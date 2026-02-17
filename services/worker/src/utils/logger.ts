@@ -4,10 +4,12 @@
  * Uses pino for JSON structured logging.
  */
 
-import pino from 'pino';
+import pino, { Logger as PinoLogger } from 'pino';
 import { config } from '../config.js';
 
-export const logger = pino({
+const pinoInstance = pino as unknown as typeof pino.default;
+
+export const logger = pinoInstance({
   level: config.logLevel,
   transport:
     config.nodeEnv === 'development'
@@ -20,4 +22,4 @@ export const logger = pino({
       : undefined,
 });
 
-export type Logger = typeof logger;
+export type Logger = PinoLogger;

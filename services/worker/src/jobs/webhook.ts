@@ -2,13 +2,16 @@
  * Outbound Webhook Delivery Job
  *
  * Delivers webhook notifications to customer endpoints.
+ *
+ * NOTE: The webhook_configs table is not yet implemented in the database schema.
+ * This module provides stub implementations that log webhook events.
+ * When the webhook_configs table is added, update this to use the database.
  */
 
 import { createHmac } from 'crypto';
-import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-interface WebhookConfig {
+export interface WebhookConfig {
   id: string;
   org_id: string;
   url: string;
@@ -24,7 +27,7 @@ interface WebhookPayload {
   data: Record<string, unknown>;
 }
 
-const MAX_RETRIES = 5;
+const _MAX_RETRIES = 5;
 const TIMEOUT_MS = 30000;
 
 /**
@@ -54,9 +57,9 @@ export async function deliverWebhook(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Ralph-Signature': signature,
-        'X-Ralph-Event': payload.type,
-        'X-Ralph-Timestamp': payload.timestamp,
+        'X-Arkova-Signature': signature,
+        'X-Arkova-Event': payload.type,
+        'X-Arkova-Timestamp': payload.timestamp,
       },
       body,
       signal: controller.signal,
@@ -68,85 +71,39 @@ export async function deliverWebhook(
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    // Reset failure count on success
-    await db
-      .from('webhook_configs')
-      .update({
-        failure_count: 0,
-        last_success_at: new Date().toISOString(),
-        last_triggered_at: new Date().toISOString(),
-      })
-      .eq('id', config.id);
-
+    // NOTE: webhook_configs table not yet implemented - skipping database update
     logger.info({ configId: config.id }, 'Webhook delivered successfully');
     return true;
   } catch (error) {
     logger.error({ configId: config.id, error }, 'Webhook delivery failed');
-
-    // Increment failure count
-    const newFailureCount = config.failure_count + 1;
-    const shouldDisable = newFailureCount >= MAX_RETRIES;
-
-    await db
-      .from('webhook_configs')
-      .update({
-        failure_count: newFailureCount,
-        enabled: !shouldDisable,
-        last_failure_at: new Date().toISOString(),
-        last_triggered_at: new Date().toISOString(),
-      })
-      .eq('id', config.id);
-
-    if (shouldDisable) {
-      logger.warn({ configId: config.id }, 'Webhook disabled after max retries');
-
-      // Log audit event
-      await db.from('audit_events').insert({
-        event_type: 'webhook.disabled',
-        event_category: 'SYSTEM',
-        org_id: config.org_id,
-        target_type: 'webhook_config',
-        target_id: config.id,
-        details: `Webhook disabled after ${MAX_RETRIES} failed attempts`,
-      });
-    }
-
+    // NOTE: webhook_configs table not yet implemented - skipping failure tracking
     return false;
   }
 }
 
 /**
  * Queue a webhook for delivery
+ *
+ * NOTE: Currently a stub - logs the event but doesn't deliver.
+ * The webhook_configs table needs to be added to the database schema.
  */
 export async function queueWebhook(
   orgId: string,
   eventType: string,
   data: Record<string, unknown>
 ): Promise<void> {
-  // Fetch active webhook configs for this org that subscribe to this event
-  const { data: configs, error } = await db
-    .from('webhook_configs')
-    .select('*')
-    .eq('org_id', orgId)
-    .eq('enabled', true)
-    .contains('events', [eventType]);
+  // NOTE: webhook_configs table not yet implemented
+  // For now, just log that a webhook would be sent
+  logger.debug(
+    { orgId, eventType, dataKeys: Object.keys(data) },
+    'Webhook queued (stub - no webhook_configs table yet)'
+  );
 
-  if (error) {
-    logger.error({ error }, 'Failed to fetch webhook configs');
-    return;
-  }
-
-  if (!configs || configs.length === 0) {
-    return;
-  }
-
-  const payload: WebhookPayload = {
-    type: eventType,
-    timestamp: new Date().toISOString(),
-    data,
-  };
-
-  for (const config of configs) {
-    await deliverWebhook(config as WebhookConfig, payload);
-  }
+  // When webhook_configs table is added, uncomment and implement:
+  // const { data: configs, error } = await db
+  //   .from('webhook_configs')
+  //   .select('*')
+  //   .eq('org_id', orgId)
+  //   .eq('enabled', true)
+  //   .contains('events', [eventType]);
 }
