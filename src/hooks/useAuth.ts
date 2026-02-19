@@ -18,6 +18,7 @@ interface AuthState {
 interface AuthActions {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, fullName?: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
 }
@@ -88,6 +89,24 @@ export function useAuth(): AuthState & AuthActions {
     []
   );
 
+  const signInWithGoogle = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
+
+    if (error) {
+      setError(error.message);
+      setLoading(false);
+    }
+    // Note: Loading stays true as we're redirecting to Google
+  }, []);
+
   const signOut = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -112,6 +131,7 @@ export function useAuth(): AuthState & AuthActions {
     error,
     signIn,
     signUp,
+    signInWithGoogle,
     signOut,
     clearError,
   };

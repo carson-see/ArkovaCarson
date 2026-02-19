@@ -34,7 +34,8 @@
       "Bash(wc:*)",
       "Bash(npm run build:*)",
       "Bash(xargs:*)",
-      "Bash(npm ls:*)"
+      "Bash(npm ls:*)",
+      "Bash(npm run test:rls:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -2,6 +2,7 @@
  * Sign Up Form Component
  *
  * Handles new user registration.
+ * Shows "Check your email" success state after signup.
  * Note: Role is assigned during onboarding, not signup.
  */
 
@@ -12,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { EmailConfirmation } from '@/components/onboarding/EmailConfirmation';
 
 interface SignUpFormProps {
   onSuccess?: () => void;
@@ -25,6 +27,8 @@ export function SignUpForm({ onSuccess, onLoginClick }: SignUpFormProps) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [signupComplete, setSignupComplete] = useState(false);
+  const [resending, setResending] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -43,10 +47,38 @@ export function SignUpForm({ onSuccess, onLoginClick }: SignUpFormProps) {
 
     await signUp(email, password, fullName || undefined);
 
-    if (!error && onSuccess) {
-      onSuccess();
-    }
+    // Check if signup was successful (no error)
+    // Note: We check after await since error state updates asynchronously
+    setTimeout(() => {
+      if (!error) {
+        setSignupComplete(true);
+        onSuccess?.();
+      }
+    }, 100);
   };
+
+  const handleResend = async () => {
+    setResending(true);
+    // Resend signup email
+    await signUp(email, password, fullName || undefined);
+    setResending(false);
+  };
+
+  const handleBack = () => {
+    setSignupComplete(false);
+  };
+
+  // Show email confirmation after successful signup
+  if (signupComplete) {
+    return (
+      <EmailConfirmation
+        email={email}
+        onResend={handleResend}
+        onBack={handleBack}
+        resending={resending}
+      />
+    );
+  }
 
   const displayError = validationError || error;
 

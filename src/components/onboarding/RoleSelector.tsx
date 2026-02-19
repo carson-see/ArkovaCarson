@@ -1,0 +1,147 @@
+/**
+ * Role Selector Component
+ *
+ * Allows new users to choose between Individual and Organization accounts.
+ * This is a one-time decision that cannot be changed after selection.
+ */
+
+import { useState } from 'react';
+import { User, Building2, ArrowRight, Loader2, CheckCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+
+type RoleOption = 'INDIVIDUAL' | 'ORG_ADMIN';
+
+interface RoleSelectorProps {
+  onSelect: (role: RoleOption) => void;
+  loading?: boolean;
+}
+
+export function RoleSelector({ onSelect, loading = false }: RoleSelectorProps) {
+  const [selected, setSelected] = useState<RoleOption | null>(null);
+
+  const handleContinue = () => {
+    if (selected) {
+      onSelect(selected);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="text-center space-y-2">
+        <h1 className="text-2xl font-bold">Choose your account type</h1>
+        <p className="text-muted-foreground">
+          Select how you'll use Arkova to secure your documents
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {/* Individual Option */}
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:border-primary/50',
+            selected === 'INDIVIDUAL' && 'border-primary ring-2 ring-primary/20'
+          )}
+          onClick={() => !loading && setSelected('INDIVIDUAL')}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <User className="h-5 w-5 text-primary" />
+              </div>
+              {selected === 'INDIVIDUAL' && (
+                <CheckCircle className="h-5 w-5 text-primary" />
+              )}
+            </div>
+            <CardTitle className="mt-4">Individual</CardTitle>
+            <CardDescription>Personal document security</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Secure personal documents
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Private vault access
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Simple verification
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+
+        {/* Organization Option */}
+        <Card
+          className={cn(
+            'cursor-pointer transition-all hover:border-primary/50',
+            selected === 'ORG_ADMIN' && 'border-primary ring-2 ring-primary/20'
+          )}
+          onClick={() => !loading && setSelected('ORG_ADMIN')}
+        >
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                <Building2 className="h-5 w-5 text-primary" />
+              </div>
+              {selected === 'ORG_ADMIN' && (
+                <CheckCircle className="h-5 w-5 text-primary" />
+              )}
+            </div>
+            <CardTitle className="mt-4">Organization</CardTitle>
+            <CardDescription>Business document security</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Team collaboration
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Organization-wide vault
+              </li>
+              <li className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                Member management
+              </li>
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Button
+        className="w-full"
+        size="lg"
+        onClick={handleContinue}
+        disabled={!selected || loading}
+      >
+        {loading ? (
+          <>
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            Setting up...
+          </>
+        ) : (
+          <>
+            Continue
+            <ArrowRight className="ml-2 h-4 w-4" />
+          </>
+        )}
+      </Button>
+
+      <p className="text-center text-xs text-muted-foreground">
+        This selection cannot be changed later
+      </p>
+    </div>
+  );
+}
