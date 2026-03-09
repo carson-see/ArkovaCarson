@@ -91,6 +91,10 @@ export function RecordDetailPage() {
           status: anchor.status,
           createdAt: anchor.created_at,
           securedAt: anchor.chain_timestamp ?? undefined,
+          issuedAt: anchor.issued_at ?? undefined,
+          revokedAt: anchor.revoked_at ?? undefined,
+          revocationReason: anchor.revocation_reason ?? undefined,
+          expiresAt: anchor.expires_at ?? undefined,
           fileSize: anchor.file_size ?? 0,
           fileMime: anchor.file_mime ?? undefined,
         }}

@@ -6,6 +6,7 @@
  */
 
 import { z } from 'zod';
+import type { Json } from '@/types/database.types';
 
 // =============================================================================
 // CONSTANTS
@@ -33,6 +34,25 @@ const MAX_FILENAME_LENGTH = 255;
  * Maximum details length for audit events
  */
 const MAX_DETAILS_LENGTH = 10000;
+
+/**
+ * Maximum label length (matches DB constraint)
+ */
+const MAX_LABEL_LENGTH = 500;
+
+/**
+ * Valid credential type values (matches credential_type enum)
+ */
+export const CREDENTIAL_TYPES = [
+  'DEGREE',
+  'LICENSE',
+  'CERTIFICATE',
+  'TRANSCRIPT',
+  'PROFESSIONAL',
+  'OTHER',
+] as const;
+
+export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
 // =============================================================================
 // ANCHOR SCHEMAS
@@ -78,6 +98,36 @@ export const AnchorCreateSchema = z.object({
     .uuid('Organization ID must be a valid UUID')
     .optional()
     .nullable(),
+
+  label: z
+    .string()
+    .min(1, 'Label is required')
+    .max(MAX_LABEL_LENGTH, `Label must be ${MAX_LABEL_LENGTH} characters or less`)
+    .optional()
+    .nullable(),
+
+  credential_type: z
+    .enum(CREDENTIAL_TYPES, {
+      errorMap: () => ({
+        message: `Credential type must be one of: ${CREDENTIAL_TYPES.join(', ')}`,
+      }),
+    })
+    .optional()
+    .nullable(),
+
+  metadata: z
+    .custom<Record<string, Json | undefined>>((val) => {
+      if (val === null || val === undefined) return true;
+      return typeof val === 'object' && !Array.isArray(val);
+    }, 'Metadata must be a JSON object')
+    .optional()
+    .nullable(),
+
+  parent_anchor_id: z
+    .string()
+    .uuid('Parent anchor ID must be a valid UUID')
+    .optional()
+    .nullable(),
 });
 
 export type AnchorCreate = z.infer<typeof AnchorCreateSchema>;
@@ -112,6 +162,27 @@ export const AnchorUpdateSchema = z.object({
   retention_until: z
     .string()
     .datetime({ message: 'retention_until must be a valid ISO datetime' })
+    .optional()
+    .nullable(),
+
+  label: z
+    .string()
+    .min(1, 'Label is required')
+    .max(MAX_LABEL_LENGTH, `Label must be ${MAX_LABEL_LENGTH} characters or less`)
+    .optional()
+    .nullable(),
+
+  credential_type: z
+    .enum(CREDENTIAL_TYPES, {
+      errorMap: () => ({
+        message: `Credential type must be one of: ${CREDENTIAL_TYPES.join(', ')}`,
+      }),
+    })
+    .optional()
+    .nullable(),
+
+  metadata: z
+    .record(z.unknown())
     .optional()
     .nullable(),
 

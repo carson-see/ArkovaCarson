@@ -46,9 +46,11 @@ describe('AssetDetailView', () => {
 
   it('should show REVOKED status for revoked anchors', () => {
     const revokedAnchor = { ...mockAnchor, status: 'REVOKED' as const };
-    const { getByText } = render(<AssetDetailView anchor={revokedAnchor} />);
+    const { getAllByText } = render(<AssetDetailView anchor={revokedAnchor} />);
 
-    expect(getByText('Revoked')).toBeInTheDocument();
+    // There may be multiple "Revoked" texts (badge + lifecycle timeline)
+    const revokedElements = getAllByText('Revoked');
+    expect(revokedElements.length).toBeGreaterThan(0);
   });
 
   it('should show re-verify button', () => {

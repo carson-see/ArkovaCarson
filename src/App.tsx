@@ -183,6 +183,17 @@ export function App() {
             </AuthGuard>
           }
         />
+        <Route
+          path={ROUTES.HELP}
+          element={
+            <AuthGuard>
+              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                {/* TODO: Wire HelpPage when implemented */}
+                <DashboardPage />
+              </RouteGuard>
+            </AuthGuard>
+          }
+        />
 
         {/* Root redirects to dashboard (guards will bounce to correct destination) */}
         <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />

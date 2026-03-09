@@ -24,6 +24,7 @@ export const ROUTES = {
   ORGANIZATION: '/organization',
   SETTINGS: '/settings',
   SETTINGS_API_KEYS: '/settings/api-keys',
+  HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
   // Root redirect

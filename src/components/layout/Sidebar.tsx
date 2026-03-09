@@ -41,7 +41,7 @@ const mainNavItems: NavItem[] = [
 
 const secondaryNavItems: NavItem[] = [
   { label: 'Settings', icon: Settings, to: ROUTES.SETTINGS },
-  { label: 'Help', icon: HelpCircle, to: '#' },
+  { label: 'Help', icon: HelpCircle, to: ROUTES.HELP },
 ];
 
 interface SidebarProps {

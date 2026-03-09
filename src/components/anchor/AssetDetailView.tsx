@@ -27,7 +27,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from './FileUpload';
+import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { formatFingerprint } from '@/lib/fileHasher';
+import { LIFECYCLE_LABELS } from '@/lib/copy';
 
 interface AnchorRecord {
   id: string;
@@ -36,6 +38,10 @@ interface AnchorRecord {
   status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
   createdAt: string;
   securedAt?: string;
+  issuedAt?: string;
+  revokedAt?: string;
+  revocationReason?: string;
+  expiresAt?: string;
   fileSize: number;
   fileMime?: string;
 }
@@ -239,6 +245,29 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof }: AssetDetail
               </div>
             )}
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Lifecycle Timeline */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            {LIFECYCLE_LABELS.TITLE}
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AnchorLifecycleTimeline
+            data={{
+              status: anchor.status,
+              createdAt: anchor.createdAt,
+              issuedAt: anchor.issuedAt,
+              securedAt: anchor.securedAt,
+              revokedAt: anchor.revokedAt,
+              revocationReason: anchor.revocationReason,
+              expiresAt: anchor.expiresAt,
+            }}
+          />
         </CardContent>
       </Card>
 

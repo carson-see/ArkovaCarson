@@ -18,12 +18,29 @@ export const ANCHOR_STATUS_LABELS = {
   PENDING: 'Pending',
   SECURED: 'Secured',
   REVOKED: 'Revoked',
+  EXPIRED: 'Expired',
 } as const;
 
 export const ANCHOR_STATUS_DESCRIPTIONS = {
   PENDING: 'Your record is being secured. This typically completes within a few minutes.',
   SECURED: 'Your record has been permanently secured with cryptographic verification.',
   REVOKED: 'This record has been revoked and is no longer active.',
+  EXPIRED: 'This record has passed its expiration date.',
+} as const;
+
+// =============================================================================
+// LIFECYCLE TIMELINE
+// =============================================================================
+
+export const LIFECYCLE_LABELS = {
+  TITLE: 'Record Lifecycle',
+  CREATED: 'Created',
+  ISSUED: 'Issued',
+  SECURED: 'Secured',
+  REVOKED: 'Revoked',
+  EXPIRED: 'Expired',
+  REVOCATION_REASON: 'Reason',
+  EXPIRES_ON: 'Expires',
 } as const;
 
 // =============================================================================
@@ -31,12 +48,21 @@ export const ANCHOR_STATUS_DESCRIPTIONS = {
 // =============================================================================
 
 export const CREDENTIAL_TYPE_LABELS = {
-  CERTIFICATE: 'Certificate',
+  DEGREE: 'Degree',
   LICENSE: 'License',
-  DIPLOMA: 'Diploma',
-  BADGE: 'Badge',
-  ATTESTATION: 'Attestation',
+  CERTIFICATE: 'Certificate',
+  TRANSCRIPT: 'Transcript',
+  PROFESSIONAL: 'Professional Credential',
   OTHER: 'Other',
+} as const;
+
+export const CREDENTIAL_TYPE_DESCRIPTIONS = {
+  DEGREE: 'Academic degree (e.g., Bachelor\'s, Master\'s, Doctorate)',
+  LICENSE: 'Professional or occupational license',
+  CERTIFICATE: 'Certificate of completion or achievement',
+  TRANSCRIPT: 'Academic transcript or record of courses',
+  PROFESSIONAL: 'Professional certification or accreditation',
+  OTHER: 'Other credential type',
 } as const;
 
 // =============================================================================
@@ -100,6 +126,9 @@ export const FORM_LABELS = {
   FILE_SIZE: 'File Size',
   CREATED_AT: 'Created',
   SECURED_AT: 'Secured',
+  ISSUED_AT: 'Issued',
+  REVOKED_AT: 'Revoked',
+  EXPIRES_AT: 'Expires',
 } as const;
 
 // =============================================================================

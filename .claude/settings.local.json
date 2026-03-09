@@ -35,7 +35,13 @@
       "Bash(npm run build:*)",
       "Bash(xargs:*)",
       "Bash(npm ls:*)",
-      "Bash(npm run test:rls:*)"
+      "Bash(npm run test:rls:*)",
+      "Bash(git checkout feat/page-routing-public-ids)",
+      "Bash(gh api repos/carson-see/ArkovaCarson/pulls/4 --jq '{mergeable: .mergeable, mergeable_state: .mergeable_state, title: .title}')",
+      "Bash(gh api repos/carson-see/ArkovaCarson/pulls/3 --jq '{mergeable: .mergeable, mergeable_state: .mergeable_state, title: .title}')",
+      "Bash(gh api repos/carson-see/ArkovaCarson/pulls/3 --jq '{mergeable: .mergeable, mergeable_state: .mergeable_state, merge_commit_sha: .merge_commit_sha}')",
+      "Bash(git fetch origin main)",
+      "Bash(git merge origin/main)"
     ]
   },
   "enableAllProjectMcpServers": true,
