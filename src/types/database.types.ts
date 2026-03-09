@@ -563,6 +563,7 @@ export type Database = {
           full_name: string | null
           id: string
           is_public_profile: boolean
+          is_verified: boolean
           manual_review_completed_at: string | null
           manual_review_completed_by: string | null
           manual_review_reason: string | null
@@ -570,6 +571,7 @@ export type Database = {
           requires_manual_review: boolean
           role: Database["public"]["Enums"]["user_role"] | null
           role_set_at: string | null
+          subscription_tier: string
           updated_at: string
         }
         Insert: {
@@ -579,6 +581,7 @@ export type Database = {
           full_name?: string | null
           id: string
           is_public_profile?: boolean
+          is_verified?: boolean
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
@@ -586,6 +589,7 @@ export type Database = {
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          subscription_tier?: string
           updated_at?: string
         }
         Update: {
@@ -595,6 +599,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           is_public_profile?: boolean
+          is_verified?: boolean
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
@@ -602,6 +607,7 @@ export type Database = {
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          subscription_tier?: string
           updated_at?: string
         }
         Relationships: [

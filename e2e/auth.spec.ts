@@ -87,4 +87,34 @@ test.describe('Authentication', () => {
     // Should show error
     await expect(page.getByText(/at least 8 characters/i)).toBeVisible();
   });
+
+  test('sign out redirects to auth page', async ({ page }) => {
+    // Log in with a seed user
+    await page.goto('/auth');
+    await page.getByLabel('Email address').fill('individual@demo.arkova.io');
+    await page.getByLabel('Password').fill('Demo1234!');
+    await page.getByRole('button', { name: 'Sign in' }).click();
+
+    // Wait for navigation away from auth page (user lands on vault or dashboard)
+    await page.waitForURL(/\/(vault|dashboard|onboarding)/, { timeout: 10000 });
+
+    // Open the user dropdown menu and click Sign out
+    // The sign-out button is in a dropdown menu in the Header
+    const userMenuTrigger = page.locator('[data-testid="user-menu-trigger"]')
+      .or(page.getByRole('button', { name: /avatar|profile|user|menu/i }));
+
+    // If dropdown trigger exists, click it first
+    if (await userMenuTrigger.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await userMenuTrigger.click();
+    }
+
+    // Click the Sign out button
+    await page.getByRole('menuitem', { name: 'Sign out' })
+      .or(page.getByRole('button', { name: 'Sign out' }))
+      .click();
+
+    // Should redirect to the auth/login page
+    await expect(page).toHaveURL(/\/auth/, { timeout: 10000 });
+    await expect(page.getByLabel('Email address')).toBeVisible();
+  });
 });

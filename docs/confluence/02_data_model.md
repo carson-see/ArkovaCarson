@@ -73,6 +73,8 @@ User profiles linked to Supabase Auth.
 | `manual_review_reason` | text | YES | NULL | Review reason |
 | `manual_review_completed_at` | timestamptz | YES | NULL | Review completion |
 | `manual_review_completed_by` | uuid | YES | NULL | Reviewing admin |
+| `is_verified` | boolean | NO | false | Identity verified by admin (privileged) |
+| `subscription_tier` | text | NO | 'free' | Billing tier: free/starter/professional/enterprise (privileged) |
 | `created_at` | timestamptz | NO | now() | Creation timestamp |
 | `updated_at` | timestamptz | NO | now() | Last update timestamp |
 
@@ -86,12 +88,13 @@ User profiles linked to Supabase Auth.
 - `id` references auth.users with CASCADE delete
 - ORG_ADMIN must have org_id set
 - Email must be valid format and lowercase
+- `subscription_tier` must be one of: free, starter, professional, enterprise
 
 **Triggers:**
 - `enforce_profiles_lowercase_email` - Lowercase email on insert/update
 - `set_profiles_updated_at` - Update timestamp
 - `enforce_role_immutability` - Prevent role changes
-- `protect_privileged_fields` - Block direct update of admin fields
+- `protect_privileged_fields` - Block direct update of admin fields (org_id, requires_manual_review, manual_review_reason, manual_review_completed_at, manual_review_completed_by, is_verified, subscription_tier)
 
 ### anchors
 

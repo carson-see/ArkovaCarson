@@ -58,4 +58,47 @@ test.describe('Route Guards', () => {
       await expect(page.getByText(/Vault/i).or(page.getByText(/Authentication Required/i))).toBeVisible();
     });
   });
+
+  test.describe('Mid-Onboarding Redirect', () => {
+    test('user with no role is redirected from /dashboard to /onboarding/role', async ({ page }) => {
+      // Sign up a fresh user with no role set (mid-onboarding state).
+      // Seed users already have roles, so we create a new account.
+      const timestamp = Date.now();
+      const email = `e2e-norole-${timestamp}@test.arkova.io`;
+      const password = 'TestPassword123!';
+
+      await page.goto('/signup');
+      await page.getByLabel('Full name').fill('No Role User');
+      await page.getByLabel('Email address').fill(email);
+      await page.getByLabel('Password', { exact: true }).fill(password);
+      await page.getByLabel('Confirm password').fill(password);
+      await page.getByRole('button', { name: 'Create account' }).click();
+
+      // In local dev, Supabase auto-confirms email.
+      // After signup, the user should be redirected to onboarding/role
+      // because their profile has role = NULL.
+      // Wait for either the email confirmation page or auto-redirect.
+      await page.waitForURL(/\/(onboarding\/role|auth)/, { timeout: 15000 }).catch(() => {
+        // If auto-confirm is off, the user sees "Check your email" — that's OK.
+        // The test still validates the route guard behavior below.
+      });
+
+      // If we ended up on the email confirmation page, log in manually
+      if (page.url().includes('/auth') || await page.getByText(/Check your email/i).isVisible().catch(() => false)) {
+        // Auto-confirm may be off; sign in to continue
+        await page.goto('/auth');
+        await page.getByLabel('Email address').fill(email);
+        await page.getByLabel('Password').fill(password);
+        await page.getByRole('button', { name: 'Sign in' }).click();
+        await page.waitForURL(/\/(onboarding|vault|dashboard)/, { timeout: 10000 });
+      }
+
+      // Now try to navigate to /dashboard directly
+      await page.goto('/dashboard');
+
+      // RouteGuard should redirect role=NULL users to /onboarding/role
+      await expect(page).toHaveURL(/\/onboarding\/role/, { timeout: 10000 });
+      await expect(page.getByText('Individual').or(page.getByText('Organization'))).toBeVisible();
+    });
+  });
 });
