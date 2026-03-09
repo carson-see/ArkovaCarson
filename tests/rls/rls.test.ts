@@ -10,54 +10,29 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '../../src/types/database.types';
+import {
+  withUser,
+  createServiceClient,
+  DEMO_CREDENTIALS,
+  ORG_IDS,
+  type TypedClient,
+} from '../../src/tests/rls/helpers';
 
-// Test configuration
-const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
-const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
-const SUPABASE_SERVICE_KEY =
-  process.env.SUPABASE_SERVICE_ROLE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+// Re-export from shared helpers so p7.test.ts imports resolve
+export { createServiceClient, DEMO_CREDENTIALS } from '../../src/tests/rls/helpers';
 
-// Demo user credentials from seed
-export const DEMO_CREDENTIALS = {
-  adminEmail: 'admin_demo@arkova.local',
-  adminPassword: 'demo_password_123',
-  adminId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-  userEmail: 'user_demo@arkova.local',
-  userPassword: 'demo_password_123',
-  userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
-  betaAdminEmail: 'beta_admin@betacorp.local',
-  betaAdminPassword: 'demo_password_123',
-  betaAdminId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-};
-
-// Organization IDs from seed
-const ARKOVA_ORG_ID = '11111111-1111-1111-1111-111111111111';
-const BETA_ORG_ID = '22222222-2222-2222-2222-222222222222';
-
-type TypedClient = SupabaseClient<Database>;
-
-// Helper to create authenticated client
+// Helper that matches the old createAuthenticatedClient(email, password) signature
+// by delegating to the shared withUser() helper
 export async function createAuthenticatedClient(
   email: string,
-  password: string
+  _password: string
 ): Promise<TypedClient> {
-  const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY);
-  const { error } = await client.auth.signInWithPassword({ email, password });
-  if (error) {
-    throw new Error(`Auth failed for ${email}: ${error.message}`);
-  }
-  return client;
+  // withUser determines password internally from DEMO_CREDENTIALS
+  return withUser(email, email.includes('admin') ? 'ORG_ADMIN' : 'INDIVIDUAL');
 }
 
-// Service role client (bypasses RLS)
-export function createServiceClient(): TypedClient {
-  return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_KEY);
-}
+const ARKOVA_ORG_ID = ORG_IDS.arkova;
+const BETA_ORG_ID = ORG_IDS.betaCorp;
 
 // =============================================================================
 // RLS: PROFILES
@@ -185,13 +160,13 @@ describe('RLS: Organizations', () => {
     expect(error).toBeNull();
     expect(data).toHaveLength(1);
     expect(data![0].id).toBe(ARKOVA_ORG_ID);
-    expect(data![0].display_name).toBe('Arkova');
+    expect(data![0].display_name).toBe('UMich Registrar');
   });
 
   it('ORG_ADMIN can update their organization', async () => {
     const { error } = await adminClient
       .from('organizations')
-      .update({ display_name: 'Arkova Updated' })
+      .update({ display_name: 'UMich Registrar Updated' })
       .eq('id', ARKOVA_ORG_ID);
 
     expect(error).toBeNull();
@@ -199,7 +174,7 @@ describe('RLS: Organizations', () => {
     // Reset
     await createServiceClient()
       .from('organizations')
-      .update({ display_name: 'Arkova' })
+      .update({ display_name: 'UMich Registrar' })
       .eq('id', ARKOVA_ORG_ID);
   });
 
@@ -371,6 +346,7 @@ describe('RLS: Audit Events', () => {
 
   it('users can insert audit events for themselves', async () => {
     const { data, error } = await userClient.from('audit_events').insert({
+      actor_id: DEMO_CREDENTIALS.userId,
       event_type: 'test.event',
       event_category: 'SYSTEM',
       details: 'Test audit event from RLS test',
@@ -460,8 +436,8 @@ describe('Database Constraints', () => {
   });
 
   it('enforces legal_hold prevents soft deletion', async () => {
-    // The anchor with legal_hold=true from seed is a4444444-4444-4444-4444-444444444444
-    const legalHoldAnchorId = 'a4444444-4444-4444-4444-444444444444';
+    // Anchor 2 (Okafor MBA) has legal_hold=true in seed data
+    const legalHoldAnchorId = 'a2a2a2a2-0000-0000-0000-000000000002';
 
     const { error } = await serviceClient
       .from('anchors')

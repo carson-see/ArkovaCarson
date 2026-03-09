@@ -69,12 +69,13 @@ export function ConfirmAnchorModal({
         org_id: profile?.org_id || null,
       });
 
+      // user_id is required (no column DEFAULT); RLS enforces user_id = auth.uid().
+      // status is omitted — column DEFAULT is 'PENDING', and RLS enforces status = 'PENDING' on INSERT.
       const { data, error } = await supabase
         .from('anchors')
         .insert({
           ...validated,
           user_id: user.id,
-          status: 'PENDING',
         })
         .select('id')
         .single();

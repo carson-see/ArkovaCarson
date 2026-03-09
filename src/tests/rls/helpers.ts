@@ -3,6 +3,9 @@
  *
  * Provides helper functions for testing Row Level Security policies.
  * These helpers create authenticated Supabase clients for different user contexts.
+ *
+ * IMPORTANT: Credentials here MUST match supabase/seed.sql.
+ * If you change seed data, update these constants to match.
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -20,31 +23,31 @@ const SUPABASE_SERVICE_KEY =
 export type TypedClient = SupabaseClient<Database>;
 
 /**
- * Demo user credentials from seed data
+ * Demo user credentials — must match supabase/seed.sql
  */
 export const DEMO_CREDENTIALS = {
-  // ORG_ADMIN user (Arkova org)
-  adminEmail: 'admin_demo@arkova.local',
-  adminPassword: 'demo_password_123',
-  adminId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+  // ORG_ADMIN user (UMich Registrar org)
+  adminEmail: 'admin@umich-demo.arkova.io',
+  adminPassword: 'Demo1234!',
+  adminId: '11111111-0000-0000-0000-000000000001',
 
   // INDIVIDUAL user (no org)
-  userEmail: 'user_demo@arkova.local',
-  userPassword: 'demo_password_123',
-  userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+  userEmail: 'individual@demo.arkova.io',
+  userPassword: 'Demo1234!',
+  userId: '33333333-0000-0000-0000-000000000001',
 
-  // ORG_ADMIN user (Beta Corp org)
-  betaAdminEmail: 'beta_admin@betacorp.local',
-  betaAdminPassword: 'demo_password_123',
-  betaAdminId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+  // ORG_ADMIN user (Midwest Medical Board org)
+  betaAdminEmail: 'admin@midwest-medical.arkova.io',
+  betaAdminPassword: 'Demo1234!',
+  betaAdminId: '22222222-0000-0000-0000-000000000001',
 };
 
 /**
- * Organization IDs from seed data
+ * Organization IDs — must match supabase/seed.sql
  */
 export const ORG_IDS = {
-  arkova: '11111111-1111-1111-1111-111111111111',
-  betaCorp: '22222222-2222-2222-2222-222222222222',
+  arkova: 'aaaaaaaa-0000-0000-0000-000000000001',
+  betaCorp: 'bbbbbbbb-0000-0000-0000-000000000001',
 };
 
 /**
@@ -60,8 +63,8 @@ export type UserRole = 'INDIVIDUAL' | 'ORG_ADMIN';
  * @returns Promise resolving to authenticated Supabase client
  *
  * @example
- * const adminClient = await withUser('admin_demo@arkova.local', 'ORG_ADMIN');
- * const userClient = await withUser('user_demo@arkova.local', 'INDIVIDUAL');
+ * const adminClient = await withUser('admin@umich-demo.arkova.io', 'ORG_ADMIN');
+ * const userClient = await withUser('individual@demo.arkova.io', 'INDIVIDUAL');
  */
 export async function withUser(email: string, role: UserRole): Promise<TypedClient> {
   // Get password based on email (all demo users have same password)
@@ -101,10 +104,9 @@ export async function cleanupClient(client: TypedClient): Promise<void> {
 }
 
 /**
- * Get password for demo email (all use same password)
+ * Get password for demo email (all use same password: Demo1234!)
  */
 function getPasswordForEmail(email: string): string {
-  // All demo users have the same password
   const knownEmails = [
     DEMO_CREDENTIALS.adminEmail,
     DEMO_CREDENTIALS.userEmail,
@@ -117,7 +119,7 @@ function getPasswordForEmail(email: string): string {
     );
   }
 
-  return 'demo_password_123';
+  return 'Demo1234!';
 }
 
 /**

@@ -13,17 +13,22 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import type { Database } from '../../src/types/database.types';
-import { createAuthenticatedClient, createServiceClient, DEMO_CREDENTIALS } from './rls.test';
+import {
+  withUser,
+  createServiceClient,
+  createAnonClient,
+  DEMO_CREDENTIALS,
+  ORG_IDS,
+  type TypedClient,
+} from '../../src/tests/rls/helpers';
 
-// Test configuration
-const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
-const SUPABASE_ANON_KEY =
-  process.env.SUPABASE_ANON_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
-
-type TypedClient = SupabaseClient<Database>;
+// Helper that matches the old createAuthenticatedClient(email, password) signature
+async function createAuthenticatedClient(
+  email: string,
+  _password: string
+): Promise<TypedClient> {
+  return withUser(email, email.includes('admin') ? 'ORG_ADMIN' : 'INDIVIDUAL');
+}
 
 // =============================================================================
 // P7-S3: BILLING IDEMPOTENCY TESTS
@@ -139,8 +144,12 @@ describe('P7-S5: Job Claim Mechanism', () => {
   beforeAll(async () => {
     serviceClient = createServiceClient();
 
+    // Clear any pending jobs from seed data so claim_anchoring_job picks our test job
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('anchoring_jobs').delete().eq('status', 'pending');
+
     // Create a test anchor to generate a job
-    const fingerprint = 'test_job_' + 'a'.repeat(55);
+    const fingerprint = 'd1e2f3a4'.repeat(8); // valid 64-char hex
     const { data: anchor, error } = await serviceClient
       .from('anchors')
       .insert({
@@ -285,7 +294,7 @@ describe('P7-S6: Anchor Status Protection', () => {
     serviceClient = createServiceClient();
 
     // Create a test anchor
-    const fingerprint = 'test_status_' + 'b'.repeat(54);
+    const fingerprint = 'a1b2c3d4'.repeat(8); // valid 64-char hex
     const { data: anchor } = await userClient
       .from('anchors')
       .insert({
@@ -308,7 +317,7 @@ describe('P7-S6: Anchor Status Protection', () => {
   });
 
   it('user cannot insert anchor with SECURED status', async () => {
-    const fingerprint = 'test_secured_' + 'c'.repeat(52);
+    const fingerprint = 'e5f6a7b8'.repeat(8); // valid 64-char hex
     const { error } = await userClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,
       fingerprint: fingerprint,
@@ -431,14 +440,23 @@ describe('P7-S14: Switchboard Flags', () => {
     expect(readError).toBeNull();
     expect(flags!.length).toBeGreaterThan(0);
 
-    // Update should fail (no policy allows this for authenticated users)
+    // Update should be silently denied by RLS (no UPDATE policy for authenticated)
+    // PostgreSQL RLS doesn't raise errors — it silently skips non-matching rows
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: updateError } = await (userClient as any)
+    await (userClient as any)
       .from('switchboard_flags')
       .update({ value: true })
       .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS');
 
-    expect(updateError).not.toBeNull();
+    // Verify the value was NOT actually changed (RLS blocked it)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: after } = await (userClient as any)
+      .from('switchboard_flags')
+      .select('value')
+      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .single();
+
+    expect(after!.value).toBe(false); // Original value preserved
   });
 
   it('service role can modify flags', async () => {
@@ -559,7 +577,7 @@ describe('P7-S7: Public Verification', () => {
     serviceClient = createServiceClient();
 
     // Create a PENDING anchor first
-    const fingerprint = 'public_verify_' + 'd'.repeat(51);
+    const fingerprint = 'c9d0e1f2'.repeat(8); // valid 64-char hex
     const { data: anchor } = await serviceClient
       .from('anchors')
       .insert({
@@ -608,7 +626,7 @@ describe('P7-S7: Public Verification', () => {
 
   it('get_public_anchor returns redacted data for valid public_id', async () => {
     // Use anonymous client (no auth)
-    const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const anonClient = createAnonClient();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: result, error } = await (anonClient.rpc as any)('get_public_anchor', {
@@ -628,7 +646,7 @@ describe('P7-S7: Public Verification', () => {
   });
 
   it('get_public_anchor returns error for invalid public_id', async () => {
-    const anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const anonClient = createAnonClient();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: result, error } = await (anonClient.rpc as any)('get_public_anchor', {
@@ -636,13 +654,14 @@ describe('P7-S7: Public Verification', () => {
     });
 
     expect(error).toBeNull();
-    expect(result.verified).toBe(false);
+    // Function returns { error: "Anchor not found or not verified" } for invalid IDs
     expect(result.error).toBeDefined();
+    expect(result.verified).toBeUndefined();
   });
 
   it('get_public_anchor does not expose PENDING anchors', async () => {
     // Create a PENDING anchor
-    const fingerprint = 'pending_public_' + 'e'.repeat(50);
+    const fingerprint = 'f3e4d5c6'.repeat(8); // valid 64-char hex
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: pending } = await (serviceClient as any)
       .from('anchors')
@@ -672,7 +691,7 @@ describe('P7-S10: Webhook Endpoint Security', () => {
   let userClient: TypedClient;
   let serviceClient: TypedClient;
 
-  const ARKOVA_ORG_ID = '11111111-1111-1111-1111-111111111111';
+  const ARKOVA_ORG_ID = ORG_IDS.arkova;
 
   beforeAll(async () => {
     adminClient = await createAuthenticatedClient(
