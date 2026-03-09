@@ -63,6 +63,8 @@ All UI copy sourced from `src/lib/copy.ts`. CI must fail if banned terms appear 
 - Never hardcode secrets, API keys, or private keys anywhere
 - Treasury/signing keys: server-side only, loaded from env vars, never logged
 - Stripe webhook handlers must call `stripe.webhooks.constructEvent()` — no exceptions
+- API keys must be hashed with HMAC-SHA256 using a server-side secret (`API_KEY_HMAC_SECRET`). Raw keys are never persisted after the initial creation response.
+- API key lifecycle events (create, revoke) must be logged to `audit_events`.
 
 ### Testing
 - RLS tests must use `src/tests/rls/helpers.ts` `withUser()` / `withAuth()` utilities — no ad-hoc auth mocking
@@ -79,6 +81,26 @@ All UI copy sourced from `src/lib/copy.ts`. CI must fail if banned terms appear 
 - File fingerprinting (`generateFingerprint`) runs in the browser only — never server-side
 - `generateFingerprint` must never be imported or called in `services/worker/`
 
+### API Versioning Policy
+- The Verification API response schema is frozen once published. No field removals, type changes, or semantic changes without a new version prefix.
+- Breaking changes require: v2+ URL prefix (e.g., `/api/v2/verify/:publicId`), 12-month deprecation notice on the previous version, and a documented migration guide published before the new version goes live.
+- Additive changes (new optional response fields) are allowed without versioning, provided the new field is nullable or has a default, existing consumers are not required to handle it, and the change is documented in the OpenAPI spec changelog.
+- The frozen schema must be defined as a single reusable OpenAPI component (`VerificationResult`) referenced by all verification endpoints. This is the single-source-of-truth for the response contract.
+
+### Feature Flags
+- API endpoints that are built but not yet launched must be gated behind an environment variable feature flag.
+- `ENABLE_VERIFICATION_API` controls all `/api/v1/*` endpoints. When `false`, all gated endpoints return HTTP 503.
+- Feature flags are boolean env vars, checked at middleware registration (not per-request). Changing the flag requires a worker restart.
+- `/api/health` is always available regardless of feature flag state.
+
+### Rate Limiting
+- All public API endpoints must have rate limiting enforced.
+- Anonymous callers: 100 req/min per IP.
+- API key holders: 1,000 req/min per key (configurable per key in DB).
+- Batch endpoints: 10 req/min per API key.
+- Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) must be included on every API response.
+- Exceeding rate limits returns HTTP 429 with `Retry-After` header.
+
 ---
 
 ## 2. HOW TO RECEIVE A TASK
@@ -89,7 +111,7 @@ Every task will be given to you in one of these formats:
 > "Implement P2-TS-03"
 
 When you receive a story ID, do the following before writing any code:
-1. Locate the story card in the Technical Backlog (`Arkova_Technical_Backlog_P1_P7_March2026.docx`)
+1. Locate the story card in the Technical Backlog (`Arkova_Technical_Backlog_P1_P7_March2026.docx`) or Phase 1.5 Backlog (`Arkova_Phase15_Technical_Backlog.docx`)
 2. Read the full card: User Story, Acceptance Criteria, Dependencies, Tech Notes, DoD
 3. Check the Audit Note — it tells you what already exists and what the specific gap is
 4. Verify all dependencies are met before starting
@@ -551,6 +573,11 @@ Each story card contains Gherkin scenarios. Map them directly to tests:
 | Exposing `user_id`, `org_id`, or `anchors.id` on the public verification page | Privacy violation | Expose only `public_id` and derived display fields |
 | Adding a nav link with `href="#"` | Dead link, breaks navigation | Use `<Link to="/path">` from react-router-dom |
 | Storing a raw Stripe webhook secret or Bitcoin private key in code | Security critical | Load from environment variable only, never log it |
+| Returning `jurisdiction: null` in verify API response | Frozen schema says omit the key when null | Use conditional spread: `...(jurisdiction && { jurisdiction })` |
+| Persisting raw API key in `api_keys` table | Security violation — raw key exposure | Hash with HMAC-SHA256 using `API_KEY_HMAC_SECRET` before INSERT |
+| Importing `generateFingerprint` in `services/worker/src/api/` | Constitution violation — fingerprinting is client-side only | Worker API returns pre-computed fingerprints from DB, never computes them |
+| Using `arkova://rec/` as record_uri format | ADR-001 resolved: use HTTPS | Use `https://app.arkova.io/verify/{public_id}` |
+| Exposing API endpoints without checking `ENABLE_VERIFICATION_API` | Premature API exposure before launch criteria met | All `/api/v1/*` routes must pass through `featureFlag.ts` middleware |
 
 ---
 
