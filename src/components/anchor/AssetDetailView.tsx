@@ -21,6 +21,7 @@ import {
   Hash,
   Lock,
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -30,9 +31,11 @@ import { FileUpload } from './FileUpload';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { LIFECYCLE_LABELS } from '@/lib/copy';
+import { verifyPath } from '@/lib/routes';
 
 interface AnchorRecord {
   id: string;
+  publicId?: string;
   filename: string;
   fingerprint: string;
   status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -270,6 +273,57 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof }: AssetDetail
           />
         </CardContent>
       </Card>
+
+      {/* QR Code — Verification Link */}
+      {anchor.publicId && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              Verification Link
+            </CardTitle>
+            <CardDescription>
+              Share this QR code to let anyone verify this credential
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col sm:flex-row items-center gap-6">
+              <div className="rounded-lg border bg-white p-3">
+                <QRCodeSVG
+                  value={`${window.location.origin}${verifyPath(anchor.publicId)}`}
+                  size={160}
+                  level="M"
+                  includeMargin={false}
+                />
+              </div>
+              <div className="flex-1 space-y-3 text-center sm:text-left">
+                <div>
+                  <p className="text-sm font-medium">Public Verification ID</p>
+                  <p className="text-sm font-mono text-muted-foreground">{anchor.publicId}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">Verification URL</p>
+                  <p className="text-xs font-mono text-muted-foreground break-all">
+                    {window.location.origin}{verifyPath(anchor.publicId)}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(
+                      `${window.location.origin}${verifyPath(anchor.publicId!)}`
+                    );
+                  }}
+                >
+                  <Copy className="mr-1 h-3 w-3" />
+                  Copy Link
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Re-verify Section */}
       <Card>

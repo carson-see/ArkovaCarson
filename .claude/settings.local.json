@@ -41,7 +41,10 @@
       "Bash(gh api repos/carson-see/ArkovaCarson/pulls/3 --jq '{mergeable: .mergeable, mergeable_state: .mergeable_state, title: .title}')",
       "Bash(gh api repos/carson-see/ArkovaCarson/pulls/3 --jq '{mergeable: .mergeable, mergeable_state: .mergeable_state, merge_commit_sha: .merge_commit_sha}')",
       "Bash(git fetch origin main)",
-      "Bash(git merge origin/main)"
+      "Bash(git merge origin/main)",
+      "Bash(git rebase --continue)",
+      "Bash(GIT_EDITOR=true git rebase --continue)",
+      "Bash(GIT_EDITOR=\"true\" git -c core.editor=true rebase --continue)"
     ]
   },
   "enableAllProjectMcpServers": true,

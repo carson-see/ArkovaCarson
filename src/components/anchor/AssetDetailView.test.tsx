@@ -90,6 +90,21 @@ describe('AssetDetailView', () => {
     expect(queryByText('Download Proof Package')).not.toBeInTheDocument();
   });
 
+  it('should show QR code section when publicId is present', () => {
+    const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
+    const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
+
+    expect(getByText('Verification Link')).toBeInTheDocument();
+    expect(getByText('ARK-2024-00091')).toBeInTheDocument();
+    expect(getByText('Copy Link')).toBeInTheDocument();
+  });
+
+  it('should not show QR code section when publicId is absent', () => {
+    const { queryByText } = render(<AssetDetailView anchor={mockAnchor} />);
+
+    expect(queryByText('Verification Link')).not.toBeInTheDocument();
+  });
+
   it('should call onBack when back button clicked', () => {
     const onBack = vi.fn();
     render(

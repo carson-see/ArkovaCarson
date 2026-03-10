@@ -86,6 +86,7 @@ export function RecordDetailPage() {
       <AssetDetailView
         anchor={{
           id: anchor.id,
+          publicId: anchor.public_id ?? undefined,
           filename: anchor.filename,
           fingerprint: anchor.fingerprint,
           status: anchor.status,
