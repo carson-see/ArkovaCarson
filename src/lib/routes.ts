@@ -25,6 +25,7 @@ export const ROUTES = {
   SETTINGS: '/settings',
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',
+  CREDENTIAL_TEMPLATES: '/settings/credential-templates',
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 

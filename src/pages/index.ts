@@ -11,4 +11,5 @@ export { RecordDetailPage } from './RecordDetailPage';
 export { SettingsPage } from './SettingsPage';
 export { HelpPage } from './HelpPage';
 export { WebhookSettingsPage } from './WebhookSettingsPage';
+export { CredentialTemplatesPage } from './CredentialTemplatesPage';
 export { VaultDashboard } from '../components/vault';

@@ -39,6 +39,7 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
+import { logVerificationEvent } from '@/lib/logVerificationEvent';
 import { CREDENTIAL_TYPE_LABELS, ANCHOR_STATUS_LABELS } from '@/lib/copy';
 
 interface PublicAnchorData {
@@ -86,17 +87,28 @@ export function PublicVerification({ publicId }: PublicVerificationProps) {
 
         if (rpcError) {
           setError(rpcError.message);
+          logVerificationEvent({ publicId, method: 'web', result: 'error' });
           return;
         }
 
         if (result.error) {
           setError(result.error);
+          logVerificationEvent({ publicId, method: 'web', result: 'not_found' });
           return;
         }
 
         setData(result as PublicAnchorData);
+
+        // Log verification event based on status
+        const status = (result as PublicAnchorData).status;
+        logVerificationEvent({
+          publicId,
+          method: 'web',
+          result: status === 'REVOKED' ? 'revoked' : 'verified',
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Verification failed');
+        logVerificationEvent({ publicId, method: 'web', result: 'error' });
       } finally {
         setLoading(false);
       }

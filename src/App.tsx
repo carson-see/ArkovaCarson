@@ -23,6 +23,7 @@ import { SettingsPage } from '@/pages/SettingsPage';
 import { HelpPage } from '@/pages/HelpPage';
 import { PublicVerifyPage } from '@/components/public/PublicVerifyPage';
 import { WebhookSettingsPage } from '@/pages/WebhookSettingsPage';
+import { CredentialTemplatesPage } from '@/pages/CredentialTemplatesPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -195,6 +196,16 @@ export function App() {
             <AuthGuard>
               <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                 <WebhookSettingsPage />
+              </RouteGuard>
+            </AuthGuard>
+          }
+        />
+        <Route
+          path={ROUTES.CREDENTIAL_TEMPLATES}
+          element={
+            <AuthGuard>
+              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                <CredentialTemplatesPage />
               </RouteGuard>
             </AuthGuard>
           }
