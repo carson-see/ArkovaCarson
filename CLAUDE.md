@@ -614,26 +614,36 @@ CORS_ALLOWED_ORIGINS=*              # Comma-separated allowed origins for verifi
 
 | Priority | Complete | Partial | Not Started |
 |----------|----------|---------|-------------|
-| P1 Bedrock | 5/6 | 1/6 (P1-TS-06 audit logging) | 0 |
-| P2 Identity | 3/5 (router, guards, hooks) | 0 | 2/5 (profile page, org settings page) |
-| P3 Vault | 2/3 (data wiring, privacy toggle) | 1/3 (P3-TS-03 Help link still `#`) | 0 |
-| P4-E1 Anchor Engine | 2/3 (creation flow, record detail) | 1/3 (P4-TS-02 lifecycle UI) | 0 |
-| P4-E2 Credential Metadata | 0/3 | 0/3 | 3/3 |
-| P5 Org Admin | 0/6 | 3/6 (registry table, revoke dialog, public_id) | 3/6 |
-| P6 Verification | 0/6 | 1/6 (P6-TS-01 public anchor RPC) | 5/6 |
+| P1 Bedrock | 6/6 | 0 | 0 |
+| P2 Identity | 5/5 (router, guards, hooks, profile page, org settings) | 0 | 0 |
+| P3 Vault | 3/3 (data wiring, privacy toggle, nav links) | 0 | 0 |
+| P4-E1 Anchor Engine | 3/3 (creation flow, record detail, lifecycle UI) | 0 | 0 |
+| P4-E2 Credential Metadata | 3/3 (credential_type, metadata JSONB, lineage) | 0 | 0 |
+| P5 Org Admin | 5/6 (registry, revoke, members, public_id, bulk upload) | 1/6 (P5-TS-07 credential templates — migration exists, CRUD hook pending) | 0 |
+| P6 Verification | 2/6 (P6-TS-01 public anchor RPC + UI, P6-TS-02 QR code) | 0 | 4/6 (P6-TS-03 widget, P6-TS-04 lifecycle hook, P6-TS-05 jsPDF, P6-TS-06 analytics) |
 | P7 Go-Live | 0/8 | 4/8 (billing schema, proof download, webhooks settings, delivery engine) | 4/8 |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 |
-| **Total** | **12/53** | **11/53** | **30/53** |
+| **Total** | **27/53** | **5/53** | **21/53** |
 
-**Overall: 23% complete. 21% partial. 57% not started.**
+**Overall: 51% complete. 9% partial. 40% not started.**
 
-_Audited against codebase on 2026-03-09. Previous counts (16/15/23) were stale — commits fb7ccc0 and 4419602 completed P3-TS-01, P3-TS-02, P4-TS-03, and P1-TS-05, but P5/P7 "complete" counts were overstated (components exist but don't meet DoD). Denominators corrected: P5=6 (P5-TS-04 does not exist), P7=8 (P7-TS-04 and P7-TS-06 do not exist), P4.5=13 (13 stories in Phase 6 table)._
+_Audited against codebase on 2026-03-10. Major sprint 2026-03-09 to 2026-03-10 completed 15 stories across 6 PRs. Key changes:_
+- _P1-TS-06 audit event logging completed_
+- _P2-TS-05 (identity section) and P2-TS-06 (org settings page) completed_
+- _P3-TS-03 nav links wired with react-router-dom_
+- _P4-E2 all 3 stories completed (credential_type, metadata JSONB, lineage columns)_
+- _P5-TS-01 (registry filters), P5-TS-02 (revoke reason), P5-TS-05 (public_id on insert), P5-TS-06 (bulk upload metadata) completed_
+- _P6-TS-01 rebuilt get_public_anchor RPC with Phase 1.5 frozen schema (14 fields, status mapping SECURED→ACTIVE)_
+- _P6-TS-02 QR code verification link in AssetDetailView_
+- _Race condition fix in get_public_anchor second SELECT (status filter added)_
+- _useProfile/useOrganization hooks now return boolean from update methods for proper UI feedback_
+- _Migration numbering: 42 migration files, versions 0001–0043 (0033 intentionally skipped, 0039 used by rebuild_get_public_anchor)_
 
-The 11 partial stories remain the fastest path to value — most need targeted fixes (reason field, route wiring, download handlers) rather than new architecture. The 13 Phase 1.5 stories are all new and should be built during Phase I weeks 6-7 behind the ENABLE_VERIFICATION_API feature flag.
+The remaining 5 partial stories need targeted fixes (CRUD hooks, download handlers). The 13 Phase 1.5 API stories are all new and should be built during Phase I weeks 6-7 behind the `ENABLE_VERIFICATION_API` feature flag.
 
 Phase 1.5 stories added: P4.5-TS-06 (async job polling), P4.5-TS-07 (key CRUD endpoints), P4.5-TS-08 (usage endpoint), P4.5-TS-09 (API key management UI), P4.5-TS-10 (usage dashboard widget), P4.5-TS-11 (key scope UI), P4.5-TS-12 (feature flag), P4.5-TS-13 (load test suite). Full story cards in Arkova_Phase15_Technical_Backlog.docx.
 
 ---
 
-_Document version: March 2026 (Phase 1.5 update) | Repo: arkova-mvpcopy-main | 20,398 lines | 21 migrations_
+_Document version: March 2026 (2026-03-10 sprint update) | Repo: arkova-mvpcopy-main | ~18,700 source lines | 42 migrations_
 _Companion documents: Arkova Technical Backlog P1-P7 March 2026 | Arkova Phase 1.5 Technical Backlog March 2026 | Arkova Business Backlog P1-P7 March 2026_
