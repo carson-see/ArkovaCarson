@@ -94,15 +94,14 @@ describe('AssetDetailView', () => {
     const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
     const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
 
-    expect(getByText('Verification Link')).toBeInTheDocument();
-    expect(getByText('ARK-2024-00091')).toBeInTheDocument();
-    expect(getByText('Copy Link')).toBeInTheDocument();
+    expect(getByText('Verification QR Code')).toBeInTheDocument();
+    expect(getByText(/ARK-2024-00091/)).toBeInTheDocument();
   });
 
   it('should not show QR code section when publicId is absent', () => {
     const { queryByText } = render(<AssetDetailView anchor={mockAnchor} />);
 
-    expect(queryByText('Verification Link')).not.toBeInTheDocument();
+    expect(queryByText('Verification QR Code')).not.toBeInTheDocument();
   });
 
   it('should call onBack when back button clicked', () => {
