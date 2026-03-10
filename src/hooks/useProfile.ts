@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { logAuditEvent } from '../lib/auditLog';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -146,6 +147,14 @@ export function useProfile(): ProfileState & ProfileActions {
       if (updateError) {
         setError(updateError.message);
       } else {
+        logAuditEvent({
+          eventType: 'PROFILE_UPDATED',
+          eventCategory: 'PROFILE',
+          targetType: 'profile',
+          targetId: user.id,
+          details: `Updated fields: ${Object.keys(updates).join(', ')}`,
+        });
+
         // Silently refresh without triggering full loading state
         const { data } = await supabase
           .from('profiles')
