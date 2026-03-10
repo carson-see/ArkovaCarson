@@ -2,21 +2,21 @@
  * Public Verification Page Component
  *
  * Public-facing page for verifying documents without authentication.
+ * When accessed via /verify/:publicId, shows the verification result directly.
+ * When accessed without a publicId, shows the verification form.
  */
 
-import { Link } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { Shield } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerificationForm } from '@/components/verify';
+import { PublicVerification } from '@/components/verification';
 import { ROUTES } from '@/lib/routes';
+import { VERIFICATION_LABELS } from '@/lib/copy';
 
-interface PublicVerifyPageProps {
-  fingerprintFromUrl?: string;
-}
+export function PublicVerifyPage() {
+  const { publicId } = useParams<{ publicId: string }>();
 
-// Note: fingerprintFromUrl can be used to pre-populate verification form
-
-export function PublicVerifyPage({ fingerprintFromUrl: _fingerprintFromUrl }: PublicVerifyPageProps) {
   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50">
       {/* Header */}
@@ -41,46 +41,57 @@ export function PublicVerifyPage({ fingerprintFromUrl: _fingerprintFromUrl }: Pu
 
       {/* Main content */}
       <main className="flex-1 container py-12">
-        <div className="max-w-xl mx-auto">
-          {/* Hero */}
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold tracking-tight mb-3">
-              Verify a Document
-            </h1>
-            <p className="text-muted-foreground">
-              Check if a document has been secured with Arkova.
-              Upload the file or enter its fingerprint to verify authenticity.
-            </p>
-          </div>
+        <div className="max-w-2xl mx-auto">
+          {publicId ? (
+            /* Direct verification result via /verify/:publicId */
+            <>
+              <div className="text-center mb-8">
+                <h1 className="text-3xl font-bold tracking-tight mb-3">
+                  {VERIFICATION_LABELS.PAGE_TITLE}
+                </h1>
+              </div>
+              <PublicVerification publicId={publicId} />
+            </>
+          ) : (
+            /* Verification form when no publicId in URL */
+            <>
+              <div className="text-center mb-8">
+                <h1 className="text-3xl font-bold tracking-tight mb-3">
+                  {VERIFICATION_LABELS.PAGE_TITLE}
+                </h1>
+                <p className="text-muted-foreground">
+                  {VERIFICATION_LABELS.PAGE_SUBTITLE}
+                </p>
+              </div>
 
-          {/* Verification card */}
-          <Card className="shadow-lg">
-            <CardHeader>
-              <CardTitle className="text-lg">Document Verification</CardTitle>
-              <CardDescription>
-                Verify that a document matches a secured record
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <VerificationForm />
-            </CardContent>
-          </Card>
+              <Card className="shadow-lg">
+                <CardHeader>
+                  <CardTitle className="text-lg">{VERIFICATION_LABELS.FORM_TITLE}</CardTitle>
+                  <CardDescription>
+                    {VERIFICATION_LABELS.FORM_SUBTITLE}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <VerificationForm />
+                </CardContent>
+              </Card>
 
-          {/* Info section */}
-          <div className="mt-8 grid gap-4 sm:grid-cols-3">
-            <InfoCard
-              title="Secure"
-              description="Documents are verified using cryptographic fingerprints"
-            />
-            <InfoCard
-              title="Private"
-              description="Your document never leaves your device during verification"
-            />
-            <InfoCard
-              title="Instant"
-              description="Get verification results in seconds"
-            />
-          </div>
+              <div className="mt-8 grid gap-4 sm:grid-cols-3">
+                <InfoCard
+                  title="Secure"
+                  description="Documents are verified using cryptographic fingerprints"
+                />
+                <InfoCard
+                  title="Private"
+                  description="Your document never leaves your device during verification"
+                />
+                <InfoCard
+                  title="Instant"
+                  description="Get verification results in seconds"
+                />
+              </div>
+            </>
+          )}
         </div>
       </main>
 

@@ -170,6 +170,59 @@ export const EMPTY_STATES = {
 } as const;
 
 // =============================================================================
+// PUBLIC VERIFICATION PAGE
+// =============================================================================
+
+export const VERIFICATION_LABELS = {
+  // Page
+  PAGE_TITLE: 'Verify a Credential',
+  PAGE_SUBTITLE: 'Check if a credential has been secured with Arkova. Upload the file or enter its fingerprint to verify authenticity.',
+  FORM_TITLE: 'Credential Verification',
+  FORM_SUBTITLE: 'Verify that a document matches a secured record',
+
+  // Status badges
+  STATUS_ACTIVE: 'Active',
+  STATUS_REVOKED: 'Revoked',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_SUPERSEDED: 'Superseded',
+
+  // Section headings
+  SECTION_STATUS: 'Verification Status',
+  SECTION_CREDENTIAL: 'Credential Details',
+  SECTION_TIMELINE: 'Timeline',
+  SECTION_PROOF: 'Network Proof',
+  SECTION_DOCUMENT: 'Document Information',
+
+  // Field labels
+  ISSUER: 'Issuer',
+  RECIPIENT_ID: 'Recipient Identifier',
+  CREDENTIAL_TYPE: 'Credential Type',
+  JURISDICTION: 'Jurisdiction',
+  ISSUED_DATE: 'Issued',
+  EXPIRY_DATE: 'Expires',
+  ANCHOR_TIMESTAMP: 'Network Observed Time',
+  NETWORK_RECEIPT: 'Network Receipt',
+  PROOF_FINGERPRINT: 'Merkle Proof',
+  RECORD_URI: 'Verification Link',
+  FINGERPRINT: 'Document Fingerprint (SHA-256)',
+  FILENAME: 'Filename',
+  FILE_SIZE: 'File Size',
+  VERIFICATION_ID: 'Verification ID',
+
+  // Status descriptions
+  ACTIVE_DESC: 'This credential has been verified and is currently active.',
+  REVOKED_DESC: 'This credential has been revoked and is no longer valid.',
+  EXPIRED_DESC: 'This credential has passed its expiration date.',
+  SUPERSEDED_DESC: 'This credential has been replaced by a newer version.',
+  NOT_FOUND_TITLE: 'Verification Failed',
+  NOT_FOUND_DESC: 'The credential you are looking for may not exist or has not been verified yet.',
+
+  // Footer
+  SECURED_BY: 'Secured by Arkova',
+  RECIPIENT_HASH_NOTE: 'Hashed for privacy — not the original identifier.',
+} as const;
+
+// =============================================================================
 // TOOLTIPS
 // =============================================================================
 

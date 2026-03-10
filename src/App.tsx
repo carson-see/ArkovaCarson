@@ -80,6 +80,10 @@ export function App() {
           }
         />
         <Route
+          path="/verify"
+          element={<PublicVerifyPage />}
+        />
+        <Route
           path={ROUTES.VERIFY}
           element={<PublicVerifyPage />}
         />
