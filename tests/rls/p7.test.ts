@@ -650,7 +650,13 @@ describe('P7-S7: Public Verification', () => {
     expect(result.verified).toBe(true);
     expect(result.public_id).toBe(testPublicId);
     expect(result.filename).toBe('public_test.pdf');
-    expect(result.status).toBe('SECURED');
+    // Migration 0039 maps SECURED → ACTIVE in the public API
+    expect(result.status).toBe('ACTIVE');
+
+    // Phase 1.5 frozen schema fields
+    expect(result.issuer_name).toBeDefined();
+    expect(result.credential_type).toBeDefined();
+    expect(result.record_uri).toContain(testPublicId);
 
     // Should NOT include sensitive fields
     expect(result.user_id).toBeUndefined();
