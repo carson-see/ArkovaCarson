@@ -259,7 +259,6 @@ services/worker/
     chain/mock.ts                            ← Mock implementation
     chain/types.ts                           ← ChainClient interface (IAnchorPublisher equivalent)
     jobs/anchor.ts                           ← Process pending anchors
-    jobs/anchorWithClaim.ts                  ← Anchor with claim processing
     jobs/report.ts                           ← Report generation job
     jobs/webhook.ts                          ← Webhook dispatch job (stub)
     stripe/client.ts                         ← Stripe SDK + webhook signature verification
