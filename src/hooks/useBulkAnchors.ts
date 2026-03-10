@@ -82,6 +82,8 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
             fingerprint: r.fingerprint,
             filename: r.filename,
             fileSize: r.fileSize || null,
+            credentialType: r.credentialType || null,
+            metadata: r.metadata || null,
           }));
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any

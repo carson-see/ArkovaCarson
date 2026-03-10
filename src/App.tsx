@@ -19,6 +19,8 @@ import { DashboardPage } from '@/pages/DashboardPage';
 import { MyRecordsPage } from '@/pages/MyRecordsPage';
 import { OrganizationPage } from '@/pages/OrganizationPage';
 import { RecordDetailPage } from '@/pages/RecordDetailPage';
+import { SettingsPage } from '@/pages/SettingsPage';
+import { HelpPage } from '@/pages/HelpPage';
 import { PublicVerifyPage } from '@/components/public/PublicVerifyPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
@@ -171,8 +173,7 @@ export function App() {
           element={
             <AuthGuard>
               <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                {/* TODO: Wire SettingsPage when implemented */}
-                <DashboardPage />
+                <SettingsPage />
               </RouteGuard>
             </AuthGuard>
           }
@@ -192,8 +193,7 @@ export function App() {
           element={
             <AuthGuard>
               <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                {/* TODO: Wire HelpPage when implemented */}
-                <DashboardPage />
+                <HelpPage />
               </RouteGuard>
             </AuthGuard>
           }

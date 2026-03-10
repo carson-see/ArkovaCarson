@@ -19,6 +19,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
+import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 
@@ -83,6 +84,15 @@ export function ConfirmAnchorModal({
       if (error) {
         throw error;
       }
+
+      logAuditEvent({
+        eventType: 'ANCHOR_CREATED',
+        eventCategory: 'ANCHOR',
+        targetType: 'anchor',
+        targetId: data.id,
+        orgId: profile?.org_id,
+        details: `Created anchor for "${file.name}"`,
+      });
 
       onSuccess?.(data.id);
       onOpenChange(false);

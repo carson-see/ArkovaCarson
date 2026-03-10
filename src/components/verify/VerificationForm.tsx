@@ -2,6 +2,9 @@
  * Verification Form Component
  *
  * Allows users to verify a document by uploading it or entering a fingerprint.
+ * Queries the real database via Supabase.
+ *
+ * @see P6-TS-01
  */
 
 import { useState, useCallback } from 'react';
@@ -12,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { supabase } from '@/lib/supabase';
 
 type VerificationMethod = 'file' | 'fingerprint';
 
@@ -21,6 +25,7 @@ interface VerificationResult {
   filename?: string;
   securedAt?: string;
   status?: 'PENDING' | 'SECURED' | 'REVOKED';
+  publicId?: string;
 }
 
 interface VerificationFormProps {
@@ -47,28 +52,37 @@ export function VerificationForm({ onVerify }: VerificationFormProps) {
     setResult(null);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      // Demo: verify if fingerprint looks valid (64 hex chars)
       const isValidFormat = /^[a-f0-9]{64}$/i.test(fp);
-
       if (!isValidFormat) {
         setError('Invalid fingerprint format. Please enter a valid 64-character fingerprint.');
         setLoading(false);
         return;
       }
 
-      // Demo: randomly determine if document is found
-      const found = Math.random() > 0.3;
+      // Query real database — look up anchor by fingerprint
+      const { data: anchors, error: queryError } = await supabase
+        .from('anchors')
+        .select('public_id, fingerprint, status, filename, chain_timestamp')
+        .eq('fingerprint', fp.toLowerCase())
+        .in('status', ['SECURED', 'REVOKED'])
+        .is('deleted_at', null)
+        .limit(1);
 
-      if (found) {
+      if (queryError) {
+        setError('Verification failed. Please try again.');
+        setLoading(false);
+        return;
+      }
+
+      if (anchors && anchors.length > 0) {
+        const anchor = anchors[0];
         const verificationResult: VerificationResult = {
-          verified: true,
+          verified: anchor.status === 'SECURED',
           fingerprint: fp,
-          filename: 'document.pdf',
-          status: 'SECURED',
-          securedAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+          filename: anchor.filename,
+          status: anchor.status as VerificationResult['status'],
+          securedAt: anchor.chain_timestamp ?? undefined,
+          publicId: anchor.public_id ?? undefined,
         };
         setResult(verificationResult);
         onVerify?.(verificationResult);
@@ -219,14 +233,14 @@ export function VerificationForm({ onVerify }: VerificationFormProps) {
       {result && (
         <>
           <Separator />
-          <VerificationResult result={result} />
+          <VerificationResultDisplay result={result} />
         </>
       )}
     </div>
   );
 }
 
-function VerificationResult({ result }: { result: VerificationResult }) {
+function VerificationResultDisplay({ result }: { result: VerificationResult }) {
   if (result.verified) {
     return (
       <Card className="border-success/50 bg-success/5">
@@ -247,6 +261,12 @@ function VerificationResult({ result }: { result: VerificationResult }) {
                 <span className="text-muted-foreground">Status</span>
                 <span className="font-medium text-success">Secured</span>
               </div>
+              {result.filename && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Filename</span>
+                  <span className="font-medium">{result.filename}</span>
+                </div>
+              )}
               {result.securedAt && (
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Secured on</span>
@@ -266,6 +286,24 @@ function VerificationResult({ result }: { result: VerificationResult }) {
                 </p>
               </div>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (result.status === 'REVOKED') {
+    return (
+      <Card className="border-muted">
+        <CardContent className="py-6">
+          <div className="flex flex-col items-center text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-gray-100 mb-4">
+              <XCircle className="h-7 w-7 text-gray-500" />
+            </div>
+            <h3 className="text-lg font-semibold mb-1">Record Revoked</h3>
+            <p className="text-sm text-muted-foreground">
+              This document was previously secured but has been revoked by the issuing organization.
+            </p>
           </div>
         </CardContent>
       </Card>

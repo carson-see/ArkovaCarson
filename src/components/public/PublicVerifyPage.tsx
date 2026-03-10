@@ -10,7 +10,7 @@ import { Link, useParams } from 'react-router-dom';
 import { Shield } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerificationForm } from '@/components/verify';
-import { PublicVerification } from '@/components/verification';
+import { PublicVerification } from '@/components/verification/PublicVerification';
 import { ROUTES } from '@/lib/routes';
 import { VERIFICATION_LABELS } from '@/lib/copy';
 

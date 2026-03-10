@@ -178,6 +178,32 @@ def456,other.doc`;
       expect(mapping.fileSize).toBe(2);
       expect(mapping.email).toBe(3);
     });
+
+    it('should detect credential_type and metadata columns', () => {
+      const columns = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+        { index: 2, name: 'credential_type', sample: '' },
+        { index: 3, name: 'metadata', sample: '' },
+      ];
+
+      const mapping = autoDetectMapping(columns);
+
+      expect(mapping.credentialType).toBe(2);
+      expect(mapping.metadata).toBe(3);
+    });
+
+    it('should detect credentialType as credential type column', () => {
+      const columns = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+        { index: 2, name: 'credentialType', sample: '' },
+      ];
+
+      const mapping = autoDetectMapping(columns);
+
+      expect(mapping.credentialType).toBe(2);
+    });
   });
 
   describe('validateCsvRows', () => {
@@ -192,6 +218,8 @@ def456,other.doc`;
       filename: 1,
       fileSize: null,
       email: 2,
+      credentialType: null,
+      metadata: null,
     };
 
     it('should validate valid rows', () => {
@@ -287,6 +315,99 @@ def456,other.doc`;
       expect(endTime - startTime).toBeLessThan(1000);
     });
 
+    it('should validate credential type values', () => {
+      const cols = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+        { index: 2, name: 'credential_type', sample: '' },
+      ];
+
+      const m = {
+        fingerprint: 0,
+        filename: 1,
+        fileSize: null,
+        email: null,
+        credentialType: 2,
+        metadata: null,
+      };
+
+      const rows = [
+        {
+          rowNumber: 2,
+          data: {
+            fingerprint: 'a'.repeat(64),
+            filename: 'test.pdf',
+            credential_type: 'DEGREE',
+          },
+        },
+        {
+          rowNumber: 3,
+          data: {
+            fingerprint: 'b'.repeat(64),
+            filename: 'test2.pdf',
+            credential_type: 'INVALID_TYPE',
+          },
+        },
+      ];
+
+      const result = validateCsvRows(rows, cols, m);
+
+      expect(result.valid).toHaveLength(1);
+      expect(result.invalid).toHaveLength(1);
+      expect(result.errors[0].message).toContain('Invalid credential type');
+    });
+
+    it('should validate metadata as valid JSON object', () => {
+      const cols = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+        { index: 2, name: 'metadata', sample: '' },
+      ];
+
+      const m = {
+        fingerprint: 0,
+        filename: 1,
+        fileSize: null,
+        email: null,
+        credentialType: null,
+        metadata: 2,
+      };
+
+      const rows = [
+        {
+          rowNumber: 2,
+          data: {
+            fingerprint: 'a'.repeat(64),
+            filename: 'valid.pdf',
+            metadata: '{"issuer": "MIT"}',
+          },
+        },
+        {
+          rowNumber: 3,
+          data: {
+            fingerprint: 'b'.repeat(64),
+            filename: 'invalid-json.pdf',
+            metadata: 'not-json',
+          },
+        },
+        {
+          rowNumber: 4,
+          data: {
+            fingerprint: 'c'.repeat(64),
+            filename: 'array.pdf',
+            metadata: '["array"]',
+          },
+        },
+      ];
+
+      const result = validateCsvRows(rows, cols, m);
+
+      expect(result.valid).toHaveLength(1);
+      expect(result.invalid).toHaveLength(2);
+      expect(result.errors[0].message).toContain('valid JSON');
+      expect(result.errors[1].message).toContain('JSON object');
+    });
+
     it('should catch mixed valid and invalid rows', () => {
       const rows = [
         {
@@ -336,6 +457,8 @@ def456,other.doc`;
         filename: 1,
         fileSize: 2,
         email: null,
+        credentialType: null,
+        metadata: null,
       };
 
       const rows = [
@@ -355,6 +478,42 @@ def456,other.doc`;
       expect(records[0].fingerprint).toBe('a'.repeat(64)); // lowercase
       expect(records[0].filename).toBe('Test.PDF');
       expect(records[0].fileSize).toBe(1024);
+    });
+
+    it('should extract credential type and metadata', () => {
+      const columns = [
+        { index: 0, name: 'fingerprint', sample: '' },
+        { index: 1, name: 'filename', sample: '' },
+        { index: 2, name: 'credential_type', sample: '' },
+        { index: 3, name: 'metadata', sample: '' },
+      ];
+
+      const mapping = {
+        fingerprint: 0,
+        filename: 1,
+        fileSize: null,
+        email: null,
+        credentialType: 2,
+        metadata: 3,
+      };
+
+      const rows = [
+        {
+          rowNumber: 2,
+          data: {
+            fingerprint: 'A'.repeat(64),
+            filename: 'degree.pdf',
+            credential_type: 'degree',
+            metadata: '{"issuer": "MIT", "program": "CS"}',
+          },
+        },
+      ];
+
+      const records = extractAnchorRecords(rows, columns, mapping);
+
+      expect(records).toHaveLength(1);
+      expect(records[0].credentialType).toBe('DEGREE');
+      expect(records[0].metadata).toEqual({ issuer: 'MIT', program: 'CS' });
     });
   });
 });

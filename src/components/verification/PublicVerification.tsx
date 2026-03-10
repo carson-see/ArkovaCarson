@@ -1,60 +1,64 @@
 /**
  * Public Verification Component
  *
- * Displays verification status for public anchor lookups.
- * Shows the 5-section spec: Status, Credential, Timeline, Proof, Document.
- * No sensitive data exposed — recipient_identifier is pre-hashed by the RPC.
+ * Full 5-section verification display for public anchor lookups:
+ * 1. Status banner (SECURED / REVOKED)
+ * 2. Document info (filename, size, credential type)
+ * 3. Issuer info (organization name, issued date)
+ * 4. Cryptographic proof (fingerprint, network receipt, block height)
+ * 5. Lifecycle info (timestamps, revocation, expiry)
+ *
+ * Shows redacted information - no sensitive data exposed.
+ *
+ * @see P6-TS-01
  */
 
 import { useState, useEffect } from 'react';
 import {
   CheckCircle,
   XCircle,
-  AlertTriangle,
   Loader2,
   FileText,
   Clock,
+  Fingerprint,
+  Building2,
   Shield,
-  Building,
-  User,
-  Award,
-  Calendar,
-  Link as LinkIcon,
+  AlertTriangle,
   Copy,
-  MapPin,
+  Check,
+  Calendar,
+  Ban,
 } from 'lucide-react';
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
-import { VERIFICATION_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, ANCHOR_STATUS_LABELS } from '@/lib/copy';
 
 interface PublicAnchorData {
-  verified: boolean;
-  status: 'ACTIVE' | 'REVOKED' | 'EXPIRED' | 'SUPERSEDED';
-  issuer_name: string;
-  recipient_identifier: string;
-  credential_type: string;
-  issued_date: string | null;
-  expiry_date: string | null;
-  anchor_timestamp: string | null;
-  bitcoin_block: number | null;
-  network_receipt_id: string | null;
-  merkle_proof_hash: string | null;
-  record_uri: string;
-  jurisdiction?: string;
-  // Additional UI fields (not in API frozen schema)
   public_id: string;
   fingerprint: string;
+  status: string;
   filename: string;
-  file_size: number | null;
+  file_size?: number;
+  verified: boolean;
+  credential_type?: string;
+  issuer_name?: string;
+  secured_at?: string;
+  network_receipt?: string;
+  block_height?: number;
+  created_at?: string;
+  issued_at?: string;
+  revoked_at?: string;
+  revocation_reason?: string;
+  expires_at?: string;
+  metadata?: Record<string, unknown>;
   error?: string;
 }
 
@@ -62,46 +66,11 @@ interface PublicVerificationProps {
   publicId: string;
 }
 
-const STATUS_CONFIG = {
-  ACTIVE: {
-    label: VERIFICATION_LABELS.STATUS_ACTIVE,
-    description: VERIFICATION_LABELS.ACTIVE_DESC,
-    icon: CheckCircle,
-    badgeClass: 'bg-success text-success-foreground',
-    iconClass: 'text-success',
-    bgClass: 'bg-success/10',
-  },
-  REVOKED: {
-    label: VERIFICATION_LABELS.STATUS_REVOKED,
-    description: VERIFICATION_LABELS.REVOKED_DESC,
-    icon: XCircle,
-    badgeClass: 'bg-muted text-muted-foreground',
-    iconClass: 'text-muted-foreground',
-    bgClass: 'bg-muted',
-  },
-  EXPIRED: {
-    label: VERIFICATION_LABELS.STATUS_EXPIRED,
-    description: VERIFICATION_LABELS.EXPIRED_DESC,
-    icon: AlertTriangle,
-    badgeClass: 'bg-muted text-muted-foreground',
-    iconClass: 'text-muted-foreground',
-    bgClass: 'bg-muted',
-  },
-  SUPERSEDED: {
-    label: VERIFICATION_LABELS.STATUS_SUPERSEDED,
-    description: VERIFICATION_LABELS.SUPERSEDED_DESC,
-    icon: AlertTriangle,
-    badgeClass: 'bg-warning text-warning-foreground',
-    iconClass: 'text-warning',
-    bgClass: 'bg-warning/10',
-  },
-} as const;
-
 export function PublicVerification({ publicId }: PublicVerificationProps) {
   const [data, setData] = useState<PublicAnchorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchVerification() {
@@ -138,6 +107,12 @@ export function PublicVerification({ publicId }: PublicVerificationProps) {
     }
   }, [publicId]);
 
+  const handleCopy = async (value: string, label: string) => {
+    await navigator.clipboard.writeText(value);
+    setCopied(label);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
   if (loading) {
     return (
       <Card className="max-w-2xl mx-auto">
@@ -155,242 +130,260 @@ export function PublicVerification({ publicId }: PublicVerificationProps) {
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 mb-4">
             <XCircle className="h-8 w-8 text-destructive" />
           </div>
-          <CardTitle>{VERIFICATION_LABELS.NOT_FOUND_TITLE}</CardTitle>
-          <CardDescription>
-            {error || VERIFICATION_LABELS.NOT_FOUND_DESC}
-          </CardDescription>
+          <CardTitle>Verification Failed</CardTitle>
+          <p className="text-sm text-muted-foreground mt-2">
+            {error || 'Unable to verify this document'}
+          </p>
         </CardHeader>
+        <CardContent className="text-center">
+          <p className="text-sm text-muted-foreground">
+            The document you are looking for may not exist or has not been verified yet.
+          </p>
+        </CardContent>
       </Card>
     );
   }
 
-  const statusConfig = STATUS_CONFIG[data.status] || STATUS_CONFIG.ACTIVE;
-  const StatusIcon = statusConfig.icon;
-
-  const credentialTypeLabel =
-    CREDENTIAL_TYPE_LABELS[data.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ||
-    data.credential_type;
-
-  const handleCopyLink = async () => {
-    await navigator.clipboard.writeText(data.record_uri);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleString('en-US', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'UTC',
+    }) + ' UTC';
   };
 
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const isRevoked = data.status === 'REVOKED';
+  const credentialLabel = data.credential_type
+    ? CREDENTIAL_TYPE_LABELS[data.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? data.credential_type
+    : null;
+  const statusLabel = ANCHOR_STATUS_LABELS[data.status as keyof typeof ANCHOR_STATUS_LABELS] ?? data.status;
+
   return (
-    <Card className="max-w-2xl mx-auto">
-      {/* ─── Section 1: Verification Status ─── */}
-      <CardHeader className="text-center pb-4">
-        <div className={`mx-auto flex h-16 w-16 items-center justify-center rounded-full ${statusConfig.bgClass} mb-4`}>
-          <StatusIcon className={`h-8 w-8 ${statusConfig.iconClass}`} />
-        </div>
-        <Badge variant="default" className={`mx-auto mb-2 ${statusConfig.badgeClass}`}>
-          {statusConfig.label}
-        </Badge>
-        <CardTitle>{data.verified ? 'Credential Verified' : `Credential ${statusConfig.label}`}</CardTitle>
-        <CardDescription>{statusConfig.description}</CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-6">
-        {/* ─── Section 2: Credential Details ─── */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {VERIFICATION_LABELS.SECTION_CREDENTIAL}
-          </h3>
-          <div className="space-y-3">
-            <InfoRow
-              icon={<Building className="h-4 w-4" />}
-              label={VERIFICATION_LABELS.ISSUER}
-              value={data.issuer_name}
-            />
-            <InfoRow
-              icon={<Award className="h-4 w-4" />}
-              label={VERIFICATION_LABELS.CREDENTIAL_TYPE}
-              value={credentialTypeLabel}
-            />
-            {data.recipient_identifier && (
-              <InfoRow
-                icon={<User className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.RECIPIENT_ID}
-                value={data.recipient_identifier}
-                mono
-                hint={VERIFICATION_LABELS.RECIPIENT_HASH_NOTE}
-              />
-            )}
-            {data.jurisdiction && (
-              <InfoRow
-                icon={<MapPin className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.JURISDICTION}
-                value={data.jurisdiction}
-              />
+    <Card className="max-w-2xl mx-auto overflow-hidden">
+      {/* ============================================================
+          SECTION 1: Status Banner
+          ============================================================ */}
+      <div className={isRevoked
+        ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
+        : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
+      }>
+        <div className="flex flex-col items-center text-center">
+          <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
+            isRevoked ? 'bg-gray-500/10' : 'bg-green-500/10'
+          }`}>
+            {isRevoked ? (
+              <Ban className="h-8 w-8 text-gray-500" />
+            ) : (
+              <CheckCircle className="h-8 w-8 text-green-500" />
             )}
           </div>
-        </div>
-
-        <Separator />
-
-        {/* ─── Section 3: Timeline ─── */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {VERIFICATION_LABELS.SECTION_TIMELINE}
-          </h3>
-          <div className="space-y-3">
-            {data.issued_date && (
-              <InfoRow
-                icon={<Calendar className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.ISSUED_DATE}
-                value={formatDate(data.issued_date)}
-              />
-            )}
-            {data.expiry_date && (
-              <InfoRow
-                icon={<Calendar className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.EXPIRY_DATE}
-                value={formatDate(data.expiry_date)}
-              />
-            )}
-            {data.anchor_timestamp && (
-              <InfoRow
-                icon={<Clock className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.ANCHOR_TIMESTAMP}
-                value={formatDate(data.anchor_timestamp)}
-              />
-            )}
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* ─── Section 4: Network Proof ─── */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {VERIFICATION_LABELS.SECTION_PROOF}
-          </h3>
-          <div className="space-y-3">
-            {data.network_receipt_id && (
-              <InfoRow
-                icon={<Shield className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.NETWORK_RECEIPT}
-                value={data.network_receipt_id}
-                mono
-              />
-            )}
-            {data.bitcoin_block && (
-              <InfoRow
-                icon={<Shield className="h-4 w-4" />}
-                label="Network Record"
-                value={`#${data.bitcoin_block.toLocaleString()}`}
-              />
-            )}
-            {data.merkle_proof_hash && (
-              <InfoRow
-                icon={<Shield className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.PROOF_FINGERPRINT}
-                value={data.merkle_proof_hash}
-                mono
-              />
-            )}
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* ─── Section 5: Document Information ─── */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-            {VERIFICATION_LABELS.SECTION_DOCUMENT}
-          </h3>
-          <div className="space-y-3">
-            <InfoRow
-              icon={<FileText className="h-4 w-4" />}
-              label={VERIFICATION_LABELS.FILENAME}
-              value={data.filename}
-            />
-            <InfoRow
-              icon={<Shield className="h-4 w-4" />}
-              label={VERIFICATION_LABELS.FINGERPRINT}
-              value={data.fingerprint}
-              mono
-            />
-            {data.file_size && (
-              <InfoRow
-                icon={<FileText className="h-4 w-4" />}
-                label={VERIFICATION_LABELS.FILE_SIZE}
-                value={formatFileSize(data.file_size)}
-              />
-            )}
-          </div>
-        </div>
-
-        <Separator />
-
-        {/* ─── Verification Link + Footer ─── */}
-        <div className="flex items-center justify-between gap-2 p-3 bg-muted rounded-lg">
-          <div className="flex items-center gap-2 min-w-0">
-            <LinkIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-xs font-mono text-muted-foreground truncate">
-              {data.record_uri}
-            </span>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleCopyLink}
-            className="shrink-0"
+          <Badge
+            variant={isRevoked ? 'secondary' : 'default'}
+            className={`mb-2 text-sm px-4 py-1 ${isRevoked ? '' : 'bg-green-600 hover:bg-green-700'}`}
           >
-            <Copy className="h-3 w-3 mr-1" />
-            {copied ? 'Copied' : 'Copy'}
-          </Button>
+            {statusLabel}
+          </Badge>
+          <h2 className="text-xl font-semibold">
+            {isRevoked ? 'Record Revoked' : 'Document Verified'}
+          </h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            {isRevoked
+              ? 'This record has been revoked by the issuing organization'
+              : 'This document has been permanently secured'}
+          </p>
+        </div>
+      </div>
+
+      <CardContent className="p-6 space-y-6">
+        {/* ============================================================
+            SECTION 2: Document Info
+            ============================================================ */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <FileText className="h-4 w-4" />
+            Document
+          </h3>
+          <div className="space-y-2">
+            <InfoRow label="Filename" value={data.filename} />
+            {data.file_size && (
+              <InfoRow label="Size" value={formatFileSize(data.file_size)} />
+            )}
+            {credentialLabel && (
+              <InfoRow label="Credential Type" value={credentialLabel} />
+            )}
+          </div>
         </div>
 
-        <div className="text-center text-xs text-muted-foreground space-y-1">
-          <p>{VERIFICATION_LABELS.VERIFICATION_ID}: {data.public_id}</p>
-          <p>{VERIFICATION_LABELS.SECURED_BY}</p>
+        <Separator />
+
+        {/* ============================================================
+            SECTION 3: Issuer Info
+            ============================================================ */}
+        {(data.issuer_name || data.issued_at) && (
+          <>
+            <div>
+              <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+                <Building2 className="h-4 w-4" />
+                Issuer
+              </h3>
+              <div className="space-y-2">
+                {data.issuer_name && (
+                  <InfoRow label="Organization" value={data.issuer_name} />
+                )}
+                {data.issued_at && (
+                  <InfoRow label="Issued" value={formatDate(data.issued_at)} />
+                )}
+              </div>
+            </div>
+            <Separator />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 4: Cryptographic Proof
+            ============================================================ */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Shield className="h-4 w-4" />
+            Cryptographic Proof
+          </h3>
+          <div className="space-y-3">
+            {/* Fingerprint with copy */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                  <Fingerprint className="h-3.5 w-3.5" />
+                  Fingerprint (SHA-256)
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => handleCopy(data.fingerprint, 'fingerprint')}
+                >
+                  {copied === 'fingerprint' ? (
+                    <Check className="h-3 w-3" />
+                  ) : (
+                    <Copy className="h-3 w-3" />
+                  )}
+                </Button>
+              </div>
+              <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
+                {data.fingerprint}
+              </div>
+            </div>
+
+            {data.network_receipt && (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-muted-foreground">Network Receipt</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-xs"
+                    onClick={() => handleCopy(data.network_receipt!, 'receipt')}
+                  >
+                    {copied === 'receipt' ? (
+                      <Check className="h-3 w-3" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </div>
+                <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
+                  {data.network_receipt}
+                </div>
+              </div>
+            )}
+
+            {data.block_height && (
+              <InfoRow label="Network Record" value={`#${data.block_height.toLocaleString()}`} />
+            )}
+
+            {data.secured_at && (
+              <InfoRow label="Observed Time" value={formatDate(data.secured_at)} />
+            )}
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* ============================================================
+            SECTION 5: Lifecycle
+            ============================================================ */}
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <Clock className="h-4 w-4" />
+            Lifecycle
+          </h3>
+          <div className="space-y-2">
+            {data.created_at && (
+              <InfoRow label="Created" value={formatDate(data.created_at)} icon={Calendar} />
+            )}
+            {data.secured_at && (
+              <InfoRow label="Secured" value={formatDate(data.secured_at)} icon={Shield} />
+            )}
+            {data.expires_at && (
+              <InfoRow
+                label="Expires"
+                value={formatDate(data.expires_at)}
+                icon={AlertTriangle}
+                variant={new Date(data.expires_at) < new Date() ? 'warning' : undefined}
+              />
+            )}
+            {isRevoked && data.revoked_at && (
+              <InfoRow label="Revoked" value={formatDate(data.revoked_at)} icon={Ban} variant="destructive" />
+            )}
+            {isRevoked && data.revocation_reason && (
+              <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 mt-2">
+                <p className="text-xs font-medium text-destructive mb-1">Revocation Reason</p>
+                <p className="text-sm text-muted-foreground">{data.revocation_reason}</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="pt-4 text-center text-xs text-muted-foreground border-t">
+          <p>Verification ID: {data.public_id}</p>
+          <p className="mt-1">Secured by Arkova</p>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-// ─── Helper Components ───
-
-interface InfoRowProps {
-  icon: React.ReactNode;
+/** Reusable info row */
+function InfoRow({
+  label,
+  value,
+  icon: Icon,
+  variant,
+}: {
   label: string;
   value: string;
-  mono?: boolean;
-  hint?: string;
-}
-
-function InfoRow({ icon, label, value, mono, hint }: InfoRowProps) {
+  icon?: React.ElementType;
+  variant?: 'warning' | 'destructive';
+}) {
   return (
-    <div className="flex items-start gap-3 p-3 bg-muted/50 rounded-lg">
-      <span className="text-muted-foreground mt-0.5 shrink-0">{icon}</span>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{label}</p>
-        <p className={`text-sm text-muted-foreground break-all ${mono ? 'font-mono text-xs' : ''}`}>
-          {value}
-        </p>
-        {hint && (
-          <p className="text-xs text-muted-foreground/70 mt-0.5 italic">{hint}</p>
-        )}
-      </div>
+    <div className="flex items-start justify-between gap-4">
+      <span className="text-sm text-muted-foreground flex items-center gap-1.5 shrink-0">
+        {Icon && <Icon className="h-3.5 w-3.5" />}
+        {label}
+      </span>
+      <span className={`text-sm text-right break-all ${
+        variant === 'warning' ? 'text-yellow-600' :
+        variant === 'destructive' ? 'text-destructive' :
+        ''
+      }`}>
+        {value}
+      </span>
     </div>
   );
-}
-
-// ─── Formatting Helpers ───
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'UTC',
-  }) + ' UTC';
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

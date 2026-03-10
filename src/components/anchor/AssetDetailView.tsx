@@ -274,53 +274,29 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof }: AssetDetail
         </CardContent>
       </Card>
 
-      {/* QR Code — Verification Link */}
-      {anchor.publicId && (
+      {/* QR Code — only for SECURED anchors with a public_id */}
+      {anchor.publicId && anchor.status === 'SECURED' && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Shield className="h-4 w-4" />
-              Verification Link
+              Verification QR Code
             </CardTitle>
             <CardDescription>
-              Share this QR code to let anyone verify this credential
+              Share this QR code to let anyone verify this document
             </CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col sm:flex-row items-center gap-6">
-              <div className="rounded-lg border bg-white p-3">
-                <QRCodeSVG
-                  value={`${window.location.origin}${verifyPath(anchor.publicId)}`}
-                  size={160}
-                  level="M"
-                  includeMargin={false}
-                />
-              </div>
-              <div className="flex-1 space-y-3 text-center sm:text-left">
-                <div>
-                  <p className="text-sm font-medium">Public Verification ID</p>
-                  <p className="text-sm font-mono text-muted-foreground">{anchor.publicId}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Verification URL</p>
-                  <p className="text-xs font-mono text-muted-foreground break-all">
-                    {window.location.origin}{verifyPath(anchor.publicId)}
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await navigator.clipboard.writeText(
-                      `${window.location.origin}${verifyPath(anchor.publicId!)}`
-                    );
-                  }}
-                >
-                  <Copy className="mr-1 h-3 w-3" />
-                  Copy Link
-                </Button>
-              </div>
+          <CardContent className="flex flex-col items-center gap-4">
+            <div className="rounded-lg border bg-white p-4">
+              <QRCodeSVG
+                value={`${window.location.origin}${verifyPath(anchor.publicId)}`}
+                size={180}
+                level="M"
+              />
             </div>
+            <p className="text-xs text-muted-foreground text-center">
+              {window.location.origin}{verifyPath(anchor.publicId)}
+            </p>
           </CardContent>
         </Card>
       )}

@@ -44,7 +44,8 @@
       "Bash(git merge origin/main)",
       "Bash(git rebase --continue)",
       "Bash(GIT_EDITOR=true git rebase --continue)",
-      "Bash(GIT_EDITOR=\"true\" git -c core.editor=true rebase --continue)"
+      "Bash(GIT_EDITOR=\"true\" git -c core.editor=true rebase --continue)",
+      "Bash(git checkout --theirs src/components/verification/PublicVerification.tsx)"
     ]
   },
   "enableAllProjectMcpServers": true,

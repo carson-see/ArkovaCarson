@@ -332,6 +332,18 @@ function ReviewStep({
           mapping.email,
           (v) => onMappingChange({ ...mapping, email: v })
         )}
+        <Separator />
+        {renderSelect(
+          'Credential Type',
+          mapping.credentialType,
+          (v) => onMappingChange({ ...mapping, credentialType: v })
+        )}
+        <Separator />
+        {renderSelect(
+          'Metadata (JSON)',
+          mapping.metadata,
+          (v) => onMappingChange({ ...mapping, metadata: v })
+        )}
       </div>
 
       {/* Validation summary */}

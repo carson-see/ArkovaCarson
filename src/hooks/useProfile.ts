@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
+import { logAuditEvent } from '../lib/auditLog';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -39,7 +40,7 @@ interface ProfileState {
 
 interface ProfileActions {
   refreshProfile: () => Promise<void>;
-  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile'>>) => Promise<void>;
+  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile'>>) => Promise<boolean>;
 }
 
 export function useProfile(): ProfileState & ProfileActions {
@@ -129,10 +130,10 @@ export function useProfile(): ProfileState & ProfileActions {
   }, [fetchProfile]);
 
   const updateProfile = useCallback(
-    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile'>>) => {
+    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile'>>): Promise<boolean> => {
       if (!user) {
         setError('Not authenticated');
-        return;
+        return false;
       }
 
       setUpdating(true);
@@ -145,17 +146,28 @@ export function useProfile(): ProfileState & ProfileActions {
 
       if (updateError) {
         setError(updateError.message);
-      } else {
-        // Silently refresh without triggering full loading state
-        const { data } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-        if (data) setProfile(data);
+        setUpdating(false);
+        return false;
       }
 
+      logAuditEvent({
+        eventType: 'PROFILE_UPDATED',
+        eventCategory: 'PROFILE',
+        targetType: 'profile',
+        targetId: user.id,
+        details: `Updated fields: ${Object.keys(updates).join(', ')}`,
+      });
+
+      // Silently refresh without triggering full loading state
+      const { data } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
+      if (data) setProfile(data);
+
       setUpdating(false);
+      return true;
     },
     [user]
   );

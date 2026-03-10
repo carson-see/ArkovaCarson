@@ -362,6 +362,60 @@ export type Database = {
           },
         ]
       }
+      credential_templates: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          credential_type: Database["public"]["Enums"]["credential_type"]
+          default_metadata: Json | null
+          description: string | null
+          id: string
+          is_active: boolean
+          name: string
+          org_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          credential_type: Database["public"]["Enums"]["credential_type"]
+          default_metadata?: Json | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name: string
+          org_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          credential_type?: Database["public"]["Enums"]["credential_type"]
+          default_metadata?: Json | null
+          description?: string | null
+          id?: string
+          is_active?: boolean
+          name?: string
+          org_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credential_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credential_templates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entitlements: {
         Row: {
           created_at: string
@@ -893,6 +947,66 @@ export type Database = {
             columns: ["updated_by"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      verification_events: {
+        Row: {
+          anchor_id: string | null
+          country_code: string | null
+          created_at: string
+          fingerprint_provided: boolean
+          id: string
+          ip_hash: string | null
+          method: string
+          org_id: string | null
+          public_id: string
+          referrer: string | null
+          result: string
+          user_agent: string | null
+        }
+        Insert: {
+          anchor_id?: string | null
+          country_code?: string | null
+          created_at?: string
+          fingerprint_provided?: boolean
+          id?: string
+          ip_hash?: string | null
+          method?: string
+          org_id?: string | null
+          public_id: string
+          referrer?: string | null
+          result: string
+          user_agent?: string | null
+        }
+        Update: {
+          anchor_id?: string | null
+          country_code?: string | null
+          created_at?: string
+          fingerprint_provided?: boolean
+          id?: string
+          ip_hash?: string | null
+          method?: string
+          org_id?: string | null
+          public_id?: string
+          referrer?: string | null
+          result?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "verification_events_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]

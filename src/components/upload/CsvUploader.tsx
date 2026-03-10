@@ -188,7 +188,7 @@ export function CsvUploader({
           <strong>Required columns:</strong> fingerprint (or sha256), filename
         </p>
         <p>
-          <strong>Optional columns:</strong> file_size, email
+          <strong>Optional columns:</strong> file_size, email, credential_type, metadata
         </p>
         <p className="text-muted-foreground/70">
           Maximum {maxRows.toLocaleString()} rows. File must be under 10MB.

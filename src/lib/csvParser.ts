@@ -6,6 +6,18 @@
 
 import { z } from 'zod';
 
+// Valid credential type values (matches credential_type enum in DB)
+export const VALID_CREDENTIAL_TYPES = [
+  'DEGREE',
+  'LICENSE',
+  'CERTIFICATE',
+  'TRANSCRIPT',
+  'PROFESSIONAL',
+  'OTHER',
+] as const;
+
+export type CredentialType = (typeof VALID_CREDENTIAL_TYPES)[number];
+
 // Email validation regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -46,6 +58,8 @@ export interface ColumnMapping {
   filename: number | null;
   fileSize: number | null;
   email: number | null;
+  credentialType: number | null;
+  metadata: number | null;
 }
 
 /**
@@ -163,6 +177,8 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
     filename: null,
     fileSize: null,
     email: null,
+    credentialType: null,
+    metadata: null,
   };
 
   for (const col of columns) {
@@ -176,6 +192,15 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
       mapping.fileSize = col.index;
     } else if (name.includes('email') || name.includes('mail')) {
       mapping.email = col.index;
+    } else if (
+      name.includes('credential_type') ||
+      name.includes('credentialtype') ||
+      name === 'type' ||
+      name === 'credential'
+    ) {
+      mapping.credentialType = col.index;
+    } else if (name.includes('metadata') || name === 'meta' || name === 'extra') {
+      mapping.metadata = col.index;
     }
   }
 
@@ -266,6 +291,41 @@ export function validateCsvRows(
       }
     }
 
+    // Validate credential type (if mapped, must be valid enum value)
+    if (mapping.credentialType !== null) {
+      const credType = getValueByIndex(row, mapping.credentialType);
+      if (credType && !VALID_CREDENTIAL_TYPES.includes(credType.toUpperCase() as CredentialType)) {
+        rowErrors.push({
+          row: row.rowNumber,
+          column: getColumnName(mapping.credentialType),
+          message: `Invalid credential type. Must be one of: ${VALID_CREDENTIAL_TYPES.join(', ')}`,
+        });
+      }
+    }
+
+    // Validate metadata (if mapped, must be valid JSON object)
+    if (mapping.metadata !== null) {
+      const metaStr = getValueByIndex(row, mapping.metadata);
+      if (metaStr) {
+        try {
+          const parsed = JSON.parse(metaStr);
+          if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+            rowErrors.push({
+              row: row.rowNumber,
+              column: getColumnName(mapping.metadata),
+              message: 'Metadata must be a JSON object',
+            });
+          }
+        } catch {
+          rowErrors.push({
+            row: row.rowNumber,
+            column: getColumnName(mapping.metadata),
+            message: 'Metadata must be valid JSON',
+          });
+        }
+      }
+    }
+
     if (rowErrors.length > 0) {
       invalid.push(row);
       errors.push(...rowErrors);
@@ -285,6 +345,8 @@ export const bulkAnchorSchema = z.object({
   filename: z.string().min(1, 'Filename is required'),
   fileSize: z.number().int().positive().optional(),
   email: z.string().email().optional(),
+  credentialType: z.enum(VALID_CREDENTIAL_TYPES).optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 export type BulkAnchorRecord = z.infer<typeof bulkAnchorSchema>;
@@ -320,6 +382,24 @@ export function extractAnchorRecords(
       const email = getValueByIndex(row, mapping.email);
       if (email) {
         record.email = email.toLowerCase();
+      }
+    }
+
+    if (mapping.credentialType !== null) {
+      const credType = getValueByIndex(row, mapping.credentialType);
+      if (credType) {
+        record.credentialType = credType.toUpperCase() as CredentialType;
+      }
+    }
+
+    if (mapping.metadata !== null) {
+      const metaStr = getValueByIndex(row, mapping.metadata);
+      if (metaStr) {
+        try {
+          record.metadata = JSON.parse(metaStr);
+        } catch {
+          // Skip invalid JSON — already caught in validation
+        }
       }
     }
 

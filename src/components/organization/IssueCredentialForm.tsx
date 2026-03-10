@@ -32,6 +32,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from '@/components/anchor/FileUpload';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
+import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import {
@@ -105,7 +106,7 @@ export function IssueCredentialForm({
           : null,
       });
 
-      const { error: insertError } = await supabase
+      const { data: inserted, error: insertError } = await supabase
         .from('anchors')
         .insert({
           ...validated,
@@ -115,6 +116,15 @@ export function IssueCredentialForm({
         .single();
 
       if (insertError) throw insertError;
+
+      logAuditEvent({
+        eventType: 'CREDENTIAL_ISSUED',
+        eventCategory: 'ANCHOR',
+        targetType: 'anchor',
+        targetId: inserted.id,
+        orgId: profile?.org_id,
+        details: `Issued ${credentialType} credential for "${file.name}"`,
+      });
 
       resetForm();
       onOpenChange(false);

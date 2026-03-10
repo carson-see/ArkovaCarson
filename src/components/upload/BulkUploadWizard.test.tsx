@@ -61,6 +61,27 @@ ${fingerprint},test.pdf,user@example.com`;
     expect(screen.getByText('1')).toBeInTheDocument();
   });
 
+  it('should auto-detect and show credential_type and metadata mapping', async () => {
+    render(<BulkUploadWizard />);
+
+    const fingerprint = 'a'.repeat(64);
+    const csvContent = `fingerprint,filename,credential_type,metadata
+${fingerprint},degree.pdf,DEGREE,"{""issuer"": ""MIT""}"`;
+
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Valid records')).toBeInTheDocument();
+    });
+
+    // The review step should show credential type and metadata mapping selects
+    expect(screen.getByText('Credential Type')).toBeInTheDocument();
+    expect(screen.getByText('Metadata (JSON)')).toBeInTheDocument();
+  });
+
   it('should show validation errors for invalid rows', async () => {
     render(<BulkUploadWizard />);
 
