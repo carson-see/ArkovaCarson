@@ -148,8 +148,9 @@ describe('P7-S5: Job Claim Mechanism', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('anchoring_jobs').delete().eq('status', 'pending');
 
-    // Create a test anchor to generate a job
-    const fingerprint = 'd1e2f3a4'.repeat(8); // valid 64-char hex
+    // Create a test anchor to generate a job (timestamp-based fingerprint for uniqueness)
+    const ts = Date.now().toString(16).padStart(16, '0');
+    const fingerprint = `d1e2f3a4${ts}`.padEnd(64, '0').slice(0, 64);
     const { data: anchor, error } = await serviceClient
       .from('anchors')
       .insert({
@@ -293,9 +294,10 @@ describe('P7-S6: Anchor Status Protection', () => {
     );
     serviceClient = createServiceClient();
 
-    // Create a test anchor
-    const fingerprint = 'a1b2c3d4'.repeat(8); // valid 64-char hex
-    const { data: anchor } = await userClient
+    // Use timestamp-based fingerprint to avoid collisions across test runs
+    const ts = Date.now().toString(16).padStart(16, '0');
+    const fingerprint = `a1b2c3d4${ts}`.padEnd(64, '0').slice(0, 64);
+    const { data: anchor, error } = await userClient
       .from('anchors')
       .insert({
         user_id: DEMO_CREDENTIALS.userId,
@@ -306,6 +308,10 @@ describe('P7-S6: Anchor Status Protection', () => {
       .select()
       .single();
 
+    if (error) {
+      console.error('Failed to create test anchor for status protection:', error);
+      throw error;
+    }
     testAnchorId = anchor!.id;
   });
 
@@ -317,7 +323,8 @@ describe('P7-S6: Anchor Status Protection', () => {
   });
 
   it('user cannot insert anchor with SECURED status', async () => {
-    const fingerprint = 'e5f6a7b8'.repeat(8); // valid 64-char hex
+    const ts2 = Date.now().toString(16).padStart(16, '0');
+    const fingerprint = `e5f6a7b8${ts2}`.padEnd(64, '0').slice(0, 64);
     const { error } = await userClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,
       fingerprint: fingerprint,
@@ -576,9 +583,10 @@ describe('P7-S7: Public Verification', () => {
   beforeAll(async () => {
     serviceClient = createServiceClient();
 
-    // Create a PENDING anchor first
-    const fingerprint = 'c9d0e1f2'.repeat(8); // valid 64-char hex
-    const { data: anchor } = await serviceClient
+    // Create a PENDING anchor (public_id is auto-generated on INSERT)
+    const ts = Date.now().toString(16).padStart(16, '0');
+    const fingerprint = `c9d0e1f2${ts}`.padEnd(64, '0').slice(0, 64);
+    const { data: anchor, error: insertError } = await serviceClient
       .from('anchors')
       .insert({
         user_id: DEMO_CREDENTIALS.userId,
@@ -589,9 +597,13 @@ describe('P7-S7: Public Verification', () => {
       .select()
       .single();
 
+    if (insertError) {
+      console.error('Failed to create test anchor for public verification:', insertError);
+      throw insertError;
+    }
     testAnchorId = anchor!.id;
 
-    // Update to SECURED to trigger public_id generation
+    // Update to SECURED so get_public_anchor RPC can find it
     await serviceClient
       .from('anchors')
       .update({
@@ -602,7 +614,7 @@ describe('P7-S7: Public Verification', () => {
       })
       .eq('id', testAnchorId);
 
-    // Get the auto-generated public_id
+    // Get the public_id (generated on INSERT, not on SECURED transition)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: updated } = await (serviceClient as any)
       .from('anchors')
@@ -660,7 +672,7 @@ describe('P7-S7: Public Verification', () => {
   });
 
   it('get_public_anchor does not expose PENDING anchors', async () => {
-    // Create a PENDING anchor
+    // Create a PENDING anchor (public_id is generated on INSERT since migration 0037)
     const fingerprint = 'f3e4d5c6'.repeat(8); // valid 64-char hex
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: pending } = await (serviceClient as any)
@@ -674,8 +686,17 @@ describe('P7-S7: Public Verification', () => {
       .select('id, public_id')
       .single();
 
-    // PENDING anchors shouldn't have public_id
-    expect(pending!.public_id).toBeNull();
+    // PENDING anchors now get a public_id on INSERT, but the RPC should NOT expose them
+    expect(pending!.public_id).not.toBeNull();
+
+    // Verify the RPC does not return data for PENDING anchors
+    const anonClient = createAnonClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: result } = await (anonClient.rpc as any)('get_public_anchor', {
+      p_public_id: pending!.public_id,
+    });
+    expect(result.error).toBeDefined();
+    expect(result.verified).toBeUndefined();
 
     // Cleanup
     await serviceClient.from('anchors').delete().eq('id', pending!.id);

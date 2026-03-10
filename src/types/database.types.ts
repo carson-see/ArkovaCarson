@@ -1068,12 +1068,20 @@ export type Database = {
         Args: Record<PropertyKey, never>
         Returns: boolean
       }
-      revoke_anchor: {
-        Args: {
-          anchor_id: string
-        }
-        Returns: undefined
-      }
+      revoke_anchor:
+        | {
+            Args: {
+              anchor_id: string
+            }
+            Returns: undefined
+          }
+        | {
+            Args: {
+              anchor_id: string
+              reason?: string
+            }
+            Returns: undefined
+          }
       update_profile_onboarding: {
         Args: {
           p_role: Database["public"]["Enums"]["user_role"]
