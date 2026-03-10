@@ -561,6 +561,7 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 | Test webhook HMAC signing | ✅ HARDENING-3 | 30 tests on delivery.ts (99% stmts), HMAC verified against crypto.createHmac |
 | Anchor lifecycle integration test | ✅ HARDENING-4 | 8 tests: full flow PENDING → chain → SECURED → audit → webhook. Failure isolation, ordering. |
 | Coverage threshold audit | ✅ PR-HARDENING-1 | Fixed `validators.ts` (71% → 100% functions) + `proofPackage.ts` (0% → 100%). 385 total tests. |
+| Test all remaining worker files | ✅ HARDENING-5 | 7 new test files (96 tests): config, index, stripe/mock, jobs/report, jobs/webhook, utils/correlationId, utils/rateLimit. 80% thresholds on all. 481 total tests. |
 
 ### Week 1-2: Payments + Proof
 
