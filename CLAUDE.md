@@ -620,12 +620,12 @@ CORS_ALLOWED_ORIGINS=*              # Comma-separated allowed origins for verifi
 | P4-E1 Anchor Engine | 3/3 | 0 | 0 |
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 |
 | P5 Org Admin | 5/6 | 1/6 | 0 |
-| P6 Verification | 2/6 | 4/6 | 0 |
+| P6 Verification | 3/6 | 3/6 | 0 |
 | P7 Go-Live | 2/10 | 4/10 | 4/10 |
 | P4.5 Verification API | 0/13 | 0 | 13/13 |
-| **Total** | **29/55** | **9/55** | **17/55** |
+| **Total** | **30/55** | **8/55** | **17/55** |
 
-**Overall: 53% complete. 16% partial. 31% not started.**
+**Overall: 55% complete. 15% partial. 31% not started.**
 
 ### Per-Story Detail
 
@@ -662,12 +662,12 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P5-TS-06: COMPLETE — BulkUploadWizard supports credential_type + metadata columns in CSV
 - P5-TS-07: PARTIAL — Migration 0040 exists, useCredentialTemplates CRUD hook exists, but **no UI page for template management** (hook is orphaned — never imported)
 
-**P6 Verification — 2/6 COMPLETE, 4/6 PARTIAL**
+**P6 Verification — 3/6 COMPLETE, 3/6 PARTIAL**
 - P6-TS-01: COMPLETE — get_public_anchor RPC rebuilt (migration 0044) with Phase 1.5 frozen schema (14 fields, SECURED→ACTIVE mapping, hashed recipient, conditional jurisdiction). PublicVerification.tsx renders 5 sections. Wired to `/verify/:publicId` route.
 - P6-TS-02: COMPLETE — QRCodeSVG in AssetDetailView for SECURED anchors with public_id. Links to `/verify/{publicId}`.
 - P6-TS-03: PARTIAL — VerificationWidget.tsx exists (compact + full modes, self-contained Supabase queries) but is **never imported or routed** anywhere. Not bundled as standalone embed script.
 - P6-TS-04: PARTIAL — useCredentialLifecycle.ts exists (events, isActive, isTerminal, isExpiringSoon, progressPercent). AnchorLifecycleTimeline.tsx exists. Both are **imported in AssetDetailView** and working. **However**, the hook is not used on the public verification page, and the story's full integration scope (timeline on public page) is incomplete. Upgrading to COMPLETE pending public page integration check.
-- P6-TS-05: PARTIAL — jsPDF installed, generateAuditReport.ts exists (201 lines, proper disclaimers) but is **never imported or called** from any component. The function is orphaned.
+- P6-TS-05: COMPLETE — jsPDF installed, generateAuditReport.ts (201 lines, proper disclaimers) now called from RecordDetailPage via `onDownloadProof` prop.
 - P6-TS-06: PARTIAL — verification_events table exists (migration 0042) with correct schema (method, result, fingerprint_provided, ip_hash, etc.) and RLS. But **no code anywhere logs events** into this table. No insert calls, no service function, no worker endpoint.
 
 **P7 Go-Live — 2/10 COMPLETE, 4/10 PARTIAL, 4/10 NOT STARTED**
@@ -675,9 +675,9 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P7-TS-02: NOT STARTED — No Stripe checkout session endpoint in worker. Only mock client exists.
 - P7-TS-03: PARTIAL — Webhook endpoint `/webhooks/stripe` exists in worker but **signature verification is commented out** (`// In production, we'd verify the signature here`). Uses JSON.parse instead of `stripe.webhooks.constructEvent()`. SECURITY GAP.
 - P7-TS-05: NOT STARTED — `getChainClient()` always returns MockChainClient. Real Bitcoin OP_RETURN client is a TODO comment.
-- P7-TS-07: PARTIAL — ProofDownload.tsx exists with PDF/JSON download buttons but **onDownloadPDF and onDownloadJSON are optional callback props with no implementation**. Buttons do nothing.
-- P7-TS-08: COMPLETE — generateAuditReport.ts generates full PDF certificate with jsPDF (header, status, document info, issuer, cryptographic proof, lifecycle, disclaimer). Note: this is the same file as P6-TS-05 — the function exists but isn't wired to any UI button.
-- P7-TS-09: PARTIAL — WebhookSettings.tsx exists with add/toggle/delete UI but is **not in the router** (no route to navigate to it). Secret hashing (HMAC-SHA256) not implemented in handler — raw secret passed through.
+- P7-TS-07: PARTIAL — ProofDownload.tsx exists with PDF/JSON download buttons. **PDF download now works** via generateAuditReport wired in RecordDetailPage. **JSON proof package download still not implemented.**
+- P7-TS-08: COMPLETE — generateAuditReport.ts generates full PDF certificate with jsPDF (header, status, document info, issuer, cryptographic proof, lifecycle, disclaimer). Now wired to RecordDetailPage `onDownloadProof`.
+- P7-TS-09: PARTIAL — WebhookSettings.tsx exists with add/toggle/delete UI, **now routed at `/settings/webhooks`** via WebhookSettingsPage. **Secret hashing (HMAC-SHA256) still not implemented** in handler — raw secret passed through.
 - P7-TS-10: PARTIAL — Delivery engine exists (`services/worker/src/webhooks/delivery.ts` with dispatchWebhookEvent, exponential backoff, HMAC signing). But **anchor lifecycle does not call it** — anchor.ts logs audit events but never triggers webhook dispatch. webhook.ts job is a stub with TODO comments.
 
 **P4.5 Verification API — 0/13 NOT STARTED**
@@ -690,16 +690,13 @@ These files exist and are functional in isolation but are never imported, routed
 | File | Story | What's missing |
 |------|-------|---------------|
 | `src/components/embed/VerificationWidget.tsx` | P6-TS-03 | Never imported. Needs route or standalone bundle. |
-| `src/lib/generateAuditReport.ts` | P6-TS-05 / P7-TS-08 | Never imported. Needs to be called from ProofDownload or AssetDetailView. |
-| `src/components/webhooks/WebhookSettings.tsx` | P7-TS-09 | Not in router. Needs `/settings/webhooks` route. |
-| `src/components/public/ProofDownload.tsx` | P7-TS-07 | Download handlers are no-op optional callbacks. |
+| `src/components/public/ProofDownload.tsx` | P7-TS-07 | PDF callback now wired but JSON download handler still no-op. |
 | `src/components/billing/BillingOverview.tsx` | P7-TS-01 | Component exists and displays plan info but is not wired to a route with real billing data. |
 
 ### Known Display Gaps
 
 | Gap | Story | Fix |
 |-----|-------|-----|
-| credential_type not shown in AssetDetailView | P4-TS-02 | Add credential_type to AnchorRecord interface + render in UI |
 | verification_events never logged | P6-TS-06 | Add insert call in PublicVerification or get_public_anchor RPC |
 
 ### Migration Inventory
@@ -707,5 +704,5 @@ These files exist and are functional in isolation but are never imported, routed
 
 ---
 
-_Document version: March 2026 (2026-03-10 audit) | Repo: arkova-mvpcopy-main | ~18,670 source lines | 43 migrations_
+_Document version: March 2026 (2026-03-10 post-commit update) | Repo: arkova-mvpcopy-main | ~18,750 source lines | 43 migrations_
 _Companion documents: Arkova Technical Backlog P1-P7 March 2026 | Arkova Phase 1.5 Technical Backlog March 2026 | Arkova Business Backlog P1-P7 March 2026_
