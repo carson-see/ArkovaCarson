@@ -35,14 +35,14 @@ app.post(
   async (req, res) => {
     const sig = req.headers['stripe-signature'] as string;
 
-    if (!sig) {
+    if (!sig && !config.useMocks) {
       logger.warn('Missing stripe-signature header');
       res.status(400).json({ error: 'Missing stripe-signature header' });
       return;
     }
 
     try {
-      const event = verifyWebhookSignature(req.body, sig);
+      const event = verifyWebhookSignature(req.body, sig ?? '');
 
       await handleStripeWebhook(event);
 
