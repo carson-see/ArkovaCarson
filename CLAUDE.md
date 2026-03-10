@@ -105,6 +105,20 @@ Internal code/DB may use technical names (e.g., `file_fingerprint_sha256`, `chai
 - Every task must keep the repo green: `typecheck`, `lint`, `test`, `lint:copy` all pass.
 - Coverage enforced via `@vitest/coverage-v8`. Per-file 80% thresholds on critical paths (see `vitest.config.ts` and `services/worker/vitest.config.ts`). CI runs `npm run test:coverage`.
 
+### E2E Testing Rules
+_Added 2026-03-10 10:45 PM EST_
+
+- E2E tests live in `e2e/` and use Playwright (`@playwright/test`).
+- All E2E specs must use shared fixtures from `e2e/fixtures/` — no inline login flows.
+- E2E test data: use seed users for reads, timestamped unique names for writes, cleanup after.
+- Never hardcode Supabase URLs or keys in spec files — use env vars via fixtures.
+- E2E tests must not depend on other spec files' side effects — each spec is isolated.
+- New user-facing flows require a corresponding E2E spec before the story is marked COMPLETE.
+- Run `npm run test:e2e` locally before pushing changes that affect routing, auth, or core flows.
+- Load/stress tests live in `tests/load/` and run via `npm run test:load` — not part of CI gate.
+- E2E fixtures: `e2e/fixtures/auth.ts` (authenticated pages), `e2e/fixtures/supabase.ts` (service client + seed users + test data helpers), `e2e/fixtures/index.ts` (barrel export).
+- Seed user constants (`SEED_USERS`) are defined in `e2e/fixtures/supabase.ts` — never duplicate credentials inline.
+
 ### 1.8 API Versioning (Phase 1.5+)
 
 - Verification API response schema is frozen once published. No field removals, type changes, or semantic changes without a new version prefix.
@@ -179,6 +193,8 @@ npm run gen:types         # if schema changed
 ```
 
 Update `docs/confluence/` page if schema/security/API changed. Update the story doc in `docs/stories/` if story status changed (e.g., PARTIAL → COMPLETE). Update `agents.md` in modified folders. Update MEMORY.md "Session Handoff Notes" section.
+
+- [ ] If you changed a user-facing flow: E2E spec exists and passes (`npm run test:e2e`)
 
 ### Bug Documentation (Mandatory)
 
