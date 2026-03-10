@@ -177,55 +177,57 @@ See Section 5 (Brand Application) for the exact procedure.
 
 Work stories in this order. Do not start a story until all of its dependencies are complete.
 
-### Phase 0 — Unblocking (Do These First)
+### Phase 0 — Unblocking ✅ COMPLETE
 
-These three tasks unblock everything else. Nothing else is worth doing until they are done.
+| Order | Story ID | Task | Status |
+|-------|----------|------|--------|
+| 1 | **P2-TS-03** | BrowserRouter + Routes in App.tsx | COMPLETE |
+| 2 | **Brand** | Arkova brand tokens applied | COMPLETE |
+| 3 | **P1-TS-05** | `validateAnchorCreate()` wired in ConfirmAnchorModal | COMPLETE |
 
-| Order | Story ID | Task | Why It Unblocks |
-|-------|----------|------|-----------------|
-| 1 | **P2-TS-03** | Install react-router-dom, refactor App.tsx from useState to BrowserRouter + Routes, define all named routes | ~15 components are invisible without this |
-| 2 | **Brand** | Apply Arkova brand tokens to `src/index.css` and `tailwind.config.ts` | Single-file change, makes every screen correct immediately |
-| 3 | **P1-TS-05** | Add `validateAnchorCreate()` call in `ConfirmAnchorModal.tsx` before the Supabase insert | 1-point fix, closes a security gap |
+### Phase 1 — P1–P3 Stories ✅ COMPLETE
 
-### Phase 1 — Complete PARTIAL Stories (P1–P3)
+| Story ID | Task | Status |
+|----------|------|--------|
+| P2-TS-04 | AuthGuard + RouteGuard wired into router | COMPLETE |
+| P3-TS-01 | DashboardPage + VaultDashboard use useAnchors() | COMPLETE |
+| P3-TS-02 | is_public_profile migration + RLS + toggle wired | COMPLETE |
+| P3-TS-03 | Sidebar uses `<Link>` with active route highlighting | COMPLETE |
+| P4-TS-03 | RecordDetailPage at `/records/:id` with real query | COMPLETE |
 
-| Story ID | Task | Current Gap |
-|----------|------|-------------|
-| P2-TS-04 | Wire AuthGuard + RouteGuard into router | Guards exist but App.tsx doesn't use them |
-| P3-TS-01 | Replace useState mock arrays in DashboardPage + VaultDashboard with real Supabase queries | Mock data, Math.random() fingerprints, console.log stubs |
-| P3-TS-02 | Add `is_public_profile` migration, RLS policy, wire toggle to DB | Cosmetic toggle only |
-| P3-TS-03 | Replace `href="#"` in Sidebar.tsx with `<Link>` components + active route highlighting | Dead links, no navigation |
-| P4-TS-03 | Wire AssetDetailView to `/records/:id` route + real Supabase query | No route, generic chain proof data |
+### Phase 2 — New Schema Work (P4-E2) ✅ COMPLETE
 
-### Phase 2 — New Schema Work (P4-E2, highest unstarted priority)
+All three P4-E2 stories are implemented (migrations 0029–0032). Types reflected in `database.types.ts`.
 
-| Story ID | Task | Dependency |
-|----------|------|------------|
-| P4-TS-04 | `credential_type` column migration | None |
-| P4-TS-05 | `metadata` JSONB column + editability trigger | P4-TS-04 |
-| P4-TS-06 | `parent_anchor_id` + `version_number` lineage columns | P4-TS-05 |
+| Story ID | Task | Status |
+|----------|------|--------|
+| P4-TS-04 | `credential_type` column migration | COMPLETE (migration 0029) |
+| P4-TS-05 | `metadata` JSONB column + editability trigger | COMPLETE (migration 0030) |
+| P4-TS-06 | `parent_anchor_id` + `version_number` lineage columns | COMPLETE (migrations 0031–0032) |
 
-### Phase 3 — P5 Org Admin
+### Phase 3 — P5 Org Admin ✅ COMPLETE
 
-| Story ID | Task |
-|----------|------|
-| P5-TS-01 | OrgRegistryTable: date range filter, bulk selection, fingerprint search |
-| P5-TS-02 | RevokeDialog: add reason field + update `revoke_anchor` DB function |
-| P5-TS-03 | Wire MembersTable to real Supabase query |
-| P5-TS-05 | Move `public_id` generation to INSERT + build IssueCredentialForm |
-| P5-TS-06 | BulkUploadWizard: add credential_type + metadata columns |
-| P5-TS-07 | `credential_templates` migration + CRUD hook |
+All 6 stories complete. See Section 11 for details.
 
-### Phase 4 — P6 Verification Portal
+| Story ID | Task | Status |
+|----------|------|--------|
+| P5-TS-01 | OrgRegistryTable: filters, bulk select, CSV export | COMPLETE |
+| P5-TS-02 | RevokeDialog: reason field, persisted to DB | COMPLETE |
+| P5-TS-03 | MembersTable wired to useOrgMembers() | COMPLETE |
+| P5-TS-05 | public_id auto-generated on INSERT | COMPLETE |
+| P5-TS-06 | BulkUploadWizard: credential_type + metadata | COMPLETE |
+| P5-TS-07 | credential_templates migration + CRUD hook + UI | COMPLETE |
 
-| Story ID | Task |
-|----------|------|
-| P6-TS-01 | Rebuild `get_public_anchor` RPC + PublicVerification.tsx to full 5-section spec |
-| P6-TS-02 | Install qrcode.react + wire QR code into AssetDetailView |
-| P6-TS-04 | `useCredentialLifecycle` hook + timeline display |
-| P6-TS-05 | Install jsPDF + `generateAuditReport()` function |
-| P6-TS-06 | `verification_events` analytics schema |
-| P6-TS-03 | Embeddable widget bundle |
+### Phase 4 — P6 Verification Portal (4/6 COMPLETE, 2 PARTIAL)
+
+| Story ID | Task | Status |
+|----------|------|--------|
+| P6-TS-01 | get_public_anchor RPC + PublicVerification.tsx | COMPLETE |
+| P6-TS-02 | QR code in AssetDetailView | COMPLETE |
+| P6-TS-04 | useCredentialLifecycle + timeline display | PARTIAL — not on public page |
+| P6-TS-05 | jsPDF + generateAuditReport() | COMPLETE |
+| P6-TS-06 | verification_events analytics schema | COMPLETE |
+| P6-TS-03 | Embeddable widget bundle | PARTIAL — exists but not bundled/routed |
 
 ### Phase 5 — P7 Go-Live (Security-Critical First)
 
