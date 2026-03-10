@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-10 | Active bugs: 7 | Resolved: 0_
+_Last updated: 2026-03-10 | Active bugs: 6 | Resolved: 4_
 
 ## Active Bugs Summary
 
@@ -11,7 +11,15 @@ _Last updated: 2026-03-10 | Active bugs: 7 | Resolved: 0_
 | CRIT-4 | MEDIUM | P2 | Onboarding routes are placeholders | OPEN |
 | CRIT-5 | MEDIUM | P7-TS-07 | JSON proof download is no-op | OPEN |
 | CRIT-6 | MEDIUM | P5-TS-06 | CSVUploadWizard uses simulated processing | OPEN |
-| CRIT-7 | LOW | — | Browser tab says "Ralph" | OPEN |
+
+## Resolved Bugs Summary
+
+| ID | Severity | Story | Summary | Resolution |
+|----|----------|-------|---------|------------|
+| CRIT-7 | LOW | — | Browser tab says "Ralph" | FIXED 2026-03-10 |
+| BUG-H1-01 | MEDIUM | P7-TS-05 | Silent audit event failure in processAnchor() | FIXED 2026-03-10 |
+| BUG-H1-02 | HIGH | P7-TS-10 | receipt.merkleRoot type error in anchorWithClaim.ts | REMOVED 2026-03-10 |
+| BUG-H1-03 | HIGH | P7-TS-10 | processAllJobs() loop exits after first batch | REMOVED 2026-03-10 |
 
 ---
 
@@ -400,6 +408,12 @@ Wizard was built as a UI prototype with simulated data. The `useBulkAnchors` hoo
 
 ---
 
+---
+
+## Resolved Bugs
+
+---
+
 ### CRIT-7: Browser Tab Says "Ralph"
 
 - **Severity:** LOW
@@ -427,20 +441,16 @@ Browser tab says "Arkova".
 
 Old codename "Ralph" was never updated to "Arkova" in these two files.
 
-#### Fix Pattern
-
-1. `package.json`: Change `"name": "ralph"` to `"name": "arkova"`
-2. `index.html`: Change `<title>Ralph</title>` to `<title>Arkova</title>`
-
 #### Actions Taken
 
 | Date | Action |
 |------|--------|
 | 2026-03-10 | Identified during codebase audit. |
+| 2026-03-10 | Fixed: `package.json` name → `arkova`, `index.html` title → `Arkova`. |
 
 #### Resolution
 
-**Status:** OPEN — 15-minute fix.
+**Status:** FIXED — 2026-03-10. Commit `3031c23`.
 
 #### Regression Test
 
@@ -448,12 +458,237 @@ Old codename "Ralph" was never updated to "Arkova" in these two files.
 
 ---
 
-## Resolved Bugs
+### BUG-H1-01: Silent Audit Event Failure in processAnchor()
 
-_No resolved bugs yet._
+- **Severity:** MEDIUM
+- **Found:** 2026-03-10, HARDENING-1 sprint (worker test coverage)
+- **Story:** P7-TS-05 (anchor processing pipeline)
+- **Component:** `services/worker/src/jobs/anchor.ts`
+
+#### Steps to Reproduce
+
+1. Start the worker service: `cd services/worker && npm run dev`
+2. Insert a PENDING anchor into the `anchors` table
+3. Trigger anchor processing (cron runs every minute, or POST `/jobs/process-anchors`)
+4. Simulate an `audit_events` table failure (e.g., table full, constraint violation on the insert)
+5. Observe logs: **no error or warning is logged** despite the audit insert failing
+6. The anchor IS correctly updated to SECURED — the audit failure is silently swallowed
+
+#### Expected Behavior
+
+When the audit event insert fails after a successful anchor securing:
+- A warning is logged with the error details (non-fatal — the anchor is already secured)
+- The function still returns `true` (anchor was secured successfully)
+- Operators can detect audit logging gaps via log monitoring
+
+#### Actual Behavior
+
+The original code performed a bare `await` on the Supabase insert without capturing the return value:
+
+```typescript
+// Original (broken)
+await db.from('audit_events').insert({
+  event_type: 'anchor.secured',
+  // ...
+});
+// Error silently discarded — Supabase returns {data, error}, never throws
+```
+
+Supabase's PostgREST client does not throw on insert errors — it returns `{ data, error }`. Since the return value was never destructured, the error was invisible.
+
+#### Root Cause
+
+Supabase client API design: errors are returned, not thrown. The original code treated the insert as a fire-and-forget `await` without checking the result. This is a common pattern mistake when moving from ORMs that throw on failure to Supabase's `{data, error}` pattern.
+
+#### Fix Pattern
+
+Destructure the return value and log on failure:
+
+```typescript
+// Fixed
+const { error: auditError } = await db.from('audit_events').insert({
+  event_type: 'anchor.secured',
+  // ...
+});
+
+if (auditError) {
+  logger.warn({ anchorId, error: auditError }, 'Failed to log audit event for secured anchor');
+}
+```
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-10 | Found during HARDENING-1 while writing unit tests for `processAnchor()`. |
+| 2026-03-10 | Fixed in `anchor.ts` lines 55-67: destructured `{ error: auditError }`, added `if (auditError)` with `logger.warn`. |
+
+#### Resolution
+
+**Status:** FIXED — 2026-03-10. Applied in `services/worker/src/jobs/anchor.ts` lines 55-67.
+
+#### Regression Test
+
+| Test File | Type | What It Validates |
+|-----------|------|-------------------|
+| `services/worker/src/jobs/anchor.test.ts` | Unit | "audit event failure" describe block — 2 tests |
+
+Specific tests:
+- `still returns true when audit event insert fails` — confirms anchor securing is non-fatal on audit failure
+- `logs warning when audit event insert fails` — confirms `logger.warn` is called with error details
+
+#### How to Verify (Manual)
+
+1. Run worker tests: `cd services/worker && npx vitest run`
+2. Confirm all 27 tests pass, including the "audit event failure" block
+3. Read `anchor.ts` lines 55-67 — verify `{ error: auditError }` is destructured and checked
+
+---
+
+### BUG-H1-02: receipt.merkleRoot Type Error in anchorWithClaim.ts
+
+- **Severity:** HIGH (compile error — dead code path)
+- **Found:** 2026-03-10, HARDENING-1 sprint (worker test coverage)
+- **Story:** P7-TS-10 (webhook dispatch — anchorWithClaim.ts was intended as future anchor pipeline)
+- **Component:** `services/worker/src/jobs/anchorWithClaim.ts` (deleted)
+
+#### Steps to Reproduce
+
+1. Run `cd services/worker && npx tsc --noEmit`
+2. Observe compile error: `Property 'merkleRoot' does not exist on type 'ChainReceipt'`
+3. The error is on line 83 of `anchorWithClaim.ts`
+
+#### Expected Behavior
+
+`receipt` fields should match the `ChainReceipt` interface defined in `chain/types.ts`:
+- `receiptId: string`
+- `blockHeight: number`
+- `blockTimestamp: string`
+- `confirmations: number`
+
+#### Actual Behavior
+
+Line 83 referenced `receipt.merkleRoot`, which does not exist on the `ChainReceipt` interface. The file compiled only because TypeScript's `--noEmit` check was not part of CI, and the file was never imported.
+
+Additional problems in the same file:
+- References table `anchoring_jobs` — does not exist in the schema
+- References table `anchor_proofs` — does not exist in the schema
+- Calls RPC `claim_anchoring_job` — does not exist
+- Calls RPC `complete_anchoring_job` — does not exist
+
+#### Root Cause
+
+`anchorWithClaim.ts` was written speculatively against a planned schema (job-claim architecture with `anchoring_jobs`, `anchor_proofs`, and atomic RPCs). That schema was never implemented. The file was never imported by `index.ts` — the worker exclusively uses `anchor.ts` via `processPendingAnchors()`. The file accumulated as dead code with no compile-time or runtime validation.
+
+#### Fix Pattern
+
+**Decision: Delete the file.** Fixing the type error would produce code that compiles but references four nonexistent database objects. When the job-claim architecture is actually needed, it should be built from scratch against the real schema with proper test coverage.
+
+Also removed the 80% per-file coverage threshold for `anchorWithClaim.ts` from `services/worker/vitest.config.ts` — an unreachable threshold on a deleted file would fail CI.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-10 | Found during HARDENING-1 while auditing worker code for test coverage. |
+| 2026-03-10 | Confirmed file is never imported (grep for `anchorWithClaim` — zero hits in source). |
+| 2026-03-10 | Deleted `anchorWithClaim.ts`. Removed coverage threshold from `vitest.config.ts`. |
+
+#### Resolution
+
+**Status:** RESOLVED — 2026-03-10. File deleted. Coverage threshold removed.
+
+#### Regression Test
+
+| Test File | Type | What It Validates |
+|-----------|------|-------------------|
+| `services/worker/src/jobs/anchor.test.ts` | Unit | Validates the real anchor pipeline (`processAnchor` + `processPendingAnchors`) — 27 tests, 100% coverage |
+
+No dedicated test needed for deleted code. The real anchor pipeline in `anchor.ts` has full coverage. When job-claim architecture is rebuilt, tests should be written alongside.
+
+#### How to Verify (Manual)
+
+1. Confirm file does not exist: `ls services/worker/src/jobs/anchorWithClaim.ts` → "No such file"
+2. Confirm no broken imports: `cd services/worker && npx vitest run` → 27 tests pass
+3. Confirm coverage threshold removed: read `services/worker/vitest.config.ts` — no `anchorWithClaim` entry
+
+---
+
+### BUG-H1-03: processAllJobs() Loop Exits After First Batch in anchorWithClaim.ts
+
+- **Severity:** HIGH (logic error — dead code path)
+- **Found:** 2026-03-10, HARDENING-1 sprint (worker test coverage)
+- **Story:** P7-TS-10 (webhook dispatch — anchorWithClaim.ts was intended as future anchor pipeline)
+- **Component:** `services/worker/src/jobs/anchorWithClaim.ts` (deleted)
+
+#### Steps to Reproduce
+
+1. Read `processAllJobs()` in `anchorWithClaim.ts` (lines 122-153)
+2. When `claimAndProcessJob()` returns `false`, the function checks for remaining pending jobs:
+   ```typescript
+   const { data: pendingCount } = await db
+     .from('anchoring_jobs')
+     .select('id', { count: 'exact', head: true })
+     .eq('status', 'pending');
+   ```
+3. `head: true` tells Supabase to return only the count, suppressing row data — so `data` is `null`
+4. The check `if (!pendingCount || pendingCount === 0)` always evaluates to `true` (null is falsy)
+5. `hasMore` is set to `false`, and the loop exits immediately
+
+#### Expected Behavior
+
+The loop should continue claiming and processing jobs until no pending jobs remain. The count check should use Supabase's `count` return value, not the `data` return value.
+
+#### Actual Behavior
+
+The loop always exits after the first failed claim because `head: true` makes `data` null, causing the "no more jobs" branch to fire unconditionally. Even if 100 pending jobs existed, only one attempt would be made.
+
+#### Root Cause
+
+Misuse of Supabase's `head: true` query option. With `head: true`, the query returns `{ data: null, count: N }` — the count is in the `count` field, not `data`. The code checked `data` instead of destructuring `count`. This is the same file that had BUG-H1-02 — written speculatively against a nonexistent schema and never tested.
+
+#### Fix Pattern
+
+**Decision: Delete the file.** Same rationale as BUG-H1-02 — the entire file references nonexistent tables and RPCs. The correct Supabase pattern for count-only queries is:
+
+```typescript
+const { count } = await db
+  .from('anchoring_jobs')
+  .select('id', { count: 'exact', head: true })
+  .eq('status', 'pending');
+
+if (!count || count === 0) {
+  hasMore = false;
+}
+```
+
+But fixing this one line would still leave a file that can't run against the actual database.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-10 | Found during HARDENING-1 while auditing worker code for test coverage. |
+| 2026-03-10 | Confirmed file references 4 nonexistent schema objects and is never imported. |
+| 2026-03-10 | Deleted `anchorWithClaim.ts` (same action as BUG-H1-02). |
+
+#### Resolution
+
+**Status:** RESOLVED — 2026-03-10. File deleted (same action as BUG-H1-02).
+
+#### Regression Test
+
+Same as BUG-H1-02 — the real anchor pipeline in `anchor.ts` has 27 tests with 100% coverage. When job-claim architecture is rebuilt, the batch processing loop must be tested with the correct Supabase count pattern.
+
+#### How to Verify (Manual)
+
+Same as BUG-H1-02.
+
+---
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial bug log created with CRIT-1 through CRIT-7, migrated from CLAUDE.md Section 8 summary table. Full steps to reproduce, root cause analysis, and fix patterns documented for all 7 bugs. |
+| 2026-03-10 | Added HARDENING-1 bugs (BUG-H1-01, BUG-H1-02, BUG-H1-03). Moved CRIT-7 to resolved. Updated summary counts: 6 active, 4 resolved. |

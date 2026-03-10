@@ -51,8 +51,8 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       throw updateError;
     }
 
-    // Log audit event
-    await db.from('audit_events').insert({
+    // Log audit event — non-fatal if it fails (anchor is already secured)
+    const { error: auditError } = await db.from('audit_events').insert({
       event_type: 'anchor.secured',
       event_category: 'ANCHOR',
       actor_id: anchor.user_id,
@@ -61,6 +61,10 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       org_id: anchor.org_id,
       details: `Secured on ${getNetworkDisplayName(config.chainNetwork)}: ${receipt.receiptId}`,
     });
+
+    if (auditError) {
+      logger.warn({ anchorId, error: auditError }, 'Failed to log audit event for secured anchor');
+    }
 
     logger.info({ anchorId, receiptId: receipt.receiptId }, 'Anchor secured successfully');
     return true;
