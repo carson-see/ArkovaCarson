@@ -1,8 +1,9 @@
 # Seed Data & Click-Through Guide
+_Last updated: 2026-03-10 | Story: Demo Quality_
 
 ## Overview
 
-Ralph includes seed data for local development and testing. This guide explains the demo data and how to use it for click-through testing.
+Arkova includes seed data for local development and testing. This guide explains the demo data and how to use it for click-through testing.
 
 ## Quick Start
 
@@ -13,126 +14,154 @@ supabase start
 # Reset database (applies migrations + seed)
 supabase db reset
 
-# Verify seed data
-supabase db execute --file scripts/verify-seed.sql
+# Verify seed data (inline — see Verification Queries below)
 ```
 
 ## Demo Users
 
 | Email | Password | Role | Organization |
 |-------|----------|------|--------------|
-| `admin_demo@arkova.local` | `demo_password_123` | ORG_ADMIN | Arkova |
-| `user_demo@arkova.local` | `demo_password_123` | INDIVIDUAL | None |
-| `beta_admin@betacorp.local` | `demo_password_123` | ORG_ADMIN | Beta Corp |
+| `admin@umich-demo.arkova.io` | `Demo1234!` | ORG_ADMIN | UMich Registrar |
+| `registrar@umich-demo.arkova.io` | `Demo1234!` | ORG_MEMBER | UMich Registrar |
+| `admin@midwest-medical.arkova.io` | `Demo1234!` | ORG_ADMIN | Midwest Medical Board |
+| `individual@demo.arkova.io` | `Demo1234!` | INDIVIDUAL | None |
 
 ## Demo Organizations
 
-| ID | Name | Domain | Status |
-|----|------|--------|--------|
-| `11111111-...` | Arkova Technologies Inc. | arkova.local | VERIFIED |
-| `22222222-...` | Beta Corp LLC | betacorp.local | UNVERIFIED |
+| ID Prefix | Display Name | Domain | Status |
+|-----------|-------------|--------|--------|
+| `aaaaaaaa-...` | UMich Registrar | umich.edu | VERIFIED |
+| `bbbbbbbb-...` | Midwest Medical Board | midwest-medical.org | VERIFIED |
 
 ## Demo Anchors
 
-### Admin Demo (Arkova)
+### UMich Registrar (ORG_A) — 5 anchors
 
-| Filename | Status | Legal Hold |
-|----------|--------|------------|
-| contract_2024.pdf | SECURED | No |
-| invoice_jan.pdf | PENDING | No |
-| old_agreement.pdf | REVOKED | No |
-| legal_hold_document.pdf | SECURED | **Yes** |
+| # | Label | Filename | Status | Legal Hold | Credential Type |
+|---|-------|----------|--------|------------|-----------------|
+| 1 | BS Computer Science — Maya Chen | `UMich_Diploma_Chen_Maya_BSc_CS_2024.pdf` | SECURED | No | DEGREE |
+| 2 | MBA — James Okafor | `UMich_Ross_MBA_Okafor_James_Dec2023.pdf` | SECURED | **Yes** | DEGREE |
+| 3 | RN License — Priya Sharma | `RN_License_Sharma_Priya_MI_2022.pdf` | REVOKED | No | LICENSE |
+| 4 | PMP — Daniel Torres | `PMP_Cert_Torres_Daniel_PMI_2023.pdf` | EXPIRED | No | PROFESSIONAL |
+| 5 | MS Data Science — Sarah Kim | `UMich_MSc_DataScience_Kim_Sarah_Aug2024.pdf` | PENDING | No | DEGREE |
 
-### User Demo (Individual)
+### Midwest Medical Board (ORG_B) — 1 anchor
 
-| Filename | Status | Legal Hold |
-|----------|--------|------------|
-| personal_doc.pdf | SECURED | No |
-| photo_proof.png | PENDING | No |
+| # | Label | Filename | Status | Credential Type |
+|---|-------|----------|--------|-----------------|
+| 6 | MD License — Dr. Marcus Webb | `MD_License_Webb_Marcus_MI_Board_2025.pdf` | SECURED | LICENSE |
 
-### Beta Admin (Beta Corp)
+### Individual User (Casey Morgan) — 2 anchors
 
-| Filename | Status |
-|----------|--------|
-| beta_contract.pdf | PENDING |
+| # | Label | Filename | Status | Credential Type |
+|---|-------|----------|--------|-----------------|
+| 7 | Personal Certification | `CaseyMorgan_PersonalCert_2025.pdf` | PENDING | CERTIFICATE |
+| 8 | Professional Development Certificate | `CaseyMorgan_ProfDev_2025.pdf` | PENDING | CERTIFICATE |
+
+### Expected Status Distribution
+
+| Status | Count |
+|--------|-------|
+| SECURED | 3 |
+| PENDING | 3 |
+| REVOKED | 1 |
+| EXPIRED | 1 |
 
 ## Click-Through Scenarios
 
-### Scenario 1: Individual User Flow
+### Scenario 1: Organization Admin Flow
 
-1. Sign in as `user_demo@arkova.local`
-2. View anchor list → Should see only personal_doc.pdf and photo_proof.png
-3. Attempt to view Arkova anchors → Should be blocked (RLS)
-4. Create new anchor → Should work with PENDING status
-5. Attempt to create SECURED anchor → Should fail
+1. Sign in as `admin@umich-demo.arkova.io` / `Demo1234!`
+2. View dashboard at `/dashboard` — should see 5 UMich anchors (via `anchors_select_org` RLS policy)
+3. View organization details at `/settings` — should see UMich Registrar info
+4. View members at `/settings/members` — should see Alex Rivera + Jordan Lee
+5. Navigate to a SECURED anchor detail — should show chain receipt and QR code
+6. Attempt to view Midwest Medical anchors — should be blocked (RLS)
 
-### Scenario 2: Organization Admin Flow
+### Scenario 2: Individual User Flow
 
-1. Sign in as `admin_demo@arkova.local`
-2. View anchor list → Should see all 4 Arkova anchors
-3. View organization details → Should see Arkova info
-4. Attempt to view Beta Corp anchors → Should be blocked (RLS)
-5. Update organization display name → Should work
+1. Sign in as `individual@demo.arkova.io` / `Demo1234!`
+2. View vault at `/vault` — should see only 2 anchors (Casey Morgan's PENDING records)
+3. Both anchors should show PENDING status (amber badge)
+4. Cannot see any UMich or Midwest Medical anchors (RLS isolation)
 
 ### Scenario 3: Cross-Tenant Isolation
 
-1. Sign in as `admin_demo@arkova.local`
-2. Query organizations → Should only see Arkova
-3. Sign out, sign in as `beta_admin@betacorp.local`
-4. Query organizations → Should only see Beta Corp
-5. Verify no cross-tenant data leakage
+1. Sign in as `admin@umich-demo.arkova.io`
+2. Query organizations — should only see UMich Registrar
+3. Sign out, sign in as `admin@midwest-medical.arkova.io`
+4. Query organizations — should only see Midwest Medical Board
+5. Verify anchor 6 (Dr. Marcus Webb) is visible to Midwest Medical admin only
 
 ### Scenario 4: Legal Hold
 
-1. Using service_role, query `legal_hold_document.pdf` anchor
-2. Attempt soft delete → Should fail (legal_hold constraint)
-3. Remove legal hold (service_role)
-4. Attempt soft delete → Should succeed
+1. Anchor 2 (James Okafor MBA) has `legal_hold = true`
+2. Using service_role, attempt soft delete — should fail (`anchors_legal_hold_no_delete` constraint)
+3. Remove legal hold (service_role): `UPDATE anchors SET legal_hold = false WHERE id = 'a2a2a2a2-...'`
+4. Attempt soft delete — should succeed
 
 ### Scenario 5: Role Immutability
 
-1. Sign in as `user_demo@arkova.local`
-2. Attempt to change role to ORG_ADMIN → Should fail
-3. Using service_role, attempt to change role → Should fail (trigger)
+1. Sign in as `individual@demo.arkova.io`
+2. Attempt to change role to ORG_ADMIN — should fail (`check_role_immutability` trigger)
+3. Using service_role, attempt to change role — should also fail (trigger fires regardless)
 
-### Scenario 6: Audit Event Isolation
+### Scenario 6: Credential Lifecycle States
 
-1. Sign in as `user_demo@arkova.local`
-2. Query audit_events → Should only see own events
-3. Cannot see admin_demo's events
+1. Sign in as `admin@umich-demo.arkova.io`
+2. View anchor 1 (Maya Chen) — SECURED with green badge, chain receipt present
+3. View anchor 3 (Priya Sharma) — REVOKED with gray badge, revocation reason displayed
+4. View anchor 4 (Daniel Torres) — EXPIRED with gray badge, expiry date past
+5. View anchor 5 (Sarah Kim) — PENDING with amber badge, no chain data
+
+### Scenario 7: Public Verification
+
+1. Navigate to `/verify/ARK-2024-00091` — should show Maya Chen's SECURED credential
+2. Navigate to `/verify/ARK-2022-00183` — should show Priya Sharma's REVOKED status
+3. Navigate to `/verify/nonexistent` — should show "not found" result
 
 ## Verification Queries
 
-Run these queries to verify seed data:
+Run these queries to verify seed data after `supabase db reset`:
 
 ```sql
--- Organizations
-SELECT id, display_name, verification_status FROM organizations;
+-- Anchor status distribution
+SELECT status, COUNT(*) FROM anchors GROUP BY status ORDER BY status;
+-- Expected: EXPIRED=1, PENDING=3, REVOKED=1, SECURED=3
 
--- Profiles
-SELECT id, email, role, org_id FROM profiles;
+-- Organization anchor counts
+SELECT o.display_name, COUNT(a.id)
+FROM organizations o
+LEFT JOIN anchors a ON a.org_id = o.id
+GROUP BY o.display_name;
+-- Expected: UMich Registrar=5, Midwest Medical Board=1
 
--- Anchors summary
-SELECT
-  p.email,
-  a.filename,
-  a.status,
-  a.legal_hold,
-  o.display_name as org
-FROM anchors a
-JOIN profiles p ON a.user_id = p.id
-LEFT JOIN organizations o ON a.org_id = o.id
-ORDER BY p.email, a.filename;
+-- Individual user anchors
+SELECT COUNT(*) FROM anchors WHERE user_id = '33333333-0000-0000-0000-000000000001';
+-- Expected: 2
+
+-- Legal hold
+SELECT legal_hold FROM anchors WHERE id = 'a2a2a2a2-0000-0000-0000-000000000002';
+-- Expected: true
 
 -- Audit events
-SELECT event_type, actor_email, target_type, created_at
-FROM audit_events
-ORDER BY created_at;
+SELECT COUNT(*) FROM audit_events;
+-- Expected: 13
+
+-- Memberships
+SELECT p.full_name, m.role, o.display_name
+FROM memberships m
+JOIN profiles p ON m.user_id = p.id
+JOIN organizations o ON m.org_id = o.id;
+-- Expected: Alex Rivera (ORG_ADMIN, UMich), Jordan Lee (ORG_MEMBER, UMich),
+--           Dr. Renata Kowalski (ORG_ADMIN, Midwest Medical)
+
+-- Switchboard flags (re-seeded after TRUNCATE CASCADE)
+SELECT id, value FROM switchboard_flags ORDER BY id;
+-- Expected: 5 flags
 ```
 
 ## Reset Procedure
-
-To reset the database to a clean state:
 
 ```bash
 # Full reset (drops and recreates)
@@ -140,8 +169,9 @@ supabase db reset
 
 # This will:
 # 1. Drop all tables
-# 2. Run all migrations in order
-# 3. Run seed.sql
+# 2. Run all 45 migrations in order (0001-0045, 0033 skipped)
+# 3. Run seed.sql (truncates + re-inserts demo data)
+# 4. Re-seeds switchboard flags (cleared by TRUNCATE CASCADE)
 ```
 
 ## Extending Seed Data
@@ -149,9 +179,10 @@ supabase db reset
 To add more seed data:
 
 1. Edit `supabase/seed.sql`
-2. Follow existing patterns
+2. Follow existing patterns (fixed UUIDs, ARK-YYYY-NNNNN public IDs)
 3. Use consistent UUIDs (for reproducibility)
-4. Run `supabase db reset` to apply
+4. Remember: `auto_create_anchoring_job` trigger fires on insert — clean up stale jobs for non-PENDING anchors
+5. Run `supabase db reset` to apply
 
 ## Troubleshooting
 
@@ -163,8 +194,7 @@ If demo users can't authenticate:
 # Check auth.users table
 supabase db execute -c "SELECT id, email FROM auth.users;"
 
-# Verify password hash (should be bcrypt)
-supabase db execute -c "SELECT encrypted_password FROM auth.users LIMIT 1;"
+# Verify 4 users exist with correct emails
 ```
 
 ### Missing Seed Data
@@ -184,3 +214,14 @@ supabase db reset --debug
 export PGPASSWORD=postgres
 psql -h localhost -p 54322 -U postgres -d postgres -c "SELECT * FROM anchors;"
 ```
+
+## Related Documentation
+
+- [02_data_model.md](./02_data_model.md) — Table definitions
+- [03_security_rls.md](./03_security_rls.md) — RLS policies tested by click-through scenarios
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit session 3 | Full rewrite: fixed "Ralph" branding, updated demo users/orgs/anchors to match current seed.sql (4 users, 2 orgs, 8 anchors with credential_type and metadata). Removed reference to nonexistent `scripts/verify-seed.sql`. Added credential lifecycle and public verification scenarios. |

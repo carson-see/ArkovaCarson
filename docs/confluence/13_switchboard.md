@@ -1,10 +1,13 @@
 # Production Switchboard
+_Last updated: 2026-03-10 | Story: P7-TS-01 (migration 0021)_
 
 ## Overview
 
-The Arkova Switchboard provides server-side feature flags for controlling production behavior. All flags are enforced at the database level, with an audit trail for all changes.
+The Arkova Switchboard provides server-side feature flags for controlling production behavior. All flags are enforced at the database level, with an automatic audit trail for all changes.
 
 ## Available Flags
+
+Five flags are seeded in migration 0021 and re-seeded by `seed.sql`:
 
 | Flag ID | Default | Description | Dangerous |
 |---------|---------|-------------|-----------|
@@ -14,7 +17,9 @@ The Arkova Switchboard provides server-side feature flags for controlling produc
 | `ENABLE_REPORTS` | `true` | Enable report generation | No |
 | `MAINTENANCE_MODE` | `false` | Put the app in maintenance mode | Yes |
 
-## Database Schema
+> **Note:** CLAUDE.md Constitution 1.9 references `ENABLE_VERIFICATION_API` for the Phase 1.5 Verification API. This flag is **not yet in the database** — it will be added when P4.5 work begins. Until then, the flag does not exist in `switchboard_flags`.
+
+## Database Schema (migration 0021)
 
 ### `switchboard_flags` Table
 
@@ -30,13 +35,25 @@ CREATE TABLE switchboard_flags (
 );
 ```
 
+RLS: Enabled and forced. Read-only for all authenticated users:
+
+```sql
+-- Everyone can read flags
+CREATE POLICY switchboard_flags_read ON switchboard_flags
+  FOR SELECT TO authenticated USING (true);
+
+-- Only service_role can modify (no INSERT/UPDATE/DELETE policies for authenticated)
+```
+
+Grants: `GRANT SELECT ON switchboard_flags TO authenticated;`
+
 ### `switchboard_flag_history` Table
 
 Audit trail for all flag changes:
 
 ```sql
 CREATE TABLE switchboard_flag_history (
-  id uuid PRIMARY KEY,
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   flag_id text NOT NULL REFERENCES switchboard_flags(id),
   old_value boolean,
   new_value boolean NOT NULL,
@@ -45,6 +62,49 @@ CREATE TABLE switchboard_flag_history (
   reason text
 );
 ```
+
+RLS: Enabled and forced. Read-only for all authenticated users:
+
+```sql
+CREATE POLICY switchboard_flag_history_read ON switchboard_flag_history
+  FOR SELECT TO authenticated USING (true);
+```
+
+Grants: `GRANT SELECT ON switchboard_flag_history TO authenticated;`
+
+## Database Functions (migration 0021)
+
+### `get_flag(p_flag_id text) RETURNS boolean`
+
+Retrieves a flag's current value. Returns the default value if the flag does not exist.
+
+```sql
+CREATE OR REPLACE FUNCTION get_flag(p_flag_id text)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+```
+
+- SECURITY DEFINER with `SET search_path = public` (Constitution 1.4 compliant)
+- Granted to `authenticated` and `anon`
+
+### `log_switchboard_flag_change()` Trigger Function
+
+Automatically logs flag changes to the history table:
+
+```sql
+CREATE TRIGGER log_flag_change
+  BEFORE UPDATE ON switchboard_flags
+  FOR EACH ROW
+  WHEN (OLD.value IS DISTINCT FROM NEW.value)
+  EXECUTE FUNCTION log_switchboard_flag_change();
+```
+
+The trigger:
+- Fires only when `value` actually changes
+- Records `old_value`, `new_value`, `changed_by` (from `NEW.updated_by`), and `changed_at`
+- Also updates `updated_at = now()` on the flag row
 
 ## Usage
 
@@ -120,11 +180,12 @@ The `MAINTENANCE_MODE` flag puts the app in read-only mode:
 UPDATE switchboard_flags
 SET value = true, updated_by = '<user_id>'
 WHERE id = 'ENABLE_OUTBOUND_WEBHOOKS';
+-- Trigger automatically logs to switchboard_flag_history
 ```
 
 ### Audit Trail
 
-All flag changes are automatically logged:
+All flag changes are automatically logged via the `log_flag_change` trigger:
 
 ```sql
 -- View flag history
@@ -133,50 +194,45 @@ WHERE flag_id = 'ENABLE_PROD_NETWORK_ANCHORING'
 ORDER BY changed_at DESC;
 ```
 
-## Testing
+## Seed Data
 
-### CI Tests
+The 5 flags are seeded in both migration 0021 (initial insert) and `seed.sql` (re-inserted after TRUNCATE CASCADE during `supabase db reset`). Verification query:
 
-```typescript
-describe('Switchboard', () => {
-  it('blocks anchoring when flag is disabled', async () => {
-    // Set flag to false
-    await serviceDb.from('switchboard_flags')
-      .update({ value: false })
-      .eq('id', 'ENABLE_PROD_NETWORK_ANCHORING');
-
-    // Attempt anchoring
-    const result = await worker.processAnchor(anchorId);
-
-    // Should use mock/testnet
-    expect(result.network).toBe('test');
-  });
-
-  it('blocks webhooks when flag is disabled', async () => {
-    // Set flag to false
-    await serviceDb.from('switchboard_flags')
-      .update({ value: false })
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS');
-
-    // Dispatch event
-    await dispatchWebhookEvent(orgId, 'anchor.secured', eventId, data);
-
-    // Check no delivery attempted
-    const logs = await db.from('webhook_delivery_logs').select();
-    expect(logs.data).toHaveLength(0);
-  });
-});
+```sql
+SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
+-- Expected: 5 rows
 ```
+
+## Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `switchboard_flags` table | **Complete** | Migration 0021 |
+| `switchboard_flag_history` table | **Complete** | Migration 0021 |
+| `get_flag()` RPC | **Complete** | Migration 0021, SECURITY DEFINER |
+| `log_switchboard_flag_change()` trigger | **Complete** | Migration 0021, auto-logs changes |
+| RLS policies (read-only for authenticated) | **Complete** | Migration 0021 |
+| 5 initial flags seeded | **Complete** | Migration 0021 + seed.sql |
+| Client-side `switchboard.ts` helpers | **Complete** | `src/lib/switchboard.ts` |
+| `ENABLE_VERIFICATION_API` flag | **Not Started** | Referenced in Constitution 1.9, not yet in DB. Deferred to P4.5. |
+| Admin UI for flag management | **Not Started** | Flags currently managed via SQL only |
 
 ## Security
 
-1. **RLS Protection**: Only service_role can modify flags
-2. **Audit Trail**: All changes are logged with user ID
-3. **Dangerous Flags**: Marked flags require extra caution
-4. **Default Values**: Fail-safe defaults (production features off)
+1. **RLS Protection**: Only service_role can modify flags — no INSERT/UPDATE/DELETE policies for authenticated role
+2. **Audit Trail**: All changes automatically logged with user ID via trigger
+3. **Dangerous Flags**: `is_dangerous = true` marks flags that have financial or availability impact
+4. **Default Values**: Fail-safe defaults — production features off by default
+5. **SECURITY DEFINER**: `get_flag()` function follows Constitution 1.4 (`SET search_path = public`)
 
 ## Related Documentation
 
-- [10_anchoring_worker.md](./10_anchoring_worker.md) - Anchoring worker
-- [09_webhooks.md](./09_webhooks.md) - Outbound webhooks
-- [08_payments_entitlements.md](./08_payments_entitlements.md) - Billing
+- [10_anchoring_worker.md](./10_anchoring_worker.md) — Anchoring worker (uses `ENABLE_PROD_NETWORK_ANCHORING`)
+- [09_webhooks.md](./09_webhooks.md) — Outbound webhooks (uses `ENABLE_OUTBOUND_WEBHOOKS`)
+- [08_payments_entitlements.md](./08_payments_entitlements.md) — Billing (uses `ENABLE_NEW_CHECKOUTS`)
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added migration references throughout. Documented `get_flag()` function signature and `log_switchboard_flag_change()` trigger details from migration 0021. Added RLS policy details and grant statements. Noted `ENABLE_VERIFICATION_API` is referenced in Constitution 1.9 but not yet in database. Added seed data section, implementation status table, and change log. |

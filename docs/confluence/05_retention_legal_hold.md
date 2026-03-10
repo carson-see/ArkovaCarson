@@ -1,4 +1,5 @@
 # Retention & Legal Hold
+_Last updated: 2026-03-10 | Story: P1-TS-01 (migration 0004)_
 
 ## Overview
 
@@ -195,3 +196,28 @@ All timestamps are stored as `timestamptz` and treated as UTC:
 - `chain_timestamp` - On-chain confirmation time
 
 UTC ensures consistent, auditable timestamps across timezones.
+
+## Implementation Status
+
+| Feature | Status | Migration | Notes |
+|---------|--------|-----------|-------|
+| `legal_hold` column | Complete | 0004 | `boolean NOT NULL DEFAULT false` |
+| `anchors_legal_hold_no_delete` CHECK | Complete | 0004 | DB-level enforcement |
+| `retention_until` column | Complete | 0004 | `timestamptz NULL` |
+| Soft delete (`deleted_at`) | Complete | 0004 | `timestamptz NULL` |
+| Unique index respecting soft delete | Complete | 0004 | `idx_anchors_user_fingerprint_unique WHERE deleted_at IS NULL` |
+| Legal hold partial index | Complete | 0004 | `idx_anchors_legal_hold WHERE legal_hold = true` |
+| Deleted-at partial index | Complete | 0004 | `idx_anchors_deleted_at WHERE deleted_at IS NOT NULL` |
+| Application-level retention check | Not Started | — | `canDeleteAnchor()` function not yet implemented in codebase |
+
+## Related Documentation
+
+- [02_data_model.md](./02_data_model.md) — Anchors table definition
+- [03_security_rls.md](./03_security_rls.md) — RLS policies protecting `legal_hold` field
+- [04_audit_events.md](./04_audit_events.md) — Audit logging for hold changes
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit session 3 | Added `_Last updated_` line, implementation status table, related docs, and change log. Verified CHECK constraint and indexes match migration 0004. |
