@@ -449,12 +449,12 @@ npx supabase db reset
 
 | ID | Issue | Severity | Detail |
 |----|-------|----------|--------|
-| CRIT-1 | `SecureDocumentDialog` fakes anchor creation | **HIGH** | Uses `setTimeout` simulation. Does NOT insert into Supabase. The org admin path (`IssueCredentialForm`) works correctly — use it as the pattern. |
+| ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
 | CRIT-2 | No real Bitcoin chain client | **HIGH** | `getChainClient()` always returns `MockChainClient`. No `bitcoinjs-lib`, no OP_RETURN, no AWS KMS. |
 | CRIT-3 | No Stripe checkout flow | **HIGH** | SDK initialized, webhook verification works, but no checkout session creation or pricing UI. |
-| CRIT-4 | Onboarding routes are placeholders | **MEDIUM** | `/onboarding/role`, `/onboarding/org`, `/review-pending` all render `<DashboardPage/>`. Components exist: `RoleSelector`, `OrgOnboardingForm`, `ManualReviewGate`. |
-| CRIT-5 | Proof export JSON download is no-op | **MEDIUM** | PDF works via `generateAuditReport`. JSON proof package download handler does nothing. |
-| CRIT-6 | `CSVUploadWizard` uses simulated processing | **MEDIUM** | `useBulkAnchors` hook exists but wizard doesn't call it. |
+| ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
+| ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
+| ~~CRIT-6~~ | ~~`CSVUploadWizard` uses simulated processing~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. Connected to csvParser + useBulkAnchors hook. Commit a38b485.~~ |
 | ~~CRIT-7~~ | ~~Browser tab says "Ralph"~~ | ~~LOW~~ | ~~RESOLVED 2026-03-10. `package.json` name → `arkova`, `index.html` title → `Arkova`.~~ |
 
 ### P1 Bedrock — 6/6 COMPLETE
