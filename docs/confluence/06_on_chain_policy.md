@@ -2,11 +2,11 @@
 
 ## Overview
 
-Ralph anchors document fingerprints to a blockchain for tamper-evident timestamping. This document describes the content policy guardrails that prevent abuse and ensure compliance.
+Arkova anchors document fingerprints to a blockchain for tamper-evident timestamping. This document describes the content policy guardrails that prevent abuse and ensure compliance.
 
 ## Core Principle: Fingerprint-Only
 
-Ralph does NOT store document content on-chain or in the database. Only the SHA-256 fingerprint (hash) is stored. This means:
+Arkova does NOT store document content on-chain or in the database. Only the SHA-256 fingerprint (hash) is stored. This means:
 
 1. **No content inspection possible** - We cannot determine document contents from the hash
 2. **Privacy preserved** - Sensitive documents never leave user devices
@@ -95,13 +95,19 @@ These fields must NEVER be included in on-chain transactions:
 | `org_id` | Privacy concern |
 | `email` | PII |
 
-## Rate Limiting (Future)
+## Rate Limiting (Defined — Constitution Section 1.10)
 
-Future implementations should consider:
+Rate limits are defined in the Constitution and enforced by the worker (`services/worker/src/utils/rateLimit.ts`):
 
-1. **Per-user anchor limits** - Prevent spam anchoring
-2. **Per-org anchor limits** - Organizational quotas
-3. **Global rate limits** - System protection
+| Scope | Limit | Notes |
+|-------|-------|-------|
+| Anonymous | 100 req/min per IP | Public verification endpoints |
+| API key holders | 1,000 req/min per key | Authenticated API access (Phase 1.5) |
+| Batch endpoints | 10 req/min per API key | Bulk operations (Phase 1.5) |
+
+Rate limit headers are included on every response. HTTP 429 with `Retry-After` on excess.
+
+Additionally, subscription-tier anchor quotas are enforced via the `plans.records_per_month` column (migration 0016).
 
 ## Compliance Considerations
 

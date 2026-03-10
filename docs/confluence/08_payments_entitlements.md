@@ -1,22 +1,22 @@
 # Payments & Entitlements
+_Last updated: 2026-03-10 | Story: P7-TS-01, P7-TS-02, P7-TS-03_
 
 ## Overview
 
-Ralph uses Stripe for billing and entitlement management. This document describes the payment architecture, subscription tiers, and how entitlements are enforced.
+Arkova uses Stripe for billing and entitlement management. Billing state is stored across four tables in the `plans`/`subscriptions`/`entitlements`/`billing_events` schema (migration 0016). Stripe integration runs exclusively in the worker service.
 
 ## Non-Custodial Model
 
-**Critical**: Ralph is non-custodial. We do NOT:
+**Critical**: Arkova is non-custodial. We do NOT:
 - Store user cryptocurrency
-- Accept deposits
-- Process withdrawals
+- Accept deposits or process withdrawals
 - Hold user funds
 
 All on-chain fees are paid from a **corporate fee account** managed by Arkova.
 
 ## Terminology
 
-Per the Constitution, UI must use approved terminology:
+Per the Constitution (Section 1.3), UI must use approved terminology:
 
 | Forbidden | Required |
 |-----------|----------|
@@ -27,65 +27,57 @@ Per the Constitution, UI must use approved terminology:
 
 ## Subscription Tiers
 
-### Individual Plan
+Plans are defined in the `plans` table (migration 0016, seeded with defaults). Pricing is enterprise B2B and not public — specific dollar amounts are configured in Stripe Dashboard and referenced via `stripe_price_id`.
 
-| Feature | Limit |
-|---------|-------|
-| Anchors per month | 10 |
-| Storage (metadata) | 100 MB |
-| Verification | Unlimited |
-| Support | Community |
+| Plan ID | Name | Records/Month | Key Features |
+|---------|------|---------------|-------------|
+| `free` | Free | 3 | Basic verification, 7-day proof access |
+| `individual` | Individual | 10 | Proof downloads, basic support |
+| `professional` | Professional | 100 | Bulk CSV upload, API access, priority support |
+| `organization` | Organization | Unlimited | Custom integrations, SLA, dedicated support |
 
-### Professional Plan
+Tier enforcement is via `profiles.subscription_tier` (privileged column, migration 0028) and `entitlements` table lookups.
 
-| Feature | Limit |
-|---------|-------|
-| Anchors per month | 100 |
-| Storage (metadata) | 1 GB |
-| Verification | Unlimited |
-| API Access | Yes |
-| Support | Email |
+## Database Schema
 
-### Organization Plan
+### Billing Tables (migration 0016)
 
-| Feature | Limit |
-|---------|-------|
-| Anchors per month | Unlimited |
-| Storage (metadata) | 10 GB |
-| Team members | Up to 25 |
-| Verification | Unlimited |
-| API Access | Yes |
-| Webhooks | Yes |
-| Support | Priority |
+All four tables have RLS enabled with `FORCE ROW LEVEL SECURITY`. Full column details in [02_data_model.md](./02_data_model.md).
+
+| Table | Purpose | RLS |
+|-------|---------|-----|
+| `plans` | Plan definitions (seeded) | Authenticated can read active plans |
+| `subscriptions` | User subscription state | User reads own; one subscription per user |
+| `entitlements` | Fine-grained feature access | User reads own |
+| `billing_events` | Append-only billing audit trail | User reads own; immutable (triggers) |
+
+**Key design decisions:**
+- `stripe_customer_id` and `stripe_subscription_id` live on `subscriptions`, NOT on `profiles`
+- `billing_events` reuses `reject_audit_modification()` from migration 0006 for append-only enforcement
+- `billing_events.stripe_event_id` (UNIQUE) provides Stripe webhook idempotency
+
+### Profile Billing Columns (migration 0028)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `is_verified` | boolean | Identity verified by admin (privileged) |
+| `subscription_tier` | text | free / starter / professional / enterprise (privileged) |
+
+Both are guarded by `protect_privileged_profile_fields()` trigger — only settable via service_role.
 
 ## Stripe Integration
 
-### Products & Prices
+### Checkout Flow (NOT YET IMPLEMENTED — CRIT-3)
 
-Products are created in Stripe Dashboard:
-
-```
-Product: Ralph Individual
-  - Price: $9.99/month (price_individual_monthly)
-  - Price: $99/year (price_individual_yearly)
-
-Product: Ralph Professional
-  - Price: $29.99/month (price_professional_monthly)
-  - Price: $299/year (price_professional_yearly)
-
-Product: Ralph Organization
-  - Price: $99.99/month (price_organization_monthly)
-  - Price: $999/year (price_organization_yearly)
-```
-
-### Checkout Flow
-
+Planned flow:
 1. User selects plan on pricing page
-2. Redirect to Stripe Checkout
+2. Worker creates Stripe Checkout Session
 3. Stripe processes payment
 4. Webhook `checkout.session.completed` fires
-5. Worker updates user entitlements in database
+5. Worker creates subscription record and updates entitlements
 6. User redirected to success page
+
+**Status:** No checkout session endpoint exists. No pricing UI. This is a production blocker.
 
 ### Subscription Management
 
@@ -98,98 +90,70 @@ const portalSession = await stripe.billingPortal.sessions.create({
 });
 ```
 
+### Webhook Processing
+
+Stripe webhooks are verified in the worker (`services/worker/src/stripe/handlers.ts`). See [09_webhooks.md](./09_webhooks.md) for full webhook documentation.
+
+| Event | Action |
+|-------|--------|
+| `checkout.session.completed` | Create subscription record |
+| `customer.subscription.updated` | Update subscription status |
+| `customer.subscription.deleted` | Downgrade to free |
+| `invoice.payment_failed` | Log failure, notify user |
+
 ## Entitlement Enforcement
-
-### Database Schema
-
-```sql
--- Added to profiles table
-ALTER TABLE profiles ADD COLUMN subscription_tier text DEFAULT 'free';
-ALTER TABLE profiles ADD COLUMN subscription_status text DEFAULT 'inactive';
-ALTER TABLE profiles ADD COLUMN stripe_customer_id text;
-ALTER TABLE profiles ADD COLUMN stripe_subscription_id text;
-ALTER TABLE profiles ADD COLUMN anchor_count_this_month integer DEFAULT 0;
-ALTER TABLE profiles ADD COLUMN anchor_count_reset_at timestamptz;
-```
 
 ### Enforcement Points
 
-1. **Anchor Creation**: Check `anchor_count_this_month` against tier limit
-2. **API Access**: Check `subscription_tier` includes API access
+1. **Anchor Creation**: Check `plans.records_per_month` against monthly usage
+2. **API Access**: Check `subscription_tier` includes API access (Phase 1.5)
 3. **Webhook Configuration**: Check `subscription_tier` is 'organization'
 
 ### Monthly Reset
 
-A scheduled job resets `anchor_count_this_month` on the 1st of each month:
-
-```sql
-UPDATE profiles
-SET anchor_count_this_month = 0,
-    anchor_count_reset_at = now()
-WHERE anchor_count_reset_at < date_trunc('month', now());
-```
-
-## Webhook Handling
-
-See [09_webhooks.md](./09_webhooks.md) for webhook implementation details.
-
-### Critical Events
-
-| Event | Action |
-|-------|--------|
-| `checkout.session.completed` | Activate subscription |
-| `customer.subscription.updated` | Update tier/status |
-| `customer.subscription.deleted` | Downgrade to free |
-| `invoice.payment_failed` | Mark payment failed |
+A scheduled worker job resets monthly anchor counts based on subscription period.
 
 ## Environment Variables
 
 ```bash
-# Stripe Configuration
-STRIPE_SECRET_KEY=sk_live_... # Server-side only
-STRIPE_PUBLISHABLE_KEY=pk_live_... # Client-safe
-STRIPE_WEBHOOK_SECRET=whsec_... # For webhook verification
+# Stripe Configuration (worker only — never in browser)
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
 
 # NEVER expose STRIPE_SECRET_KEY to client
 ```
 
 ## Testing
 
-### Test Mode
-
-Use Stripe test mode for development:
-
-```bash
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PUBLISHABLE_KEY=pk_test_...
-```
-
-### Test Cards
-
-| Card | Result |
-|------|--------|
-| 4242 4242 4242 4242 | Success |
-| 4000 0000 0000 0002 | Decline |
-| 4000 0000 0000 3220 | 3D Secure |
-
 ### Mock Mode
 
-For unit tests, use Stripe mocks:
+Worker tests use `services/worker/src/stripe/mock.ts`. No real Stripe API calls in tests (Constitution 1.7).
 
 ```typescript
+// Mock Stripe for tests
 vi.mock('stripe', () => ({
   default: vi.fn(() => ({
     checkout: {
       sessions: { create: vi.fn() },
     },
-    // ... other mocked methods
   })),
 }));
 ```
 
+## Current Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Billing schema (4 tables) | Complete | Migration 0016 |
+| Profile billing columns | Complete | Migration 0028 |
+| Stripe webhook verification | Complete | P7-TS-03 |
+| BillingOverview.tsx | Exists | Not routed with real data |
+| Checkout session creation | Not Started | CRIT-3 |
+| Pricing UI | Not Started | CRIT-3 |
+
 ## Audit Events
 
-All payment events are logged:
+All payment events are logged to `billing_events`:
 
 - `payment.subscription_created`
 - `payment.subscription_updated`
@@ -199,6 +163,12 @@ All payment events are logged:
 
 ## Related Documentation
 
-- [09_webhooks.md](./09_webhooks.md) - Webhook implementation
-- [10_anchoring_worker.md](./10_anchoring_worker.md) - Worker service
-- [04_audit_events.md](./04_audit_events.md) - Audit logging
+- [09_webhooks.md](./09_webhooks.md) — Webhook implementation
+- [10_anchoring_worker.md](./10_anchoring_worker.md) — Worker service
+- [02_data_model.md](./02_data_model.md) — Full billing table schemas
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit | Rewrote: removed specific dollar amounts, fixed table references to match migration 0016 (plans/subscriptions/entitlements/billing_events), removed fake stripe_customer_id/stripe_subscription_id/anchor_count_this_month from profiles, documented implementation status |

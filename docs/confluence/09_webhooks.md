@@ -1,10 +1,11 @@
 # Webhooks
+_Last updated: 2026-03-10 | Story: P7-TS-09, P7-TS-10_
 
 ## Overview
 
-Ralph uses webhooks for two purposes:
-1. **Inbound**: Receiving events from Stripe
-2. **Outbound**: Sending anchor status updates to customers
+Arkova uses webhooks for two purposes:
+1. **Inbound**: Receiving events from Stripe (billing lifecycle)
+2. **Outbound**: Sending anchor status updates to organization customers
 
 ## Inbound Webhooks (Stripe)
 
@@ -14,11 +15,11 @@ Ralph uses webhooks for two purposes:
 POST /webhooks/stripe
 ```
 
-This endpoint is handled by the worker service, NOT Next.js API routes (per Constitution).
+Handled by the worker service (`services/worker/src/stripe/handlers.ts`). Per the Constitution, all backend processing runs in the worker — no frontend framework API routes.
 
 ### Signature Verification
 
-All Stripe webhooks must be verified:
+All Stripe webhooks must be verified using `stripe.webhooks.constructEvent()` (Constitution 1.4):
 
 ```typescript
 import Stripe from 'stripe';
@@ -44,20 +45,20 @@ async function handleStripeWebhook(req: Request) {
 | Event | Handler | Action |
 |-------|---------|--------|
 | `checkout.session.completed` | `handleCheckoutComplete` | Create subscription record |
-| `customer.subscription.created` | `handleSubscriptionCreated` | Update profile tier |
-| `customer.subscription.updated` | `handleSubscriptionUpdated` | Update profile tier/status |
+| `customer.subscription.created` | `handleSubscriptionCreated` | Update subscription status |
+| `customer.subscription.updated` | `handleSubscriptionUpdated` | Update subscription status |
 | `customer.subscription.deleted` | `handleSubscriptionDeleted` | Downgrade to free |
 | `invoice.paid` | `handleInvoicePaid` | Log payment success |
 | `invoice.payment_failed` | `handlePaymentFailed` | Log failure, notify user |
 
 ### Idempotency
 
-Webhooks may be delivered multiple times. Use Stripe event ID for idempotency:
+Stripe webhooks may be delivered multiple times. The `billing_events` table provides idempotency via the `stripe_event_id` column:
 
 ```typescript
 // Check if event already processed
 const existing = await db
-  .from('webhook_events')
+  .from('billing_events')
   .select('id')
   .eq('stripe_event_id', event.id)
   .single();
@@ -68,7 +69,7 @@ if (existing.data) {
 
 // Process and record
 await processEvent(event);
-await db.from('webhook_events').insert({
+await db.from('billing_events').insert({
   stripe_event_id: event.id,
   event_type: event.type,
   processed_at: new Date().toISOString(),
@@ -89,7 +90,7 @@ Return appropriate status codes:
 
 ### Purpose
 
-Organization customers can configure webhooks to receive anchor status updates.
+Organization customers can configure webhooks to receive anchor status updates. Configuration UI is at `/settings/webhooks` (`WebhookSettings.tsx`).
 
 ### Events
 
@@ -100,41 +101,27 @@ Organization customers can configure webhooks to receive anchor status updates.
 | `anchor.revoked` | Anchor ID, revocation reason |
 | `anchor.verified` | Anchor ID, verification result |
 
-### Configuration
-
-Organizations configure webhooks in settings:
-
-```typescript
-interface WebhookConfig {
-  url: string;           // HTTPS endpoint
-  secret: string;        // For HMAC signature
-  events: string[];      // Events to receive
-  enabled: boolean;
-  created_at: string;
-  last_triggered_at: string | null;
-  failure_count: number;
-}
-```
-
 ### Delivery
+
+Delivery engine: `services/worker/src/webhooks/delivery.ts`
 
 ```typescript
 async function deliverWebhook(
-  config: WebhookConfig,
+  endpoint: WebhookEndpoint,
   event: WebhookEvent
 ): Promise<void> {
   const payload = JSON.stringify(event);
-  const signature = createHmac('sha256', config.secret)
+  const signature = createHmac('sha256', secret)
     .update(payload)
     .digest('hex');
 
-  const response = await fetch(config.url, {
+  const response = await fetch(endpoint.url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-Ralph-Signature': signature,
-      'X-Ralph-Event': event.type,
-      'X-Ralph-Timestamp': new Date().toISOString(),
+      'X-Arkova-Signature': signature,
+      'X-Arkova-Event': event.type,
+      'X-Arkova-Timestamp': new Date().toISOString(),
     },
     body: payload,
   });
@@ -157,7 +144,7 @@ Failed deliveries are retried with exponential backoff:
 | 4 | 30 minutes |
 | 5 | 2 hours |
 
-After 5 failures, webhook is disabled and organization is notified.
+After 5 failures, webhook endpoint is disabled and organization is notified.
 
 ### Signature Verification (Customer Side)
 
@@ -176,51 +163,77 @@ function verifyWebhook(payload: string, signature: string, secret: string): bool
 
 ## Database Schema
 
-```sql
--- Webhook configurations (per organization)
-CREATE TABLE webhook_configs (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  org_id uuid NOT NULL REFERENCES organizations(id),
-  url text NOT NULL,
-  secret text NOT NULL,
-  events text[] NOT NULL DEFAULT '{}',
-  enabled boolean NOT NULL DEFAULT true,
-  failure_count integer NOT NULL DEFAULT 0,
-  last_triggered_at timestamptz,
-  last_success_at timestamptz,
-  last_failure_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
+### webhook_endpoints (migration 0018)
 
--- Webhook delivery log
-CREATE TABLE webhook_deliveries (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  config_id uuid NOT NULL REFERENCES webhook_configs(id),
-  event_type text NOT NULL,
-  payload jsonb NOT NULL,
-  response_status integer,
-  response_body text,
-  delivered_at timestamptz,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
+Organization-level webhook configuration.
 
--- Stripe webhook events (for idempotency)
-CREATE TABLE stripe_webhook_events (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  stripe_event_id text UNIQUE NOT NULL,
-  event_type text NOT NULL,
-  processed_at timestamptz NOT NULL DEFAULT now()
-);
-```
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | Primary key |
+| `org_id` | uuid | NO | — | FK → organizations(id) |
+| `url` | text | NO | — | HTTPS endpoint (enforced by CHECK) |
+| `secret_hash` | text | NO | — | HMAC secret hash (write-only) |
+| `events` | text[] | NO | `{anchor.secured, anchor.revoked}` | Events to receive |
+| `is_active` | boolean | NO | true | Enabled state |
+| `description` | text | YES | NULL | Human label |
+| `created_at` | timestamptz | NO | now() | Creation timestamp |
+| `updated_at` | timestamptz | NO | now() | Auto-updated via moddatetime |
+| `created_by` | uuid | YES | NULL | FK → profiles(id) |
+
+**Constraints:** `url` must match `^https://`.
+
+**RLS:** ORG_ADMIN can full CRUD for their org's endpoints.
+
+### webhook_delivery_logs (migration 0018)
+
+Delivery attempts for audit and retry logic.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | Primary key |
+| `endpoint_id` | uuid | NO | — | FK → webhook_endpoints(id) |
+| `event_type` | text | NO | — | Event name |
+| `event_id` | uuid | NO | — | Source event ID |
+| `payload` | jsonb | NO | — | Delivered payload |
+| `attempt_number` | integer | NO | 1 | Retry attempt number |
+| `status` | text | NO | — | pending / success / failed / retrying |
+| `response_status` | integer | YES | NULL | HTTP response code |
+| `response_body` | text | YES | NULL | Response body |
+| `error_message` | text | YES | NULL | Error details |
+| `created_at` | timestamptz | NO | now() | Created timestamp |
+| `delivered_at` | timestamptz | YES | NULL | Successful delivery time |
+| `next_retry_at` | timestamptz | YES | NULL | Next retry scheduled |
+| `idempotency_key` | text | YES | NULL | Unique (prevents duplicates) |
+
+**RLS:** ORG_ADMIN can read logs for their org's endpoints (via subquery on webhook_endpoints).
+
+### billing_events (migration 0016)
+
+Used for Stripe inbound webhook idempotency. See [08_payments_entitlements.md](./08_payments_entitlements.md) for full schema.
+
+Key columns: `stripe_event_id` (UNIQUE), `event_type`, `payload`, `idempotency_key`.
+
+## Current Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Stripe inbound webhook verification | Complete | P7-TS-03 |
+| Stripe mock mode for tests | Complete | P7-TS-03 |
+| WebhookSettings UI | Partial | P7-TS-09 — routed at `/settings/webhooks`, secret HMAC hashing not implemented |
+| Delivery engine | Partial | P7-TS-10 — `delivery.ts` has exponential backoff + HMAC signing, but `anchor.ts` never triggers dispatch |
+| webhook_endpoints / webhook_delivery_logs tables | Complete | Migration 0018 |
+| billing_events table | Complete | Migration 0016 |
+
+**Known gap:** Anchor lifecycle events (SECURED, REVOKED) do not trigger outbound webhook dispatch. The delivery engine exists but is not wired to the anchor processing pipeline.
 
 ## Security
 
-1. **HTTPS Only**: Outbound webhooks only to HTTPS URLs
-2. **Signature Verification**: All webhooks signed
+1. **HTTPS Only**: Outbound webhooks only to HTTPS URLs (CHECK constraint on `url`)
+2. **Signature Verification**: All webhooks signed with HMAC-SHA256
 3. **Timeout**: 30 second timeout for delivery
 4. **Rate Limiting**: Max 100 deliveries per minute per organization
-5. **IP Allowlist**: Optional customer-side IP filtering
+5. **Secret hashing**: `secret_hash` column stores hash, never raw secret
+6. **RLS**: All tables have FORCE ROW LEVEL SECURITY
 
 ## Testing
 
@@ -233,13 +246,9 @@ stripe listen --forward-to localhost:3001/webhooks/stripe
 stripe trigger checkout.session.completed
 ```
 
-### Mock Webhook Receiver
+### Mock Mode
 
-For testing outbound webhooks:
-
-```bash
-npx webhook-relay --port 8080
-```
+Worker tests use `services/worker/src/stripe/mock.ts` for Stripe mocking. No real Stripe or Bitcoin API calls in tests (Constitution 1.7).
 
 ## Audit Events
 
@@ -252,6 +261,12 @@ All webhook activity is logged:
 
 ## Related Documentation
 
-- [08_payments_entitlements.md](./08_payments_entitlements.md) - Payment system
-- [10_anchoring_worker.md](./10_anchoring_worker.md) - Worker service
-- [04_audit_events.md](./04_audit_events.md) - Audit logging
+- [08_payments_entitlements.md](./08_payments_entitlements.md) — Payment system and billing_events schema
+- [10_anchoring_worker.md](./10_anchoring_worker.md) — Worker service
+- [04_audit_events.md](./04_audit_events.md) — Audit logging
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit | Rewrote: fixed "Ralph" branding, corrected table names (webhook_endpoints, webhook_delivery_logs), removed nonexistent stripe_webhook_events, added billing_events for idempotency, documented implementation status and known gaps |

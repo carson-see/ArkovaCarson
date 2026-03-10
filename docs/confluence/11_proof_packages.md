@@ -1,28 +1,34 @@
 # Proof Packages
+_Last updated: 2026-03-10 | Story: P7-TS-07, P7-TS-08_
 
 ## Overview
 
-Proof packages are downloadable verification bundles that users can share to prove document authenticity. They contain all information needed to independently verify an anchor without accessing Ralph.
+Proof packages are downloadable verification bundles that allow recipients to independently verify an anchor's authenticity. The current implementation provides PDF certificates; JSON proof download and ZIP archives are planned but not yet functional.
 
-## Package Contents
+## Current Implementation
 
-A proof package is a ZIP archive containing:
+### PDF Certificate (Complete — P7-TS-08)
 
-```
-proof_package_<anchor_id>.zip
-├── proof.json           # Machine-readable proof data
-├── proof.html           # Human-readable proof page
-├── verification.txt     # Plain text verification instructions
-└── README.md            # Package documentation
-```
+`src/lib/generateAuditReport.ts` generates PDF certificates using jsPDF (201 lines). Called from `RecordDetailPage`.
 
-## Proof Data (proof.json)
+The PDF includes:
+1. **Document Information** — filename, fingerprint (SHA-256), file size
+2. **Anchor Timeline** — created timestamp, secured timestamp
+3. **Network Receipt** — receipt ID, block reference (using approved terminology)
+4. **Verification Instructions** — how to compute SHA-256, link to public verification page
+5. **QR Code** — links to `/verify/{publicId}`
+
+### JSON Proof Download (No-Op — CRIT-5)
+
+`src/components/public/ProofDownload.tsx` renders download buttons for both PDF and JSON formats. The PDF handler works; the JSON handler does nothing. This is tracked as CRIT-5.
+
+**Planned JSON schema (`proofPackage.ts`):**
 
 ```json
 {
   "version": "1.0",
   "anchor": {
-    "id": "a1111111-1111-1111-1111-111111111111",
+    "public_id": "abc123xyz456",
     "fingerprint": "a1b2c3d4e5f6...",
     "filename": "contract_2024.pdf",
     "file_size": 1048576,
@@ -31,170 +37,58 @@ proof_package_<anchor_id>.zip
   },
   "chain": {
     "network": "Production Network",
-    "receipt_id": "btc_tx_001_demo",
+    "receipt_id": "btc_tx_001",
     "block_height": 800000,
-    "block_timestamp": "2024-01-15T10:35:00Z",
-    "confirmations": 1000
+    "block_timestamp": "2024-01-15T10:35:00Z"
   },
   "verification": {
-    "url": "https://ralph.app/verify/<anchor_id>",
+    "url": "https://app.arkova.io/verify/{public_id}",
     "instructions": "To verify, hash your document with SHA-256..."
   },
   "generated_at": "2024-01-20T14:00:00Z",
-  "generated_by": "ralph.app"
+  "generated_by": "app.arkova.io"
 }
 ```
 
-## Human-Readable Proof (proof.html)
+### ZIP Archive (Planned — Not Implemented)
 
-A self-contained HTML page that displays:
-
-1. **Document Information**
-   - Filename
-   - Fingerprint (SHA-256)
-   - File size
-
-2. **Anchor Timeline**
-   - Created timestamp
-   - Secured timestamp
-   - Network receipt reference
-
-3. **Verification Instructions**
-   - How to compute SHA-256
-   - How to check network receipt
-   - Link to public verification page
-
-4. **Network Receipt Details**
-   - Receipt ID
-   - Block reference
-   - Confirmation count
-
-## Verification Instructions (verification.txt)
+A future enhancement would bundle multiple files into a ZIP archive:
 
 ```
-DOCUMENT VERIFICATION INSTRUCTIONS
-==================================
+proof_package_{public_id}.zip
+├── proof.json           # Machine-readable proof data
+├── certificate.pdf      # Human-readable PDF certificate
+├── verification.txt     # Plain text verification instructions
+└── README.md            # Package documentation
+```
 
-Document: contract_2024.pdf
-Fingerprint: a1b2c3d4e5f6...
+This is not implemented. No ZIP library is installed. The ZIP format is a target for post-launch improvement.
 
+## Verification Instructions
+
+### Command-Line Verification
+
+```
 STEP 1: Compute Document Fingerprint
--------------------------------------
-On macOS/Linux:
-  shasum -a 256 contract_2024.pdf
-
-On Windows (PowerShell):
-  Get-FileHash contract_2024.pdf -Algorithm SHA256
+  macOS/Linux:  shasum -a 256 <filename>
+  Windows:      Get-FileHash <filename> -Algorithm SHA256
 
 STEP 2: Compare Fingerprints
------------------------------
-The computed fingerprint should match:
-a1b2c3d4e5f6...
+  The computed fingerprint should match the anchor's fingerprint.
 
 STEP 3: Verify Network Receipt
--------------------------------
-Visit: https://ralph.app/verify/a1111111-1111-1111-1111-111111111111
-
-Or independently verify receipt: btc_tx_001_demo
-Block: 800000
-Timestamp: 2024-01-15T10:35:00Z
-
-VERIFICATION COMPLETE
-=====================
-If the fingerprints match, your document is authentic and
-was secured on 2024-01-15T10:35:00Z.
-```
-
-## Generation
-
-### API Endpoint
-
-```typescript
-// Worker service endpoint
-GET /api/anchors/:id/proof-package
-
-// Response: application/zip
-// Filename: proof_package_<anchor_id>.zip
-```
-
-### Generation Logic
-
-```typescript
-async function generateProofPackage(anchorId: string): Promise<Buffer> {
-  const anchor = await db.from('anchors')
-    .select('*, organizations(*)')
-    .eq('id', anchorId)
-    .eq('status', 'SECURED')
-    .single();
-
-  if (!anchor.data) {
-    throw new Error('Anchor not found or not secured');
-  }
-
-  const archive = new AdmZip();
-
-  // Add proof.json
-  archive.addFile('proof.json', Buffer.from(
-    JSON.stringify(buildProofJson(anchor.data), null, 2)
-  ));
-
-  // Add proof.html
-  archive.addFile('proof.html', Buffer.from(
-    renderProofHtml(anchor.data)
-  ));
-
-  // Add verification.txt
-  archive.addFile('verification.txt', Buffer.from(
-    renderVerificationTxt(anchor.data)
-  ));
-
-  // Add README.md
-  archive.addFile('README.md', Buffer.from(
-    renderReadme(anchor.data)
-  ));
-
-  return archive.toBuffer();
-}
+  Visit: https://app.arkova.io/verify/{public_id}
 ```
 
 ## Public Verification
 
 ### Verification Page
 
-Public URL: `https://ralph.app/verify/<anchor_id>`
+Public URL: `https://app.arkova.io/verify/{publicId}`
 
-This page allows anyone to:
-1. View anchor details
-2. Upload a document to verify
-3. See verification result
+Uses `get_public_anchor` RPC (SECURITY DEFINER, migrations 0020/0039/0044) to return redacted anchor info. The page renders 5 sections via `PublicVerification.tsx` (P6-TS-01).
 
-### Verification API
-
-```typescript
-POST /api/verify
-
-Body: {
-  "anchor_id": "a1111111-...",
-  "fingerprint": "computed_sha256_hash"
-}
-
-Response: {
-  "verified": true,
-  "anchor": {
-    "id": "a1111111-...",
-    "filename": "contract_2024.pdf",
-    "secured_at": "2024-01-15T10:35:00Z"
-  },
-  "chain": {
-    "receipt_id": "btc_tx_001_demo",
-    "block_height": 800000
-  }
-}
-```
-
-### Client-Side Verification
-
-The verification page computes fingerprints client-side:
+### Client-Side Fingerprint Verification
 
 ```typescript
 async function computeFingerprint(file: File): Promise<string> {
@@ -205,14 +99,17 @@ async function computeFingerprint(file: File): Promise<string> {
 }
 ```
 
+Fingerprint computation happens client-side only (Constitution 1.6).
+
 ## Terminology Compliance
 
-Per Constitution, proof packages use approved terminology:
+Per Constitution Section 1.3, proof packages use approved terminology:
 
 | Internal | Display |
 |----------|---------|
 | `chain_tx_id` | Network Receipt ID |
 | `chain_block_height` | Block Reference |
+| `chain_timestamp` | Network Observed Time |
 | `testnet` | Test Environment |
 | `mainnet` | Production Network |
 
@@ -220,46 +117,28 @@ Per Constitution, proof packages use approved terminology:
 
 - **Own anchors**: Users can download proof packages for their anchors
 - **Organization anchors**: ORG_ADMIN can download for any org anchor
-- **Public verification**: Anyone can verify with anchor ID + fingerprint
+- **Public verification**: Anyone with the `public_id` can verify via the public page
 
-## Report Ordering
+## Current Implementation Status
 
-Organizations on the Organization plan can order bulk reports:
-
-### Report Types
-
-1. **Monthly Summary**: All anchors secured in a month
-2. **Compliance Report**: Detailed audit trail for compliance
-3. **Custom Date Range**: User-specified period
-
-### Order Flow
-
-1. Organization admin requests report
-2. Worker generates report asynchronously
-3. Email notification when ready
-4. Download from secure link (24-hour expiry)
-
-### Report Format
-
-Reports are delivered as:
-- PDF summary
-- CSV data export
-- ZIP of individual proof packages
-
-## Audit Events
-
-All proof package operations are logged:
-
-- `proof.package_generated`
-- `proof.verification_attempted`
-- `proof.verification_success`
-- `proof.verification_failed`
-- `report.ordered`
-- `report.generated`
-- `report.downloaded`
+| Component | Status | Notes |
+|-----------|--------|-------|
+| PDF certificate generation | Complete | `generateAuditReport.ts` (jsPDF) |
+| PDF download button | Complete | `ProofDownload.tsx` |
+| JSON proof download | No-op | CRIT-5 — handler does nothing |
+| ZIP archive | Not started | No ZIP library installed |
+| Public verification page | Complete | P6-TS-01, 5-section display |
+| QR code generation | Complete | P6-TS-02, in AssetDetailView |
+| Verification events logging | Complete | P6-TS-06, migration 0042/0045 |
 
 ## Related Documentation
 
-- [06_on_chain_policy.md](./06_on_chain_policy.md) - Content policy
-- [08_payments_entitlements.md](./08_payments_entitlements.md) - Report ordering
-- [10_anchoring_worker.md](./10_anchoring_worker.md) - Worker service
+- [06_on_chain_policy.md](./06_on_chain_policy.md) — Content policy and allowed on-chain fields
+- [08_payments_entitlements.md](./08_payments_entitlements.md) — Report ordering (organization plan)
+- [10_anchoring_worker.md](./10_anchoring_worker.md) — Worker service
+
+## Change Log
+
+| Date | Story | Change |
+|------|-------|--------|
+| 2026-03-10 | Audit | Rewrote: documented actual implementation (PDF works, JSON is no-op CRIT-5, ZIP is planned not built), removed fictional ZIP generation code, added implementation status table |

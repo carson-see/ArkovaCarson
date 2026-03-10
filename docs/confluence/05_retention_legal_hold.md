@@ -2,7 +2,7 @@
 
 ## Overview
 
-Ralph supports data retention policies and legal hold capabilities to meet compliance and legal requirements. This document describes the mechanisms and constraints.
+Arkova supports data retention policies and legal hold capabilities to meet compliance and legal requirements. This document describes the mechanisms and constraints.
 
 ## Legal Hold
 
@@ -153,13 +153,13 @@ CREATE UNIQUE INDEX idx_anchors_user_fingerprint_unique
 
 ### Important Note
 
-While Ralph allows soft deletion of anchor records, **on-chain data is permanent**:
+While Arkova allows soft deletion of anchor records, **on-chain data is permanent**:
 
 - The fingerprint anchored to blockchain cannot be removed
-- `deleted_at` only affects Ralph's local record
+- `deleted_at` only affects Arkova's local record
 - Chain evidence remains for verification
 
-This is by design: the blockchain provides immutable proof that existed independently of Ralph's database.
+This is by design: the blockchain provides immutable proof that existed independently of Arkova's database.
 
 ## Compliance Considerations
 

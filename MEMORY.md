@@ -50,6 +50,7 @@ Decisions that affect architecture and should never be revisited without explici
 | 2026-02 | Gemini AI Integration Spec is NOT authoritative | The spec describes server-side document processing, which violates the Constitution | Do not reference it for architecture decisions. Client-side OCR (PDF.js + Tesseract.js) with server-side LLM on extracted text only. |
 | 2026-02 | GTM Report March 2026 is authoritative pricing source | Supersedes Sales Playbook Jan 2026 and older docs | Use $1K/$3K/custom tiers from GTM report. |
 | 2026-03 | CLAUDE.md story status is more current than the Technical Backlog PDF | Backlog audit notes for P4-E2 say "NOT STARTED" but migrations 0029-0032 are implemented | When status conflicts, trust CLAUDE.md Section 11 over the PDF backlog |
+| 2026-03-10 | Worker hardening sprint before Bitcoin chain integration | Worker/chain critical path has 0% test coverage. processAnchor(), job claim flow, webhook dispatch all untested. Building on sand. | ~1 week of test writing before any bitcoinjs-lib work. CLAUDE.md Section 9 updated to reflect new ordering. |
 
 ---
 
@@ -122,9 +123,55 @@ docs/confluence/                   ← Architecture, data model, security, audit
 
 > When ending a session, write what the next session needs to know here. Clear old notes when they're no longer relevant.
 
-**Last session (2026-03-10):** Full codebase audit completed against GitHub repo `carson-see/ArkovaCarson`. Audit document produced (`Arkova_Codebase_Audit_GoLive_Plan_March2026.docx`). CLAUDE.md Section 11 story status is more accurate than the Technical Backlog PDF for P4-E2 (which says NOT STARTED but is actually done). 7 critical blockers identified. 4-week go-live sprint plan drafted.
+**Last session (2026-03-10):** Test coverage assessment revealed worker/chain critical path has 0% coverage. Decision made to do a ~1 week hardening sprint before starting Bitcoin chain integration (CRIT-2). CLAUDE.md Section 9 updated to add "Week 1: Worker Hardening" phase. Bitcoin Signet work shifted to Week 2-3.
 
-**Next session should:** Start with CRIT-1 (SecureDocumentDialog fix), CRIT-4 (onboarding wiring), and CRIT-7 (Ralph branding). These are sub-day tasks that immediately improve demo-readiness.
+**Worker hardening scope (6 tasks):**
+1. Unit test `processAnchor()` — success, timeout, malformed receipt, duplicate
+2. Test `processPendingAnchors()` job claim/completion flow
+3. Test ChainClient interface contract (MockChainClient exercises real interface)
+4. Wire webhook dispatch in `anchor.ts` (status → SECURED triggers delivery.ts)
+5. Test webhook HMAC signing correctness
+6. Anchor lifecycle integration test (PENDING → SECURED → webhook → public verify)
+
+**Next session should:** Start hardening work — begin with task 1 (unit test processAnchor).
+
+---
+
+## Bug Tracker
+
+> Non-blocking bugs and issues discovered during development. For production blockers, see CLAUDE.md Section 8 Critical Blockers.
+> **Format required:** Every bug entry must include steps to reproduce, expected vs actual behavior, and resolution actions taken.
+
+| ID | Date Found | Summary | Severity | Status | Detail |
+|----|-----------|---------|----------|--------|--------|
+| — | — | No bugs logged yet | — | — | — |
+
+### Bug Entry Template
+
+When logging a new bug, replace a row with this format:
+
+```
+| BUG-NNN | YYYY-MM-DD | Short summary | LOW/MEDIUM/HIGH | OPEN/IN PROGRESS/FIXED/WONT FIX | See below |
+```
+
+Then add a detail block below the table:
+
+```markdown
+#### BUG-NNN: [Short summary]
+- **Found during:** [story ID or task]
+- **Steps to reproduce:**
+  1. [Step 1]
+  2. [Step 2]
+  3. [Step 3]
+- **Expected behavior:** [What should happen]
+- **Actual behavior:** [What actually happens]
+- **Root cause:** [If known]
+- **Actions taken:**
+  - [Action 1 — date]
+  - [Action 2 — date]
+- **Resolution:** [Fix description, commit, or "OPEN"]
+- **Regression test:** [Test file/name that prevents recurrence, or "None yet"]
+```
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `audit_events` table provides an immutable, append-only audit trail for all significant actions in Ralph. This enables compliance, debugging, and security forensics.
+The `audit_events` table provides an immutable, append-only audit trail for all significant actions in Arkova. This enables compliance, debugging, and security forensics.
 
 ## Design Principles
 
@@ -150,20 +150,24 @@ await supabase.from('audit_events').insert({
 });
 ```
 
-### From Database Trigger (Future Enhancement)
-```sql
--- Example: Auto-log anchor creation
-CREATE OR REPLACE FUNCTION log_anchor_created()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO audit_events (
-    event_type, event_category, actor_id, target_type, target_id, org_id
-  ) VALUES (
-    'anchor.created', 'ANCHOR', NEW.user_id, 'anchor', NEW.id, NEW.org_id
-  );
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+### From Database Triggers (Deployed)
+
+The immutability triggers (`reject_audit_update`, `reject_audit_delete`) are deployed via migration 0006. They use `reject_audit_modification()` which raises an exception on any UPDATE or DELETE attempt, regardless of role.
+
+Migration 0017 also deploys `auto_create_anchoring_job()` — a trigger on `anchors` INSERT that demonstrates the trigger-based event tracking pattern (writes to `anchoring_jobs`, not `audit_events`).
+
+Audit events themselves are created through application code (`src/lib/auditLog.ts`), not database triggers:
+
+```typescript
+// Example: Anchor creation audit (from ConfirmAnchorModal)
+await supabase.from('audit_events').insert({
+  event_type: 'anchor.created',
+  event_category: 'ANCHOR',
+  target_type: 'anchor',
+  target_id: anchorId,
+  org_id: userOrgId,
+  details: `Created anchor for ${filename}`,
+});
 ```
 
 ## Retention

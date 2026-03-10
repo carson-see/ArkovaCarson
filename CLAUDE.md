@@ -160,7 +160,7 @@ See Section 5.
 
 ### While writing code
 - [ ] One story at a time — do not fix unrelated things
-- [ ] If you find a bug outside scope, note it in `agents.md` and stop
+- [ ] If you find a bug outside scope, log it in MEMORY.md Bug Tracker (full template) and stop
 - [ ] New tables: migration + rollback comment + RLS + `database.types.ts` + seed update
 - [ ] New hooks: follow `useAuth.ts` / `useAnchors.ts` pattern
 - [ ] New components: `src/components/<domain>/` with barrel export in `index.ts`
@@ -177,6 +177,23 @@ npm run gen:types         # if schema changed
 ```
 
 Update `docs/confluence/` page if schema/security/API changed. Update `agents.md` in modified folders. Update MEMORY.md "Session Handoff Notes" section.
+
+### Bug Documentation (Mandatory)
+
+Every bug found during development must be documented. Where it goes depends on severity:
+
+- **Production blockers** → CLAUDE.md Section 8 Critical Blockers table (CRIT-N format)
+- **All other bugs** → MEMORY.md Bug Tracker section
+
+**Required fields for every bug (no exceptions):**
+1. **Steps to reproduce** — numbered, specific, reproducible by someone unfamiliar with the code
+2. **Expected vs actual behavior** — what should happen and what does happen
+3. **Root cause** — if known at time of logging, update later when diagnosed
+4. **Actions taken** — every action attempted to fix, with dates
+5. **Resolution** — fix description + commit reference, or "OPEN"
+6. **Regression test** — test file/name that prevents recurrence, or "None yet"
+
+If a bug is found and fixed in the same session, still log it — the documentation prevents future regressions and builds institutional knowledge.
 
 ### Definition of Done
 - All acceptance criteria met
@@ -325,6 +342,19 @@ _Last updated: [date] | Story: [story ID]_
 | Date | Story | Change |
 |------|-------|--------|
 ```
+
+### Document Standards
+
+All docs live in `docs/confluence/` and are numbered 00–13. The index (`00_index.md`) lists all documents with descriptions and a suggested reading order.
+
+Every doc must include:
+- `_Last updated: [date] | Story: [story ID]_` line below the title
+- Schema docs reference specific migration numbers (e.g., "migration 0016")
+- Implementation status tables distinguish **Complete / Partial / Not Started**
+- Change log at the bottom tracking audit history
+- Cross-references use relative markdown links (e.g., `[02_data_model.md](./02_data_model.md)`)
+
+When a doc describes something that is partially implemented or a known gap exists, document it explicitly — never imply that something works if it doesn't.
 
 ### agents.md Updates
 
@@ -490,22 +520,34 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 | Fix Ralph branding | CRIT-7 | `package.json` name → `arkova`. `index.html` title → `Arkova`. |
 | Wire CSVUploadWizard | CRIT-6 | Connect to `useBulkAnchors` hook instead of simulated processing. |
 
+### Week 1: Worker Hardening (pre-chain prerequisite)
+
+> **Decision (2026-03-10):** Worker/chain path has 0% test coverage. Harden before writing real chain code so regressions are caught immediately when MockChainClient is swapped for bitcoinjs-lib.
+
+| Task | Detail |
+|------|--------|
+| Unit test `processAnchor()` | Test with mock chain client: success path, network timeout, malformed receipt, duplicate submission |
+| Test job claim/completion flow | Verify `processPendingAnchors()` claims, processes, and marks jobs done correctly |
+| Test chain client interface contract | Ensure MockChainClient exercises the same interface the real client will implement |
+| Wire webhook dispatch in `anchor.ts` | Connect status → SECURED lifecycle event to `delivery.ts`. Currently a dead end. |
+| Test webhook HMAC signing | Verify HMAC-SHA256 signing correctness in `delivery.ts` |
+| Anchor lifecycle integration test | PENDING → job claimed → chain submitted → SECURED → webhook fired → public verify works |
+
 ### Week 1-2: Payments + Proof
 
 | Task | Blocker | Detail |
 |------|---------|--------|
 | Stripe checkout session | CRIT-3 | Worker endpoint for `checkout.session.create`. Pricing UI. |
 | JSON proof download | CRIT-5 | Wire `downloadProofPackage()` in ProofDownload component. |
-| Bitcoin Signet | CRIT-2 | Install `bitcoinjs-lib`. Implement real ChainClient with OP_RETURN. Signet first. |
 
-### Week 3: Mainnet + Hardening
+### Week 2-3: Bitcoin Signet + Mainnet
 
-| Task | Detail |
-|------|--------|
-| AWS KMS | Key provisioning for mainnet signing. |
-| Mainnet OP_RETURN | Real Bitcoin anchoring. Treasury wallet funding. |
-| Webhook dispatch wiring | Connect `anchor.ts` lifecycle to `delivery.ts` dispatch. |
-| Webhook secret hashing | HMAC-SHA256 for webhook secrets. |
+| Task | Blocker | Detail |
+|------|---------|--------|
+| Bitcoin Signet | CRIT-2 | Install `bitcoinjs-lib`. Implement real ChainClient with OP_RETURN. Signet first. Worker hardening tests catch regressions. |
+| AWS KMS | — | Key provisioning for mainnet signing. |
+| Mainnet OP_RETURN | — | Real Bitcoin anchoring. Treasury wallet funding. |
+| Webhook secret hashing | — | HMAC-SHA256 for webhook secrets. |
 
 ### Week 4: Pre-Launch
 
