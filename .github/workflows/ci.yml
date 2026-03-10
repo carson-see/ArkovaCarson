@@ -130,5 +130,11 @@ jobs:
       - name: Run database reset
         run: supabase db reset
 
-      - name: Run tests
-        run: npm test
+      - name: Run tests with coverage
+        run: npm run test:coverage
+
+      - name: Run worker tests with coverage
+        working-directory: services/worker
+        run: |
+          npm ci
+          npm run test:coverage

@@ -37,7 +37,7 @@ These rules apply to every task. If a story conflicts with any rule below, **the
 | Worker | Node.js + Express in `services/worker/` | Webhooks, anchoring jobs, cron |
 | Payments | Stripe (SDK + webhooks) | Worker-only, never browser |
 | Chain | bitcoinjs-lib + AWS KMS (target) | MockChainClient until real implementation |
-| Testing | Vitest + Playwright + RLS test helpers | `npm test`, `npm run test:rls`, `npm run test:e2e` |
+| Testing | Vitest + Playwright + RLS test helpers | `npm test`, `npm run test:coverage`, `npm run test:rls`, `npm run test:e2e` |
 
 **Hard constraints:**
 - Never use Next.js API routes for long-running jobs
@@ -103,6 +103,7 @@ Internal code/DB may use technical names (e.g., `file_fingerprint_sha256`, `chai
 - RLS tests must use `src/tests/rls/helpers.ts` `withUser()` / `withAuth()` — no ad-hoc auth mocking.
 - Tests must not call real Stripe or Bitcoin APIs — use `IPaymentProvider` and `IAnchorPublisher` interfaces.
 - Every task must keep the repo green: `typecheck`, `lint`, `test`, `lint:copy` all pass.
+- Coverage enforced via `@vitest/coverage-v8`. Per-file 80% thresholds on critical paths (see `vitest.config.ts` and `services/worker/vitest.config.ts`). CI runs `npm run test:coverage`.
 
 ### 1.8 API Versioning (Phase 1.5+)
 
@@ -171,7 +172,7 @@ See Section 5.
 ```bash
 npx tsc --noEmit          # zero type errors
 npm run lint              # zero lint errors
-npm test                  # all tests pass
+npm run test:coverage     # all tests pass + coverage thresholds met
 npm run lint:copy         # no banned terms
 npm run gen:types         # if schema changed
 ```
@@ -427,7 +428,7 @@ npx supabase db reset
 | CRIT-4 | Onboarding routes are placeholders | **MEDIUM** | `/onboarding/role`, `/onboarding/org`, `/review-pending` all render `<DashboardPage/>`. Components exist: `RoleSelector`, `OrgOnboardingForm`, `ManualReviewGate`. |
 | CRIT-5 | Proof export JSON download is no-op | **MEDIUM** | PDF works via `generateAuditReport`. JSON proof package download handler does nothing. |
 | CRIT-6 | `CSVUploadWizard` uses simulated processing | **MEDIUM** | `useBulkAnchors` hook exists but wizard doesn't call it. |
-| CRIT-7 | Browser tab says "Ralph" | **LOW** | `package.json` name and `index.html` `<title>` retain old codename. |
+| ~~CRIT-7~~ | ~~Browser tab says "Ralph"~~ | ~~LOW~~ | ~~RESOLVED 2026-03-10. `package.json` name → `arkova`, `index.html` title → `Arkova`.~~ |
 
 ### P1 Bedrock — 6/6 COMPLETE
 
@@ -517,7 +518,7 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 |------|---------|--------|
 | Fix `SecureDocumentDialog` | CRIT-1 | Replace `setTimeout` simulation with real Supabase insert. Follow `IssueCredentialForm` pattern. |
 | Wire onboarding routes | CRIT-4 | Replace `<DashboardPage/>` placeholders with `RoleSelector`, `OrgOnboardingForm`, `ManualReviewGate`. |
-| Fix Ralph branding | CRIT-7 | `package.json` name → `arkova`. `index.html` title → `Arkova`. |
+| ~~Fix Ralph branding~~ | ~~CRIT-7~~ | ~~DONE 2026-03-10. `package.json` name → `arkova`. `index.html` title → `Arkova`.~~ |
 | Wire CSVUploadWizard | CRIT-6 | Connect to `useBulkAnchors` hook instead of simulated processing. |
 
 ### Week 1: Worker Hardening (pre-chain prerequisite)

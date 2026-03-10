@@ -1,5 +1,5 @@
 {
-  "name": "ralph",
+  "name": "arkova",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,6 +12,7 @@
     "lint:copy": "tsx scripts/check-copy-terms.ts",
     "gen:types": "supabase gen types typescript --local > src/types/database.types.ts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:rls": "vitest run tests/rls",
     "test:e2e": "playwright test",
@@ -56,6 +57,7 @@
     "@typescript-eslint/eslint-plugin": "^6.0.0",
     "@typescript-eslint/parser": "^6.0.0",
     "@vitejs/plugin-react": "^4.2.0",
+    "@vitest/coverage-v8": "^1.6.1",
     "autoprefixer": "^10.4.16",
     "eslint": "^8.56.0",
     "eslint-plugin-react": "^7.33.0",

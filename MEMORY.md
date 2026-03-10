@@ -23,7 +23,7 @@
 | CRIT-4 | Onboarding routes (`/onboarding/role`, `/onboarding/org`, `/review-pending`) render `DashboardPage` as placeholder. Components exist (`RoleSelector`, `OrgOnboardingForm`, `ManualReviewGate`). | Prajal | **OPEN — Quick fix** |
 | CRIT-5 | Proof export is JSON-only. jsPDF is in deps. `generateAuditReport.ts` exists but JSON proof download handler is a no-op. | Prajal | **OPEN — Week 2** |
 | CRIT-6 | `CSVUploadWizard` uses simulated processing. `useBulkAnchors` hook exists but wizard doesn't call it. | Prajal | **OPEN — Week 1** |
-| CRIT-7 | Browser tab says "Ralph." `package.json` name and `index.html` title retain old codename. | Anyone | **OPEN — 15 min fix** |
+| ~~CRIT-7~~ | ~~Browser tab says "Ralph."~~ | ~~Anyone~~ | ~~**RESOLVED 2026-03-10.** `package.json` name → `arkova`, `index.html` title → `Arkova`.~~ |
 
 ### What's NOT Blocked
 
@@ -133,6 +133,8 @@ docs/confluence/                   ← Architecture, data model, security, audit
 5. Test webhook HMAC signing correctness
 6. Anchor lifecycle integration test (PENDING → SECURED → webhook → public verify)
 
+**Coverage infrastructure (2026-03-10):** `@vitest/coverage-v8` installed in both root and worker. Per-file 80% thresholds on critical paths: `fileHasher.ts` (passes at 100%), `validators.ts` (needs function coverage bump), `proofPackage.ts` (needs tests), and 7 worker files (all at 0% — blocked on hardening sprint). CI enforces via `npm run test:coverage`. Config in `vitest.config.ts` and `services/worker/vitest.config.ts`.
+
 **Next session should:** Start hardening work — begin with task 1 (unit test processAnchor).
 
 ---
@@ -179,8 +181,8 @@ Then add a detail block below the table:
 
 - The backlog PDF audit notes go stale. CLAUDE.md Section 11 is updated more frequently and should be treated as source of truth for story completion status.
 - `IssueCredentialForm` (org admin path) does real Supabase inserts correctly. `SecureDocumentDialog` (individual path) fakes it with setTimeout. They look like the same flow from the user's perspective but are completely different under the hood.
-- The Vercel deployment at `arkova-carson.vercel.app` shows "Ralph" in the browser tab.
-- `package.json` name is still "ralph" — affects build artifacts and Vercel project name.
+- ~~The Vercel deployment at `arkova-carson.vercel.app` shows "Ralph" in the browser tab.~~ Fixed 2026-03-10.
+- ~~`package.json` name is still "ralph" — affects build artifacts and Vercel project name.~~ Fixed 2026-03-10.
 - Google Drive search is unreliable with complex queries. Use `name contains 'X' or name contains 'Y'` chaining or `fullText contains` with folder parent IDs.
 - The Gemini AI Integration Specification in Drive describes server-side document processing that violates the Constitution. Do not treat it as authoritative.
 - CLAUDE.md project file in `/mnt/project/` requires a fresh session to pick up changes. If you update CLAUDE.md during a session, the changes won't be visible in the project file until next session.
