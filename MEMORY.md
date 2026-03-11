@@ -1,6 +1,6 @@
 # MEMORY.md — Arkova Living Project State
 
-> **Last updated:** 2026-03-11
+> **Last updated:** 2026-03-12
 > **Purpose:** Living context for AI-assisted development sessions. CLAUDE.md has rules and story status. This file has decisions, blockers, sprint state, and institutional knowledge.
 > **Update frequency:** After every significant session or decision. If you learn something during a task, update this file before closing out.
 
@@ -18,7 +18,7 @@
 | ID | Issue | Owner | Status |
 |----|-------|-------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Real Supabase insert. Commit a38b485.~~ |
-| CRIT-2 | Bitcoin chain client — partial | Specialist | **PARTIAL.** SignetChainClient implemented (`bitcoinjs-lib`, OP_RETURN `ARKV` prefix). Factory updated. **Remaining:** AWS KMS signing (mainnet), Signet node connectivity test, mainnet treasury funding. |
+| CRIT-2 | Bitcoin chain client — partial | Specialist | **PARTIAL.** SignetChainClient implemented (`bitcoinjs-lib`, OP_RETURN `ARKV` prefix). Factory updated. Wallet utilities (P7-TS-11): `wallet.ts`, CLI scripts, 13 tests. UTXO provider (P7-TS-12): `RpcUtxoProvider` + `MempoolUtxoProvider`, factory, 35 tests. 147 chain tests total (6 files). **Remaining:** AWS KMS signing (mainnet), Signet node connectivity test, mainnet treasury funding. |
 | CRIT-3 | Stripe checkout — partial | Carson/Prajal | **PARTIAL.** Pricing UI + useBilling hook + checkout/portal worker endpoints wired (b1f798a). 74 tests. **Remaining:** entitlement enforcement, plan change/downgrade. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Wired RoleSelector, OrgOnboardingForm, ManualReviewGate. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Wired onDownloadProofJson. Commit a38b485.~~ |
@@ -28,13 +28,13 @@
 ### What's NOT Blocked
 
 These areas are production-ready or very close:
-- Database layer (45 migrations, RLS on all tables, audit trail immutable)
+- Database layer (48 migrations, RLS on all tables, audit trail immutable)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance (`IssueCredentialForm` — real Supabase insert + Zod + audit log)
 - Individual anchor creation (`SecureDocumentDialog` — fixed, real Supabase insert)
 - Public verification portal (5-section display, `get_public_anchor` RPC, verification event logging)
 - CI/CD (secret scanning, dep scanning, typecheck, lint, copy lint, tests)
-- Worker test coverage (275 tests, 80%+ on all critical paths)
+- Worker test coverage (363 tests, 80%+ on all critical paths)
 - Webhook delivery engine (HMAC signing, exponential backoff, retry cron)
 - Webhook settings UI (two-phase dialog, server-side secret generation)
 - Stripe webhook handlers (checkout.session.completed + subscription lifecycle)
@@ -89,7 +89,7 @@ services/worker/                   ← Express worker (anchoring jobs, Stripe we
 services/worker/src/chain/         ← ChainClient interface + MockChainClient + SignetChainClient
 services/worker/src/stripe/        ← Stripe SDK + webhook verification + handlers
 services/worker/src/webhooks/      ← Outbound webhook delivery engine (HMAC, backoff, retries)
-supabase/migrations/               ← 45 migrations (0001-0046, 0033 skipped)
+supabase/migrations/               ← 48 migrations (0001-0048, 0033 skipped)
 supabase/seed.sql                  ← Demo data (admin_demo, user_demo, beta_admin)
 docs/confluence/                   ← 14 docs (00-13): architecture, data model, security, etc.
 docs/stories/                      ← Story docs (9 group files + index)
@@ -137,25 +137,26 @@ e2e/                               ← Playwright E2E specs + fixtures
 
 > When ending a session, write what the next session needs to know here. Clear old notes when they're no longer relevant.
 
-**Last session (2026-03-11 ~8:00 PM EST):** Comprehensive CLAUDE.md + MEMORY.md audit. Both files brought fully up to date with actual codebase state.
+**Last session (2026-03-12 ~1:00 AM EST):** Documentation audit across all project files. Updated CLAUDE.md, MEMORY.md, bug_log.md, story docs. PR #24 created for broadcast test coverage + anchoring worker docs.
 
 **Current state:**
-- 594+ total tests (275 worker + 319 frontend) + 116 E2E/load tests
-- All worker critical paths at 80%+ coverage (15 test files, 275 tests)
+- 682 total tests (363 worker + 319 frontend) + 116 E2E/load tests
+- All worker critical paths at 80%+ coverage (17 test files, 363 tests)
+- 147 chain-specific tests across 6 files (signet 30, utxo-provider 31, wallet 13, client 9, mock 18, anchor 46)
 - Worker hardening sprint COMPLETE (6/6 tasks, 5 bugs found/fixed)
-- Vite 5→6 + vitest 1→3 upgrade (Dependabot CVE fix for esbuild)
-- SignetChainClient implemented with `bitcoinjs-lib` OP_RETURN (`ARKV` prefix)
+- Vite 6.4.1 + vitest 3 + esbuild 0.25.12 (CVE patched, 0 npm vulnerabilities)
+- SignetChainClient + UTXO providers + wallet utilities all implemented
 - Stripe checkout/portal endpoints wired with JWT auth
 - Webhook delivery engine complete with HMAC signing + exponential backoff
 
 **Remaining production blockers (5 items):**
 1. AWS KMS signing for mainnet Bitcoin
-2. Signet node connectivity test
+2. Signet node connectivity test (fund treasury via faucet, run live broadcast)
 3. Mainnet treasury funding
 4. Entitlement enforcement (restrict features by billing plan)
 5. Plan change/downgrade flows
 
-**Next session should:** Pick up one of the remaining blockers above, or address GitHub state (user noted it is "horrifically behind" — may need branch cleanup, PR creation, or merge to main).
+**Next session should:** Pick up one of the remaining blockers above, or address any remaining GitHub PRs.
 
 **Completed sprints (archived):**
 All sprint details moved to Claude project memory. Summary:
@@ -169,6 +170,10 @@ All sprint details moved to Claude project memory. Summary:
 - Bitcoin Signet (2026-03-11): SignetChainClient, factory updated, 268 worker tests
 - Billing Endpoints (2026-03-11): Checkout + portal worker endpoints, IDOR fix
 - Dependency Upgrade (2026-03-11): Vite 5→6, vitest 1→3, esbuild CVE fixed, 0 npm vulnerabilities
+- P7-TS-11 Wallet Setup (2026-03-11): wallet.ts, CLI scripts, 13 tests
+- P7-TS-12 UTXO Provider (2026-03-11): RpcUtxoProvider + MempoolUtxoProvider, factory, 35 tests
+- Signet Test Fixes (2026-03-12): Fixed 6 failures, 101 chain tests, 363 worker total
+- Broadcast Test Coverage (2026-03-12): PR #24, 6 new broadcast tests, anchoring worker docs
 
 ---
 

@@ -1,5 +1,5 @@
 # Anchoring Worker
-_Last updated: 2026-03-11 ~11:30 PM EST | Story: P7-TS-05, P7-TS-10, P7-TS-11_
+_Last updated: 2026-03-12 ~1:00 AM EST | Story: P7-TS-05, P7-TS-10, P7-TS-11, P7-TS-12_
 
 ## Overview
 
@@ -36,8 +36,8 @@ services/
     │   │   ├── client.ts         # ChainClient factory (Mock or Signet based on config)
     │   │   ├── signet.ts         # Real Signet implementation (bitcoinjs-lib, OP_RETURN)
     │   │   ├── mock.ts           # Mock implementation
-    │   │   ├── utxo-provider.ts  # UTXO provider abstraction (RPC + Mempool.space backends)
     │   │   ├── wallet.ts         # Wallet utilities (keypair gen, address derivation, WIF validation)
+    │   │   ├── utxo-provider.ts  # UTXO provider (RpcUtxoProvider, MempoolUtxoProvider, factory)
     │   │   └── types.ts          # ChainClient interface
     │   ├── stripe/
     │   │   ├── client.ts         # Stripe SDK + webhook signature verification
@@ -140,13 +140,10 @@ Report processing job (`jobs/report.ts`) generates reports requested via the `re
 # Database
 SUPABASE_SERVICE_ROLE_KEY=...     # Worker-only, never in browser
 
-# Chain
+# Chain (SignetChainClient implemented — CRIT-2 PARTIAL)
 BITCOIN_TREASURY_WIF=...          # Signing key — never logged
 BITCOIN_NETWORK=signet            # "signet", "testnet", or "mainnet"
-BITCOIN_UTXO_PROVIDER=mempool     # "rpc" or "mempool" (default: mempool)
-BITCOIN_RPC_URL=...               # Required if UTXO provider is "rpc"
-BITCOIN_RPC_AUTH=...               # Optional RPC auth (user:pass)
-MEMPOOL_API_URL=...                # Optional Mempool.space URL override (default: signet)
+BITCOIN_RPC_URL=...               # Optional — Signet/mainnet RPC endpoint
 
 # Stripe
 STRIPE_SECRET_KEY=sk_live_...
@@ -172,31 +169,12 @@ Per Constitution, use approved terminology in UI:
 
 `getChainClient()` in `chain/client.ts` returns `SignetChainClient` when `ENABLE_PROD_NETWORK_ANCHORING=true`, otherwise `MockChainClient`. SignetChainClient implements OP_RETURN anchoring with `ARKV` 4-byte prefix + 32-byte SHA-256 fingerprint using `bitcoinjs-lib`.
 
-**UTXO Provider Abstraction (P7-TS-12):**
-
-`utxo-provider.ts` defines a `UtxoProvider` interface with two backends:
-
-| Provider | Backend | Broadcasting | Config |
-|----------|---------|-------------|--------|
-| `RpcUtxoProvider` | Bitcoin Core JSON-RPC | `sendrawtransaction` RPC call | `BITCOIN_RPC_URL` required |
-| `MempoolUtxoProvider` | Mempool.space REST API | `POST /api/tx` with raw hex as `text/plain` | No node needed (default) |
-
-The factory `createUtxoProvider()` selects the backend based on `BITCOIN_UTXO_PROVIDER` config (defaults to `mempool`). `SignetChainClient` delegates all UTXO fetching, broadcasting, and blockchain queries to the provider.
-
-Broadcasting flow in `SignetChainClient.submitFingerprint()`:
-1. Fetch UTXOs via `provider.listUnspent(address)`
-2. Select largest UTXO that covers estimated fee
-3. Build OP_RETURN PSBT with `bitcoinjs-lib`, sign with treasury keypair
-4. Broadcast via `provider.broadcastTx(txHex)` — returns txid
-5. If broadcast txid differs from locally computed txid, log warning and use broadcast value
-
 **Completed:**
 1. ~~Install `bitcoinjs-lib`~~ — `bitcoinjs-lib ^6.1.7`, `ecpair ^3.0.1`, `tiny-secp256k1 ^2.2.4`
-2. ~~Implement real ChainClient with OP_RETURN~~ — `SignetChainClient` in `chain/signet.ts` (~481 lines)
+2. ~~Implement real ChainClient with OP_RETURN~~ — `SignetChainClient` in `chain/signet.ts` (~414 lines)
 3. ~~Wallet utilities~~ — `chain/wallet.ts` (keypair gen, address derivation, WIF validation) + 13 tests
 4. ~~CLI scripts~~ — `scripts/generate-signet-keypair.ts`, `scripts/check-signet-balance.ts`
-5. ~~UTXO provider abstraction~~ — `chain/utxo-provider.ts` (RPC + Mempool.space backends, factory) + 29 tests
-6. ~~Broadcast test coverage~~ — 3 broadcast tests in `signet.test.ts` + 3 in `utxo-provider.test.ts`
+5. ~~UTXO provider~~ — `chain/utxo-provider.ts` (`RpcUtxoProvider` + `MempoolUtxoProvider` + factory) + 35 tests. Integrated into SignetChainClient + getChainClient().
 
 **Remaining:**
 1. Fund Signet treasury via faucet (signetfaucet.com or alt.signetfaucet.com)
@@ -279,12 +257,13 @@ Available regardless of feature flag state (Constitution 1.9).
 | Anchor processing jobs | Complete | `anchor.ts` — full lifecycle including webhook dispatch |
 | Chain client interface | Complete | SignetChainClient + MockChainClient (CRIT-2 PARTIAL — AWS KMS remaining) |
 | Wallet utilities | Complete | P7-TS-11: keypair gen, address derivation, WIF validation, CLI scripts |
+| UTXO provider | Complete | P7-TS-12: RpcUtxoProvider + MempoolUtxoProvider, factory, integrated into SignetChainClient |
 | Stripe webhook handlers | Complete | P7-TS-03 |
 | Outbound webhook delivery | Complete | Wired to anchor lifecycle (HARDENING-4). Dispatches on SECURED. |
 | Webhook retry scheduling | Complete | `processWebhookRetries()` runs every 2 minutes via cron |
 | Report generation | Complete | `report.ts` |
 | Rate limiter | Complete | `utils/rateLimit.ts` |
-| Worker test coverage | 320+ tests across 16+ files, 80%+ on all paths | HARDENING-1/2/3/4/5 + Signet + wallet (2026-03-11) |
+| Worker test coverage | 363 tests across 17 files, 80%+ on all paths | HARDENING-1/2/3/4/5 + Signet + wallet + UTXO provider (2026-03-12) |
 
 ## Testing
 
@@ -295,7 +274,7 @@ cd services/worker
 npm test
 ```
 
-**Current coverage (2026-03-10 8:00 PM EST):** 228 tests across 14 test files. All worker source files pass 80% per-file thresholds. Critical path files (`anchor.ts`, `chain/client.ts`, `chain/mock.ts`, `webhooks/delivery.ts`, `stripe/client.ts`, `stripe/handlers.ts`) at 98-100%. Lifecycle integration test (`anchor-lifecycle.test.ts`) verifies end-to-end flow. HARDENING-5 added coverage for all remaining files: `config.ts`, `index.ts`, `stripe/mock.ts`, `jobs/report.ts`, `jobs/webhook.ts`, `utils/correlationId.ts`, `utils/rateLimit.ts`.
+**Current coverage (2026-03-12 ~1:00 AM EST):** 363 tests across 17 test files. All worker source files pass 80% per-file thresholds. Critical path files (`anchor.ts`, `chain/client.ts`, `chain/mock.ts`, `chain/signet.ts`, `chain/utxo-provider.ts`, `chain/wallet.ts`, `webhooks/delivery.ts`, `stripe/client.ts`, `stripe/handlers.ts`) at 98-100%. Chain-specific: 147 tests across 6 files (signet 30, utxo-provider 31, wallet 13, client 9, mock 18, anchor 46).
 
 ### Mock Mode
 
@@ -322,4 +301,4 @@ const mockChain: IAnchorPublisher = {
 | 2026-03-10 5:20 PM EST | HARDENING-4 | Webhook dispatch wired in anchor.ts. processWebhookRetries added to cron. 132 tests. P7-TS-10 COMPLETE. Removed stale anchorWithClaim.ts from directory listing. |
 | 2026-03-10 8:00 PM EST | HARDENING-5 | 96 new tests across 7 new test files covering all remaining worker source files (config, index, stripe/mock, jobs/report, jobs/webhook, utils/correlationId, utils/rateLimit). Exported `cleanupExpiredEntries()` from rateLimit.ts for testability. Total: 228 worker tests, 14 test files. 80%+ thresholds on all files. Worker hardening sprint COMPLETE. |
 | 2026-03-11 ~11:30 PM EST | P7-TS-11 | Added wallet utilities (wallet.ts), CLI scripts (generate-signet-keypair.ts, check-signet-balance.ts), 13 wallet tests. Updated chain integration section with current state and wallet setup procedure. Updated directory structure with signet.ts and wallet.ts. |
-| 2026-03-12 ~12:30 AM EST | P7-TS-12 | Added UTXO provider abstraction (utxo-provider.ts) to directory structure. Updated env vars section with BITCOIN_UTXO_PROVIDER, BITCOIN_RPC_URL, BITCOIN_RPC_AUTH, MEMPOOL_API_URL. Expanded Chain Integration section with UTXO provider table, broadcasting flow, and updated completed/remaining items. |
+| 2026-03-12 ~1:00 AM EST | P7-TS-12 | Added UTXO provider (utxo-provider.ts: RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Integrated into SignetChainClient + getChainClient(). Updated directory, implementation status, coverage. Fixed signet.test.ts failures (ESM compat + PSBT validation). 363 worker tests total. |

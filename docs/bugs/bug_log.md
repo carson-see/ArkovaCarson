@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-11 ~6:00 PM EST | Active bugs: 2 | Resolved: 15_
+_Last updated: 2026-03-11 ~10:00 PM EST | Active bugs: 2 | Resolved: 15_
 
 ## Layman's Summary
 
@@ -8,7 +8,7 @@ _For each bug: what it means in plain English and why it matters._
 | ID | What's Wrong (Plain English) |
 |----|------------------------------|
 | ~~CRIT-1~~ | ~~When a regular user tries to secure a document, the app **pretends** it worked (shows a fake progress bar) but never actually saves anything.~~ **FIXED** — real Supabase insert replacing setTimeout simulation. |
-| CRIT-2 | The system that's supposed to write a permanent record to the Bitcoin network is **completely fake**. It uses a pretend version that stores data in temporary memory and disappears when the server restarts. No real proof exists on any blockchain. |
+| CRIT-2 | The system that writes permanent records to the Bitcoin network is **partially implemented**. A Signet (test network) client exists and can construct real OP_RETURN transactions, but the mainnet (production) path still falls back to a mock. UTXO provider pattern and wallet utilities are complete. **Remaining:** AWS KMS signing for mainnet, fund Signet treasury, live Signet broadcast test. |
 | CRIT-3 | The payment system is **partially built**. Pricing UI, checkout pages, billing hooks, webhook handlers, and checkout/portal worker endpoints are implemented with 91+ tests. **Remaining:** entitlement enforcement and plan change/downgrade flows. |
 | ~~CRIT-4~~ | ~~New users who sign up get **dumped straight onto the dashboard** instead of going through the setup wizard.~~ **FIXED** — OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. |
 | ~~CRIT-5~~ | ~~The "Download JSON Proof" button **does absolutely nothing** when clicked.~~ **FIXED** — onDownloadProofJson wired in RecordDetailPage with generateProofPackage + downloadProofPackage. |
@@ -26,7 +26,7 @@ _For each bug: what it means in plain English and why it matters._
 
 | ID | Severity | Story | Summary | Status |
 |----|----------|-------|---------|--------|
-| CRIT-2 | HIGH | P7-TS-05 | No real Bitcoin chain client | OPEN |
+| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client — Signet complete, mainnet remaining | PARTIAL |
 | CRIT-3 | HIGH | P7-TS-02 | Stripe checkout flow incomplete | PARTIAL — UI + tests + checkout/portal endpoints done (b1f798a), entitlements remain |
 
 ## Resolved Bugs Summary
@@ -189,17 +189,24 @@ Real Bitcoin integration was deferred. The interface contract exists (`ChainClie
 | 2026-03-11 | Installed `bitcoinjs-lib`, `ecpair`, `tiny-secp256k1`. Created `signet.ts` (~300 lines) with OP_RETURN construction, RPC client, `ARKV` prefix. |
 | 2026-03-11 | Updated `client.ts` factory (26 → 63 lines) with full Signet/testnet path. Config updated with `bitcoinRpcUrl`, `bitcoinRpcAuth`, `bitcoinTreasuryWif` fields. |
 | 2026-03-11 | Created `signet.test.ts` (~15 tests) and updated `client.test.ts` (5 → 8 tests). All 268 worker tests pass. |
+| 2026-03-11 | P7-TS-11: wallet.ts (4 exports), wallet.test.ts (13 tests), CLI scripts (generate-signet-keypair.ts, check-signet-balance.ts). |
+| 2026-03-11 | P7-TS-12: utxo-provider.ts (RpcUtxoProvider + MempoolUtxoProvider + factory). utxo-provider.test.ts (31 tests). Integrated into SignetChainClient + getChainClient(). |
+| 2026-03-12 | Fixed 6 signet.test.ts failures: ESM require() → direct import, PSBT validation via buildDummyFundingTx(). |
+| 2026-03-12 | Added 6 broadcast-specific tests: 3 in signet.test.ts (txid mismatch, empty fallback, hex verification), 3 in utxo-provider.test.ts (POST /tx content-type, whitespace trim, HTTP error). |
 
 #### Resolution
 
-**Status:** PARTIAL — Signet implementation complete. Mainnet (AWS KMS + treasury) remaining.
+**Status:** PARTIAL — Signet implementation complete (SignetChainClient + UTXO providers + wallet utilities + broadcast tests). Mainnet (AWS KMS + treasury) remaining.
 
 #### Regression Test
 
-- Existing: `services/worker/src/chain/client.test.ts` (8 tests — factory returns correct type for all config combinations)
-- Existing: `services/worker/src/chain/signet.test.ts` (~15 tests — OP_RETURN construction, RPC interactions, health check, error handling)
-- Existing: `services/worker/src/chain/mock.test.ts` (18 tests — interface contract)
-- Existing: `services/worker/src/jobs/anchor.test.ts` (36 tests — full lifecycle PENDING → SECURED)
+- `services/worker/src/chain/client.test.ts` (9 tests — factory returns correct type for all config combinations)
+- `services/worker/src/chain/signet.test.ts` (30 tests — OP_RETURN construction, broadcasting, txid handling, RPC interactions, health check, error handling)
+- `services/worker/src/chain/utxo-provider.test.ts` (31 tests — RPC + Mempool.space UTXO listing, broadcasting, error handling)
+- `services/worker/src/chain/wallet.test.ts` (13 tests — keypair generation, WIF validation, address derivation)
+- `services/worker/src/chain/mock.test.ts` (18 tests — interface contract)
+- `services/worker/src/jobs/anchor.test.ts` (46 tests — full lifecycle PENDING → SECURED)
+- **Total chain-related:** 147 tests across 6 files
 - Needed: Live Signet node connectivity integration test
 
 ---

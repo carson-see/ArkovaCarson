@@ -275,6 +275,8 @@ services/worker/
     chain/signet.ts                          ← Real Signet implementation (bitcoinjs-lib, OP_RETURN)
     chain/mock.ts                            ← Mock implementation
     chain/types.ts                           ← ChainClient interface (IAnchorPublisher equivalent)
+    chain/wallet.ts                          ← Signet wallet utilities (generateSignetKeypair, addressFromWif, isValidSignetWif)
+    chain/utxo-provider.ts                   ← UTXO provider (RpcUtxoProvider, MempoolUtxoProvider, factory)
     jobs/anchor.ts                           ← Process pending anchors
     jobs/report.ts                           ← Report generation job
     jobs/webhook.ts                          ← Webhook dispatch job (stub)
@@ -757,5 +759,5 @@ CORS_ALLOWED_ORIGINS=*
 
 ---
 
-_Directive version: 2026-03-11 (comprehensive audit update) | Repo: ArkovaCarson | 47 migrations | 594+ tests_
+_Directive version: 2026-03-12 (doc audit) | Repo: ArkovaCarson | 48 migrations | 682+ tests_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_
