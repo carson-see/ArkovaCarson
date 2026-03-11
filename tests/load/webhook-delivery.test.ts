@@ -60,11 +60,15 @@ vi.mock('../../services/worker/src/utils/db.js', () => {
     );
   }
 
+  // Flat chain builders — each level returns an object, avoiding nesting > 4
+
+  function retryLimitResult() {
+    return Promise.resolve({ data: getRetryingLogs(), error: null });
+  }
+
   function createRetryLimitMock() {
     return {
-      lte: vi.fn(() => ({
-        limit: vi.fn(() => Promise.resolve({ data: getRetryingLogs(), error: null })),
-      })),
+      lte: vi.fn(() => ({ limit: vi.fn(() => retryLimitResult()) })),
     };
   }
 
@@ -72,22 +76,27 @@ vi.mock('../../services/worker/src/utils/db.js', () => {
     const existing = Array.from(dbState.deliveryLogs.values()).find(
       (l) => l.idempotency_key === value
     );
+    const singleResult = Promise.resolve({ data: existing || null, error: null });
     return {
-      single: vi.fn(() => Promise.resolve({ data: existing || null, error: null })),
+      single: vi.fn(() => singleResult),
       ...createRetryLimitMock(),
     };
   }
 
+  function deliveryLogsEqHandler(field: string, value: string) {
+    if (field === 'idempotency_key') return createIdempotencyEqMock(value);
+    if (field === 'status') return createRetryLimitMock();
+    return { single: vi.fn(() => Promise.resolve({ data: null, error: null })) };
+  }
+
   function createDeliveryLogsSelectMock() {
     return {
-      select: vi.fn(() => ({
-        eq: vi.fn((field: string, value: string) => {
-          if (field === 'idempotency_key') return createIdempotencyEqMock(value);
-          if (field === 'status') return createRetryLimitMock();
-          return { single: vi.fn(() => Promise.resolve({ data: null, error: null })) };
-        }),
-      })),
+      select: vi.fn(() => ({ eq: vi.fn(deliveryLogsEqHandler) })),
     };
+  }
+
+  function insertSelectSingle(entry: Record<string, unknown>) {
+    return { single: vi.fn(() => Promise.resolve({ data: entry, error: null })) };
   }
 
   function createDeliveryLogsInsertMock() {
@@ -96,43 +105,35 @@ vi.mock('../../services/worker/src/utils/db.js', () => {
         const id = `log-${++dbState.logIdCounter}`;
         const entry = { ...data, id };
         dbState.deliveryLogs.set(id, entry);
-        return {
-          select: vi.fn(() => ({
-            single: vi.fn(() => Promise.resolve({ data: entry, error: null })),
-          })),
-        };
+        return { select: vi.fn(() => insertSelectSingle(entry)) };
       }),
     };
+  }
+
+  function updateEqHandler(data: Record<string, unknown>, field: string, value: string) {
+    if (field === 'id') {
+      const existing = dbState.deliveryLogs.get(value);
+      if (existing) dbState.deliveryLogs.set(value, { ...existing, ...data });
+    }
+    return Promise.resolve({ error: null });
   }
 
   function createDeliveryLogsUpdateMock() {
     return {
       update: vi.fn((data: Record<string, unknown>) => ({
-        eq: vi.fn((field: string, value: string) => {
-          if (field === 'id') {
-            const existing = dbState.deliveryLogs.get(value);
-            if (existing) {
-              dbState.deliveryLogs.set(value, { ...existing, ...data });
-            }
-          }
-          return Promise.resolve({ error: null });
-        }),
+        eq: vi.fn((field: string, value: string) => updateEqHandler(data, field, value)),
       })),
     };
   }
 
+  function endpointsResult() {
+    return Promise.resolve({ data: dbState.endpoints, error: null });
+  }
+
   function createEndpointsMock() {
-    return {
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            contains: vi.fn(() =>
-              Promise.resolve({ data: dbState.endpoints, error: null })
-            ),
-          })),
-        })),
-      })),
-    };
+    const innerEq = vi.fn(() => ({ contains: vi.fn(() => endpointsResult()) }));
+    const outerEq = vi.fn(() => ({ eq: innerEq }));
+    return { select: vi.fn(() => ({ eq: outerEq })) };
   }
 
   const mockFrom = vi.fn((table: string) => {
