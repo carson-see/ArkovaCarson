@@ -19,6 +19,9 @@ import { processWebhookRetries } from './webhooks/delivery.js';
 
 const app = express();
 
+// Disable x-powered-by header to prevent Express version disclosure
+app.disable('x-powered-by');
+
 // Health check endpoint
 app.get('/health', (_req, res) => {
   res.json({

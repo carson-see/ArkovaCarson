@@ -18,8 +18,8 @@ export const VALID_CREDENTIAL_TYPES = [
 
 export type CredentialType = (typeof VALID_CREDENTIAL_TYPES)[number];
 
-// Email validation regex
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Email validation regex (non-backtracking to avoid ReDoS)
+const EMAIL_REGEX = /^[^\s@]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
 
 // Fingerprint validation (SHA-256 hex string)
 const FINGERPRINT_REGEX = /^[a-fA-F0-9]{64}$/;

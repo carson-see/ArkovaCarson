@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-11 ~12:30 AM EST | Active bugs: 2 | Resolved: 12_
+_Last updated: 2026-03-11 | Active bugs: 2 | Resolved: 15_
 
 ## Layman's Summary
 
@@ -19,6 +19,8 @@ _For each bug: what it means in plain English and why it matters._
 | BUG-H1-03 | _(Resolved)_ A batch processing loop in the same dead code file **always quit after one try** because it misread the database response. Even if 100 jobs were waiting, only one would ever be attempted. Deleted along with BUG-H1-02. |
 | ~~BUG-PRH1-01~~ | ~~The validation library's test coverage was below threshold (71% vs 80% for functions).~~ **FIXED** — added 10 tests, now at 100%. |
 | ~~BUG-PRH1-02~~ | ~~The proof package generator had zero test coverage.~~ **FIXED** — created 33-test suite, now at 100%. |
+| ~~BUG-SQ-01~~ | ~~Two email-checking regexes could freeze the app if fed a very long, weird email address (a "ReDoS" attack).~~ **FIXED** — replaced with non-backtracking regexes. |
+| ~~BUG-SQ-02~~ | ~~The worker server told the world it was running Express (via `x-powered-by` header), making it easier for attackers to find known vulnerabilities.~~ **FIXED** — disabled header. |
 
 ## Active Bugs Summary
 
@@ -41,6 +43,8 @@ _For each bug: what it means in plain English and why it matters._
 | BUG-H1-03 | HIGH | P7-TS-10 | processAllJobs() loop exits after first batch | REMOVED 2026-03-10 |
 | BUG-PRH1-01 | LOW | — | validators.ts functions coverage below 80% threshold | FIXED 2026-03-10 |
 | BUG-PRH1-02 | MEDIUM | P7-TS-07 | proofPackage.ts has 0% coverage against 80% threshold | FIXED 2026-03-10 |
+| BUG-SQ-01 | MEDIUM | — | ReDoS-vulnerable email regex in InviteMemberModal + csvParser | FIXED 2026-03-11 |
+| BUG-SQ-02 | LOW | — | Express x-powered-by header information disclosure in worker | FIXED 2026-03-11 |
 
 ---
 
@@ -833,10 +837,99 @@ Same as BUG-H1-02.
 
 ---
 
+### BUG-SQ-01: ReDoS-Vulnerable Email Regex
+
+- **Severity:** MEDIUM (security — denial of service)
+- **Found:** 2026-03-11, SonarQube Cloud scan
+- **Story:** — (cross-cutting: input validation)
+- **Components:** `src/components/organization/InviteMemberModal.tsx:66`, `src/lib/csvParser.ts:22`
+
+#### Steps to Reproduce
+
+1. Call `validateEmail()` or `isValidEmail()` with a crafted input like `a@${'b.'.repeat(50)}c`
+2. The regex engine backtracks exponentially trying to match `[^\s@]+\.[^\s@]+` against the repeated dots
+3. CPU spikes; in extreme cases the browser tab or Node process hangs
+
+#### Expected Behavior
+
+Email validation completes in constant time regardless of input length.
+
+#### Actual Behavior
+
+The regex `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` has two adjacent `[^\s@]+` groups separated by `\.` in the domain part. Since both groups match the same character set (anything except whitespace and @), the engine can split input between them in exponentially many ways, causing catastrophic backtracking on adversarial input.
+
+#### Root Cause
+
+The original regex used overlapping character classes (`[^\s@]+` appears twice) which creates ambiguity for the regex engine's backtracking NFA.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-11 | Found via SonarQube Cloud scan (security hotspot). |
+| 2026-03-11 | Replaced both regexes with non-backtracking pattern: `/^[^\s@]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/`. Domain groups use `[a-zA-Z0-9-]` which cannot overlap. |
+
+#### Resolution
+
+**Status:** FIXED (2026-03-11)
+
+#### Regression Test
+
+- `src/lib/csvParser.test.ts` — 26 tests pass (email validation covered)
+- `src/components/organization/InviteMemberModal.test.tsx` — 8 tests pass
+
+---
+
+### BUG-SQ-02: Express x-powered-by Header Information Disclosure
+
+- **Severity:** LOW (security — information disclosure)
+- **Found:** 2026-03-11, SonarQube Cloud scan
+- **Story:** — (cross-cutting: worker security)
+- **Component:** `services/worker/src/index.ts:20`
+
+#### Steps to Reproduce
+
+1. Start the worker: `cd services/worker && npm run dev`
+2. `curl -I http://localhost:3001/health`
+3. Observe response header: `X-Powered-By: Express`
+4. Attackers can use this to identify the framework and target known Express vulnerabilities
+
+#### Expected Behavior
+
+No `X-Powered-By` header in responses.
+
+#### Actual Behavior
+
+Express sends `X-Powered-By: Express` by default on every response.
+
+#### Root Cause
+
+Express enables the `x-powered-by` header by default. It must be explicitly disabled.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-11 | Found via SonarQube Cloud scan (vulnerability). |
+| 2026-03-11 | Added `app.disable('x-powered-by')` after Express app creation. |
+
+#### Resolution
+
+**Status:** FIXED (2026-03-11)
+
+#### Regression Test
+
+- `services/worker/src/index.test.ts` — 17 tests pass
+
+---
+
+---
+
 ## Change Log
 
 | Date | Change |
 |------|--------|
+| 2026-03-11 | SonarQube scan: fixed BUG-SQ-01 (ReDoS email regex) and BUG-SQ-02 (Express x-powered-by disclosure). Added to resolved bugs. Active: 2, Resolved: 15. |
 | 2026-03-10 | Initial bug log created with CRIT-1 through CRIT-7, migrated from CLAUDE.md Section 8 summary table. Full steps to reproduce, root cause analysis, and fix patterns documented for all 7 bugs. |
 | 2026-03-10 | Added HARDENING-1 bugs (BUG-H1-01, BUG-H1-02, BUG-H1-03). Moved CRIT-7 to resolved. Updated summary counts: 6 active, 4 resolved. |
 | 2026-03-10 4:15 PM EDT | HARDENING-2 complete. No new bugs found. Added layman's summary table for all 10 bugs. Chain client (mock.ts, client.ts) and anchor job claim flow confirmed clean — 59 worker tests, 100% coverage on anchor.ts, mock.ts, client.ts. |

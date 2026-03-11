@@ -63,7 +63,10 @@ export function InviteMemberModal({
   );
 
   const validateEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    // Non-backtracking email regex (avoids ReDoS)
+    // Local part: one or more non-whitespace/non-@ chars
+    // Domain: one or more segments of [a-zA-Z0-9-] separated by dots, ending with 2+ alpha TLD
+    const emailRegex = /^[^\s@]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
     return emailRegex.test(email);
   };
 
