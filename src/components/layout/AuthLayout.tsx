@@ -6,6 +6,7 @@
  */
 
 import { Shield } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface AuthLayoutProps {
@@ -54,13 +55,13 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground">
             By continuing, you agree to our{' '}
-            <a href="/terms" className="underline underline-offset-4 hover:text-primary transition-colors">
+            <Link to="/terms" className="underline underline-offset-4 hover:text-primary transition-colors">
               Terms of Service
-            </a>{' '}
+            </Link>{' '}
             and{' '}
-            <a href="/privacy" className="underline underline-offset-4 hover:text-primary transition-colors">
+            <Link to="/privacy" className="underline underline-offset-4 hover:text-primary transition-colors">
               Privacy Policy
-            </a>
+            </Link>
           </p>
         </div>
       </main>

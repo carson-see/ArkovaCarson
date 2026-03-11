@@ -63,9 +63,11 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
           ) : (
             <div className="flex items-baseline justify-center gap-1">
               <span className="text-4xl font-bold">${plan.price}</span>
-              <span className="text-muted-foreground">
-                /{({ month: 'mo', year: 'yr' } as Record<string, string>)[plan.period] ?? ''}
-              </span>
+              {plan.period !== 'custom' && (
+                <span className="text-muted-foreground">
+                  /{plan.period === 'month' ? 'mo' : 'yr'}
+                </span>
+              )}
             </div>
           )}
           <p className="text-sm text-muted-foreground mt-1">
@@ -77,8 +79,8 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
 
         {/* Features */}
         <ul className="space-y-3">
-          {plan.features.map((feature) => (
-            <li key={feature} className="flex items-start gap-2">
+          {plan.features.map((feature, index) => (
+            <li key={`${feature}-${index}`} className="flex items-start gap-2">
               <Check className="h-4 w-4 text-success mt-0.5 shrink-0" />
               <span className="text-sm">{feature}</span>
             </li>

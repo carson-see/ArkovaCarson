@@ -102,9 +102,9 @@ export function PublicVerifyPage() {
             Arkova - Secure Document Verification
           </p>
           <nav className="flex gap-4 text-xs text-muted-foreground">
-            <a href="/privacy" className="hover:text-foreground transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-foreground transition-colors">Terms</a>
-            <a href="/contact" className="hover:text-foreground transition-colors">Contact</a>
+            <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+            <Link to="/contact" className="hover:text-foreground transition-colors">Contact</Link>
           </nav>
         </div>
       </footer>

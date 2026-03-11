@@ -212,7 +212,7 @@ export function MyRecordsPage() {
                     tabIndex={0}
                     className="flex items-center gap-4 py-4 px-2 hover:bg-muted/50 transition-colors cursor-pointer"
                     onClick={() => navigate(recordDetailPath(record.id))}
-                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(recordDetailPath(record.id)); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(recordDetailPath(record.id)); } }}
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
                       <FileText className="h-5 w-5 text-muted-foreground" />

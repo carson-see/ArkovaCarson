@@ -390,8 +390,8 @@ function ReviewStep({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {validation.errors.slice(0, 5).map((err) => (
-                <TableRow key={`${err.row}-${err.column}`}>
+              {validation.errors.slice(0, 5).map((err, idx) => (
+                <TableRow key={`${err.row}-${err.column}-${idx}`}>
                   <TableCell className="font-mono">{err.row}</TableCell>
                   <TableCell>{err.column}</TableCell>
                   <TableCell className="text-destructive">{err.message}</TableCell>
