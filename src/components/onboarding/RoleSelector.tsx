@@ -67,15 +67,15 @@ export function RoleSelector({ onSelect, loading = false }: Readonly<RoleSelecto
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Secure personal documents
+                <span>Secure personal documents</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Private vault access
+                <span>Private vault access</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Simple verification
+                <span>Simple verification</span>
               </li>
             </ul>
           </CardContent>
@@ -105,15 +105,15 @@ export function RoleSelector({ onSelect, loading = false }: Readonly<RoleSelecto
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Team collaboration
+                <span>Team collaboration</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Organization-wide vault
+                <span>Organization-wide vault</span>
               </li>
               <li className="flex items-center gap-2">
                 <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
-                Member management
+                <span>Member management</span>
               </li>
             </ul>
           </CardContent>

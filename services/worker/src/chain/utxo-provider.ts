@@ -315,7 +315,7 @@ export class MempoolUtxoProvider implements UtxoProvider {
       );
     }
 
-    const blocks = parseInt(await heightResp.text(), 10);
+    const blocks = Number.parseInt(await heightResp.text(), 10);
 
     // Mempool.space Signet API doesn't expose a "chain" field directly,
     // but we know from the base URL. We infer from the URL path.

@@ -26,9 +26,9 @@ const {
     debug: vi.fn(),
   };
 
-  /** Assigns a `.then` property via Object.defineProperty to avoid S7739. */
+  /** Assigns a `.then` property — intentional thenable mock matching Supabase's PostgREST builder. */
   function setThenable(obj: any, handler: (onFulfilled: any, onRejected?: any) => any) {
-    Object.defineProperty(obj, 'then', {
+    Object.defineProperty(obj, 'then', { // NOSONAR — intentional thenable for Supabase mock
       value: vi.fn(handler),
       configurable: true,
       writable: true,

@@ -57,9 +57,9 @@ interface Violation {
 
 function globToRegex(pattern: string): RegExp {
   const regexStr = pattern
-    .replace(/\./g, '\\.')
-    .replace(/\*\*/g, '.*')
-    .replace(/\*/g, '[^/]*');
+    .replaceAll('.', '\\.')
+    .replaceAll('**', '.*')
+    .replaceAll('*', '[^/]*');
   return new RegExp(`^${regexStr}$`);
 }
 

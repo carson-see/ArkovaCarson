@@ -6,14 +6,13 @@ on:
   pull_request:
     branches: [main, develop]
 
-permissions:
-  contents: read
-
 jobs:
   # Secret scanning - block commits containing secrets
   secret-scan:
     name: Secret Scanning
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +32,8 @@ jobs:
   dependency-scan:
     name: Dependency Scanning
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +52,8 @@ jobs:
   typecheck-lint:
     name: TypeCheck & Lint
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -78,6 +81,8 @@ jobs:
   types-check:
     name: Generated Types Check
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
@@ -113,6 +118,8 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [typecheck-lint]
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +176,8 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     needs: [typecheck-lint, test]
     steps:
       - uses: actions/checkout@v4
@@ -209,6 +218,7 @@ jobs:
         env:
           E2E_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
+          E2E_SEED_PASSWORD: Demo1234!
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
