@@ -131,7 +131,7 @@ async function request(app: Express, method: string, path: string, body?: any, h
       headers: { ...headers },
       body,
       ip: '127.0.0.1',
-      get: (name: string) => (headers || {})[name.toLowerCase()],
+      get: (name: string) => headers?.[name.toLowerCase()],
     };
 
     const res: any = {

@@ -66,15 +66,15 @@ export function RoleSelector({ onSelect, loading = false }: RoleSelectorProps) {
           <CardContent>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Secure personal documents
               </li>
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Private vault access
               </li>
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Simple verification
               </li>
             </ul>
@@ -104,15 +104,15 @@ export function RoleSelector({ onSelect, loading = false }: RoleSelectorProps) {
           <CardContent>
             <ul className="space-y-2 text-sm text-muted-foreground">
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Team collaboration
               </li>
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Organization-wide vault
               </li>
               <li className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-primary" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
                 Member management
               </li>
             </ul>

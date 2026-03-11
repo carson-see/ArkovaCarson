@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { createHmac } from 'crypto';
+import { createHmac } from 'node:crypto';
 
 vi.mock('../utils/logger.js', () => ({
   logger: {

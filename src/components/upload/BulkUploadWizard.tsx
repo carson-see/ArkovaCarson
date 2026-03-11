@@ -177,9 +177,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: BulkUploadWizardProps
               <div
                 className={cn(
                   'flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium',
-                  index < currentStepIndex
-                    ? 'bg-primary text-primary-foreground'
-                    : index === currentStepIndex
+                  index <= currentStepIndex
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-muted text-muted-foreground'
                 )}
@@ -289,7 +287,7 @@ function ReviewStep({
       </span>
       <select
         value={value ?? ''}
-        onChange={(e) => onChange(e.target.value ? parseInt(e.target.value) : null)}
+        onChange={(e) => onChange(e.target.value ? Number.parseInt(e.target.value) : null)}
         className="w-48 rounded-md border border-input bg-background px-3 py-1 text-sm"
       >
         <option value="">Select column</option>
@@ -392,8 +390,8 @@ function ReviewStep({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {validation.errors.slice(0, 5).map((err, i) => (
-                <TableRow key={i}>
+              {validation.errors.slice(0, 5).map((err) => (
+                <TableRow key={`${err.row}-${err.column}`}>
                   <TableCell className="font-mono">{err.row}</TableCell>
                   <TableCell>{err.column}</TableCell>
                   <TableCell className="text-destructive">{err.message}</TableCell>

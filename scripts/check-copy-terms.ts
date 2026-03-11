@@ -10,8 +10,8 @@
  * - 1: Forbidden terms found (CI should fail)
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 // Forbidden terms (case-insensitive)
 const FORBIDDEN_TERMS = [

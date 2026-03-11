@@ -164,7 +164,7 @@ export function CsvUploader({
           <>
             <FileSpreadsheet className="h-10 w-10 text-muted-foreground mb-4" />
             <p className="text-sm font-medium mb-1">
-              {dragActive ? 'Drop your CSV file here' : 'Drop your CSV file here'}
+              Drop your CSV file here
             </p>
             <p className="text-xs text-muted-foreground mb-4">or click to browse</p>
             <Button type="button" variant="secondary" size="sm" disabled={loading}>

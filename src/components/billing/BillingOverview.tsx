@@ -74,18 +74,10 @@ export function BillingOverview({
           </div>
           <Badge
             variant={
-              billingInfo.status === 'active'
-                ? 'success'
-                : billingInfo.status === 'past_due'
-                ? 'warning'
-                : 'secondary'
+              ({ active: 'success', past_due: 'warning' } as Record<string, 'success' | 'warning'>)[billingInfo.status] ?? 'secondary'
             }
           >
-            {billingInfo.status === 'active'
-              ? 'Active'
-              : billingInfo.status === 'past_due'
-              ? 'Past Due'
-              : 'Canceled'}
+            {({ active: 'Active', past_due: 'Past Due' } as Record<string, string>)[billingInfo.status] ?? 'Canceled'}
           </Badge>
         </CardHeader>
         <CardContent>
@@ -132,7 +124,7 @@ export function BillingOverview({
             <>
               <Progress
                 value={usagePercent}
-                className={isAtLimit ? '[&>div]:bg-destructive' : isNearLimit ? '[&>div]:bg-warning' : ''}
+                className={isAtLimit ? '[&>div]:bg-destructive' : (isNearLimit ? '[&>div]:bg-warning' : '')}
               />
               {isNearLimit && !isAtLimit && (
                 <p className="text-xs text-warning">

@@ -62,7 +62,7 @@ export function PricingCard({ plan, onSelect, loading }: PricingCardProps) {
             <div className="flex items-baseline justify-center gap-1">
               <span className="text-4xl font-bold">${plan.price}</span>
               <span className="text-muted-foreground">
-                /{plan.period === 'month' ? 'mo' : plan.period === 'year' ? 'yr' : ''}
+                /{({ month: 'mo', year: 'yr' } as Record<string, string>)[plan.period] ?? ''}
               </span>
             </div>
           ) : (
@@ -77,8 +77,8 @@ export function PricingCard({ plan, onSelect, loading }: PricingCardProps) {
 
         {/* Features */}
         <ul className="space-y-3">
-          {plan.features.map((feature, i) => (
-            <li key={i} className="flex items-start gap-2">
+          {plan.features.map((feature) => (
+            <li key={feature} className="flex items-start gap-2">
               <Check className="h-4 w-4 text-success mt-0.5 shrink-0" />
               <span className="text-sm">{feature}</span>
             </li>
@@ -89,11 +89,11 @@ export function PricingCard({ plan, onSelect, loading }: PricingCardProps) {
       <CardFooter>
         <Button
           className="w-full"
-          variant={plan.current ? 'outline' : plan.recommended ? 'default' : 'secondary'}
+          variant={plan.current ? 'outline' : (plan.recommended ? 'default' : 'secondary')}
           onClick={() => onSelect?.(plan.id)}
           disabled={loading || plan.current}
         >
-          {plan.current ? 'Current Plan' : plan.price === null ? 'Contact Sales' : 'Select Plan'}
+          {plan.current ? 'Current Plan' : (plan.price === null ? 'Contact Sales' : 'Select Plan')}
         </Button>
       </CardFooter>
     </Card>

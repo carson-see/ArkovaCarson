@@ -168,8 +168,8 @@ export function MyRecordsPage() {
         <CardContent className="pt-0">
           {recordsLoading ? (
             <div className="divide-y">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={i} className="flex items-center gap-4 py-4 px-2">
+              {Array.from({ length: 5 }).map((_, idx) => (
+                <div key={`skeleton-${idx}`} className="flex items-center gap-4 py-4 px-2">
                   <Skeleton className="h-10 w-10 rounded-lg" />
                   <div className="flex-1 space-y-2">
                     <Skeleton className="h-4 w-48" />
@@ -179,7 +179,7 @@ export function MyRecordsPage() {
                 </div>
               ))}
             </div>
-          ) : filteredRecords.length === 0 ? (
+          ) : (filteredRecords.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
                 <FileText className="h-7 w-7 text-muted-foreground" />
@@ -208,8 +208,11 @@ export function MyRecordsPage() {
                 return (
                   <div
                     key={record.id}
+                    role="button"
+                    tabIndex={0}
                     className="flex items-center gap-4 py-4 px-2 hover:bg-muted/50 transition-colors cursor-pointer"
                     onClick={() => navigate(recordDetailPath(record.id))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') navigate(recordDetailPath(record.id)); }}
                   >
                     <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
                       <FileText className="h-5 w-5 text-muted-foreground" />
@@ -289,7 +292,7 @@ export function MyRecordsPage() {
                 );
               })}
             </div>
-          )}
+          ))}
         </CardContent>
       </Card>
 

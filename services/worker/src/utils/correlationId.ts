@@ -5,8 +5,8 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
-import { AsyncLocalStorage } from 'async_hooks';
+import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 // Store for correlation context
 const correlationStorage = new AsyncLocalStorage<{ correlationId: string }>();

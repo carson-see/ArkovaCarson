@@ -390,9 +390,7 @@ function InfoRow({
         {label}
       </span>
       <span className={`text-sm text-right break-all ${
-        variant === 'warning' ? 'text-yellow-600' :
-        variant === 'destructive' ? 'text-destructive' :
-        ''
+        ({ warning: 'text-yellow-600', destructive: 'text-destructive' } as Record<string, string>)[variant ?? ''] ?? ''
       }`}>
         {value}
       </span>

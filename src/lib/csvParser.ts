@@ -212,6 +212,15 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
 type ColumnNameGetter = (index: number | null) => string;
 type FieldValueGetter = (row: CsvRow, index: number | null) => string;
 
+/** Shared helper: look up a field value by column index. */
+function makeFieldValueGetter(columns: CsvColumn[]): FieldValueGetter {
+  return (row, index) => {
+    if (index === null) return '';
+    const colName = columns[index]?.name;
+    return colName ? row.data[colName] || '' : '';
+  };
+}
+
 function validateFingerprintField(
   row: CsvRow, mapping: ColumnMapping,
   getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
@@ -258,8 +267,8 @@ function validateFileSizeField(
   if (mapping.fileSize === null) return [];
   const sizeStr = getValueByIndex(row, mapping.fileSize);
   if (sizeStr) {
-    const size = parseInt(sizeStr, 10);
-    if (isNaN(size) || size < 0) {
+    const size = Number.parseInt(sizeStr, 10);
+    if (Number.isNaN(size) || size < 0) {
       return [{ row: row.rowNumber, column: getColumnName(mapping.fileSize), message: 'File size must be a positive number' }];
     }
   }
@@ -316,11 +325,7 @@ export function validateCsvRows(
     return columns[index]?.name || `column_${index}`;
   };
 
-  const getValueByIndex: FieldValueGetter = (row, index) => {
-    if (index === null) return '';
-    const colName = columns[index]?.name;
-    return colName ? row.data[colName] || '' : '';
-  };
+  const getValueByIndex = makeFieldValueGetter(columns);
 
   for (const row of rows) {
     const rowErrors = [
@@ -365,11 +370,7 @@ export function extractAnchorRecords(
   columns: CsvColumn[],
   mapping: ColumnMapping
 ): BulkAnchorRecord[] {
-  const getValueByIndex = (row: CsvRow, index: number | null): string => {
-    if (index === null) return '';
-    const colName = columns[index]?.name;
-    return colName ? row.data[colName] || '' : '';
-  };
+  const getValueByIndex = makeFieldValueGetter(columns);
 
   return rows.map(row => {
     const record: BulkAnchorRecord = {
@@ -380,7 +381,7 @@ export function extractAnchorRecords(
     if (mapping.fileSize !== null) {
       const sizeStr = getValueByIndex(row, mapping.fileSize);
       if (sizeStr) {
-        record.fileSize = parseInt(sizeStr, 10);
+        record.fileSize = Number.parseInt(sizeStr, 10);
       }
     }
 

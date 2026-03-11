@@ -116,7 +116,7 @@ vi.stubGlobal('fetch', mockFetch);
 import { dispatchWebhookEvent, processWebhookRetries } from './delivery.js';
 
 // We also need direct access for HMAC verification — import crypto
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 
 // ---- Test fixtures ----
 
@@ -791,7 +791,7 @@ describe('processWebhookRetries', () => {
         return {
           select: (...args: any[]) => {
             // Retry query (first call)
-            if (args[0] && args[0].includes('webhook_endpoints')) {
+            if (args[0]?.includes('webhook_endpoints')) {
               return { eq: retryLogsSelect.eq };
             }
             // Idempotency check (subsequent calls from deliverToEndpoint)

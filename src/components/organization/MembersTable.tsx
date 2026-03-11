@@ -141,11 +141,7 @@ export function MembersTable({
               <TableCell>
                 <Badge
                   variant={
-                    member.status === 'active'
-                      ? 'success'
-                      : member.status === 'pending'
-                      ? 'warning'
-                      : 'secondary'
+                    ({ active: 'success', pending: 'warning' } as Record<string, 'success' | 'warning'>)[member.status] ?? 'secondary'
                   }
                 >
                   {member.status.charAt(0).toUpperCase() + member.status.slice(1)}
@@ -234,8 +230,8 @@ function MembersTableSkeleton() {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <TableRow key={i}>
+        {Array.from({ length: 3 }).map((_, idx) => (
+          <TableRow key={`skeleton-${idx}`}>
             <TableCell>
               <div className="flex items-center gap-3">
                 <Skeleton className="h-8 w-8 rounded-full" />

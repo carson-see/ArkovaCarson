@@ -132,14 +132,14 @@ export function SettingsPage() {
                 >
                   {updating ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : saved ? (
+                  ) : (saved ? (
                     <>
                       <Check className="mr-1 h-4 w-4" />
                       Saved
                     </>
                   ) : (
                     'Save'
-                  )}
+                  ))}
                 </Button>
               </div>
             </div>
