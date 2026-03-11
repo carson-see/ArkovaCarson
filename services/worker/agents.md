@@ -1,5 +1,5 @@
 # agents.md — services/worker
-_Last updated: 2026-03-10 8:00 PM EST_
+_Last updated: 2026-03-10 11:30 PM EST_
 
 ## What This Folder Contains
 
@@ -14,6 +14,7 @@ Express-based worker service handling privileged server-side operations: anchor 
 | 2026-03-10 ~4 PM | HARDENING-3 | 55 new tests: webhook delivery (30), Stripe client (7), Stripe handlers (18). Total: 114 worker tests. HMAC signature verification confirmed against `crypto.createHmac`. |
 | 2026-03-10 ~5:20 PM | HARDENING-4 | 18 new tests: lifecycle integration (8), webhook dispatch wiring (10). Wired `dispatchWebhookEvent()` into `processAnchor()`. Added `processWebhookRetries` cron. Total: 132 worker tests. P7-TS-10 COMPLETE. |
 | 2026-03-10 ~8 PM | HARDENING-5 | 96 new tests across 7 new test files: config (9), index (17), stripe/mock (9), jobs/report (19), jobs/webhook (12), utils/correlationId (12), utils/rateLimit (18). 80% thresholds on all. Total: 228 worker tests. Sprint COMPLETE. |
+| 2026-03-10 ~11:30 PM | TYPE-FIX | Fixed pre-existing TS errors: `delivery.ts` (Json type cast for payload insert), `logger.ts` (pino CJS/ESM interop), `delivery.test.ts` (mock tuple/undefined casts), `client.test.ts` (missing afterEach import), `index.test.ts` (express importActual type). Synced `database.types.ts` from frontend. Zero TS errors across all source + test files. |
 
 ## Test Coverage Status (Final — HARDENING-5)
 

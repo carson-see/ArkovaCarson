@@ -5,6 +5,7 @@
  */
 
 import crypto from 'crypto';
+import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
@@ -74,7 +75,7 @@ async function deliverToEndpoint(
       endpoint_id: endpoint.id,
       event_type: payload.event_type,
       event_id: payload.event_id,
-      payload: payload,
+      payload: payload as unknown as Json,
       attempt_number: attempt,
       status: 'pending',
       idempotency_key: idempotencyKey,
@@ -248,7 +249,7 @@ export async function processWebhookRetries(): Promise<number> {
 
     await deliverToEndpoint(
       endpoint,
-      log.payload as WebhookPayload,
+      log.payload as unknown as WebhookPayload,
       log.attempt_number + 1
     );
     retried++;

@@ -9,11 +9,21 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-// Default to local Supabase instance if env vars not set
+// Require credentials via environment variables — never hardcode secrets
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `Missing required environment variable: ${name}. ` +
+      `Set it in .env.test or your shell before running E2E tests.`
+    );
+  }
+  return value;
+}
+
 const SUPABASE_URL = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
-const SUPABASE_SERVICE_KEY =
-  process.env.E2E_SUPABASE_SERVICE_KEY ||
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+const SUPABASE_SERVICE_KEY = requireEnv('E2E_SUPABASE_SERVICE_KEY');
+const SEED_PASSWORD = requireEnv('E2E_SEED_PASSWORD');
 
 /**
  * Service-role Supabase client for E2E test setup/teardown.
@@ -30,31 +40,31 @@ export const SEED_USERS = {
   orgAdmin: {
     id: '11111111-0000-0000-0000-000000000001',
     email: 'admin@umich-demo.arkova.io',
-    password: 'Demo1234!',
+    password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
   /** ORG_MEMBER at University of Michigan demo org */
   registrar: {
     id: '11111111-0000-0000-0000-000000000002',
     email: 'registrar@umich-demo.arkova.io',
-    password: 'Demo1234!',
+    password: SEED_PASSWORD,
     role: 'ORG_MEMBER' as const,
   },
   /** ORG_ADMIN at Midwest Medical (second org — RLS isolation) */
   orgBAdmin: {
     id: '22222222-0000-0000-0000-000000000001',
     email: 'admin@midwest-medical.arkova.io',
-    password: 'Demo1234!',
+    password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
   /** INDIVIDUAL user (no org) */
   individual: {
     id: '33333333-0000-0000-0000-000000000001',
     email: 'individual@demo.arkova.io',
-    password: 'Demo1234!',
+    password: SEED_PASSWORD,
     role: 'INDIVIDUAL' as const,
   },
-} as const;
+};
 
 // ── Test Data Helpers ───────────────────────────────────────────────────────
 
