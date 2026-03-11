@@ -18,9 +18,9 @@ The PDF includes:
 4. **Verification Instructions** — how to compute SHA-256, link to public verification page
 5. **QR Code** — links to `/verify/{publicId}`
 
-### JSON Proof Download (No-Op — CRIT-5)
+### JSON Proof Download (~~CRIT-5~~ FIXED)
 
-`src/components/public/ProofDownload.tsx` renders download buttons for both PDF and JSON formats. The PDF handler works; the JSON handler does nothing. This is tracked as CRIT-5.
+`src/components/public/ProofDownload.tsx` renders download buttons for both PDF and JSON formats. Both handlers work. ~~CRIT-5~~ was resolved 2026-03-10 (commit a38b485) — `onDownloadProofJson` wired in `RecordDetailPage` using `generateProofPackage` + `downloadProofPackage` from `proofPackage.ts`.
 
 **Planned JSON schema (`proofPackage.ts`):**
 
@@ -125,7 +125,7 @@ Per Constitution Section 1.3, proof packages use approved terminology:
 |-----------|--------|-------|
 | PDF certificate generation | Complete | `generateAuditReport.ts` (jsPDF) |
 | PDF download button | Complete | `ProofDownload.tsx` |
-| JSON proof download | No-op | CRIT-5 — handler does nothing |
+| JSON proof download | Complete | ~~CRIT-5~~ FIXED (commit a38b485) |
 | ZIP archive | Not started | No ZIP library installed |
 | Public verification page | Complete | P6-TS-01, 5-section display |
 | QR code generation | Complete | P6-TS-02, in AssetDetailView |
@@ -143,5 +143,6 @@ Per Constitution Section 1.3, proof packages use approved terminology:
 
 | Date | Story | Change |
 |------|-------|--------|
-| 2026-03-10 | Audit | Rewrote: documented actual implementation (PDF works, JSON is no-op CRIT-5, ZIP is planned not built), removed fictional ZIP generation code, added implementation status table |
+| 2026-03-10 | Audit | Rewrote: documented actual implementation (PDF works, ZIP is planned not built), removed fictional ZIP generation code, added implementation status table |
+| 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-5 references as resolved (commit a38b485). JSON proof download now working. |
 | 2026-03-10 ~7:15 PM EST | PR-HARDENING-1 | `proofPackage.ts` went from 0% to 100% test coverage — 33 tests in `src/lib/proofPackage.test.ts` covering schema validation, package generation for all anchor states, validation function, filename generation, and browser download with DOM mocks. `validators.ts` functions coverage fixed from 71% to 100% with 10 new tests. |

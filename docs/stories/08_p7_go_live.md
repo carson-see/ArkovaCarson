@@ -1,5 +1,5 @@
 # P7 Go-Live — Story Documentation
-_Last updated: 2026-03-10 5:20 PM EST | 4/10 stories COMPLETE, 2/10 PARTIAL, 4/10 NOT STARTED_
+_Last updated: 2026-03-11 12:30 AM EST | 5/10 stories COMPLETE, 1/10 PARTIAL, 4/10 NOT STARTED_
 
 ## Group Overview
 
@@ -9,7 +9,7 @@ Key deliverables:
 - Billing schema (migration 0016) with plans, subscriptions, entitlements, billing events
 - Stripe webhook verification + checkout session (checkout NOT STARTED — CRIT-3)
 - Real Bitcoin chain client replacing MockChainClient (NOT STARTED — CRIT-2)
-- Proof package export (PDF complete, JSON no-op — CRIT-5)
+- Proof package export (PDF + JSON both complete — ~~CRIT-5~~ FIXED commit a38b485)
 - Webhook endpoint management + delivery engine (fully wired to anchor lifecycle — HARDENING-4)
 - Anchoring worker with job processing (hardening sprint COMPLETE — 132 tests, all 80%+ thresholds)
 
@@ -322,13 +322,13 @@ interface ChainClient {
 
 ### P7-TS-07: Proof Package Export
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Dependencies:** P4-TS-02 (AssetDetailView), P6-TS-05 (PDF generation)
-**Blocked by:** CRIT-5 (JSON download is no-op)
+**Blocked by:** None (~~CRIT-5~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
-Export of verification proof packages in PDF and JSON formats. PDF export is complete via `generateAuditReport.ts`. JSON export has a Zod-validated schema and download utility in `proofPackage.ts`, but the download handler is never called from the UI.
+Export of verification proof packages in PDF and JSON formats. PDF export is complete via `generateAuditReport.ts`. JSON export uses Zod-validated schema and download utility in `proofPackage.ts`. Both download handlers are wired in `RecordDetailPage` and `AssetDetailView`.
 
 #### Implementation Files
 
@@ -355,18 +355,12 @@ The `ProofPackageSchema` (Zod) defines:
 - `getProofPackageFilename(basename, publicId)` — generates `arkova-proof-{basename}-{publicId}.json`
 - `validateProofPackage(data)` — validates unknown data against schema
 
-#### Critical Gap
+#### Implementation Notes
 
 - `ProofDownload.tsx` has two buttons: "PDF Certificate" and "JSON Data"
 - PDF button calls `onDownloadPDF` callback — **working** (calls `generateAuditReport()`)
-- JSON button calls `onDownloadJSON` callback — **no-op** (handler does nothing)
-- `downloadProofPackage()` utility exists but is never wired to the JSON button
-
-#### What's Needed to Complete
-
-1. Wire `generateProofPackage()` + `downloadProofPackage()` to the JSON button handler
-2. Pass anchor data from RecordDetailPage to ProofDownload component
-3. Test JSON download produces valid schema output
+- JSON button calls `onDownloadJSON` callback — **working** (~~CRIT-5~~ FIXED commit a38b485)
+- `downloadProofPackage()` wired via `onDownloadProofJson` in RecordDetailPage + AssetDetailView
 
 #### Security Considerations
 
@@ -377,7 +371,7 @@ The `ProofPackageSchema` (Zod) defines:
 
 | Test File | Type | What It Validates |
 |-----------|------|-------------------|
-| — | — | No tests for proof package generation or download |
+| `src/lib/proofPackage.test.ts` | Unit | Schema validation, generation, download, filename generation (33 tests, 100% coverage — PR-HARDENING-1) |
 
 #### Acceptance Criteria
 
@@ -385,14 +379,12 @@ The `ProofPackageSchema` (Zod) defines:
 - [x] `generateProofPackage()` constructs valid package from anchor data
 - [x] `downloadProofPackage()` triggers browser download
 - [x] PDF export working via `generateAuditReport()`
-- [ ] JSON download button wired to `downloadProofPackage()`
-- [ ] JSON output matches ProofPackageSchema
+- [x] JSON download button wired to `downloadProofPackage()` (~~CRIT-5~~ FIXED)
+- [x] JSON output matches ProofPackageSchema
 
 #### Known Issues
 
-| Issue | Impact |
-|-------|--------|
-| CRIT-5 | JSON proof download button does nothing |
+None. ~~CRIT-5~~ resolved 2026-03-10 (commit a38b485).
 
 ---
 
@@ -637,3 +629,5 @@ Check the Technical Backlog PDF for actual story cards if they exist.
 | 2026-03-10 5:20 PM EST | HARDENING-4: P7-TS-10 PARTIAL → COMPLETE. Webhook dispatch wired in anchor.ts, processWebhookRetries added to cron. 132 worker tests. |
 | 2026-03-10 ~7:15 PM EST | PR-HARDENING-1: Fixed validators.ts (71% → 100% functions) and proofPackage.ts (0% → 100%) coverage failures. 44 new frontend tests. 385 total. |
 | 2026-03-10 ~8:00 PM EST | HARDENING-5: 7 new worker test files (96 tests). All remaining worker files now covered: config, index, stripe/mock, jobs/report, jobs/webhook, utils/correlationId, utils/rateLimit. 228 worker tests. 481 total. Worker hardening sprint COMPLETE. |
+| 2026-03-10 ~9:30 PM EST | CRIT bug fix sprint: CRIT-5 resolved. P7-TS-07 promoted PARTIAL → COMPLETE. JSON proof download wired via onDownloadProofJson. proofPackage.ts has 33 tests (PR-HARDENING-1). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated all CRIT-5 references as resolved. Updated header counts (5/10 complete, 1/10 partial). Added proofPackage.ts test coverage entry. |

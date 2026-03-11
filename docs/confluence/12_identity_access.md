@@ -56,9 +56,9 @@ Roles are **immutable** once set:
 ┌──────────────────────────────────────────────────────────────┐
 │  Role Selection                                              │
 │  /onboarding/role                                            │
-│  Component: RoleSelector                                     │
-│  ⚠ CRIT-4: Route currently renders <DashboardPage/>.        │
-│  RoleSelector component exists but is not wired to route.    │
+│  Component: OnboardingRolePage → RoleSelector                │
+│  ✅ ~~CRIT-4~~ FIXED (commit a38b485)                        │
+│                                                              │
 └────────┬─────────────────────────────────────────────────────┘
          │
     ┌────┴────┐
@@ -70,16 +70,16 @@ INDIVIDUAL  ORG_ADMIN
     │  ┌─────────────────────────────────────────────────────┐
     │  │ Org Onboarding                                      │
     │  │ /onboarding/org                                     │
-    │  │ Component: OrgOnboardingForm                        │
-    │  │ ⚠ CRIT-4: Route currently renders <DashboardPage/>.│
+    │  │ Component: OnboardingOrgPage → OrgOnboardingForm   │
+    │  │ ✅ ~~CRIT-4~~ FIXED (commit a38b485)               │
     │  └────────┬────────────────────────────────────────────┘
     │           │
     │           ▼
     │  ┌─────────────────────────────────────────────────────┐
     │  │ Manual Review Gate (if flagged)                     │
     │  │ /review-pending                                     │
-    │  │ Component: ManualReviewGate                         │
-    │  │ ⚠ CRIT-4: Route currently renders <DashboardPage/>.│
+    │  │ Component: ReviewPendingPage → ManualReviewGate    │
+    │  │ ✅ ~~CRIT-4~~ FIXED (commit a38b485)               │
     │  └────────┬────────────────────────────────────────────┘
     │           │
     ▼           ▼
@@ -243,7 +243,7 @@ Enforced by `protect_privileged_profile_fields()` trigger (migration 0008, updat
 | Role selection UI (RoleSelector) | **Complete** | Component exists at `src/components/onboarding/RoleSelector.tsx` |
 | Org onboarding UI (OrgOnboardingForm) | **Complete** | Component exists at `src/components/onboarding/OrgOnboardingForm.tsx` |
 | Manual review gate UI (ManualReviewGate) | **Complete** | Component exists at `src/components/onboarding/ManualReviewGate.tsx` |
-| Onboarding route wiring | **Not Started** | CRIT-4: All three routes (`/onboarding/role`, `/onboarding/org`, `/review-pending`) render `<DashboardPage/>` placeholder |
+| Onboarding route wiring | **Complete** | ~~CRIT-4~~ FIXED (commit a38b485). All three routes wired: OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage |
 | `update_profile_onboarding` RPC | **Complete** | Migration 0015 |
 | Role immutability trigger | **Complete** | Migration 0008 |
 | Privileged field protection trigger | **Complete** | Migration 0008, updated 0035 |
@@ -263,3 +263,4 @@ Enforced by `protect_privileged_profile_fields()` trigger (migration 0008, updat
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added ORG_MEMBER role (migration 0022). Annotated flow diagram with CRIT-4 status. Expanded `update_profile_onboarding` docs with full signature, return value, and behavior from migration 0015. Added `public_id` to privileged fields (migration 0035). Corrected test file table — `useAuth.test.ts` and `useProfile.test.ts` do not exist. Marked Google OAuth as not configured. Added implementation status table. |
+| 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-4 references as resolved (commit a38b485). Flow diagram updated with correct page components. Onboarding route wiring marked Complete. |

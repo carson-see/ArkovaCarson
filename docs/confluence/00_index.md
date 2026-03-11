@@ -37,7 +37,7 @@ This directory contains 14 architecture and design documents for the Arkova plat
 | 08 | `08_payments_entitlements.md` | Stripe integration, subscription tiers, billing schema (plans/subscriptions/entitlements/billing_events) |
 | 09 | `09_webhooks.md` | Inbound Stripe webhooks, outbound customer webhooks, delivery engine, webhook_endpoints/webhook_delivery_logs schema |
 | 10 | `10_anchoring_worker.md` | Worker service architecture, job processing, chain client interface, directory structure |
-| 11 | `11_proof_packages.md` | Proof downloads (PDF works, JSON is CRIT-5 no-op, ZIP planned), public verification |
+| 11 | `11_proof_packages.md` | Proof downloads (PDF + JSON both working, ~~CRIT-5~~ FIXED, ZIP planned), public verification |
 | 12 | `12_identity_access.md` | Identity verification, access control, role assignment |
 | 13 | `13_switchboard.md` | Feature flags (switchboard_flags), flag history, get_flag() function |
 

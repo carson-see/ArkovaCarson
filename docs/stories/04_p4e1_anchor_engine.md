@@ -31,7 +31,7 @@ RecordDetailPage (useAnchor → AssetDetailView)
 
 **Two Creation Paths:**
 1. `IssueCredentialForm` (org admin) — works correctly, follows this pattern
-2. `SecureDocumentDialog` (individual) — BROKEN (CRIT-1), uses setTimeout simulation
+2. `SecureDocumentDialog` (individual) — ~~CRIT-1~~ FIXED (commit a38b485), now uses real Supabase insert
 
 ---
 
@@ -43,7 +43,7 @@ RecordDetailPage (useAnchor → AssetDetailView)
 
 **Status:** COMPLETE
 **Dependencies:** P1-TS-04 (RLS insert policy), P1-TS-05 (validators), P1-TS-06 (wiring pattern)
-**Blocked by:** CRIT-1 (SecureDocumentDialog wrapping is broken — modal itself works correctly)
+**Blocked by:** None (~~CRIT-1~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -103,7 +103,7 @@ None (uses existing `anchors` table and RLS from P1).
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation) | `SecureDocumentDialog` wraps this modal but bypasses it with `setTimeout` simulation. The modal itself is correctly implemented. |
+| ~~[CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation)~~ | RESOLVED 2026-03-10 (commit a38b485). SecureDocumentDialog rewritten with real Supabase insert. |
 
 #### How to Verify (Manual)
 
@@ -328,3 +328,4 @@ RecordDetailPage.tsx
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P4-E1 story documentation created (Session 2 of 3). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated CRIT-1 references as resolved (commit a38b485). |
