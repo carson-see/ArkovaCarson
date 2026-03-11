@@ -377,8 +377,7 @@ describe('downloadProofPackage', () => {
     removeSpy = vi.fn();
     appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(((node: Node) => node) as never);
 
-    globalThis.URL.createObjectURL = mockCreateObjectURL;
-    globalThis.URL.revokeObjectURL = mockRevokeObjectURL;
+    vi.stubGlobal('URL', { ...URL, createObjectURL: mockCreateObjectURL, revokeObjectURL: mockRevokeObjectURL });
 
     vi.spyOn(document, 'createElement').mockReturnValue({
       href: '',

@@ -292,13 +292,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           <CardContent className="flex flex-col items-center gap-4">
             <div className="rounded-lg border bg-white p-4">
               <QRCodeSVG
-                value={`${globalThis.location.origin}${verifyPath(anchor.publicId)}`}
+                value={`${location.origin}${verifyPath(anchor.publicId)}`}
                 size={180}
                 level="M"
               />
             </div>
             <p className="text-xs text-muted-foreground text-center">
-              {globalThis.location.origin}{verifyPath(anchor.publicId)}
+              {location.origin}{verifyPath(anchor.publicId)}
             </p>
           </CardContent>
         </Card>

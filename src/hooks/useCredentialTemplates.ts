@@ -134,9 +134,9 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         .from('credential_templates')
         .update({
           ...params,
-          default_metadata: params.default_metadata !== undefined
-            ? (params.default_metadata as Json) ?? {}
-            : undefined,
+          default_metadata: params.default_metadata === undefined
+            ? undefined
+            : (params.default_metadata as Json) ?? {},
         })
         .eq('id', id)
         .eq('org_id', orgId);

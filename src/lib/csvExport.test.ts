@@ -108,8 +108,7 @@ describe('csvExport', () => {
     it('should create blob URL and trigger download', () => {
       const createObjectURLMock = vi.fn().mockReturnValue('blob:test-url');
       const revokeObjectURLMock = vi.fn();
-      globalThis.URL.createObjectURL = createObjectURLMock;
-      globalThis.URL.revokeObjectURL = revokeObjectURLMock;
+      vi.stubGlobal('URL', { ...URL, createObjectURL: createObjectURLMock, revokeObjectURL: revokeObjectURLMock });
 
       downloadCsv('name,value\ntest,123', 'export.csv');
 
