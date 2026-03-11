@@ -10,7 +10,7 @@ Arkova does NOT store document content on-chain or in the database. Only the SHA
 
 1. **No content inspection possible** - We cannot determine document contents from the hash
 2. **Privacy preserved** - Sensitive documents never leave user devices
-3. **Minimal on-chain footprint** - Only 64-byte hashes are anchored
+3. **Minimal on-chain footprint** - Only `ARKV` prefix (4 bytes) + SHA-256 fingerprint (32 bytes) = 36 bytes per OP_RETURN output
 
 ## Database-Level Guardrails
 

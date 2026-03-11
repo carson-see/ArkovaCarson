@@ -169,7 +169,7 @@ supabase db reset
 
 # This will:
 # 1. Drop all tables
-# 2. Run all 45 migrations in order (0001-0045, 0033 skipped)
+# 2. Run all 48 migrations in order (0001-0048, 0033 skipped)
 # 3. Run seed.sql (truncates + re-inserts demo data)
 # 4. Re-seeds switchboard flags (cleared by TRUNCATE CASCADE)
 ```

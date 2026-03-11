@@ -140,7 +140,7 @@ Key principles:
 
 See [02_data_model.md](./02_data_model.md) for the complete data model.
 
-### Table Inventory (20 tables across 45 migrations)
+### Table Inventory (20 tables across 48 migrations)
 
 | Table | Migration | Purpose |
 |-------|-----------|---------|

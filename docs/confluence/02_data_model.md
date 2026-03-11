@@ -5,7 +5,7 @@ _Last updated: 2026-03-10 | Migrations: 0001–0045 (0033 skipped)_
 
 Arkova uses PostgreSQL via Supabase with a schema-first approach. All tables have Row Level Security (RLS) enabled via `FORCE ROW LEVEL SECURITY`. Data integrity is enforced through constraints, triggers, and Zod validators on all write paths.
 
-**Total tables:** 20 across 45 migrations.
+**Total tables:** 20 across 48 migrations.
 
 ## Enums
 
