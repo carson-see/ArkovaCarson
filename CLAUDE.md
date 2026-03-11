@@ -284,7 +284,7 @@ services/worker/
     webhooks/delivery.ts                     ← Outbound webhook delivery engine
     utils/                                   ← DB client, logger, rate limiter, correlation ID
 supabase/
-  migrations/                                ← 45 files (0001–0046, 0033 skipped)
+  migrations/                                ← 48 files (0001–0048, 0033 skipped)
   seed.sql                                   ← Demo data
   config.toml                                ← Local Supabase config
 docs/confluence/                             ← Architecture, data model, security, audit, etc.
@@ -443,7 +443,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 46 files, versions 0001–0047 (0033 intentionally skipped). Last: `0047_add_lifecycle_fields_to_get_public_anchor.sql`.
+**Current migration inventory:** 48 files, versions 0001–0048 (0033 intentionally skipped). Last: `0048_consolidate_get_public_anchor_single_read.sql`.
 
 ---
 

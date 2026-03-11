@@ -205,6 +205,21 @@ async function request(app: Express, method: string, path: string, body?: any, h
   });
 }
 
+/** Shared mock DB chain builder — avoids duplication across describe blocks */
+function mockDbChain(result: { data: any; error: any }) {
+  const chain: any = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    in: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue(result),
+    maybeSingle: vi.fn().mockResolvedValue(result),
+  };
+  chain.select.mockReturnValue(chain);
+  chain.eq.mockReturnValue(chain);
+  chain.in.mockReturnValue(chain);
+  return chain;
+}
+
 // Import module once — side effects (listen, cron, shutdown) run at import time
 let app: Express;
 let server: any;
@@ -467,20 +482,6 @@ describe('worker server', () => {
       anchor_limit: 1000,
     };
 
-    function mockDbChain(result: { data: any; error: any }) {
-      const chain: any = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        in: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue(result),
-        maybeSingle: vi.fn().mockResolvedValue(result),
-      };
-      chain.select.mockReturnValue(chain);
-      chain.eq.mockReturnValue(chain);
-      chain.in.mockReturnValue(chain);
-      return chain;
-    }
-
     beforeEach(() => {
       mockDbFrom.mockClear();
       mockSupabaseGetUser.mockClear();
@@ -653,17 +654,6 @@ describe('worker server', () => {
   // ================================================================
 
   describe('POST /api/billing/portal', () => {
-    function mockDbChain(result: { data: any; error: any }) {
-      const chain: any = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue(result),
-      };
-      chain.select.mockReturnValue(chain);
-      chain.eq.mockReturnValue(chain);
-      return chain;
-    }
-
     beforeEach(() => {
       mockDbFrom.mockClear();
       mockSupabaseGetUser.mockClear();

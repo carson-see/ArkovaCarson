@@ -13,7 +13,7 @@
 import { supabase } from '@/lib/supabase';
 
 type VerificationMethod = 'web' | 'api' | 'embed' | 'qr';
-type VerificationResult = 'verified' | 'revoked' | 'not_found' | 'error';
+type VerificationResult = 'verified' | 'revoked' | 'expired' | 'not_found' | 'error';
 
 interface LogVerificationEventParams {
   publicId: string;

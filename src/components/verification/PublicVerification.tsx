@@ -105,10 +105,13 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         // Log verification event based on status
         const status = anchorData.status;
+        const logResult = status === 'REVOKED' ? 'revoked'
+          : status === 'EXPIRED' ? 'expired'
+          : 'verified';
         logVerificationEvent({
           publicId,
           method: 'web',
-          result: status === 'REVOKED' ? 'revoked' : 'verified',
+          result: logResult,
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Verification failed');
@@ -175,6 +178,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   };
 
   const isRevoked = data.status === 'REVOKED';
+  const isExpired = data.status === 'EXPIRED';
+  const isInactive = isRevoked || isExpired;
   const credentialLabel = data.credential_type
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[data.credential_type] ?? data.credential_type
     : null;
@@ -187,33 +192,35 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       {/* ============================================================
           SECTION 1: Status Banner
           ============================================================ */}
-      <div className={isRevoked
+      <div className={isInactive
         ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
         : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
       }>
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
-            isRevoked ? 'bg-gray-500/10' : 'bg-green-500/10'
+            isInactive ? 'bg-gray-500/10' : 'bg-green-500/10'
           }`}>
-            {isRevoked ? (
+            {isInactive ? (
               <Ban className="h-8 w-8 text-gray-500" />
             ) : (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
           </div>
           <Badge
-            variant={isRevoked ? 'secondary' : 'default'}
-            className={`mb-2 text-sm px-4 py-1 ${isRevoked ? '' : 'bg-green-600 hover:bg-green-700'}`}
+            variant={isInactive ? 'secondary' : 'default'}
+            className={`mb-2 text-sm px-4 py-1 ${isInactive ? '' : 'bg-green-600 hover:bg-green-700'}`}
           >
             {statusLabel}
           </Badge>
           <h2 className="text-xl font-semibold">
-            {isRevoked ? 'Record Revoked' : 'Document Verified'}
+            {isRevoked ? 'Record Revoked' : isExpired ? 'Record Expired' : 'Document Verified'}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             {isRevoked
               ? 'This record has been revoked by the issuing organization'
-              : 'This document has been permanently secured'}
+              : isExpired
+                ? 'This record has passed its expiration date'
+                : 'This document has been permanently secured'}
           </p>
         </div>
       </div>
@@ -361,15 +368,17 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
  * The RPC maps SECURED→ACTIVE for the frozen API schema, so we reverse it here. */
 function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
   // Reverse the RPC status mapping: ACTIVE→SECURED for the lifecycle component
-  const statusMap: Record<string, AnchorLifecycleData['status']> = {
+  // Validate against known statuses to prevent unexpected strings
+  const validStatuses: Record<string, AnchorLifecycleData['status']> = {
     ACTIVE: 'SECURED',
     SECURED: 'SECURED',
     REVOKED: 'REVOKED',
     EXPIRED: 'EXPIRED',
     PENDING: 'PENDING',
   };
+  const status = validStatuses[data.status] ?? 'PENDING';
   return {
-    status: statusMap[data.status] ?? 'PENDING',
+    status,
     createdAt: data.created_at!,
     issuedAt: data.issued_at ?? data.issued_date,
     securedAt: data.secured_at ?? data.anchor_timestamp,
