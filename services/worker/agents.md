@@ -16,10 +16,12 @@ Express-based worker service handling privileged server-side operations: anchor 
 | 2026-03-10 ~8 PM | HARDENING-5 | 96 new tests across 7 new test files: config (9), index (17), stripe/mock (9), jobs/report (19), jobs/webhook (12), utils/correlationId (12), utils/rateLimit (18). 80% thresholds on all. Total: 228 worker tests. Sprint COMPLETE. |
 | 2026-03-10 ~11:30 PM | TYPE-FIX | Fixed pre-existing TS errors: `delivery.ts` (Json type cast for payload insert), `logger.ts` (pino CJS/ESM interop), `delivery.test.ts` (mock tuple/undefined casts), `client.test.ts` (missing afterEach import), `index.test.ts` (express importActual type). Synced `database.types.ts` from frontend. Zero TS errors across all source + test files. |
 | 2026-03-11 | SONARQUBE | SonarQube remediation: S2068 credential fixes across test files, S6437 ReDoS regex replacements, S8215 Express disclosure fix, S2004 deeply nested mock flattening in load tests, security hotspot reviews (pseudorandom, CORS, CSRF, regex anchoring). All worker type errors resolved. |
+| 2026-03-11 | P7-TS-11 | Wallet utilities: `chain/wallet.ts` (generateSignetKeypair, addressFromWif, isValidSignetWif), CLI scripts, 13 tests. |
+| 2026-03-12 | P7-TS-12 | UTXO provider abstraction: `chain/utxo-provider.ts` (RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Broadcast tests added to signet.test.ts (3) and utxo-provider.test.ts (3). Integrated into SignetChainClient + getChainClient(). 363 total worker tests. |
 
 ## Test Coverage Status (Final — HARDENING-5)
 
-**228 worker tests across 14 test files. All pass 80%+ per-file thresholds.**
+**363 worker tests across 17 test files. All pass 80%+ per-file thresholds.**
 
 | File | Test File | Tests | Coverage | Sprint |
 |------|-----------|-------|----------|--------|
@@ -37,6 +39,9 @@ Express-based worker service handling privileged server-side operations: anchor 
 | `src/jobs/webhook.ts` | `webhook.test.ts` | 12 | 80%+ | H5 |
 | `src/utils/correlationId.ts` | `correlationId.test.ts` | 12 | 80%+ | H5 |
 | `src/utils/rateLimit.ts` | `rateLimit.test.ts` | 18 | 80%+ | H5 |
+| `src/chain/signet.ts` | `signet.test.ts` | 33 | 80%+ | P7-TS-05+12 |
+| `src/chain/utxo-provider.ts` | `utxo-provider.test.ts` | 29 | 80%+ | P7-TS-12 |
+| `src/chain/wallet.ts` | `wallet.test.ts` | 13 | 80%+ | P7-TS-11 |
 
 ## Do / Don't Rules
 
@@ -50,6 +55,7 @@ Express-based worker service handling privileged server-side operations: anchor 
 
 ## Dependencies
 
+- `bitcoinjs-lib`, `ecpair`, `tiny-secp256k1` — Bitcoin transaction construction + signing
 - `pino` / `pino-pretty` — structured logging
 - `stripe` — payment webhook verification
 - `zod` — config validation

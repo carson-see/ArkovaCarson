@@ -332,6 +332,73 @@ describe('SignetChainClient.submitFingerprint', () => {
     expect(receipt.blockHeight).toBe(150000);
     expect(receipt.confirmations).toBe(0);
   });
+
+  it('uses broadcast txid when it differs from computed txid', async () => {
+    const { logger } = await import('../utils/logger.js');
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'different_txid_from_network' });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150001 }),
+    });
+    const client = new SignetChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Should use the broadcast txid, not the computed one
+    expect(receipt.receiptId).toBe('different_txid_from_network');
+    // Should have logged a warning about the mismatch
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ broadcast: 'different_txid_from_network' }),
+      expect.stringContaining('differs'),
+    );
+  });
+
+  it('falls back to computed txid when broadcast returns empty', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: '' });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150002 }),
+    });
+    const client = new SignetChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Should fall back to the locally computed txid (not empty string)
+    expect(receipt.receiptId).toBeTruthy();
+    expect(receipt.receiptId).not.toBe('');
+  });
+
+  it('passes raw tx hex to broadcastTx', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'txid_result' });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150003 }),
+    });
+    const client = new SignetChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    await client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+
+    // broadcastTx should receive a valid hex string
+    expect(broadcastTx).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]+$/));
+  });
 });
 
 // ─── SignetChainClient.getReceipt ────────────────────────────────────────

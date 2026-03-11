@@ -1,5 +1,5 @@
 # agents.md — services/worker/src/chain/
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 ## What This Folder Contains
 
@@ -15,11 +15,12 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 | `wallet.ts` | Treasury wallet utilities — keypair generation, address derivation, WIF validation |
 | `client.test.ts` | Factory tests (8 tests) |
 | `mock.test.ts` | Mock client tests (14 tests) |
-| `signet.test.ts` | Signet client tests (30 tests) — uses dynamically-built funding txs for PSBT validation |
-| `utxo-provider.test.ts` | UTXO provider tests (26 tests) |
+| `signet.test.ts` | Signet client tests (33 tests) — uses dynamically-built funding txs for PSBT validation |
+| `utxo-provider.test.ts` | UTXO provider tests (29 tests) |
 | `wallet.test.ts` | Wallet utility tests (13 tests) |
 
 ## Recent Changes
+- Broadcast test coverage: Added 3 broadcast-specific tests to `signet.test.ts` (txid mismatch handling, empty txid fallback, raw hex format verification) and 3 to `utxo-provider.test.ts` (Mempool POST format, whitespace trimming, HTTP status in errors).
 - P7-TS-12: Added `utxo-provider.ts` — `UtxoProvider` interface, `RpcUtxoProvider`, `MempoolUtxoProvider`, factory. Integrated into `signet.ts` constructor + `client.ts` factory.
 - P7-TS-11: Added `wallet.ts` — `generateSignetKeypair()`, `addressFromWif()`, `isValidSignetWif()`.
 - Test fixes: `signet.test.ts` uses `buildDummyFundingTx()` to construct valid P2PKH funding txs that satisfy `bitcoinjs-lib` PSBT validation (txid hash match + scriptPubKey match).
