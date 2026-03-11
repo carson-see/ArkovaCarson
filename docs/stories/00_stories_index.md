@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-10 8:00 PM EST_
+_Last updated: 2026-03-11 12:30 AM EST_
 
 ## Overview
 
@@ -28,9 +28,9 @@ For a new developer joining the project, read in this order:
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 4 | 2 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 10 | 4 | 2 | 4 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P7 | Go-Live | 10 | 5 | 1 | 4 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| **Total** | | **55** | **34** | **4** | **17** | |
+| **Total** | | **55** | **35** | **3** | **17** | |
 
 ### All Stories by ID
 
@@ -42,15 +42,15 @@ For a new developer joining the project, read in this order:
 | P1-TS-04 | RLS Policies (all tables) | COMPLETE | [P1](./01_p1_bedrock.md) | — |
 | P1-TS-05 | Zod Validators | COMPLETE | [P1](./01_p1_bedrock.md) | — |
 | P1-TS-06 | Validation-on-Insert Wiring | COMPLETE | [P1](./01_p1_bedrock.md) | — |
-| P2-TS-03 | React Router + Named Routes | COMPLETE | [P2](./02_p2_identity.md) | CRIT-4 |
-| P2-TS-04 | AuthGuard + RouteGuard | COMPLETE | [P2](./02_p2_identity.md) | CRIT-4 |
+| P2-TS-03 | React Router + Named Routes | COMPLETE | [P2](./02_p2_identity.md) | ~~CRIT-4~~ FIXED |
+| P2-TS-04 | AuthGuard + RouteGuard | COMPLETE | [P2](./02_p2_identity.md) | ~~CRIT-4~~ FIXED |
 | P2-TS-05 | useProfile Hook + DB Persistence | COMPLETE | [P2](./02_p2_identity.md) | — |
 | P2-TS-06 | useOrganization Hook + OrgSettingsPage | COMPLETE | [P2](./02_p2_identity.md) | — |
-| P2-TS-0X | Auth Forms + Onboarding Components | COMPLETE | [P2](./02_p2_identity.md) | CRIT-4 |
+| P2-TS-0X | Auth Forms + Onboarding Components | COMPLETE | [P2](./02_p2_identity.md) | ~~CRIT-4~~ FIXED |
 | P3-TS-01 | Dashboard + VaultDashboard (real queries) | COMPLETE | [P3](./03_p3_vault.md) | — |
 | P3-TS-02 | Privacy Toggle (is_public_profile) | COMPLETE | [P3](./03_p3_vault.md) | — |
 | P3-TS-03 | Sidebar Navigation | COMPLETE | [P3](./03_p3_vault.md) | — |
-| P4-TS-01 | ConfirmAnchorModal (upload + insert) | COMPLETE | [P4-E1](./04_p4e1_anchor_engine.md) | CRIT-1 |
+| P4-TS-01 | ConfirmAnchorModal (upload + insert) | COMPLETE | [P4-E1](./04_p4e1_anchor_engine.md) | ~~CRIT-1~~ FIXED |
 | P4-TS-02 | AssetDetailView (record display) | COMPLETE | [P4-E1](./04_p4e1_anchor_engine.md) | — |
 | P4-TS-03 | RecordDetailPage (/records/:id) | COMPLETE | [P4-E1](./04_p4e1_anchor_engine.md) | — |
 | P4-TS-04 | credential_type Enum + Column | COMPLETE | [P4-E2](./05_p4e2_credential_metadata.md) | — |
@@ -60,7 +60,7 @@ For a new developer joining the project, read in this order:
 | P5-TS-02 | RevokeDialog (reason + DB persist) | COMPLETE | [P5](./06_p5_org_admin.md) | — |
 | P5-TS-03 | MembersTable (real Supabase query) | COMPLETE | [P5](./06_p5_org_admin.md) | — |
 | P5-TS-05 | public_id Auto-Generation | COMPLETE | [P5](./06_p5_org_admin.md) | — |
-| P5-TS-06 | BulkUploadWizard (credential_type + metadata) | COMPLETE | [P5](./06_p5_org_admin.md) | CRIT-6 |
+| P5-TS-06 | BulkUploadWizard (credential_type + metadata) | COMPLETE | [P5](./06_p5_org_admin.md) | ~~CRIT-6~~ FIXED |
 | P5-TS-07 | credential_templates CRUD + Manager UI | COMPLETE | [P5](./06_p5_org_admin.md) | — |
 | P6-TS-01 | get_public_anchor RPC + PublicVerification | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-02 | QR Code in AssetDetailView | COMPLETE | [P6](./07_p6_verification.md) | — |
@@ -72,7 +72,7 @@ For a new developer joining the project, read in this order:
 | P7-TS-02 | Stripe Checkout Flow | NOT STARTED | [P7](./08_p7_go_live.md) | CRIT-3 |
 | P7-TS-03 | Stripe Webhook Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-05 | Bitcoin Chain Client | NOT STARTED | [P7](./08_p7_go_live.md) | CRIT-2 |
-| P7-TS-07 | Proof Package Download | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-5 |
+| P7-TS-07 | Proof Package Download | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-5~~ FIXED |
 | P7-TS-08 | PDF Certificate (generateAuditReport) | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-09 | Webhook Settings UI | PARTIAL | [P7](./08_p7_go_live.md) | — |
 | P7-TS-10 | Webhook Delivery Engine | COMPLETE | [P7](./08_p7_go_live.md) | — |
@@ -98,17 +98,17 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 
 | Bug ID | Severity | Affects Stories | Summary |
 |--------|----------|-----------------|---------|
-| CRIT-1 | HIGH | P4-TS-01 | SecureDocumentDialog fakes anchor creation (setTimeout, no Supabase insert) |
 | CRIT-2 | HIGH | P7-TS-05 | No real Bitcoin chain client (MockChainClient in all code paths) |
 | CRIT-3 | HIGH | P7-TS-02 | No Stripe checkout flow (SDK initialized, no session endpoint) |
-| CRIT-4 | MEDIUM | P2-TS-03, P2-TS-04, P2-TS-0X | Onboarding routes render DashboardPage placeholder |
-| CRIT-5 | MEDIUM | P7-TS-07 | JSON proof download is no-op (PDF works) |
-| CRIT-6 | MEDIUM | P5-TS-06 | CSVUploadWizard uses simulated processing |
 
 ### Resolved Bugs
 
 | Bug ID | Severity | Resolution | Summary |
 |--------|----------|------------|---------|
+| CRIT-1 | HIGH | FIXED 2026-03-10 (a38b485) | SecureDocumentDialog fakes anchor creation |
+| CRIT-4 | MEDIUM | FIXED 2026-03-10 (a38b485) | Onboarding routes render DashboardPage placeholder |
+| CRIT-5 | MEDIUM | FIXED 2026-03-10 (a38b485) | JSON proof download is no-op (PDF works) |
+| CRIT-6 | MEDIUM | FIXED 2026-03-10 (a38b485) | CSVUploadWizard uses simulated processing |
 | CRIT-7 | LOW | FIXED 2026-03-10 | Browser tab says "Ralph" instead of "Arkova" |
 | BUG-H1-01 | MEDIUM | FIXED 2026-03-10 | Silent audit event failure in processAnchor() |
 | BUG-H1-02 | HIGH | REMOVED 2026-03-10 | Dead code (anchorWithClaim.ts) with nonexistent schema refs |
@@ -140,3 +140,5 @@ Each story doc follows a consistent template:
 | 2026-03-10 4:15 PM EDT | Added resolved bugs (BUG-H1-01, BUG-H1-02, BUG-H1-03) to cross-reference. Split bug table into Active/Resolved sections. |
 | 2026-03-10 ~7:15 PM EST | PR-HARDENING-1: Added BUG-PRH1-01 and BUG-PRH1-02 to resolved bugs (validators.ts + proofPackage.ts coverage fixes). 385 total tests. |
 | 2026-03-10 ~8:00 PM EST | HARDENING-5: 7 new worker test files (96 tests). Final count: 481 total tests (228 worker + 253 frontend). All 80% thresholds pass. Worker hardening sprint COMPLETE. |
+| 2026-03-10 ~9:30 PM EST | CRIT bug fix sprint: CRIT-1, CRIT-4, CRIT-5, CRIT-6 all resolved (commit a38b485). Moved from Active to Resolved bugs. P7-TS-07 promoted PARTIAL → COMPLETE. P7 totals: 5 complete, 1 partial. Overall: 35 complete, 3 partial. |
+| 2026-03-11 ~12:15 AM EST | E2E testing sprint: 15 spec files (86 E2E tests), 4 load test files (25 tests), 1 performance spec (5 tests). 116 new tests total. Fixtures, CI job, and agents.md all created. |

@@ -28,7 +28,7 @@ All P3 work builds on P1 (schema + RLS) and P2 (auth + routing). No new tables a
 
 **Status:** COMPLETE
 **Dependencies:** P1-TS-02 (anchors table), P1-TS-04 (RLS), P2-TS-05 (useProfile)
-**Blocked by:** CRIT-1 (SecureDocumentDialog accessed from dashboard still fakes inserts — but reading/display is real)
+**Blocked by:** None (~~CRIT-1~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -82,7 +82,7 @@ None (queries existing `anchors` table from P1-TS-02).
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation) | SecureDocumentDialog (accessed via dashboard "Secure Document" button) fakes anchor creation. The dashboard data display is real — only the creation path is broken. |
+| ~~[CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation)~~ | RESOLVED 2026-03-10 (commit a38b485). SecureDocumentDialog now uses real Supabase insert. Dashboard data display and creation path both working. |
 
 #### How to Verify (Manual)
 
@@ -264,3 +264,4 @@ None.
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P3 story documentation created (Session 2 of 3). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated CRIT-1 reference as resolved (commit a38b485). |

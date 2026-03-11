@@ -343,7 +343,7 @@ None.
 
 **Status:** COMPLETE
 **Dependencies:** P4-TS-04 (credential_type), P4-TS-05 (metadata)
-**Blocked by:** CRIT-6 (CSVUploadWizard uses simulated processing — BulkUploadWizard is the correct component)
+**Blocked by:** None (~~CRIT-6~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -411,7 +411,7 @@ A 4-step wizard for bulk importing credentials via CSV. Supports `credential_typ
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-6](../bugs/bug_log.md#crit-6-csvuploadwizard-uses-simulated-processing) | `CSVUploadWizard` (separate component) uses simulated processing. `BulkUploadWizard` is the correct component with `useBulkAnchors` hook. |
+| ~~[CRIT-6](../bugs/bug_log.md#crit-6-csvuploadwizard-uses-simulated-processing)~~ | RESOLVED 2026-03-10 (commit a38b485). CSVUploadWizard rewritten with real csvParser + useBulkAnchors hook. Both wizard components now use real processing. |
 
 #### How to Verify (Manual)
 
@@ -548,10 +548,11 @@ None.
 - [03_security_rls.md](../confluence/03_security_rls.md) — RLS policies for org-scoped tables
 - [04_audit_events.md](../confluence/04_audit_events.md) — Template lifecycle audit events
 - [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) — Credential type + metadata foundation
-- [bug_log.md](../bugs/bug_log.md) — CRIT-6 (CSVUploadWizard simulation)
+- [bug_log.md](../bugs/bug_log.md) — ~~CRIT-6~~ (CSVUploadWizard — RESOLVED)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P5 story documentation created (Session 2 of 3). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated CRIT-6 reference as resolved (commit a38b485). |

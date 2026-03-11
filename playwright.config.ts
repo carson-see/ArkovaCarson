@@ -5,6 +5,12 @@ import { defineConfig, devices } from '@playwright/test';
  *
  * Run tests with: npm run test:e2e
  * Run with UI: npm run test:e2e:ui
+ *
+ * Environment variables (optional, defaults to local Supabase):
+ *   E2E_SUPABASE_URL         — Supabase API URL
+ *   E2E_SUPABASE_SERVICE_KEY — Service role key (for test data setup)
+ *
+ * @updated 2026-03-10 10:30 PM EST
  */
 export default defineConfig({
   testDir: './e2e',
@@ -16,6 +22,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
   },
   projects: [
     {

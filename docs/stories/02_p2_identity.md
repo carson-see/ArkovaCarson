@@ -41,7 +41,7 @@ ORG_ADMIN + org  → /dashboard
 
 **Status:** COMPLETE
 **Dependencies:** P1-TS-04 (RLS for profile queries)
-**Blocked by:** CRIT-4 (onboarding routes render placeholder)
+**Blocked by:** None (~~CRIT-4~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -81,9 +81,9 @@ None (routing is frontend-only).
 | `/signup` | SignUpPage | PublicOnly | |
 | `/verify/:publicId` | PublicVerifyPage | None | Public access |
 | `/auth/callback` | AuthCallbackPage | None | OAuth redirect target |
-| `/onboarding/role` | DashboardPage* | AuthGuard + RouteGuard | *CRIT-4: should be RoleSelector |
-| `/onboarding/org` | DashboardPage* | AuthGuard + RouteGuard | *CRIT-4: should be OrgOnboardingForm |
-| `/review-pending` | DashboardPage* | AuthGuard + RouteGuard | *CRIT-4: should be ManualReviewGate |
+| `/onboarding/role` | OnboardingRolePage | AuthGuard + RouteGuard | ~~CRIT-4~~ FIXED — RoleSelector wired |
+| `/onboarding/org` | OnboardingOrgPage | AuthGuard + RouteGuard | ~~CRIT-4~~ FIXED — OrgOnboardingForm wired |
+| `/review-pending` | ReviewPendingPage | AuthGuard + RouteGuard | ~~CRIT-4~~ FIXED — ManualReviewGate wired |
 | `/dashboard` | DashboardPage | AuthGuard + RouteGuard | ORG_ADMIN home |
 | `/vault` | VaultPage | AuthGuard + RouteGuard | INDIVIDUAL home |
 | `/records` | MyRecordsPage | AuthGuard + RouteGuard | |
@@ -107,7 +107,7 @@ None (routing is frontend-only).
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders) | `/onboarding/role`, `/onboarding/org`, `/review-pending` all render `<DashboardPage/>` instead of actual components. Components exist but are not imported into App.tsx. |
+| ~~[CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders)~~ | RESOLVED 2026-03-10 (commit a38b485). OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage created and wired into App.tsx. |
 
 #### How to Verify (Manual)
 
@@ -124,7 +124,7 @@ None (routing is frontend-only).
 
 **Status:** COMPLETE
 **Dependencies:** P2-TS-03 (routes to guard)
-**Blocked by:** CRIT-4 (RouteGuard works but onboarding destinations render placeholders)
+**Blocked by:** None (~~CRIT-4~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -175,7 +175,7 @@ None (guards are frontend-only, but depend on profile data from P1 tables).
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders) | RouteGuard correctly computes destination `/onboarding/role` for users without a role, but the route renders DashboardPage instead of RoleSelector. The guard works; the target route is broken. |
+| ~~[CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders)~~ | RESOLVED 2026-03-10 (commit a38b485). Onboarding routes now render actual components. RouteGuard + route destinations both work correctly. |
 
 #### How to Verify (Manual)
 
@@ -314,7 +314,7 @@ None.
 
 **Status:** COMPLETE
 **Dependencies:** P2-TS-03 (routes), P2-TS-05 (useProfile for auth state)
-**Blocked by:** CRIT-4 (onboarding components built but not wired to routes)
+**Blocked by:** None (~~CRIT-4~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
@@ -392,7 +392,7 @@ The `useOnboarding` hook calls the `update_profile_onboarding` RPC for transacti
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders) | RoleSelector, OrgOnboardingForm, and ManualReviewGate all exist and are fully functional, but the routes in App.tsx render `<DashboardPage/>` instead. Fix: import and wire the actual components (3 line changes). |
+| ~~[CRIT-4](../bugs/bug_log.md#crit-4-onboarding-routes-are-placeholders)~~ | RESOLVED 2026-03-10 (commit a38b485). RoleSelector, OrgOnboardingForm, and ManualReviewGate wired to routes via OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage. |
 
 #### How to Verify (Manual)
 
@@ -407,8 +407,8 @@ The `useOnboarding` hook calls the `update_profile_onboarding` RPC for transacti
 2. Fill in name, email, password (8+ chars), confirm password
 3. Click Sign Up — should show "Check your email" confirmation
 
-**Onboarding (cannot fully test due to CRIT-4):**
-1. The RoleSelector component can be tested in Storybook or by temporarily wiring it
+**Onboarding (~~CRIT-4~~ FIXED):**
+1. Navigate to `/onboarding/role` — RoleSelector renders with INDIVIDUAL/ORG_ADMIN options
 2. OrgOnboardingForm: validates legal name required, domain format
 3. ManualReviewGate: renders blocking screen with amber shield icon
 
@@ -456,10 +456,11 @@ All three onboarding steps (role, org, review) are gated by RouteGuard and the `
 - [02_data_model.md](../confluence/02_data_model.md) — profiles + organizations schema
 - [03_security_rls.md](../confluence/03_security_rls.md) — RLS policies for profiles, organizations
 - [04_audit_events.md](../confluence/04_audit_events.md) — Audit event types (profile.role_set, org.created)
-- [bug_log.md](../bugs/bug_log.md) — CRIT-4 (onboarding route placeholders)
+- [bug_log.md](../bugs/bug_log.md) — ~~CRIT-4~~ (onboarding routes — RESOLVED)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P2 story documentation created (Session 1 of 3). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated all CRIT-4 references as resolved (commit a38b485). Route table updated with actual page components. |

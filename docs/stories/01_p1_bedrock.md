@@ -387,13 +387,13 @@ None.
 
 **Status:** COMPLETE
 **Dependencies:** P1-TS-04 (RLS for insert policy), P1-TS-05 (validators)
-**Blocked by:** CRIT-1 (SecureDocumentDialog path is broken; IssueCredentialForm path works)
+**Blocked by:** None (~~CRIT-1~~ resolved 2026-03-10, commit a38b485)
 
 #### What This Story Delivers
 
 Wires the Zod validators into the actual anchor creation flow. When a user confirms an anchor in `ConfirmAnchorModal`, the component calls `validateAnchorCreate()` before inserting into Supabase, then logs an audit event on success. This ensures every anchor in the database has been validated at both the application and database layers.
 
-This is the **correct pattern** for anchor creation. The org admin path (`IssueCredentialForm`) also follows this pattern. The individual user path (`SecureDocumentDialog`) does NOT — it uses setTimeout simulation (CRIT-1).
+This is the **correct pattern** for anchor creation. The org admin path (`IssueCredentialForm`) also follows this pattern. The individual user path (`SecureDocumentDialog`) now also follows this pattern (~~CRIT-1~~ FIXED commit a38b485).
 
 #### Implementation Files
 
@@ -434,7 +434,7 @@ None (uses existing tables and RLS policies from P1-TS-02 and P1-TS-04).
 
 | Bug | Impact |
 |-----|--------|
-| [CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation) | SecureDocumentDialog (individual user path) does NOT use this pattern. It fakes anchor creation with setTimeout. The ConfirmAnchorModal and IssueCredentialForm patterns are correct. |
+| ~~[CRIT-1](../bugs/bug_log.md#crit-1-securedocumentdialog-fakes-anchor-creation)~~ | RESOLVED 2026-03-10 (commit a38b485). SecureDocumentDialog rewritten to use real Supabase insert following the ConfirmAnchorModal/IssueCredentialForm pattern. |
 
 #### How to Verify (Manual)
 
@@ -484,10 +484,11 @@ None (uses existing tables and RLS policies from P1-TS-02 and P1-TS-04).
 - [02_data_model.md](../confluence/02_data_model.md) — Full schema reference
 - [03_security_rls.md](../confluence/03_security_rls.md) — RLS policy details
 - [04_audit_events.md](../confluence/04_audit_events.md) — Audit event types and categories
-- [bug_log.md](../bugs/bug_log.md) — CRIT-1 (SecureDocumentDialog bypass)
+- [bug_log.md](../bugs/bug_log.md) — ~~CRIT-1~~ (SecureDocumentDialog — RESOLVED)
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P1 story documentation created (Session 1 of 3). |
+| 2026-03-11 ~12:30 AM EST | Documentation audit: Updated CRIT-1 references as resolved (commit a38b485). |

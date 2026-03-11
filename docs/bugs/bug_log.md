@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-10 10:00 PM EST | Active bugs: 2 | Resolved: 10_
+_Last updated: 2026-03-11 ~12:30 AM EST | Active bugs: 2 | Resolved: 12_
 
 ## Layman's Summary
 
@@ -26,8 +26,6 @@ _For each bug: what it means in plain English and why it matters._
 |----|----------|-------|---------|--------|
 | CRIT-2 | HIGH | P7-TS-05 | No real Bitcoin chain client | OPEN |
 | CRIT-3 | HIGH | P7-TS-02 | No Stripe checkout flow | OPEN |
-| ~~BUG-PRH1-01~~ | LOW | — | validators.ts functions coverage below 80% threshold | **FIXED** [PR-Hardening1-Bug] |
-| ~~BUG-PRH1-02~~ | MEDIUM | P7-TS-07 | proofPackage.ts has 0% coverage against 80% threshold | **FIXED** [PR-Hardening1-Bug] |
 
 ## Resolved Bugs Summary
 
@@ -41,6 +39,8 @@ _For each bug: what it means in plain English and why it matters._
 | BUG-H1-01 | MEDIUM | P7-TS-05 | Silent audit event failure in processAnchor() | FIXED 2026-03-10 |
 | BUG-H1-02 | HIGH | P7-TS-10 | receipt.merkleRoot type error in anchorWithClaim.ts | REMOVED 2026-03-10 |
 | BUG-H1-03 | HIGH | P7-TS-10 | processAllJobs() loop exits after first batch | REMOVED 2026-03-10 |
+| BUG-PRH1-01 | LOW | — | validators.ts functions coverage below 80% threshold | FIXED 2026-03-10 |
+| BUG-PRH1-02 | MEDIUM | P7-TS-07 | proofPackage.ts has 0% coverage against 80% threshold | FIXED 2026-03-10 |
 
 ---
 
@@ -843,3 +843,5 @@ Same as BUG-H1-02.
 | 2026-03-10 6:45 PM EST | PR-HARDENING-1 audit complete. 2 new bugs found (BUG-PRH1-01, BUG-PRH1-02) — both frontend coverage threshold failures, labeled PR-Hardening1-Bug. 0 open PRs, 0 unaddressed comments. 341/341 tests pass. Updated active count: 8 active, 4 resolved. |
 | 2026-03-10 7:15 PM EST | Fixed BUG-PRH1-01 (10 new tests in validators.test.ts) and BUG-PRH1-02 (33 new tests in proofPackage.test.ts). Both at 100% coverage. Total: 385 tests (253 frontend + 132 worker). Updated counts: 6 active, 6 resolved. |
 | 2026-03-10 8:00 PM EST | HARDENING-5 complete. 7 new worker test files (96 tests). No new bugs found. Final: 481 tests (253 frontend + 228 worker). All thresholds pass. Worker hardening sprint COMPLETE. |
+| 2026-03-10 10:30 PM EST | CRIT-1, CRIT-4, CRIT-5, CRIT-6 all FIXED. SecureDocumentDialog real Supabase insert, onboarding routes wired, JSON proof download connected, CSVUploadWizard uses real csvParser + useBulkAnchors. Moved PRH1 bugs from active to resolved table. Active: 2, Resolved: 12. |
+| 2026-03-11 ~12:30 AM EST | E2E testing + stress testing sprint complete (116 new tests). No new bugs found. Documentation audit: updated stale CRIT-1/4/5/6 references across 9 story docs + 3 confluence docs. |
