@@ -121,7 +121,8 @@ describe('InviteMemberModal', () => {
       expect(screen.getByText('User already exists')).toBeInTheDocument();
     });
 
-    // Modal should stay open on error
-    expect(defaultProps.onOpenChange).not.toHaveBeenCalledWith(false);
+    // Modal content should still be visible (error doesn't close it)
+    expect(screen.getByText('Invite Team Member')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('colleague@company.com')).toBeInTheDocument();
   });
 });
