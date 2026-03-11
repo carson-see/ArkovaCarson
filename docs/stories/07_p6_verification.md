@@ -1,5 +1,5 @@
 # P6 Verification — Story Documentation
-_Last updated: 2026-03-10 | 4/6 stories COMPLETE, 2/6 PARTIAL_
+_Last updated: 2026-03-11 | 5/6 stories COMPLETE, 1/6 PARTIAL_
 
 ## Group Overview
 
@@ -9,7 +9,7 @@ Key deliverables:
 - `PublicVerification` — 5-section public page fetching via `get_public_anchor` RPC (SECURITY DEFINER)
 - `QRCodeSVG` in AssetDetailView — links to `/verify/{publicId}` for SECURED anchors
 - `VerificationWidget` — self-contained embed-ready component (PARTIAL: never imported or routed)
-- `AnchorLifecycleTimeline` + `useCredentialLifecycle` — visual timeline for credential lifecycle (PARTIAL: not on public page)
+- `AnchorLifecycleTimeline` + `useCredentialLifecycle` — visual timeline for credential lifecycle (integrated on both detail and public pages)
 - `generateAuditReport` — jsPDF certificate with 7-section layout, downloads as PDF
 - `verification_events` table + `log_verification_event` RPC — fire-and-forget analytics
 
@@ -261,13 +261,13 @@ The widget:
 
 ### P6-TS-04: Credential Lifecycle on Public Page
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Dependencies:** P4-TS-02 (AssetDetailView)
-**Blocked by:** None (integration gap)
+**Blocked by:** None
 
 #### What This Story Delivers
 
-A credential lifecycle hook and visual timeline component. The hook computes lifecycle state (events, progress, expiry warnings) and the component renders a vertical timeline with status-aware styling.
+A credential lifecycle hook and visual timeline component. The hook computes lifecycle state (events, progress, expiry warnings) and the component renders a vertical timeline with status-aware styling. Integrated on both the authenticated AssetDetailView and the public PublicVerification page.
 
 #### Implementation Files
 
@@ -275,6 +275,7 @@ A credential lifecycle hook and visual timeline component. The hook computes lif
 |-------|------|-------|---------|
 | Hook | `src/hooks/useCredentialLifecycle.ts` | 171 | Compute lifecycle events, progress, expiry warnings |
 | Component | `src/components/anchor/AnchorLifecycleTimeline.tsx` | 203 | Vertical timeline with status-aware dots and lines |
+| Integration | `src/components/verification/PublicVerification.tsx` | ~400 | Section 5 uses AnchorLifecycleTimeline via mapToLifecycleData() |
 
 #### Hook Details (`useCredentialLifecycle`)
 
@@ -299,22 +300,15 @@ Event sequence: CREATED (always) → ISSUED (optional) → SECURED → REVOKED o
 - Connecting lines between events (except last)
 - Labels from `LIFECYCLE_LABELS` in `copy.ts`
 
-#### Completion Gaps
+#### Public Page Integration
 
-| Gap | What's Missing | Effort |
-|-----|---------------|--------|
-| Not on public page | Timeline renders in AssetDetailView (authenticated) but NOT in PublicVerification (public) | Small |
-
-#### Remaining Work
-
-1. Import `AnchorLifecycleTimeline` in `PublicVerification.tsx`
-2. Pass lifecycle data from `get_public_anchor` response to timeline component
-3. Ensure timeline renders correctly without authentication context
+`PublicVerification.tsx` Section 5 replaced flat `InfoRow` entries with `AnchorLifecycleTimeline`. A `mapToLifecycleData()` helper maps `PublicAnchorData` fields (snake_case from RPC) to `AnchorLifecycleData` props (camelCase). Timeline only renders when `created_at` is present. No authentication required — timeline uses only public data fields.
 
 #### Security Considerations
 
 - Timeline only shows timestamps and status labels — no sensitive data
 - Revocation reason displayed when present (already visible on public page)
+- No internal IDs exposed through timeline
 
 #### Test Coverage
 
@@ -329,13 +323,11 @@ Event sequence: CREATED (always) → ISSUED (optional) → SECURED → REVOKED o
 - [x] `useCredentialLifecycle` hook with events, progress, expiry
 - [x] `AnchorLifecycleTimeline` with status-aware visual timeline
 - [x] Integrated in AssetDetailView (authenticated detail page)
-- [ ] Integrated in PublicVerification (public verification page)
+- [x] Integrated in PublicVerification (public verification page)
 
 #### Known Issues
 
-| Issue | Impact |
-|-------|--------|
-| Not on public page | Public verification visitors don't see lifecycle timeline |
+None.
 
 ---
 
@@ -535,3 +527,4 @@ None.
 | Date | Change |
 |------|--------|
 | 2026-03-10 | Initial P6 story documentation created (Session 3 of 3). |
+| 2026-03-11 | P6-TS-04 promoted PARTIAL → COMPLETE. AnchorLifecycleTimeline wired into PublicVerification.tsx Section 5 via mapToLifecycleData(). P6 now 5/6 complete, 1/6 partial. |

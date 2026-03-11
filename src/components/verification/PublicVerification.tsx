@@ -10,7 +10,7 @@
  *
  * Shows redacted information - no sensitive data exposed.
  *
- * @see P6-TS-01
+ * @see P6-TS-01, P6-TS-04
  */
 
 import { useState, useEffect } from 'react';
@@ -19,16 +19,14 @@ import {
   XCircle,
   Loader2,
   FileText,
-  Clock,
   Fingerprint,
   Building2,
   Shield,
-  AlertTriangle,
   Copy,
   Check,
-  Calendar,
   Ban,
 } from 'lucide-react';
+import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import {
   Card,
   CardContent,
@@ -328,39 +326,19 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         <Separator />
 
         {/* ============================================================
-            SECTION 5: Lifecycle
+            SECTION 5: Lifecycle Timeline (P6-TS-04)
             ============================================================ */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Clock className="h-4 w-4" />
-            Lifecycle
-          </h3>
-          <div className="space-y-2">
-            {data.created_at && (
-              <InfoRow label="Created" value={formatDate(data.created_at)} icon={Calendar} />
-            )}
-            {data.secured_at && (
-              <InfoRow label="Secured" value={formatDate(data.secured_at)} icon={Shield} />
-            )}
-            {data.expires_at && (
-              <InfoRow
-                label="Expires"
-                value={formatDate(data.expires_at)}
-                icon={AlertTriangle}
-                variant={new Date(data.expires_at) < new Date() ? 'warning' : undefined}
-              />
-            )}
-            {isRevoked && data.revoked_at && (
-              <InfoRow label="Revoked" value={formatDate(data.revoked_at)} icon={Ban} variant="destructive" />
-            )}
-            {isRevoked && data.revocation_reason && (
-              <div className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 mt-2">
-                <p className="text-xs font-medium text-destructive mb-1">Revocation Reason</p>
-                <p className="text-sm text-muted-foreground">{data.revocation_reason}</p>
-              </div>
-            )}
+        {data.created_at && (
+          <div>
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <Shield className="h-4 w-4" />
+              Lifecycle
+            </h3>
+            <AnchorLifecycleTimeline
+              data={mapToLifecycleData(data)}
+            />
           </div>
-        </div>
+        )}
 
         {/* Footer */}
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">
@@ -370,6 +348,19 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       </CardContent>
     </Card>
   );
+}
+
+/** Map public anchor data to AnchorLifecycleData for the timeline */
+function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
+  return {
+    status: (data.status as AnchorLifecycleData['status']) ?? 'PENDING',
+    createdAt: data.created_at!,
+    issuedAt: data.issued_at,
+    securedAt: data.secured_at,
+    revokedAt: data.revoked_at,
+    revocationReason: data.revocation_reason,
+    expiresAt: data.expires_at,
+  };
 }
 
 /** Reusable info row */

@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-11 ~7:00 PM EST_
+_Last updated: 2026-03-11 ~11:00 PM EST_
 
 ## Overview
 
@@ -27,10 +27,10 @@ For a new developer joining the project, read in this order:
 | P4-E1 | Anchor Engine | 3 | 3 | 0 | 0 | [04_p4e1_anchor_engine.md](./04_p4e1_anchor_engine.md) |
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
-| P6 | Verification | 6 | 4 | 2 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
+| P6 | Verification | 6 | 5 | 1 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
 | P7 | Go-Live | 10 | 6 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| **Total** | | **55** | **36** | **4** | **15** | |
+| **Total** | | **55** | **37** | **3** | **15** | |
 
 ### All Stories by ID
 
@@ -65,7 +65,7 @@ For a new developer joining the project, read in this order:
 | P6-TS-01 | get_public_anchor RPC + PublicVerification | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-02 | QR Code in AssetDetailView | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-03 | Embeddable VerificationWidget | PARTIAL | [P6](./07_p6_verification.md) | — |
-| P6-TS-04 | Credential Lifecycle on Public Page | PARTIAL | [P6](./07_p6_verification.md) | — |
+| P6-TS-04 | Credential Lifecycle on Public Page | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-05 | PDF Audit Report (jsPDF) | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-06 | verification_events Table + RPC | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P7-TS-01 | Billing Schema (migration 0016) | COMPLETE | [P7](./08_p7_go_live.md) | — |
@@ -146,3 +146,4 @@ Each story doc follows a consistent template:
 | 2026-03-11 ~3:00 PM EST / ~6:00 AM AEDT Mar 12 | P7-TS-02 promoted NOT STARTED → PARTIAL. Stripe checkout tests written: useBilling.test.ts (12), PricingPage.test.tsx (12), CheckoutSuccessPage.test.tsx (7), CheckoutCancelPage.test.tsx (5), handlers.test.ts (38). 74 new tests. Remaining: Stripe portal endpoint, entitlement enforcement, plan change/downgrade. P7 totals: 6 complete, 1 partial, 3 not started. Overall: 36 complete, 3 partial, 16 not started. |
 | 2026-03-11 ~7:00 PM EST | P7-TS-05 promoted NOT STARTED → PARTIAL. SignetChainClient implemented (~300 lines) with bitcoinjs-lib OP_RETURN (ARKV prefix). Factory updated. 40 new worker tests (signet.test.ts ~15, client.test.ts 8 updated, anchor.test.ts integration). 268 worker tests total. CRIT-2 now PARTIAL. P7 totals: 6 complete, 2 partial, 2 not started. Overall: 36 complete, 4 partial, 15 not started. |
 | 2026-03-11 ~8:00 PM EST | Checkout + billing portal worker endpoints wired with JWT auth (b1f798a). IDOR fix. CRIT-3 narrowed to entitlements + downgrade only. |
+| 2026-03-11 ~11:00 PM EST | P6-TS-04 promoted PARTIAL → COMPLETE. AnchorLifecycleTimeline wired into PublicVerification.tsx. P6 now 5/6 complete. Overall: 37 complete, 3 partial. |

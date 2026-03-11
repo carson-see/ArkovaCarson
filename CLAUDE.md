@@ -459,10 +459,10 @@ npx supabase db reset
 | P4-E1 Anchor Engine | 3/3 | 0 | 0 | 100% |
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
-| P6 Verification | 4/6 | 2/6 | 0 | 75% |
+| P6 Verification | 5/6 | 1/6 | 0 | 83% |
 | P7 Go-Live | 6/10 | 2/10 | 2/10 | 70% |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| **Total** | **36/55** | **4/55** | **15/55** | **~71%** |
+| **Total** | **37/55** | **3/55** | **15/55** | **~73%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -517,12 +517,12 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P5-TS-06: BulkUploadWizard supports `credential_type` + `metadata` columns in CSV
 - P5-TS-07: `credential_templates` migration (0040), CRUD hook, CredentialTemplatesManager, routed at `/settings/credential-templates`
 
-### P6 Verification — 4/6 COMPLETE, 2/6 PARTIAL
+### P6 Verification — 5/6 COMPLETE, 1/6 PARTIAL
 
 - P6-TS-01: ✅ `get_public_anchor` RPC rebuilt (migration 0044). PublicVerification.tsx renders 5 sections. Wired to `/verify/:publicId`.
 - P6-TS-02: ✅ QRCodeSVG in AssetDetailView for SECURED anchors. Links to `/verify/{publicId}`.
 - P6-TS-03: ⚠️ PARTIAL — `VerificationWidget.tsx` exists but **never imported or routed**. Not bundled as standalone embed.
-- P6-TS-04: ⚠️ PARTIAL — `useCredentialLifecycle.ts` + `AnchorLifecycleTimeline.tsx` exist and work in AssetDetailView. Not integrated on public verification page.
+- P6-TS-04: ✅ COMPLETE — `AnchorLifecycleTimeline` wired into PublicVerification.tsx Section 5. `mapToLifecycleData()` maps snake_case RPC fields to camelCase props. Shows on both detail and public pages.
 - P6-TS-05: ✅ `generateAuditReport.ts` (jsPDF, 201 lines). Called from RecordDetailPage.
 - P6-TS-06: ✅ `verification_events` table (migration 0042), SECURITY DEFINER RPC (migration 0045), wired into PublicVerification.tsx.
 
