@@ -320,11 +320,12 @@ describe('Concurrent Claims Load Tests', () => {
   describe('Timing & Ordering', () => {
     it('sequential processing maintains order', async () => {
       seedAnchors(10);
-      const processedOrder: string[] = [];
+      let callCount = 0;
 
       mockSubmitFingerprint.mockImplementation(async () => {
+        callCount++;
         return {
-          receiptId: `tx-order-${processedOrder.length}`,
+          receiptId: `tx-order-${callCount}`,
           blockHeight: 800000,
           blockTimestamp: new Date().toISOString(),
           confirmations: 1,
@@ -338,9 +339,9 @@ describe('Concurrent Claims Load Tests', () => {
 
       await processPendingAnchors();
 
-      // Anchors should be processed in the order returned by the DB query
-      // (which is the order they appear in dbState.anchors Map)
-      expect(processedOrder.length).toBeGreaterThan(0);
+      // All 10 anchors should be processed sequentially
+      expect(callCount).toBeGreaterThan(0);
+      expect(callCount).toBe(10);
     });
   });
 });

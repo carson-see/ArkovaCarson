@@ -161,7 +161,7 @@ export function VerificationWidget({ publicId, compact = false }: Readonly<Verif
       {/* Footer */}
       <div className="px-4 py-2 border-t border-gray-100 flex items-center justify-between">
         <a
-          href={`${globalThis.location.origin}/verify/${data.public_id}`}
+          href={`${location.origin}/verify/${data.public_id}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-[10px] text-[#82b8d0] hover:underline"
