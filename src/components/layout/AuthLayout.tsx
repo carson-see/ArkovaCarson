@@ -14,7 +14,7 @@ interface AuthLayoutProps {
   description: string;
 }
 
-export function AuthLayout({ children, title, description }: AuthLayoutProps) {
+export function AuthLayout({ children, title, description }: Readonly<AuthLayoutProps>) {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Background with subtle gradient */}

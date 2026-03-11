@@ -32,7 +32,7 @@ interface VerificationFormProps {
   onVerify?: (result: VerificationResult) => void;
 }
 
-export function VerificationForm({ onVerify }: VerificationFormProps) {
+export function VerificationForm({ onVerify }: Readonly<VerificationFormProps>) {
   const [method, setMethod] = useState<VerificationMethod>('file');
   const [fingerprint, setFingerprint] = useState('');
   const [loading, setLoading] = useState(false);
@@ -240,7 +240,7 @@ export function VerificationForm({ onVerify }: VerificationFormProps) {
   );
 }
 
-function VerificationResultDisplay({ result }: { result: VerificationResult }) {
+function VerificationResultDisplay({ result }: Readonly<{ result: VerificationResult }>) {
   if (result.verified) {
     return (
       <Card className="border-success/50 bg-success/5">

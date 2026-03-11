@@ -29,7 +29,7 @@ interface HeaderProps {
   onSignOut: () => void;
 }
 
-export function Header({ user, profile, profileLoading, onSignOut }: HeaderProps) {
+export function Header({ user, profile, profileLoading, onSignOut }: Readonly<HeaderProps>) {
   const displayName = profile?.full_name || user?.email || 'User';
   const initials = getInitials(displayName);
 

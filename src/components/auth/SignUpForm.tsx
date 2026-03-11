@@ -20,7 +20,7 @@ interface SignUpFormProps {
   onLoginClick?: () => void;
 }
 
-export function SignUpForm({ onSuccess, onLoginClick }: SignUpFormProps) {
+export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps>) {
   const { signUp, loading, error, clearError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

@@ -17,15 +17,15 @@ import * as path from 'node:path';
 const FORBIDDEN_TERMS = [
   'wallet',
   'gas',
-  '\\bhash\\b', // \b for word boundary to avoid matching 'hashmap', etc in code
-  '\\bblock\\b',
+  String.raw`\bhash\b`, // \b for word boundary to avoid matching 'hashmap', etc in code
+  String.raw`\bblock\b`,
   'transaction',
   'crypto',
   'cryptocurrency',
   'bitcoin',
   'blockchain',
   'mining',
-  '\\btoken\\b',
+  String.raw`\btoken\b`,
 ];
 
 // File patterns to check (UI-facing files)

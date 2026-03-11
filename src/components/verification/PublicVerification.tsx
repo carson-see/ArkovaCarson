@@ -67,7 +67,7 @@ interface PublicVerificationProps {
   publicId: string;
 }
 
-export function PublicVerification({ publicId }: PublicVerificationProps) {
+export function PublicVerification({ publicId }: Readonly<PublicVerificationProps>) {
   const [data, setData] = useState<PublicAnchorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -97,10 +97,11 @@ export function PublicVerification({ publicId }: PublicVerificationProps) {
           return;
         }
 
-        setData(result as PublicAnchorData);
+        const anchorData: PublicAnchorData = result;
+        setData(anchorData);
 
         // Log verification event based on status
-        const status = (result as PublicAnchorData).status;
+        const status = anchorData.status;
         logVerificationEvent({
           publicId,
           method: 'web',
@@ -172,9 +173,9 @@ export function PublicVerification({ publicId }: PublicVerificationProps) {
 
   const isRevoked = data.status === 'REVOKED';
   const credentialLabel = data.credential_type
-    ? CREDENTIAL_TYPE_LABELS[data.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? data.credential_type
+    ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[data.credential_type] ?? data.credential_type
     : null;
-  const statusLabel = ANCHOR_STATUS_LABELS[data.status as keyof typeof ANCHOR_STATUS_LABELS] ?? data.status;
+  const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
 
   return (
     <Card className="max-w-2xl mx-auto overflow-hidden">
@@ -377,12 +378,12 @@ function InfoRow({
   value,
   icon: Icon,
   variant,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   icon?: React.ElementType;
   variant?: 'warning' | 'destructive';
-}) {
+}>) {
   return (
     <div className="flex items-start justify-between gap-4">
       <span className="text-sm text-muted-foreground flex items-center gap-1.5 shrink-0">

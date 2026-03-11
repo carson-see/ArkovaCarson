@@ -96,7 +96,7 @@ export function OrgRegistryTable({
   onViewAnchor,
   onRevokeAnchor,
   onDownloadProof,
-}: OrgRegistryTableProps) {
+}: Readonly<OrgRegistryTableProps>) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [loading, setLoading] = useState(true);
   const [totalCount, setTotalCount] = useState(0);

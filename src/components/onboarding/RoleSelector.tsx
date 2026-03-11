@@ -24,7 +24,7 @@ interface RoleSelectorProps {
   loading?: boolean;
 }
 
-export function RoleSelector({ onSelect, loading = false }: RoleSelectorProps) {
+export function RoleSelector({ onSelect, loading = false }: Readonly<RoleSelectorProps>) {
   const [selected, setSelected] = useState<RoleOption | null>(null);
 
   const handleContinue = () => {

@@ -57,7 +57,7 @@ export function WebhookSettings({
   onDelete,
   onToggle,
   loading = false,
-}: WebhookSettingsProps) {
+}: Readonly<WebhookSettingsProps>) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [newUrl, setNewUrl] = useState('');
   const [newSecret, setNewSecret] = useState('');

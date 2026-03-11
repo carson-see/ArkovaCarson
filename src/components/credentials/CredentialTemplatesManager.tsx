@@ -62,8 +62,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
-import type { Database } from '@/types/database.types';
-import type { Json } from '@/types/database.types';
+import type { Database, Json } from '@/types/database.types';
 
 type CredentialType = Database['public']['Enums']['credential_type'];
 type CredentialTemplate = Database['public']['Tables']['credential_templates']['Row'];
@@ -115,7 +114,7 @@ export function CredentialTemplatesManager({
   onCreate,
   onUpdate,
   onDelete,
-}: CredentialTemplatesManagerProps) {
+}: Readonly<CredentialTemplatesManagerProps>) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -287,7 +286,7 @@ export function CredentialTemplatesManager({
                     </TableCell>
                     <TableCell>
                       <Badge variant="secondary">
-                        {CREDENTIAL_TYPE_LABELS[template.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? template.credential_type}
+                        {CREDENTIAL_TYPE_LABELS[template.credential_type] ?? template.credential_type}
                       </Badge>
                     </TableCell>
                     <TableCell>

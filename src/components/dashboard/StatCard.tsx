@@ -44,7 +44,7 @@ export function StatCard({
   variant = 'default',
   loading = false,
   description,
-}: StatCardProps) {
+}: Readonly<StatCardProps>) {
   const styles = variantStyles[variant];
 
   if (loading) {

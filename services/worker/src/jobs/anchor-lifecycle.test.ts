@@ -324,7 +324,7 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
     // audit_log comes after chain submit + DB update
     expect(callOrder).toContain('audit_log');
     // webhook_dispatch comes last
-    expect(callOrder[callOrder.length - 1]).toBe('webhook_dispatch');
+    expect(callOrder.at(-1)).toBe('webhook_dispatch');
 
     // Restore
     dbState.auditEvents.push = originalPush;

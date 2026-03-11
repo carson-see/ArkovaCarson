@@ -12,16 +12,11 @@ import { test, expect, getServiceClient } from './fixtures';
 test.describe('Anchor Creation (Secure Document)', () => {
   const serviceClient = getServiceClient();
 
-  // Track anchors created during tests for cleanup
-  const createdAnchorIds: string[] = [];
-
-  test.afterAll(async () => {
-    // Clean up any test anchors
-    for (const id of createdAnchorIds) {
-      await serviceClient.from('audit_events').delete().eq('anchor_id', id);
-      await serviceClient.from('anchors').delete().eq('id', id);
-    }
-  });
+  // Cleanup helper for anchors created during tests
+  async function cleanupAnchor(id: string) {
+    await serviceClient.from('audit_events').delete().eq('anchor_id', id);
+    await serviceClient.from('anchors').delete().eq('id', id);
+  }
 
   test('Secure Document dialog opens and shows upload step', async ({ individualPage }) => {
     await individualPage.goto('/vault');

@@ -16,7 +16,7 @@ interface AuthGuardProps {
   fallback?: ReactNode;
 }
 
-export function AuthGuard({ children, fallback }: AuthGuardProps) {
+export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const { user, loading } = useAuth();
   const location = useLocation();
 

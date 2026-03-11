@@ -27,7 +27,7 @@ export function AppShell({
   profile,
   profileLoading,
   onSignOut,
-}: AppShellProps) {
+}: Readonly<AppShellProps>) {
   return (
     <div className="flex h-screen overflow-hidden bg-background">
       {/* Sidebar */}

@@ -32,7 +32,7 @@ export function CsvUploader({
   onParsed,
   maxRows = 10000,
   className,
-}: CsvUploaderProps) {
+}: Readonly<CsvUploaderProps>) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);

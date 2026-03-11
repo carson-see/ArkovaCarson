@@ -65,7 +65,7 @@ const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   billing_history: 'Billing History',
 };
 
-export function ReportsList({ hasReportsEntitlement = true }: ReportsListProps) {
+export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsListProps>) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);

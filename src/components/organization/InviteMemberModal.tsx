@@ -38,7 +38,7 @@ export function InviteMemberModal({
   open,
   onOpenChange,
   onInvite,
-}: InviteMemberModalProps) {
+}: Readonly<InviteMemberModalProps>) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<InviteRole>('INDIVIDUAL');
   const [loading, setLoading] = useState(false);

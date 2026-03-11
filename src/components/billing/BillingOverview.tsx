@@ -44,7 +44,7 @@ export function BillingOverview({
   loading,
   onManageBilling,
   onUpgrade,
-}: BillingOverviewProps) {
+}: Readonly<BillingOverviewProps>) {
   if (loading) {
     return <BillingOverviewSkeleton />;
   }

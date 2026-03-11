@@ -6,8 +6,7 @@
  * @updated 2026-03-10 10:30 PM EST — migrated to shared fixtures
  */
 
-import { test, expect } from './fixtures';
-import { SEED_USERS } from './fixtures';
+import { test, expect, SEED_USERS } from './fixtures';
 
 test.describe('Authentication', () => {
   test.beforeEach(async ({ page }) => {

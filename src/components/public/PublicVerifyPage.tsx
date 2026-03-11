@@ -112,7 +112,7 @@ export function PublicVerifyPage() {
   );
 }
 
-function InfoCard({ title, description }: { title: string; description: string }) {
+function InfoCard({ title, description }: Readonly<{ title: string; description: string }>) {
   return (
     <div className="rounded-lg border bg-card p-4 text-center">
       <h3 className="font-medium mb-1">{title}</h3>

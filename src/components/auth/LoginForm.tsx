@@ -19,7 +19,7 @@ interface LoginFormProps {
   onSignUpClick?: () => void;
 }
 
-export function LoginForm({ onSuccess, onSignUpClick }: LoginFormProps) {
+export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>) {
   const { signIn, signInWithGoogle, loading, error, clearError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

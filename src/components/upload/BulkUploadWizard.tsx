@@ -69,7 +69,7 @@ interface BulkUploadWizardProps {
   onCancel?: () => void;
 }
 
-export function BulkUploadWizard({ onComplete, onCancel }: BulkUploadWizardProps) {
+export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWizardProps>) {
   const [step, setStep] = useState<Step>('upload');
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
   const [columns, setColumns] = useState<CsvColumn[]>([]);
@@ -266,14 +266,14 @@ function ReviewStep({
   onMappingChange,
   onBack,
   onProcess,
-}: {
+}: Readonly<{
   validation: ValidationResult;
   columns: CsvColumn[];
   mapping: ColumnMapping;
   onMappingChange: (mapping: ColumnMapping) => void;
   onBack: () => void;
   onProcess: () => void;
-}) {
+}>) {
   const renderSelect = (
     label: string,
     value: number | null,
@@ -425,11 +425,11 @@ function ProcessingStep({
   progress,
   current,
   total,
-}: {
+}: Readonly<{
   progress: number;
   current: number;
   total: number;
-}) {
+}>) {
   return (
     <div className="space-y-4 py-4">
       <div className="flex justify-center">
@@ -452,10 +452,10 @@ function ProcessingStep({
 function CompleteStep({
   result,
   onReset,
-}: {
+}: Readonly<{
   result: ProcessingResult;
   onReset: () => void;
-}) {
+}>) {
   const hasFailures = result.failed > 0;
 
   return (

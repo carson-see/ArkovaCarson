@@ -43,7 +43,7 @@ export function SecureDocumentDialog({
   open,
   onOpenChange,
   onSuccess,
-}: SecureDocumentDialogProps) {
+}: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
 

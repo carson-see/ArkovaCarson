@@ -86,7 +86,7 @@ const statusConfig = {
   },
 };
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson }: AssetDetailViewProps) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
@@ -292,13 +292,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           <CardContent className="flex flex-col items-center gap-4">
             <div className="rounded-lg border bg-white p-4">
               <QRCodeSVG
-                value={`${window.location.origin}${verifyPath(anchor.publicId)}`}
+                value={`${globalThis.location.origin}${verifyPath(anchor.publicId)}`}
                 size={180}
                 level="M"
               />
             </div>
             <p className="text-xs text-muted-foreground text-center">
-              {window.location.origin}{verifyPath(anchor.publicId)}
+              {globalThis.location.origin}{verifyPath(anchor.publicId)}
             </p>
           </CardContent>
         </Card>

@@ -34,7 +34,7 @@ export function RevokeDialog({
   onOpenChange,
   recordName,
   onConfirm,
-}: RevokeDialogProps) {
+}: Readonly<RevokeDialogProps>) {
   const [confirmation, setConfirmation] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);

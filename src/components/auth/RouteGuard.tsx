@@ -37,7 +37,7 @@ interface RouteGuardProps {
  *     </RouteGuard>
  *   </AuthGuard>
  */
-export function RouteGuard({ children, allow }: RouteGuardProps) {
+export function RouteGuard({ children, allow }: Readonly<RouteGuardProps>) {
   const { loading, destination } = useProfile();
 
   if (loading) {

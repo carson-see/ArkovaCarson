@@ -265,7 +265,7 @@ ${'a'.repeat(64)},file.pdf`;
     // Generate 500 rows
     const header = 'fingerprint,filename';
     const rows = Array.from({ length: 500 }, (_, i) => {
-      const fp = ('a'.charCodeAt(0) + (i % 26)).toString(16).padStart(2, '0').repeat(32);
+      const fp = (('a'.codePointAt(0) ?? 97) + (i % 26)).toString(16).padStart(2, '0').repeat(32);
       return `${fp},file${i}.pdf`;
     });
 

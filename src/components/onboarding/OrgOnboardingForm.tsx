@@ -33,7 +33,7 @@ export function OrgOnboardingForm({
   onSubmit,
   loading = false,
   error,
-}: OrgOnboardingFormProps) {
+}: Readonly<OrgOnboardingFormProps>) {
   const [legalName, setLegalName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [domain, setDomain] = useState('');

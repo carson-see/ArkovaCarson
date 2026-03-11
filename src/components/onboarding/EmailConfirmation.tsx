@@ -26,7 +26,7 @@ export function EmailConfirmation({
   onResend,
   onBack,
   resending = false,
-}: EmailConfirmationProps) {
+}: Readonly<EmailConfirmationProps>) {
   return (
     <Card className="max-w-md mx-auto">
       <CardHeader className="text-center">

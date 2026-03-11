@@ -36,7 +36,7 @@ export function ProofDownload({
   proof,
   onDownloadPDF,
   onDownloadJSON,
-}: ProofDownloadProps) {
+}: Readonly<ProofDownloadProps>) {
   const [copied, setCopied] = useState(false);
 
   const handleCopyFingerprint = useCallback(async () => {

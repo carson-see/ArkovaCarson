@@ -58,7 +58,7 @@ export function MembersTable({
   loading,
   currentUserId,
   onRemoveMember,
-}: MembersTableProps) {
+}: Readonly<MembersTableProps>) {
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
 

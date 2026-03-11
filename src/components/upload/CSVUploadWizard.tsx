@@ -63,7 +63,7 @@ interface CSVUploadWizardProps {
   onCancel?: () => void;
 }
 
-export function CSVUploadWizard({ onComplete, onCancel }: CSVUploadWizardProps) {
+export function CSVUploadWizard({ onComplete, onCancel }: Readonly<CSVUploadWizardProps>) {
   const [step, setStep] = useState<Step>('upload');
   const [columns, setColumns] = useState<CsvColumn[]>([]);
   const [rows, setRows] = useState<CsvRow[]>([]);
@@ -285,7 +285,7 @@ export function CSVUploadWizard({ onComplete, onCancel }: CSVUploadWizardProps) 
 
 // Sub-components for each step
 
-function UploadStep({ onFileUpload }: { onFileUpload: (file: File) => void }) {
+function UploadStep({ onFileUpload }: Readonly<{ onFileUpload: (file: File) => void }>) {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -327,13 +327,13 @@ function MappingStep({
   onMappingChange,
   onBack,
   onNext,
-}: {
+}: Readonly<{
   columns: CsvColumn[];
   mapping: ColumnMapping;
   onMappingChange: (mapping: ColumnMapping) => void;
   onBack: () => void;
   onNext: () => void;
-}) {
+}>) {
   const isValid = mapping.fingerprint !== null && mapping.filename !== null;
 
   const renderSelect = (
@@ -422,11 +422,11 @@ function ValidationStep({
   validation,
   onBack,
   onProcess,
-}: {
+}: Readonly<{
   validation: ValidationResult | null;
   onBack: () => void;
   onProcess: () => void;
-}) {
+}>) {
   if (!validation) {
     return (
       <div className="flex flex-col items-center py-8">
@@ -505,12 +505,12 @@ function ProcessingStep({
   current,
   total,
   loading,
-}: {
+}: Readonly<{
   progress: number;
   current: number;
   total: number;
   loading: boolean;
-}) {
+}>) {
   return (
     <div className="space-y-4 py-4">
       <div className="flex justify-center">
@@ -537,10 +537,10 @@ function ProcessingStep({
 function CompleteStep({
   result,
   onReset,
-}: {
+}: Readonly<{
   result: ProcessingResult;
   onReset: () => void;
-}) {
+}>) {
   return (
     <div className="space-y-4 py-4 text-center">
       <div className="flex justify-center">

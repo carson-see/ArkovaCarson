@@ -40,7 +40,7 @@ export function ConfirmAnchorModal({
   fingerprint,
   onSuccess,
   onError,
-}: ConfirmAnchorModalProps) {
+}: Readonly<ConfirmAnchorModalProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
   const [isCreating, setIsCreating] = useState(false);

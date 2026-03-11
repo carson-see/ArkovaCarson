@@ -85,17 +85,20 @@ export function rateLimit(options: RateLimitOptions) {
     // Increment count
     entry.count++;
 
+    // Capture for use in closure below (entry is guaranteed non-null here)
+    const currentEntry = entry;
+
     // Set headers
     res.setHeader('X-RateLimit-Limit', maxRequests.toString());
-    res.setHeader('X-RateLimit-Remaining', (maxRequests - entry.count).toString());
-    res.setHeader('X-RateLimit-Reset', entry.resetAt.toString());
+    res.setHeader('X-RateLimit-Remaining', (maxRequests - currentEntry.count).toString());
+    res.setHeader('X-RateLimit-Reset', currentEntry.resetAt.toString());
 
     // Handle skip on failure
     if (skipFailedRequests) {
       const originalSend = res.send.bind(res);
       res.send = function (body: unknown) {
         if (res.statusCode >= 400) {
-          entry!.count--;
+          currentEntry.count--;
         }
         return originalSend(body);
       };

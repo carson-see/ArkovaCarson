@@ -34,7 +34,7 @@ import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes'
  * Uses profile destination so users go to onboarding if needed,
  * not always to dashboard.
  */
-function PublicOnly({ children }: { children: React.ReactNode }) {
+function PublicOnly({ children }: Readonly<{ children: React.ReactNode }>) {
   const { user, loading: authLoading } = useAuth();
   const { destination, loading: profileLoading } = useProfile();
 

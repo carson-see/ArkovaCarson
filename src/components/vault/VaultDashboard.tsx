@@ -39,7 +39,7 @@ interface VaultDashboardProps {
   onViewAssetDetail?: (recordId: string) => void;
 }
 
-export function VaultDashboard({ onSignOut, onViewAssetDetail }: VaultDashboardProps) {
+export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultDashboardProps>) {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading, updateProfile } = useProfile();
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();

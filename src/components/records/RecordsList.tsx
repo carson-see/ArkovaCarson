@@ -65,7 +65,7 @@ export function RecordsList({
   onViewRecord,
   onDownloadProof,
   onRevokeRecord,
-}: RecordsListProps) {
+}: Readonly<RecordsListProps>) {
   if (loading) {
     return (
       <div className="divide-y">
@@ -102,7 +102,7 @@ interface RecordRowProps {
   onRevoke: () => void;
 }
 
-function RecordRow({ record, onView, onDownload, onRevoke }: RecordRowProps) {
+function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowProps>) {
   const status = statusConfig[record.status];
   const StatusIcon = status.icon;
 

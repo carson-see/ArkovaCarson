@@ -10,8 +10,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
-import type { Database } from '@/types/database.types';
-import type { Json } from '@/types/database.types';
+import type { Database, Json } from '@/types/database.types';
 
 type CredentialTemplate = Database['public']['Tables']['credential_templates']['Row'];
 

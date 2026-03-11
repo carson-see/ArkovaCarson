@@ -51,7 +51,7 @@ export function IssueCredentialForm({
   open,
   onOpenChange,
   onSuccess,
-}: IssueCredentialFormProps) {
+}: Readonly<IssueCredentialFormProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
 

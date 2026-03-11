@@ -20,7 +20,7 @@ interface ManualReviewGateProps {
   onSignOut?: () => void;
 }
 
-export function ManualReviewGate({ reason, onSignOut }: ManualReviewGateProps) {
+export function ManualReviewGate({ reason, onSignOut }: Readonly<ManualReviewGateProps>) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="max-w-md w-full">

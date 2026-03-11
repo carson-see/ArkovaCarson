@@ -48,7 +48,7 @@ interface SidebarProps {
   className?: string;
 }
 
-export function Sidebar({ className }: SidebarProps) {
+export function Sidebar({ className }: Readonly<SidebarProps>) {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
 
@@ -134,7 +134,7 @@ interface SidebarNavLinkProps {
   active: boolean;
 }
 
-function SidebarNavLink({ item, collapsed, active }: SidebarNavLinkProps) {
+function SidebarNavLink({ item, collapsed, active }: Readonly<SidebarNavLinkProps>) {
   const Icon = item.icon;
 
   const link = (

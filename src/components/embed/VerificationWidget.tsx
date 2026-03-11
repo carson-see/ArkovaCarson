@@ -40,7 +40,7 @@ interface VerificationWidgetProps {
   compact?: boolean;
 }
 
-export function VerificationWidget({ publicId, compact = false }: VerificationWidgetProps) {
+export function VerificationWidget({ publicId, compact = false }: Readonly<VerificationWidgetProps>) {
   const [data, setData] = useState<WidgetAnchorData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,7 +161,7 @@ export function VerificationWidget({ publicId, compact = false }: VerificationWi
       {/* Footer */}
       <div className="px-4 py-2 border-t border-gray-100 flex items-center justify-between">
         <a
-          href={`${window.location.origin}/verify/${data.public_id}`}
+          href={`${globalThis.location.origin}/verify/${data.public_id}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-[10px] text-[#82b8d0] hover:underline"
@@ -174,7 +174,7 @@ export function VerificationWidget({ publicId, compact = false }: VerificationWi
   );
 }
 
-function WidgetContainer({ children, compact }: { children: React.ReactNode; compact: boolean }) {
+function WidgetContainer({ children, compact }: Readonly<{ children: React.ReactNode; compact: boolean }>) {
   return (
     <div
       className={`bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden ${
@@ -187,7 +187,7 @@ function WidgetContainer({ children, compact }: { children: React.ReactNode; com
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function DetailRow({ label, value }: Readonly<{ label: string; value: string }>) {
   return (
     <div className="flex justify-between text-sm">
       <span className="text-gray-500">{label}</span>

@@ -152,7 +152,7 @@ interface AnchorLifecycleTimelineProps {
   className?: string;
 }
 
-export function AnchorLifecycleTimeline({ data, className }: AnchorLifecycleTimelineProps) {
+export function AnchorLifecycleTimeline({ data, className }: Readonly<AnchorLifecycleTimelineProps>) {
   const events = buildLifecycleEvents(data);
 
   return (

@@ -22,7 +22,7 @@ interface SelectedFile {
   processing: boolean;
 }
 
-export function FileUpload({ onFileSelect, disabled }: FileUploadProps) {
+export function FileUpload({ onFileSelect, disabled }: Readonly<FileUploadProps>) {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -120,28 +120,7 @@ export function FileUpload({ onFileSelect, disabled }: FileUploadProps) {
           disabled={disabled || !!selectedFile}
         />
 
-        {!selectedFile ? (
-          <div className="flex flex-col items-center text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
-              <Upload className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="text-sm font-medium text-foreground mb-1">
-              Drag and drop your document here
-            </p>
-            <p className="text-xs text-muted-foreground mb-4">
-              or click to browse files
-            </p>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={disabled}
-              onClick={() => inputRef.current?.click()}
-            >
-              Select Document
-            </Button>
-          </div>
-        ) : (
+        {selectedFile ? (
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
               <FileText className="h-6 w-6 text-primary" />
@@ -168,6 +147,27 @@ export function FileUpload({ onFileSelect, disabled }: FileUploadProps) {
                 <span className="sr-only">Remove file</span>
               </Button>
             )}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
+              <Upload className="h-6 w-6 text-muted-foreground" />
+            </div>
+            <p className="text-sm font-medium text-foreground mb-1">
+              Drag and drop your document here
+            </p>
+            <p className="text-xs text-muted-foreground mb-4">
+              or click to browse files
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={disabled}
+              onClick={() => inputRef.current?.click()}
+            >
+              Select Document
+            </Button>
           </div>
         )}
       </div>

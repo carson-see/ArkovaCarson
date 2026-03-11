@@ -30,7 +30,7 @@ interface PricingCardProps {
   loading?: boolean;
 }
 
-export function PricingCard({ plan, onSelect, loading }: PricingCardProps) {
+export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardProps>) {
   return (
     <Card
       className={cn(
@@ -58,15 +58,15 @@ export function PricingCard({ plan, onSelect, loading }: PricingCardProps) {
       <CardContent className="flex-1">
         {/* Price */}
         <div className="text-center mb-6">
-          {plan.price !== null ? (
+          {plan.price === null ? (
+            <div className="text-2xl font-bold">{plan.priceLabel || 'Contact us'}</div>
+          ) : (
             <div className="flex items-baseline justify-center gap-1">
               <span className="text-4xl font-bold">${plan.price}</span>
               <span className="text-muted-foreground">
                 /{({ month: 'mo', year: 'yr' } as Record<string, string>)[plan.period] ?? ''}
               </span>
             </div>
-          ) : (
-            <div className="text-2xl font-bold">{plan.priceLabel || 'Contact us'}</div>
           )}
           <p className="text-sm text-muted-foreground mt-1">
             {plan.recordsIncluded === 'unlimited'

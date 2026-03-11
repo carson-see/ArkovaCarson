@@ -28,7 +28,7 @@ vi.mock('../config.js', () => ({
 }));
 
 import { MockChainClient } from './mock.js';
-import type { ChainClient, ChainReceipt, SubmitFingerprintRequest } from './types.js';
+import type { ChainClient, SubmitFingerprintRequest } from './types.js';
 
 describe('MockChainClient', () => {
   let client: MockChainClient;
