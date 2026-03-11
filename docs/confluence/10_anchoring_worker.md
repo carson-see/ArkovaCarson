@@ -163,14 +163,46 @@ Per Constitution, use approved terminology in UI:
 
 ## Chain Integration
 
-### Current State (CRIT-2)
+### Current State (CRIT-2 — PARTIAL)
 
-`getChainClient()` in `chain/client.ts` always returns `MockChainClient`. No real Bitcoin integration exists yet. The production path requires:
+`getChainClient()` in `chain/client.ts` returns `SignetChainClient` when `ENABLE_PROD_NETWORK_ANCHORING=true`, otherwise `MockChainClient`. SignetChainClient implements OP_RETURN anchoring with `ARKV` 4-byte prefix + 32-byte SHA-256 fingerprint using `bitcoinjs-lib`.
 
-1. Install `bitcoinjs-lib`
-2. Implement real ChainClient with OP_RETURN
-3. Bitcoin Signet testing first
-4. AWS KMS for mainnet signing
+**Completed:**
+1. ~~Install `bitcoinjs-lib`~~ — `bitcoinjs-lib ^6.1.7`, `ecpair ^3.0.1`, `tiny-secp256k1 ^2.2.4`
+2. ~~Implement real ChainClient with OP_RETURN~~ — `SignetChainClient` in `chain/signet.ts` (~414 lines)
+3. ~~Wallet utilities~~ — `chain/wallet.ts` (keypair gen, address derivation, WIF validation) + 13 tests
+4. ~~CLI scripts~~ — `scripts/generate-signet-keypair.ts`, `scripts/check-signet-balance.ts`
+
+**Remaining:**
+1. Fund Signet treasury via faucet (signetfaucet.com or alt.signetfaucet.com)
+2. Signet node connectivity test (verify SignetChainClient against real Signet node)
+3. AWS KMS signing for mainnet
+4. Mainnet treasury funding
+
+### Wallet Setup Procedure
+
+```bash
+# 1. Generate a new Signet keypair
+cd services/worker
+npx tsx scripts/generate-signet-keypair.ts
+# → Outputs WIF (private key) and P2PKH address (m/n prefix)
+# → NEVER commit or log the WIF (Constitution 1.4)
+
+# 2. Store WIF in .env (gitignored)
+echo "BITCOIN_TREASURY_WIF=<wif-from-step-1>" >> .env
+echo "BITCOIN_NETWORK=signet" >> .env
+echo "BITCOIN_RPC_URL=http://<signet-node>:38332" >> .env
+
+# 3. Fund via Signet faucet
+# Visit https://signetfaucet.com or https://alt.signetfaucet.com
+# Paste the P2PKH address from step 1
+
+# 4. Verify funding
+npx tsx scripts/check-signet-balance.ts
+# → Shows chain info, UTXOs, balance, estimated anchoring capacity
+
+# 5. Document the address (NOT the WIF) in MEMORY.md
+```
 
 ### Non-Custodial Model
 
@@ -220,13 +252,14 @@ Available regardless of feature flag state (Constitution 1.9).
 |-----------|--------|-------|
 | Express server + cron | Complete | `index.ts` with graceful shutdown |
 | Anchor processing jobs | Complete | `anchor.ts` — full lifecycle including webhook dispatch |
-| Chain client interface | Complete | MockChainClient only (CRIT-2) |
+| Chain client interface | Complete | SignetChainClient + MockChainClient (CRIT-2 PARTIAL — AWS KMS remaining) |
+| Wallet utilities | Complete | P7-TS-11: keypair gen, address derivation, WIF validation, CLI scripts |
 | Stripe webhook handlers | Complete | P7-TS-03 |
 | Outbound webhook delivery | Complete | Wired to anchor lifecycle (HARDENING-4). Dispatches on SECURED. |
 | Webhook retry scheduling | Complete | `processWebhookRetries()` runs every 2 minutes via cron |
 | Report generation | Complete | `report.ts` |
 | Rate limiter | Complete | `utils/rateLimit.ts` |
-| Worker test coverage | 228 tests across 14 files, 80%+ on all paths | HARDENING-1/2/3/4/5 complete (2026-03-10) |
+| Worker test coverage | 320+ tests across 16+ files, 80%+ on all paths | HARDENING-1/2/3/4/5 + Signet + wallet (2026-03-11) |
 
 ## Testing
 
@@ -263,3 +296,4 @@ const mockChain: IAnchorPublisher = {
 | 2026-03-10 | HARDENING-1/2/3 | Updated coverage status: 114 tests, 80%+ thresholds on all 6 critical paths. Removed anchorWithClaim.ts reference (deleted as dead code in HARDENING-1). |
 | 2026-03-10 5:20 PM EST | HARDENING-4 | Webhook dispatch wired in anchor.ts. processWebhookRetries added to cron. 132 tests. P7-TS-10 COMPLETE. Removed stale anchorWithClaim.ts from directory listing. |
 | 2026-03-10 8:00 PM EST | HARDENING-5 | 96 new tests across 7 new test files covering all remaining worker source files (config, index, stripe/mock, jobs/report, jobs/webhook, utils/correlationId, utils/rateLimit). Exported `cleanupExpiredEntries()` from rateLimit.ts for testability. Total: 228 worker tests, 14 test files. 80%+ thresholds on all files. Worker hardening sprint COMPLETE. |
+| 2026-03-11 ~11:30 PM EST | P7-TS-11 | Added wallet utilities (wallet.ts), CLI scripts (generate-signet-keypair.ts, check-signet-balance.ts), 13 wallet tests. Updated chain integration section with current state and wallet setup procedure. Updated directory structure with signet.ts and wallet.ts. |
