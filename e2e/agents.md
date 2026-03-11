@@ -49,7 +49,11 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 
 - `@playwright/test` — test framework
 - `@supabase/supabase-js` — service client for test data setup/teardown
-- Environment variables: `E2E_SUPABASE_URL`, `E2E_SUPABASE_SERVICE_KEY` (defaults to local Supabase)
+- `dotenv` — loads `.env.test` in `playwright.config.ts`
+- Environment variables (set in `.env.test`, see `.env.test.example`):
+  - `E2E_SUPABASE_SERVICE_KEY` (required) — service role key for test data setup
+  - `E2E_SEED_PASSWORD` (required) — shared password for seed test users
+  - `E2E_SUPABASE_URL` (optional, defaults to `http://127.0.0.1:54321`)
 - Local Supabase must be running with seed data loaded (`npx supabase db reset`)
 
 ## Change Log
@@ -61,3 +65,4 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 | 2026-03-10 11:30 PM EST | Phase C complete. Created 3 Tier 2 specs: csv-upload (5), org-admin (5), settings (5). |
 | 2026-03-10 11:45 PM EST | Phase D complete. Created 2 Tier 3 specs: cross-tenant (5), error-states (5). All E2E spec files created. |
 | 2026-03-11 12:00 AM EST | Phase E complete. Created performance.spec.ts (5 tests). Stress/load tests in `tests/load/` (4 files, 25 tests). |
+| 2026-03-10 11:30 PM EST | Security: moved hard-coded seed passwords + service key to env vars (SonarQube S2068). Added `dotenv` + `.env.test` + `.env.test.example`. |

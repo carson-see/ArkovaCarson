@@ -152,7 +152,7 @@ function setupDbRouting(overrides: Record<string, any> = {}) {
                   return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
                 }
                 // Retry query with join
-                return retryLogsSelect.select(...args);
+                return (retryLogsSelect.select as any)(...args);
               },
           insert: deliveryLogInsert.insert,
           update: deliveryLogUpdate.update,
@@ -298,7 +298,7 @@ describe('exponential backoff', () => {
 
     // The update should set status to 'retrying' with next_retry_at
     expect(deliveryLogUpdate.update).toHaveBeenCalled();
-    const updateArg = deliveryLogUpdate.update.mock.calls[0][0];
+    const updateArg = (deliveryLogUpdate.update.mock.calls as any[][])[0][0];
     expect(updateArg.status).toBe('retrying');
     expect(updateArg.next_retry_at).toBeDefined();
 
@@ -561,7 +561,7 @@ describe('deliverToEndpoint', () => {
 
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
-    const updateArg = deliveryLogUpdate.update.mock.calls[0][0];
+    const updateArg = (deliveryLogUpdate.update.mock.calls as any[][])[0][0];
     expect(updateArg.response_body.length).toBe(1000);
   });
 

@@ -4,7 +4,7 @@
  * HARDENING-3: Mock mode vs production mode, signature verification.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Hoisted mocks ----
 

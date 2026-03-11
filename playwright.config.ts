@@ -1,4 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
+import dotenv from 'dotenv';
+import path from 'path';
+
+// Load E2E-specific env vars from .env.test (falls back to .env)
+dotenv.config({ path: path.resolve(__dirname, '.env.test') });
+dotenv.config(); // fallback to .env for any vars not in .env.test
 
 /**
  * Playwright E2E Test Configuration
@@ -6,11 +12,14 @@ import { defineConfig, devices } from '@playwright/test';
  * Run tests with: npm run test:e2e
  * Run with UI: npm run test:e2e:ui
  *
- * Environment variables (optional, defaults to local Supabase):
- *   E2E_SUPABASE_URL         — Supabase API URL
+ * Required environment variables (set in .env.test):
  *   E2E_SUPABASE_SERVICE_KEY — Service role key (for test data setup)
+ *   E2E_SEED_PASSWORD        — Shared password for seed test users
  *
- * @updated 2026-03-10 10:30 PM EST
+ * Optional environment variables:
+ *   E2E_SUPABASE_URL         — Supabase API URL (defaults to local)
+ *
+ * @updated 2026-03-10 11:30 PM EST
  */
 export default defineConfig({
   testDir: './e2e',

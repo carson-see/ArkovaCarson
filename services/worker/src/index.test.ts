@@ -91,7 +91,8 @@ vi.mock('dotenv/config', () => ({}));
 
 // Preserve express static methods (raw, json, etc.) while overriding listen
 vi.mock('express', async () => {
-  const actual = await vi.importActual<typeof import('express')>('express');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const actual: any = await vi.importActual('express');
   const originalExpress: any = actual.default;
 
   const wrappedExpress: any = (...args: any[]) => {
