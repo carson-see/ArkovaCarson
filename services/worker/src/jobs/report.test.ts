@@ -12,6 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const {
   mockFrom,
   mockLogger,
+  setThenable,
   reportsTable,
   reportArtifactsTable,
   anchorsTable,
@@ -24,6 +25,15 @@ const {
     error: vi.fn(),
     debug: vi.fn(),
   };
+
+  /** Assigns a `.then` property via Object.defineProperty to avoid S7739. */
+  function setThenable(obj: any, handler: (onFulfilled: any, onRejected?: any) => any) {
+    Object.defineProperty(obj, 'then', {
+      value: vi.fn(handler),
+      configurable: true,
+      writable: true,
+    });
+  }
 
   // Build chainable query mocks per table
   function createChainableMock() {
@@ -38,7 +48,7 @@ const {
     // Terminal: resolve to { data, error }
     chain._resolve = { data: null, error: null };
     // Make the chain thenable
-    chain.then = vi.fn((onFulfilled: any) => Promise.resolve(onFulfilled(chain._resolve)));
+    setThenable(chain, (onFulfilled: any) => Promise.resolve(onFulfilled(chain._resolve)));
     return chain;
   }
 
@@ -68,6 +78,7 @@ const {
   return {
     mockFrom,
     mockLogger,
+    setThenable,
     reportsTable,
     reportArtifactsTable,
     anchorsTable,
@@ -108,23 +119,23 @@ describe('processReport', () => {
     vi.clearAllMocks();
     // Default: all DB ops succeed
     reportsTable._resolve = { data: null, error: null };
-    reportsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(reportsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(reportsTable._resolve))
     );
     reportArtifactsTable._resolve = { data: null, error: null };
-    reportArtifactsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(reportArtifactsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(reportArtifactsTable._resolve))
     );
     anchorsTable._resolve = { data: [], error: null };
-    anchorsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(anchorsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(anchorsTable._resolve))
     );
     auditEventsTable._resolve = { data: [], error: null };
-    auditEventsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(auditEventsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(auditEventsTable._resolve))
     );
     billingEventsTable._resolve = { data: [], error: null };
-    billingEventsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(billingEventsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(billingEventsTable._resolve))
     );
   });
@@ -249,7 +260,7 @@ describe('processReport', () => {
     // Make anchors query throw by having .then() reject properly
     // We override .then so the thenable rejects when awaited
     const originalThen = anchorsTable.then;
-    anchorsTable.then = vi.fn((onFulfilled: any, onRejected?: any) => {
+    setThenable(anchorsTable, (onFulfilled: any, onRejected?: any) => {
       const rejection = Promise.reject(new Error('DB connection lost'));
       return rejection.then(onFulfilled, onRejected);
     });
@@ -262,7 +273,7 @@ describe('processReport', () => {
     expect(lastUpdate.status).toBe('failed');
     expect(lastUpdate.error_message).toBe('DB connection lost');
 
-    anchorsTable.then = originalThen;
+    setThenable(anchorsTable, originalThen);
   });
 
   it('handles null org_id', async () => {
@@ -277,23 +288,23 @@ describe('processPendingReports', () => {
     vi.clearAllMocks();
     // Defaults
     reportsTable._resolve = { data: null, error: null };
-    reportsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(reportsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(reportsTable._resolve))
     );
     reportArtifactsTable._resolve = { data: null, error: null };
-    reportArtifactsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(reportArtifactsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(reportArtifactsTable._resolve))
     );
     anchorsTable._resolve = { data: [], error: null };
-    anchorsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(anchorsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(anchorsTable._resolve))
     );
     auditEventsTable._resolve = { data: [], error: null };
-    auditEventsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(auditEventsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(auditEventsTable._resolve))
     );
     billingEventsTable._resolve = { data: [], error: null };
-    billingEventsTable.then = vi.fn((onFulfilled: any) =>
+    setThenable(billingEventsTable, (onFulfilled: any) =>
       Promise.resolve(onFulfilled(billingEventsTable._resolve))
     );
   });
@@ -339,7 +350,7 @@ describe('processPendingReports', () => {
   it('processes multiple reports and counts successes', async () => {
     // Return two pending reports on the first call, then succeed on subsequent calls
     let callCount = 0;
-    reportsTable.then = vi.fn((onFulfilled: any) => {
+    setThenable(reportsTable, (onFulfilled: any) => {
       callCount++;
       if (callCount === 1) {
         // First call: the pending query
@@ -365,7 +376,7 @@ describe('processPendingReports', () => {
 
   it('counts failed reports separately', async () => {
     let callCount = 0;
-    reportsTable.then = vi.fn((onFulfilled: any) => {
+    setThenable(reportsTable, (onFulfilled: any) => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve(

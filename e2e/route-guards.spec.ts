@@ -54,7 +54,7 @@ test.describe('Route Guards', () => {
       // Sign up a fresh user with no role (mid-onboarding state)
       const timestamp = Date.now();
       const email = `e2e-norole-${timestamp}@test.arkova.io`;
-      const password = 'TestPassword123!';
+      const password = process.env.E2E_SEED_PASSWORD || 'TestPassword123!';
 
       await page.goto('/signup');
       await page.getByLabel('Full name').fill('No Role User');

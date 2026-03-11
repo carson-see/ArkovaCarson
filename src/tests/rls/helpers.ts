@@ -6,6 +6,11 @@
  *
  * IMPORTANT: Credentials here MUST match supabase/seed.sql.
  * If you change seed data, update these constants to match.
+ *
+ * Required env vars (set in .env.test or shell):
+ *   RLS_TEST_PASSWORD — seed user password (must match seed.sql)
+ *   SUPABASE_ANON_KEY — local Supabase anon JWT (optional, defaults to local dev key)
+ *   SUPABASE_SERVICE_ROLE_KEY — local Supabase service role JWT (optional, defaults to local dev key)
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -16,7 +21,19 @@ import type { Database } from '@/types/database.types';
 // and the last signInWithPassword overwrites all previous sessions.
 let clientCounter = 0;
 
-// Test configuration
+// Require seed password via environment variable — never hardcode secrets
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(
+      `Missing required environment variable: ${name}. ` +
+      `Set it in .env.test or your shell before running RLS tests.`
+    );
+  }
+  return value;
+}
+
+// Test configuration — keys default to well-known local Supabase dev JWTs
 const SUPABASE_URL = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
 const SUPABASE_ANON_KEY =
   process.env.SUPABASE_ANON_KEY ||
@@ -24,6 +41,7 @@ const SUPABASE_ANON_KEY =
 const SUPABASE_SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+const RLS_TEST_PASSWORD = requireEnv('RLS_TEST_PASSWORD');
 
 export type TypedClient = SupabaseClient<Database>;
 
@@ -33,17 +51,17 @@ export type TypedClient = SupabaseClient<Database>;
 export const DEMO_CREDENTIALS = {
   // ORG_ADMIN user (UMich Registrar org)
   adminEmail: 'admin@umich-demo.arkova.io',
-  adminPassword: 'Demo1234!',
+  adminPassword: RLS_TEST_PASSWORD,
   adminId: '11111111-0000-0000-0000-000000000001',
 
   // INDIVIDUAL user (no org)
   userEmail: 'individual@demo.arkova.io',
-  userPassword: 'Demo1234!',
+  userPassword: RLS_TEST_PASSWORD,
   userId: '33333333-0000-0000-0000-000000000001',
 
   // ORG_ADMIN user (Midwest Medical Board org)
   betaAdminEmail: 'admin@midwest-medical.arkova.io',
-  betaAdminPassword: 'Demo1234!',
+  betaAdminPassword: RLS_TEST_PASSWORD,
   betaAdminId: '22222222-0000-0000-0000-000000000001',
 };
 
@@ -115,7 +133,7 @@ export async function cleanupClient(client: TypedClient): Promise<void> {
 }
 
 /**
- * Get password for demo email (all use same password: Demo1234!)
+ * Get password for demo email (all seed users share the same password)
  */
 function getPasswordForEmail(email: string): string {
   const knownEmails = [
@@ -130,7 +148,7 @@ function getPasswordForEmail(email: string): string {
     );
   }
 
-  return 'Demo1234!';
+  return RLS_TEST_PASSWORD;
 }
 
 /**

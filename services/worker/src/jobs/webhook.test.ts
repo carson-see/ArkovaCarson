@@ -24,7 +24,7 @@ function makeConfig(overrides: Partial<WebhookConfig> = {}): WebhookConfig {
     id: 'wh-config-001',
     org_id: 'org-001',
     url: 'https://hooks.example.com/webhook',
-    secret: 'test-secret-key',
+    secret: 'whsec_test_fixture_key_not_real', // test-only fixture value
     events: ['anchor.secured'],
     enabled: true,
     failure_count: 0,
@@ -74,7 +74,7 @@ describe('deliverWebhook', () => {
   });
 
   it('includes correct HMAC signature header', async () => {
-    const secret = 'my-secret';
+    const secret = 'whsec_hmac_test_fixture'; // test-only fixture value
     const payload = makePayload();
     const body = JSON.stringify(payload);
     const expectedSig = createHmac('sha256', secret).update(body).digest('hex');
