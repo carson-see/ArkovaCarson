@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-11 ~3:00 PM EST / ~6:00 AM AEDT Mar 12_
+_Last updated: 2026-03-11 ~7:00 PM EST_
 
 ## Overview
 
@@ -28,9 +28,9 @@ For a new developer joining the project, read in this order:
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 4 | 2 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 10 | 6 | 1 | 3 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P7 | Go-Live | 10 | 6 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| **Total** | | **55** | **36** | **3** | **16** | |
+| **Total** | | **55** | **36** | **4** | **15** | |
 
 ### All Stories by ID
 
@@ -71,7 +71,7 @@ For a new developer joining the project, read in this order:
 | P7-TS-01 | Billing Schema (migration 0016) | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-02 | Stripe Checkout Flow | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-3 |
 | P7-TS-03 | Stripe Webhook Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
-| P7-TS-05 | Bitcoin Chain Client | NOT STARTED | [P7](./08_p7_go_live.md) | CRIT-2 |
+| P7-TS-05 | Bitcoin Chain Client | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-2 |
 | P7-TS-07 | Proof Package Download | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-5~~ FIXED |
 | P7-TS-08 | PDF Certificate (generateAuditReport) | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-09 | Webhook Settings UI | COMPLETE | [P7](./08_p7_go_live.md) | — |
@@ -98,7 +98,7 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 
 | Bug ID | Severity | Affects Stories | Summary |
 |--------|----------|-----------------|---------|
-| CRIT-2 | HIGH | P7-TS-05 | No real Bitcoin chain client (MockChainClient in all code paths) |
+| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client PARTIAL — SignetChainClient implemented, AWS KMS + mainnet remaining |
 | CRIT-3 | HIGH | P7-TS-02 | No Stripe checkout flow (SDK initialized, no session endpoint) |
 
 ### Resolved Bugs
@@ -144,3 +144,4 @@ Each story doc follows a consistent template:
 | 2026-03-11 ~12:15 AM EST | E2E testing sprint: 15 spec files (86 E2E tests), 4 load test files (25 tests), 1 performance spec (5 tests). 116 new tests total. Fixtures, CI job, and agents.md all created. |
 | 2026-03-11 ~2:00 PM EST / ~4:00 AM AEDT Mar 12 | P7-TS-09 promoted PARTIAL → COMPLETE. WebhookSettings + WebhookSettingsPage tests added (34 tests). Migration 0046 for server-side secret generation. P7 totals: 6 complete, 0 partial. Overall: 36 complete, 2 partial. |
 | 2026-03-11 ~3:00 PM EST / ~6:00 AM AEDT Mar 12 | P7-TS-02 promoted NOT STARTED → PARTIAL. Stripe checkout tests written: useBilling.test.ts (12), PricingPage.test.tsx (12), CheckoutSuccessPage.test.tsx (7), CheckoutCancelPage.test.tsx (5), handlers.test.ts (38). 74 new tests. Remaining: Stripe portal endpoint, entitlement enforcement, plan change/downgrade. P7 totals: 6 complete, 1 partial, 3 not started. Overall: 36 complete, 3 partial, 16 not started. |
+| 2026-03-11 ~7:00 PM EST | P7-TS-05 promoted NOT STARTED → PARTIAL. SignetChainClient implemented (~300 lines) with bitcoinjs-lib OP_RETURN (ARKV prefix). Factory updated. 40 new worker tests (signet.test.ts ~15, client.test.ts 8 updated, anchor.test.ts integration). 268 worker tests total. CRIT-2 now PARTIAL. P7 totals: 6 complete, 2 partial, 2 not started. Overall: 36 complete, 4 partial, 15 not started. |

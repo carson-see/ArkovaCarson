@@ -1,10 +1,10 @@
 /**
  * Unit tests for chain client factory (getChainClient)
  *
- * HARDENING-2: Verify the factory returns the correct client based
- * on configuration. Currently always returns MockChainClient — when
- * the real bitcoinjs-lib client is added, these tests enforce that
- * the factory switches correctly.
+ * HARDENING-2 + CRIT-2: Verify the factory returns the correct client
+ * based on configuration — MockChainClient for test/mock modes,
+ * SignetChainClient when ENABLE_PROD_NETWORK_ANCHORING is true with
+ * valid Bitcoin config, MockChainClient fallback otherwise.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -15,6 +15,11 @@ const { mockConfig } = vi.hoisted(() => {
     nodeEnv: 'test' as string,
     useMocks: true,
     chainNetwork: 'testnet' as const,
+    bitcoinNetwork: 'signet' as string,
+    bitcoinRpcUrl: undefined as string | undefined,
+    bitcoinRpcAuth: undefined as string | undefined,
+    bitcoinTreasuryWif: undefined as string | undefined,
+    enableProdNetworkAnchoring: false,
     logLevel: 'info',
   };
   return { mockConfig };
@@ -36,6 +41,18 @@ vi.mock('../config.js', () => ({
   getNetworkDisplayName: vi.fn(() => 'Test Environment'),
 }));
 
+// Mock SignetChainClient with a real class so `new SignetChainClient()` works
+vi.mock('./signet.js', () => {
+  class MockSignetChainClient {
+    _isSignet = true; // marker for test assertions
+    submitFingerprint = vi.fn();
+    verifyFingerprint = vi.fn();
+    getReceipt = vi.fn();
+    healthCheck = vi.fn().mockResolvedValue(true);
+  }
+  return { SignetChainClient: MockSignetChainClient };
+});
+
 import { getChainClient } from './client.js';
 import { MockChainClient } from './mock.js';
 import type { ChainClient } from './types.js';
@@ -45,6 +62,10 @@ describe('getChainClient', () => {
     // Reset to test defaults
     mockConfig.nodeEnv = 'test';
     mockConfig.useMocks = true;
+    mockConfig.enableProdNetworkAnchoring = false;
+    mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.bitcoinTreasuryWif = undefined;
+    mockConfig.bitcoinRpcUrl = undefined;
   });
 
   it('returns a ChainClient interface', () => {
@@ -72,14 +93,61 @@ describe('getChainClient', () => {
     expect(client).toBeInstanceOf(MockChainClient);
   });
 
-  it('returns MockChainClient in development (TODO: real client not yet implemented)', () => {
-    // Once the real BitcoinChainClient exists, this test should be
-    // updated to verify the factory returns it for non-mock, non-test envs.
+  it('returns MockChainClient when enableProdNetworkAnchoring is false', () => {
     mockConfig.useMocks = false;
-    mockConfig.nodeEnv = 'development';
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = false;
 
     const client = getChainClient();
-    // Currently falls through to mock — update when CRIT-2 is resolved
+    expect(client).toBeInstanceOf(MockChainClient);
+  });
+
+  it('returns SignetChainClient when feature flag is on and config is valid', () => {
+    mockConfig.useMocks = false;
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = true;
+    mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
+    mockConfig.bitcoinRpcUrl = 'http://localhost:38332';
+
+    const client = getChainClient();
+    // Should be the mocked SignetChainClient (has _isSignet marker)
+    expect((client as any)._isSignet).toBe(true);
+  });
+
+  it('falls back to MockChainClient when treasury WIF is missing', () => {
+    mockConfig.useMocks = false;
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = true;
+    mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.bitcoinTreasuryWif = undefined;
+    mockConfig.bitcoinRpcUrl = 'http://localhost:38332';
+
+    const client = getChainClient();
+    expect(client).toBeInstanceOf(MockChainClient);
+  });
+
+  it('falls back to MockChainClient when RPC URL is missing', () => {
+    mockConfig.useMocks = false;
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = true;
+    mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
+    mockConfig.bitcoinRpcUrl = undefined;
+
+    const client = getChainClient();
+    expect(client).toBeInstanceOf(MockChainClient);
+  });
+
+  it('falls back to MockChainClient for mainnet (not yet implemented)', () => {
+    mockConfig.useMocks = false;
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = true;
+    mockConfig.bitcoinNetwork = 'mainnet';
+    mockConfig.bitcoinTreasuryWif = 'L1aW4aubDFB7yfDzZ';
+    mockConfig.bitcoinRpcUrl = 'http://localhost:8332';
+
+    const client = getChainClient();
     expect(client).toBeInstanceOf(MockChainClient);
   });
 

@@ -130,56 +130,77 @@ Follow `src/components/organization/IssueCredentialForm.tsx` (lines 89-155):
 
 #### Steps to Reproduce
 
-1. Read `services/worker/src/chain/client.ts` line 15-23
-2. Observe: `getChainClient()` returns `MockChainClient` in all code paths, including when `config.useMocks = false`
-3. No `bitcoinjs-lib` dependency in `services/worker/package.json`
+1. Read `services/worker/src/chain/client.ts` — factory now has full Signet path
+2. `getChainClient()` returns `SignetChainClient` when `enableProdNetworkAnchoring=true`, `bitcoinNetwork=signet`, and valid WIF + RPC URL provided
+3. `bitcoinjs-lib`, `ecpair`, `tiny-secp256k1` installed in `services/worker/package.json`
+4. **Remaining gap:** AWS KMS signing for mainnet, mainnet treasury funding, live Signet node connectivity test
 
 #### Expected Behavior
 
 When `BITCOIN_NETWORK=mainnet` and `BITCOIN_TREASURY_WIF` is set, `getChainClient()` should return a real chain client that constructs OP_RETURN transactions, signs via AWS KMS, and submits to Bitcoin network.
 
-#### Actual Behavior
+#### Actual Behavior (Updated 2026-03-11)
 
 ```typescript
 export function getChainClient(): ChainClient {
   if (config.useMocks || config.nodeEnv === 'test') {
     return new MockChainClient();
   }
-  // TODO: Implement real chain client
+  if (!config.enableProdNetworkAnchoring) {
+    return new MockChainClient();
+  }
+  if (config.bitcoinNetwork === 'signet' || config.bitcoinNetwork === 'testnet') {
+    if (!config.bitcoinTreasuryWif || !config.bitcoinRpcUrl) {
+      return new MockChainClient(); // fallback
+    }
+    return new SignetChainClient({ treasuryWif, rpcUrl, rpcAuth });
+  }
+  if (config.bitcoinNetwork === 'mainnet') {
+    return new MockChainClient(); // not yet implemented
+  }
   return new MockChainClient();
 }
 ```
 
-All paths return `MockChainClient` which uses `setTimeout(resolve, 100)` to simulate network calls, increments a fake block counter, and stores data in an in-memory Map.
+Signet path now returns real `SignetChainClient` with OP_RETURN transaction construction (`ARKV` 4-byte prefix + SHA-256 fingerprint). Mainnet path still falls back to MockChainClient.
 
 #### Root Cause
 
-Real Bitcoin integration was deferred. The interface contract exists (`ChainClient` in `types.ts`) but no implementation. Decision made to harden worker tests first (2026-03-10) before implementing real chain client.
+Real Bitcoin integration was deferred. The interface contract exists (`ChainClient` in `types.ts`). Signet implementation now complete. Mainnet requires AWS KMS integration.
 
 #### Fix Pattern
 
-1. Install `bitcoinjs-lib` in `services/worker/`
-2. Create `services/worker/src/chain/real.ts` implementing `ChainClient` interface
-3. Construct OP_RETURN transactions with document fingerprint
-4. Sign via `BITCOIN_TREASURY_WIF` env var (later: AWS KMS)
-5. Submit to Bitcoin network (Signet first, then Mainnet)
-6. Update `getChainClient()` factory to return real client when not in test/mock mode
-7. Gate behind `ENABLE_PROD_NETWORK_ANCHORING` switchboard flag
+1. ~~Install `bitcoinjs-lib` in `services/worker/`~~ DONE
+2. ~~Create `services/worker/src/chain/signet.ts` implementing `ChainClient` interface~~ DONE (~300 lines)
+3. ~~Construct OP_RETURN transactions with embedded fingerprint (`ARKV` prefix)~~ DONE
+4. ~~Sign via `BITCOIN_TREASURY_WIF` env var~~ DONE (WIF-based, KMS later)
+5. ~~Submit to Bitcoin network (Signet)~~ DONE (via RPC)
+6. ~~Update `getChainClient()` factory to return real client when not in test/mock mode~~ DONE
+7. ~~Gate behind `ENABLE_PROD_NETWORK_ANCHORING` switchboard flag~~ DONE
+8. AWS KMS integration for mainnet signing — NOT DONE
+9. Mainnet configuration and treasury wallet funding — NOT DONE
 
 #### Actions Taken
 
 | Date | Action |
 |------|--------|
 | 2026-03-10 | Identified during codebase audit. Decision: worker hardening sprint first (0% test coverage). |
+| 2026-03-10 | Worker hardening complete: 228 tests, 100% coverage on chain mock + factory. |
+| 2026-03-11 | Installed `bitcoinjs-lib`, `ecpair`, `tiny-secp256k1`. Created `signet.ts` (~300 lines) with OP_RETURN construction, RPC client, `ARKV` prefix. |
+| 2026-03-11 | Updated `client.ts` factory (26 → 63 lines) with full Signet/testnet path. Config updated with `bitcoinRpcUrl`, `bitcoinRpcAuth`, `bitcoinTreasuryWif` fields. |
+| 2026-03-11 | Created `signet.test.ts` (~15 tests) and updated `client.test.ts` (5 → 8 tests). All 268 worker tests pass. |
 
 #### Resolution
 
-**Status:** OPEN — Blocked by worker hardening (Week 1), scheduled for Weeks 2-3.
+**Status:** PARTIAL — Signet implementation complete. Mainnet (AWS KMS + treasury) remaining.
 
 #### Regression Test
 
-- Needed: `ChainClient` interface contract test (mock and real both satisfy same interface)
-- Needed: Integration test: PENDING -> job claimed -> chain submitted -> SECURED
+- Existing: `services/worker/src/chain/client.test.ts` (8 tests — factory returns correct type for all config combinations)
+- Existing: `services/worker/src/chain/signet.test.ts` (~15 tests — OP_RETURN construction, RPC interactions, health check, error handling)
+- Existing: `services/worker/src/chain/mock.test.ts` (18 tests — interface contract)
+- Existing: `services/worker/src/jobs/anchor.test.ts` (36 tests — full lifecycle PENDING → SECURED)
+- Needed: Live Signet node connectivity integration test
 
 ---
 

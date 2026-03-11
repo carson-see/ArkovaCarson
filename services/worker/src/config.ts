@@ -3,6 +3,10 @@
  *
  * Environment-based configuration for the anchoring worker service.
  * All secrets are loaded from environment variables.
+ *
+ * Constitution refs:
+ *   - 1.4: Treasury/signing keys server-side only, loaded from env vars, never logged
+ *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  */
 
 import { z } from 'zod';
@@ -21,9 +25,16 @@ const ConfigSchema = z.object({
   stripeSecretKey: z.string().min(1),
   stripeWebhookSecret: z.string().min(1),
 
-  // Chain API
-  chainApiUrl: z.string().url(),
-  chainApiKey: z.string().min(1),
+  // Bitcoin chain
+  bitcoinNetwork: z.enum(['signet', 'testnet', 'mainnet']).default('signet'),
+  bitcoinRpcUrl: z.string().url().optional(),
+  bitcoinRpcAuth: z.string().optional(),
+  /** Treasury WIF — loaded from env, NEVER logged (Constitution 1.4) */
+  bitcoinTreasuryWif: z.string().optional(),
+
+  // Legacy chain API fields (kept for backward compat with existing tests)
+  chainApiUrl: z.string().url().optional(),
+  chainApiKey: z.string().optional(),
   chainNetwork: z.enum(['testnet', 'mainnet']).default('testnet'),
 
   // Frontend
@@ -31,6 +42,8 @@ const ConfigSchema = z.object({
 
   // Feature flags
   useMocks: z.coerce.boolean().default(false),
+  /** Gates real Bitcoin chain calls (Constitution 1.9) */
+  enableProdNetworkAnchoring: z.coerce.boolean().default(false),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -44,11 +57,16 @@ function loadConfig(): Config {
     supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    bitcoinNetwork: process.env.BITCOIN_NETWORK,
+    bitcoinRpcUrl: process.env.BITCOIN_RPC_URL,
+    bitcoinRpcAuth: process.env.BITCOIN_RPC_AUTH,
+    bitcoinTreasuryWif: process.env.BITCOIN_TREASURY_WIF,
     chainApiUrl: process.env.CHAIN_API_URL,
     chainApiKey: process.env.CHAIN_API_KEY,
     chainNetwork: process.env.CHAIN_NETWORK,
     frontendUrl: process.env.FRONTEND_URL,
     useMocks: process.env.USE_MOCKS,
+    enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
   });
 
   if (!result.success) {
@@ -63,13 +81,14 @@ function loadConfig(): Config {
 export const config = loadConfig();
 
 /**
- * Network display names per Constitution terminology
+ * Network display names per Constitution terminology (Section 1.3)
  */
 export const NETWORK_DISPLAY_NAMES = {
+  signet: 'Test Environment',
   testnet: 'Test Environment',
   mainnet: 'Production Network',
 } as const;
 
-export function getNetworkDisplayName(network: 'testnet' | 'mainnet'): string {
+export function getNetworkDisplayName(network: 'signet' | 'testnet' | 'mainnet'): string {
   return NETWORK_DISPLAY_NAMES[network];
 }

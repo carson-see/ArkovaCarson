@@ -2,6 +2,7 @@
  * Unit tests for worker configuration
  *
  * HARDENING-5: Zod validation, defaults, error handling, network display names.
+ * Updated for Bitcoin Signet config fields (CRIT-2 / P7-TS-05).
  *
  * NOTE: config.ts calls loadConfig() at module level, which validates env vars
  * via Zod. We set required env vars BEFORE importing so the singleton loads.
@@ -40,6 +41,10 @@ beforeAll(async () => {
 });
 
 describe('NETWORK_DISPLAY_NAMES', () => {
+  it('maps signet to Constitution-compliant name', () => {
+    expect(NETWORK_DISPLAY_NAMES.signet).toBe('Test Environment');
+  });
+
   it('maps testnet to Constitution-compliant name', () => {
     expect(NETWORK_DISPLAY_NAMES.testnet).toBe('Test Environment');
   });
@@ -48,12 +53,16 @@ describe('NETWORK_DISPLAY_NAMES', () => {
     expect(NETWORK_DISPLAY_NAMES.mainnet).toBe('Production Network');
   });
 
-  it('has exactly two entries', () => {
-    expect(Object.keys(NETWORK_DISPLAY_NAMES)).toHaveLength(2);
+  it('has exactly three entries', () => {
+    expect(Object.keys(NETWORK_DISPLAY_NAMES)).toHaveLength(3);
   });
 });
 
 describe('getNetworkDisplayName', () => {
+  it('returns "Test Environment" for signet', () => {
+    expect(getNetworkDisplayName('signet')).toBe('Test Environment');
+  });
+
   it('returns "Test Environment" for testnet', () => {
     expect(getNetworkDisplayName('testnet')).toBe('Test Environment');
   });
@@ -98,10 +107,9 @@ describe('config singleton', () => {
     expect(typeof config.supabaseServiceKey).toBe('string');
     expect(typeof config.stripeSecretKey).toBe('string');
     expect(typeof config.stripeWebhookSecret).toBe('string');
-    expect(typeof config.chainApiUrl).toBe('string');
-    expect(typeof config.chainApiKey).toBe('string');
-    expect(['testnet', 'mainnet']).toContain(config.chainNetwork);
+    expect(['signet', 'testnet', 'mainnet']).toContain(config.bitcoinNetwork);
     expect(typeof config.useMocks).toBe('boolean');
+    expect(typeof config.enableProdNetworkAnchoring).toBe('boolean');
   });
 
   it('uses default port when WORKER_PORT not set', () => {
@@ -112,5 +120,19 @@ describe('config singleton', () => {
     expect(config.supabaseUrl).toBe('https://test.supabase.co');
     expect(config.nodeEnv).toBe('test');
     expect(config.useMocks).toBe(true);
+  });
+
+  it('defaults enableProdNetworkAnchoring to false', () => {
+    expect(config.enableProdNetworkAnchoring).toBe(false);
+  });
+
+  it('defaults bitcoinNetwork to signet', () => {
+    expect(config.bitcoinNetwork).toBe('signet');
+  });
+
+  it('bitcoin config fields are optional when useMocks is true', () => {
+    // These should be undefined since we didn't set them
+    expect(config.bitcoinTreasuryWif).toBeUndefined();
+    expect(config.bitcoinRpcUrl).toBeUndefined();
   });
 });

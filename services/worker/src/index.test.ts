@@ -45,6 +45,8 @@ const {
     chainApiUrl: 'https://chain.test',
     chainApiKey: 'chain-key',
     chainNetwork: 'testnet',
+    bitcoinNetwork: 'signet',
+    enableProdNetworkAnchoring: false,
     useMocks: true,
   };
 
