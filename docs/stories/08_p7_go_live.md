@@ -1,5 +1,5 @@
 # P7 Go-Live — Story Documentation
-_Last updated: 2026-03-11 ~11:30 PM EST | 7/10 stories COMPLETE, 2/10 PARTIAL, 1/10 NOT STARTED_
+_Last updated: 2026-03-11 ~11:45 PM EST | 9/12 stories COMPLETE, 2/12 PARTIAL, 1/12 NOT STARTED_
 
 ## Group Overview
 
@@ -695,6 +695,110 @@ npx tsx scripts/generate-signet-keypair.ts
 # Check treasury balance (requires .env with BITCOIN_TREASURY_WIF + BITCOIN_RPC_URL)
 npx tsx scripts/check-signet-balance.ts
 ```
+
+---
+
+### P7-TS-12 — UTXO Provider Pattern + Mempool.space Integration
+
+**Status:** COMPLETE
+**Dependencies:** P7-TS-05 (SignetChainClient), P7-TS-11 (Wallet Utilities)
+**Story:** P7-TS-12
+
+#### What It Delivers
+
+A pluggable UTXO provider abstraction that decouples the SignetChainClient from any specific Bitcoin node or API backend. Two implementations ship: `RpcUtxoProvider` (Bitcoin Core JSON-RPC) and `MempoolUtxoProvider` (Mempool.space REST API). The Mempool provider is the default — it requires no local Bitcoin node, making development and deployment significantly simpler.
+
+The factory also updates the chain client wiring (`client.ts`) and configuration (`config.ts`) so the provider type is selectable via environment variable `BITCOIN_UTXO_PROVIDER` (default: `mempool`).
+
+#### Files
+
+| File | Purpose |
+|------|---------|
+| `services/worker/src/chain/utxo-provider.ts` | `UtxoProvider` interface + `RpcUtxoProvider` + `MempoolUtxoProvider` + `createUtxoProvider()` factory |
+| `services/worker/src/chain/utxo-provider.test.ts` | 35+ tests: RPC provider (listUnspent, broadcastTx, getBlockchainInfo, getRawTransaction, getBlockHeader, auth), Mempool provider (confirmed filtering, broadcast, chain inference, URL handling), factory |
+| `services/worker/src/chain/client.ts` | Updated: uses `createUtxoProvider()` factory, validates provider-specific config |
+| `services/worker/src/config.ts` | Added `bitcoinUtxoProvider` (enum: 'rpc' | 'mempool', default: 'mempool') and `mempoolApiUrl` (optional URL override) |
+| `services/worker/src/chain/signet.ts` | Updated: accepts `SignetConfig` with `utxoProvider` field; backward-compatible `LegacySignetConfig` |
+| `services/worker/src/chain/signet.test.ts` | Rewritten: uses mock `UtxoProvider` instead of raw fetch mocks |
+
+#### Interface
+
+```typescript
+interface UtxoProvider {
+  name: string;
+  listUnspent(address: string): Promise<Utxo[]>;
+  broadcastTx(txHex: string): Promise<{ txid: string }>;
+  getBlockchainInfo(): Promise<{ chain: string; blocks: number }>;
+  getRawTransaction(txid: string): Promise<RawTransaction>;
+  getBlockHeader(blockhash: string): Promise<{ height: number }>;
+}
+```
+
+#### Configuration
+
+| Env Var | Type | Default | Description |
+|---------|------|---------|-------------|
+| `BITCOIN_UTXO_PROVIDER` | `'rpc' \| 'mempool'` | `mempool` | Which UTXO backend to use |
+| `MEMPOOL_API_URL` | URL (optional) | `https://mempool.space/signet/api` | Override Mempool.space endpoint |
+| `BITCOIN_RPC_URL` | URL (optional) | — | Required only when provider is 'rpc' |
+| `BITCOIN_RPC_AUTH` | string (optional) | — | RPC Basic auth credentials |
+
+#### Security Considerations
+
+- RPC auth uses HTTP Basic auth header (never logged)
+- Mempool.space is a public API — no auth required for reads
+- All network calls mocked in tests (Constitution 1.7)
+- Provider selection validated at factory level — unknown types throw
+
+#### Test Coverage
+
+| File | Tests | What It Validates |
+|------|-------|-------------------|
+| `utxo-provider.test.ts` | 35+ | RPC CRUD ops, Mempool confirmed filtering, chain inference from URL, factory validation, auth headers, error handling |
+| `signet.test.ts` | 15+ | Updated to use mock UtxoProvider; selectUtxo, estimateTxVsize, buildOpReturnTransaction, client lifecycle |
+| `client.test.ts` | 8 | Factory returns correct client type based on config (includes provider validation) |
+
+#### Acceptance Criteria
+
+- [x] `UtxoProvider` interface defined with 5 methods + `name` property
+- [x] `RpcUtxoProvider` wraps Bitcoin Core JSON-RPC (listunspent, sendrawtransaction, getblockchaininfo, getrawtransaction, getblockheader)
+- [x] `MempoolUtxoProvider` wraps Mempool.space REST API (confirmed UTXOs only, chain inference from URL)
+- [x] `createUtxoProvider()` factory validates config and selects implementation
+- [x] `config.ts` adds `bitcoinUtxoProvider` and `mempoolApiUrl` fields
+- [x] `client.ts` uses factory to create provider before passing to SignetChainClient
+- [x] SignetChainClient accepts both new `SignetConfig` (utxoProvider) and legacy `LegacySignetConfig` (rpcUrl)
+- [x] All network calls mocked in tests — no real Bitcoin API calls
+- [x] Default provider is `mempool` (no local node required)
+- [x] MempoolUtxoProvider strips trailing slashes from base URL
+
+---
+
+### P7-TS-13 — Fingerprint Indexing for Efficient Verification Lookup
+
+**Status:** NOT STARTED
+**Dependencies:** P7-TS-05 (SignetChainClient), P7-TS-12 (UTXO Provider)
+**Story:** P7-TS-13
+
+#### What It Delivers
+
+An efficient fingerprint lookup mechanism to replace the current O(n) UTXO scan in `SignetChainClient.verifyFingerprint()`. The current implementation walks all UTXOs and fetches each parent transaction looking for OP_RETURN outputs — this is slow and doesn't scale.
+
+#### Planned Approach
+
+Options (to be decided at implementation time):
+1. **Local index table** — Store `(fingerprint, txid, block_height)` in Supabase when anchoring succeeds. Verification becomes a single DB query.
+2. **Electrum-style indexer** — Use an Electrum server or `esplora` instance to search by script hash.
+3. **Mempool.space search** — If Mempool adds OP_RETURN search, use their API.
+
+Option 1 is most likely — it's the simplest and the data is already available at anchoring time.
+
+#### Acceptance Criteria (Planned)
+
+- [ ] `verifyFingerprint()` completes in O(1) instead of O(n)
+- [ ] Lookup works for both recently anchored and historical fingerprints
+- [ ] Index is populated automatically during `submitFingerprint()` flow
+- [ ] Fallback to UTXO scan if index miss (backward compatibility)
+- [ ] Tests validate both indexed and fallback paths
 
 ---
 

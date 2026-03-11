@@ -392,7 +392,7 @@ Story docs live in `docs/stories/` and are grouped by priority level (one file p
 | `05_p4e2_credential_metadata.md` | P4-E2 Credential Metadata | 3 |
 | `06_p5_org_admin.md` | P5 Org Admin | 6 |
 | `07_p6_verification.md` | P6 Verification | 6 |
-| `08_p7_go_live.md` | P7 Go-Live | 11 |
+| `08_p7_go_live.md` | P7 Go-Live | 13 |
 | `09_p45_verification_api.md` | P4.5 Verification API | 13 |
 
 When a story's status changes:
@@ -460,9 +460,9 @@ npx supabase db reset
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
 | P6 Verification | 5/6 | 1/6 | 0 | 83% |
-| P7 Go-Live | 7/11 | 2/11 | 2/11 | 64% |
+| P7 Go-Live | 8/13 | 2/13 | 3/13 | 62% |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| **Total** | **38/56** | **3/56** | **15/56** | **~73%** |
+| **Total** | **39/58** | **3/58** | **16/58** | **~72%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -526,7 +526,7 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P6-TS-05: ✅ `generateAuditReport.ts` (jsPDF, 201 lines). Called from RecordDetailPage.
 - P6-TS-06: ✅ `verification_events` table (migration 0042), SECURITY DEFINER RPC (migration 0045), wired into PublicVerification.tsx.
 
-### P7 Go-Live — 7/11 COMPLETE, 2/11 PARTIAL, 2/11 NOT STARTED
+### P7 Go-Live — 8/13 COMPLETE, 2/13 PARTIAL, 3/13 NOT STARTED
 
 - P7-TS-01: ✅ Billing schema (migration 0016). BillingOverview.tsx wired in PricingPage with useBilling data.
 - P7-TS-02: ⚠️ PARTIAL — Pricing UI (PricingPage, PricingCard, BillingOverview), useBilling hook, checkout success/cancel pages all implemented. Stripe webhook handlers handle checkout.session.completed + subscription lifecycle. Worker checkout + billing portal endpoints wired (b1f798a). 74 tests. **Remaining:** entitlement enforcement, plan change/downgrade flows.
@@ -537,6 +537,8 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P7-TS-09: ✅ COMPLETE — WebhookSettings.tsx with two-phase dialog (creation form → one-time secret display). Server-side secret generation via SECURITY DEFINER RPC (migration 0046). 34 tests (23 component + 11 integration).
 - P7-TS-10: ✅ COMPLETE — Delivery engine with exponential backoff + HMAC signing. `anchor.ts` dispatches `anchor.secured` webhook after SECURED status set. Webhook retries scheduled in worker cron.
 - P7-TS-11: ✅ COMPLETE — Signet treasury wallet utilities (`wallet.ts`: `generateSignetKeypair()`, `addressFromWif()`, `isValidSignetWif()`). CLI scripts (`generate-signet-keypair.ts`, `check-signet-balance.ts`). 13 tests.
+- P7-TS-12: ✅ COMPLETE — UTXO provider pattern (`utxo-provider.ts`): `UtxoProvider` interface with `RpcUtxoProvider` (Bitcoin Core JSON-RPC) and `MempoolUtxoProvider` (Mempool.space REST API). Factory function `createUtxoProvider()`. Integrated into `SignetChainClient` + `getChainClient()`. 35 tests.
+- P7-TS-13: ❌ NOT STARTED — Fingerprint indexing for efficient verification lookup. Currently O(n) UTXO scan in `verifyFingerprint()`.
 
 ### P4.5 Verification API — 0/13 NOT STARTED
 
@@ -572,6 +574,7 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - ✅ Stripe checkout + billing portal worker endpoints (b1f798a)
 - ✅ SignetChainClient (bitcoinjs-lib OP_RETURN, `ARKV` prefix)
 - ✅ P7-TS-11 Signet wallet setup (wallet.ts, CLI scripts, 13 tests)
+- ✅ P7-TS-12 UTXO provider pattern (RPC + Mempool.space backends, 35 tests)
 
 ### Current: Remaining Production Blockers
 

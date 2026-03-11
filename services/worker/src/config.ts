@@ -31,6 +31,10 @@ const ConfigSchema = z.object({
   bitcoinRpcAuth: z.string().optional(),
   /** Treasury WIF — loaded from env, NEVER logged (Constitution 1.4) */
   bitcoinTreasuryWif: z.string().optional(),
+  /** UTXO provider: 'rpc' (requires bitcoinRpcUrl) or 'mempool' (no node needed) */
+  bitcoinUtxoProvider: z.enum(['rpc', 'mempool']).default('mempool'),
+  /** Mempool.space API URL override (defaults to Signet endpoint) */
+  mempoolApiUrl: z.string().url().optional(),
 
   // Legacy chain API fields (kept for backward compat with existing tests)
   chainApiUrl: z.string().url().optional(),
@@ -61,6 +65,8 @@ function loadConfig(): Config {
     bitcoinRpcUrl: process.env.BITCOIN_RPC_URL,
     bitcoinRpcAuth: process.env.BITCOIN_RPC_AUTH,
     bitcoinTreasuryWif: process.env.BITCOIN_TREASURY_WIF,
+    bitcoinUtxoProvider: process.env.BITCOIN_UTXO_PROVIDER,
+    mempoolApiUrl: process.env.MEMPOOL_API_URL,
     chainApiUrl: process.env.CHAIN_API_URL,
     chainApiKey: process.env.CHAIN_API_KEY,
     chainNetwork: process.env.CHAIN_NETWORK,

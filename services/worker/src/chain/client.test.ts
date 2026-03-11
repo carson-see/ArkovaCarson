@@ -19,6 +19,8 @@ const { mockConfig } = vi.hoisted(() => {
     bitcoinRpcUrl: undefined as string | undefined,
     bitcoinRpcAuth: undefined as string | undefined,
     bitcoinTreasuryWif: undefined as string | undefined,
+    bitcoinUtxoProvider: 'mempool' as string,
+    mempoolApiUrl: undefined as string | undefined,
     enableProdNetworkAnchoring: false,
     logLevel: 'info',
   };
@@ -127,13 +129,14 @@ describe('getChainClient', () => {
     expect(client).toBeInstanceOf(MockChainClient);
   });
 
-  it('falls back to MockChainClient when RPC URL is missing', () => {
+  it('falls back to MockChainClient when RPC URL is missing for rpc provider', () => {
     mockConfig.useMocks = false;
     mockConfig.nodeEnv = 'production';
     mockConfig.enableProdNetworkAnchoring = true;
     mockConfig.bitcoinNetwork = 'signet';
     mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
     mockConfig.bitcoinRpcUrl = undefined;
+    mockConfig.bitcoinUtxoProvider = 'rpc';
 
     const client = getChainClient();
     expect(client).toBeInstanceOf(MockChainClient);

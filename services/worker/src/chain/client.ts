@@ -9,6 +9,8 @@
  * Constitution refs:
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  *   - 1.4: Treasury keys never logged
+ *
+ * Stories: P7-TS-05, P7-TS-12
  */
 
 import { config } from '../config.js';
@@ -16,6 +18,7 @@ import { logger } from '../utils/logger.js';
 import type { ChainClient } from './types.js';
 import { MockChainClient } from './mock.js';
 import { SignetChainClient } from './signet.js';
+import { createUtxoProvider } from './utxo-provider.js';
 
 export function getChainClient(): ChainClient {
   // Always use mock in test mode or when explicitly configured
@@ -37,16 +40,28 @@ export function getChainClient(): ChainClient {
       return new MockChainClient();
     }
 
-    if (!config.bitcoinRpcUrl) {
-      logger.error('BITCOIN_RPC_URL required for Signet chain client — falling back to mock');
+    // Validate provider config
+    if (config.bitcoinUtxoProvider === 'rpc' && !config.bitcoinRpcUrl) {
+      logger.error('BITCOIN_RPC_URL required for RPC UTXO provider — falling back to mock');
       return new MockChainClient();
     }
 
-    logger.info({ network: config.bitcoinNetwork }, 'Using SignetChainClient');
-    return new SignetChainClient({
-      treasuryWif: config.bitcoinTreasuryWif,
+    const utxoProvider = createUtxoProvider({
+      type: config.bitcoinUtxoProvider,
       rpcUrl: config.bitcoinRpcUrl,
       rpcAuth: config.bitcoinRpcAuth,
+      mempoolApiUrl: config.mempoolApiUrl,
+    });
+
+    logger.info(
+      { network: config.bitcoinNetwork, provider: utxoProvider.name },
+      'Using SignetChainClient',
+    );
+
+    return new SignetChainClient({
+      treasuryWif: config.bitcoinTreasuryWif,
+      utxoProvider,
+      feeRate: 1, // 1 sat/vbyte — Signet minimum
     });
   }
 
