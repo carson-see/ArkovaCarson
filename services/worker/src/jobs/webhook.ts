@@ -8,7 +8,7 @@
  * When the webhook_configs table is added, update this to use the database.
  */
 
-import { createHmac } from 'crypto';
+import { createHmac } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 
 export interface WebhookConfig {

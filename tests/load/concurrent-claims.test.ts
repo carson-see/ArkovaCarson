@@ -191,8 +191,6 @@ describe('Concurrent Claims Load Tests', () => {
       // Second worker also tries all 10, but some may already be SECURED
       // Total processed should be >= 10 (first worker gets them all)
       const totalProcessed = resultA.processed + resultB.processed;
-      const totalFailed = resultA.failed + resultB.failed;
-
       console.log(
         `[LOAD] Worker A: ${resultA.processed} processed, ${resultA.failed} failed | ` +
           `Worker B: ${resultB.processed} processed, ${resultB.failed} failed`
@@ -333,20 +331,6 @@ describe('Concurrent Claims Load Tests', () => {
         };
       });
       mockDispatchWebhookEvent.mockResolvedValue(undefined);
-
-      // Track update order
-      const originalUpdate = vi.fn((data: Record<string, unknown>) => ({
-        eq: vi.fn((field: string, value: string) => {
-          if (field === 'id' && data.status === 'SECURED') {
-            processedOrder.push(value);
-            const existing = dbState.anchors.get(value);
-            if (existing) {
-              dbState.anchors.set(value, { ...existing, ...data });
-            }
-          }
-          return Promise.resolve({ error: null });
-        }),
-      }));
 
       const { processPendingAnchors } = await import(
         '../../services/worker/src/jobs/anchor.js'

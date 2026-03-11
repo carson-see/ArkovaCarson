@@ -37,8 +37,8 @@ export interface MockSubscription {
 }
 
 export class MockStripeClient {
-  private sessions = new Map<string, MockCheckoutSession>();
-  private subscriptions = new Map<string, MockSubscription>();
+  private readonly sessions = new Map<string, MockCheckoutSession>();
+  private readonly subscriptions = new Map<string, MockSubscription>();
 
   async createCheckoutSession(params: {
     customer?: string;

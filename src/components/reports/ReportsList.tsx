@@ -5,7 +5,7 @@
  * Entitlement-gated access to report generation.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { FileText, Download, Loader2, Calendar, AlertCircle, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -125,7 +125,7 @@ export function ReportsList({ hasReportsEntitlement = true }: ReportsListProps) 
     setGenerating(false);
   }
 
-  async function downloadReport(reportId: string) {
+  const downloadReport = useCallback(async (reportId: string) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: artifacts } = await (supabase as any)
       .from('report_artifacts')
@@ -145,10 +145,10 @@ export function ReportsList({ hasReportsEntitlement = true }: ReportsListProps) 
       link.download = artifacts.filename || `arkova-report-${reportId}.json`;
       document.body.appendChild(link);
       link.click();
-      document.body.removeChild(link);
+      link.remove();
       URL.revokeObjectURL(url);
     }
-  }
+  }, []);
 
   function getStatusBadge(status: ReportStatus) {
     switch (status) {

@@ -4,7 +4,7 @@
  * Handles signed webhook delivery with exponential backoff retries.
  */
 
-import crypto from 'crypto';
+import crypto from 'node:crypto';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -245,7 +245,7 @@ export async function processWebhookRetries(): Promise<number> {
 
   for (const log of logs) {
     const endpoint = log.webhook_endpoints as WebhookEndpoint;
-    if (!endpoint || !endpoint.is_active) continue;
+    if (!endpoint?.is_active) continue;
 
     await deliverToEndpoint(
       endpoint,

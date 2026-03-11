@@ -255,7 +255,7 @@ export function CredentialTemplatesManager({
             <div className="flex justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
-          ) : templates.length === 0 ? (
+          ) : (templates.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
               <p>No templates yet</p>
@@ -319,7 +319,7 @@ export function CredentialTemplatesManager({
                 ))}
               </TableBody>
             </Table>
-          )}
+          ))}
         </CardContent>
       </Card>
 

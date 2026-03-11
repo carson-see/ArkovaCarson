@@ -368,14 +368,14 @@ describe('downloadProofPackage', () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let appendChildSpy: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let removeChildSpy: any;
+  let removeSpy: any;
 
   beforeEach(() => {
     mockCreateObjectURL = vi.fn(() => 'blob:mock-url');
     mockRevokeObjectURL = vi.fn();
     clickSpy = vi.fn();
+    removeSpy = vi.fn();
     appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation(((node: Node) => node) as never);
-    removeChildSpy = vi.spyOn(document.body, 'removeChild').mockImplementation(((node: Node) => node) as never);
 
     global.URL.createObjectURL = mockCreateObjectURL;
     global.URL.revokeObjectURL = mockRevokeObjectURL;
@@ -384,6 +384,7 @@ describe('downloadProofPackage', () => {
       href: '',
       download: '',
       click: clickSpy,
+      remove: removeSpy,
     } as unknown as HTMLAnchorElement);
   });
 
@@ -394,7 +395,7 @@ describe('downloadProofPackage', () => {
     expect(mockCreateObjectURL).toHaveBeenCalledOnce();
     expect(appendChildSpy).toHaveBeenCalledOnce();
     expect(clickSpy).toHaveBeenCalledOnce();
-    expect(removeChildSpy).toHaveBeenCalledOnce();
+    expect(removeSpy).toHaveBeenCalledOnce();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
   });
 
@@ -404,6 +405,7 @@ describe('downloadProofPackage', () => {
       href: '',
       download: '',
       click: clickSpy,
+      remove: removeSpy,
     } as unknown as HTMLAnchorElement;
     createSpy.mockReturnValue(mockLink);
 

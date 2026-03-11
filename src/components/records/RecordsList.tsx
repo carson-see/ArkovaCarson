@@ -69,8 +69,8 @@ export function RecordsList({
   if (loading) {
     return (
       <div className="divide-y">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <RecordSkeleton key={i} />
+        {Array.from({ length: 3 }).map((_, idx) => (
+          <RecordSkeleton key={`skeleton-${idx}`} />
         ))}
       </div>
     );

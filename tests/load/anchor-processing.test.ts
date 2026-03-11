@@ -235,7 +235,8 @@ describe('Anchor Processing Load Tests', () => {
 
       const avg = timings.reduce((a, b) => a + b, 0) / timings.length;
       const max = Math.max(...timings);
-      const p95 = timings.sort((a, b) => a - b)[Math.floor(timings.length * 0.95)];
+      const sorted = [...timings].sort((a, b) => a - b);
+      const p95 = sorted[Math.floor(sorted.length * 0.95)];
 
       console.log(
         `[LOAD] Per-anchor timing (${ANCHOR_COUNT} anchors): ` +

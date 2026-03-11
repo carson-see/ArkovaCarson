@@ -154,14 +154,14 @@ export function OrganizationPage() {
           >
             {orgUpdating ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : orgSaved ? (
+            ) : (orgSaved ? (
               <>
                 <Check className="mr-2 h-4 w-4" />
                 Saved
               </>
             ) : (
               'Save Settings'
-            )}
+            ))}
           </Button>
         </CardContent>
       </Card>

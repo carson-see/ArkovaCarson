@@ -96,6 +96,8 @@ export function FileUpload({ onFileSelect, disabled }: FileUploadProps) {
 
       {/* Drop zone */}
       <div
+        role="button"
+        tabIndex={0}
         className={cn(
           'relative rounded-lg border-2 border-dashed p-8 transition-colors',
           dragActive
@@ -108,6 +110,7 @@ export function FileUpload({ onFileSelect, disabled }: FileUploadProps) {
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click(); }}
       >
         <input
           ref={inputRef}

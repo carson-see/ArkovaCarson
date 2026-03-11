@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Label } from '@/components/ui/label';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
@@ -149,7 +150,7 @@ export function ConfirmAnchorModal({
           {/* Fingerprint display */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">Document Fingerprint</label>
+              <Label className="text-sm font-medium">Document Fingerprint</Label>
               <Button
                 variant="ghost"
                 size="sm"

@@ -351,7 +351,7 @@ export function OrgRegistryTable({
                   <Loader2 className="h-6 w-6 animate-spin mx-auto text-muted-foreground" />
                 </TableCell>
               </TableRow>
-            ) : anchors.length === 0 ? (
+            ) : (anchors.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                   No records found
@@ -435,7 +435,7 @@ export function OrgRegistryTable({
                   </TableRow>
                 );
               })
-            )}
+            ))}
           </TableBody>
         </Table>
       </div>

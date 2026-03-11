@@ -71,8 +71,9 @@ test.describe('Identity Security', () => {
       await page.goto('/dashboard');
 
       // No org switcher that could allow accessing other orgs
-      const orgSwitcher = page.getByRole('combobox', { name: /organization/i });
       // Intentionally lenient — feature may not exist yet
+      // Just verify the page loads without org-switching UI
+      await expect(page.getByRole('combobox', { name: /organization/i })).toHaveCount(0);
     });
   });
 

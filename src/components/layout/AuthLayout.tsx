@@ -54,11 +54,11 @@ export function AuthLayout({ children, title, description }: AuthLayoutProps) {
           {/* Footer */}
           <p className="text-center text-xs text-muted-foreground">
             By continuing, you agree to our{' '}
-            <a href="#" className="underline underline-offset-4 hover:text-primary transition-colors">
+            <a href="/terms" className="underline underline-offset-4 hover:text-primary transition-colors">
               Terms of Service
             </a>{' '}
             and{' '}
-            <a href="#" className="underline underline-offset-4 hover:text-primary transition-colors">
+            <a href="/privacy" className="underline underline-offset-4 hover:text-primary transition-colors">
               Privacy Policy
             </a>
           </p>
