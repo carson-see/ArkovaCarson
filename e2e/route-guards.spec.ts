@@ -6,7 +6,7 @@
  * @updated 2026-03-10 10:30 PM EST — migrated to shared fixtures
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, SEED_USERS } from './fixtures';
 
 test.describe('Route Guards', () => {
   test.describe('Unauthenticated Access', () => {
@@ -54,7 +54,7 @@ test.describe('Route Guards', () => {
       // Sign up a fresh user with no role (mid-onboarding state)
       const timestamp = Date.now();
       const email = `e2e-norole-${timestamp}@test.arkova.io`;
-      const password = process.env.E2E_SEED_PASSWORD || 'TestPassword123!';
+      const password = SEED_USERS.individual.password;
 
       await page.goto('/signup');
       await page.getByLabel('Full name').fill('No Role User');
