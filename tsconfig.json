@@ -27,5 +27,6 @@
     }
   },
   "include": ["src", "tests", "scripts"],
+  "exclude": ["services", "tests/load"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -173,8 +173,7 @@ UPDATE auth.users SET
   phone_change = COALESCE(phone_change, ''),
   phone_change_token = COALESCE(phone_change_token, ''),
   reauthentication_token = COALESCE(reauthentication_token, ''),
-  is_sso_user = COALESCE(is_sso_user, false),
-  is_anonymous = COALESCE(is_anonymous, false)
+  is_sso_user = COALESCE(is_sso_user, false)
 WHERE id IN (
   '11111111-0000-0000-0000-000000000001',
   '11111111-0000-0000-0000-000000000002',
