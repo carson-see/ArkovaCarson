@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
 jobs:
   # Secret scanning - block commits containing secrets
   secret-scan:
@@ -154,7 +157,7 @@ jobs:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
-          RLS_TEST_PASSWORD: demo_password_123
+          RLS_TEST_PASSWORD: Demo1234!
 
       - name: Run worker tests with coverage
         working-directory: services/worker
