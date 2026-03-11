@@ -27,6 +27,9 @@ import { HelpPage } from '@/pages/HelpPage';
 import { PublicVerifyPage } from '@/components/public/PublicVerifyPage';
 import { WebhookSettingsPage } from '@/pages/WebhookSettingsPage';
 import { CredentialTemplatesPage } from '@/pages/CredentialTemplatesPage';
+import { PricingPage } from '@/pages/PricingPage';
+import { CheckoutSuccessPage } from '@/pages/CheckoutSuccessPage';
+import { CheckoutCancelPage } from '@/pages/CheckoutCancelPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -216,6 +219,38 @@ export function App() {
             <AuthGuard>
               <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                 <HelpPage />
+              </RouteGuard>
+            </AuthGuard>
+          }
+        />
+
+        {/* Billing routes — auth required, onboarding must be complete */}
+        <Route
+          path={ROUTES.BILLING}
+          element={
+            <AuthGuard>
+              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                <PricingPage />
+              </RouteGuard>
+            </AuthGuard>
+          }
+        />
+        <Route
+          path={ROUTES.BILLING_SUCCESS}
+          element={
+            <AuthGuard>
+              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                <CheckoutSuccessPage />
+              </RouteGuard>
+            </AuthGuard>
+          }
+        />
+        <Route
+          path={ROUTES.BILLING_CANCEL}
+          element={
+            <AuthGuard>
+              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                <CheckoutCancelPage />
               </RouteGuard>
             </AuthGuard>
           }

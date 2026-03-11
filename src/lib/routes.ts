@@ -29,6 +29,11 @@ export const ROUTES = {
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
+  // Billing routes
+  BILLING: '/billing',
+  BILLING_SUCCESS: '/billing/success',
+  BILLING_CANCEL: '/billing/cancel',
+
   // Root redirect
   HOME: '/',
 } as const;

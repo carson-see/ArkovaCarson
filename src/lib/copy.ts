@@ -1,5 +1,5 @@
 /**
- * UI Copy Strings for Ralph
+ * UI Copy Strings for Arkova
  *
  * This file centralizes all user-facing copy to enforce terminology guidelines.
  *
@@ -231,6 +231,27 @@ export const TOOLTIPS = {
   SECURED: 'This record has been permanently anchored with cryptographic verification.',
   LEGAL_HOLD: 'This record is under legal hold and cannot be deleted.',
   VERIFICATION: 'Verify that a document matches a secured record.',
+} as const;
+
+// =============================================================================
+// BILLING
+// =============================================================================
+
+export const BILLING_LABELS = {
+  PAGE_TITLE: 'Billing & Plans',
+  PAGE_DESCRIPTION: 'Manage your subscription and view available plans.',
+  CHOOSE_PLAN: 'Choose a Plan',
+  CHANGE_PLAN: 'Change Plan',
+  PLAN_DESCRIPTION: 'Select the plan that best fits your needs. You can change plans at any time.',
+  CHECKOUT_SUCCESS_TITLE: 'Subscription Activated',
+  CHECKOUT_SUCCESS_DESC: 'Your subscription has been successfully set up. You can now access all features included in your plan.',
+  LOADING_SUBSCRIPTION: 'Setting up your subscription...',
+  YOUR_PLAN: 'Your Plan',
+  GO_TO_DASHBOARD: 'Go to Dashboard',
+  VIEW_BILLING: 'View Billing Details',
+  CHECKOUT_CANCEL_TITLE: 'Checkout Cancelled',
+  CHECKOUT_CANCEL_DESC: 'Your checkout was cancelled. No charges were made. You can try again whenever you are ready.',
+  BACK_TO_PRICING: 'Back to Plans',
 } as const;
 
 // =============================================================================

@@ -457,9 +457,9 @@ npx supabase db reset
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
 | P6 Verification | 4/6 | 2/6 | 0 | 75% |
-| P7 Go-Live | 4/10 | 2/10 | 4/10 | 40% |
+| P7 Go-Live | 6/10 | 1/10 | 3/10 | 65% |
 | P4.5 Verification API | 0/13 | 0 | 13/13 | 0% |
-| **Total** | **34/55** | **4/55** | **17/55** | **~66%** |
+| **Total** | **36/55** | **3/55** | **16/55** | **~70%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -467,7 +467,7 @@ npx supabase db reset
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
 | CRIT-2 | No real Bitcoin chain client | **HIGH** | `getChainClient()` always returns `MockChainClient`. No `bitcoinjs-lib`, no OP_RETURN, no AWS KMS. |
-| CRIT-3 | No Stripe checkout flow | **HIGH** | SDK initialized, webhook verification works, but no checkout session creation or pricing UI. |
+| CRIT-3 | No Stripe checkout flow | **HIGH** | Pricing UI + useBilling hook + checkout pages implemented. Webhook handlers work. **Remaining:** billing portal endpoint, entitlement enforcement, plan change/downgrade. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
 | ~~CRIT-6~~ | ~~`CSVUploadWizard` uses simulated processing~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. Connected to csvParser + useBulkAnchors hook. Commit a38b485.~~ |
@@ -525,15 +525,15 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P6-TS-05: ✅ `generateAuditReport.ts` (jsPDF, 201 lines). Called from RecordDetailPage.
 - P6-TS-06: ✅ `verification_events` table (migration 0042), SECURITY DEFINER RPC (migration 0045), wired into PublicVerification.tsx.
 
-### P7 Go-Live — 4/10 COMPLETE, 2/10 PARTIAL, 4/10 NOT STARTED
+### P7 Go-Live — 6/10 COMPLETE, 1/10 PARTIAL, 3/10 NOT STARTED
 
 - P7-TS-01: ✅ Billing schema (migration 0016). BillingOverview.tsx exists (not routed with real data).
-- P7-TS-02: ❌ NOT STARTED — No Stripe checkout session endpoint. No pricing UI.
+- P7-TS-02: ⚠️ PARTIAL — Pricing UI (PricingPage, PricingCard, BillingOverview), useBilling hook, checkout success/cancel pages all implemented. Stripe webhook handlers handle checkout.session.completed + subscription lifecycle. 74 tests (12 useBilling + 12 PricingPage + 7 CheckoutSuccess + 5 CheckoutCancel + 38 handlers). **Remaining:** Stripe billing portal endpoint, entitlement enforcement, plan change/downgrade flows.
 - P7-TS-03: ✅ Stripe webhook signature verification works. Mock mode for tests.
 - P7-TS-05: ❌ NOT STARTED — `getChainClient()` always returns MockChainClient. **Production blocker.**
-- P7-TS-07: ⚠️ PARTIAL — PDF download works. JSON proof package download is no-op.
+- P7-TS-07: ✅ COMPLETE — PDF + JSON proof package downloads both wired. Fixed in CRIT-5 (commit a38b485).
 - P7-TS-08: ✅ `generateAuditReport.ts` — full PDF certificate with jsPDF.
-- P7-TS-09: ⚠️ PARTIAL — WebhookSettings.tsx routed at `/settings/webhooks`. Secret hashing (HMAC) not implemented.
+- P7-TS-09: ✅ COMPLETE — WebhookSettings.tsx with two-phase dialog (creation form → one-time secret display). Server-side secret generation via SECURITY DEFINER RPC (migration 0046). 34 tests (23 component + 11 integration).
 - P7-TS-10: ✅ COMPLETE — Delivery engine with exponential backoff + HMAC signing. `anchor.ts` dispatches `anchor.secured` webhook after SECURED status set. Webhook retries scheduled in worker cron.
 
 ### P4.5 Verification API — 0/13 NOT STARTED
@@ -545,7 +545,7 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 | File | What It Does | Missing |
 |------|-------------|---------|
 | `src/components/embed/VerificationWidget.tsx` | Embeddable verification widget | Never imported. Needs route or standalone bundle. |
-| `src/components/billing/BillingOverview.tsx` | Plan info display | Not wired to route with real data. |
+| `src/components/billing/BillingOverview.tsx` | Plan info display | Now wired in PricingPage with useBilling data. |
 | `src/components/public/ProofDownload.tsx` | PDF/JSON download buttons | JSON handler is no-op. |
 
 ---

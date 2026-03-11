@@ -2,7 +2,8 @@
  * Webhook Settings Page
  *
  * Wraps WebhookSettings component in the AppShell layout.
- * Manages webhook endpoint CRUD via Supabase.
+ * Manages webhook endpoint CRUD via Supabase RPCs.
+ * Secrets are generated server-side and returned once at creation.
  *
  * @see P7-TS-09
  */
@@ -52,22 +53,29 @@ export function WebhookSettingsPage() {
     fetchEndpoints();
   }, [fetchEndpoints]);
 
-  const handleAdd = async (url: string, secret: string, events: string[]) => {
-    if (!profile?.org_id) return;
-    // NOTE: secret should be HMAC-SHA256 hashed before persisting.
-    // This is a placeholder until P7-TS-09 secret hashing is implemented.
-    await supabase.from('webhook_endpoints').insert({
-      org_id: profile.org_id,
-      url,
-      secret_hash: secret,
-      events,
-      is_active: true,
+  const handleAdd = async (url: string, events: string[]): Promise<string> => {
+    const { data, error } = await supabase.rpc('create_webhook_endpoint', {
+      p_url: url,
+      p_events: events,
     });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
     await fetchEndpoints();
+
+    // Return the server-generated secret (shown to user once)
+    return (data as { id: string; secret: string }).secret;
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from('webhook_endpoints').delete().eq('id', id);
+    const { error } = await supabase.rpc('delete_webhook_endpoint', {
+      p_endpoint_id: id,
+    });
+    if (error) {
+      throw new Error(error.message);
+    }
     await fetchEndpoints();
   };
 

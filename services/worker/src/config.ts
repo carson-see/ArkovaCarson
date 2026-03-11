@@ -26,6 +26,9 @@ const ConfigSchema = z.object({
   chainApiKey: z.string().min(1),
   chainNetwork: z.enum(['testnet', 'mainnet']).default('testnet'),
 
+  // Frontend
+  frontendUrl: z.string().url().default('http://localhost:5173'),
+
   // Feature flags
   useMocks: z.coerce.boolean().default(false),
 });
@@ -44,6 +47,7 @@ function loadConfig(): Config {
     chainApiUrl: process.env.CHAIN_API_URL,
     chainApiKey: process.env.CHAIN_API_KEY,
     chainNetwork: process.env.CHAIN_NETWORK,
+    frontendUrl: process.env.FRONTEND_URL,
     useMocks: process.env.USE_MOCKS,
   });
 

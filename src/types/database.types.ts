@@ -1142,6 +1142,13 @@ export type Database = {
         }
         Returns: string
       }
+      create_webhook_endpoint: {
+        Args: {
+          p_url: string
+          p_events: string[]
+        }
+        Returns: Json
+      }
       complete_anchoring_job: {
         Args: {
           p_job_id: string
@@ -1149,6 +1156,12 @@ export type Database = {
           p_error?: string
         }
         Returns: boolean
+      }
+      delete_webhook_endpoint: {
+        Args: {
+          p_endpoint_id: string
+        }
+        Returns: undefined
       }
       generate_public_id: {
         Args: Record<PropertyKey, never>
@@ -1177,6 +1190,17 @@ export type Database = {
           org_id: string
         }
         Returns: string
+      }
+      log_verification_event: {
+        Args: {
+          p_public_id: string
+          p_method?: string
+          p_result?: string
+          p_fingerprint_provided?: boolean
+          p_user_agent?: string
+          p_referrer?: string
+        }
+        Returns: undefined
       }
       is_org_admin: {
         Args: Record<PropertyKey, never>

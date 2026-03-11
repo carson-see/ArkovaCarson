@@ -12,24 +12,26 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
 
-interface BillingInfo {
+export interface BillingInfo {
   plan: {
     name: string;
-    price: number;
-    period: 'month' | 'year';
+    price?: number;
+    period?: 'month' | 'year';
     recordsIncluded: number | 'unlimited';
   };
   usage: {
     recordsUsed: number;
     recordsLimit: number | null;
-    percentUsed: number;
+    percentUsed?: number;
   };
   billing: {
-    nextBillingDate: string;
-    paymentMethod: string;
-    lastFourDigits: string;
+    nextBillingDate?: string;
+    paymentMethod?: string;
+    lastFourDigits?: string;
+    status?: 'active' | 'trialing' | 'past_due' | 'canceled';
+    currentPeriodEnd?: string;
   };
-  status: 'active' | 'past_due' | 'canceled';
+  status: 'active' | 'trialing' | 'past_due' | 'canceled';
 }
 
 interface BillingOverviewProps {
@@ -59,7 +61,7 @@ export function BillingOverview({
     );
   }
 
-  const usagePercent = billingInfo.usage.percentUsed;
+  const usagePercent = billingInfo.usage.percentUsed ?? 0;
   const isNearLimit = usagePercent >= 80;
   const isAtLimit = usagePercent >= 100;
 
@@ -83,9 +85,11 @@ export function BillingOverview({
         <CardContent>
           <div className="flex items-baseline gap-2 mb-4">
             <span className="text-2xl font-bold">{billingInfo.plan.name}</span>
-            <span className="text-muted-foreground">
-              ${billingInfo.plan.price}/{billingInfo.plan.period === 'month' ? 'mo' : 'yr'}
-            </span>
+            {billingInfo.plan.price != null && billingInfo.plan.period && (
+              <span className="text-muted-foreground">
+                ${billingInfo.plan.price}/{billingInfo.plan.period === 'month' ? 'mo' : 'yr'}
+              </span>
+            )}
           </div>
 
           <div className="flex gap-2">
@@ -153,26 +157,32 @@ export function BillingOverview({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-14 items-center justify-center rounded border bg-muted">
-                <span className="text-xs font-medium">
-                  {billingInfo.billing.paymentMethod.toUpperCase()}
-                </span>
+          {billingInfo.billing.paymentMethod && billingInfo.billing.lastFourDigits ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-14 items-center justify-center rounded border bg-muted">
+                  <span className="text-xs font-medium">
+                    {billingInfo.billing.paymentMethod.toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-sm font-medium">
+                    **** **** **** {billingInfo.billing.lastFourDigits}
+                  </p>
+                  {billingInfo.billing.nextBillingDate && (
+                    <p className="text-xs text-muted-foreground">
+                      Next billing: {formatDate(billingInfo.billing.nextBillingDate)}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium">
-                  **** **** **** {billingInfo.billing.lastFourDigits}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Next billing: {formatDate(billingInfo.billing.nextBillingDate)}
-                </p>
-              </div>
+              <Button variant="ghost" size="sm">
+                Update
+              </Button>
             </div>
-            <Button variant="ghost" size="sm">
-              Update
-            </Button>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No payment method on file.</p>
+          )}
         </CardContent>
       </Card>
 

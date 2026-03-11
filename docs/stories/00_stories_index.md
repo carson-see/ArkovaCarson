@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-11 12:30 AM EST_
+_Last updated: 2026-03-11 ~3:00 PM EST / ~6:00 AM AEDT Mar 12_
 
 ## Overview
 
@@ -28,9 +28,9 @@ For a new developer joining the project, read in this order:
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 4 | 2 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 10 | 5 | 1 | 4 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P7 | Go-Live | 10 | 6 | 1 | 3 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| **Total** | | **55** | **35** | **3** | **17** | |
+| **Total** | | **55** | **36** | **3** | **16** | |
 
 ### All Stories by ID
 
@@ -69,12 +69,12 @@ For a new developer joining the project, read in this order:
 | P6-TS-05 | PDF Audit Report (jsPDF) | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-06 | verification_events Table + RPC | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P7-TS-01 | Billing Schema (migration 0016) | COMPLETE | [P7](./08_p7_go_live.md) | — |
-| P7-TS-02 | Stripe Checkout Flow | NOT STARTED | [P7](./08_p7_go_live.md) | CRIT-3 |
+| P7-TS-02 | Stripe Checkout Flow | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-3 |
 | P7-TS-03 | Stripe Webhook Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-05 | Bitcoin Chain Client | NOT STARTED | [P7](./08_p7_go_live.md) | CRIT-2 |
 | P7-TS-07 | Proof Package Download | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-5~~ FIXED |
 | P7-TS-08 | PDF Certificate (generateAuditReport) | COMPLETE | [P7](./08_p7_go_live.md) | — |
-| P7-TS-09 | Webhook Settings UI | PARTIAL | [P7](./08_p7_go_live.md) | — |
+| P7-TS-09 | Webhook Settings UI | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-10 | Webhook Delivery Engine | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P4.5-TS-01 | GET /api/v1/verify/:publicId | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-02 | POST /api/v1/verify/batch | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
@@ -142,3 +142,5 @@ Each story doc follows a consistent template:
 | 2026-03-10 ~8:00 PM EST | HARDENING-5: 7 new worker test files (96 tests). Final count: 481 total tests (228 worker + 253 frontend). All 80% thresholds pass. Worker hardening sprint COMPLETE. |
 | 2026-03-10 ~9:30 PM EST | CRIT bug fix sprint: CRIT-1, CRIT-4, CRIT-5, CRIT-6 all resolved (commit a38b485). Moved from Active to Resolved bugs. P7-TS-07 promoted PARTIAL → COMPLETE. P7 totals: 5 complete, 1 partial. Overall: 35 complete, 3 partial. |
 | 2026-03-11 ~12:15 AM EST | E2E testing sprint: 15 spec files (86 E2E tests), 4 load test files (25 tests), 1 performance spec (5 tests). 116 new tests total. Fixtures, CI job, and agents.md all created. |
+| 2026-03-11 ~2:00 PM EST / ~4:00 AM AEDT Mar 12 | P7-TS-09 promoted PARTIAL → COMPLETE. WebhookSettings + WebhookSettingsPage tests added (34 tests). Migration 0046 for server-side secret generation. P7 totals: 6 complete, 0 partial. Overall: 36 complete, 2 partial. |
+| 2026-03-11 ~3:00 PM EST / ~6:00 AM AEDT Mar 12 | P7-TS-02 promoted NOT STARTED → PARTIAL. Stripe checkout tests written: useBilling.test.ts (12), PricingPage.test.tsx (12), CheckoutSuccessPage.test.tsx (7), CheckoutCancelPage.test.tsx (5), handlers.test.ts (38). 74 new tests. Remaining: Stripe portal endpoint, entitlement enforcement, plan change/downgrade. P7 totals: 6 complete, 1 partial, 3 not started. Overall: 36 complete, 3 partial, 16 not started. |
