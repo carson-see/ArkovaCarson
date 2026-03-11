@@ -123,7 +123,7 @@ import crypto from 'crypto';
 const MOCK_ENDPOINT = {
   id: 'ep-001',
   url: 'https://hooks.example.com/callback',
-  secret_hash: 'test-webhook-secret-key-abc123',
+  secret_hash: 'whsec_test_fixture_hash_value', // test-only fixture
   events: ['anchor.secured'],
   is_active: true,
   org_id: 'org-001',
@@ -239,14 +239,14 @@ describe('HMAC-SHA256 webhook signing', () => {
 
   it('produces different signatures for different secrets', () => {
     const payload = '{"test":true}';
-    const hmac1 = crypto.createHmac('sha256', 'secret-a').update(payload).digest('hex');
-    const hmac2 = crypto.createHmac('sha256', 'secret-b').update(payload).digest('hex');
+    const hmac1 = crypto.createHmac('sha256', 'whsec_fixture_a').update(payload).digest('hex');
+    const hmac2 = crypto.createHmac('sha256', 'whsec_fixture_b').update(payload).digest('hex');
     expect(hmac1).not.toBe(hmac2);
   });
 
   it('produces deterministic signatures for same input', () => {
     const payload = '1234567890.{"data":"test"}';
-    const secret = 'test-secret';
+    const secret = 'whsec_deterministic_fixture'; // test-only fixture
     const hmac1 = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     const hmac2 = crypto.createHmac('sha256', secret).update(payload).digest('hex');
     expect(hmac1).toBe(hmac2);

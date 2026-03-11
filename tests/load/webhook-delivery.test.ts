@@ -54,81 +54,96 @@ vi.mock('../../services/worker/src/config.js', () => ({
 
 // Stateful DB mock tracking delivery logs
 vi.mock('../../services/worker/src/utils/db.js', () => {
+  function getRetryingLogs() {
+    return Array.from(dbState.deliveryLogs.values()).filter(
+      (l) => l.status === 'retrying'
+    );
+  }
+
+  function createRetryLimitMock() {
+    return {
+      lte: vi.fn(() => ({
+        limit: vi.fn(() => Promise.resolve({ data: getRetryingLogs(), error: null })),
+      })),
+    };
+  }
+
+  function createIdempotencyEqMock(value: string) {
+    const existing = Array.from(dbState.deliveryLogs.values()).find(
+      (l) => l.idempotency_key === value
+    );
+    return {
+      single: vi.fn(() => Promise.resolve({ data: existing || null, error: null })),
+      ...createRetryLimitMock(),
+    };
+  }
+
+  function createDeliveryLogsSelectMock() {
+    return {
+      select: vi.fn(() => ({
+        eq: vi.fn((field: string, value: string) => {
+          if (field === 'idempotency_key') return createIdempotencyEqMock(value);
+          if (field === 'status') return createRetryLimitMock();
+          return { single: vi.fn(() => Promise.resolve({ data: null, error: null })) };
+        }),
+      })),
+    };
+  }
+
+  function createDeliveryLogsInsertMock() {
+    return {
+      insert: vi.fn((data: Record<string, unknown>) => {
+        const id = `log-${++dbState.logIdCounter}`;
+        const entry = { ...data, id };
+        dbState.deliveryLogs.set(id, entry);
+        return {
+          select: vi.fn(() => ({
+            single: vi.fn(() => Promise.resolve({ data: entry, error: null })),
+          })),
+        };
+      }),
+    };
+  }
+
+  function createDeliveryLogsUpdateMock() {
+    return {
+      update: vi.fn((data: Record<string, unknown>) => ({
+        eq: vi.fn((field: string, value: string) => {
+          if (field === 'id') {
+            const existing = dbState.deliveryLogs.get(value);
+            if (existing) {
+              dbState.deliveryLogs.set(value, { ...existing, ...data });
+            }
+          }
+          return Promise.resolve({ error: null });
+        }),
+      })),
+    };
+  }
+
+  function createEndpointsMock() {
+    return {
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          eq: vi.fn(() => ({
+            contains: vi.fn(() =>
+              Promise.resolve({ data: dbState.endpoints, error: null })
+            ),
+          })),
+        })),
+      })),
+    };
+  }
+
   const mockFrom = vi.fn((table: string) => {
     if (table === 'webhook_delivery_logs') {
       return {
-        select: vi.fn(() => ({
-          eq: vi.fn((field: string, value: string) => {
-            if (field === 'idempotency_key') {
-              // Check idempotency
-              const existing = Array.from(dbState.deliveryLogs.values()).find(
-                (l) => l.idempotency_key === value
-              );
-              return {
-                single: vi.fn(() =>
-                  Promise.resolve({ data: existing || null, error: null })
-                ),
-                lte: vi.fn(() => ({
-                  limit: vi.fn(() => {
-                    const retrying = Array.from(dbState.deliveryLogs.values()).filter(
-                      (l) => l.status === 'retrying'
-                    );
-                    return Promise.resolve({ data: retrying, error: null });
-                  }),
-                })),
-              };
-            }
-            if (field === 'status') {
-              return {
-                lte: vi.fn(() => ({
-                  limit: vi.fn(() => {
-                    const retrying = Array.from(dbState.deliveryLogs.values()).filter(
-                      (l) => l.status === 'retrying'
-                    );
-                    return Promise.resolve({ data: retrying, error: null });
-                  }),
-                })),
-              };
-            }
-            return { single: vi.fn(() => Promise.resolve({ data: null, error: null })) };
-          }),
-        })),
-        insert: vi.fn((data: Record<string, unknown>) => {
-          const id = `log-${++dbState.logIdCounter}`;
-          const entry = { ...data, id };
-          dbState.deliveryLogs.set(id, entry);
-          return {
-            select: vi.fn(() => ({
-              single: vi.fn(() => Promise.resolve({ data: entry, error: null })),
-            })),
-          };
-        }),
-        update: vi.fn((data: Record<string, unknown>) => ({
-          eq: vi.fn((field: string, value: string) => {
-            if (field === 'id') {
-              const existing = dbState.deliveryLogs.get(value);
-              if (existing) {
-                dbState.deliveryLogs.set(value, { ...existing, ...data });
-              }
-            }
-            return Promise.resolve({ error: null });
-          }),
-        })),
+        ...createDeliveryLogsSelectMock(),
+        ...createDeliveryLogsInsertMock(),
+        ...createDeliveryLogsUpdateMock(),
       };
     }
-    if (table === 'webhook_endpoints') {
-      return {
-        select: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              contains: vi.fn(() =>
-                Promise.resolve({ data: dbState.endpoints, error: null })
-              ),
-            })),
-          })),
-        })),
-      };
-    }
+    if (table === 'webhook_endpoints') return createEndpointsMock();
     return { select: vi.fn(() => ({ eq: vi.fn(() => ({ single: vi.fn() })) })) };
   });
 

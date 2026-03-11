@@ -100,6 +100,50 @@ function shouldCheck(filePath: string): boolean {
   return false;
 }
 
+/**
+ * Returns true if the line should be skipped (comments, imports, CSS classes, crypto API).
+ */
+function shouldSkipLine(line: string, trimmed: string): boolean {
+  // Skip comments and imports
+  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
+    return true;
+  }
+  // Skip CSS class names (e.g. Tailwind "block" means display:block)
+  if (line.includes('className=')) {
+    return true;
+  }
+  // Skip Web Crypto API usage and "cryptographic" adjective
+  if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues') || line.includes('cryptographic')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Finds forbidden term violations in a single line.
+ */
+function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+  const results: Violation[] = [];
+  for (const term of FORBIDDEN_TERMS) {
+    const regex = new RegExp(term, 'gi');
+    const match = line.match(regex);
+    if (!match) continue;
+
+    const hasString = line.includes('"') || line.includes("'") || line.includes('`');
+    const hasJsxText = line.includes('>') && line.includes('<');
+
+    if (hasString || hasJsxText) {
+      results.push({
+        file: filePath,
+        line: lineNum,
+        term: match[0],
+        context: line.trim().substring(0, 80),
+      });
+    }
+  }
+  return results;
+}
+
 function checkFile(filePath: string): Violation[] {
   const violations: Violation[] = [];
   const content = fs.readFileSync(filePath, 'utf-8');
@@ -107,52 +151,13 @@ function checkFile(filePath: string): Violation[] {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const lineNum = i + 1;
-
-    // Skip comments and imports
     const trimmed = line.trim();
-    if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
+
+    if (shouldSkipLine(line, trimmed)) {
       continue;
     }
 
-    // Skip lines that are clearly CSS class names (className=)
-    // The word "block" in Tailwind CSS means display:block, not blockchain
-    if (line.includes('className=')) {
-      continue;
-    }
-
-    // Skip lines with crypto.subtle (Web Crypto API - allowed)
-    if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues')) {
-      continue;
-    }
-
-    // Skip lines with "cryptographic" (the adjective is allowed, only "crypto" as noun is forbidden)
-    if (line.includes('cryptographic')) {
-      continue;
-    }
-
-    // Check for forbidden terms in string literals
-    // Look for strings in JSX text content and string literals
-    for (const term of FORBIDDEN_TERMS) {
-      const regex = new RegExp(term, 'gi');
-      const match = line.match(regex);
-
-      if (match) {
-        // Check if it's in a string or JSX text (simple heuristic)
-        // This is imperfect but catches most UI copy issues
-        const hasString = line.includes('"') || line.includes("'") || line.includes('`');
-        const hasJsxText = line.includes('>') && line.includes('<');
-
-        if (hasString || hasJsxText) {
-          violations.push({
-            file: filePath,
-            line: lineNum,
-            term: match[0],
-            context: line.trim().substring(0, 80),
-          });
-        }
-      }
-    }
+    violations.push(...findTermViolations(line, i + 1, filePath));
   }
 
   return violations;

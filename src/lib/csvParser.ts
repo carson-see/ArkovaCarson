@@ -207,6 +207,97 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
   return mapping;
 }
 
+// ── Per-field validators (extracted to reduce cognitive complexity) ──────────
+
+type ColumnNameGetter = (index: number | null) => string;
+type FieldValueGetter = (row: CsvRow, index: number | null) => string;
+
+function validateFingerprintField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.fingerprint === null) return [];
+  const fingerprint = getValueByIndex(row, mapping.fingerprint);
+  if (!fingerprint) {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.fingerprint), message: 'Fingerprint is required' }];
+  }
+  if (!isValidFingerprint(fingerprint)) {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.fingerprint), message: 'Invalid fingerprint format (expected 64-character hex)' }];
+  }
+  return [];
+}
+
+function validateFilenameField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.filename === null) return [];
+  const filename = getValueByIndex(row, mapping.filename);
+  if (!filename) {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.filename), message: 'Filename is required' }];
+  }
+  return [];
+}
+
+function validateEmailField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.email === null) return [];
+  const email = getValueByIndex(row, mapping.email);
+  if (email && !isValidEmail(email)) {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.email), message: 'Invalid email format' }];
+  }
+  return [];
+}
+
+function validateFileSizeField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.fileSize === null) return [];
+  const sizeStr = getValueByIndex(row, mapping.fileSize);
+  if (sizeStr) {
+    const size = parseInt(sizeStr, 10);
+    if (isNaN(size) || size < 0) {
+      return [{ row: row.rowNumber, column: getColumnName(mapping.fileSize), message: 'File size must be a positive number' }];
+    }
+  }
+  return [];
+}
+
+function validateCredentialTypeField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.credentialType === null) return [];
+  const credType = getValueByIndex(row, mapping.credentialType);
+  if (credType && !VALID_CREDENTIAL_TYPES.includes(credType.toUpperCase() as CredentialType)) {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.credentialType), message: `Invalid credential type. Must be one of: ${VALID_CREDENTIAL_TYPES.join(', ')}` }];
+  }
+  return [];
+}
+
+function validateMetadataField(
+  row: CsvRow, mapping: ColumnMapping,
+  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+): ValidationError[] {
+  if (mapping.metadata === null) return [];
+  const metaStr = getValueByIndex(row, mapping.metadata);
+  if (!metaStr) return [];
+  try {
+    const parsed = JSON.parse(metaStr);
+    if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+      return [{ row: row.rowNumber, column: getColumnName(mapping.metadata), message: 'Metadata must be a JSON object' }];
+    }
+  } catch {
+    return [{ row: row.rowNumber, column: getColumnName(mapping.metadata), message: 'Metadata must be valid JSON' }];
+  }
+  return [];
+}
+
+// ── Main validation function ────────────────────────────────────────────────
+
 /**
  * Validates parsed CSV rows against the column mapping.
  * Pre-flight validation identifies invalid emails.
@@ -220,111 +311,26 @@ export function validateCsvRows(
   const invalid: CsvRow[] = [];
   const errors: ValidationError[] = [];
 
-  const getColumnName = (index: number | null): string => {
+  const getColumnName: ColumnNameGetter = (index) => {
     if (index === null) return 'unknown';
     return columns[index]?.name || `column_${index}`;
   };
 
-  const getValueByIndex = (row: CsvRow, index: number | null): string => {
+  const getValueByIndex: FieldValueGetter = (row, index) => {
     if (index === null) return '';
     const colName = columns[index]?.name;
     return colName ? row.data[colName] || '' : '';
   };
 
   for (const row of rows) {
-    const rowErrors: ValidationError[] = [];
-
-    // Validate fingerprint (required)
-    if (mapping.fingerprint !== null) {
-      const fingerprint = getValueByIndex(row, mapping.fingerprint);
-      if (!fingerprint) {
-        rowErrors.push({
-          row: row.rowNumber,
-          column: getColumnName(mapping.fingerprint),
-          message: 'Fingerprint is required',
-        });
-      } else if (!isValidFingerprint(fingerprint)) {
-        rowErrors.push({
-          row: row.rowNumber,
-          column: getColumnName(mapping.fingerprint),
-          message: 'Invalid fingerprint format (expected 64-character hex)',
-        });
-      }
-    }
-
-    // Validate filename (required)
-    if (mapping.filename !== null) {
-      const filename = getValueByIndex(row, mapping.filename);
-      if (!filename) {
-        rowErrors.push({
-          row: row.rowNumber,
-          column: getColumnName(mapping.filename),
-          message: 'Filename is required',
-        });
-      }
-    }
-
-    // Validate email (if mapped)
-    if (mapping.email !== null) {
-      const email = getValueByIndex(row, mapping.email);
-      if (email && !isValidEmail(email)) {
-        rowErrors.push({
-          row: row.rowNumber,
-          column: getColumnName(mapping.email),
-          message: 'Invalid email format',
-        });
-      }
-    }
-
-    // Validate file size (if mapped, must be numeric)
-    if (mapping.fileSize !== null) {
-      const sizeStr = getValueByIndex(row, mapping.fileSize);
-      if (sizeStr) {
-        const size = parseInt(sizeStr, 10);
-        if (isNaN(size) || size < 0) {
-          rowErrors.push({
-            row: row.rowNumber,
-            column: getColumnName(mapping.fileSize),
-            message: 'File size must be a positive number',
-          });
-        }
-      }
-    }
-
-    // Validate credential type (if mapped, must be valid enum value)
-    if (mapping.credentialType !== null) {
-      const credType = getValueByIndex(row, mapping.credentialType);
-      if (credType && !VALID_CREDENTIAL_TYPES.includes(credType.toUpperCase() as CredentialType)) {
-        rowErrors.push({
-          row: row.rowNumber,
-          column: getColumnName(mapping.credentialType),
-          message: `Invalid credential type. Must be one of: ${VALID_CREDENTIAL_TYPES.join(', ')}`,
-        });
-      }
-    }
-
-    // Validate metadata (if mapped, must be valid JSON object)
-    if (mapping.metadata !== null) {
-      const metaStr = getValueByIndex(row, mapping.metadata);
-      if (metaStr) {
-        try {
-          const parsed = JSON.parse(metaStr);
-          if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
-            rowErrors.push({
-              row: row.rowNumber,
-              column: getColumnName(mapping.metadata),
-              message: 'Metadata must be a JSON object',
-            });
-          }
-        } catch {
-          rowErrors.push({
-            row: row.rowNumber,
-            column: getColumnName(mapping.metadata),
-            message: 'Metadata must be valid JSON',
-          });
-        }
-      }
-    }
+    const rowErrors = [
+      ...validateFingerprintField(row, mapping, getColumnName, getValueByIndex),
+      ...validateFilenameField(row, mapping, getColumnName, getValueByIndex),
+      ...validateEmailField(row, mapping, getColumnName, getValueByIndex),
+      ...validateFileSizeField(row, mapping, getColumnName, getValueByIndex),
+      ...validateCredentialTypeField(row, mapping, getColumnName, getValueByIndex),
+      ...validateMetadataField(row, mapping, getColumnName, getValueByIndex),
+    ];
 
     if (rowErrors.length > 0) {
       invalid.push(row);
