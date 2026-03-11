@@ -123,7 +123,14 @@
       "Bash(gh pr:*)",
       "mcp__sonarqube__change_security_hotspot_status",
       "Bash(git ls-remote:*)",
-      "mcp__sonarqube__change_sonar_issue_status"
+      "mcp__sonarqube__change_sonar_issue_status",
+      "Bash(npx eslint:*)",
+      "Bash(git stash:*)",
+      "mcp__sonarqube__search_duplicated_files",
+      "Bash(git log:*)",
+      "Bash(git branch:*)",
+      "Bash(git merge:*)",
+      "Bash(git pull:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
