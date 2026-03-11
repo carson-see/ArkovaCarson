@@ -217,13 +217,47 @@ describe('MempoolUtxoProvider', () => {
       expect(result.txid).toBe('abc123def');
     });
 
-    it('throws on broadcast error', async () => {
+    it('sends POST to /tx with plain text Content-Type', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve('txid_result'),
+      });
+      await provider.broadcastTx('02000000deadbeef');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://mempool.space/signet/api/tx',
+        expect.objectContaining({
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: '02000000deadbeef',
+        }),
+      );
+    });
+
+    it('trims whitespace from txid response', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        text: () => Promise.resolve('  abc123  \n'),
+      });
+      const result = await provider.broadcastTx('hex');
+      expect(result.txid).toBe('abc123');
+    });
+
+    it('throws on broadcast error with error text', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
         status: 400,
         text: () => Promise.resolve('bad-txns-inputs-missingorspent'),
       });
       await expect(provider.broadcastTx('bad')).rejects.toThrow('broadcast failed');
+    });
+
+    it('includes HTTP status in error message', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Internal Server Error'),
+      });
+      await expect(provider.broadcastTx('bad')).rejects.toThrow('HTTP 500');
     });
   });
 
