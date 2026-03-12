@@ -30,6 +30,7 @@ import { CredentialTemplatesPage } from '@/pages/CredentialTemplatesPage';
 import { PricingPage } from '@/pages/PricingPage';
 import { CheckoutSuccessPage } from '@/pages/CheckoutSuccessPage';
 import { CheckoutCancelPage } from '@/pages/CheckoutCancelPage';
+import { MarketingPage } from '@/pages/MarketingPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -256,8 +257,15 @@ export function App() {
           }
         />
 
-        {/* Root redirects to dashboard (guards will bounce to correct destination) */}
-        <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+        {/* Root — marketing page for visitors, dashboard redirect for auth users */}
+        <Route
+          path={ROUTES.HOME}
+          element={
+            <PublicOnly>
+              <MarketingPage />
+            </PublicOnly>
+          }
+        />
 
         {/* Catch-all — redirect to dashboard */}
         <Route path="*" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
