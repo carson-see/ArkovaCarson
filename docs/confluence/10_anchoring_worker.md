@@ -320,7 +320,7 @@ cd services/worker
 npm test
 ```
 
-**Current coverage (2026-03-12 ~3:00 AM EST):** 408 tests across 17 test files. All worker source files pass 80% per-file thresholds. Critical path files (`anchor.ts`, `chain/client.ts`, `chain/mock.ts`, `chain/signet.ts`, `chain/signing-provider.ts`, `chain/fee-estimator.ts`, `chain/utxo-provider.ts`, `chain/wallet.ts`, `webhooks/delivery.ts`, `stripe/client.ts`, `stripe/handlers.ts`) at 98-100%. Chain-specific: 192 tests across 8 files (signet 47, utxo-provider 34, wallet 13, client 28, mock 18, anchor 46, signing-provider + fee-estimator).
+**Current coverage (2026-03-12 ~5:00 AM EST):** 416 tests across 18 test files. All worker source files pass 80% per-file thresholds (85.91% statement, 73.98% branch, 87.87% function). Critical path files (`anchor.ts`, `chain/client.ts`, `chain/mock.ts`, `chain/signet.ts`, `chain/signing-provider.ts`, `chain/fee-estimator.ts`, `chain/utxo-provider.ts`, `chain/wallet.ts`, `webhooks/delivery.ts`, `stripe/client.ts`, `stripe/handlers.ts`) at 98-100%. Chain-specific: 200 tests across 9 files (signet 47, signet.integration 8, utxo-provider 34, wallet 13, client 28, mock 18, anchor 46, signing-provider + fee-estimator). Integration tests in `signet.integration.test.ts` construct and sign real Bitcoin Signet transactions (broadcast skipped in CI per Constitution 1.7).
 
 ### Mock Mode
 

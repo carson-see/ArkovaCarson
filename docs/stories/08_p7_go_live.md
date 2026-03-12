@@ -11,7 +11,7 @@ Key deliverables:
 - Real Bitcoin chain client — BitcoinChainClient implemented with provider abstractions (CRIT-2 CODE COMPLETE — operational items remain)
 - Proof package export (PDF + JSON both complete — ~~CRIT-5~~ FIXED commit a38b485)
 - Webhook endpoint management + delivery engine (fully wired to anchor lifecycle — HARDENING-4)
-- Anchoring worker with job processing (hardening sprint COMPLETE — 408 tests, all 80%+ thresholds)
+- Anchoring worker with job processing (hardening sprint COMPLETE — 416 tests across 18 files, all 80%+ thresholds)
 
 > **Note:** P7-TS-04 and P7-TS-06 are not listed in CLAUDE.md Section 8. They may be skipped, renumbered, or part of another phase. This document covers the 8 stories explicitly tracked.
 
@@ -350,7 +350,7 @@ All code for CRIT-2 is complete. `BitcoinChainClient` implements the full `Chain
 - [x] Provider abstractions for signing, fees, UTXOs
 - [x] Chain index for O(1) fingerprint verification (P7-TS-13)
 
-#### Test Coverage (Updated 2026-03-12 ~3:00 AM EST)
+#### Test Coverage (Updated 2026-03-12 ~5:30 AM EST)
 
 | Test File | Type | Tests | Coverage |
 |-----------|------|-------|----------|
@@ -358,6 +358,7 @@ All code for CRIT-2 is complete. `BitcoinChainClient` implements the full `Chain
 | `services/worker/src/chain/client.test.ts` | Unit | 28 | Async factory, SupabaseChainIndexLookup, signet/mainnet/mock paths, provider validation, `bitcoin.networks.bitcoin` for mainnet |
 | `services/worker/src/chain/utxo-provider.test.ts` | Unit | 34 | RpcUtxoProvider + MempoolUtxoProvider + factory, confirmed-only filtering |
 | `services/worker/src/chain/wallet.test.ts` | Unit | 13 | generateSignetKeypair, addressFromWif, isValidSignetWif |
+| `services/worker/src/chain/signet.integration.test.ts` | Integration | 8 | Real TX construction + signing: generated keypair, known WIF, large UTXO, dust change, invalid fingerprint, different fingerprints → different txIds, scriptSig DER+pubkey, broadcast skip doc |
 | `services/worker/src/chain/mock.test.ts` | Unit | 18 | 100% on `mock.ts` — interface contract, submit/verify/getReceipt/healthCheck |
 | `services/worker/src/jobs/anchor.test.ts` | Unit | 46 | 100% on `anchor.ts` — processAnchor + processPendingAnchors (query shape, failure isolation, completion, webhook dispatch, chain index upsert) |
 

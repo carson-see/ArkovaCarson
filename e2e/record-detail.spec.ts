@@ -21,6 +21,12 @@ test.describe('Record Detail', () => {
       status: 'SECURED',
       filename: 'e2e_record_detail_secured.pdf',
     });
+
+    // Fail loudly if test data setup didn't work — never silently skip
+    if (!secured?.id || !secured?.public_id) {
+      throw new Error('beforeAll: failed to create SECURED test anchor — cannot run record detail tests');
+    }
+
     securedAnchor = {
       id: secured.id,
       public_id: secured.public_id,
@@ -33,6 +39,11 @@ test.describe('Record Detail', () => {
       status: 'PENDING',
       filename: 'e2e_record_detail_pending.pdf',
     });
+
+    if (!pending?.id) {
+      throw new Error('beforeAll: failed to create PENDING test anchor — cannot run record detail tests');
+    }
+
     pendingAnchor = { id: pending.id, fingerprint: pending.fingerprint };
   });
 
@@ -43,7 +54,6 @@ test.describe('Record Detail', () => {
 
   test.describe('SECURED Record', () => {
     test('shows record details page with all sections', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
 
@@ -58,7 +68,6 @@ test.describe('Record Detail', () => {
     });
 
     test('shows document fingerprint with copy button', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -72,7 +81,6 @@ test.describe('Record Detail', () => {
     });
 
     test('shows filename and file metadata', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -82,7 +90,6 @@ test.describe('Record Detail', () => {
     });
 
     test('shows QR code for SECURED records', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -92,7 +99,6 @@ test.describe('Record Detail', () => {
     });
 
     test('shows download proof package buttons', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -106,7 +112,6 @@ test.describe('Record Detail', () => {
     });
 
     test('shows lifecycle timeline', async ({ individualPage }) => {
-      test.skip(!securedAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -118,7 +123,6 @@ test.describe('Record Detail', () => {
 
   test.describe('PENDING Record', () => {
     test('shows Pending status badge', async ({ individualPage }) => {
-      test.skip(!pendingAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${pendingAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
@@ -128,7 +132,6 @@ test.describe('Record Detail', () => {
     });
 
     test('does not show QR code for PENDING records', async ({ individualPage }) => {
-      test.skip(!pendingAnchor?.id, 'No test anchor available');
 
       await individualPage.goto(`/records/${pendingAnchor.id}`);
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
