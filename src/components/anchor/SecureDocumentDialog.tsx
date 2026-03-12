@@ -25,6 +25,8 @@ import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { toast } from 'sonner';
+import { TOAST } from '@/lib/copy';
 
 interface SecureDocumentDialogProps {
   open: boolean;
@@ -90,6 +92,7 @@ export function SecureDocumentDialog({
         details: `Secured document "${fileData.file.name}"`,
       });
 
+      toast.success(TOAST.ANCHOR_SUBMITTED);
       setStep('success');
       onSuccess?.();
     } catch (err) {
@@ -101,6 +104,7 @@ export function SecureDocumentDialog({
           err instanceof Error ? err.message : 'Failed to secure document. Please try again.'
         );
       }
+      toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
   }, [fileData, user, profile, onSuccess]);

@@ -38,7 +38,9 @@ import { useProfile } from '@/hooks/useProfile';
 import {
   FORM_LABELS,
   CREDENTIAL_TYPE_LABELS,
+  TOAST,
 } from '@/lib/copy';
+import { toast } from 'sonner';
 import type { CredentialType } from '@/lib/validators';
 
 interface IssueCredentialFormProps {
@@ -126,6 +128,7 @@ export function IssueCredentialForm({
         details: `Issued ${credentialType} credential for "${file.name}"`,
       });
 
+      toast.success(TOAST.CREDENTIAL_ISSUED);
       resetForm();
       onOpenChange(false);
       onSuccess?.();
@@ -138,6 +141,7 @@ export function IssueCredentialForm({
           err instanceof Error ? err.message : 'Failed to issue credential'
         );
       }
+      toast.error(TOAST.CREDENTIAL_ISSUE_FAILED);
     } finally {
       setCreating(false);
     }

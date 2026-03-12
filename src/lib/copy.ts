@@ -159,6 +159,35 @@ export const MESSAGES = {
 } as const;
 
 // =============================================================================
+// TOAST NOTIFICATIONS
+// =============================================================================
+
+export const TOAST = {
+  // Profile
+  PROFILE_UPDATED: 'Profile updated successfully.',
+  PROFILE_UPDATE_FAILED: 'Failed to update profile. Please try again.',
+
+  // Organization
+  ORG_UPDATED: 'Organization updated successfully.',
+  ORG_UPDATE_FAILED: 'Failed to update organization. Please try again.',
+
+  // Anchoring
+  ANCHOR_SUBMITTED: 'Your document has been submitted for securing.',
+  ANCHOR_FAILED: 'Failed to secure document. Please try again.',
+
+  // Credentials
+  CREDENTIAL_ISSUED: 'Credential issued successfully.',
+  CREDENTIAL_ISSUE_FAILED: 'Failed to issue credential. Please try again.',
+
+  // Bulk upload
+  BULK_COMPLETE: 'Bulk upload complete — {created} records created.',
+  BULK_PARTIAL: 'Bulk upload finished with issues — {created} created, {failed} failed.',
+  BULK_FAILED: 'Bulk upload failed. Please try again.',
+  BULK_CANCELLED: 'Bulk upload cancelled.',
+  BULK_QUOTA_EXCEEDED: 'Upload exceeds your plan limit.',
+} as const;
+
+// =============================================================================
 // EMPTY STATES
 // =============================================================================
 

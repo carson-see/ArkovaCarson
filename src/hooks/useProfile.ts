@@ -6,8 +6,10 @@
  */
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '../lib/supabase';
 import { logAuditEvent } from '../lib/auditLog';
+import { TOAST } from '../lib/copy';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -146,6 +148,7 @@ export function useProfile(): ProfileState & ProfileActions {
 
       if (updateError) {
         setError(updateError.message);
+        toast.error(TOAST.PROFILE_UPDATE_FAILED);
         setUpdating(false);
         return false;
       }
@@ -166,6 +169,7 @@ export function useProfile(): ProfileState & ProfileActions {
         .single();
       if (data) setProfile(data);
 
+      toast.success(TOAST.PROFILE_UPDATED);
       setUpdating(false);
       return true;
     },

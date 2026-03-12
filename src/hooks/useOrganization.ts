@@ -7,8 +7,10 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
+import { TOAST } from '@/lib/copy';
 import type { Database } from '@/types/database.types';
 
 type Organization = Database['public']['Tables']['organizations']['Row'];
@@ -78,6 +80,7 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
 
       if (updateError) {
         setError(updateError.message);
+        toast.error(TOAST.ORG_UPDATE_FAILED);
         setUpdating(false);
         return false;
       }
@@ -98,6 +101,7 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
         .single();
       if (data) setOrganization(data);
 
+      toast.success(TOAST.ORG_UPDATED);
       setUpdating(false);
       return true;
     },

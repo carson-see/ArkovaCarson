@@ -40,6 +40,8 @@ import {
   extractAnchorRecords,
 } from '@/lib/csvParser';
 import type { CsvColumn, CsvRow, ColumnMapping, ValidationResult } from '@/lib/csvParser';
+import { toast } from 'sonner';
+import { TOAST } from '@/lib/copy';
 import { useBulkAnchors } from '@/hooks/useBulkAnchors';
 
 type Step = 'upload' | 'mapping' | 'validation' | 'processing' | 'complete';
@@ -139,7 +141,8 @@ export function CSVUploadWizard({ onComplete, onCancel }: Readonly<CSVUploadWiza
       setStep('complete');
       onComplete?.(processingResult);
     } else {
-      // Error is handled by useBulkAnchors hook
+      // Hook handles most toasts; this covers edge cases (e.g. entitlement pre-check)
+      toast.error(TOAST.BULK_FAILED);
       setError('Processing failed. Please try again.');
       setStep('validation');
     }

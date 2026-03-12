@@ -12,6 +12,9 @@ export const ROUTES = {
   LOGIN: '/login',
   SIGNUP: '/signup',
   VERIFY: '/verify/:publicId',
+  PRIVACY: '/privacy',
+  TERMS: '/terms',
+  CONTACT: '/contact',
 
   // Onboarding routes (auth required, pre-setup)
   ONBOARDING_ROLE: '/onboarding/role',

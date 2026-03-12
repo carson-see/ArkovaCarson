@@ -38,6 +38,8 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CsvUploader } from './CsvUploader';
+import { toast } from 'sonner';
+import { TOAST } from '@/lib/copy';
 import { useBulkAnchors } from '@/hooks/useBulkAnchors';
 import {
   type ParsedCsv,
@@ -122,6 +124,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
       setStep('complete');
       onComplete?.(processingResult);
     } else {
+      toast.error(TOAST.BULK_FAILED);
       setError(bulkError || 'Failed to process records');
       setStep('review');
     }

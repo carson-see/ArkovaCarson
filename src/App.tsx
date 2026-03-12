@@ -9,10 +9,12 @@
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Shield, Loader2 } from 'lucide-react';
+import { Toaster } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { RouteGuard } from '@/components/auth/RouteGuard';
+import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { LoginPage } from '@/pages/LoginPage';
 import { SignUpPage } from '@/pages/SignUpPage';
 import { DashboardPage } from '@/pages/DashboardPage';
@@ -30,6 +32,10 @@ import { CredentialTemplatesPage } from '@/pages/CredentialTemplatesPage';
 import { PricingPage } from '@/pages/PricingPage';
 import { CheckoutSuccessPage } from '@/pages/CheckoutSuccessPage';
 import { CheckoutCancelPage } from '@/pages/CheckoutCancelPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
+import { PrivacyPage } from '@/pages/PrivacyPage';
+import { TermsPage } from '@/pages/TermsPage';
+import { ContactPage } from '@/pages/ContactPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -70,199 +76,201 @@ function LoadingScreen() {
 
 export function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        {/* Public routes — no auth required */}
-        <Route
-          path={ROUTES.LOGIN}
-          element={
-            <PublicOnly>
-              <LoginPage />
-            </PublicOnly>
-          }
-        />
-        <Route
-          path={ROUTES.SIGNUP}
-          element={
-            <PublicOnly>
-              <SignUpPage />
-            </PublicOnly>
-          }
-        />
-        <Route
-          path="/verify"
-          element={<PublicVerifyPage />}
-        />
-        <Route
-          path={ROUTES.VERIFY}
-          element={<PublicVerifyPage />}
-        />
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Toaster position="top-right" richColors closeButton />
+        <Routes>
+          {/* Public routes — no auth required */}
+          <Route
+            path={ROUTES.LOGIN}
+            element={
+              <PublicOnly>
+                <LoginPage />
+              </PublicOnly>
+            }
+          />
+          <Route
+            path={ROUTES.SIGNUP}
+            element={
+              <PublicOnly>
+                <SignUpPage />
+              </PublicOnly>
+            }
+          />
+          <Route
+            path={ROUTES.VERIFY}
+            element={<PublicVerifyPage />}
+          />
+          <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
+          <Route path={ROUTES.TERMS} element={<TermsPage />} />
+          <Route path={ROUTES.CONTACT} element={<ContactPage />} />
 
-        {/* Onboarding routes — auth required, only for users needing setup */}
-        <Route
-          path={ROUTES.ONBOARDING_ROLE}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={['/onboarding/role']}>
-                <OnboardingRolePage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.ONBOARDING_ORG}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={['/onboarding/org']}>
-                <OnboardingOrgPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
+          {/* Onboarding routes — auth required, only for users needing setup */}
+          <Route
+            path={ROUTES.ONBOARDING_ROLE}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={['/onboarding/role']}>
+                  <OnboardingRolePage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.ONBOARDING_ORG}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={['/onboarding/org']}>
+                  <OnboardingOrgPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
 
-        {/* Review pending — auth required, only for users under review */}
-        <Route
-          path={ROUTES.REVIEW_PENDING}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={['/review-pending']}>
-                <ReviewPendingPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
+          {/* Review pending — auth required, only for users under review */}
+          <Route
+            path={ROUTES.REVIEW_PENDING}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={['/review-pending']}>
+                  <ReviewPendingPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
 
-        {/* Main app routes — auth required, onboarding must be complete */}
-        <Route
-          path={ROUTES.DASHBOARD}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <DashboardPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.RECORDS}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <MyRecordsPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.RECORD_DETAIL}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <RecordDetailPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.ORGANIZATION}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <OrganizationPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.SETTINGS}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <SettingsPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.SETTINGS_API_KEYS}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <DashboardPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.SETTINGS_WEBHOOKS}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <WebhookSettingsPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.CREDENTIAL_TEMPLATES}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <CredentialTemplatesPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.HELP}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <HelpPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
+          {/* Main app routes — auth required, onboarding must be complete */}
+          <Route
+            path={ROUTES.DASHBOARD}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <DashboardPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.RECORDS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <MyRecordsPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.RECORD_DETAIL}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <RecordDetailPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.ORGANIZATION}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <OrganizationPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.SETTINGS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <SettingsPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.SETTINGS_API_KEYS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <DashboardPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.SETTINGS_WEBHOOKS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <WebhookSettingsPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.CREDENTIAL_TEMPLATES}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <CredentialTemplatesPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.HELP}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <HelpPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
 
-        {/* Billing routes — auth required, onboarding must be complete */}
-        <Route
-          path={ROUTES.BILLING}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <PricingPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.BILLING_SUCCESS}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <CheckoutSuccessPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
-        <Route
-          path={ROUTES.BILLING_CANCEL}
-          element={
-            <AuthGuard>
-              <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                <CheckoutCancelPage />
-              </RouteGuard>
-            </AuthGuard>
-          }
-        />
+          {/* Billing routes — auth required, onboarding must be complete */}
+          <Route
+            path={ROUTES.BILLING}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <PricingPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.BILLING_SUCCESS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <CheckoutSuccessPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.BILLING_CANCEL}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <CheckoutCancelPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
 
-        {/* Root redirects to dashboard (guards will bounce to correct destination) */}
-        <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+          {/* Root redirects to dashboard (guards will bounce to correct destination) */}
+          <Route path={ROUTES.HOME} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
 
-        {/* Catch-all — redirect to dashboard */}
-        <Route path="*" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-      </Routes>
-    </BrowserRouter>
+          {/* 404 — catch-all for unknown routes */}
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

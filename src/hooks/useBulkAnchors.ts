@@ -6,10 +6,11 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import type { BulkAnchorRecord } from '@/lib/csvParser';
 import { useEntitlements } from '@/hooks/useEntitlements';
-import { ENTITLEMENT_LABELS } from '@/lib/copy';
+import { ENTITLEMENT_LABELS, TOAST } from '@/lib/copy';
 
 interface BulkAnchorResult {
   fingerprint: string;
@@ -92,6 +93,7 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
         for (let i = 0; i < records.length; i += BATCH_SIZE) {
           if (cancelledRef.current) {
             setError('Operation cancelled');
+            toast.error(TOAST.BULK_CANCELLED);
             return null;
           }
 
@@ -141,10 +143,23 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
         // Refresh entitlement counts after successful bulk creation
         await refreshEntitlements();
 
+        if (totalFailed > 0) {
+          toast.warning(
+            TOAST.BULK_PARTIAL
+              .replace('{created}', String(totalCreated))
+              .replace('{failed}', String(totalFailed))
+          );
+        } else {
+          toast.success(
+            TOAST.BULK_COMPLETE.replace('{created}', String(totalCreated))
+          );
+        }
+
         return finalResult;
       } catch (err) {
         const message = err instanceof Error ? err.message : 'An unexpected error occurred';
         setError(message);
+        toast.error(TOAST.BULK_FAILED);
         return null;
       } finally {
         setLoading(false);
