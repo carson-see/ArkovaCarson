@@ -18,7 +18,7 @@ The group is split into three phases using **Option C (Hybrid) phasing**:
 - `ENABLE_SEMANTIC_SEARCH` — gates pgvector search endpoints (default: `false`)
 - `ENABLE_AI_FRAUD` — gates fraud analysis pipeline (default: `false`)
 
-**Provider abstraction:** All AI calls go through `IAIProvider` interface supporting Gemini, OpenAI, and Anthropic with hot-swap via `AI_PROVIDER` env var.
+**Provider abstraction:** All AI calls go through `IAIProvider` interface supporting Gemini, OpenAI, and Anthropic with hot-swap via `AI_PROVIDER` env var. Gemini path uses **Vertex AI ADK** (`GeminiADKProvider` with sub-agents) by default, with direct SDK fallback. Non-Gemini providers use direct SDK calls. ADK agents deploy to **Vertex AI Agent Engine** (Google Cloud startup credits).
 
 ## Architecture Context
 
@@ -39,16 +39,39 @@ Document (user device)
 services/worker/src/
   ai/
     provider.ts           # IAIProvider interface + factory
-    gemini.ts             # Gemini Flash implementation
+    gemini.ts             # GeminiProvider (direct SDK — fallback path)
+    gemini-adk.ts         # GeminiADKProvider (Vertex AI ADK — recommended)
     openai.ts             # OpenAI implementation (Phase 1.5+)
     anthropic.ts          # Anthropic implementation (Phase 1.5+)
     extraction.ts         # Credential extraction service
     embeddings.ts         # Embedding generation (Phase 1.5+)
     fraud.ts              # Fraud analysis (Phase II)
     cost-tracker.ts       # Token/credit usage tracking
+    adk/                  # ADK agent definitions (Gemini path only)
+      extraction-agent.ts # MetadataExtractionAgent (P8-S4)
+      description-agent.ts# DescriptionAgent (P8-S5)
+      anomaly-agent.ts    # AnomalyDetectionAgent (P8-S7)
+      duplicate-agent.ts  # DuplicateDetectionAgent (P8-S8)
+      classify-agent.ts   # ClassificationAgent (P8-S14)
   middleware/
     aiFeatureGate.ts      # ENABLE_AI_EXTRACTION enforcement
 ```
+
+**Vertex AI ADK Architecture (Gemini path):**
+```
+IAIProvider interface (unchanged — all providers implement this)
+  ├── GeminiADKProvider ← RECOMMENDED: Uses ADK LlmAgent + Vertex AI Agent Engine
+  │   ├── MetadataExtractionAgent (P8-S4)
+  │   ├── DescriptionAgent (P8-S5)
+  │   ├── AnomalyDetectionAgent (P8-S7)
+  │   ├── DuplicateDetectionAgent (P8-S8)
+  │   └── ClassificationAgent (P8-S14)
+  ├── GeminiProvider (direct SDK — simpler, fallback if ADK unavailable)
+  ├── OpenAIProvider (Phase 1.5+)
+  └── AnthropicProvider (Phase 1.5+)
+```
+
+ADK is used **only** for the Gemini path. IAIProvider wraps all providers including ADK. Non-Gemini providers use direct SDK calls. ADK agents deploy to **Vertex AI Agent Engine** (covered by Google Cloud startup credits).
 
 **PII Stripping (client-side only):**
 ```
@@ -98,7 +121,9 @@ Phase II:
 ```bash
 # AI Provider (worker only)
 AI_PROVIDER=gemini                    # gemini | openai | anthropic
+AI_GEMINI_MODE=adk                   # adk (default, recommended) | direct (SDK fallback)
 GEMINI_API_KEY=                       # Google AI Studio key
+GOOGLE_CLOUD_PROJECT=                 # GCP project for Vertex AI Agent Engine (ADK deployment)
 OPENAI_API_KEY=                       # OpenAI key (Phase 1.5+)
 ANTHROPIC_API_KEY=                    # Anthropic key (Phase 1.5+)
 
@@ -136,7 +161,8 @@ As a developer, I need a provider-agnostic AI interface so that the platform can
 #### What This Story Delivers
 
 - `IAIProvider` TypeScript interface with `extract()`, `classify()`, and `embed()` methods
-- Gemini Flash implementation (`GeminiProvider`) using `@google/generative-ai` SDK
+- **Recommended Gemini implementation: `GeminiADKProvider`** using Vertex AI ADK (`@google/adk`) with `LlmAgent` abstraction, deployable to Vertex AI Agent Engine (covered by Google Cloud startup credits)
+- Fallback Gemini implementation: `GeminiProvider` using direct `@google/generative-ai` SDK (simpler, for environments where ADK is unavailable)
 - Structured prompt templates for credential extraction
 - Error handling with retries and circuit breaker pattern
 - Request/response Zod schemas
@@ -144,10 +170,11 @@ As a developer, I need a provider-agnostic AI interface so that the platform can
 #### Implementation Tasks
 
 - [ ] Create `services/worker/src/ai/provider.ts` — `IAIProvider` interface
-- [ ] Create `services/worker/src/ai/gemini.ts` — `GeminiProvider` class
+- [ ] Create `services/worker/src/ai/gemini-adk.ts` — `GeminiADKProvider` class (recommended, uses ADK `LlmAgent`)
+- [ ] Create `services/worker/src/ai/gemini.ts` — `GeminiProvider` class (direct SDK fallback)
 - [ ] Create `services/worker/src/ai/prompts/extraction.ts` — prompt templates
 - [ ] Create `services/worker/src/ai/schemas.ts` — Zod request/response schemas
-- [ ] Add `@google/generative-ai` dependency to worker `package.json`
+- [ ] Add `@google/adk` + `@google/generative-ai` dependencies to worker `package.json`
 - [ ] Unit tests for prompt generation, response parsing, error handling
 - [ ] Mock provider for tests (`services/worker/src/ai/mock.ts`)
 
@@ -276,24 +303,26 @@ As a platform operator, I need to swap between AI providers (Gemini, OpenAI, Ant
 #### What This Story Delivers
 
 - Provider factory function selecting implementation based on `AI_PROVIDER` env var
-- OpenAI and Anthropic stub implementations (interface-compliant, not yet functional)
+- **ADK wraps the Gemini path:** When `AI_PROVIDER=gemini` (default), factory returns `GeminiADKProvider` which uses Vertex AI ADK under the hood. Fallback to direct `GeminiProvider` via `AI_GEMINI_MODE=direct` env var.
+- OpenAI and Anthropic stub implementations (interface-compliant, not yet functional) — these use direct SDK calls, NOT ADK
 - Provider health check endpoint
 - Hot-swap support (change env var → new requests use new provider)
 
 #### Implementation Tasks
 
-- [ ] Create `services/worker/src/ai/factory.ts` — provider factory
+- [ ] Create `services/worker/src/ai/factory.ts` — provider factory (routes `gemini` → ADK by default, `gemini-direct` → SDK fallback)
 - [ ] Create `services/worker/src/ai/openai.ts` — stub implementing `IAIProvider`
 - [ ] Create `services/worker/src/ai/anthropic.ts` — stub implementing `IAIProvider`
 - [ ] GET `/api/v1/ai/health` endpoint (provider name, status, latency)
-- [ ] Unit tests for factory routing, fallback behavior
+- [ ] Unit tests for factory routing, fallback behavior, ADK→direct fallback
 
 #### Acceptance Criteria
 
 - [ ] Factory returns correct provider based on `AI_PROVIDER` env var
-- [ ] Gemini is default when env var is unset
+- [ ] Gemini is default when env var is unset; uses `GeminiADKProvider` by default
+- [ ] `AI_GEMINI_MODE=direct` forces fallback to `GeminiProvider` (direct SDK, no ADK)
 - [ ] OpenAI/Anthropic stubs throw `NotImplementedError` with clear message
-- [ ] Health endpoint returns provider name and status
+- [ ] Health endpoint returns provider name, mode (ADK/direct), and status
 - [ ] Provider swap requires no restart (reads env on each request)
 
 #### Definition of Done
@@ -795,6 +824,8 @@ As an org admin, I want a reports page where I can generate, view, and download 
 | Constitution 4A (PII-stripped metadata exception) | Enables AI features while preserving core privacy guarantee |
 | Option C hybrid phasing | 7 blockers ship with Phase I; semantic search and fraud follow |
 | IAIProvider abstraction | Vendor independence; Google credits now, swap later |
+| Vertex AI ADK for Gemini path | ADK `LlmAgent` provides structured multi-agent orchestration; deploys to Vertex AI Agent Engine (Google startup credits); ADK wraps Gemini only — IAIProvider wraps all providers including ADK |
+| GeminiADKProvider with sub-agents | MetadataExtraction, Description, Anomaly, Duplicate, Classification agents — each maps to a P8 story; ADK Sequential/Parallel workflow agents for pipeline orchestration |
 | Hybrid credits (not unlimited) | Prevents cost overrun; predictable per-tier pricing |
 | Client-side OCR (Web Worker) | Document bytes never leave device; non-blocking UI |
 | PII stripping mandatory (no bypass) | Compliance requirement; no "raw mode" even for admins |
@@ -816,3 +847,4 @@ As an org admin, I want a reports page where I can generate, view, and download 
 | Date | Change |
 |------|--------|
 | 2026-03-12 | Initial P8 story documentation created. 19 stories, Option C hybrid phasing. |
+| 2026-03-12 | ADK architecture decision: Vertex AI ADK for Gemini path (GeminiADKProvider with sub-agents). Updated P8-S1, P8-S17, Architecture Context, Architectural Decisions table. |

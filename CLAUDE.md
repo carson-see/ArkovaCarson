@@ -622,7 +622,7 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 
 ### P8 AI Intelligence — 0/19 NOT STARTED
 
-19 stories for AI-powered document intelligence. Phased: Phase I blockers (P8-S1 through P8-S6, P8-S13), Phase 1.5 (P8-S7 through P8-S12), Phase II (P8-S14 through P8-S19). Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
+19 stories for AI-powered document intelligence. Phased: Phase I blockers (P8-S1 through P8-S6, P8-S13), Phase 1.5 (P8-S7 through P8-S12), Phase II (P8-S14 through P8-S19). Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. **Gemini path uses Vertex AI ADK** (`GeminiADKProvider` with sub-agents: MetadataExtraction, Description, Anomaly, Duplicate, Classification) — deploys to Vertex AI Agent Engine (Google startup credits). Non-Gemini providers use direct SDK. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
 
 ### Orphaned Code (built but never wired)
 
