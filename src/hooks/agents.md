@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 ## What This Folder Contains
 React hooks for data fetching and mutations against Supabase. Each hook encapsulates a single concern (auth, profile, anchors, revocation, export, etc.).
@@ -17,6 +17,11 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 - DO: Use `Database['public']['Tables'][table]['Row']` types from generated `database.types.ts`
 - DON'T: Call real Stripe or Bitcoin APIs in hooks — use `IPaymentProvider` / `IAnchorPublisher` interfaces
 - DON'T: Use `useState` arrays to mock data that should come from Supabase (Constitution: schema-first)
+
+## MVP Launch Gap Context
+- **MVP-02 (Toast Notifications):** Hooks (`useAnchors`, `useProfile`, `useOrganization`, etc.) need toast calls on success/error. Will use Sonner (`toast.success()`, `toast.error()`). Global `<Toaster />` goes in App.tsx.
+- **MVP-09 (Records Pagination + Search):** `useAnchors.ts` needs pagination params (page, pageSize, search, status filter, sort) passed to Supabase `.range()` query.
+- **MVP-12 (Dark Mode):** New `useTheme.ts` hook — localStorage persistence + system preference detection.
 
 ## Dependencies
 - `@/lib/supabase` — the typed Supabase client

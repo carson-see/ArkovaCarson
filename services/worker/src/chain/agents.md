@@ -45,6 +45,9 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 - **DO NOT** use string `'mainnet'` for network config — use `bitcoin.networks.bitcoin` from `bitcoinjs-lib`
 - Test funding txs: use `buildDummyFundingTx()` pattern — static hex strings fail PSBT validation
 
+## MVP Launch Gap Context
+- No MVP launch gap stories directly target this folder. CRIT-2 operational items remain: AWS KMS key provisioning (mainnet), mainnet treasury funding.
+
 ## Dependencies
 
 - `bitcoinjs-lib`, `tiny-secp256k1`, `ecpair` — Bitcoin transaction construction + signing

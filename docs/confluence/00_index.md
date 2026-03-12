@@ -1,5 +1,5 @@
 # Arkova Documentation Index
-_Last updated: 2026-03-10_
+_Last updated: 2026-03-12_
 
 ## Reading Guide
 
@@ -41,6 +41,13 @@ This directory contains 15 architecture and design documents for the Arkova plat
 | 12 | `12_identity_access.md` | Identity verification, access control, role assignment |
 | 13 | `13_switchboard.md` | Feature flags (switchboard_flags), flag history, get_flag() function |
 | 14 | `14_kms_operations.md` | AWS KMS key provisioning, IAM policy, key rotation, disaster recovery for mainnet treasury signing |
+
+### Audit Documents
+
+| File | Description |
+|------|-------------|
+| `docs/audit/2026-03-12_full_audit.md` | Full 7-deliverable MVP audit: backlog vs codebase, UI/UX review, gap analysis, 14 launch gap stories |
+| `docs/stories/11_mvp_launch_gaps.md` | 14 MVP launch gap stories (MVP-01 through MVP-14) identified during audit |
 
 ---
 

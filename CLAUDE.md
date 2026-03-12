@@ -1,6 +1,6 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-11 (comprehensive audit update)
+> **Version:** 2026-03-12 (MVP launch gap audit)
 > **Repo:** ArkovaCarson | **Branch:** main | **Deploy:** arkova-carson.vercel.app
 > **Companion file:** `MEMORY.md` (living state — decisions, blockers, sprint context)
 
@@ -468,7 +468,8 @@ npx supabase db reset
 | P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
 | DH Deferred Hardening | 1/12 | 0/12 | 11/12 | 8% |
-| **Total** | **41/70** | **3/70** | **26/70** | **~63%** |
+| MVP Launch Gaps | 0/14 | 0/14 | 14/14 | 0% |
+| **Total** | **41/84** | **3/84** | **40/84** | **~52%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -556,6 +557,29 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 
 DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · DH-07 MempoolFeeEstimator request timeout · DH-08 Rate limiting for check_anchor_quota · DH-09 UtxoProvider retry logic · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
 
+### MVP Launch Gaps — 0/14 NOT STARTED
+
+14 stories identified during the 2026-03-12 full audit. These represent gaps between the current codebase and a fully testable MVP on Bitcoin Signet testnet. See `docs/stories/11_mvp_launch_gaps.md` for full details, and `docs/audit/2026-03-12_full_audit.md` for the audit document.
+
+| ID | Priority | Description |
+|----|----------|-------------|
+| MVP-01 | CRITICAL | Worker production deployment (Railway/Fly.io/Render) |
+| MVP-02 | HIGH | Global toast/notification system (Sonner) |
+| MVP-03 | HIGH | Legal pages (Privacy, Terms, Contact — dead links) |
+| MVP-04 | HIGH | Brand assets (logo, favicon, OG meta tags) |
+| MVP-05 | HIGH | Error boundary + 404 page |
+| MVP-06 | MEDIUM | File-based public verification (drag-and-drop) |
+| MVP-07 | MEDIUM | Mobile responsive layout |
+| MVP-08 | MEDIUM | Onboarding progress stepper |
+| MVP-09 | MEDIUM | Records pagination + search |
+| MVP-10 | MEDIUM | Marketing website (arkova.ai) |
+| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) |
+| MVP-12 | LOW | Dark mode toggle |
+| MVP-13 | LOW | Organization logo upload |
+| MVP-14 | LOW | Embeddable verification widget |
+
+**Bugs linked:** BUG-AUDIT-01 (→MVP-02), BUG-AUDIT-02 (→MVP-03), BUG-AUDIT-03 (→MVP-04).
+
 ### Orphaned Code (built but never wired)
 
 | File | What It Does | Missing |
@@ -598,13 +622,25 @@ All of the following are done. Details in MEMORY.md completed sprints.
 | Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook (fail-closed) + server-side quota in bulk_create_anchors (migration 0049) + ConfirmAnchorModal quota gate + UpgradePrompt. Remaining: plan change/downgrade flows only. |
 | Plan change/downgrade | CRIT-3 | Handle subscription upgrades, downgrades, cancellations. |
 
-### Pre-Launch (after blockers resolved)
+### MVP Launch Gap Stories (testnet launch blockers)
+
+| Task | Story | Priority | Detail |
+|------|-------|----------|--------|
+| Worker deployment | MVP-01 | CRITICAL | Deploy Express worker to production host. Blocks all anchor processing. |
+| Toast system | MVP-02 | HIGH | Global Sonner toasts — actions currently give no feedback (BUG-AUDIT-01). |
+| Legal pages | MVP-03 | HIGH | /privacy, /terms, /contact are dead links (BUG-AUDIT-02). |
+| Brand assets | MVP-04 | HIGH | Logo, favicon, OG tags — placeholder Shield icon (BUG-AUDIT-03). |
+| Error boundary | MVP-05 | HIGH | React error boundary + 404 page. |
+| Stripe plan change | MVP-11 | HIGH | Upgrades, downgrades, cancellations (CRIT-3 remaining). |
+
+### Pre-Launch (after blockers + MVP gaps resolved)
 
 | Task | Detail |
 |------|--------|
 | Supabase production | Provision production-tier project. |
 | DNS + custom domain | `app.arkova.io` or equivalent. |
 | Seed data strip | Remove demo users. |
+| Marketing website | MVP-10: arkova.ai public site with pricing, features, CTA. |
 | SOC 2 evidence | Begin collection (CI logs, RLS tests, audit events). |
 
 ### Do NOT Start
@@ -612,6 +648,7 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - P4.5 (Verification API) — defer to post-launch
 - AI/OCR pipeline — Phase 2
 - OpenTimestamps — decision made, direct OP_RETURN only
+- MVP-12/13/14 (dark mode, org logo, embed widget) — post-launch polish
 
 ---
 
@@ -769,5 +806,5 @@ CORS_ALLOWED_ORIGINS=*
 
 ---
 
-_Directive version: 2026-03-12 (PR #26 review) | Repo: ArkovaCarson | 49 migrations | 700+ tests_
+_Directive version: 2026-03-12 (MVP launch gap audit) | Repo: ArkovaCarson | 49 migrations | 700+ tests | 84 stories_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

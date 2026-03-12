@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-12 ~3:30 AM EST | Active bugs: 2 | Resolved: 15_
+_Last updated: 2026-03-12 ~6:00 AM EST | Active bugs: 5 | Resolved: 15_
 
 ## Layman's Summary
 
@@ -21,6 +21,9 @@ _For each bug: what it means in plain English and why it matters._
 | ~~BUG-PRH1-02~~ | ~~The proof package generator had zero test coverage.~~ **FIXED** — created 33-test suite, now at 100%. |
 | ~~BUG-SQ-01~~ | ~~Two email-checking regexes could freeze the app if fed a very long, weird email address (a "ReDoS" attack).~~ **FIXED** — replaced with non-backtracking regexes. |
 | ~~BUG-SQ-02~~ | ~~The worker server told the world it was running Express (via `x-powered-by` header), making it easier for attackers to find known vulnerabilities.~~ **FIXED** — disabled header. |
+| BUG-AUDIT-01 | When users perform actions (save profile, create an anchor, invite a member), **nothing tells them it worked or failed**. No toast, no banner, no feedback at all. Only WebhookSettings has inline toasts — everywhere else is silent. |
+| BUG-AUDIT-02 | The footer on the public verification page has links to `/privacy`, `/terms`, and `/contact` — but **all three are dead links** returning blank pages. Looks unprofessional and could be a legal liability. |
+| BUG-AUDIT-03 | The site has **no favicon, no logo, and no social sharing tags** (OG meta). When shared on Slack/Twitter it shows a generic blank preview. The sidebar still uses a placeholder Shield icon instead of the Arkova logo. |
 
 ## Active Bugs Summary
 
@@ -28,6 +31,9 @@ _For each bug: what it means in plain English and why it matters._
 |----|----------|-------|---------|--------|
 | CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client — CODE COMPLETE, operational items remaining | CODE COMPLETE |
 | CRIT-3 | HIGH | P7-TS-02 | Stripe checkout flow incomplete | PARTIAL — UI + tests + checkout/portal endpoints done (b1f798a), entitlements remain |
+| BUG-AUDIT-01 | HIGH | MVP-02 | No global toast/notification system — actions give no feedback | OPEN |
+| BUG-AUDIT-02 | HIGH | MVP-03 | Dead footer links (/privacy, /terms, /contact) return 404 | OPEN |
+| BUG-AUDIT-03 | HIGH | MVP-04 | No favicon, logo, or OG meta tags — placeholder Shield icon | OPEN |
 
 ## Resolved Bugs Summary
 
@@ -970,6 +976,127 @@ Express enables the `x-powered-by` header by default. It must be explicitly disa
 
 ---
 
+### BUG-AUDIT-01: No Global Toast/Notification System
+
+- **Severity:** HIGH (UX gap — users have no feedback on actions)
+- **Found:** 2026-03-12, full audit
+- **Story:** MVP-02
+- **Components:** All form submission handlers across the app
+
+#### Steps to Reproduce
+
+1. Log in as `admin_demo@arkova.local`
+2. Go to Settings > Profile and click Save
+3. Observe: no toast, no banner, no indication the save succeeded or failed
+4. Create a new anchor via SecureDocumentDialog — no success toast
+5. Invite a member — no success toast
+6. Only WebhookSettings shows inline toasts
+
+#### Expected vs Actual
+
+- **Expected:** Success/error toast notification after every user action
+- **Actual:** Silent success/failure on all actions except webhook settings
+
+#### Root Cause
+
+Sonner `<Toaster />` is not installed globally in `App.tsx`. Individual components don't call `toast()`.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-12 | Identified during full audit. Logged as BUG-AUDIT-01, linked to MVP-02. |
+
+#### Resolution
+
+**Status:** OPEN — requires MVP-02 implementation (add Sonner `<Toaster />` globally + toast calls in all hooks/handlers)
+
+#### Regression Test
+
+- None yet
+
+---
+
+### BUG-AUDIT-02: Dead Footer Links (/privacy, /terms, /contact)
+
+- **Severity:** HIGH (dead links in production, legal liability)
+- **Found:** 2026-03-12, full audit
+- **Story:** MVP-03
+- **Components:** `src/components/public/PublicVerifyPage.tsx` (lines 105-107), `src/components/layout/AuthLayout.tsx`
+
+#### Steps to Reproduce
+
+1. Navigate to `/verify` (public verification page)
+2. Scroll to footer
+3. Click "Privacy" — navigates to `/privacy`, blank page (no route defined)
+4. Click "Terms" — navigates to `/terms`, blank page
+5. Click "Contact" — navigates to `/contact`, blank page
+
+#### Expected vs Actual
+
+- **Expected:** Each link renders a professional legal/contact page
+- **Actual:** All three routes are undefined — React Router renders nothing (blank content area)
+
+#### Root Cause
+
+Footer links exist in JSX but no corresponding routes or page components were ever created. `src/lib/routes.ts` has no PRIVACY, TERMS, or CONTACT constants.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-12 | Identified during full audit. Logged as BUG-AUDIT-02, linked to MVP-03. |
+
+#### Resolution
+
+**Status:** OPEN — requires MVP-03 implementation (create PrivacyPage, TermsPage, ContactPage + routes)
+
+#### Regression Test
+
+- None yet
+
+---
+
+### BUG-AUDIT-03: No Favicon, Logo, or OG Meta Tags
+
+- **Severity:** HIGH (professional appearance, social sharing broken)
+- **Found:** 2026-03-12, full audit
+- **Story:** MVP-04
+- **Components:** `index.html`, `src/components/layout/Sidebar.tsx`, `src/components/public/PublicVerifyPage.tsx`
+
+#### Steps to Reproduce
+
+1. Open `arkova-carson.vercel.app` in a browser
+2. Observe: browser tab shows default Vite favicon (or none)
+3. Share the URL on Slack or Twitter — no OG preview image, generic title
+4. Open sidebar — Shield icon placeholder instead of Arkova logo
+5. Visit `/verify` — Shield icon in header instead of Arkova logo
+
+#### Expected vs Actual
+
+- **Expected:** Arkova favicon, OG meta tags for social sharing, real logo in sidebar and verify page
+- **Actual:** No favicon, no OG tags, placeholder Shield icon from Lucide React
+
+#### Root Cause
+
+Brand assets were never created/integrated. `index.html` has minimal `<head>` with no meta description, OG tags, or favicon links. Sidebar and PublicVerifyPage use `<Shield />` from lucide-react as a placeholder.
+
+#### Actions Taken
+
+| Date | Action |
+|------|--------|
+| 2026-03-12 | Identified during full audit. Logged as BUG-AUDIT-03, linked to MVP-04. |
+
+#### Resolution
+
+**Status:** OPEN — requires MVP-04 implementation (create SVG logo, favicon set, OG meta tags, Logo component)
+
+#### Regression Test
+
+- None yet
+
+---
+
 ---
 
 ## Change Log
@@ -985,4 +1112,5 @@ Express enables the `x-powered-by` header by default. It must be explicitly disa
 | 2026-03-10 8:00 PM EST | HARDENING-5 complete. 7 new worker test files (96 tests). No new bugs found. Final: 481 tests (253 frontend + 228 worker). All thresholds pass. Worker hardening sprint COMPLETE. |
 | 2026-03-10 10:30 PM EST | CRIT-1, CRIT-4, CRIT-5, CRIT-6 all FIXED. SecureDocumentDialog real Supabase insert, onboarding routes wired, JSON proof download connected, CSVUploadWizard uses real csvParser + useBulkAnchors. Moved PRH1 bugs from active to resolved table. Active: 2, Resolved: 12. |
 | 2026-03-11 ~12:30 AM EST | E2E testing + stress testing sprint complete (116 new tests). No new bugs found. Documentation audit: updated stale CRIT-1/4/5/6 references across 9 story docs + 3 confluence docs. |
+| 2026-03-12 | Full audit: 3 new bugs (BUG-AUDIT-01 toast system, BUG-AUDIT-02 dead footer links, BUG-AUDIT-03 missing brand assets). Active: 5, Resolved: 15. Linked to MVP-02, MVP-03, MVP-04 stories. |
 | 2026-03-11 | SonarQube remediation sprint complete (8 batches). Fixed: S2068 hard-coded credentials, S6437 ReDoS, S8215 Express disclosure, S2004 nested functions, 24 security hotspots, HIGH/MEDIUM/LOW severity issues across ~30 files. 66 MAJOR/MINOR issues verified as already fixed (stale). 2 false positives marked (S3776 csvParser + check-copy-terms). All worker type errors resolved. Branch: `fix/sonarqube-security-hotspots`. |

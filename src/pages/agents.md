@@ -1,5 +1,5 @@
 # agents.md — pages
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 ## What This Folder Contains
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
@@ -15,6 +15,12 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 - DO: Pass `loading` state from hooks to child components (RecordsList, StatCard)
 - DON'T: Create mock records with `Math.random()` or `Date.now()` IDs
 - DON'T: Use `console.log` as a placeholder for actions — use no-op functions or wire to real hooks
+
+## MVP Launch Gap Context
+- **MVP-03 (Legal Pages):** New `PrivacyPage.tsx`, `TermsPage.tsx`, `ContactPage.tsx` — public routes, no auth required. Add to `routes.ts` and `App.tsx`.
+- **MVP-05 (Error Boundary + 404):** New `NotFoundPage.tsx` at catch-all `*` route. ErrorBoundary wraps App in `App.tsx`.
+- **MVP-08 (Onboarding Stepper):** Visual progress indicator integrated into existing onboarding pages.
+- **MVP-11 (Stripe Plan Change):** Settings page needs plan management UI (upgrade/downgrade/cancel).
 
 ## Dependencies
 - `@/hooks/useAnchors` — anchor data for dashboard and vault

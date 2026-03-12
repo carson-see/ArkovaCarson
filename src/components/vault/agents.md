@@ -1,5 +1,5 @@
 # agents.md — components/vault
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 ## What This Folder Contains
 Vault-related components for the INDIVIDUAL user experience, including the VaultDashboard.
@@ -13,6 +13,9 @@ Vault-related components for the INDIVIDUAL user experience, including the Vault
 ## Do / Don't Rules
 - DO: Use `useAnchors()` for all anchor data — never local useState arrays
 - DO: Read `is_public_profile` from `profile` object, persist via `updateProfile({ is_public_profile })` — never local state
+
+## MVP Launch Gap Context
+- **MVP-09 (Records Pagination + Search):** VaultDashboard will need pagination controls and search/filter bar when records list grows. Currently loads all records at once via `useAnchors()`. Story targets `RecordsList.tsx` and `useAnchors.ts` with 25-per-page pagination + URL params.
 
 ## Dependencies
 - `@/hooks/useAnchors` — anchor data

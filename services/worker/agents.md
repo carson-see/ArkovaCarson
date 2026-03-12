@@ -1,5 +1,5 @@
 # agents.md — services/worker
-_Last updated: 2026-03-11_
+_Last updated: 2026-03-12_
 
 ## What This Folder Contains
 
@@ -62,6 +62,10 @@ Express-based worker service handling privileged server-side operations: anchor 
 - `node-cron` — job scheduling
 - `express` — HTTP server
 - Supabase JS client (`@supabase/supabase-js`) — database operations
+
+## MVP Launch Gap Context
+- **MVP-01 (Worker Production Deployment):** CRITICAL — deploy this service to Railway/Fly.io/Render. Needs: Dockerfile or platform config, `.github/workflows/deploy-worker.yml`, env var secrets, health check. No code changes needed — deployment config only.
+- **MVP-11 (Stripe Plan Change/Downgrade):** `stripe/handlers.ts` needs `customer.subscription.updated` and `customer.subscription.deleted` handlers. `useBilling` hook needs plan change mutations.
 
 ## Key Patterns
 

@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-12 ~3:30 AM EST_
+_Last updated: 2026-03-12 ~6:00 AM EST_
 
 ## Overview
 
@@ -31,7 +31,8 @@ For a new developer joining the project, read in this order:
 | P7 | Go-Live | 13 | 9 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 0 | 0 | 12 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| **Total** | | **70** | **40** | **3** | **27** | |
+| MVP | Launch Gaps | 14 | 0 | 0 | 14 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| **Total** | | **84** | **40** | **3** | **41** | |
 
 ### All Stories by ID
 
@@ -105,6 +106,20 @@ For a new developer joining the project, read in this order:
 | DH-10 | useEntitlements Realtime Subscription | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-11 | Worker RPC Logging Structured Format | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-12 | Webhook Delivery Dead Letter Queue | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| MVP-01 | Worker Production Deployment | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-02 | Toast/Notification System | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-01 |
+| MVP-03 | Legal Pages (Privacy, Terms, Contact) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-02 |
+| MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-03 |
+| MVP-05 | Error Boundary + 404 Page | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-06 | File-Based Public Verification | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-07 | Mobile Responsive Layout | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-08 | Onboarding Progress Stepper | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-09 | Records Pagination + Search | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-10 | Marketing Website (arkova.ai) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-11 | Stripe Plan Change/Downgrade | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | CRIT-3 |
+| MVP-12 | Dark Mode Toggle | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-13 | Organization Logo Upload | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-14 | Embeddable Verification Widget | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 
 ## Bug Cross-Reference
 
