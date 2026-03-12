@@ -21,6 +21,11 @@ test.describe('Public Verification', () => {
       filename: 'e2e_public_test.pdf',
     });
 
+    // Fail loudly if test data setup didn't work — never silently skip
+    if (!anchor?.id || !anchor?.public_id) {
+      throw new Error('beforeAll: failed to create test anchor — cannot run public verification tests');
+    }
+
     testAnchorId = anchor.id;
     testPublicId = anchor.public_id;
   });
@@ -32,8 +37,6 @@ test.describe('Public Verification', () => {
   });
 
   test('public verification page shows verified status for valid public_id', async ({ page }) => {
-    test.skip(!testPublicId, 'No test public_id available');
-
     await page.goto(`/verify/${testPublicId}`);
 
     // Should show verified status
@@ -66,8 +69,6 @@ test.describe('Public Verification', () => {
   });
 
   test('public verification page does not expose sensitive data', async ({ page }) => {
-    test.skip(!testPublicId, 'No test public_id available');
-
     await page.goto(`/verify/${testPublicId}`);
     await expect(page.getByText('Document Verified')).toBeVisible({ timeout: 10000 });
 
@@ -77,8 +78,6 @@ test.describe('Public Verification', () => {
   });
 
   test('public verification page is accessible without authentication', async ({ page }) => {
-    test.skip(!testPublicId, 'No test public_id available');
-
     await page.context().clearCookies();
     await page.goto(`/verify/${testPublicId}`);
 
@@ -90,8 +89,6 @@ test.describe('Public Verification', () => {
   });
 
   test('public verification page shows file size when available', async ({ page }) => {
-    test.skip(!testPublicId, 'No test public_id available');
-
     await page.goto(`/verify/${testPublicId}`);
     await expect(page.getByText('Document Verified')).toBeVisible({ timeout: 10000 });
 
