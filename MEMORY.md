@@ -140,9 +140,9 @@ e2e/                               ← Playwright E2E specs + fixtures
 **Last session (2026-03-12 ~5:30 AM EST):** PR #26 review/fix sprint. Addressed 26 CodeRabbit review comments: 14 fixed in code (commit dd2c2f0 — fail-closed useEntitlements, UpgradePrompt, structured logging, ConfirmAnchorModal quota gate, useBulkAnchors quota check, etc.), 12 deferred as new stories (DH-01 through DH-12 in `docs/stories/10_deferred_hardening.md`). Updated stories index with DH group (70 total stories). Migration 0049 (entitlement quota enforcement) + migration 0050 (anchor_chain_index) both in PR #26. CRIT-2 marked CODE COMPLETE — all code done, only operational items remain (Signet E2E broadcast, AWS KMS provisioning, mainnet funding). CRIT-3 partially advanced with entitlement enforcement (useEntitlements hook + check_anchor_quota RPC + server-side quota in bulk_create_anchors).
 
 **Current state:**
-- 727 total tests (408 worker + 319 frontend) + 116 E2E/load tests
+- 718 total tests (408 worker + 310 frontend) + 116 E2E/load tests
 - All worker critical paths at 80%+ coverage (17 test files, 408 tests)
-- 167 chain-specific tests across 7 files (signet 47, utxo-provider 34, wallet 13, client 28, mock 18, anchor 27)
+- 167 chain-specific tests across 6 files (signet 47, utxo-provider 34, wallet 13, client 28, mock 18, anchor 27)
 - Worker hardening sprint COMPLETE (6/6 tasks, 5 bugs found/fixed)
 - Vite 6.4.1 + vitest 3 + esbuild 0.25.12 (CVE patched, 0 npm vulnerabilities)
 - BitcoinChainClient + provider abstractions + UTXO providers + wallet utilities all implemented
@@ -157,7 +157,7 @@ e2e/                               ← Playwright E2E specs + fixtures
 1. AWS KMS signing for mainnet Bitcoin
 2. Signet E2E connectivity test — treasury funded, awaiting UTXO confirmation for first real OP_RETURN broadcast
 3. Mainnet treasury funding
-4. Entitlement enforcement — partially done (useEntitlements + server-side quota). Remaining: ConfirmAnchorModal UI gate for single anchors, plan change/downgrade flows.
+4. Entitlement enforcement — partially done (useEntitlements fail-closed + server-side quota in bulk_create_anchors + ConfirmAnchorModal quota gate). Remaining: plan change/downgrade flows only.
 5. Plan change/downgrade flows
 
 **Next session should:** Merge PR #26 if CI green + CodeRabbit approved. Then: check UTXO confirmation status, run real Signet E2E broadcast if confirmed, or pick up remaining entitlement enforcement (CRIT-3).

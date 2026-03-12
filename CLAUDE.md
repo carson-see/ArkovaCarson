@@ -465,7 +465,7 @@ npx supabase db reset
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
 | P6 Verification | 5/6 | 1/6 | 0 | 83% |
-| P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% |
+| P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
 | DH Deferred Hardening | 0/12 | 0/12 | 12/12 | 0% |
 | **Total** | **40/70** | **3/70** | **27/70** | **~61%** |
@@ -595,7 +595,7 @@ All of the following are done. Details in MEMORY.md completed sprints.
 | AWS KMS signing | CRIT-2 | Key provisioning for mainnet signing. SignetChainClient done, mainnet needs KMS. |
 | Signet node connectivity test | CRIT-2 | Verify SignetChainClient against a real Signet node. |
 | Mainnet treasury funding | CRIT-2 | Fund the production treasury wallet. |
-| Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook + server-side quota (migration 0049) + ConfirmAnchorModal gate + UpgradePrompt. Remaining: single-anchor UI enforcement in SecureDocumentDialog, plan change/downgrade. |
+| Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook (fail-closed) + server-side quota in bulk_create_anchors (migration 0049) + ConfirmAnchorModal quota gate + UpgradePrompt. Remaining: plan change/downgrade flows only. |
 | Plan change/downgrade | CRIT-3 | Handle subscription upgrades, downgrades, cancellations. |
 
 ### Pre-Launch (after blockers resolved)
