@@ -221,6 +221,7 @@ export interface KmsClientLike {
  * Create a real AWS KMS client. Lazily imports @aws-sdk/client-kms
  * so the dependency is optional (only needed for mainnet).
  */
+/* v8 ignore start — AWS SDK integration boundary; tested via KmsClientLike mock (Constitution 1.7) */
 async function createRealKmsClient(region?: string): Promise<KmsClientLike> {
   // Dynamic import — @aws-sdk/client-kms is only required for mainnet
   const { KMSClient, GetPublicKeyCommand, SignCommand } = await import(
@@ -265,6 +266,7 @@ async function createRealKmsClient(region?: string): Promise<KmsClientLike> {
     },
   };
 }
+/* v8 ignore stop */
 
 // ─── Utilities ──────────────────────────────────────────────────────────
 

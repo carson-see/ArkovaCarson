@@ -3,13 +3,13 @@ _Last updated: 2026-03-12 ~5:00 AM EST_
 
 ## Overview
 
-These stories were identified during CodeRabbit review of PR #26 (CRIT-2 + CRIT-3). They are non-blocking operational improvements deferred to post-launch hardening. All 12 items are NOT STARTED.
+These stories were identified during CodeRabbit review of PR #26 (CRIT-2 + CRIT-3). They are non-blocking operational improvements deferred to post-launch hardening.
 
 | Status | Count |
 |--------|-------|
-| Complete | 0 |
+| Complete | 1 |
 | Partial | 0 |
-| Not Started | 12 |
+| Not Started | 11 |
 
 ---
 
@@ -49,19 +49,23 @@ Add `pg_advisory_xact_lock()` in `bulk_create_anchors()` to prevent race conditi
 
 ## DH-03: KMS Operational Documentation
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (blocks mainnet)
 **Source:** CodeRabbit PR #26, comment on `services/worker/src/chain/signing-provider.ts`
+**Completed:** 2026-03-12
 
 ### What It Delivers
 Operational runbook for AWS KMS key provisioning and rotation for mainnet Bitcoin signing.
 
 ### Acceptance Criteria
-- [ ] KMS key creation procedure documented (key policy, algorithm, region)
-- [ ] Key rotation procedure documented
-- [ ] Access control requirements specified (IAM roles/policies)
-- [ ] Emergency key revocation procedure
-- [ ] Document lives in `docs/confluence/` or `docs/operations/`
+- [x] KMS key creation procedure documented (key policy, algorithm, region)
+- [x] Key rotation procedure documented
+- [x] Access control requirements specified (IAM roles/policies)
+- [x] Emergency key revocation procedure
+- [x] Document lives in `docs/confluence/14_kms_operations.md`
+
+### Implementation
+`docs/confluence/14_kms_operations.md` — 276 lines covering: architecture diagram, 5-step key provisioning (CLI commands), IAM policy JSON (least privilege: kms:Sign + kms:GetPublicKey only), key policy, manual rotation procedure (9 steps + checklist), 4 disaster recovery scenarios, CloudTrail monitoring with CloudWatch alarm recommendations, security notes, code reference table.
 
 ---
 

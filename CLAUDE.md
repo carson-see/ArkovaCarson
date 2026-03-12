@@ -467,15 +467,15 @@ npx supabase db reset
 | P6 Verification | 5/6 | 1/6 | 0 | 83% |
 | P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| DH Deferred Hardening | 0/12 | 0/12 | 12/12 | 0% |
-| **Total** | **40/70** | **3/70** | **27/70** | **~61%** |
+| DH Deferred Hardening | 1/12 | 0/12 | 11/12 | 8% |
+| **Total** | **41/70** | **3/70** | **26/70** | **~63%** |
 
 ### Critical Blockers (resolve before production)
 
 | ID | Issue | Severity | Detail |
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
-| CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient (renamed from SignetChainClient) with provider abstractions: `SigningProvider` (WIF + KMS), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory (`initChainClient()` / `getInitializedChainClient()`). Wallet utilities + CLI scripts. 408 worker tests across 17 files. **Remaining operational items:** Signet E2E broadcast (awaiting UTXO confirmation), AWS KMS key provisioning (mainnet), mainnet treasury funding. |
+| CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. **Remaining operational items:** Signet E2E broadcast (manual), AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
 | CRIT-3 | Stripe checkout — partial | **HIGH** | Pricing UI + useBilling hook + checkout pages + checkout/portal worker endpoints all implemented (b1f798a). Webhook handlers work. Entitlement enforcement partially done: `useEntitlements` hook (client-side quota check, fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
@@ -550,11 +550,11 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 
 All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled for post-launch.
 
-### DH Deferred Hardening — 0/12 NOT STARTED
+### DH Deferred Hardening — 1/12 COMPLETE, 11/12 NOT STARTED
 
-12 stories identified during CodeRabbit review of PR #26. All deferred to post-launch hardening. See `docs/stories/10_deferred_hardening.md` for full details.
+12 stories identified during CodeRabbit review of PR #26. See `docs/stories/10_deferred_hardening.md` for full details.
 
-DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · DH-03 KMS operational docs (HIGH — blocks mainnet) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · DH-07 MempoolFeeEstimator request timeout · DH-08 Rate limiting for check_anchor_quota · DH-09 UtxoProvider retry logic · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
+DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · DH-07 MempoolFeeEstimator request timeout · DH-08 Rate limiting for check_anchor_quota · DH-09 UtxoProvider retry logic · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
 
 ### Orphaned Code (built but never wired)
 

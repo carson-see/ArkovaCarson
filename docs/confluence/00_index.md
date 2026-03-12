@@ -3,7 +3,7 @@ _Last updated: 2026-03-10_
 
 ## Reading Guide
 
-This directory contains 14 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
+This directory contains 15 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
 
 ### Suggested Reading Order
 
@@ -14,7 +14,7 @@ This directory contains 14 architecture and design documents for the Arkova plat
 4. **03** — Security and RLS policies
 
 **Working on a specific area? Jump to:**
-- Anchoring: 06 → 10 → 11
+- Anchoring: 06 → 10 → 11 → 14 (KMS ops)
 - Billing: 08 → 09
 - Verification: 11 → 06
 - Identity/Auth: 12 → 03
@@ -40,6 +40,7 @@ This directory contains 14 architecture and design documents for the Arkova plat
 | 11 | `11_proof_packages.md` | Proof downloads (PDF + JSON both working, ~~CRIT-5~~ FIXED, ZIP planned), public verification |
 | 12 | `12_identity_access.md` | Identity verification, access control, role assignment |
 | 13 | `13_switchboard.md` | Feature flags (switchboard_flags), flag history, get_flag() function |
+| 14 | `14_kms_operations.md` | AWS KMS key provisioning, IAM policy, key rotation, disaster recovery for mainnet treasury signing |
 
 ---
 

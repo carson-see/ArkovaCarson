@@ -18,7 +18,7 @@
 | ID | Issue | Owner | Status |
 |----|-------|-------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Real Supabase insert. Commit a38b485.~~ |
-| CRIT-2 | Bitcoin chain client — CODE COMPLETE | Specialist | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: SigningProvider (WIF + KMS), FeeEstimator (static + mempool), UtxoProvider (RPC + Mempool.space). SupabaseChainIndexLookup + migration 0050. Async factory (initChainClient/getInitializedChainClient). 408 worker tests across 17 files. **Remaining (operational only):** Signet E2E broadcast, AWS KMS key provisioning, mainnet treasury funding. |
+| CRIT-2 | Bitcoin chain client — CODE COMPLETE | Specialist | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: SigningProvider (WIF + KMS, 98%+ coverage), FeeEstimator (static + mempool), UtxoProvider (RPC + Mempool.space). SupabaseChainIndexLookup + migration 0050. Async factory. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. **Remaining (operational only):** Signet E2E broadcast (manual), AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
 | CRIT-3 | Stripe checkout — partial | Carson/Prajal | **PARTIAL.** Pricing UI + useBilling hook + checkout/portal worker endpoints wired (b1f798a). 74 tests. **Remaining:** entitlement enforcement, plan change/downgrade. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Wired RoleSelector, OrgOnboardingForm, ManualReviewGate. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~Prajal~~ | ~~**RESOLVED 2026-03-10.** Wired onDownloadProofJson. Commit a38b485.~~ |
@@ -34,7 +34,7 @@ These areas are production-ready or very close:
 - Individual anchor creation (`SecureDocumentDialog` — fixed, real Supabase insert)
 - Public verification portal (5-section display, `get_public_anchor` RPC, verification event logging)
 - CI/CD (secret scanning, dep scanning, typecheck, lint, copy lint, tests)
-- Worker test coverage (408 tests, 80%+ on all critical paths)
+- Worker test coverage (455 tests across 19 files, 80%+ on all critical paths incl. signing-provider.ts)
 - Webhook delivery engine (HMAC signing, exponential backoff, retry cron)
 - Webhook settings UI (two-phase dialog, server-side secret generation)
 - Stripe webhook handlers (checkout.session.completed + subscription lifecycle)
@@ -91,7 +91,7 @@ services/worker/src/stripe/        ← Stripe SDK + webhook verification + handl
 services/worker/src/webhooks/      ← Outbound webhook delivery engine (HMAC, backoff, retries)
 supabase/migrations/               ← 49 migrations (0001-0050, 0033 skipped)
 supabase/seed.sql                  ← Demo data (admin_demo, user_demo, beta_admin)
-docs/confluence/                   ← 14 docs (00-13): architecture, data model, security, etc.
+docs/confluence/                   ← 15 docs (00-14): architecture, data model, security, KMS ops, etc.
 docs/stories/                      ← Story docs (10 group files + index)
 e2e/                               ← Playwright E2E specs + fixtures
 ```
@@ -137,30 +137,41 @@ e2e/                               ← Playwright E2E specs + fixtures
 
 > When ending a session, write what the next session needs to know here. Clear old notes when they're no longer relevant.
 
-**Last session (2026-03-12 ~5:30 AM EST):** PR #26 review/fix sprint. Addressed 26 CodeRabbit review comments: 14 fixed in code (commit dd2c2f0 — fail-closed useEntitlements, UpgradePrompt, structured logging, ConfirmAnchorModal quota gate, useBulkAnchors quota check, etc.), 12 deferred as new stories (DH-01 through DH-12 in `docs/stories/10_deferred_hardening.md`). Updated stories index with DH group (70 total stories). Migration 0049 (entitlement quota enforcement) + migration 0050 (anchor_chain_index) both in PR #26. CRIT-2 marked CODE COMPLETE — all code done, only operational items remain (Signet E2E broadcast, AWS KMS provisioning, mainnet funding). CRIT-3 partially advanced with entitlement enforcement (useEntitlements hook + check_anchor_quota RPC + server-side quota in bulk_create_anchors).
+**Last session (2026-03-12 ~6:00 AM EST):** CRIT-2 Operational Readiness sprint. KMS signing coverage: 39 tests added in signing-provider.test.ts (98%+ coverage with v8 ignore on AWS SDK boundary). Added signing-provider.ts 80% threshold to vitest.config.ts. Created `docs/confluence/14_kms_operations.md` (key provisioning, IAM policy, rotation, DR) — unblocks DH-03. Updated 00_index.md (15 docs). 455 worker tests across 19 files (was 408/17). Signet integration tests: 8 tests constructing + signing real Bitcoin Signet transactions. E2E silent skip anti-pattern fixed.
 
 **Current state:**
-- 718 total tests (408 worker + 310 frontend) + 116 E2E/load tests
-- All worker critical paths at 80%+ coverage (17 test files, 408 tests)
-- 167 chain-specific tests across 6 files (signet 47, utxo-provider 34, wallet 13, client 28, mock 18, anchor 27)
-- Worker hardening sprint COMPLETE (6/6 tasks, 5 bugs found/fixed)
-- Vite 6.4.1 + vitest 3 + esbuild 0.25.12 (CVE patched, 0 npm vulnerabilities)
-- BitcoinChainClient + provider abstractions + UTXO providers + wallet utilities all implemented
-- SupabaseChainIndexLookup + migration 0050 for O(1) fingerprint verification
-- Entitlement enforcement: useEntitlements hook (client) + check_anchor_quota RPC + server-side quota in bulk_create_anchors (migration 0049)
-- Stripe checkout/portal endpoints wired with JWT auth
-- Webhook delivery engine complete with HMAC signing + exponential backoff
-- Signet treasury address: `mx1zmGtQTghi4GWcJaV1oPwJ5TKhGfFpjs` — funded 500,636 sats, awaiting confirmation
-- PR #26 open on `feat/crit2-complete-provider-abstractions-chain-index` — CI running, CodeRabbit re-review pending
+- 765 total tests (455 worker + 310 frontend) + 116 E2E/load tests
+- All worker critical paths at 80%+ coverage (19 test files, 455 tests)
+- signing-provider.ts coverage: 98.41% statements, 94.59% branches, 100% functions, 98.41% lines
+- 206 chain-specific tests across 8 files (signet 47, signet.integration 8, utxo-provider 34, wallet 13, client 28, mock 18, anchor 27, signing-provider 39)
+- KMS operational docs complete (14_kms_operations.md)
+- Signet treasury address: `mx1zmGtQTghi4GWcJaV1oPwJ5TKhGfFpjs` — funded 500,636 sats
+- PR #26 open on `feat/crit2-complete-provider-abstractions-chain-index`
 
-**Remaining production blockers (5 items):**
-1. AWS KMS signing for mainnet Bitcoin
-2. Signet E2E connectivity test — treasury funded, awaiting UTXO confirmation for first real OP_RETURN broadcast
-3. Mainnet treasury funding
-4. Entitlement enforcement — partially done (useEntitlements fail-closed + server-side quota in bulk_create_anchors + ConfirmAnchorModal quota gate). Remaining: plan change/downgrade flows only.
-5. Plan change/downgrade flows
+## Mainnet Readiness Checklist
 
-**Next session should:** Merge PR #26 if CI green + CodeRabbit approved. Then: check UTXO confirmation status, run real Signet E2E broadcast if confirmed, or pick up remaining entitlement enforcement (CRIT-3).
+| # | Item | Status | Detail |
+|---|------|--------|--------|
+| 1 | Signet E2E broadcast | **PENDING** | Treasury funded. Requires manual execution: `BITCOIN_TREASURY_WIF=<wif> npx tsx scripts/broadcast-signet-test.ts`. Record txId here after success. Verify on `https://mempool.space/signet/tx/<txId>`. |
+| 2 | AWS KMS key provisioning | **NOT STARTED** | Follow `docs/confluence/14_kms_operations.md` Section "Key Provisioning Steps". Create `ECC_SECG_P256K1` / `SIGN_VERIFY` key in us-east-1. Record KeyId → `KMS_KEY_ID` env var. |
+| 3 | KMS IAM policy | **NOT STARTED** | Worker IAM role needs `kms:Sign` + `kms:GetPublicKey` on the specific key ARN. See 14_kms_operations.md IAM section. |
+| 4 | Derive mainnet Bitcoin address | **NOT STARTED** | Run `KmsSigningProvider.create()` → `bitcoin.payments.p2pkh()` with `bitcoin.networks.bitcoin`. Record the P2PKH treasury address. |
+| 5 | Fund mainnet treasury | **NOT STARTED** | Send BTC to the derived mainnet address. Minimum: enough for ~1000 OP_RETURN transactions (~0.01 BTC at current fee rates). |
+| 6 | Set production env vars | **NOT STARTED** | `BITCOIN_NETWORK=mainnet`, `KMS_KEY_ID=<key>`, `KMS_REGION=us-east-1`, `ENABLE_PROD_NETWORK_ANCHORING=true` |
+| 7 | CloudTrail monitoring | **NOT STARTED** | Enable CloudWatch alarms for `kms:ScheduleKeyDeletion` and `kms:DisableKey` on the treasury key. See 14_kms_operations.md DR section. |
+| 8 | Supabase production project | **NOT STARTED** | Provision production-tier Supabase project. Run all 49 migrations. |
+| 9 | DNS + custom domain | **NOT STARTED** | `app.arkova.io` or equivalent. Configure Vercel custom domain. |
+| 10 | Seed data strip | **NOT STARTED** | Remove demo users (admin_demo, user_demo, beta_admin) from production seed. |
+| 11 | Entitlement plan change/downgrade | **NOT STARTED** | Handle subscription upgrades, downgrades, cancellations (CRIT-3 remaining work). |
+| 12 | SOC 2 evidence collection | **NOT STARTED** | Begin at production launch. CI logs, RLS test results, audit events as evidence. |
+
+**Remaining production blockers (3 code items + operational):**
+1. **Signet E2E broadcast** — manual, requires WIF (Step 1 above)
+2. **Plan change/downgrade flows** — CRIT-3 remaining code work
+3. **AWS KMS + mainnet funding** — operational, follows 14_kms_operations.md
+4. **Supabase production + DNS** — infrastructure provisioning
+
+**Next session should:** Commit all pending changes (KMS tests, vitest threshold, 14_kms_operations.md, 00_index.md, signing-provider.ts v8 ignore). Push to PR #26. Merge if CI green. Then: Signet E2E broadcast (manual with WIF) or CRIT-3 plan change/downgrade flows.
 
 **Completed sprints (archived):**
 All sprint details moved to Claude project memory. Summary:
@@ -181,6 +192,7 @@ All sprint details moved to Claude project memory. Summary:
 - CRIT-2 Code Complete (2026-03-12): All 8 steps done. BitcoinChainClient + provider abstractions + SupabaseChainIndexLookup + migration 0050. 408 worker tests.
 - CRIT-3 Entitlement Enforcement (2026-03-12): migration 0049 (check_anchor_quota + bulk_create_anchors quota), useEntitlements hook, ConfirmAnchorModal quota gate, UpgradePrompt component
 - PR #26 CodeRabbit Review (2026-03-12): 14 fixes committed (dd2c2f0), 12 deferred as DH-01 through DH-12 in docs/stories/10_deferred_hardening.md
+- CRIT-2 Operational Readiness (2026-03-12): KMS signing 39 tests (98%+ coverage), vitest threshold, 14_kms_operations.md (DH-03 unblocked), 00_index.md updated (15 docs), signet integration tests (8), E2E silent skip fix. 455 worker tests across 19 files.
 
 ---
 

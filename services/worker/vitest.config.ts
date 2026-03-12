@@ -32,6 +32,12 @@ export default defineConfig({
           lines: 80,
           statements: 80,
         },
+        'src/chain/signing-provider.ts': {
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
+        },
         'src/webhooks/delivery.ts': {
           branches: 80,
           functions: 80,
