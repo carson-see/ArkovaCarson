@@ -1,0 +1,96 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: arkova1
+  REGION: us-central1
+  SERVICE_NAME: arkova-worker
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: arkova-worker-images
+
+jobs:
+  # Run CI checks first
+  ci:
+    name: Worker CI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: services/worker
+        run: npm ci
+
+      - name: TypeScript check
+        working-directory: services/worker
+        run: npx tsc --noEmit
+
+      - name: Run tests
+        working-directory: services/worker
+        run: npm run test:coverage
+
+  # Build and deploy to Cloud Run
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    needs: [ci]
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build Docker image
+        working-directory: services/worker
+        run: |
+          docker build \
+            --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
+            --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          docker push "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
+            --region ${{ env.REGION }} \
+            --project ${{ env.PROJECT_ID }} \
+            --platform managed \
+            --no-allow-unauthenticated \
+            --port 3001 \
+            --cpu 1 \
+            --memory 512Mi \
+            --min-instances 0 \
+            --max-instances 3 \
+            --timeout 300 \
+            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest" \
+            --set-env-vars "NODE_ENV=production,LOG_LEVEL=info,BITCOIN_NETWORK=signet,ENABLE_PROD_NETWORK_ANCHORING=false,USE_MOCKS=false,FRONTEND_URL=https://arkova-carson.vercel.app"
