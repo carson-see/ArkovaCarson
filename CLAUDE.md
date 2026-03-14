@@ -540,17 +540,17 @@ npx supabase db reset
 | P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
 | DH Deferred Hardening | 1/12 | 0/12 | 11/12 | 8% |
-| MVP Launch Gaps | 1/27 | 0/27 | 26/27 | 4% |
+| MVP Launch Gaps | 3/27 | 1/27 | 23/27 | 11% |
 | P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
-| INFRA Edge & Ingress | 0/8 | 0/8 | 8/8 | 0% |
-| **Total** | **42/124** | **3/124** | **79/124** | **~36%** |
+| INFRA Edge & Ingress | 0/8 | 5/8 | 3/8 | 31% |
+| **Total** | **45/124** | **9/124** | **70/124** | **~39%** |
 
 ### Critical Blockers (resolve before production)
 
 | ID | Issue | Severity | Detail |
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
-| CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. **Remaining operational items:** Signet E2E broadcast (manual), AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
+| CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. Signet E2E broadcast verified (TX `b8e381df`). **Remaining operational items:** AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
 | CRIT-3 | Stripe checkout — partial | **HIGH** | Pricing UI + useBilling hook + checkout pages + checkout/portal worker endpoints all implemented (b1f798a). Webhook handlers work. Entitlement enforcement partially done: `useEntitlements` hook (client-side quota check, fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
@@ -631,47 +631,62 @@ All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled
 
 DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · DH-07 MempoolFeeEstimator request timeout · DH-08 Rate limiting for check_anchor_quota · DH-09 UtxoProvider retry logic · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
 
-### MVP Launch Gaps — 0/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 3/27 COMPLETE, 1/27 PARTIAL, 23/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
-| ID | Priority | Description |
-|----|----------|-------------|
-| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) |
-| MVP-02 | HIGH | Global toast/notification system (Sonner) |
-| MVP-03 | HIGH | Legal pages (Privacy, Terms, Contact — dead links) |
-| MVP-04 | HIGH | Brand assets (logo, favicon, OG meta tags) |
-| MVP-05 | HIGH | Error boundary + 404 page |
-| MVP-06 | MEDIUM | File-based public verification (drag-and-drop) |
-| MVP-07 | MEDIUM | Mobile responsive layout |
-| MVP-08 | MEDIUM | Onboarding progress stepper |
-| MVP-09 | MEDIUM | Records pagination + search |
-| MVP-10 | MEDIUM | Marketing website (arkova.ai) |
-| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) |
-| MVP-12 | LOW | Dark mode toggle |
-| MVP-13 | LOW | Organization logo upload |
-| MVP-14 | LOW | Embeddable verification widget |
-| MVP-16 | MEDIUM | Block explorer deep links |
-| MVP-17 | MEDIUM | Credential template metadata enhancement |
-| MVP-18 | MEDIUM | Enhanced metadata display |
-| ~~MVP-19~~ | — | ~~AI Auto-Descriptions~~ — REMOVED (superseded by P8-S4/S5) |
-| MVP-20 | LOW | LinkedIn badge integration |
-| MVP-21 | MEDIUM | Individual self-verification flow |
-| ~~MVP-22~~ | — | ~~AI Fraud Detection~~ — REMOVED (superseded by P8-S7/S8/S9) |
-| MVP-23 | MEDIUM | Batch anchor processing |
-| MVP-24 | HIGH | Credits schema + monthly allocations |
-| MVP-25 | MEDIUM | Credits tracking + scheduling |
-| MVP-26 | HIGH | GCP Cloud Run deployment |
-| MVP-27 | HIGH | GCP Secret Manager integration |
-| MVP-28 | MEDIUM | GCP Cloud Scheduler |
-| MVP-29 | HIGH | GCP Cloud KMS integration |
-| MVP-30 | MEDIUM | GCP CI/CD pipeline |
+| ID | Priority | Description | Status |
+|----|----------|-------------|--------|
+| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | NOT STARTED |
+| MVP-02 | HIGH | Global toast/notification system (Sonner) | ⚠️ PARTIAL — Sonner wired, toasts in useProfile + useOrganization + useBulkAnchors. Missing: useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
+| ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages (Privacy, Terms, Contact)~~ | ✅ COMPLETE — PrivacyPage, TermsPage, ContactPage exist + routed |
+| ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets (logo, favicon, OG meta tags)~~ | ✅ COMPLETE (PR #30) — ArkovaLogo, favicon.svg, og-image.svg, OG/Twitter meta |
+| ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404 page~~ | ✅ COMPLETE — ErrorBoundary (Sentry-wired) + NotFoundPage, both routed |
+| MVP-06 | MEDIUM | File-based public verification (drag-and-drop) | NOT STARTED |
+| MVP-07 | MEDIUM | Mobile responsive layout | NOT STARTED |
+| MVP-08 | MEDIUM | Onboarding progress stepper | NOT STARTED |
+| MVP-09 | MEDIUM | Records pagination + search | NOT STARTED |
+| MVP-10 | MEDIUM | Marketing website (arkova.ai) | NOT STARTED |
+| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) | NOT STARTED |
+| MVP-12 | LOW | Dark mode toggle | NOT STARTED |
+| MVP-13 | LOW | Organization logo upload | NOT STARTED |
+| MVP-14 | LOW | Embeddable verification widget | NOT STARTED |
+| MVP-16 | MEDIUM | Block explorer deep links | NOT STARTED |
+| MVP-17 | MEDIUM | Credential template metadata enhancement | NOT STARTED |
+| MVP-18 | MEDIUM | Enhanced metadata display | NOT STARTED |
+| ~~MVP-19~~ | — | ~~AI Auto-Descriptions~~ — REMOVED (superseded by P8-S4/S5) | — |
+| MVP-20 | LOW | LinkedIn badge integration | NOT STARTED |
+| MVP-21 | MEDIUM | Individual self-verification flow | NOT STARTED |
+| ~~MVP-22~~ | — | ~~AI Fraud Detection~~ — REMOVED (superseded by P8-S7/S8/S9) | — |
+| MVP-23 | MEDIUM | Batch anchor processing | NOT STARTED |
+| MVP-24 | HIGH | Credits schema + monthly allocations | NOT STARTED |
+| MVP-25 | MEDIUM | Credits tracking + scheduling | NOT STARTED |
+| MVP-26 | HIGH | GCP Cloud Run deployment | NOT STARTED |
+| MVP-27 | HIGH | GCP Secret Manager integration | NOT STARTED |
+| MVP-28 | MEDIUM | GCP Cloud Scheduler | NOT STARTED |
+| MVP-29 | HIGH | GCP Cloud KMS integration | NOT STARTED |
+| MVP-30 | MEDIUM | GCP CI/CD pipeline | NOT STARTED |
 
-**Bugs linked:** BUG-AUDIT-01 (→MVP-02), BUG-AUDIT-02 (→MVP-03), BUG-AUDIT-03 (→MVP-04).
+**Bugs linked:** BUG-AUDIT-01 (→MVP-02 PARTIAL), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
 ### P8 AI Intelligence — 0/19 NOT STARTED
 
 19 stories for AI-powered document intelligence. Phased: Phase I blockers (P8-S1 through P8-S6, P8-S13), Phase 1.5 (P8-S7 through P8-S12), Phase II (P8-S14 through P8-S19). Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. **Gemini path uses Vertex AI ADK** (`GeminiADKProvider` with sub-agents: MetadataExtraction, Description, Anomaly, Duplicate, Classification) — deploys to Vertex AI Agent Engine (Google startup credits). Non-Gemini providers use direct SDK. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
+
+### INFRA Edge & Ingress — 0/8 COMPLETE, 5/8 PARTIAL, 3/8 NOT STARTED
+
+8 stories for Zero Trust ingress, edge compute, observability, and AI provider fallback. See `docs/stories/13_infrastructure_edge.md`.
+
+| ID | Status | Description |
+|----|--------|-------------|
+| INFRA-01 | NOT STARTED | Cloudflare Tunnel sidecar setup |
+| INFRA-02 | ⚠️ PARTIAL | Wrangler + edge scaffolding — `services/edge/` with 11 source files, `wrangler.toml`, `tsconfig.json`. Missing: `agents.md`, deployment, CI typecheck. |
+| INFRA-03 | ⚠️ PARTIAL | R2 report storage — binding in wrangler.toml, `report-generator.ts` + `report-logic.ts` implemented. Missing: R2 bucket creation, lifecycle policy. |
+| INFRA-04 | ⚠️ PARTIAL | Batch anchor queue — binding in wrangler.toml, `batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. Missing: queue creation in CF, DLQ config. |
+| INFRA-05 | ⚠️ PARTIAL | AI fallback provider — `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests. Edge worker `ai-fallback.ts` (144 lines). Missing: circuit breaker, GeminiADKProvider. |
+| INFRA-06 | NOT STARTED | Replicate QA data generator |
+| INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
+| INFRA-08 | ⚠️ PARTIAL | pgvector + institution ground truth — migration 0051 applied to production. Missing: data model doc update, seed data. |
 
 ### Orphaned Code (built but never wired)
 
@@ -708,13 +723,17 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - ✅ database.types.ts regenerated from production (22 tables, 16 functions, 6 enums) — PR #29
 - ✅ Phase 0 tooling (edge scaffolding, tunnel config, Sentry/CF deps, scripts) — PR #29
 - ✅ MVP-04 brand assets (ArkovaLogo, favicon.svg, OG meta tags) — PR #30
+- ✅ Sentry integration + AI provider scaffolding + edge worker implementation — PR #31
+- ✅ MCP server + verify-anchor API endpoint + vulnerability fixes — PR #31
+- ✅ MVP-03 legal pages (PrivacyPage, TermsPage, ContactPage — exist + routed)
+- ✅ MVP-05 error boundary + 404 (ErrorBoundary + NotFoundPage — exist + routed + Sentry-wired)
 
 ### Current: Remaining Production Blockers
 
 | Task | Blocker | Detail |
 |------|---------|--------|
 | AWS KMS signing | CRIT-2 | Key provisioning for mainnet signing. SignetChainClient done, mainnet needs KMS. |
-| Signet node connectivity test | CRIT-2 | Verify SignetChainClient against a real Signet node. |
+| ~~Signet node connectivity test~~ | ~~CRIT-2~~ | ~~DONE — Signet E2E broadcast verified (TX `b8e381df`).~~ |
 | Mainnet treasury funding | CRIT-2 | Fund the production treasury wallet. |
 | Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook (fail-closed) + server-side quota in bulk_create_anchors (migration 0049) + ConfirmAnchorModal quota gate + UpgradePrompt. Remaining: plan change/downgrade flows only. |
 | Plan change/downgrade | CRIT-3 | Handle subscription upgrades, downgrades, cancellations. |
@@ -724,10 +743,10 @@ All of the following are done. Details in MEMORY.md completed sprints.
 | Task | Story | Priority | Detail |
 |------|-------|----------|--------|
 | Worker deployment | MVP-01 | CRITICAL | Deploy Express worker to production host. Blocks all anchor processing. |
-| Toast system | MVP-02 | HIGH | Global Sonner toasts — actions currently give no feedback (BUG-AUDIT-01). |
-| Legal pages | MVP-03 | HIGH | /privacy, /terms, /contact are dead links (BUG-AUDIT-02). |
+| Toast system | MVP-02 | HIGH | ⚠️ PARTIAL — Sonner wired, toasts in 3 hooks. Missing 4+ hooks (BUG-AUDIT-01). |
+| ~~Legal pages~~ | ~~MVP-03~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. PrivacyPage + TermsPage + ContactPage exist + routed.~~ |
 | ~~Brand assets~~ | ~~MVP-04~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ArkovaLogo component, favicon.svg, OG meta tags. PR #30.~~ |
-| Error boundary | MVP-05 | HIGH | React error boundary + 404 page. |
+| ~~Error boundary~~ | ~~MVP-05~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ErrorBoundary (Sentry-wired) + NotFoundPage, both routed.~~ |
 | Stripe plan change | MVP-11 | HIGH | Upgrades, downgrades, cancellations (CRIT-3 remaining). |
 
 ### Pre-Launch (after blockers + MVP gaps resolved)
