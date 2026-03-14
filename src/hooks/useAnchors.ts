@@ -12,7 +12,9 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
+import { TOAST } from '@/lib/copy';
 import { useAuth } from './useAuth';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
@@ -65,6 +67,7 @@ export function useAnchors(): UseAnchorsReturn {
     if (fetchError) {
       setError(fetchError.message);
       setRecords([]);
+      toast.error(TOAST.RECORDS_FETCH_FAILED);
     } else {
       setRecords((data ?? []).map(mapAnchorToRecord));
     }

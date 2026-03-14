@@ -224,6 +224,7 @@ function mockDbChain(result: { data: any; error: any }) {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     in: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockResolvedValue(result),
     single: vi.fn().mockResolvedValue(result),
     maybeSingle: vi.fn().mockResolvedValue(result),
   };
@@ -260,17 +261,31 @@ describe('worker server', () => {
   });
 
   describe('GET /health', () => {
-    it('returns healthy status with expected fields', async () => {
+    it('returns healthy status when Supabase is reachable', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: [{ id: '1' }], error: null }));
+
       const res = await request(app, 'GET', '/health');
 
       expect(res.status).toBe(200);
       expect(res.body).toMatchObject({
         status: 'healthy',
         network: 'signet',
+        checks: { supabase: 'ok' },
       });
-      expect(res.body.uptime).toBeDefined();
       expect(typeof res.body.uptime).toBe('number');
       expect(res.body.version).toBeDefined();
+    });
+
+    it('returns degraded status when Supabase is unreachable', async () => {
+      mockDbFrom.mockReturnValue(mockDbChain({ data: null, error: { message: 'connection refused' } }));
+
+      const res = await request(app, 'GET', '/health');
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        status: 'degraded',
+        checks: { supabase: 'error' },
+      });
     });
   });
 

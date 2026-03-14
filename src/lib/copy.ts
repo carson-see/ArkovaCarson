@@ -175,6 +175,9 @@ export const TOAST = {
   ANCHOR_SUBMITTED: 'Your document has been submitted for securing.',
   ANCHOR_FAILED: 'Failed to secure document. Please try again.',
 
+  // Records fetch
+  RECORDS_FETCH_FAILED: 'Failed to load records. Please try again.',
+
   // Credentials
   CREDENTIAL_ISSUED: 'Credential issued successfully.',
   CREDENTIAL_ISSUE_FAILED: 'Failed to issue credential. Please try again.',
