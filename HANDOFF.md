@@ -56,6 +56,15 @@
 | Load Balancer (health checks) | **COMPLETE** — script ready |
 | Edge worker bindings (R2, Queues, AI) | **COMPLETE** — wrangler.toml uncommented |
 
+### AI Documentation & MCP Server (Phase 4)
+
+| Component | Status |
+|-----------|--------|
+| `public/llms.txt` | **COMPLETE** — 12 validation tests |
+| `public/AGENTS.md` | **COMPLETE** — tool docs + OAuth instructions |
+| MCP Server (P8-S19) | **COMPLETE** — verify + search tools, OAuth/API key auth, 8 tests |
+| MCP tools module | **COMPLETE** — shared logic for verify_credential + search_credentials |
+
 ### What's Production-Ready
 
 - Database layer (51 migrations, RLS on all tables, audit trail immutable)
@@ -73,10 +82,28 @@
 - Sentry error tracking with PII scrubbing (frontend + worker)
 - AI provider abstraction (IAIProvider interface, factory, mock, CF fallback)
 - Edge worker infrastructure (batch queue, report storage, crawler, AI fallback)
+- AI documentation (llms.txt + AGENTS.md for agent discovery)
+- Remote MCP server (Cloudflare Worker, Streamable HTTP, OAuth + API key auth)
 
 ---
 
 ## Session Log
+
+### Session: 2026-03-14 — Phase 4 Agentic Upsell & Documentation
+
+**AI Documentation:**
+- `public/llms.txt` — API docs optimized for LLM consumption (frozen schema, endpoints, auth, rate limits)
+- `public/AGENTS.md` — Agent integration guide (MCP connection, tool schemas, usage examples)
+- 12 validation tests: heading hierarchy, required sections, frozen fields, banned terms, size limit
+
+**MCP Server (P8-S19):**
+- `services/edge/src/mcp-server.ts` — Cloudflare Worker MCP server using `McpServer` + `WebStandardStreamableHTTPServerTransport`
+- `services/edge/src/mcp-tools.ts` — Shared tool definitions + handlers for `verify_credential` and `search_credentials`
+- OAuth 2.0 + API key auth via `validateAuth()` (checks X-API-Key header or Bearer token against Supabase)
+- Edge worker routed at `/mcp` with CORS support
+- 8 tests: tool definitions, verify input validation, search with limits
+
+**Test results:** 856 total tests (364 frontend/infra + 492 worker), 0 type errors, 0 failures
 
 ### Session: 2026-03-14 — Phase 2 Compliance + Phase 3 AI Intelligence
 
@@ -114,12 +141,15 @@
 | 2026-03-14 | Cloudflare fallback in degraded mode (heuristic) when no Workers AI binding | Express worker can still provide basic extraction without edge deployment |
 | 2026-03-14 | SSRF protection in crawler via domain allowlist pattern | Prevent internal network scanning via crawl endpoint |
 | 2026-03-14 | Batch queue throttle: 5 concurrent, 200ms delay | Prevent Gemini API rate limit exhaustion |
+| 2026-03-14 | MCP server uses WebStandardStreamableHTTPServerTransport (stateful mode) | Native Cloudflare Workers compat; session management via crypto.randomUUID() |
+| 2026-03-14 | MCP auth: dual-mode (API key + OAuth Bearer) | API keys for machine-to-machine; OAuth for enterprise SSO |
+| 2026-03-14 | llms.txt + AGENTS.md in public/ for agent discovery | Cloudflare AI Tooling style guide compliance |
 
 ---
 
 ## Phase 4 Readiness (Verification API — Post-Launch)
 
-**Status:** 0/13 stories. All behind `ENABLE_VERIFICATION_API=false`. Intentionally deferred.
+**Status:** 0/13 P4.5 stories (deferred). P8-S19 (Agentic Verification) **COMPLETE** via MCP server.
 **Prerequisite:** Phase 3 production launch complete.
 **Build order:** See CLAUDE.md Section 10.
 
@@ -166,6 +196,17 @@
 | `tests/infra/r2-report.test.ts` | NEW — 4 tests |
 | `tests/infra/crawler.test.ts` | NEW — 5 tests |
 
+### Phase 4 Agentic Upsell & Documentation
+| File | Action |
+|------|--------|
+| `public/llms.txt` | NEW — LLM-optimized API documentation |
+| `public/AGENTS.md` | NEW — Agent integration guide with MCP tools |
+| `services/edge/src/mcp-server.ts` | NEW — Cloudflare MCP server (Streamable HTTP + OAuth) |
+| `services/edge/src/mcp-tools.ts` | NEW — Tool definitions + handlers (verify + search) |
+| `services/edge/src/index.ts` | MODIFIED — Added /mcp route |
+| `tests/infra/llms-txt.test.ts` | NEW — 12 validation tests |
+| `tests/infra/mcp-server.test.ts` | NEW — 8 tool + handler tests |
+
 ---
 
 ## Bug Tracker
@@ -179,6 +220,14 @@
 ---
 
 ## Verification Pending
+
+**MCP Server verification:** After `wrangler deploy`, test with MCP Inspector:
+```bash
+npx @modelcontextprotocol/inspector https://arkova-edge.<account>.workers.dev/mcp
+```
+Then call `verify_credential` with `{ "public_id": "ARK-2026-001" }` and `search_credentials` with `{ "query": "University of Michigan" }`.
+
+**llms.txt validation:** Verify at `https://arkova-edge.<account>.workers.dev/llms.txt` — should return valid markdown under 5KB with all required sections.
 
 **Crawl test on live university domain:** Requires deployed edge worker with Workers AI binding. Run:
 ```bash

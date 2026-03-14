@@ -28,6 +28,11 @@ export default {
       return handler.fetch(request, env, ctx);
     }
 
+    if (url.pathname.startsWith('/mcp')) {
+      const { handleMcpRequest } = await import('./mcp-server');
+      return handleMcpRequest(request, env);
+    }
+
     return new Response('arkova-edge: no matching route', { status: 404 });
   },
 

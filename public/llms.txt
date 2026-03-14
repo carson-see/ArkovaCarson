@@ -1,0 +1,83 @@
+# Arkova Verification API
+
+> Arkova provides credential verification and semantic search over anchored academic and professional credentials.
+
+## Description
+
+Arkova anchors credential fingerprints to an immutable ledger for tamper-proof verification. The API enables AI agents, ATS systems, and background check integrations to verify credentials and search by natural language query. Documents never leave the holder's device — only cryptographic fingerprints and PII-stripped metadata are processed.
+
+## Endpoints
+
+### Verify a Credential
+
+```
+GET /api/v1/verify/:publicId
+```
+
+Returns the verification status and metadata for a credential identified by its `public_id`.
+
+**Response fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `verified` | boolean | Whether the credential is verified on the network |
+| `status` | string | `ACTIVE`, `REVOKED`, `SUPERSEDED`, or `EXPIRED` |
+| `issuer_name` | string | Organization that issued the credential |
+| `recipient_identifier` | string | Hashed identifier (never raw PII) |
+| `credential_type` | string | Type of credential (e.g., `DEGREE`, `CERTIFICATE`) |
+| `issued_date` | string or null | ISO 8601 date when credential was issued |
+| `expiry_date` | string or null | ISO 8601 expiry date, if applicable |
+| `anchor_timestamp` | string | ISO 8601 timestamp when credential was anchored |
+| `network_receipt_id` | string or null | Network receipt reference |
+| `record_uri` | string | Canonical verification URL: `https://app.arkova.io/verify/{public_id}` |
+| `jurisdiction` | string | Omitted when null (never returned as null) |
+
+### Search Credentials
+
+```
+GET /api/v1/verify/search?q={query}&max_results={n}
+```
+
+Semantic search across verified credentials using natural language queries. Returns matching credentials ranked by relevance.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `q` | string | Yes | Natural language search query |
+| `max_results` | integer | No | Maximum results to return (default: 10, max: 50) |
+
+## Authentication
+
+API access requires an API key passed via the `X-API-Key` header. Enterprise access uses OAuth 2.0 via the MCP server endpoint at `/mcp`.
+
+- **Free tier:** 1,000 requests/minute per key
+- **Batch endpoints:** 10 requests/minute per key
+- **Anonymous:** 100 requests/minute per IP
+
+## Tools
+
+The following tools are available via the MCP server at `/mcp`:
+
+### `verify_credential`
+
+Verify a single credential by its public ID. Returns the frozen verification schema.
+
+**Input:** `{ "public_id": "string" }`
+
+### `search_credentials`
+
+Search for credentials using natural language. Returns ranked results with verification status.
+
+**Input:** `{ "query": "string", "max_results": number }`
+
+## Rate Limits
+
+All endpoints return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` headers. Excess requests receive HTTP 429 with a `Retry-After` header.
+
+## Notes
+
+- All timestamps are UTC (ISO 8601).
+- The `record_uri` field always uses HTTPS — no custom protocol handlers.
+- The `jurisdiction` field is omitted from responses when null, never returned as `null`.
+- Recipient identifiers are always hashed — raw PII is never returned.
