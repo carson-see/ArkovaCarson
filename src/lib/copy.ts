@@ -175,9 +175,28 @@ export const TOAST = {
   ANCHOR_SUBMITTED: 'Your document has been submitted for securing.',
   ANCHOR_FAILED: 'Failed to secure document. Please try again.',
 
+  // Records fetch
+  RECORDS_FETCH_FAILED: 'Failed to load records. Please try again.',
+
   // Credentials
   CREDENTIAL_ISSUED: 'Credential issued successfully.',
   CREDENTIAL_ISSUE_FAILED: 'Failed to issue credential. Please try again.',
+
+  // Credential templates
+  TEMPLATE_CREATED: 'Template created successfully.',
+  TEMPLATE_CREATE_FAILED: 'Failed to create template. Please try again.',
+  TEMPLATE_UPDATED: 'Template updated successfully.',
+  TEMPLATE_UPDATE_FAILED: 'Failed to update template. Please try again.',
+  TEMPLATE_DELETED: 'Template deleted successfully.',
+  TEMPLATE_DELETE_FAILED: 'Failed to delete template. Please try again.',
+
+  // Revoke
+  ANCHOR_REVOKED: 'Record revoked successfully.',
+  ANCHOR_REVOKE_FAILED: 'Failed to revoke record. Please try again.',
+
+  // Members
+  MEMBER_INVITED: 'Invitation sent successfully.',
+  MEMBER_INVITE_FAILED: 'Failed to send invitation. Please try again.',
 
   // Bulk upload
   BULK_COMPLETE: 'Bulk upload complete — {created} records created.',

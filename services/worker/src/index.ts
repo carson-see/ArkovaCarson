@@ -30,13 +30,26 @@ const app = express();
 // Disable x-powered-by header to prevent Express version disclosure
 app.disable('x-powered-by');
 
-// Health check endpoint
-app.get('/health', (_req, res) => {
-  res.json({
-    status: 'healthy',
+// Health check endpoint — enhanced for production monitoring (H3-08)
+app.get('/health', async (_req, res) => {
+  const checks: Record<string, 'ok' | 'error'> = {};
+
+  // Shallow Supabase connectivity check
+  try {
+    const { error } = await db.from('plans').select('id').limit(1);
+    checks.supabase = error ? 'error' : 'ok';
+  } catch {
+    checks.supabase = 'error';
+  }
+
+  const allHealthy = Object.values(checks).every((v) => v === 'ok');
+
+  res.status(allHealthy ? 200 : 503).json({
+    status: allHealthy ? 'healthy' : 'degraded',
     version: process.env.npm_package_version ?? '0.1.0',
-    uptime: process.uptime(),
+    uptime: Math.floor(process.uptime()),
     network: config.bitcoinNetwork,
+    checks,
   });
 });
 
