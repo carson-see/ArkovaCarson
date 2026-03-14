@@ -89,6 +89,34 @@
 
 ## Session Log
 
+### Session: 2026-03-14 — Phase 5 Bitcoin Anchor Verification
+
+**Verification endpoint:**
+- `POST /api/verify-anchor` — accepts a `fingerprint` (64-char hex SHA-256, NOT a file) and returns frozen verification schema result
+- Constitution 1.6 compliant: documents never leave the device; only the hash is sent
+- Wired into Express worker with CORS + rate limiting
+- DB lookup via `anchors` table (fingerprint → status, chain_tx_id, block height, public_id)
+
+**Verification module:**
+- `services/worker/src/api/verify-anchor.ts` — pure function with injectable DB lookup for testability
+- Input validation (rejects non-hex, wrong length, empty)
+- Maps internal statuses (SECURED→ACTIVE), omits jurisdiction when null (frozen schema)
+- Returns: verified, status, network_receipt_id, anchor_timestamp, record_uri
+
+**Tests (10):**
+- Full E2E: dummy PDF → SHA-256 → mock Bitcoin receipt → verification match
+- Tampered document fails verification (different hash = not found)
+- PENDING, REVOKED, and SECURED status handling
+- Invalid/empty fingerprint rejection
+- Jurisdiction omission when null
+
+**Constitution compliance notes:**
+- Server-side document hashing was NOT implemented (violates Constitution 1.6)
+- OpenTimestamps was NOT used (Decision Log: "Direct OP_RETURN only")
+- Existing infrastructure leveraged: `fileHasher.ts` (client), `BitcoinChainClient` (worker), `anchor_chain_index` (DB)
+
+**Test results:** 866 total tests (502 worker + 364 frontend/infra), 0 type errors, 0 failures
+
 ### Session: 2026-03-14 — Phase 4 Agentic Upsell & Documentation
 
 **AI Documentation:**

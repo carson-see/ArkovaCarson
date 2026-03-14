@@ -278,6 +278,61 @@ app.post('/api/billing/portal', rateLimiters.checkout, async (req, res) => {
   }
 });
 
+// =========================================================================
+// Public Anchor Verification (accepts fingerprint hash, NOT files)
+// Constitution 1.6: Documents never leave the user's device.
+// =========================================================================
+
+app.post('/api/verify-anchor', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+
+  const { fingerprint } = req.body as { fingerprint?: string };
+
+  if (!fingerprint) {
+    res.status(400).json({ error: 'fingerprint is required (64-char hex SHA-256)' });
+    return;
+  }
+
+  try {
+    const { verifyAnchorByFingerprint } = await import('./api/verify-anchor.js');
+
+    const lookup = {
+      async lookupByFingerprint(fp: string) {
+        const { data } = await db
+          .from('anchors')
+          .select('fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, public_id, created_at, credential_type')
+          .eq('fingerprint', fp)
+          .is('deleted_at', null)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (!data) return null;
+
+        return {
+          fingerprint: data.fingerprint,
+          status: data.status,
+          chain_tx_id: data.chain_tx_id,
+          chain_block_height: data.chain_block_height,
+          chain_block_timestamp: data.chain_timestamp,
+          public_id: data.public_id,
+          created_at: data.created_at,
+          credential_type: data.credential_type,
+        };
+      },
+    };
+
+    const result = await verifyAnchorByFingerprint(fingerprint, lookup);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Anchor verification failed');
+    res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
+// CORS preflight for verify-anchor
+app.options('/api/verify-anchor', (req, res) => { setCorsHeaders(req, res); });
+
 // Manual trigger for anchor processing (for testing)
 app.post('/jobs/process-anchors', async (_req, res) => {
   try {
