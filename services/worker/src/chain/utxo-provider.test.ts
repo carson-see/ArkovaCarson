@@ -23,7 +23,11 @@ import {
   RpcUtxoProvider,
   MempoolUtxoProvider,
   createUtxoProvider,
+  HttpError,
+  retryWithBackoff,
 } from './utxo-provider.js';
+
+import { logger } from '../utils/logger.js';
 
 // ─── RpcUtxoProvider ─────────────────────────────────────────────────────
 
@@ -78,9 +82,9 @@ describe('RpcUtxoProvider', () => {
       await expect(provider.listUnspent('tb1qtest')).rejects.toThrow('RPC listunspent error');
     });
 
-    it('throws on HTTP error', async () => {
-      mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
-      await expect(provider.listUnspent('tb1qtest')).rejects.toThrow('HTTP 500');
+    it('throws on HTTP error (4xx — no retry)', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 401 });
+      await expect(provider.listUnspent('tb1qtest')).rejects.toThrow('HTTP 401');
     });
 
     it('includes auth header when configured', async () => {
@@ -251,13 +255,13 @@ describe('MempoolUtxoProvider', () => {
       await expect(provider.broadcastTx('bad')).rejects.toThrow('broadcast failed');
     });
 
-    it('includes HTTP status in error message', async () => {
+    it('includes HTTP status in error message (4xx — no retry)', async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,
-        status: 500,
-        text: () => Promise.resolve('Internal Server Error'),
+        status: 422,
+        text: () => Promise.resolve('Unprocessable Entity'),
       });
-      await expect(provider.broadcastTx('bad')).rejects.toThrow('HTTP 500');
+      await expect(provider.broadcastTx('bad')).rejects.toThrow('HTTP 422');
     });
   });
 
@@ -396,5 +400,247 @@ describe('createUtxoProvider', () => {
 
   it('throws on unknown provider type', () => {
     expect(() => createUtxoProvider({ type: 'unknown' as any })).toThrow('Unknown UTXO provider');
+  });
+});
+
+// ─── HttpError ──────────────────────────────────────────────────────────
+
+describe('HttpError', () => {
+  it('carries status code', () => {
+    const err = new HttpError('Server Error', 500);
+    expect(err.message).toBe('Server Error');
+    expect(err.status).toBe(500);
+    expect(err).toBeInstanceOf(Error);
+  });
+});
+
+// ─── retryWithBackoff ───────────────────────────────────────────────────
+
+describe('retryWithBackoff', () => {
+  const noopDelay = () => Promise.resolve();
+
+  it('returns result on first success without retry', async () => {
+    const fn = vi.fn().mockResolvedValue('ok');
+    const result = await retryWithBackoff(fn, { name: 'test', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on 5xx HttpError and succeeds on 2nd attempt', async () => {
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new HttpError('Internal Server Error', 500))
+      .mockResolvedValueOnce('ok');
+
+    const result = await retryWithBackoff(fn, { name: 'test-5xx', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, maxRetries: 3, delayMs: 1000, operation: 'test-5xx' }),
+      expect.stringContaining('Retrying'),
+    );
+  });
+
+  it('retries on 502 Bad Gateway', async () => {
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new HttpError('Bad Gateway', 502))
+      .mockResolvedValueOnce('ok');
+
+    const result = await retryWithBackoff(fn, { name: 'test-502', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries on network TypeError (fetch failure)', async () => {
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+      .mockResolvedValueOnce('ok');
+
+    const result = await retryWithBackoff(fn, { name: 'test-network', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries on AbortError (timeout)', async () => {
+    const abortErr = new DOMException('The operation was aborted', 'AbortError');
+    const fn = vi.fn()
+      .mockRejectedValueOnce(abortErr)
+      .mockResolvedValueOnce('ok');
+
+    const result = await retryWithBackoff(fn, { name: 'test-abort', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries on ECONNREFUSED error', async () => {
+    const err = new Error('connect ECONNREFUSED 127.0.0.1:38332');
+    const fn = vi.fn()
+      .mockRejectedValueOnce(err)
+      .mockResolvedValueOnce('ok');
+
+    const result = await retryWithBackoff(fn, { name: 'test-econnrefused', delayFn: noopDelay });
+    expect(result).toBe('ok');
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on 4xx HttpError (400)', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new HttpError('Bad Request', 400));
+
+    await expect(retryWithBackoff(fn, { name: 'test-400', delayFn: noopDelay }))
+      .rejects.toThrow('Bad Request');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry on 404 HttpError', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new HttpError('Not Found', 404));
+
+    await expect(retryWithBackoff(fn, { name: 'test-404', delayFn: noopDelay }))
+      .rejects.toThrow('Not Found');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT retry on non-retryable Error', async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new Error('RPC listunspent error: Wallet not loaded (code -18)'));
+
+    await expect(retryWithBackoff(fn, { name: 'test-rpc-err', delayFn: noopDelay }))
+      .rejects.toThrow('Wallet not loaded');
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('exhausts max retries then throws original error', async () => {
+    const err = new HttpError('Service Unavailable', 503);
+    const fn = vi.fn().mockRejectedValue(err);
+
+    await expect(retryWithBackoff(fn, { name: 'test-exhaust', maxRetries: 3, delayFn: noopDelay }))
+      .rejects.toThrow('Service Unavailable');
+    expect(fn).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+  });
+
+  it('uses exponential backoff delays (1s, 2s, 4s)', async () => {
+    const delays: number[] = [];
+    const trackingDelay = (ms: number) => { delays.push(ms); return Promise.resolve(); };
+
+    const fn = vi.fn().mockRejectedValue(new HttpError('Down', 500));
+
+    await expect(retryWithBackoff(fn, { name: 'test-delays', maxRetries: 3, baseDelayMs: 1000, delayFn: trackingDelay }))
+      .rejects.toThrow('Down');
+
+    expect(delays).toEqual([1000, 2000, 4000]);
+  });
+
+  it('logs each retry attempt with structured fields', async () => {
+    vi.mocked(logger.warn).mockClear();
+
+    const fn = vi.fn()
+      .mockRejectedValueOnce(new HttpError('Error', 500))
+      .mockRejectedValueOnce(new HttpError('Error', 500))
+      .mockResolvedValueOnce('ok');
+
+    await retryWithBackoff(fn, { name: 'test-logging', delayFn: noopDelay });
+
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 1, operation: 'test-logging' }),
+      expect.any(String),
+    );
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ attempt: 2, operation: 'test-logging' }),
+      expect.any(String),
+    );
+  });
+
+  it('respects custom maxRetries', async () => {
+    const fn = vi.fn().mockRejectedValue(new HttpError('Down', 500));
+
+    await expect(retryWithBackoff(fn, { name: 'test-custom', maxRetries: 1, delayFn: noopDelay }))
+      .rejects.toThrow();
+    expect(fn).toHaveBeenCalledTimes(2); // 1 initial + 1 retry
+  });
+});
+
+// ─── RpcUtxoProvider retry integration ──────────────────────────────────
+
+describe('RpcUtxoProvider retry integration', () => {
+  const provider = new RpcUtxoProvider({ rpcUrl: 'http://localhost:38332' });
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('retries on transient 500 and succeeds on 2nd call', async () => {
+    // First call: 500
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    // Second call: success
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ result: { chain: 'signet', blocks: 100 }, error: null }),
+    });
+
+    const info = await provider.getBlockchainInfo();
+    expect(info).toEqual({ chain: 'signet', blocks: 100 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on RPC-level error (JSON error response)', async () => {
+    // RPC-level errors have ok:true but json.error set — these are application errors, not transient
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ result: null, error: { message: 'Wallet not loaded', code: -18 } }),
+    });
+
+    await expect(provider.getBlockchainInfo()).rejects.toThrow('Wallet not loaded');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ─── MempoolUtxoProvider retry integration ──────────────────────────────
+
+describe('MempoolUtxoProvider retry integration', () => {
+  const provider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/signet/api' });
+
+  beforeEach(() => {
+    mockFetch.mockReset();
+  });
+
+  it('retries on transient 503 and succeeds', async () => {
+    // First call: 503
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+    // Second call: success
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: () => Promise.resolve('150000'),
+    });
+
+    const info = await provider.getBlockchainInfo();
+    expect(info).toEqual({ chain: 'signet', blocks: 150000 });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does NOT retry on 400 bad request for broadcastTx', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve('bad-txns-inputs-missingorspent'),
+    });
+
+    await expect(provider.broadcastTx('bad')).rejects.toThrow('HTTP 400');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries on network failure for getRawTransaction', async () => {
+    // First call: network error
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+    // Second call: success
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({
+        txid: 'aaa',
+        status: { confirmed: true, block_height: 100, block_hash: 'bbb', block_time: 1710000000 },
+        vout: [],
+      }),
+    });
+
+    const tx = await provider.getRawTransaction('aaa');
+    expect(tx.txid).toBe('aaa');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

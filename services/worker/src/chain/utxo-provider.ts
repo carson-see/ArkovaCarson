@@ -15,6 +15,140 @@
 
 import { logger } from '../utils/logger.js';
 
+// ─── HttpError ──────────────────────────────────────────────────────────
+
+/**
+ * Error subclass that carries an HTTP status code.
+ * Used to distinguish retryable (5xx) from non-retryable (4xx) failures.
+ */
+export class HttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+// ─── Retry with Exponential Backoff ─────────────────────────────────────
+
+interface RetryOptions {
+  /** Max number of retries after the initial attempt */
+  maxRetries?: number;
+  /** Base delay in ms (doubles each retry: 1s, 2s, 4s) */
+  baseDelayMs?: number;
+  /** Operation name for structured logging */
+  name: string;
+  /** Injectable delay function for testability */
+  delayFn?: (ms: number) => Promise<void>;
+}
+
+const defaultDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Determine if an error is transient and should be retried.
+ *
+ * Retryable:
+ *   - HttpError with 5xx status
+ *   - TypeError (network fetch failure)
+ *   - AbortError / DOMException (timeout)
+ *   - Errors with ECONNREFUSED, ECONNRESET, ETIMEDOUT in message
+ *
+ * NOT retryable:
+ *   - HttpError with 4xx status (bad request, not found, etc.)
+ *   - RPC-level application errors (JSON error response)
+ *   - Any other unknown error
+ */
+function isRetryableError(error: unknown): boolean {
+  if (error instanceof HttpError) {
+    return error.status >= 500;
+  }
+
+  if (error instanceof TypeError) {
+    return true; // Network fetch failures
+  }
+
+  if (
+    typeof DOMException !== 'undefined' &&
+    error instanceof DOMException &&
+    error.name === 'AbortError'
+  ) {
+    return true;
+  }
+
+  if (error instanceof Error) {
+    const msg = error.message;
+    if (
+      msg.includes('ECONNREFUSED') ||
+      msg.includes('ECONNRESET') ||
+      msg.includes('ETIMEDOUT')
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Execute an async function with retry and exponential backoff.
+ *
+ * Only retries on transient errors (5xx, network failures).
+ * Non-retryable errors (4xx, application errors) throw immediately.
+ *
+ * @param fn - Async function to execute
+ * @param opts - Retry options (maxRetries, baseDelayMs, name, delayFn)
+ * @returns Result of fn()
+ */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  opts: RetryOptions,
+): Promise<T> {
+  const maxRetries = opts.maxRetries ?? 3;
+  const baseDelayMs = opts.baseDelayMs ?? 1000;
+  const delay = opts.delayFn ?? defaultDelay;
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+
+      // Don't retry non-retryable errors
+      if (!isRetryableError(error)) {
+        throw error;
+      }
+
+      // Don't retry if we've exhausted attempts
+      if (attempt >= maxRetries) {
+        break;
+      }
+
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+
+      logger.warn(
+        {
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs,
+          operation: opts.name,
+          error: errorMessage,
+        },
+        `Retrying ${opts.name} after transient error`,
+      );
+
+      await delay(delayMs);
+    }
+  }
+
+  throw lastError;
+}
+
 // ─── Shared Types ───────────────────────────────────────────────────────
 
 export interface Utxo {
@@ -108,7 +242,7 @@ async function rpcCall(
   const response = await fetch(rpcUrl, { method: 'POST', headers, body });
 
   if (!response.ok) {
-    throw new Error(`RPC ${method} failed: HTTP ${response.status}`);
+    throw new HttpError(`RPC ${method} failed: HTTP ${response.status}`, response.status);
   }
 
   const json = (await response.json()) as {
@@ -135,82 +269,107 @@ export class RpcUtxoProvider implements UtxoProvider {
   constructor(private readonly config: RpcProviderConfig) {}
 
   async listUnspent(address: string): Promise<Utxo[]> {
-    // listunspent minconf=1, maxconf=9999999, addresses=[address]
-    const rpcUtxos = (await rpcCall(
-      this.config.rpcUrl,
-      'listunspent',
-      [1, 9999999, [address]],
-      this.config.rpcAuth,
-    )) as Array<{
-      txid: string;
-      vout: number;
-      amount: number;
-      scriptPubKey: string;
-    }>;
+    return retryWithBackoff(
+      async () => {
+        // listunspent minconf=1, maxconf=9999999, addresses=[address]
+        const rpcUtxos = (await rpcCall(
+          this.config.rpcUrl,
+          'listunspent',
+          [1, 9999999, [address]],
+          this.config.rpcAuth,
+        )) as Array<{
+          txid: string;
+          vout: number;
+          amount: number;
+          scriptPubKey: string;
+        }>;
 
-    if (!rpcUtxos || rpcUtxos.length === 0) {
-      return [];
-    }
+        if (!rpcUtxos || rpcUtxos.length === 0) {
+          return [];
+        }
 
-    // Fetch raw tx hex for each UTXO (needed for nonWitnessUtxo in PSBT)
-    const utxos: Utxo[] = [];
-    for (const u of rpcUtxos) {
-      const rawTxHex = (await rpcCall(
-        this.config.rpcUrl,
-        'getrawtransaction',
-        [u.txid, false],
-        this.config.rpcAuth,
-      )) as string;
+        // Fetch raw tx hex for each UTXO (needed for nonWitnessUtxo in PSBT)
+        const utxos: Utxo[] = [];
+        for (const u of rpcUtxos) {
+          const rawTxHex = (await rpcCall(
+            this.config.rpcUrl,
+            'getrawtransaction',
+            [u.txid, false],
+            this.config.rpcAuth,
+          )) as string;
 
-      utxos.push({
-        txid: u.txid,
-        vout: u.vout,
-        valueSats: Math.round(u.amount * 1e8),
-        rawTxHex,
-      });
-    }
+          utxos.push({
+            txid: u.txid,
+            vout: u.vout,
+            valueSats: Math.round(u.amount * 1e8),
+            rawTxHex,
+          });
+        }
 
-    return utxos;
+        return utxos;
+      },
+      { name: 'RpcUtxoProvider.listUnspent' },
+    );
   }
 
   async broadcastTx(txHex: string): Promise<BroadcastResult> {
-    const txid = (await rpcCall(
-      this.config.rpcUrl,
-      'sendrawtransaction',
-      [txHex],
-      this.config.rpcAuth,
-    )) as string;
+    return retryWithBackoff(
+      async () => {
+        const txid = (await rpcCall(
+          this.config.rpcUrl,
+          'sendrawtransaction',
+          [txHex],
+          this.config.rpcAuth,
+        )) as string;
 
-    return { txid };
+        return { txid };
+      },
+      { name: 'RpcUtxoProvider.broadcastTx' },
+    );
   }
 
   async getBlockchainInfo(): Promise<BlockchainInfo> {
-    const info = (await rpcCall(
-      this.config.rpcUrl,
-      'getblockchaininfo',
-      [],
-      this.config.rpcAuth,
-    )) as { chain: string; blocks: number };
+    return retryWithBackoff(
+      async () => {
+        const info = (await rpcCall(
+          this.config.rpcUrl,
+          'getblockchaininfo',
+          [],
+          this.config.rpcAuth,
+        )) as { chain: string; blocks: number };
 
-    return { chain: info.chain, blocks: info.blocks };
+        return { chain: info.chain, blocks: info.blocks };
+      },
+      { name: 'RpcUtxoProvider.getBlockchainInfo' },
+    );
   }
 
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    return (await rpcCall(
-      this.config.rpcUrl,
-      'getrawtransaction',
-      [txid, true],
-      this.config.rpcAuth,
-    )) as RawTransaction;
+    return retryWithBackoff(
+      async () => {
+        return (await rpcCall(
+          this.config.rpcUrl,
+          'getrawtransaction',
+          [txid, true],
+          this.config.rpcAuth,
+        )) as RawTransaction;
+      },
+      { name: 'RpcUtxoProvider.getRawTransaction' },
+    );
   }
 
   async getBlockHeader(blockhash: string): Promise<BlockHeader> {
-    return (await rpcCall(
-      this.config.rpcUrl,
-      'getblockheader',
-      [blockhash],
-      this.config.rpcAuth,
-    )) as BlockHeader;
+    return retryWithBackoff(
+      async () => {
+        return (await rpcCall(
+          this.config.rpcUrl,
+          'getblockheader',
+          [blockhash],
+          this.config.rpcAuth,
+        )) as BlockHeader;
+      },
+      { name: 'RpcUtxoProvider.getBlockHeader' },
+    );
   }
 }
 
@@ -244,143 +403,173 @@ export class MempoolUtxoProvider implements UtxoProvider {
   }
 
   async listUnspent(address: string): Promise<Utxo[]> {
-    // GET /api/address/:address/utxo
-    const url = `${this.baseUrl}/address/${address}/utxo`;
-    const response = await fetch(url);
+    return retryWithBackoff(
+      async () => {
+        // GET /api/address/:address/utxo
+        const url = `${this.baseUrl}/address/${address}/utxo`;
+        const response = await fetch(url);
 
-    if (!response.ok) {
-      throw new Error(
-        `Mempool API GET ${url} failed: HTTP ${response.status}`,
-      );
-    }
+        if (!response.ok) {
+          throw new HttpError(
+            `Mempool API GET ${url} failed: HTTP ${response.status}`,
+            response.status,
+          );
+        }
 
-    const mempoolUtxos = (await response.json()) as Array<{
-      txid: string;
-      vout: number;
-      value: number; // satoshis
-      status: { confirmed: boolean; block_height?: number };
-    }>;
+        const mempoolUtxos = (await response.json()) as Array<{
+          txid: string;
+          vout: number;
+          value: number; // satoshis
+          status: { confirmed: boolean; block_height?: number };
+        }>;
 
-    // Filter to confirmed UTXOs only (1+ confirmations)
-    const confirmed = mempoolUtxos.filter((u) => u.status.confirmed);
+        // Filter to confirmed UTXOs only (1+ confirmations)
+        const confirmed = mempoolUtxos.filter((u) => u.status.confirmed);
 
-    if (confirmed.length === 0) {
-      return [];
-    }
+        if (confirmed.length === 0) {
+          return [];
+        }
 
-    // Fetch raw tx hex for each UTXO
-    const utxos: Utxo[] = [];
-    for (const u of confirmed) {
-      const rawTxHex = await this.fetchRawTxHex(u.txid);
-      utxos.push({
-        txid: u.txid,
-        vout: u.vout,
-        valueSats: u.value,
-        rawTxHex,
-      });
-    }
+        // Fetch raw tx hex for each UTXO
+        const utxos: Utxo[] = [];
+        for (const u of confirmed) {
+          const rawTxHex = await this.fetchRawTxHex(u.txid);
+          utxos.push({
+            txid: u.txid,
+            vout: u.vout,
+            valueSats: u.value,
+            rawTxHex,
+          });
+        }
 
-    return utxos;
+        return utxos;
+      },
+      { name: 'MempoolUtxoProvider.listUnspent' },
+    );
   }
 
   async broadcastTx(txHex: string): Promise<BroadcastResult> {
-    // POST /api/tx  (body is raw tx hex as plain text)
-    const url = `${this.baseUrl}/tx`;
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: txHex,
-    });
+    return retryWithBackoff(
+      async () => {
+        // POST /api/tx  (body is raw tx hex as plain text)
+        const url = `${this.baseUrl}/tx`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: txHex,
+        });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(
-        `Mempool API broadcast failed: HTTP ${response.status} — ${errorText}`,
-      );
-    }
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new HttpError(
+            `Mempool API broadcast failed: HTTP ${response.status} — ${errorText}`,
+            response.status,
+          );
+        }
 
-    // Response body is the txid as plain text
-    const txid = (await response.text()).trim();
-    return { txid };
+        // Response body is the txid as plain text
+        const txid = (await response.text()).trim();
+        return { txid };
+      },
+      { name: 'MempoolUtxoProvider.broadcastTx' },
+    );
   }
 
   async getBlockchainInfo(): Promise<BlockchainInfo> {
-    // GET /api/blocks/tip/height  → current block height (number)
-    const heightUrl = `${this.baseUrl}/blocks/tip/height`;
-    const heightResp = await fetch(heightUrl);
+    return retryWithBackoff(
+      async () => {
+        // GET /api/blocks/tip/height  → current block height (number)
+        const heightUrl = `${this.baseUrl}/blocks/tip/height`;
+        const heightResp = await fetch(heightUrl);
 
-    if (!heightResp.ok) {
-      throw new Error(
-        `Mempool API GET ${heightUrl} failed: HTTP ${heightResp.status}`,
-      );
-    }
+        if (!heightResp.ok) {
+          throw new HttpError(
+            `Mempool API GET ${heightUrl} failed: HTTP ${heightResp.status}`,
+            heightResp.status,
+          );
+        }
 
-    const blocks = Number.parseInt(await heightResp.text(), 10);
+        const blocks = Number.parseInt(await heightResp.text(), 10);
 
-    // Mempool.space Signet API doesn't expose a "chain" field directly,
-    // but we know from the base URL. We infer from the URL path.
-    const isSignet = this.baseUrl.includes('/signet');
-    const isTestnet = this.baseUrl.includes('/testnet');
+        // Mempool.space Signet API doesn't expose a "chain" field directly,
+        // but we know from the base URL. We infer from the URL path.
+        const isSignet = this.baseUrl.includes('/signet');
+        const isTestnet = this.baseUrl.includes('/testnet');
 
-    return {
-      chain: isSignet ? 'signet' : isTestnet ? 'test' : 'main',
-      blocks,
-    };
+        return {
+          chain: isSignet ? 'signet' : isTestnet ? 'test' : 'main',
+          blocks,
+        };
+      },
+      { name: 'MempoolUtxoProvider.getBlockchainInfo' },
+    );
   }
 
   async getRawTransaction(txid: string): Promise<RawTransaction> {
-    // GET /api/tx/:txid  → transaction details (JSON)
-    const url = `${this.baseUrl}/tx/${txid}`;
-    const response = await fetch(url);
+    return retryWithBackoff(
+      async () => {
+        // GET /api/tx/:txid  → transaction details (JSON)
+        const url = `${this.baseUrl}/tx/${txid}`;
+        const response = await fetch(url);
 
-    if (!response.ok) {
-      throw new Error(
-        `Mempool API GET ${url} failed: HTTP ${response.status}`,
-      );
-    }
+        if (!response.ok) {
+          throw new HttpError(
+            `Mempool API GET ${url} failed: HTTP ${response.status}`,
+            response.status,
+          );
+        }
 
-    const mempoolTx = (await response.json()) as {
-      txid: string;
-      status: {
-        confirmed: boolean;
-        block_height?: number;
-        block_hash?: string;
-        block_time?: number;
-      };
-      vout: Array<{
-        scriptpubkey: string;
-        scriptpubkey_asm: string;
-        value: number;
-      }>;
-    };
+        const mempoolTx = (await response.json()) as {
+          txid: string;
+          status: {
+            confirmed: boolean;
+            block_height?: number;
+            block_hash?: string;
+            block_time?: number;
+          };
+          vout: Array<{
+            scriptpubkey: string;
+            scriptpubkey_asm: string;
+            value: number;
+          }>;
+        };
 
-    return {
-      txid: mempoolTx.txid,
-      confirmations: mempoolTx.status.confirmed ? 1 : 0, // Mempool doesn't give exact count
-      blocktime: mempoolTx.status.block_time,
-      blockhash: mempoolTx.status.block_hash,
-      vout: mempoolTx.vout.map((v) => ({
-        scriptPubKey: {
-          hex: v.scriptpubkey,
-          asm: v.scriptpubkey_asm,
-        },
-      })),
-    };
+        return {
+          txid: mempoolTx.txid,
+          confirmations: mempoolTx.status.confirmed ? 1 : 0, // Mempool doesn't give exact count
+          blocktime: mempoolTx.status.block_time,
+          blockhash: mempoolTx.status.block_hash,
+          vout: mempoolTx.vout.map((v) => ({
+            scriptPubKey: {
+              hex: v.scriptpubkey,
+              asm: v.scriptpubkey_asm,
+            },
+          })),
+        };
+      },
+      { name: 'MempoolUtxoProvider.getRawTransaction' },
+    );
   }
 
   async getBlockHeader(blockhash: string): Promise<BlockHeader> {
-    // GET /api/block/:hash  → block details (includes height)
-    const url = `${this.baseUrl}/block/${blockhash}`;
-    const response = await fetch(url);
+    return retryWithBackoff(
+      async () => {
+        // GET /api/block/:hash  → block details (includes height)
+        const url = `${this.baseUrl}/block/${blockhash}`;
+        const response = await fetch(url);
 
-    if (!response.ok) {
-      throw new Error(
-        `Mempool API GET ${url} failed: HTTP ${response.status}`,
-      );
-    }
+        if (!response.ok) {
+          throw new HttpError(
+            `Mempool API GET ${url} failed: HTTP ${response.status}`,
+            response.status,
+          );
+        }
 
-    const block = (await response.json()) as { height: number };
-    return { height: block.height };
+        const block = (await response.json()) as { height: number };
+        return { height: block.height };
+      },
+      { name: 'MempoolUtxoProvider.getBlockHeader' },
+    );
   }
 
   /**
@@ -392,8 +581,9 @@ export class MempoolUtxoProvider implements UtxoProvider {
     const response = await fetch(url);
 
     if (!response.ok) {
-      throw new Error(
+      throw new HttpError(
         `Mempool API GET ${url} failed: HTTP ${response.status}`,
+        response.status,
       );
     }
 
