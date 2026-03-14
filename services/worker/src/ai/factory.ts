@@ -56,6 +56,7 @@ export function createAIProvider(): IAIProvider {
     case 'gemini-direct':
       // Gemini providers (GeminiADKProvider / GeminiProvider) not yet implemented.
       // Fall through to mock with a warning for now.
+      // Not using structured logger here — factory may be imported before config is loaded in tests
       console.warn(`[AI Factory] Gemini provider "${providerName}" not yet implemented — using mock`);
       return new MockAIProvider();
 
