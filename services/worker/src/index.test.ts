@@ -714,6 +714,74 @@ describe('worker server', () => {
   });
 
   // ================================================================
+  // POST /api/verify-anchor
+  // ================================================================
+
+  describe('POST /api/verify-anchor', () => {
+    beforeEach(() => {
+      mockDbFrom.mockClear();
+    });
+
+    it('returns 400 when fingerprint is missing', async () => {
+      const res = await request(app, 'POST', '/api/verify-anchor', {});
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'fingerprint is required (64-char hex SHA-256)' });
+    });
+
+    it('returns verification result for valid fingerprint', async () => {
+      const chain: any = {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        is: vi.fn().mockReturnThis(),
+        order: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockReturnThis(),
+        maybeSingle: vi.fn().mockResolvedValue({
+          data: {
+            fingerprint: 'a'.repeat(64),
+            status: 'SECURED',
+            chain_tx_id: 'tx_123',
+            chain_block_height: 100,
+            chain_timestamp: '2026-03-14T00:00:00Z',
+            public_id: 'pub-1',
+            created_at: '2026-03-14T00:00:00Z',
+            credential_type: 'diploma',
+          },
+          error: null,
+        }),
+      };
+      mockDbFrom.mockReturnValue(chain);
+
+      const res = await request(app, 'POST', '/api/verify-anchor', { fingerprint: 'a'.repeat(64) }, {
+        origin: 'http://localhost:5173',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.verified).toBe(true);
+    });
+
+    it('returns 500 when verification throws', async () => {
+      mockDbFrom.mockImplementation(() => { throw new Error('DB down'); });
+
+      const res = await request(app, 'POST', '/api/verify-anchor', { fingerprint: 'a'.repeat(64) });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Verification failed' });
+    });
+  });
+
+  describe('OPTIONS /api/verify-anchor (CORS preflight)', () => {
+    it('returns 204 with CORS headers', async () => {
+      const res = await request(app, 'OPTIONS', '/api/verify-anchor', undefined, {
+        origin: 'http://localhost:5173',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Origin']).toBe('http://localhost:5173');
+    });
+  });
+
+  // ================================================================
   // extractAuthUserId edge cases
   // ================================================================
 
