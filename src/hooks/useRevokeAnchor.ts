@@ -6,8 +6,10 @@
  */
 
 import { useCallback } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
+import { TOAST } from '@/lib/copy';
 
 interface UseRevokeAnchorReturn {
   revokeAnchor: (anchorId: string, reason?: string) => Promise<boolean>;
@@ -46,8 +48,11 @@ export function useRevokeAnchor(): UseRevokeAnchorReturn {
   const revokeAnchor = useCallback(
     async (anchorId: string, reason?: string): Promise<boolean> => {
       try {
-        return await execute(anchorId, reason);
+        const result = await execute(anchorId, reason);
+        toast.success(TOAST.ANCHOR_REVOKED);
+        return result;
       } catch {
+        toast.error(TOAST.ANCHOR_REVOKE_FAILED);
         return false;
       }
     },

@@ -5,8 +5,10 @@
  */
 
 import { useCallback } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
+import { TOAST } from '@/lib/copy';
 
 type InviteRole = 'INDIVIDUAL' | 'ORG_ADMIN';
 
@@ -51,8 +53,11 @@ export function useInviteMember(): UseInviteMemberReturn {
   const inviteMember = useCallback(
     async (email: string, role: InviteRole, orgId: string): Promise<boolean> => {
       try {
-        return await execute(email, role, orgId);
+        const result = await execute(email, role, orgId);
+        toast.success(TOAST.MEMBER_INVITED);
+        return result;
       } catch {
+        toast.error(TOAST.MEMBER_INVITE_FAILED);
         return false;
       }
     },

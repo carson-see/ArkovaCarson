@@ -8,8 +8,10 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
+import { TOAST } from '@/lib/copy';
 import type { Database, Json } from '@/types/database.types';
 
 type CredentialTemplate = Database['public']['Tables']['credential_templates']['Row'];
@@ -103,6 +105,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
 
       if (insertError) {
         setError(insertError.message);
+        toast.error(TOAST.TEMPLATE_CREATE_FAILED);
         return null;
       }
 
@@ -115,6 +118,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         details: `Created template "${params.name}" (${params.credential_type})`,
       });
 
+      toast.success(TOAST.TEMPLATE_CREATED);
       await fetchTemplates();
       return data;
     },
@@ -143,6 +147,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
 
       if (updateError) {
         setError(updateError.message);
+        toast.error(TOAST.TEMPLATE_UPDATE_FAILED);
         return false;
       }
 
@@ -155,6 +160,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         details: `Updated fields: ${Object.keys(params).join(', ')}`,
       });
 
+      toast.success(TOAST.TEMPLATE_UPDATED);
       await fetchTemplates();
       return true;
     },
@@ -178,6 +184,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
 
       if (deleteError) {
         setError(deleteError.message);
+        toast.error(TOAST.TEMPLATE_DELETE_FAILED);
         return false;
       }
 
@@ -189,6 +196,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         orgId,
       });
 
+      toast.success(TOAST.TEMPLATE_DELETED);
       await fetchTemplates();
       return true;
     },
