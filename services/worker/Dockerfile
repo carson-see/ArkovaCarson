@@ -1,15 +1,21 @@
 # ─────────────────────────────────────────────────
-# Arkova Worker — Zero Trust Multi-Process Build
+# Arkova Worker — Multi-Stage Build
 #
 # Multi-stage build producing a container that runs:
-#   1. Express worker (Node.js, localhost:3001)
-#   2. cloudflared daemon (Cloudflare Tunnel sidecar)
+#   1. Express worker (Node.js, port $PORT)
+#   2. cloudflared daemon (OPTIONAL — Cloudflare Tunnel sidecar)
 #
-# NO ports are exposed. All ingress flows through the
-# Cloudflare Tunnel. Direct IP/port access is impossible.
+# Two modes controlled by CLOUDFLARE_TUNNEL_TOKEN env var:
+#
+#   WITH token:  Zero Trust mode — no ports exposed, all
+#                ingress via Cloudflare Tunnel (INFRA-01).
+#
+#   WITHOUT token: Standalone mode — Express listens on
+#                  $PORT, Cloud Run HTTPS handles ingress.
+#                  Suitable for signet/dev deployments.
 #
 # ADR: docs/confluence/15_zero_trust_edge_architecture.md
-# Story: INFRA-01
+# Story: INFRA-01, MVP-01
 # ESM-only (type: module), Node 20 LTS.
 # ─────────────────────────────────────────────────
 
@@ -31,7 +37,8 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
-# Install cloudflared — pinned version for reproducibility
+# Install curl (needed for health check) + cloudflared (optional tunnel sidecar).
+# cloudflared is always installed so the same image supports both modes.
 # https://github.com/cloudflare/cloudflared/releases
 ARG CLOUDFLARED_VERSION=2024.12.2
 RUN apk add --no-cache curl && \
@@ -50,25 +57,22 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Compiled output from builder
 COPY --from=builder /app/dist ./dist
 
-# Entrypoint script (manages both processes)
+# Entrypoint script (manages Express + optional tunnel)
 COPY entrypoint.sh ./entrypoint.sh
 RUN chmod +x ./entrypoint.sh
 
 # Switch to non-root user
 USER arkova
 
-# Express listens on localhost only — NOT exposed externally.
-# All traffic enters through the Cloudflare Tunnel.
+# Cloud Run injects PORT (typically 8080). Default to 3001 for local dev.
 ENV PORT=3001
 
-# ── NO EXPOSE — Zero Trust architecture ──────────
-# The container has no public ports. cloudflared creates
-# an outbound-only tunnel to Cloudflare's edge network.
-# Direct IP:port access to this container is impossible.
+# Expose port for Cloud Run standalone mode.
+# In Zero Trust mode (with tunnel), Cloud Run ignores this — all traffic
+# flows through the outbound-only cloudflared tunnel instead.
+EXPOSE ${PORT}
 
-# Internal health check — runs inside the container only.
-# Cloud Run / Docker health probes use this; external
-# clients cannot reach it.
+# Internal health check — Cloud Run also probes /health via HTTP.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD curl -sf http://localhost:${PORT}/health > /dev/null || exit 1
 
