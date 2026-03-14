@@ -37,8 +37,7 @@ ARG CLOUDFLARED_VERSION=2024.12.2
 RUN apk add --no-cache curl && \
     curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64" \
       -o /usr/local/bin/cloudflared && \
-    chmod +x /usr/local/bin/cloudflared && \
-    apk del curl
+    chmod +x /usr/local/bin/cloudflared
 
 # Non-root user for security
 RUN addgroup --system --gid 1001 arkova && \
@@ -71,6 +70,6 @@ ENV PORT=3001
 # Cloud Run / Docker health probes use this; external
 # clients cannot reach it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+  CMD curl -sf http://localhost:${PORT}/health > /dev/null || exit 1
 
 ENTRYPOINT ["./entrypoint.sh"]

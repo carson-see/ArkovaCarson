@@ -47,11 +47,13 @@ echo ""
 
 # ── Step 2: Configure DNS routes ─────────────────
 echo "[2/5] Creating DNS CNAME for ${HOSTNAME_PROD}..."
-cloudflared tunnel route dns "${TUNNEL_NAME}" "${HOSTNAME_PROD}" 2>&1 || true
+cloudflared tunnel route dns "${TUNNEL_NAME}" "${HOSTNAME_PROD}" 2>&1 || \
+  echo "  WARNING: DNS route for ${HOSTNAME_PROD} may have failed. Check Cloudflare dashboard."
 echo ""
 
 echo "  Creating DNS CNAME for ${HOSTNAME_STAGING}..."
-cloudflared tunnel route dns "${TUNNEL_NAME}" "${HOSTNAME_STAGING}" 2>&1 || true
+cloudflared tunnel route dns "${TUNNEL_NAME}" "${HOSTNAME_STAGING}" 2>&1 || \
+  echo "  WARNING: DNS route for ${HOSTNAME_STAGING} may have failed. Check Cloudflare dashboard."
 echo ""
 
 # ── Step 3: Generate tunnel token ────────────────

@@ -25,7 +25,8 @@ SERVICE_NAME="arkova-worker"
 REPOSITORY="arkova-worker-images"
 SA_NAME="github-actions-deploy"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
-GITHUB_REPO="ArkovaCarson/arkova-mvpcopy"  # <-- Update if different
+REGISTRY="${REGION}-docker.pkg.dev"
+GITHUB_REPO="${GITHUB_REPO:-carson-see/ArkovaCarson}"  # Override via env if needed
 
 echo "═══════════════════════════════════════════════"
 echo "  Arkova Worker — GCP Infrastructure Setup"
@@ -147,17 +148,21 @@ else
   echo "  ✓ Workload Identity Provider created"
 fi
 
+# Look up project number dynamically (never hardcode)
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')
+echo "  Project number: ${PROJECT_NUMBER}"
+
 # Allow GitHub Actions to impersonate the service account
 gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
   --project="${PROJECT_ID}" \
   --role="roles/iam.workloadIdentityUser" \
-  --member="principalSet://iam.googleapis.com/projects/270018525501/locations/global/workloadIdentityPools/${WIF_POOL}/attribute.repository/${GITHUB_REPO}" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/attribute.repository/${GITHUB_REPO}" \
   --quiet > /dev/null 2>&1
 
 echo "  ✓ Workload Identity Federation configured"
 
 # ── Done ─────────────────────────────────────────
-WIF_PROVIDER_FULL="projects/270018525501/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
+WIF_PROVIDER_FULL="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
 
 echo ""
 echo "═══════════════════════════════════════════════"

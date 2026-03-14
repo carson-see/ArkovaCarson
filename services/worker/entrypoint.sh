@@ -43,7 +43,7 @@ NODE_PID=$!
 echo "[entrypoint] Waiting for Express health check..."
 RETRIES=0
 MAX_RETRIES=30
-until wget --no-verbose --tries=1 --spider "http://localhost:${PORT}/health" 2>/dev/null; do
+until curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; do
   RETRIES=$((RETRIES + 1))
   if [ "$RETRIES" -ge "$MAX_RETRIES" ]; then
     echo "FATAL: Express worker failed to start after ${MAX_RETRIES}s"
