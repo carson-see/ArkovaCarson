@@ -33,7 +33,8 @@ For a new developer joining the project, read in this order:
 | DH | Deferred Hardening | 12 | 0 | 0 | 12 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
 | MVP | Launch Gaps | 27 | 0 | 0 | 27 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
-| **Total** | | **116** | **41** | **3** | **72** | |
+| INFRA | Infrastructure & Edge | 8 | 0 | 0 | 8 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
+| **Total** | | **124** | **41** | **3** | **80** | |
 
 ### All Stories by ID
 
@@ -155,6 +156,14 @@ For a new developer joining the project, read in this order:
 | P8-S17 | AI Usage Analytics Dashboard | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S18 | AI Model Performance Monitoring | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S19 | AI Cost Optimization + Caching | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| INFRA-01 | Cloudflare Tunnel Sidecar Setup | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-02 | Wrangler + Edge Worker Scaffolding | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-03 | R2 Report Storage Bucket | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-05 | Cloudflare Workers AI Fallback Provider | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-06 | Replicate QA Data Generator | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-07 | Sentry Observability Integration | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-08 | pgvector Extension + Institution Ground Truth | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
 
 ## Bug Cross-Reference
 
@@ -216,6 +225,7 @@ Each story doc follows a consistent template:
 | 2026-03-11 ~11:30 PM EST | P7-TS-11 created and marked COMPLETE. Signet wallet utilities (wallet.ts, 13 tests) + CLI scripts (generate-keypair, check-balance). P7 now 7/11. Overall: 38 complete. |
 | 2026-03-11 ~11:45 PM EST | P7-TS-12 created and marked COMPLETE. UTXO provider pattern (utxo-provider.ts) with RPC + Mempool.space backends. 35 tests. P7-TS-13 (fingerprint indexing) created as NOT STARTED. P7 now 8/13. Overall: 39 complete, 3 partial, 16 not started. |
 | 2026-03-12 ~3:30 AM EST | CRIT-2 code complete. P7-TS-13 promoted NOT STARTED → COMPLETE (SupabaseChainIndexLookup + migration 0050). BitcoinChainClient with provider abstractions (SigningProvider, FeeEstimator, UtxoProvider). Async factory (initChainClient/getInitializedChainClient). 408 worker tests, 727 total. P7 now 9/13 complete, 2 partial, 2 not started. Overall: 40 complete, 3 partial, 15 not started (~74%). |
+| 2026-03-12 ~2:00 PM EST | ADR-002 approved. 8 INFRA stories added (INFRA-01 through INFRA-08). Constitution Amendment 1.1B applied to CLAUDE.md. Total stories: 124 (was 116). Overall: 41/124 complete, 3 partial, 80 not started (~33%). |
 | 2026-03-12 ~5:00 AM EST | Added Deferred Hardening group (DH-01 through DH-12). 12 stories from CodeRabbit PR #26 review, all NOT STARTED. Added 10_deferred_hardening.md. Updated completion summary to 70 total stories. |
 | 2026-03-12 ~6:30 AM EST | MVP Launch Gap Audit: Added 14 MVP stories (MVP-01 through MVP-14), 3 new bugs (BUG-AUDIT-01/02/03). DH-03 promoted NOT STARTED → COMPLETE. Total: 84 stories (41 complete, 3 partial, 40 not started). |
 | 2026-03-12 ~11:30 AM EST | Added P8 AI Intelligence group (19 stories, P8-S1 through P8-S19). Removed MVP-19 (superseded by P8-S4/S5) and MVP-22 (superseded by P8-S7/S8/S9). Renamed MVP-23 → Batch Anchor Processing, MVP-24 → Credits Schema + Monthly Allocations. MVP count 29→27. Total: 116 stories (41 complete, 3 partial, 72 not started). |

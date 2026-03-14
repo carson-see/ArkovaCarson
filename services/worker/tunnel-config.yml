@@ -1,0 +1,77 @@
+# ─────────────────────────────────────────────────
+# Cloudflare Tunnel Configuration — Arkova Worker
+#
+# This file defines ingress rules for the cloudflared
+# tunnel sidecar. It maps public hostnames to the
+# internal Express worker running on localhost:3001.
+#
+# NOTE: When using `cloudflared tunnel run --token`,
+# ingress rules are configured in the Cloudflare
+# Dashboard (Zero Trust > Tunnels > Public Hostname).
+# This file serves as the REFERENCE SPEC and is used
+# for local development with `cloudflared tunnel run`
+# (non-token mode).
+#
+# ADR: docs/confluence/15_zero_trust_edge_architecture.md
+# Story: INFRA-01
+# ─────────────────────────────────────────────────
+
+# Tunnel name is set at creation time via CLI:
+#   cloudflared tunnel create arkova-worker
+#
+# Credentials file is auto-generated at:
+#   ~/.cloudflared/<TUNNEL_ID>.json
+
+tunnel: arkova-worker
+
+ingress:
+  # ── Stripe webhooks ────────────────────────────
+  # POST /webhooks/stripe — signature verified by
+  # stripe.webhooks.constructEvent() (Constitution 1.4)
+  - hostname: worker.arkova.io
+    path: /webhooks/stripe
+    service: http://localhost:3001
+
+  # ── Billing endpoints (browser-facing) ─────────
+  # POST /checkout, /billing-portal
+  # Protected by Cloudflare Access (see access-policies below)
+  - hostname: worker.arkova.io
+    path: /checkout
+    service: http://localhost:3001
+
+  - hostname: worker.arkova.io
+    path: /billing-portal
+    service: http://localhost:3001
+
+  # ── Health check ───────────────────────────────
+  # GET /health — public, no auth required
+  - hostname: worker.arkova.io
+    path: /health
+    service: http://localhost:3001
+
+  # ── Catch-all: reject everything else ──────────
+  # Unknown paths get a 404, not forwarded to Express
+  - service: http_status:404
+
+# ─────────────────────────────────────────────────
+# Cloudflare Access Policies (configure in Dashboard)
+#
+# These are NOT enforced by this file — they are set
+# in the Cloudflare Zero Trust Dashboard. Documented
+# here as the source of truth for what MUST be
+# configured.
+#
+# ┌─────────────────────────┬──────────────────────┐
+# │ Route                   │ Policy               │
+# ├─────────────────────────┼──────────────────────┤
+# │ /webhooks/stripe        │ Service Token (Stripe)│
+# │ /checkout               │ Bypass (browser CORS)│
+# │ /billing-portal         │ Bypass (browser CORS)│
+# │ /health                 │ Bypass (public)      │
+# │ /*  (everything else)   │ Deny                 │
+# └─────────────────────────┴──────────────────────┘
+#
+# Staging environment (staging-worker.arkova.io):
+#   ALL routes locked to @arkova.io email domain
+#   via Cloudflare Access application policy.
+# ─────────────────────────────────────────────────

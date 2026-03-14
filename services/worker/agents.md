@@ -18,6 +18,7 @@ Express-based worker service handling privileged server-side operations: anchor 
 | 2026-03-11 | SONARQUBE | SonarQube remediation: S2068 credential fixes across test files, S6437 ReDoS regex replacements, S8215 Express disclosure fix, S2004 deeply nested mock flattening in load tests, security hotspot reviews (pseudorandom, CORS, CSRF, regex anchoring). All worker type errors resolved. |
 | 2026-03-11 | P7-TS-11 | Wallet utilities: `chain/wallet.ts` (generateSignetKeypair, addressFromWif, isValidSignetWif), CLI scripts, 13 tests. |
 | 2026-03-12 | P7-TS-12 | UTXO provider abstraction: `chain/utxo-provider.ts` (RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Broadcast tests added to signet.test.ts (3) and utxo-provider.test.ts (3). Integrated into SignetChainClient + getChainClient(). 363 total worker tests. |
+| 2026-03-12 | INFRA-01 | **Zero Trust Docker transformation.** Dockerfile converted to multi-process (Express + cloudflared sidecar). `entrypoint.sh` process manager created. `tunnel-config.yml` reference spec. `config.ts` extended with `cloudflareTunnelToken` + `sentryDsn`. `scripts/deploy-tunnel.sh` deployment script. NO ports exposed — all ingress via Cloudflare Tunnel. ADR-002: `docs/confluence/15_zero_trust_edge_architecture.md`. |
 
 ## Test Coverage Status (Final — HARDENING-5)
 
@@ -61,10 +62,30 @@ Express-based worker service handling privileged server-side operations: anchor 
 - `zod` — config validation
 - `node-cron` — job scheduling
 - `express` — HTTP server
+- `cloudflared` (binary, installed in Dockerfile) — Cloudflare Tunnel sidecar daemon
 - Supabase JS client (`@supabase/supabase-js`) — database operations
 
+## Zero Trust Architecture (INFRA-01)
+
+The worker container runs **two processes** managed by `entrypoint.sh`:
+
+1. **Express worker** (Node.js) — binds to `localhost:${PORT}` (default 3001), internal only
+2. **cloudflared daemon** — creates outbound-only tunnel to Cloudflare's edge network
+
+**Key files:**
+- `Dockerfile` — multi-stage build, installs `cloudflared` binary (pinned version), NO `EXPOSE` directive
+- `entrypoint.sh` — process supervisor: validates `CLOUDFLARE_TUNNEL_TOKEN`, starts Express, waits for health, starts tunnel, kills both on failure
+- `tunnel-config.yml` — reference ingress spec (token mode uses Dashboard config, this is for local dev)
+- `scripts/deploy-tunnel.sh` — one-time tunnel creation + DNS routing + Access policy checklist
+
+**Security invariants:**
+- Container has NO public ports — direct IP:port access is impossible
+- All traffic enters via Cloudflare Tunnel → Cloudflare WAF/DDoS → Access policies → worker
+- `CLOUDFLARE_TUNNEL_TOKEN` injected via secrets manager, never logged
+- Express health check runs inside container only (HEALTHCHECK directive)
+
 ## MVP Launch Gap Context
-- **MVP-01 (Worker Production Deployment):** CRITICAL — deploy this service to Railway/Fly.io/Render. Needs: Dockerfile or platform config, `.github/workflows/deploy-worker.yml`, env var secrets, health check. No code changes needed — deployment config only.
+- **MVP-01 (Worker Production Deployment):** CRITICAL — deploy this service to GCP Cloud Run. Dockerfile is production-ready (multi-process with cloudflared). Needs: `.github/workflows/deploy-worker.yml`, GCP project config, env var secrets in Secret Manager, Cloud Run service definition. Cloudflare Tunnel token must be provisioned via `scripts/deploy-tunnel.sh`.
 - **MVP-11 (Stripe Plan Change/Downgrade):** `stripe/handlers.ts` needs `customer.subscription.updated` and `customer.subscription.deleted` handlers. `useBilling` hook needs plan change mutations.
 
 ## Key Patterns

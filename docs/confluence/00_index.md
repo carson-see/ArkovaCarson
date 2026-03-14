@@ -41,6 +41,7 @@ This directory contains 15 architecture and design documents for the Arkova plat
 | 12 | `12_identity_access.md` | Identity verification, access control, role assignment |
 | 13 | `13_switchboard.md` | Feature flags (switchboard_flags), flag history, get_flag() function |
 | 14 | `14_kms_operations.md` | AWS KMS key provisioning, IAM policy, key rotation, disaster recovery for mainnet treasury signing |
+| 15 | `15_zero_trust_edge_architecture.md` | ADR-002: Zero Trust ingress (Cloudflare Tunnel), edge compute (Workers), AI fallback, Sentry observability, MCP (future) |
 
 ### Audit Documents
 

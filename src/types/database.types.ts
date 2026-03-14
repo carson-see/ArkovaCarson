@@ -7,30 +7,10 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.1"
   }
   public: {
     Tables: {
@@ -511,6 +491,42 @@ export type Database = {
           },
         ]
       }
+      institution_ground_truth: {
+        Row: {
+          confidence_score: number | null
+          created_at: string
+          domain: string | null
+          embedding: string | null
+          id: string
+          institution_name: string
+          metadata: Json
+          source: string
+          updated_at: string
+        }
+        Insert: {
+          confidence_score?: number | null
+          created_at?: string
+          domain?: string | null
+          embedding?: string | null
+          id?: string
+          institution_name: string
+          metadata?: Json
+          source?: string
+          updated_at?: string
+        }
+        Update: {
+          confidence_score?: number | null
+          created_at?: string
+          domain?: string | null
+          embedding?: string | null
+          id?: string
+          institution_name?: string
+          metadata?: Json
+          source?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       invitations: {
         Row: {
           accepted_at: string | null
@@ -916,84 +932,55 @@ export type Database = {
         Row: {
           changed_at: string
           changed_by: string | null
-          flag_id: string
+          flag_key: string
           id: string
           new_value: boolean
           old_value: boolean | null
-          reason: string | null
         }
         Insert: {
           changed_at?: string
           changed_by?: string | null
-          flag_id: string
+          flag_key: string
           id?: string
           new_value: boolean
           old_value?: boolean | null
-          reason?: string | null
         }
         Update: {
           changed_at?: string
           changed_by?: string | null
-          flag_id?: string
+          flag_key?: string
           id?: string
           new_value?: boolean
           old_value?: boolean | null
-          reason?: string | null
         }
-        Relationships: [
-          {
-            foreignKeyName: "switchboard_flag_history_changed_by_fkey"
-            columns: ["changed_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "switchboard_flag_history_flag_id_fkey"
-            columns: ["flag_id"]
-            isOneToOne: false
-            referencedRelation: "switchboard_flags"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       switchboard_flags: {
         Row: {
-          default_value: boolean
+          created_at: string
           description: string | null
+          enabled: boolean
+          flag_key: string
           id: string
-          is_dangerous: boolean
           updated_at: string
-          updated_by: string | null
-          value: boolean
         }
         Insert: {
-          default_value: boolean
+          created_at?: string
           description?: string | null
-          id: string
-          is_dangerous?: boolean
+          enabled?: boolean
+          flag_key: string
+          id?: string
           updated_at?: string
-          updated_by?: string | null
-          value: boolean
         }
         Update: {
-          default_value?: boolean
+          created_at?: string
           description?: string | null
+          enabled?: boolean
+          flag_key?: string
           id?: string
-          is_dangerous?: boolean
           updated_at?: string
-          updated_by?: string | null
-          value?: boolean
         }
-        Relationships: [
-          {
-            foreignKeyName: "switchboard_flags_updated_by_fkey"
-            columns: ["updated_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
+        Relationships: []
       }
       verification_events: {
         Row: {
@@ -1192,7 +1179,10 @@ export type Database = {
         Returns: undefined
       }
       generate_public_id: { Args: never; Returns: string }
-      get_flag: { Args: { p_flag_id: string }; Returns: boolean }
+      get_flag: {
+        Args: { p_default?: boolean; p_flag_key: string }
+        Returns: boolean
+      }
       get_public_anchor: { Args: { p_public_id: string }; Returns: Json }
       get_user_org_id: { Args: never; Returns: string }
       invite_member: {
@@ -1218,6 +1208,8 @@ export type Database = {
       revoke_anchor:
         | { Args: { anchor_id: string }; Returns: undefined }
         | { Args: { anchor_id: string; reason?: string }; Returns: undefined }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
       update_profile_onboarding: {
         Args: {
           p_org_display_name?: string
@@ -1370,9 +1362,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       anchor_status: ["PENDING", "SECURED", "REVOKED", "EXPIRED"],
@@ -1396,4 +1385,3 @@ export const Constants = {
     },
   },
 } as const
-

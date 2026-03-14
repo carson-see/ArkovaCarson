@@ -1,0 +1,38 @@
+# Arkova Edge Workers — Cloudflare Worker Configuration
+# ADR: docs/confluence/15_zero_trust_edge_architecture.md
+# Stories: INFRA-02 through INFRA-05
+#
+# These workers handle PERIPHERAL edge tasks only.
+# Core anchor processing, Stripe webhooks, and cron stay in services/worker/.
+
+name = "arkova-edge"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+# ── R2 Storage (INFRA-03) ──────────────────────────────────────────────
+# [[r2_buckets]]
+# binding = "ARKOVA_REPORTS"
+# bucket_name = "arkova-reports"
+
+# ── Queues (INFRA-04) ─────────────────────────────────────────────────
+# [[queues.producers]]
+# queue = "arkova-batch-queue"
+# binding = "ARKOVA_BATCH_QUEUE"
+
+# [[queues.consumers]]
+# queue = "arkova-batch-queue"
+# max_batch_size = 10
+# max_batch_timeout = 30
+
+# ── Workers AI (INFRA-05) ─────────────────────────────────────────────
+# [ai]
+# binding = "ARKOVA_AI"
+
+# ── Environment Variables ─────────────────────────────────────────────
+# [vars]
+# ENABLE_AI_FALLBACK = "false"
+# CF_AI_MODEL = "@cf/nvidia/nemotron"
+
+# ── Secrets (set via `wrangler secret put`) ───────────────────────────
+# SUPABASE_URL
+# SUPABASE_SERVICE_ROLE_KEY

@@ -1,0 +1,35 @@
+# Arkova — Root Wrangler Configuration
+# Defines shared Cloudflare resource bindings used by edge workers.
+#
+# ADR: docs/confluence/15_zero_trust_edge_architecture.md
+# Stories: INFRA-02 (scaffolding), INFRA-03 (R2), INFRA-04 (Queues), INFRA-05 (AI)
+#
+# IMPORTANT: This is the root config for resource bindings.
+# Edge worker entry point config is in services/edge/wrangler.toml.
+# The Express worker in services/worker/ is NOT a Cloudflare Worker.
+
+name = "arkova"
+compatibility_date = "2024-12-01"
+
+# ── R2 Storage Bucket (INFRA-03) ──────────────────────────────────────
+# Used for storing generated PDF reports.
+# Create with: wrangler r2 bucket create arkova-reports
+#
+# [[r2_buckets]]
+# binding = "ARKOVA_REPORTS"
+# bucket_name = "arkova-reports"
+
+# ── Queues (INFRA-04) ─────────────────────────────────────────────────
+# Batch anchor queue for decoupling submissions from processing.
+# Create with: wrangler queues create arkova-batch-queue
+#
+# [[queues.producers]]
+# queue = "arkova-batch-queue"
+# binding = "ARKOVA_BATCH_QUEUE"
+
+# ── Workers AI (INFRA-05) ─────────────────────────────────────────────
+# AI fallback provider (Workers AI / Nemotron).
+# Activates only when Gemini is unavailable.
+#
+# [ai]
+# binding = "ARKOVA_AI"

@@ -1,11 +1,11 @@
 # Data Model
-_Last updated: 2026-03-10 | Migrations: 0001–0045 (0033 skipped)_
+_Last updated: 2026-03-12 | Migrations: 0001–0051 (0033 skipped)_
 
 ## Overview
 
 Arkova uses PostgreSQL via Supabase with a schema-first approach. All tables have Row Level Security (RLS) enabled via `FORCE ROW LEVEL SECURITY`. Data integrity is enforced through constraints, triggers, and Zod validators on all write paths.
 
-**Total tables:** 20 across 48 migrations.
+**Total tables:** 21 across 50 migrations.
 
 ## Enums
 
@@ -431,6 +431,38 @@ Analytics: tracks public verification lookups (no PII).
 
 ---
 
+## AI / Vector Tables
+
+### institution_ground_truth (migration 0051)
+
+Institution verification ground truth data with vector embeddings for semantic similarity search. Used by P8 anomaly detection (INFRA-08).
+
+**Extensions required:** `vector` (pgvector), `pg_trgm` (trigram fuzzy search) — both enabled in migration 0051.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | Primary key |
+| `institution_name` | text | NO | — | Institution display name |
+| `domain` | text | YES | NULL | Institution domain (e.g., mit.edu) |
+| `metadata` | jsonb | NO | '{}' | Structured metadata (accreditation, location, etc.) |
+| `embedding` | vector(768) | YES | NULL | 768-dimensional vector embedding for similarity search |
+| `source` | text | NO | 'manual' | Data source: cloudflare_crawl, manual, api |
+| `confidence_score` | numeric(3,2) | YES | NULL | Reliability score 0.00–1.00 |
+| `created_at` | timestamptz | NO | now() | Creation timestamp |
+| `updated_at` | timestamptz | NO | now() | Auto-updated via trigger |
+
+**Indexes:**
+- `idx_institution_ground_truth_embedding` — IVFFlat (vector_cosine_ops, lists=100). Switch to HNSW when dataset exceeds ~100K rows.
+- `idx_institution_ground_truth_name_trgm` — GIN trigram index for fuzzy name search
+- `idx_institution_ground_truth_domain` — B-tree partial index (WHERE domain IS NOT NULL)
+- `idx_institution_ground_truth_source` — B-tree index on source column
+
+**RLS:** service_role has full access. Authenticated users have read-only access.
+
+**Trigger:** `trg_institution_ground_truth_updated_at` — auto-sets `updated_at` on UPDATE.
+
+---
+
 ## Entity Relationships
 
 ```
@@ -462,6 +494,8 @@ auth.users
             └──< audit_events (actor_id)
 
 switchboard_flags ──< switchboard_flag_history (flag_id)
+
+institution_ground_truth (standalone — no FK relationships)
 ```
 
 ## Zod Validators
@@ -496,3 +530,4 @@ Creates `src/types/database.types.ts` — the authoritative UI contract. Regener
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit | Complete rewrite: added 16 missing tables, added missing anchor columns (public_id, credential_type, metadata, parent_anchor_id, version_number, revocation_reason), added is_public_profile to profiles, documented all enums, updated ER diagram |
+| 2026-03-12 | INFRA-08 | Added institution_ground_truth table (migration 0051). Enabled pgvector + pg_trgm extensions. 21 tables total. |

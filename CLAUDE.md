@@ -38,11 +38,20 @@ These rules apply to every task. If a story conflicts with any rule below, **the
 | Payments | Stripe (SDK + webhooks) | Worker-only, never browser |
 | Chain | bitcoinjs-lib + AWS KMS (target) | SignetChainClient implemented; MockChainClient for tests. AWS KMS for mainnet TBD. |
 | Testing | Vitest + Playwright + RLS test helpers | `npm test`, `npm run test:coverage`, `npm run test:rls`, `npm run test:e2e` |
+| Ingress | Cloudflare Tunnel (`cloudflared`) | Zero Trust ingress to worker container. No public ports. |
+| Edge Compute | Cloudflare Workers + `wrangler` (dev dep) | Peripheral tasks only (Queues, R2, AI fallback). NOT for core worker logic. |
+| Observability | Sentry (`@sentry/react`, `@sentry/node`, `@sentry/profiling-node`) | Error tracking + performance. PII scrubbing mandatory. |
+| AI (extended) | `@cloudflare/ai` (fallback), `replicate` (QA only), `@modelcontextprotocol/sdk` (future) | See scoping rules below. Primary AI remains Vertex AI ADK (P8). |
 
 **Hard constraints:**
 - Never use Next.js API routes for long-running jobs
 - New AI libraries require explicit architecture review before introduction
 - No server-side document processing — ever (see 1.6)
+- Cloudflare Workers handle ONLY peripheral edge tasks (queues, reports, AI fallback). Core anchor processing, Stripe webhooks, and cron jobs stay in `services/worker/` Express container.
+- `@cloudflare/ai` is fallback-only — never the primary extraction provider. Gated by `ENABLE_AI_FALLBACK` flag (default: `false`).
+- `replicate` is QA/synthetic-data-only — hard-blocked in production (`NODE_ENV=production` + `ENABLE_SYNTHETIC_DATA!=true`).
+- `@modelcontextprotocol/sdk` is installed for future use. No MCP server code until P4.5 Verification API is complete.
+- Sentry must have PII scrubbing enabled. No user emails, document fingerprints, or API keys in Sentry events (Constitution 1.4 + 1.6).
 
 ### 1.2 Schema-First (Non-Negotiable)
 
@@ -309,8 +318,16 @@ services/worker/
     stripe/mock.ts                           ← Mock Stripe for tests
     webhooks/delivery.ts                     ← Outbound webhook delivery engine
     utils/                                   ← DB client, logger, rate limiter, correlation ID
+services/edge/                               ← NEW — Cloudflare Worker scripts (ADR-002)
+  wrangler.toml                              ← Edge worker config (bindings, routes)
+  tsconfig.json                              ← Edge-specific TypeScript config
+  src/
+    report-generator.ts                      ← PDF report generation worker (R2 storage)
+    batch-queue.ts                           ← Queue consumer for batch anchors
+    ai-fallback.ts                           ← CloudflareAIProvider (Workers AI)
+wrangler.toml                                ← Root config (R2 bucket, queue, AI bindings)
 supabase/
-  migrations/                                ← 49 files (0001–0050, 0033 skipped)
+  migrations/                                ← 50 files (0001–0051, 0033 skipped)
   seed.sql                                   ← Demo data
   config.toml                                ← Local Supabase config
 docs/confluence/                             ← Architecture, data model, security, audit, etc.
@@ -472,7 +489,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 49 files, versions 0001–0050 (0033 skipped). Last: `0050_create_anchor_chain_index.sql`.
+**Current migration inventory:** 50 files, versions 0001–0051 (0033 skipped). Last: `0051_enable_pgvector_and_institution_ground_truth.sql`.
 
 ---
 
@@ -494,7 +511,8 @@ npx supabase db reset
 | DH Deferred Hardening | 1/12 | 0/12 | 11/12 | 8% |
 | MVP Launch Gaps | 0/27 | 0/27 | 27/27 | 0% |
 | P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
-| **Total** | **41/116** | **3/116** | **72/116** | **~38%** |
+| INFRA Edge & Ingress | 0/8 | 0/8 | 8/8 | 0% |
+| **Total** | **41/124** | **3/124** | **80/124** | **~35%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -846,9 +864,26 @@ ENABLE_PROD_NETWORK_ANCHORING=false # gates real Bitcoin chain calls (Constituti
 ENABLE_VERIFICATION_API=false
 API_KEY_HMAC_SECRET=
 CORS_ALLOWED_ORIGINS=*
+
+# Cloudflare (edge workers — never in browser)
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=              # wrangler deploy token
+
+# Sentry
+VITE_SENTRY_DSN=                   # frontend (browser)
+SENTRY_DSN=                        # worker (server)
+SENTRY_SAMPLE_RATE=0.1             # performance sampling (default 10%)
+
+# AI Fallback (edge worker only)
+ENABLE_AI_FALLBACK=false
+CF_AI_MODEL=@cf/nvidia/nemotron    # or equivalent Workers AI model
+
+# Replicate (QA only — hard-blocked in production)
+REPLICATE_API_TOKEN=               # only in test/QA environments
+ENABLE_SYNTHETIC_DATA=false
 ```
 
 ---
 
-_Directive version: 2026-03-12 (MVP launch gap audit) | Repo: ArkovaCarson | 49 migrations | 700+ tests | 84 stories_
+_Directive version: 2026-03-12 (Zero Trust + Edge amendment) | Repo: ArkovaCarson | 50 migrations | 700+ tests | 124 stories_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

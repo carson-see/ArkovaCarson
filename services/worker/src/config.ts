@@ -58,6 +58,12 @@ const ConfigSchema = z.object({
   // Frontend
   frontendUrl: z.string().url().default('http://localhost:5173'),
 
+  // Cloudflare Tunnel (INFRA-01, ADR-002)
+  /** Tunnel token — injected by secrets manager, never logged */
+  cloudflareTunnelToken: z.string().optional(),
+  /** Sentry DSN for error tracking (INFRA-01) */
+  sentryDsn: z.string().url().optional(),
+
   // Feature flags
   useMocks: z.coerce.boolean().default(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
@@ -90,6 +96,8 @@ function loadConfig(): Config {
     chainApiKey: process.env.CHAIN_API_KEY,
     chainNetwork: process.env.CHAIN_NETWORK,
     frontendUrl: process.env.FRONTEND_URL,
+    cloudflareTunnelToken: process.env.CLOUDFLARE_TUNNEL_TOKEN,
+    sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
   });
