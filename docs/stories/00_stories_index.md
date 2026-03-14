@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-13_
+_Last updated: 2026-03-14_
 
 ## Overview
 
@@ -30,11 +30,11 @@ For a new developer joining the project, read in this order:
 | P6 | Verification | 6 | 5 | 1 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
 | P7 | Go-Live | 13 | 9 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| DH | Deferred Hardening | 12 | 0 | 0 | 12 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 0 | 0 | 27 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| DH | Deferred Hardening | 12 | 1 | 0 | 11 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
+| MVP | Launch Gaps | 27 | 3 | 1 | 23 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
-| INFRA | Infrastructure & Edge | 8 | 0 | 0 | 8 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
-| **Total** | | **124** | **41** | **3** | **80** | |
+| INFRA | Infrastructure & Edge | 8 | 0 | 5 | 3 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
+| **Total** | | **124** | **45** | **9** | **70** | |
 
 ### All Stories by ID
 
@@ -109,10 +109,10 @@ For a new developer joining the project, read in this order:
 | DH-11 | Worker RPC Logging Structured Format | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-12 | Webhook Delivery Dead Letter Queue | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | MVP-01 | Worker Production Deployment | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-02 | Toast/Notification System | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-01 |
-| MVP-03 | Legal Pages (Privacy, Terms, Contact) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-02 |
-| MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-03 |
-| MVP-05 | Error Boundary + 404 Page | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-02 | Toast/Notification System | PARTIAL | [MVP](./11_mvp_launch_gaps.md) | BUG-AUDIT-01 |
+| MVP-03 | Legal Pages (Privacy, Terms, Contact) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-02~~ FIXED |
+| MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-03~~ FIXED |
+| MVP-05 | Error Boundary + 404 Page | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-06 | File-Based Public Verification | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-07 | Mobile Responsive Layout | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-08 | Onboarding Progress Stepper | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
@@ -157,13 +157,13 @@ For a new developer joining the project, read in this order:
 | P8-S18 | AI Model Performance Monitoring | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S19 | AI Cost Optimization + Caching | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | INFRA-01 | Cloudflare Tunnel Sidecar Setup | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-02 | Wrangler + Edge Worker Scaffolding | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-03 | R2 Report Storage Bucket | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-05 | Cloudflare Workers AI Fallback Provider | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-02 | Wrangler + Edge Worker Scaffolding | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-03 | R2 Report Storage Bucket | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-05 | Cloudflare Workers AI Fallback Provider | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-06 | Replicate QA Data Generator | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-07 | Sentry Observability Integration | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-08 | pgvector Extension + Institution Ground Truth | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-07 | Sentry Observability Integration | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-08 | pgvector Extension + Institution Ground Truth | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
 
 ## Bug Cross-Reference
 
@@ -173,8 +173,9 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 
 | Bug ID | Severity | Affects Stories | Summary |
 |--------|----------|-----------------|---------|
-| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client CODE COMPLETE — BitcoinChainClient + provider abstractions + SupabaseChainIndexLookup + async factory + migration 0050. 408 worker tests. Remaining: operational (Signet E2E broadcast, AWS KMS provisioning, mainnet funding) |
-| CRIT-3 | HIGH | P7-TS-02 | Stripe checkout PARTIAL — checkout/portal endpoints wired (b1f798a), entitlements + downgrade remaining |
+| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client CODE COMPLETE — operational items only (AWS KMS provisioning, mainnet funding). Signet E2E broadcast verified (TX b8e381df). |
+| CRIT-3 | HIGH | P7-TS-02 | Stripe checkout PARTIAL — checkout/portal/webhooks done. Remaining: plan change/downgrade flows (→ MVP-11). |
+| BUG-AUDIT-01 | HIGH | MVP-02 | Toast system PARTIAL — Sonner wired, toasts in useProfile + useOrganization + useBulkAnchors. Missing: useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
 
 ### Resolved Bugs
 
@@ -190,6 +191,8 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 | BUG-H1-03 | HIGH | REMOVED 2026-03-10 | Batch loop bug in same dead code file |
 | BUG-PRH1-01 | LOW | FIXED 2026-03-10 | validators.ts functions coverage below 80% threshold |
 | BUG-PRH1-02 | MEDIUM | FIXED 2026-03-10 | proofPackage.ts had 0% test coverage against 80% threshold |
+| BUG-AUDIT-02 | HIGH | FIXED 2026-03-14 | Dead footer links — PrivacyPage, TermsPage, ContactPage created + routed |
+| BUG-AUDIT-03 | HIGH | FIXED 2026-03-14 (PR #30) | No favicon, logo, or OG meta tags — ArkovaLogo, favicon.svg, og-image.svg added |
 
 ## Related Documentation
 
@@ -230,3 +233,4 @@ Each story doc follows a consistent template:
 | 2026-03-12 ~6:30 AM EST | MVP Launch Gap Audit: Added 14 MVP stories (MVP-01 through MVP-14), 3 new bugs (BUG-AUDIT-01/02/03). DH-03 promoted NOT STARTED → COMPLETE. Total: 84 stories (41 complete, 3 partial, 40 not started). |
 | 2026-03-12 ~11:30 AM EST | Added P8 AI Intelligence group (19 stories, P8-S1 through P8-S19). Removed MVP-19 (superseded by P8-S4/S5) and MVP-22 (superseded by P8-S7/S8/S9). Renamed MVP-23 → Batch Anchor Processing, MVP-24 → Credits Schema + Monthly Allocations. MVP count 29→27. Total: 116 stories (41 complete, 3 partial, 72 not started). |
 | 2026-03-13 | Production database deployment: all 51 migrations applied to production Supabase, Stripe Price IDs set, seed data loaded, `database.types.ts` regenerated, Vercel env vars configured and redeployed. No story status changes — infrastructure milestone. |
+| 2026-03-14 | Full doc sync audit. MVP-03 → COMPLETE (legal pages exist + routed). MVP-04 → COMPLETE (PR #30). MVP-05 → COMPLETE (ErrorBoundary + NotFoundPage exist + routed + Sentry wired). MVP-02 → PARTIAL (Sonner + toasts in 3 hooks, missing 4 hooks). INFRA-02/03/04/05 → PARTIAL (scaffolding + real logic exists). INFRA-07 → PARTIAL (Sentry fully integrated, source maps not yet uploaded). INFRA-08 → PARTIAL (migration 0051 exists). DH totals fixed (1 complete, was showing 0). BUG-AUDIT-02/03 moved to Resolved. Overall: 45 complete, 9 partial, 70 not started. |

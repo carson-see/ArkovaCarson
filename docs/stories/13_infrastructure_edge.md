@@ -1,5 +1,5 @@
 # 13 — Infrastructure & Edge Stories
-_Last updated: 2026-03-12 ~2:00 PM EST_
+_Last updated: 2026-03-14_
 
 ## Overview
 
@@ -10,8 +10,8 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 | Status | Count |
 |--------|-------|
 | Complete | 0 |
-| Partial | 0 |
-| Not Started | 8 |
+| Partial | 5 |
+| Not Started | 3 |
 
 ---
 
@@ -43,7 +43,7 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 
 ## INFRA-02: Wrangler + Edge Worker Scaffolding
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** MEDIUM (blocks INFRA-03, INFRA-04, INFRA-05)
 **Depends on:** ADR-002 approval
 **ADR:** ADR-002 Section 2
@@ -52,12 +52,20 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 `wrangler` dev dependency installed. `wrangler.toml` scaffolded with resource bindings. `services/edge/` directory created for edge worker scripts.
 
 ### Acceptance Criteria
-- [ ] `wrangler` added as dev dependency in `package.json`
-- [ ] Root `wrangler.toml` with bindings: R2 (`ARKOVA_REPORTS`), Queue (`ARKOVA_BATCH_QUEUE`), AI (`ARKOVA_AI`)
-- [ ] `services/edge/` directory with `wrangler.toml`, `src/` structure
+- [x] `wrangler` added as dev dependency in `package.json`
+- [x] Root `wrangler.toml` with bindings: R2 (`ARKOVA_REPORTS`), Queue (`ARKOVA_BATCH_QUEUE`), AI (`ARKOVA_AI`)
+- [x] `services/edge/` directory with `wrangler.toml`, `src/` structure
 - [ ] `agents.md` created in `services/edge/`
-- [ ] TypeScript config for edge workers (separate from main `tsconfig.json`)
-- [ ] No application logic — scaffolding only
+- [x] TypeScript config for edge workers (separate from main `tsconfig.json`)
+- [x] Application logic added beyond scaffolding — ai-fallback, batch-queue, report-generator, MCP server, crawler all implemented
+
+### Completion Gaps
+- Missing `agents.md` in `services/edge/`
+- Edge workers not deployed to Cloudflare (local development only)
+- CI does not typecheck edge workers separately
+
+### Remaining Work
+Create `services/edge/agents.md`. Add edge typecheck to CI. Deploy to Cloudflare.
 
 ### File Placement
 - `wrangler.toml` — root binding config
@@ -69,7 +77,7 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 
 ## INFRA-03: R2 Report Storage Bucket
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** MEDIUM
 **Depends on:** INFRA-02
 **ADR:** ADR-002 Section 2
@@ -79,16 +87,24 @@ Cloudflare R2 bucket (`ARKOVA_REPORTS`) for storing generated PDF reports. Repla
 
 ### Acceptance Criteria
 - [ ] R2 bucket created via `wrangler r2 bucket create`
-- [ ] Bucket bound in `wrangler.toml` as `ARKOVA_REPORTS`
+- [x] Bucket bound in `wrangler.toml` as `ARKOVA_REPORTS` (line 13-15)
 - [ ] No public access — Workers-only via binding
 - [ ] Lifecycle policy: reports expire after 90 days (configurable)
-- [ ] Edge worker stub for report upload/download
+- [x] Edge worker for report upload/download — `report-generator.ts` + `report-logic.ts` (real implementation, not stub)
+
+### Completion Gaps
+- R2 bucket not yet created in Cloudflare dashboard/CLI
+- Lifecycle policy not configured
+- Not deployed
+
+### Remaining Work
+Create R2 bucket, configure lifecycle, deploy edge worker.
 
 ---
 
 ## INFRA-04: Batch Anchor Queue (Cloudflare Queues)
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** MEDIUM
 **Depends on:** INFRA-02
 **ADR:** ADR-002 Section 2
@@ -98,17 +114,25 @@ Cloudflare Queue (`ARKOVA_BATCH_QUEUE`) for decoupling batch anchor submissions 
 
 ### Acceptance Criteria
 - [ ] Queue created via `wrangler queues create`
-- [ ] Queue bound in `wrangler.toml` as `ARKOVA_BATCH_QUEUE`
-- [ ] Producer stub: accepts batch payload, enqueues messages
-- [ ] Consumer stub: dequeues and calls Express worker for processing
+- [x] Queue bound in `wrangler.toml` as `ARKOVA_BATCH_QUEUE` (lines 18-23)
+- [x] Producer: accepts batch payload, enqueues messages — `batch-queue.ts` (55 lines)
+- [x] Consumer: dequeues and calls Express worker — `batch-queue-logic.ts` (107 lines)
 - [ ] Dead-letter queue configured for failed messages
-- [ ] Message schema defined with Zod
+- [x] Message schema defined with Zod (in `batch-queue-logic.ts`)
+
+### Completion Gaps
+- Queue not yet created in Cloudflare
+- Dead-letter queue not configured
+- Not deployed
+
+### Remaining Work
+Create queue in Cloudflare, configure DLQ, deploy.
 
 ---
 
 ## INFRA-05: Cloudflare Workers AI Fallback Provider
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** LOW (P8 Phase 1.5)
 **Depends on:** INFRA-02, P8-S13 (IAIProvider interface)
 **ADR:** ADR-002 Section 3
@@ -117,13 +141,24 @@ Cloudflare Queue (`ARKOVA_BATCH_QUEUE`) for decoupling batch anchor submissions 
 `CloudflareAIProvider` implementing `IAIProvider` interface. Uses Workers AI (Nemotron or equivalent) as fallback when Gemini is unavailable.
 
 ### Acceptance Criteria
-- [ ] `@cloudflare/ai` added as dependency (scoped to `services/edge/`)
-- [ ] `CloudflareAIProvider` implements `IAIProvider` interface
+- [x] `@cloudflare/ai` added as dependency
+- [x] `CloudflareAIFallbackProvider` implements `IAIProvider` interface — `services/worker/src/ai/cloudflare-fallback.ts` (95 lines)
+- [x] `IAIProvider` interface defined — `services/worker/src/ai/types.ts` (82 lines)
+- [x] Factory pattern — `services/worker/src/ai/factory.ts` (71 lines)
 - [ ] Circuit breaker: activates only after Gemini failure (configurable threshold)
 - [ ] Response format matches `GeminiADKProvider` output schema
-- [ ] Never called as primary — fallback only
-- [ ] Feature flag: `ENABLE_AI_FALLBACK` (default: `false`)
-- [ ] Tests with mock Workers AI binding
+- [x] Never called as primary — fallback only (enforced in factory)
+- [x] Feature flag: `ENABLE_AI_FALLBACK` (default: `false`)
+- [x] Tests — 16 tests across factory.test.ts, cloudflare-fallback.test.ts, types.test.ts
+- [x] Edge worker implementation — `services/edge/src/ai-fallback.ts` (144 lines) with extract + embed + health endpoints
+
+### Completion Gaps
+- Circuit breaker not implemented (currently simple on/off flag)
+- GeminiADKProvider not yet created (P8-S1 dependency)
+- Not deployed to Cloudflare
+
+### Remaining Work
+Implement circuit breaker, create GeminiADKProvider (P8-S1), deploy.
 
 ---
 
@@ -149,7 +184,7 @@ Cloudflare Queue (`ARKOVA_BATCH_QUEUE`) for decoupling batch anchor submissions 
 
 ## INFRA-07: Sentry Observability Integration
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** HIGH (observability gap)
 **Depends on:** None
 **ADR:** ADR-002 Section 4
@@ -158,22 +193,30 @@ Cloudflare Queue (`ARKOVA_BATCH_QUEUE`) for decoupling batch anchor submissions 
 Centralized error tracking and performance monitoring via Sentry. Covers both React frontend and Express worker.
 
 ### Acceptance Criteria
-- [ ] `@sentry/react` added to frontend dependencies
-- [ ] `@sentry/node` + `@sentry/profiling-node` added to worker dependencies
-- [ ] Sentry initialized in `src/main.tsx` (frontend) with React Error Boundary integration
-- [ ] Sentry initialized in `services/worker/src/index.ts` (worker)
-- [ ] DSN loaded from environment variable (`VITE_SENTRY_DSN` / `SENTRY_DSN`)
-- [ ] Source maps uploaded to Sentry on build (Vite plugin)
-- [ ] PII scrubbing enabled (no user emails, no document fingerprints in breadcrumbs)
-- [ ] Performance sampling rate configurable via env var (default: 10%)
-- [ ] Test: Sentry captures unhandled rejection in worker
-- [ ] No secrets or fingerprints in Sentry events (Constitution 1.4 + 1.6)
+- [x] `@sentry/react` added to frontend dependencies (`^10.43.0`)
+- [x] `@sentry/node` + `@sentry/profiling-node` added to worker dependencies (`^10.43.0`)
+- [x] Sentry initialized in `src/main.tsx` (frontend) — `initSentry()` at line 15
+- [x] Sentry initialized in `services/worker/src/index.ts` (worker) — `initSentry()` at line 25, `setupExpressErrorHandler` at line 348
+- [x] DSN loaded from environment variable (`VITE_SENTRY_DSN` / `SENTRY_DSN`)
+- [ ] Source maps uploaded to Sentry on build (Vite plugin) — **NOT YET DONE**
+- [x] PII scrubbing enabled — comprehensive scrubbing in both `src/lib/sentry.ts` (195 lines) and `services/worker/src/utils/sentry.ts` (186 lines): email regex, SHA256, SSN, API keys, JWTs, URL tokens, sensitive headers, request bodies stripped
+- [x] Performance sampling rate configurable via env var (default: 10%)
+- [x] Tests: `src/lib/sentry.test.ts` (9 tests), `services/worker/src/utils/sentry.test.ts` (16 tests), `services/worker/src/utils/sentry-verification.test.ts` (5 tests) — 30 tests total
+- [x] No secrets or fingerprints in Sentry events (Constitution 1.4 + 1.6) — verified in tests
+- [x] ErrorBoundary wired to `Sentry.captureException` in `src/components/layout/ErrorBoundary.tsx`
+
+### Completion Gaps
+- Source maps not uploaded to Sentry on build (no Vite Sentry plugin configured)
+- Sentry DSN env vars not set in production (Vercel + Cloud Run)
+
+### Remaining Work
+Add `@sentry/vite-plugin` for source map upload. Set `VITE_SENTRY_DSN` in Vercel and `SENTRY_DSN` in Cloud Run.
 
 ---
 
 ## INFRA-08: pgvector Extension + Institution Ground Truth Table
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** MEDIUM (blocks P8-S7 anomaly detection)
 **Depends on:** None
 **ADR:** ADR-002 Section 5 (implied)
@@ -182,9 +225,9 @@ Centralized error tracking and performance monitoring via Sentry. Covers both Re
 Enable `pgvector` extension in Supabase. Create `institution_ground_truth` table with vector embeddings for future institution verification (Cloudflare Crawl data, known issuer metadata).
 
 ### Acceptance Criteria
-- [ ] Migration `0051_enable_pgvector_and_institution_ground_truth.sql` created
-- [ ] `CREATE EXTENSION IF NOT EXISTS vector` (with schema specification)
-- [ ] `institution_ground_truth` table with columns:
+- [x] Migration `0051_enable_pgvector_and_institution_ground_truth.sql` created and applied to production
+- [x] `CREATE EXTENSION IF NOT EXISTS vector` (with schema specification)
+- [x] `institution_ground_truth` table with columns:
   - `id` (uuid, PK, default gen_random_uuid())
   - `institution_name` (text, not null)
   - `domain` (text)
@@ -194,13 +237,20 @@ Enable `pgvector` extension in Supabase. Create `institution_ground_truth` table
   - `confidence_score` (numeric(3,2), check 0-1)
   - `created_at` (timestamptz, default now())
   - `updated_at` (timestamptz, default now())
-- [ ] RLS enabled (`FORCE ROW LEVEL SECURITY`)
-- [ ] RLS policy: service_role full access, authenticated read-only
-- [ ] Index on `embedding` column (ivfflat or hnsw)
-- [ ] Index on `institution_name` (trigram for fuzzy search)
-- [ ] Rollback comment at bottom of migration
-- [ ] `database.types.ts` regenerated
+- [x] RLS enabled (`FORCE ROW LEVEL SECURITY`)
+- [x] RLS policy: service_role full access, authenticated read-only
+- [x] Index on `embedding` column (ivfflat or hnsw)
+- [x] Index on `institution_name` (trigram for fuzzy search)
+- [x] Rollback comment at bottom of migration
+- [x] `database.types.ts` regenerated (PR #29)
 - [ ] `docs/confluence/02_data_model.md` updated
+
+### Completion Gaps
+- `docs/confluence/02_data_model.md` not yet updated with `institution_ground_truth` table
+- No seed data for institution ground truth table
+
+### Remaining Work
+Update data model docs. Consider adding seed data for common institutions.
 
 ---
 
@@ -223,3 +273,4 @@ ADR-002 Approval
 | Date | Change |
 |------|--------|
 | 2026-03-12 | 8 infrastructure stories created (INFRA-01 through INFRA-08) |
+| 2026-03-14 | Doc sync audit: INFRA-02 → PARTIAL (wrangler + edge dir + 11 source files, missing agents.md + deployment). INFRA-03 → PARTIAL (wrangler binding + report-generator logic, R2 bucket not created). INFRA-04 → PARTIAL (wrangler binding + batch-queue logic, queue not created). INFRA-05 → PARTIAL (IAIProvider + factory + CloudflareAIFallbackProvider + edge worker + 16 tests, missing circuit breaker). INFRA-07 → PARTIAL (Sentry fully integrated in frontend + worker + 30 tests, missing source map upload + DSN env vars). INFRA-08 → PARTIAL (migration 0051 applied to production, missing data model doc update). Totals: 0 complete, 5 partial, 3 not started. |

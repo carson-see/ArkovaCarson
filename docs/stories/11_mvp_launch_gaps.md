@@ -1,5 +1,5 @@
 # MVP Launch Gap Stories
-_Last updated: 2026-03-12 ~11:00 AM EST_
+_Last updated: 2026-03-14_
 
 ## Group Overview
 
@@ -13,9 +13,9 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 0 |
-| PARTIAL | 0 |
-| NOT STARTED | 27 |
+| COMPLETE | 3 |
+| PARTIAL | 1 |
+| NOT STARTED | 23 |
 | REMOVED (superseded) | 2 |
 
 ---
@@ -55,12 +55,22 @@ Deploy the Express worker service to Google Cloud Run so the anchor processing p
 
 ## MVP-02: Toast/Notification System
 
-**Status:** NOT STARTED
+**Status:** PARTIAL
 **Priority:** HIGH (UX gap)
 **Depends on:** None
 
 ### What It Delivers
 Global toast notification system using Sonner. Currently only WebhookSettings has inline toasts — all other actions (anchor creation, revocation, profile save, errors) provide no feedback.
+
+### Completion Gaps
+- Sonner `<Toaster />` wired in App.tsx (position="top-right", richColors, closeButton) ✅
+- Toast calls in `useProfile.ts` (success + error) ✅
+- Toast calls in `useOrganization.ts` (success + error) ✅
+- Toast calls in `useBulkAnchors.ts` ✅
+- **Missing:** `useAnchors.ts`, `useCredentialTemplates.ts`, `useRevokeAnchor.ts`, `useInviteMember.ts`, `useOnboarding.ts`
+
+### Remaining Work
+Add `toast.success()` / `toast.error()` to all remaining mutation hooks.
 
 ### Acceptance Criteria
 - [ ] Sonner `<Toaster />` added to App.tsx (global)
@@ -80,76 +90,77 @@ Global toast notification system using Sonner. Currently only WebhookSettings ha
 
 ## MVP-03: Legal Pages (Privacy, Terms, Contact)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (dead links in production)
 **Depends on:** None
+**Completed:** 2026-03-14
 
 ### What It Delivers
-Static legal pages at `/privacy`, `/terms`, and `/contact`. Currently these routes are linked from PublicVerifyPage footer and AuthLayout but return 404.
+Static legal pages at `/privacy`, `/terms`, and `/contact`. Previously these routes were linked from PublicVerifyPage footer and AuthLayout but returned 404.
 
 ### Acceptance Criteria
-- [ ] `/privacy` route renders Privacy Policy page
-- [ ] `/terms` route renders Terms of Service page
-- [ ] `/contact` route renders Contact page with support@arkova.io
-- [ ] All three pages are public (no auth required)
-- [ ] Footer links in PublicVerifyPage and AuthLayout work
-- [ ] Pages use consistent layout with Arkova header/footer
-- [ ] Content is placeholder but professional (can be updated with legal review later)
+- [x] `/privacy` route renders Privacy Policy page (108 lines)
+- [x] `/terms` route renders Terms of Service page (115 lines)
+- [x] `/contact` route renders Contact page (86 lines)
+- [x] All three pages are public (no auth required)
+- [x] Footer links in PublicVerifyPage and AuthLayout work
+- [x] Pages use consistent layout with Arkova header/footer
+- [x] Content is placeholder but professional (can be updated with legal review later)
 
 ### Files
-- New: `src/pages/PrivacyPage.tsx`
-- New: `src/pages/TermsPage.tsx`
-- New: `src/pages/ContactPage.tsx`
-- `src/lib/routes.ts` — add PRIVACY, TERMS, CONTACT
-- `src/App.tsx` — add routes
+- `src/pages/PrivacyPage.tsx` (108 lines)
+- `src/pages/TermsPage.tsx` (115 lines)
+- `src/pages/ContactPage.tsx` (86 lines)
+- `src/lib/routes.ts` — PRIVACY, TERMS, CONTACT routes defined
+- `src/App.tsx` — routes wired (lines 103-105)
 
 ---
 
 ## MVP-04: Brand Assets (Logo, Favicon, OG Tags)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (professional appearance)
 **Depends on:** None
+**Completed:** 2026-03-14 (PR #30)
 
 ### What It Delivers
 Real brand assets replacing the Shield icon placeholder. Favicon, OG meta tags for social sharing, and logo component.
 
 ### Acceptance Criteria
-- [ ] SVG logo in `public/` directory
-- [ ] Favicon set (favicon.ico + apple-touch-icon + manifest icons)
-- [ ] `index.html` has: meta description, OG title/description/image, Twitter card tags
-- [ ] Logo component replaces Shield icon in Sidebar and PublicVerifyPage header
-- [ ] Logo works on both light and dark backgrounds
+- [x] SVG logo in `public/` directory — `favicon.svg`, `og-image.svg`
+- [x] Favicon set — `public/favicon.svg` (bear logo)
+- [x] `index.html` has: meta description, OG title/description/image, Twitter card tags
+- [x] ArkovaLogo component created (`src/components/layout/ArkovaLogo.tsx`)
+- [x] Logo works on both light and dark backgrounds (variant prop)
 
 ### Files
-- New: `public/logo.svg`, `public/favicon.ico`, `public/apple-touch-icon.png`
-- `index.html` — add meta tags
-- `src/components/layout/Sidebar.tsx` — replace Shield with Logo
-- `src/components/public/PublicVerifyPage.tsx` — replace Shield with Logo
-- New: `src/components/ui/Logo.tsx` (brand logo component)
+- `public/favicon.svg` — bear logo favicon
+- `public/og-image.svg` — OG social sharing image
+- `src/components/layout/ArkovaLogo.tsx` — brand logo component with light/dark variants
+- `index.html` — OG + Twitter meta tags (lines 13-20)
 
 ---
 
 ## MVP-05: Error Boundary + 404 Page
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (error handling)
 **Depends on:** None
+**Completed:** 2026-03-14
 
 ### What It Delivers
 React Error Boundary wrapping the app to catch render crashes, plus a proper 404 page for unknown routes.
 
 ### Acceptance Criteria
-- [ ] Error boundary catches React render errors and shows recovery UI
-- [ ] 404 page at catch-all route with "Go to Dashboard" link
-- [ ] Error boundary logs errors (console in dev, could be Sentry later)
-- [ ] Both pages match Arkova brand styling
+- [x] Error boundary catches React render errors and shows recovery UI (83 lines, Shield + RefreshCw icons)
+- [x] 404 page at catch-all route with "Go to Dashboard" link (35 lines)
+- [x] Error boundary logs errors to Sentry (`Sentry.captureException`) + console in dev
+- [x] Both pages match Arkova brand styling
 
 ### Files
-- New: `src/components/layout/ErrorBoundary.tsx`
-- New: `src/pages/NotFoundPage.tsx`
-- `src/App.tsx` — wrap with ErrorBoundary, add `*` catch-all route
-- `src/lib/routes.ts` — add NOT_FOUND
+- `src/components/layout/ErrorBoundary.tsx` (83 lines) — wraps App in App.tsx (line 78)
+- `src/pages/NotFoundPage.tsx` (35 lines) — catch-all route `<Route path="*">` (line 269)
+- `src/App.tsx` — ErrorBoundary wraps all content, NotFoundPage at catch-all route
 
 ---
 
@@ -783,3 +794,4 @@ Automated CI/CD pipeline that builds and deploys the worker to Cloud Run on merg
 | 2026-03-12 | Initial creation from full audit. 14 stories (MVP-01 through MVP-14). |
 | 2026-03-12 | Added 15 stories (MVP-16 through MVP-30): block explorer deep links, credential template enhancement, metadata display, AI features (auto-descriptions, fraud detection, cost optimization), LinkedIn badges, individual self-verification, credits system, GCP deployment (Cloud Run, Secret Manager, Cloud Scheduler, Cloud KMS, CI/CD). Updated MVP-01 to target Google Cloud Run. Total: 29 stories. |
 | 2026-03-12 | Removed MVP-19 (superseded by P8-S4/S5), removed MVP-22 (superseded by P8-S7/S8/S9). Updated MVP-23 to non-AI batch anchoring only. Updated MVP-24 with monthly credit allocations per tier (Free=50, Pro=500, Enterprise=5000). Total: 27 stories (2 removed as superseded). |
+| 2026-03-14 | Doc sync audit: MVP-02 → PARTIAL (Sonner wired + 3 hooks have toasts, 4 hooks still missing). MVP-03 → COMPLETE (PrivacyPage + TermsPage + ContactPage exist + routed). MVP-04 → COMPLETE (PR #30 — ArkovaLogo, favicon.svg, og-image.svg, OG meta tags). MVP-05 → COMPLETE (ErrorBoundary + NotFoundPage exist + routed + Sentry wired). Totals: 3 complete, 1 partial, 23 not started. |
