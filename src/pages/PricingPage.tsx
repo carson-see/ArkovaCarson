@@ -45,9 +45,19 @@ export function PricingPage() {
   const handleSelectPlan = async (planId: string) => {
     setCheckoutLoading(planId);
 
-    const url = await startCheckout(planId);
-    if (url) {
-      window.location.href = url;
+    if (hasActiveSubscription) {
+      // Existing subscriber — open Stripe billing portal for plan change/downgrade/cancel.
+      // Stripe handles proration, confirmation, and effective dates.
+      const url = await openBillingPortal();
+      if (url) {
+        window.location.href = url;
+      }
+    } else {
+      // New subscriber — create checkout session
+      const url = await startCheckout(planId);
+      if (url) {
+        window.location.href = url;
+      }
     }
 
     setCheckoutLoading(null);

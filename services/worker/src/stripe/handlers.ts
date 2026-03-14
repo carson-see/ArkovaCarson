@@ -152,7 +152,11 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
 /**
  * Handle customer.subscription.updated
  *
- * Updates subscription status and period dates.
+ * Updates subscription status, period dates, and detects plan changes.
+ * When the Stripe price changes (via billing portal upgrade/downgrade),
+ * resolves the new plan_id and logs an audit event.
+ *
+ * @see MVP-11
  */
 export async function handleSubscriptionUpdated(event: StripeEvent): Promise<void> {
   const subscription = event.data.object as {
@@ -162,6 +166,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     current_period_start: number;
     current_period_end: number;
     cancel_at_period_end: boolean;
+    items?: { data: Array<{ price: { id: string } }> };
     metadata?: { user_id?: string };
   };
 
@@ -184,14 +189,44 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
 
   const mappedStatus = statusMap[subscription.status] ?? 'active';
 
+  // Detect plan change: resolve plan_id from the current Stripe price
+  let newPlanId: string | null = null;
+  const currentPriceId = subscription.items?.data?.[0]?.price?.id;
+
+  if (currentPriceId) {
+    const { data: matchedPlan } = await db
+      .from('plans')
+      .select('id')
+      .eq('stripe_price_id', currentPriceId)
+      .maybeSingle();
+
+    if (matchedPlan) {
+      newPlanId = matchedPlan.id;
+    }
+  }
+
+  // Get existing subscription to check for plan change
+  const { data: existingSub } = await db
+    .from('subscriptions')
+    .select('user_id, plan_id')
+    .eq('stripe_subscription_id', subscription.id)
+    .maybeSingle();
+
+  // Build update payload
+  const updatePayload: Record<string, unknown> = {
+    status: mappedStatus,
+    current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+    current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+    cancel_at_period_end: subscription.cancel_at_period_end,
+  };
+
+  if (newPlanId) {
+    updatePayload.plan_id = newPlanId;
+  }
+
   const { error } = await db
     .from('subscriptions')
-    .update({
-      status: mappedStatus,
-      current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-      current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
-      cancel_at_period_end: subscription.cancel_at_period_end,
-    })
+    .update(updatePayload)
     .eq('stripe_subscription_id', subscription.id);
 
   if (error) {
@@ -199,7 +234,33 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     throw error;
   }
 
-  logger.info({ subscriptionId: subscription.id, status: mappedStatus }, 'Subscription updated');
+  // Log audit event if plan changed
+  const planChanged = newPlanId && existingSub?.plan_id && newPlanId !== existingSub.plan_id;
+  if (planChanged && existingSub.user_id) {
+    await db.from('audit_events').insert({
+      event_type: 'payment.plan_changed',
+      event_category: 'ADMIN',
+      actor_id: existingSub.user_id,
+      details: `Plan changed from ${existingSub.plan_id} to ${newPlanId} (subscription: ${subscription.id})`,
+    });
+
+    logger.info(
+      { subscriptionId: subscription.id, oldPlanId: existingSub.plan_id, newPlanId },
+      'Plan change detected and applied',
+    );
+  }
+
+  // Log audit event if subscription set to cancel at period end
+  if (subscription.cancel_at_period_end && existingSub?.user_id) {
+    await db.from('audit_events').insert({
+      event_type: 'payment.subscription_cancel_scheduled',
+      event_category: 'ADMIN',
+      actor_id: existingSub.user_id,
+      details: `Subscription ${subscription.id} scheduled for cancellation at period end`,
+    });
+  }
+
+  logger.info({ subscriptionId: subscription.id, status: mappedStatus, planChanged: !!planChanged }, 'Subscription updated');
 }
 
 /**
