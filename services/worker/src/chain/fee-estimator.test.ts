@@ -265,6 +265,30 @@ describe('MempoolFeeEstimator', () => {
       );
     });
 
+    it('throws on timeoutMs of 0', () => {
+      expect(() => new MempoolFeeEstimator({ timeoutMs: 0 })).toThrow(
+        'timeoutMs must be a positive finite number',
+      );
+    });
+
+    it('throws on negative timeoutMs', () => {
+      expect(() => new MempoolFeeEstimator({ timeoutMs: -100 })).toThrow(
+        'timeoutMs must be a positive finite number',
+      );
+    });
+
+    it('throws on Infinity timeoutMs', () => {
+      expect(() => new MempoolFeeEstimator({ timeoutMs: Infinity })).toThrow(
+        'timeoutMs must be a positive finite number',
+      );
+    });
+
+    it('throws on NaN timeoutMs', () => {
+      expect(() => new MempoolFeeEstimator({ timeoutMs: NaN })).toThrow(
+        'timeoutMs must be a positive finite number',
+      );
+    });
+
     it('strips trailing slash from base URL', async () => {
       mockFetch.mockResolvedValueOnce(okFeeResponse());
       const estimator = new MempoolFeeEstimator({

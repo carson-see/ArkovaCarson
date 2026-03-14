@@ -100,7 +100,11 @@ export class MempoolFeeEstimator implements FeeEstimator {
     }
     this.fallbackRate = fallback;
     this.target = config.target ?? 'halfHour';
-    this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const timeout = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+      throw new Error(`timeoutMs must be a positive finite number, got: ${timeout}`);
+    }
+    this.timeoutMs = timeout;
   }
 
   async estimateFee(): Promise<number> {
