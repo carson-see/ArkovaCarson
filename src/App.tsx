@@ -8,7 +8,8 @@
  */
 
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Shield, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Toaster } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -62,9 +63,7 @@ function LoadingScreen() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background">
       <div className="flex flex-col items-center space-y-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10">
-          <Shield className="h-8 w-8 text-primary" />
-        </div>
+        <ArkovaLogo size={56} />
         <div className="flex items-center space-x-2 text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           <span className="text-sm">Loading Arkova...</span>

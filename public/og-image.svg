@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" fill="none">
+  <rect width="1200" height="630" fill="#303433"/>
+  <rect x="0" y="0" width="1200" height="630" fill="url(#grad)" opacity="0.3"/>
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1200" y2="630">
+      <stop offset="0%" stop-color="#82b8d0" stop-opacity="0.4"/>
+      <stop offset="100%" stop-color="#303433" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Shield icon -->
+  <g transform="translate(480, 140) scale(3)">
+    <path d="M40 10L20 20v15c0 13.88 9.6 26.85 20 30 10.4-3.15 20-16.12 20-30V20L40 10z" fill="#82b8d0" fill-opacity="0.2"/>
+    <path d="M40 14L24 22.4v13.1c0 11.1 7.68 21.48 16 24 8.32-2.52 16-12.9 16-24V22.4L40 14z" stroke="#82b8d0" stroke-width="2.5" fill="none"/>
+    <path d="M33 36l5 5 9-10" stroke="#82b8d0" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <!-- Text -->
+  <text x="600" y="460" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="72" font-weight="600" fill="#ffffff" letter-spacing="2">Arkova</text>
+  <text x="600" y="510" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="24" fill="#82b8d0" letter-spacing="4">SECURE DOCUMENT VERIFICATION</text>
+</svg>

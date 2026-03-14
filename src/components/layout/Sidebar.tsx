@@ -7,7 +7,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  Shield,
   LayoutDashboard,
   FileText,
   Building2,
@@ -17,6 +16,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -66,9 +66,7 @@ export function Sidebar({ className }: Readonly<SidebarProps>) {
           'flex h-16 items-center border-b px-4',
           collapsed ? 'justify-center' : 'gap-3'
         )}>
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-            <Shield className="h-5 w-5 text-primary-foreground" />
-          </div>
+          <ArkovaLogo size={36} />
           {!collapsed && (
             <span className="text-lg font-semibold text-sidebar-foreground">
               Arkova

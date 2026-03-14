@@ -7,6 +7,7 @@
 
 import { Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 interface AuthLayoutProps {
@@ -26,8 +27,8 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
         <div className="w-full max-w-md space-y-8">
           {/* Logo and branding */}
           <div className="flex flex-col items-center text-center">
-            <div className="flex items-center justify-center h-14 w-14 rounded-xl bg-primary/10 mb-4">
-              <Shield className="h-8 w-8 text-primary" />
+            <div className="mb-4">
+              <ArkovaLogo size={56} />
             </div>
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
               Arkova
