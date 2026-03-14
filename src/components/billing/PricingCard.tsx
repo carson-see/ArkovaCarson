@@ -1,7 +1,7 @@
 /**
  * Pricing Card Component
  *
- * Displays a subscription plan with features and pricing.
+ * Displays a subscription plan with gradient borders and elevated recommended state.
  * Uses approved terminology per Constitution.
  */
 
@@ -34,43 +34,43 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
   return (
     <Card
       className={cn(
-        'relative flex flex-col',
-        plan.recommended && 'border-primary shadow-lg',
+        'relative flex flex-col shadow-card-rest hover:shadow-card-hover transition-all duration-300 hover:-translate-y-1',
+        plan.recommended && 'gradient-border shadow-glow-md',
         plan.current && 'border-success'
       )}
     >
       {plan.recommended && (
-        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2">
+        <Badge className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 text-[0.65rem] font-semibold tracking-wide shadow-glow-sm">
           Recommended
         </Badge>
       )}
       {plan.current && (
-        <Badge variant="success" className="absolute -top-3 left-1/2 -translate-x-1/2">
+        <Badge variant="success" className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 text-[0.65rem] font-semibold tracking-wide">
           Current Plan
         </Badge>
       )}
 
-      <CardHeader className="text-center pb-2">
-        <CardTitle className="text-xl">{plan.name}</CardTitle>
-        <CardDescription>{plan.description}</CardDescription>
+      <CardHeader className="text-center pb-2 pt-7">
+        <CardTitle className="text-heading-sm tracking-tight">{plan.name}</CardTitle>
+        <CardDescription className="text-xs">{plan.description}</CardDescription>
       </CardHeader>
 
       <CardContent className="flex-1">
         {/* Price */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-8">
           {plan.price === null ? (
-            <div className="text-2xl font-bold">{plan.priceLabel || 'Contact us'}</div>
+            <div className="text-heading-lg font-bold tracking-tight">{plan.priceLabel || 'Contact us'}</div>
           ) : (
             <div className="flex items-baseline justify-center gap-1">
-              <span className="text-4xl font-bold">${plan.price}</span>
+              <span className="text-display font-bold tracking-tight">${plan.price}</span>
               {plan.period !== 'custom' && (
-                <span className="text-muted-foreground">
+                <span className="text-sm text-muted-foreground font-medium">
                   /{plan.period === 'month' ? 'mo' : 'yr'}
                 </span>
               )}
             </div>
           )}
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="text-xs text-muted-foreground mt-2 font-medium">
             {plan.recordsIncluded === 'unlimited'
               ? 'Unlimited records'
               : `${plan.recordsIncluded} records/month`}
@@ -80,17 +80,22 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
         {/* Features */}
         <ul className="space-y-3">
           {plan.features.map((feature, index) => (
-            <li key={`${feature}-${index}`} className="flex items-start gap-2">
-              <Check className="h-4 w-4 text-success mt-0.5 shrink-0" />
-              <span className="text-sm">{feature}</span>
+            <li key={`${feature}-${index}`} className="flex items-start gap-2.5">
+              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-success/10 shrink-0 mt-0.5">
+                <Check className="h-3 w-3 text-success" />
+              </div>
+              <span className="text-sm leading-snug">{feature}</span>
             </li>
           ))}
         </ul>
       </CardContent>
 
-      <CardFooter>
+      <CardFooter className="pt-4">
         <Button
-          className="w-full"
+          className={cn(
+            'w-full h-11 font-semibold transition-all duration-300',
+            plan.recommended && !plan.current && 'shadow-glow-sm hover:shadow-glow-md'
+          )}
           variant={plan.current ? 'outline' : (plan.recommended ? 'default' : 'secondary')}
           onClick={() => onSelect?.(plan.id)}
           disabled={loading || plan.current}

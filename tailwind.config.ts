@@ -91,30 +91,30 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'Inter',
+          'DM Sans',
           '-apple-system',
           'BlinkMacSystemFont',
           'Segoe UI',
-          'Roboto',
-          'Oxygen',
-          'Ubuntu',
-          'Cantarell',
-          'Open Sans',
-          'Helvetica Neue',
           'sans-serif',
+        ],
+        mono: [
+          'JetBrains Mono',
+          'SF Mono',
+          'Fira Code',
+          'monospace',
         ],
       },
       fontSize: {
-        // Typography scale for hierarchy
-        'display-lg': ['3rem', { lineHeight: '1.1', letterSpacing: '-0.02em', fontWeight: '700' }],
-        'display': ['2.25rem', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '700' }],
-        'heading-lg': ['1.875rem', { lineHeight: '1.3', letterSpacing: '-0.01em', fontWeight: '600' }],
-        'heading': ['1.5rem', { lineHeight: '1.4', letterSpacing: '-0.01em', fontWeight: '600' }],
-        'heading-sm': ['1.25rem', { lineHeight: '1.4', fontWeight: '600' }],
-        'body-lg': ['1.125rem', { lineHeight: '1.6' }],
-        'body': ['1rem', { lineHeight: '1.6' }],
-        'body-sm': ['0.875rem', { lineHeight: '1.5' }],
-        'caption': ['0.75rem', { lineHeight: '1.5' }],
+        // Typography scale — distinctive hierarchy with DM Sans
+        'display-lg': ['3.25rem', { lineHeight: '1.08', letterSpacing: '-0.03em', fontWeight: '700' }],
+        'display': ['2.5rem', { lineHeight: '1.12', letterSpacing: '-0.025em', fontWeight: '700' }],
+        'heading-lg': ['1.875rem', { lineHeight: '1.25', letterSpacing: '-0.02em', fontWeight: '600' }],
+        'heading': ['1.5rem', { lineHeight: '1.35', letterSpacing: '-0.015em', fontWeight: '600' }],
+        'heading-sm': ['1.25rem', { lineHeight: '1.4', letterSpacing: '-0.01em', fontWeight: '600' }],
+        'body-lg': ['1.125rem', { lineHeight: '1.65' }],
+        'body': ['0.9375rem', { lineHeight: '1.6' }],
+        'body-sm': ['0.8125rem', { lineHeight: '1.55' }],
+        'caption': ['0.6875rem', { lineHeight: '1.5', letterSpacing: '0.02em' }],
       },
       keyframes: {
         'accordion-down': {
@@ -130,25 +130,41 @@ const config: Config = {
           to: { opacity: '1' },
         },
         'fade-up': {
-          from: { opacity: '0', transform: 'translateY(10px)' },
+          from: { opacity: '0', transform: 'translateY(12px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
         },
         'slide-in-right': {
           from: { transform: 'translateX(100%)' },
           to: { transform: 'translateX(0)' },
         },
+        'scale-in': {
+          from: { opacity: '0', transform: 'scale(0.95)' },
+          to: { opacity: '1', transform: 'scale(1)' },
+        },
+        'slide-down': {
+          from: { opacity: '0', transform: 'translateY(-8px)' },
+          to: { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
-        'fade-in': 'fade-in 0.3s ease-out',
-        'fade-up': 'fade-up 0.4s ease-out',
+        'fade-in': 'fade-in 0.4s ease-out',
+        'fade-up': 'fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1)',
         'slide-in-right': 'slide-in-right 0.3s ease-out',
+        'scale-in': 'scale-in 0.3s cubic-bezier(0.22, 1, 0.36, 1)',
+        'slide-down': 'slide-down 0.3s ease-out',
       },
       spacing: {
-        // Additional spacing values for layout consistency
         '18': '4.5rem',
         '22': '5.5rem',
+      },
+      boxShadow: {
+        'glow-sm': '0 0 0 1px hsl(197 42% 66% / 0.1), 0 2px 12px -2px hsl(197 42% 66% / 0.1)',
+        'glow-md': '0 0 0 1px hsl(197 42% 66% / 0.15), 0 4px 24px -4px hsl(197 42% 66% / 0.15)',
+        'glow-lg': '0 0 0 1px hsl(197 42% 66% / 0.2), 0 8px 40px -8px hsl(197 42% 66% / 0.2)',
+        'card-hover': '0 8px 30px -6px hsl(197 42% 66% / 0.12), 0 0 0 1px hsl(var(--border))',
+        'card-rest': '0 1px 3px 0 hsl(0 0% 0% / 0.04), 0 0 0 1px hsl(var(--border) / 0.8)',
       },
     },
   },

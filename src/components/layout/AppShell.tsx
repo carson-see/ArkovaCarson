@@ -2,7 +2,7 @@
  * App Shell Component
  *
  * Main layout wrapper for authenticated pages.
- * Provides consistent sidebar, header, and content area.
+ * Provides sidebar, glassmorphism header, and atmospheric content area.
  */
 
 import { Sidebar } from './Sidebar';
@@ -43,9 +43,9 @@ export function AppShell({
           onSignOut={onSignOut}
         />
 
-        {/* Page content */}
-        <main className="flex-1 overflow-y-auto overflow-x-hidden">
-          <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        {/* Page content with atmospheric background */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden bg-mesh-gradient">
+          <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 py-6 animate-fade-in">
             {children}
           </div>
         </main>

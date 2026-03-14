@@ -92,17 +92,17 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
       onSignOut={handleSignOut}
     >
       {/* Welcome section */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">
+      <div className="mb-10 animate-in-view stagger-1">
+        <h1 className="text-heading-lg font-bold tracking-tight">
           Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}
         </h1>
-        <p className="text-muted-foreground mt-1">
+        <p className="text-muted-foreground mt-1.5 text-sm">
           Manage and verify your secured documents
         </p>
       </div>
 
       {/* Stats grid */}
-      <div className="grid gap-4 md:grid-cols-3 mb-8">
+      <div className="grid gap-5 md:grid-cols-3 mb-10 animate-in-view stagger-2">
         <StatCard
           label="Total Records"
           value={stats.total}
@@ -127,11 +127,11 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
       </div>
 
       {/* Two-column layout for settings */}
-      <div className="grid gap-6 md:grid-cols-2 mb-8">
+      <div className="grid gap-6 md:grid-cols-2 mb-10 animate-in-view stagger-3">
         {/* Privacy Controls Card */}
-        <Card>
+        <Card className="shadow-card-rest">
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
               {isPublicProfile ? (
                 <Eye className="h-4 w-4 text-primary" />
               ) : (
@@ -139,14 +139,14 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
               )}
               Privacy Settings
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               Control who can see your verification records
             </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between">
               <div className="space-y-0.5">
-                <Label htmlFor="public-profile" className="text-sm font-medium">
+                <Label htmlFor="public-profile" className="text-sm font-semibold">
                   Public Verification Profile
                 </Label>
                 <p className="text-xs text-muted-foreground">
@@ -160,8 +160,8 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
               />
             </div>
             <div className="mt-4 pt-4 border-t">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Shield className="h-4 w-4" />
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Shield className="h-3.5 w-3.5 text-primary/60" />
                 <span>
                   {isPublicProfile
                     ? 'Your records can be verified by anyone with the fingerprint'
@@ -173,28 +173,28 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
         </Card>
 
         {/* Affiliations Placeholder Card */}
-        <Card>
+        <Card className="shadow-card-rest">
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
               <Building2 className="h-4 w-4 text-muted-foreground" />
               Organization Affiliations
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="text-xs">
               Connect with organizations for shared verification
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex flex-col items-center justify-center py-6 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-3">
-                <Users className="h-6 w-6 text-muted-foreground" />
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-muted/70 mb-4">
+                <Users className="h-6 w-6 text-muted-foreground/60" />
               </div>
               <p className="text-sm font-medium text-muted-foreground mb-1">
                 No affiliations yet
               </p>
-              <p className="text-xs text-muted-foreground mb-4">
+              <p className="text-xs text-muted-foreground/70 mb-4">
                 Join an organization to share verification capabilities
               </p>
-              <Badge variant="secondary">Coming Soon</Badge>
+              <Badge variant="secondary" className="text-[0.65rem] font-medium">Coming Soon</Badge>
             </div>
           </CardContent>
         </Card>
@@ -211,16 +211,24 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
       )}
 
       {/* Records section */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <CardTitle className="text-lg font-semibold">My Records</CardTitle>
-          <Button onClick={() => setSecureDialogOpen(true)}>
+      <Card className="shadow-card-rest animate-in-view stagger-4">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4 px-6">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">My Records</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {stats.total > 0 ? `${stats.total} document${stats.total !== 1 ? 's' : ''} secured` : 'No documents yet'}
+            </p>
+          </div>
+          <Button
+            onClick={() => setSecureDialogOpen(true)}
+            className="shadow-glow-sm hover:shadow-glow-md transition-all duration-300"
+          >
             <Plus className="mr-2 h-4 w-4" />
             Secure Document
           </Button>
         </CardHeader>
         <Separator />
-        <CardContent className="pt-0">
+        <CardContent className="pt-0 px-6">
           {!loading && records.length === 0 ? (
             <EmptyState
               title="No records yet"
@@ -242,21 +250,21 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
 
       {/* Account info */}
       {profile && (
-        <Card className="mt-6">
-          <CardContent className="flex items-center justify-between py-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+        <Card className="mt-6 shadow-card-rest animate-in-view stagger-5">
+          <CardContent className="flex items-center justify-between py-5 px-6">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
                 <Shield className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="text-sm font-medium">Account Type</p>
-                <p className="text-sm text-muted-foreground">
+                <p className="text-sm font-semibold">Account Type</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
                   {profile.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Individual'}
                 </p>
               </div>
             </div>
             {profile.org_id && (
-              <Badge variant="secondary">Organization Member</Badge>
+              <Badge variant="secondary" className="text-xs font-medium">Organization Member</Badge>
             )}
           </CardContent>
         </Card>
