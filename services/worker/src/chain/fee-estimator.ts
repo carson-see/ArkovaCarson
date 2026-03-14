@@ -47,6 +47,9 @@ export class StaticFeeEstimator implements FeeEstimator {
 
 // ─── Mempool.space Fee Estimator ────────────────────────────────────────
 
+/** Default request timeout in milliseconds */
+const DEFAULT_TIMEOUT_MS = 5000;
+
 export interface MempoolFeeEstimatorConfig {
   /** Base URL for Mempool API (e.g., https://mempool.space/api) */
   baseUrl?: string;
@@ -54,6 +57,8 @@ export interface MempoolFeeEstimatorConfig {
   fallbackRate?: number;
   /** Target speed: 'fastest' | 'halfHour' | 'hour' | 'economy'. Default: 'halfHour' */
   target?: MempoolFeeTarget;
+  /** Request timeout in milliseconds. Default: 5000 (5s). */
+  timeoutMs?: number;
 }
 
 export type MempoolFeeTarget = 'fastest' | 'halfHour' | 'hour' | 'economy';
@@ -85,6 +90,7 @@ export class MempoolFeeEstimator implements FeeEstimator {
   private readonly baseUrl: string;
   private readonly fallbackRate: number;
   private readonly target: MempoolFeeTarget;
+  private readonly timeoutMs: number;
 
   constructor(config: MempoolFeeEstimatorConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_MEMPOOL_URL).replace(/\/$/, '');
@@ -94,13 +100,20 @@ export class MempoolFeeEstimator implements FeeEstimator {
     }
     this.fallbackRate = fallback;
     this.target = config.target ?? 'halfHour';
+    const timeout = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
+      throw new Error(`timeoutMs must be a positive finite number, got: ${timeout}`);
+    }
+    this.timeoutMs = timeout;
   }
 
   async estimateFee(): Promise<number> {
     const url = `${this.baseUrl}/v1/fees/recommended`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal: controller.signal });
 
       if (!response.ok) {
         logger.warn(
@@ -125,11 +138,20 @@ export class MempoolFeeEstimator implements FeeEstimator {
       logger.debug({ target: this.target, rate }, 'Mempool fee estimate');
       return rate;
     } catch (error) {
-      logger.warn(
-        { error, url },
-        'Mempool fee API request failed — using fallback',
-      );
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        logger.warn(
+          { url, timeoutMs: this.timeoutMs },
+          'Mempool fee API request timed out — using fallback',
+        );
+      } else {
+        logger.warn(
+          { error, url },
+          'Mempool fee API request failed — using fallback',
+        );
+      }
       return this.fallbackRate;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }
@@ -148,6 +170,8 @@ export interface FeeEstimatorFactoryConfig {
   fallbackRate?: number;
   /** Fee target for mempool strategy */
   target?: MempoolFeeTarget;
+  /** Request timeout in milliseconds for mempool strategy. Default: 5000 */
+  timeoutMs?: number;
 }
 
 /**
@@ -178,6 +202,7 @@ export function createFeeEstimator(
       baseUrl: factoryConfig.mempoolApiUrl,
       fallbackRate: factoryConfig.fallbackRate,
       target: factoryConfig.target,
+      timeoutMs: factoryConfig.timeoutMs,
     });
   }
 
