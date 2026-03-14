@@ -1,4 +1,5 @@
 # MVP Launch Gap Stories
+
 _Last updated: 2026-03-14_
 
 ## Group Overview
@@ -27,9 +28,11 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 **Depends on:** P7-TS-05 (Bitcoin chain client), MVP-26 (GCP Cloud Run setup)
 
 ### What It Delivers
+
 Deploy the Express worker service to Google Cloud Run so the anchor processing pipeline, Stripe webhooks, and cron jobs can run outside localhost. GCP chosen for Google startup credits program compatibility.
 
 ### Acceptance Criteria
+
 - [ ] Worker deployed to Cloud Run with health check endpoint responding
 - [ ] Secrets configured via GCP Secret Manager (Supabase service role, Stripe keys, Bitcoin treasury WIF)
 - [ ] Cloud Scheduler triggers cron jobs (anchor processing, webhook retries, report generation)
@@ -39,6 +42,7 @@ Deploy the Express worker service to Google Cloud Run so the anchor processing p
 - [ ] Cloud Logging accessible for debugging
 
 ### Files
+
 - `services/worker/` (existing — no code changes needed)
 - `services/worker/Dockerfile` (exists — multi-stage build)
 - New: `services/worker/.dockerignore`
@@ -46,6 +50,7 @@ Deploy the Express worker service to Google Cloud Run so the anchor processing p
 - New: Cloud Run service configuration (Terraform or `gcloud` CLI scripts)
 
 ### Security Notes
+
 - Service role key must be in GCP Secret Manager, never in code
 - `BITCOIN_TREASURY_WIF` loaded from Secret Manager, never logged
 - Health endpoint must not expose internal state
@@ -60,9 +65,11 @@ Deploy the Express worker service to Google Cloud Run so the anchor processing p
 **Depends on:** None
 
 ### What It Delivers
+
 Global toast notification system using Sonner. All mutation hooks now show success/error toasts.
 
 ### Implementation
+
 - Sonner `<Toaster />` wired in App.tsx (position="top-right", richColors, closeButton) ✅
 - Toast calls in `useProfile.ts` (success + error) ✅
 - Toast calls in `useOrganization.ts` (success + error) ✅
@@ -73,6 +80,7 @@ Global toast notification system using Sonner. All mutation hooks now show succe
 - TOAST constants in `src/lib/copy.ts` for all messages ✅
 
 ### Acceptance Criteria
+
 - [x] Sonner `<Toaster />` added to App.tsx (global)
 - [x] Success toast on: anchor creation, profile save, org settings save, member invite, credential template CRUD
 - [x] Error toast on: all Supabase query failures, validation errors
@@ -80,6 +88,7 @@ Global toast notification system using Sonner. All mutation hooks now show succe
 - [x] Toast styling matches Arkova brand (Steel Blue accent)
 
 ### Files
+
 - `src/App.tsx` — `<Toaster />`
 - `src/hooks/useProfile.ts`, `useOrganization.ts`, `useBulkAnchors.ts` — toast calls (Sprint 2)
 - `src/hooks/useCredentialTemplates.ts`, `useRevokeAnchor.ts`, `useInviteMember.ts` — toast calls (PR #36)
@@ -95,9 +104,11 @@ Global toast notification system using Sonner. All mutation hooks now show succe
 **Completed:** 2026-03-14
 
 ### What It Delivers
+
 Static legal pages at `/privacy`, `/terms`, and `/contact`. Previously these routes were linked from PublicVerifyPage footer and AuthLayout but returned 404.
 
 ### Acceptance Criteria
+
 - [x] `/privacy` route renders Privacy Policy page (108 lines)
 - [x] `/terms` route renders Terms of Service page (115 lines)
 - [x] `/contact` route renders Contact page (86 lines)
@@ -107,6 +118,7 @@ Static legal pages at `/privacy`, `/terms`, and `/contact`. Previously these rou
 - [x] Content is placeholder but professional (can be updated with legal review later)
 
 ### Files
+
 - `src/pages/PrivacyPage.tsx` (108 lines)
 - `src/pages/TermsPage.tsx` (115 lines)
 - `src/pages/ContactPage.tsx` (86 lines)
@@ -123,9 +135,11 @@ Static legal pages at `/privacy`, `/terms`, and `/contact`. Previously these rou
 **Completed:** 2026-03-14 (PR #30)
 
 ### What It Delivers
+
 Real brand assets replacing the Shield icon placeholder. Favicon, OG meta tags for social sharing, and logo component.
 
 ### Acceptance Criteria
+
 - [x] SVG logo in `public/` directory — `favicon.svg`, `og-image.svg`
 - [x] Favicon set — `public/favicon.svg` (bear logo)
 - [x] `index.html` has: meta description, OG title/description/image, Twitter card tags
@@ -133,6 +147,7 @@ Real brand assets replacing the Shield icon placeholder. Favicon, OG meta tags f
 - [x] Logo works on both light and dark backgrounds (variant prop)
 
 ### Files
+
 - `public/favicon.svg` — bear logo favicon
 - `public/og-image.svg` — OG social sharing image
 - `src/components/layout/ArkovaLogo.tsx` — brand logo component with light/dark variants
@@ -148,15 +163,18 @@ Real brand assets replacing the Shield icon placeholder. Favicon, OG meta tags f
 **Completed:** 2026-03-14
 
 ### What It Delivers
+
 React Error Boundary wrapping the app to catch render crashes, plus a proper 404 page for unknown routes.
 
 ### Acceptance Criteria
+
 - [x] Error boundary catches React render errors and shows recovery UI (83 lines, Shield + RefreshCw icons)
 - [x] 404 page at catch-all route with "Go to Dashboard" link (35 lines)
 - [x] Error boundary logs errors to Sentry (`Sentry.captureException`) + console in dev
 - [x] Both pages match Arkova brand styling
 
 ### Files
+
 - `src/components/layout/ErrorBoundary.tsx` (83 lines) — wraps App in App.tsx (line 78)
 - `src/pages/NotFoundPage.tsx` (35 lines) — catch-all route `<Route path="*">` (line 269)
 - `src/App.tsx` — ErrorBoundary wraps all content, NotFoundPage at catch-all route
@@ -170,9 +188,11 @@ React Error Boundary wrapping the app to catch render crashes, plus a proper 404
 **Depends on:** P6-TS-01
 
 ### What It Delivers
+
 Allow public verification by dragging a file onto the verification page. The file is fingerprinted client-side and the fingerprint is looked up against the anchor database.
 
 ### Acceptance Criteria
+
 - [ ] Drop zone on PublicVerifyPage accepts file drag-and-drop
 - [ ] File is fingerprinted client-side using `generateFingerprint`
 - [ ] Fingerprint is looked up via Supabase RPC or query
@@ -182,6 +202,7 @@ Allow public verification by dragging a file onto the verification page. The fil
 - [ ] Tab UI to switch between "Verify by ID" and "Verify by File"
 
 ### Files
+
 - `src/components/verify/VerificationForm.tsx` — add file upload tab
 - `src/components/public/PublicVerifyPage.tsx` — layout update
 - `src/lib/fileHasher.ts` — already exists, reuse
@@ -195,9 +216,11 @@ Allow public verification by dragging a file onto the verification page. The fil
 **Depends on:** None
 
 ### What It Delivers
+
 Responsive sidebar with hamburger menu on mobile. Currently the sidebar is fixed-width and unusable on small screens.
 
 ### Acceptance Criteria
+
 - [ ] Sidebar collapses to hamburger menu on screens < 768px
 - [ ] Mobile menu opens as overlay or slide-in drawer
 - [ ] All navigation items accessible on mobile
@@ -206,6 +229,7 @@ Responsive sidebar with hamburger menu on mobile. Currently the sidebar is fixed
 - [ ] Touch-friendly tap targets (min 44px)
 
 ### Files
+
 - `src/components/layout/Sidebar.tsx` — responsive behavior
 - `src/components/layout/AppShell.tsx` — mobile layout
 - New: `src/components/layout/MobileNav.tsx` (hamburger menu)
@@ -219,9 +243,11 @@ Responsive sidebar with hamburger menu on mobile. Currently the sidebar is fixed
 **Depends on:** P2-TS-0X (onboarding routes)
 
 ### What It Delivers
+
 Visual progress indicator in the onboarding flow showing which step the user is on (1. Role Selection → 2. Org Setup → 3. Review).
 
 ### Acceptance Criteria
+
 - [ ] Step indicator visible on all onboarding pages
 - [ ] Current step highlighted, completed steps marked
 - [ ] Steps: Select Role → Organization Setup → Review
@@ -229,6 +255,7 @@ Visual progress indicator in the onboarding flow showing which step the user is 
 - [ ] Progress persisted in URL or state (refresh doesn't lose progress)
 
 ### Files
+
 - New: `src/components/onboarding/OnboardingProgress.tsx`
 - `src/components/onboarding/RoleSelector.tsx` — integrate stepper
 - `src/components/onboarding/OrgOnboardingForm.tsx` — integrate stepper
@@ -243,9 +270,11 @@ Visual progress indicator in the onboarding flow showing which step the user is 
 **Depends on:** P3-TS-01
 
 ### What It Delivers
+
 Pagination and search for the records list. Currently all records load at once which won't scale.
 
 ### Acceptance Criteria
+
 - [ ] Records list paginates (25 per page default)
 - [ ] Previous/Next page controls
 - [ ] Search by document name or fingerprint
@@ -254,6 +283,7 @@ Pagination and search for the records list. Currently all records load at once w
 - [ ] URL params preserve page/search state on refresh
 
 ### Files
+
 - `src/components/records/RecordsList.tsx` — add pagination + search
 - `src/hooks/useAnchors.ts` — add pagination params to query
 
@@ -266,9 +296,11 @@ Pagination and search for the records list. Currently all records load at once w
 **Depends on:** MVP-04 (brand assets)
 
 ### What It Delivers
+
 Public marketing website at arkova.ai explaining what Arkova does, how it works, and pricing. Separate from the app (could be a simple static site or Vite app).
 
 ### Acceptance Criteria
+
 - [ ] Hero section with value proposition
 - [ ] "How It Works" section (3-step process)
 - [ ] Features section with use cases
@@ -279,6 +311,7 @@ Public marketing website at arkova.ai explaining what Arkova does, how it works,
 - [ ] Deployed to arkova.ai domain
 
 ### Files
+
 - New project or `src/pages/MarketingPage.tsx` (depends on architecture decision)
 - Design spec in `docs/audit/2026-03-12_full_audit.md` Section 6
 
@@ -291,9 +324,11 @@ Public marketing website at arkova.ai explaining what Arkova does, how it works,
 **Depends on:** P7-TS-02 (Stripe checkout — partial)
 
 ### What It Delivers
+
 Complete the Stripe billing flow with plan upgrades, downgrades, and cancellations. This is the remaining work from CRIT-3.
 
 ### Acceptance Criteria
+
 - [ ] Users can upgrade from Free to Pro/Enterprise
 - [ ] Users can downgrade (effective at end of billing period)
 - [ ] Users can cancel subscription
@@ -302,6 +337,7 @@ Complete the Stripe billing flow with plan upgrades, downgrades, and cancellatio
 - [ ] UI shows current plan and change options in Settings
 
 ### Files
+
 - `services/worker/src/stripe/handlers.ts` — subscription change handlers
 - `src/pages/SettingsPage.tsx` — plan management UI
 - `src/hooks/useBilling.ts` — plan change mutations
@@ -315,9 +351,11 @@ Complete the Stripe billing flow with plan upgrades, downgrades, and cancellatio
 **Depends on:** None
 
 ### What It Delivers
+
 Dark mode toggle in Settings or header. CSS custom properties already defined in `src/index.css` for `.dark` class.
 
 ### Acceptance Criteria
+
 - [ ] Toggle switch in Settings page (or header)
 - [ ] Persisted to localStorage
 - [ ] Respects system preference on first visit
@@ -325,6 +363,7 @@ Dark mode toggle in Settings or header. CSS custom properties already defined in
 - [ ] Sidebar, cards, inputs, badges all themed
 
 ### Files
+
 - `src/index.css` — already has `.dark` block
 - New: `src/hooks/useTheme.ts`
 - `src/components/layout/Header.tsx` — add toggle
@@ -338,9 +377,11 @@ Dark mode toggle in Settings or header. CSS custom properties already defined in
 **Depends on:** P5-TS-03
 
 ### What It Delivers
+
 Organizations can upload a logo that appears in verification results and proof packages.
 
 ### Acceptance Criteria
+
 - [ ] Logo upload in Organization Settings
 - [ ] Stored in Supabase Storage bucket
 - [ ] Displayed in org header, verification results, proof PDFs
@@ -348,6 +389,7 @@ Organizations can upload a logo that appears in verification results and proof p
 - [ ] Fallback to organization initial if no logo
 
 ### Files
+
 - `src/pages/OrgSettingsPage.tsx` — add logo upload
 - `src/hooks/useOrganization.ts` — logo URL field
 - Supabase Storage bucket creation (migration or manual)
@@ -361,9 +403,11 @@ Organizations can upload a logo that appears in verification results and proof p
 **Depends on:** P6-TS-03 (partial)
 
 ### What It Delivers
+
 Complete the orphaned VerificationWidget by routing it and/or bundling it as a standalone embeddable script.
 
 ### Acceptance Criteria
+
 - [ ] Widget accessible at a dedicated route (e.g., `/embed/verify`)
 - [ ] OR: Bundled as standalone JS that can be embedded via `<script>` tag
 - [ ] Widget accepts `publicId` parameter
@@ -372,6 +416,7 @@ Complete the orphaned VerificationWidget by routing it and/or bundling it as a s
 - [ ] Documentation for embedding
 
 ### Files
+
 - `src/components/embed/VerificationWidget.tsx` — already exists
 - `src/App.tsx` — add route OR separate Vite config for standalone build
 
@@ -384,9 +429,11 @@ Complete the orphaned VerificationWidget by routing it and/or bundling it as a s
 **Depends on:** P7-TS-05 (Bitcoin chain client), P7-TS-13 (chain index)
 
 ### What It Delivers
+
 Add a "View on Network" link to SECURED anchors that deep-links to the Bitcoin transaction on mempool.space. Uses `anchor_chain_index` table to look up `chain_tx_id` from the anchor's fingerprint, then constructs a `mempool.space/signet/tx/{txid}` URL.
 
 ### Acceptance Criteria
+
 - [ ] SECURED anchors show "View on Network" link in AssetDetailView
 - [ ] Link opens `https://mempool.space/signet/tx/{chain_tx_id}` in new tab
 - [ ] Link also appears in PublicVerification.tsx (public verify page)
@@ -396,12 +443,14 @@ Add a "View on Network" link to SECURED anchors that deep-links to the Bitcoin t
 - [ ] Network prefix switches based on `BITCOIN_NETWORK` env var (signet/testnet/mainnet)
 
 ### Files
+
 - `src/components/anchor/AssetDetailView.tsx` — add deep link
 - `src/components/verification/PublicVerification.tsx` — add deep link
 - `src/lib/copy.ts` — add "View Network Receipt" string
 - `src/hooks/useAnchors.ts` — include `chain_tx_id` join from `anchor_chain_index`
 
 ### Technical Notes
+
 - Fingerprint → TX ID mapping lives in `anchor_chain_index` table (migration 0050)
 - Two distinct values: `file_fingerprint_sha256` (document hash) and `chain_tx_id` (Bitcoin receipt)
 - URL pattern: `https://mempool.space/{network}/tx/{chain_tx_id}` where network = signet | testnet | (empty for mainnet)
@@ -415,9 +464,11 @@ Add a "View on Network" link to SECURED anchors that deep-links to the Bitcoin t
 **Depends on:** P5-TS-07 (credential templates)
 
 ### What It Delivers
+
 Enhance credential templates to define metadata field schemas that pre-fill the metadata form when creating anchors. Currently `credential_templates.default_metadata` is JSONB but not used during anchor creation.
 
 ### Acceptance Criteria
+
 - [ ] Template `default_metadata` defines field names, types, and defaults
 - [ ] When user selects a credential type during anchor creation, metadata fields auto-populate
 - [ ] Supported field types: text, date, number, select (dropdown)
@@ -427,6 +478,7 @@ Enhance credential templates to define metadata field schemas that pre-fill the 
 - [ ] Migration adds `metadata_schema` JSONB column to `credential_templates` table
 
 ### Files
+
 - New migration: `supabase/migrations/0051_credential_template_schema.sql`
 - `src/components/credentials/CredentialTemplatesManager.tsx` — schema builder UI
 - `src/components/anchor/SecureDocumentDialog.tsx` — pre-fill from template
@@ -442,9 +494,11 @@ Enhance credential templates to define metadata field schemas that pre-fill the 
 **Depends on:** MVP-17 (template metadata enhancement)
 
 ### What It Delivers
+
 Rich metadata rendering on verification pages. Currently metadata is shown as raw JSON. This story adds structured display with labels, formatting, and visual hierarchy.
 
 ### Acceptance Criteria
+
 - [ ] Metadata rendered as labeled key-value pairs (not raw JSON)
 - [ ] Date fields formatted as human-readable dates
 - [ ] Fields grouped by category if template defines groups
@@ -454,6 +508,7 @@ Rich metadata rendering on verification pages. Currently metadata is shown as ra
 - [ ] Fallback to raw JSON display if no template schema exists
 
 ### Files
+
 - New: `src/components/verification/MetadataDisplay.tsx`
 - `src/components/verification/PublicVerification.tsx` — use MetadataDisplay
 - `src/components/anchor/AssetDetailView.tsx` — use MetadataDisplay
@@ -473,9 +528,11 @@ Rich metadata rendering on verification pages. Currently metadata is shown as ra
 **Depends on:** P6-TS-01 (public verification), MVP-18 (metadata display)
 
 ### What It Delivers
+
 Allow credential recipients to share verified credentials on LinkedIn. Two approaches: (1) LinkedIn Add-to-Profile URL API (simpler), or (2) OpenBadges v3 JSON-LD (standards-based). Start with Add-to-Profile.
 
 ### Acceptance Criteria
+
 - [ ] "Share on LinkedIn" button on public verification page (SECURED anchors only)
 - [ ] Button generates LinkedIn Add-to-Profile URL with: credential name, issuing org, issue date, verification URL
 - [ ] Verification URL (`https://app.arkova.io/verify/{publicId}`) serves as the credential evidence
@@ -484,11 +541,13 @@ Allow credential recipients to share verified credentials on LinkedIn. Two appro
 - [ ] No LinkedIn API key required (Add-to-Profile is a URL scheme)
 
 ### Files
+
 - `src/components/verification/PublicVerification.tsx` — add LinkedIn button
 - New: `src/lib/linkedin.ts` — URL builder for Add-to-Profile
 - `src/lib/copy.ts` — "Share on LinkedIn" string
 
 ### Technical Notes
+
 - LinkedIn Add-to-Profile URL: `https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&name={name}&organizationName={org}&issueYear={year}&issueMonth={month}&certUrl={verifyUrl}&certId={publicId}`
 - No LinkedIn integration exists in the codebase today.
 - OpenBadges v3 (JSON-LD with cryptographic proof) is a future enhancement.
@@ -503,9 +562,11 @@ Allow credential recipients to share verified credentials on LinkedIn. Two appro
 **Depends on:** P4-TS-01 (anchor creation), P6-TS-01 (public verification)
 
 ### What It Delivers
+
 Allow individual users (non-org) to anchor and verify their own documents. Currently the UI is heavily org-focused. This adds a simplified flow for individuals who want to prove document existence/integrity.
 
 ### Acceptance Criteria
+
 - [ ] Individual user sees "Secure a Document" CTA on dashboard
 - [ ] Simplified anchor creation: file upload → fingerprint → confirm → anchor
 - [ ] No credential type or metadata required (optional fields)
@@ -515,6 +576,7 @@ Allow individual users (non-org) to anchor and verify their own documents. Curre
 - [ ] Individual Free tier: 3 anchors/month (existing quota)
 
 ### Files
+
 - `src/components/dashboard/` — individual-specific dashboard view
 - `src/components/anchor/SecureDocumentDialog.tsx` — simplify for individuals
 - `src/pages/DashboardPage.tsx` — role-conditional rendering
@@ -534,11 +596,13 @@ Allow individual users (non-org) to anchor and verify their own documents. Curre
 **Depends on:** MVP-24 (credits system), P7-TS-05 (Bitcoin chain client)
 
 ### What It Delivers
+
 Batch anchor processing to reduce per-anchor Bitcoin fees: queue multiple anchors and broadcast as a Merkle root in a single OP_RETURN TX. Includes usage analytics for orgs.
 
 > **Note:** AI-specific cost optimization (intelligent fee timing via LLM) has been moved to P8. This story covers the non-AI batch processing and usage analytics only. See also P8-S2 (Batch Anchor Processing) in `docs/stories/12_p8_ai_intelligence.md` for the AI-enhanced version.
 
 ### Acceptance Criteria
+
 - [ ] Batch processing: queue anchors and broadcast as Merkle root in single TX
 - [ ] Fee estimation: suggest optimal submission time based on mempool congestion (rule-based, not AI)
 - [ ] Usage analytics dashboard: cost per anchor, monthly spend, projected costs
@@ -547,12 +611,14 @@ Batch anchor processing to reduce per-anchor Bitcoin fees: queue multiple anchor
 - [ ] Feature gated behind `ENABLE_BATCH_ANCHORING` flag
 
 ### Files
+
 - New: `services/worker/src/jobs/batch-anchor.ts` — batch processing job
 - New: `src/components/billing/UsageAnalytics.tsx` — cost dashboard
 - `services/worker/src/chain/fee-estimator.ts` — enhanced fee timing
 - `src/lib/switchboard.ts` — add `ENABLE_BATCH_ANCHORING` flag
 
 ### Technical Notes
+
 - Current anchoring: 1 TX per anchor (OP_RETURN with single fingerprint)
 - Batch anchoring: Merkle tree of N fingerprints → single OP_RETURN with Merkle root
 - Requires new `anchor_batches` table to track batch→anchor relationships
@@ -567,6 +633,7 @@ Batch anchor processing to reduce per-anchor Bitcoin fees: queue multiple anchor
 **Depends on:** P7-TS-02 (Stripe checkout — partial)
 
 ### What It Delivers
+
 Hybrid billing model: keep existing subscriptions (quota-based) + add monthly credit allocations per tier for network fees and AI usage. Additional credits purchasable via Stripe one-time payments.
 
 **Monthly credit allocations per tier:**
@@ -580,6 +647,7 @@ Hybrid billing model: keep existing subscriptions (quota-based) + add monthly cr
 1 credit ≈ 1 anchor operation (Bitcoin TX fee) or ~10 AI operations (metadata extraction, description generation).
 
 ### Acceptance Criteria
+
 - [ ] New `credit_balances` table: `org_id`, `balance_credits`, `monthly_allocation`, `lifetime_purchased`, `lifetime_used`, `last_allocation_at`
 - [ ] New `credit_transactions` table: `id`, `org_id`, `amount`, `type` (ALLOCATION/PURCHASE/USAGE/REFUND/EXPIRY), `description`, `stripe_payment_id`, `created_at`
 - [ ] Monthly credit allocation on subscription renewal (cron job or Stripe webhook)
@@ -595,6 +663,7 @@ Hybrid billing model: keep existing subscriptions (quota-based) + add monthly cr
 - [ ] Migration includes rollback comments
 
 ### Files
+
 - New migration: `supabase/migrations/0054_credit_system.sql` (next available after P4.5 migrations 0051-0053)
 - New: `src/hooks/useCredits.ts` — credit balance + transaction queries
 - `src/pages/SettingsPage.tsx` — credit balance + purchase UI
@@ -604,6 +673,7 @@ Hybrid billing model: keep existing subscriptions (quota-based) + add monthly cr
 - New: `services/worker/src/jobs/credit-allocation.ts` — monthly allocation cron
 
 ### Technical Notes
+
 - Subscriptions stay for access tiers (Free/Pro/Enterprise) and monthly record quotas
 - Credits cover variable costs: Bitcoin TX fees + AI usage (P8 stories)
 - Credit deduction happens in worker (service_role) — never client-side
@@ -621,9 +691,11 @@ Hybrid billing model: keep existing subscriptions (quota-based) + add monthly cr
 **Depends on:** MVP-24 (credits schema)
 
 ### What It Delivers
+
 Usage dashboard for credits, auto-refill option, and scheduled anchoring (queue documents for batch processing at low-fee times).
 
 ### Acceptance Criteria
+
 - [ ] Credits usage dashboard: current balance, 30-day spend chart, per-anchor cost breakdown
 - [ ] Auto-refill toggle: automatically purchase credits when balance drops below threshold
 - [ ] Scheduled anchoring: user can queue documents for "next low-fee window" (worker picks optimal time)
@@ -631,6 +703,7 @@ Usage dashboard for credits, auto-refill option, and scheduled anchoring (queue 
 - [ ] Credit transaction history with export (CSV)
 
 ### Files
+
 - New: `src/components/billing/CreditsDashboard.tsx`
 - `src/hooks/useCredits.ts` — add usage analytics queries
 - `services/worker/src/jobs/anchor.ts` — scheduled anchoring logic
@@ -645,9 +718,11 @@ Usage dashboard for credits, auto-refill option, and scheduled anchoring (queue 
 **Depends on:** None (infrastructure setup)
 
 ### What It Delivers
+
 Deploy the worker service to Google Cloud Run. This is the infrastructure foundation for MVP-01 (worker production deployment). Uses Google startup credits.
 
 ### Acceptance Criteria
+
 - [ ] Cloud Run service created for worker container
 - [ ] Dockerfile builds and deploys successfully to Cloud Run
 - [ ] Health check endpoint (`/health`) configured and responding
@@ -659,12 +734,14 @@ Deploy the worker service to Google Cloud Run. This is the infrastructure founda
 - [ ] HTTPS enforced (Cloud Run default)
 
 ### Files
+
 - `services/worker/Dockerfile` (exists)
 - New: `services/worker/.dockerignore` (partial — needs completion)
 - New: `infrastructure/gcp/cloud-run.tf` (Terraform) or `scripts/deploy-cloud-run.sh` (CLI)
 - New: `docs/confluence/15_gcp_deployment.md`
 
 ### Technical Notes
+
 - Cloud Run supports container images, HTTP triggers, and always-on instances
 - Worker Express server needs `PORT` env var (Cloud Run sets this automatically)
 - Cloud Run max request timeout: 3600s (sufficient for anchor processing)
@@ -679,9 +756,11 @@ Deploy the worker service to Google Cloud Run. This is the infrastructure founda
 **Depends on:** MVP-26 (Cloud Run deployment)
 
 ### What It Delivers
+
 Migrate all worker secrets from environment variables to GCP Secret Manager. Cloud Run services access secrets via mounted volumes or environment variable injection from Secret Manager.
 
 ### Acceptance Criteria
+
 - [ ] All worker secrets stored in GCP Secret Manager: `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BITCOIN_TREASURY_WIF`, `API_KEY_HMAC_SECRET`
 - [ ] Cloud Run service configured to inject secrets as env vars from Secret Manager
 - [ ] Secret rotation supported (new versions without downtime)
@@ -690,6 +769,7 @@ Migrate all worker secrets from environment variables to GCP Secret Manager. Clo
 - [ ] Local development still uses `.env` file (no GCP dependency for local dev)
 
 ### Files
+
 - New: `infrastructure/gcp/secrets.tf` or `scripts/setup-secrets.sh`
 - `services/worker/src/config.ts` — no changes needed (reads from env vars regardless of source)
 
@@ -702,9 +782,11 @@ Migrate all worker secrets from environment variables to GCP Secret Manager. Clo
 **Depends on:** MVP-26 (Cloud Run deployment)
 
 ### What It Delivers
+
 Replace the worker's internal cron scheduler with GCP Cloud Scheduler for production reliability. Cloud Scheduler sends HTTP requests to Cloud Run endpoints on a schedule.
 
 ### Acceptance Criteria
+
 - [ ] Cloud Scheduler jobs created for: anchor processing (every 1 min), webhook retries (every 5 min), report generation (daily)
 - [ ] Each job hits a dedicated Cloud Run endpoint (e.g., `POST /cron/process-anchors`)
 - [ ] Jobs authenticated via OIDC token (Cloud Scheduler → Cloud Run)
@@ -713,11 +795,13 @@ Replace the worker's internal cron scheduler with GCP Cloud Scheduler for produc
 - [ ] Local development: internal cron still works (no Cloud Scheduler dependency)
 
 ### Files
+
 - New: `infrastructure/gcp/scheduler.tf` or `scripts/setup-scheduler.sh`
 - `services/worker/src/index.ts` — add cron endpoint routes (alongside internal cron)
 - New: `services/worker/src/api/cron.ts` — HTTP cron trigger handlers
 
 ### Technical Notes
+
 - Cloud Scheduler supports cron expressions, retries, and dead-letter topics
 - Worker currently uses `node-cron` internally — keep for local dev, Cloud Scheduler for production
 - OIDC auth ensures only Cloud Scheduler can trigger cron endpoints
@@ -731,9 +815,11 @@ Replace the worker's internal cron scheduler with GCP Cloud Scheduler for produc
 **Depends on:** MVP-26 (Cloud Run deployment), P7-TS-05 (Bitcoin chain client)
 
 ### What It Delivers
+
 Add GCP Cloud KMS as an alternative key management option alongside AWS KMS. The existing `KmsSigningProvider` interface supports pluggable backends — this adds a GCP implementation.
 
 ### Acceptance Criteria
+
 - [ ] New `GcpKmsSigningProvider` implements `SigningProvider` interface
 - [ ] Supports secp256k1 key creation and signing (required for Bitcoin)
 - [ ] Worker config: `KMS_PROVIDER=aws|gcp` selects which backend
@@ -742,12 +828,14 @@ Add GCP Cloud KMS as an alternative key management option alongside AWS KMS. The
 - [ ] Operational docs: `docs/confluence/16_gcp_kms_operations.md`
 
 ### Files
+
 - New: `services/worker/src/chain/gcp-kms-signing-provider.ts`
 - `services/worker/src/chain/client.ts` — factory supports GCP KMS
 - `services/worker/src/config.ts` — add `KMS_PROVIDER` config
 - New: `docs/confluence/16_gcp_kms_operations.md`
 
 ### Technical Notes
+
 - GCP Cloud KMS supports secp256k1 keys (required for Bitcoin signing)
 - Existing `KmsSigningProvider` (AWS) in `signing-provider.ts` — can coexist with GCP version
 - AWS KMS for mainnet (already designed), GCP KMS as backup/alternative
@@ -762,9 +850,11 @@ Add GCP Cloud KMS as an alternative key management option alongside AWS KMS. The
 **Depends on:** MVP-26 (Cloud Run deployment)
 
 ### What It Delivers
+
 Automated CI/CD pipeline that builds and deploys the worker to Cloud Run on merge to main. Can use Cloud Build (GCP-native) or GitHub Actions with GCP auth.
 
 ### Acceptance Criteria
+
 - [ ] Pipeline triggers on push/merge to `main` branch
 - [ ] Builds worker Docker image
 - [ ] Pushes image to Google Artifact Registry
@@ -775,10 +865,12 @@ Automated CI/CD pipeline that builds and deploys the worker to Cloud Run on merg
 - [ ] Rollback capability (deploy previous image tag)
 
 ### Files
+
 - New: `cloudbuild.yaml` (if using Cloud Build) or `.github/workflows/deploy-worker-gcp.yml` (if using GitHub Actions)
 - New: `infrastructure/gcp/artifact-registry.tf` or setup script
 
 ### Technical Notes
+
 - Cloud Build is GCP-native, simpler IAM integration with Cloud Run
 - GitHub Actions requires Workload Identity Federation for GCP auth (no service account keys)
 - Recommend Cloud Build for simplicity with GCP credits program

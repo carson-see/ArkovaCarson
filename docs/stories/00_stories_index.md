@@ -181,6 +181,7 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 
 | Bug ID | Severity | Resolution | Summary |
 |--------|----------|------------|---------|
+| BUG-AUDIT-01 | HIGH | RESOLVED 2026-03-14 (PR #36) | Toast system incomplete — all mutation hooks now have toast notifications |
 | CRIT-1 | HIGH | FIXED 2026-03-10 (a38b485) | SecureDocumentDialog fakes anchor creation |
 | CRIT-4 | MEDIUM | FIXED 2026-03-10 (a38b485) | Onboarding routes render DashboardPage placeholder |
 | CRIT-5 | MEDIUM | FIXED 2026-03-10 (a38b485) | JSON proof download is no-op (PDF works) |
