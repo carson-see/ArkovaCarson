@@ -533,7 +533,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 51 files, versions 0001–0052 (0033 skipped). Last: `0052_webhook_dead_letter_queue.sql` (DH-02, DH-12). 51 migrations applied to production Supabase (`vzwyaatejekddvltxyye`) on 2026-03-13; migration 0052 pending deploy.
+**Current migration inventory:** 50 files, versions 0001–0051 (0033 skipped). Last: `0051_enable_pgvector_and_institution_ground_truth.sql`. All 51 migrations applied to production Supabase (`vzwyaatejekddvltxyye`) on 2026-03-13.
 
 ---
 
@@ -552,11 +552,11 @@ npx supabase db reset
 | P6 Verification | 5/6 | 1/6 | 0 | 83% |
 | P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| DH Deferred Hardening | 10/12 | 0/12 | 2/12 | 83% |
-| MVP Launch Gaps | 3/27 | 1/27 | 23/27 | 11% |
+| DH Deferred Hardening | 3/12 | 0/12 | 9/12 | 25% |
+| MVP Launch Gaps | 10/27 | 1/27 | 16/27 | 37% |
 | P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
 | INFRA Edge & Ingress | 0/8 | 5/8 | 3/8 | 31% |
-| **Total** | **54/124** | **9/124** | **61/124** | **~44%** |
+| **Total** | **55/124** | **8/124** | **61/124** | **~47%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -564,7 +564,7 @@ npx supabase db reset
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
 | CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. Signet E2E broadcast verified (TX `b8e381df`). **Remaining operational items:** AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
-| CRIT-3 | Stripe checkout — partial | **HIGH** | Pricing UI + useBilling hook + checkout pages + checkout/portal worker endpoints all implemented (b1f798a). Webhook handlers work. Entitlement enforcement partially done: `useEntitlements` hook (client-side quota check, fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows. |
+| ~~CRIT-3~~ | ~~Stripe checkout~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal. All entitlement enforcement complete.~~ |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
 | ~~CRIT-6~~ | ~~`CSVUploadWizard` uses simulated processing~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. Connected to csvParser + useBulkAnchors hook. Commit a38b485.~~ |
@@ -638,49 +638,49 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 
 All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled for post-launch.
 
-### DH Deferred Hardening — 10/12 COMPLETE, 2/12 NOT STARTED
+### DH Deferred Hardening — 3/12 COMPLETE, 9/12 NOT STARTED
 
 12 stories identified during CodeRabbit review of PR #26. See `docs/stories/10_deferred_hardening.md` for full details.
 
-~~DH-01 Feature flag hot-reload~~ (COMPLETE — realtime subscription on switchboard_flags) · ~~DH-02 Advisory lock for bulk_create_anchors~~ (COMPLETE — pg_advisory_xact_lock in migration 0052) · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · ~~DH-04 Webhook circuit breaker~~ (COMPLETE — 5 failures → open, 60s half-open) · ~~DH-05 Chain index cache TTL~~ (COMPLETE — 5-min in-memory cache) · ~~DH-06 ConfirmAnchorModal server-side quota error handling~~ (COMPLETE — catches P0002 + Quota exceeded) · ~~DH-07 MempoolFeeEstimator request timeout~~ (COMPLETE — PR #38) · ~~DH-08 Rate limiting for check_anchor_quota~~ (COMPLETE — 10 req/min per IP) · ~~DH-09 UtxoProvider retry logic~~ (COMPLETE — PR #39) · ~~DH-10 useEntitlements realtime subscription~~ (COMPLETE — subscriptions + anchors INSERT) · ~~DH-11 Worker RPC structured logging~~ (COMPLETE — createRpcLogger with child logger + timing) · ~~DH-12 Webhook dead letter queue~~ (COMPLETE — webhook_dead_letter_queue table, migration 0052)
+DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · ~~DH-07 MempoolFeeEstimator request timeout~~ (COMPLETE — PR #38, +23 tests) · DH-08 Rate limiting for check_anchor_quota · ~~DH-09 UtxoProvider retry logic~~ (COMPLETE — PR #39, +17 tests) · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
 
-### MVP Launch Gaps — 3/27 COMPLETE, 1/27 PARTIAL, 23/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 10/27 COMPLETE, 0/27 PARTIAL, 17/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
 | ID | Priority | Description | Status |
 |----|----------|-------------|--------|
-| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | NOT STARTED |
-| MVP-02 | HIGH | Global toast/notification system (Sonner) | ⚠️ PARTIAL — Sonner wired, toasts in useProfile + useOrganization + useBulkAnchors. Missing: useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
+| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | ⚠️ PARTIAL — `.env.example` updated, deploy workflow health check added (PR #50). Needs env vars + manual deploy. |
+| ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system (Sonner)~~ | ✅ COMPLETE — All mutation hooks have toasts: useProfile, useOrganization, useBulkAnchors, useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
 | ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages (Privacy, Terms, Contact)~~ | ✅ COMPLETE — PrivacyPage, TermsPage, ContactPage exist + routed |
 | ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets (logo, favicon, OG meta tags)~~ | ✅ COMPLETE (PR #30) — ArkovaLogo, favicon.svg, og-image.svg, OG/Twitter meta |
 | ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404 page~~ | ✅ COMPLETE — ErrorBoundary (Sentry-wired) + NotFoundPage, both routed |
-| MVP-06 | MEDIUM | File-based public verification (drag-and-drop) | NOT STARTED |
-| MVP-07 | MEDIUM | Mobile responsive layout | NOT STARTED |
-| MVP-08 | MEDIUM | Onboarding progress stepper | NOT STARTED |
-| MVP-09 | MEDIUM | Records pagination + search | NOT STARTED |
+| ~~MVP-06~~ | ~~MEDIUM~~ | ~~File-based public verification (drag-and-drop)~~ | ✅ COMPLETE (PR #50) — `/verify` route, client-side fingerprinting, PublicVerifyPage tests |
+| ~~MVP-07~~ | ~~MEDIUM~~ | ~~Mobile responsive layout~~ | ✅ COMPLETE (PR #43) |
+| ~~MVP-08~~ | ~~MEDIUM~~ | ~~Onboarding progress stepper~~ | ✅ COMPLETE (PR #44) |
+| ~~MVP-09~~ | ~~MEDIUM~~ | ~~Records pagination + search~~ | ✅ COMPLETE (PR #44) |
 | MVP-10 | MEDIUM | Marketing website (arkova.ai) | NOT STARTED |
-| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) | NOT STARTED |
+| ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ✅ COMPLETE (PR #43) — via Billing Portal |
 | MVP-12 | LOW | Dark mode toggle | NOT STARTED |
 | MVP-13 | LOW | Organization logo upload | NOT STARTED |
 | MVP-14 | LOW | Embeddable verification widget | NOT STARTED |
-| MVP-16 | MEDIUM | Block explorer deep links | NOT STARTED |
+| ~~MVP-16~~ | ~~MEDIUM~~ | ~~Block explorer deep links~~ | ✅ COMPLETE (PR #50) — ExplorerLink component, wired in PublicVerification |
 | MVP-17 | MEDIUM | Credential template metadata enhancement | NOT STARTED |
 | MVP-18 | MEDIUM | Enhanced metadata display | NOT STARTED |
 | ~~MVP-19~~ | — | ~~AI Auto-Descriptions~~ — REMOVED (superseded by P8-S4/S5) | — |
 | MVP-20 | LOW | LinkedIn badge integration | NOT STARTED |
-| MVP-21 | MEDIUM | Individual self-verification flow | NOT STARTED |
+| ~~MVP-21~~ | ~~MEDIUM~~ | ~~Individual self-verification flow~~ | ✅ COMPLETE (PR #50) — VerifyMyRecordPage at `/my-records/verify` |
 | ~~MVP-22~~ | — | ~~AI Fraud Detection~~ — REMOVED (superseded by P8-S7/S8/S9) | — |
 | MVP-23 | MEDIUM | Batch anchor processing | NOT STARTED |
-| MVP-24 | HIGH | Credits schema + monthly allocations | NOT STARTED |
-| MVP-25 | MEDIUM | Credits tracking + scheduling | NOT STARTED |
+| ~~MVP-24~~ | ~~HIGH~~ | ~~Credits schema + monthly allocations~~ | ✅ COMPLETE (PR #50) — Migration 0053, RPCs, RLS |
+| ~~MVP-25~~ | ~~MEDIUM~~ | ~~Credits tracking + scheduling~~ | ✅ COMPLETE (PR #50) — useCredits hook, CreditUsageWidget, cron job |
 | MVP-26 | HIGH | GCP Cloud Run deployment | NOT STARTED |
 | MVP-27 | HIGH | GCP Secret Manager integration | NOT STARTED |
 | MVP-28 | MEDIUM | GCP Cloud Scheduler | NOT STARTED |
 | MVP-29 | HIGH | GCP Cloud KMS integration | NOT STARTED |
 | MVP-30 | MEDIUM | GCP CI/CD pipeline | NOT STARTED |
 
-**Bugs linked:** BUG-AUDIT-01 (→MVP-02 PARTIAL), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
+**Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
 ### P8 AI Intelligence — 0/19 NOT STARTED
 
@@ -748,19 +748,18 @@ All of the following are done. Details in MEMORY.md completed sprints.
 | AWS KMS signing | CRIT-2 | Key provisioning for mainnet signing. SignetChainClient done, mainnet needs KMS. |
 | ~~Signet node connectivity test~~ | ~~CRIT-2~~ | ~~DONE — Signet E2E broadcast verified (TX `b8e381df`).~~ |
 | Mainnet treasury funding | CRIT-2 | Fund the production treasury wallet. |
-| Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook (fail-closed) + server-side quota in bulk_create_anchors (migration 0049) + ConfirmAnchorModal quota gate + UpgradePrompt. Remaining: plan change/downgrade flows only. |
-| Plan change/downgrade | CRIT-3 | Handle subscription upgrades, downgrades, cancellations. |
+| ~~Entitlement enforcement~~ | ~~CRIT-3~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal.~~ |
 
 ### MVP Launch Gap Stories (testnet launch blockers)
 
 | Task | Story | Priority | Detail |
 |------|-------|----------|--------|
-| Worker deployment | MVP-01 | CRITICAL | Deploy Express worker to production host. Blocks all anchor processing. |
-| Toast system | MVP-02 | HIGH | ⚠️ PARTIAL — Sonner wired, toasts in 3 hooks. Missing 4+ hooks (BUG-AUDIT-01). |
+| Worker deployment | MVP-01 | CRITICAL | Deploy Express worker to production host. Blocks all anchor processing. `.env.example` + deploy workflow updated (PR #50). |
+| ~~Toast system~~ | ~~MVP-02~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-15. All mutation hooks have toasts (audit confirmed).~~ |
 | ~~Legal pages~~ | ~~MVP-03~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. PrivacyPage + TermsPage + ContactPage exist + routed.~~ |
 | ~~Brand assets~~ | ~~MVP-04~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ArkovaLogo component, favicon.svg, OG meta tags. PR #30.~~ |
 | ~~Error boundary~~ | ~~MVP-05~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ErrorBoundary (Sentry-wired) + NotFoundPage, both routed.~~ |
-| Stripe plan change | MVP-11 | HIGH | Upgrades, downgrades, cancellations (CRIT-3 remaining). |
+| ~~Stripe plan change~~ | ~~MVP-11~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14 (PR #43). Via Billing Portal.~~ |
 
 ### Pre-Launch (after blockers + MVP gaps resolved)
 
