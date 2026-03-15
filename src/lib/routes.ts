@@ -17,6 +17,7 @@ export const ROUTES = {
   PRIVACY: '/privacy',
   TERMS: '/terms',
   CONTACT: '/contact',
+  EMBED_VERIFY: '/embed/verify/:publicId',
 
   // Onboarding routes (auth required, pre-setup)
   ONBOARDING_ROLE: '/onboarding/role',
