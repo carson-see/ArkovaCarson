@@ -10,7 +10,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { TreasuryAdminPage } from './TreasuryAdminPage';
 
 // Mock hooks
-const mockUser = { email: 'admin_demo@arkova.local' };
+const mockUser = { email: 'carson@arkova.io' };
 const mockProfile = { full_name: 'Admin', role: 'ORG_ADMIN', org_id: null, public_id: 'admin-1', is_public_profile: false, avatar_url: null };
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -75,7 +75,7 @@ function renderPage() {
 describe('TreasuryAdminPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockUser.email = 'admin_demo@arkova.local';
+    mockUser.email = 'carson@arkova.io';
   });
 
   it('renders the page title for admin users', () => {

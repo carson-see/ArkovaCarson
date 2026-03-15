@@ -36,9 +36,8 @@ import { supabase } from '@/lib/supabase';
 
 /** Hardcoded admin emails — will be replaced with PLATFORM_ADMIN role in future */
 const PLATFORM_ADMIN_EMAILS = [
-  'admin@arkova.io',
-  'admin_demo@arkova.local',
-  'admin@umich-demo.arkova.io',
+  'carson@arkova.io',
+  'sarah@arkova.io',
 ];
 
 interface AnchorStats {
