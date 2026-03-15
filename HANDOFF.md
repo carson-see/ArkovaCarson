@@ -18,18 +18,20 @@
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
 | CRIT-2 | Bitcoin chain client — operational items | **HIGH** | CODE COMPLETE | AWS KMS key provisioning, mainnet treasury funding |
-| CRIT-3 | Stripe plan change/downgrade | **HIGH** | PARTIAL | Implement upgrade/downgrade/cancellation flows (→ MVP-11) |
+| ~~CRIT-3~~ | ~~Stripe plan change/downgrade~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14~~ | ~~PR #43~~ |
+| UAT-S5 | UAT Sprint 5 — 9 critical/high UI bugs | **HIGH** | NOT STARTED | Mobile sidebar, auth errors, billing route, header, help, dropdown, badges, org table, profile dedup |
+| UAT-S6 | UAT Sprint 6 — 8 medium/low UI polish bugs | **MEDIUM** | NOT STARTED | Stat cards, loading states, forgot password, QR URL |
 
 ### MVP Launch Gap Stories (testnet launch blockers)
 
 | Story | Priority | Description | Status |
 |-------|----------|-------------|--------|
 | MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | NOT STARTED |
-| MVP-02 | HIGH | Global toast/notification system (Sonner) | PARTIAL — Sonner wired, toast calls not in hooks |
-| MVP-03 | HIGH | Legal pages (Privacy, Terms, Contact) | RESOLVED (uncommitted) |
-| MVP-04 | HIGH | Brand assets (logo, favicon, OG meta tags) | COMPLETE (PR #30) |
-| MVP-05 | HIGH | Error boundary + 404 page | NOT STARTED |
-| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) | NOT STARTED |
+| ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system~~ | ~~COMPLETE (PRs #36, #37, #40)~~ |
+| ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages~~ | ~~COMPLETE~~ |
+| ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets~~ | ~~COMPLETE (PR #30)~~ |
+| ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404~~ | ~~COMPLETE~~ |
+| ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ~~COMPLETE (PR #43)~~ |
 
 ### P8 AI Intelligence (in progress)
 
@@ -88,6 +90,38 @@
 ---
 
 ## Session Log
+
+### Session: 2026-03-15 — UAT Bug Bounty Audit + Sprint Planning
+
+**UAT Testing:**
+- Comprehensive UAT audit across 12 pages, 3 viewports (desktop 1280px, tablet 768px, mobile 375px)
+- Tested: Login, Dashboard, My Records, Record Detail, Organization, Settings, Billing, Help, Public Verify, Privacy, Terms, Contact, 404
+- **17 bugs discovered** (3 Critical, 6 High, 5 Medium, 3 Low)
+- All findings documented in `docs/bugs/uat_2026_03_15.md`
+
+**Sprint Planning:**
+- **Sprint 5** (Critical + High): 9 bugs — mobile sidebar, auth errors, billing route, header title, help link, avatar dropdown, badge overlap, org table columns, profile API dedup
+- **Sprint 6** (Medium + Low): 8 bugs — layout fixes, loading states, forgot password, QR URL
+- Full sprint plans in `docs/stories/14_uat_sprints.md`
+
+**Key Findings:**
+- Mobile sidebar does NOT auto-collapse — app unusable on mobile (contradicts MVP-07 COMPLETE status)
+- `/billing` route silently redirects to Dashboard — users cannot access billing
+- Supabase `oauth_client_id` auth error fires on every page load (6x per load)
+- `useProfile()` hook causes 8+ redundant API calls per page load (performance)
+- Header permanently says "Dashboard" regardless of current page
+- Help link and avatar dropdown are dead/non-functional
+
+**Positive Findings:**
+- Public verification page is excellent (clean 5-section layout)
+- Record detail page is strong (fingerprint, lifecycle, QR, re-verify, proof downloads)
+- Legal pages, 404, and Secure Document dialog all work well
+- All Supabase API calls returning real data (200/204)
+
+**Files Created:**
+- `docs/bugs/uat_2026_03_15.md` — Full 17-bug report with reproduction steps
+- `docs/stories/14_uat_sprints.md` — Sprint 5 + Sprint 6 execution plans
+- Updated: CLAUDE.md (Section 8 + 9), HANDOFF.md, MEMORY.md, stories index, bug log
 
 ### Session: 2026-03-14 — Phase 5 Bitcoin Anchor Verification
 
