@@ -96,8 +96,8 @@ BEGIN
       'file_size', a.file_size,
       -- Template lookup fields (UF-01)
       'org_id', a.org_id,
-      -- Anchor metadata for CredentialRenderer
-      'metadata', a.metadata,
+      -- Anchor metadata for CredentialRenderer (PII-stripped: remove recipient)
+      'metadata', COALESCE(a.metadata, '{}'::jsonb) - 'recipient',
       -- Lifecycle fields for AnchorLifecycleTimeline (P6-TS-04)
       'created_at', a.created_at,
       'secured_at', CASE WHEN a.status != 'PENDING' THEN a.chain_timestamp END,
