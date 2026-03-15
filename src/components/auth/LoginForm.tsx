@@ -6,8 +6,9 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, AlertCircle, Loader2, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,6 +24,11 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
   const { signIn, signInWithGoogle, loading, error, clearError } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [forgotMode, setForgotMode] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [resetSending, setResetSending] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -39,6 +45,95 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
     clearError();
     await signInWithGoogle();
   };
+
+  const handleForgotPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    setResetSending(true);
+
+    const { error: resetErr } = await supabase.auth.resetPasswordForEmail(resetEmail, {
+      redirectTo: `${window.location.origin}/login`,
+    });
+
+    setResetSending(false);
+
+    if (resetErr) {
+      setResetError(resetErr.message);
+    } else {
+      setResetSent(true);
+    }
+  };
+
+  if (forgotMode) {
+    return (
+      <div className="space-y-6">
+        <div className="text-center">
+          <h2 className="text-lg font-semibold">Reset your password</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Enter your email address and we&apos;ll send you a reset link.
+          </p>
+        </div>
+
+        {resetSent ? (
+          <Alert className="border-green-200 bg-green-50">
+            <CheckCircle className="h-4 w-4 text-green-600" />
+            <AlertDescription className="text-green-800">
+              Check your email for a password reset link. It may take a few minutes to arrive.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            {resetError && (
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>{resetError}</AlertDescription>
+              </Alert>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="reset-email">Email address</Label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="reset-email"
+                  type="email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                  disabled={resetSending}
+                  className="pl-10"
+                />
+              </div>
+            </div>
+            <Button type="submit" className="w-full" disabled={resetSending}>
+              {resetSending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Sending...
+                </>
+              ) : (
+                'Send reset link'
+              )}
+            </Button>
+          </form>
+        )}
+
+        <p className="text-center text-sm text-muted-foreground">
+          <button
+            type="button"
+            onClick={() => {
+              setForgotMode(false);
+              setResetSent(false);
+              setResetError(null);
+            }}
+            className="font-medium text-primary hover:text-primary/80 transition-colors"
+          >
+            Back to sign in
+          </button>
+        </p>
+      </div>
+    );
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -105,7 +200,19 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="password">Password</Label>
+          <button
+            type="button"
+            onClick={() => {
+              setForgotMode(true);
+              setResetEmail(email);
+            }}
+            className="text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+          >
+            Forgot password?
+          </button>
+        </div>
         <div className="relative">
           <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input

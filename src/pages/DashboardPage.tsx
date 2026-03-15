@@ -26,6 +26,7 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { IDENTITY_LABELS } from '@/lib/copy';
 
@@ -102,7 +103,7 @@ export function DashboardPage() {
       </div>
 
       {/* Stats grid */}
-      <div className="grid gap-4 md:grid-cols-3 mb-8">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
         <StatCard
           label="Total Records"
           value={stats.total}
@@ -129,30 +130,43 @@ export function DashboardPage() {
       {/* Privacy toggle */}
       <Card className="mb-8">
         <CardContent className="flex items-center justify-between py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              {isPublicProfile ? (
-                <Eye className="h-5 w-5 text-primary" />
-              ) : (
-                <EyeOff className="h-5 w-5 text-muted-foreground" />
-              )}
+          {profileLoading ? (
+            <div className="flex items-center gap-3 w-full">
+              <Skeleton className="h-10 w-10 rounded-lg" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <Skeleton className="h-5 w-9 rounded-full" />
             </div>
-            <div className="space-y-0.5">
-              <Label htmlFor="public-profile" className="text-sm font-medium">
-                Public Verification Profile
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {isPublicProfile
-                  ? 'Your records can be verified by anyone with the fingerprint'
-                  : 'Only you can access your verification records'}
-              </p>
-            </div>
-          </div>
-          <Switch
-            id="public-profile"
-            checked={isPublicProfile}
-            onCheckedChange={handleTogglePublicProfile}
-          />
+          ) : (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                  {isPublicProfile ? (
+                    <Eye className="h-5 w-5 text-primary" />
+                  ) : (
+                    <EyeOff className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  <Label htmlFor="public-profile" className="text-sm font-medium">
+                    Public Verification Profile
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {isPublicProfile
+                      ? 'Your records can be verified by anyone with the fingerprint'
+                      : 'Only you can access your verification records'}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="public-profile"
+                checked={isPublicProfile}
+                onCheckedChange={handleTogglePublicProfile}
+              />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -206,15 +220,15 @@ export function DashboardPage() {
                   <Shield className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium">Account Type</p>
+                  <p className="text-sm font-medium">Account</p>
                   <p className="text-sm text-muted-foreground">
-                    {profile.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Individual'}
+                    {profile.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Individual Account'}
                   </p>
                 </div>
               </div>
-              {profile.org_id && (
-                <Badge variant="secondary">Organization Member</Badge>
-              )}
+              <Badge variant="secondary">
+                {profile.role === 'ORG_ADMIN' ? 'Org Admin' : 'Individual'}
+              </Badge>
             </div>
             {profile.public_id && (
               <>
