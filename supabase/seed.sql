@@ -350,6 +350,74 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- =============================================================================
+-- 5B. CREDENTIAL TEMPLATES — display templates for credential rendering (UF-05)
+-- Templates define the field schema that CredentialRenderer uses.
+-- default_metadata.fields defines what appears in the issuance form.
+-- =============================================================================
+
+INSERT INTO credential_templates (
+  id,
+  org_id,
+  name,
+  description,
+  credential_type,
+  default_metadata,
+  is_active,
+  created_at,
+  updated_at
+) VALUES
+  -- UMich Registrar — Degree template
+  (
+    'tttttttt-0000-0000-0000-000000000001',
+    'aaaaaaaa-0000-0000-0000-000000000001',
+    'University Degree',
+    'Academic degree credential (Bachelor, Master, Doctorate)',
+    'DEGREE',
+    '{"fields": [{"key": "institution", "label": "Institution", "type": "text", "required": true}, {"key": "degree_level", "label": "Degree Level", "type": "select", "required": true, "options": ["Bachelor of Arts", "Bachelor of Science", "Master of Arts", "Master of Science", "Master of Business Administration", "Doctor of Philosophy", "Juris Doctor", "Doctor of Medicine"]}, {"key": "program", "label": "Program / Major", "type": "text", "required": true}, {"key": "recipient", "label": "Recipient Name", "type": "text", "required": true}, {"key": "graduation_date", "label": "Graduation Date", "type": "date"}, {"key": "honors", "label": "Honors", "type": "select", "options": ["None", "Cum Laude", "Magna Cum Laude", "Summa Cum Laude"]}]}',
+    true,
+    '2025-08-15 10:00:00+00',
+    '2025-08-15 10:00:00+00'
+  ),
+  -- UMich Registrar — Transcript template
+  (
+    'tttttttt-0000-0000-0000-000000000002',
+    'aaaaaaaa-0000-0000-0000-000000000001',
+    'Academic Transcript',
+    'Official transcript of academic courses and grades',
+    'TRANSCRIPT',
+    '{"fields": [{"key": "institution", "label": "Institution", "type": "text", "required": true}, {"key": "student_name", "label": "Student Name", "type": "text", "required": true}, {"key": "program", "label": "Program", "type": "text"}, {"key": "academic_year", "label": "Academic Year", "type": "text"}, {"key": "gpa", "label": "GPA", "type": "number"}]}',
+    true,
+    '2025-08-15 10:00:00+00',
+    '2025-08-15 10:00:00+00'
+  ),
+  -- Midwest Medical Board — License template
+  (
+    'tttttttt-0000-0000-0000-000000000003',
+    'bbbbbbbb-0000-0000-0000-000000000001',
+    'Medical License',
+    'Professional medical license credential',
+    'LICENSE',
+    '{"fields": [{"key": "issuing_body", "label": "Issuing Body", "type": "text", "required": true}, {"key": "license_number", "label": "License Number", "type": "text", "required": true}, {"key": "licensee_name", "label": "Licensee Name", "type": "text", "required": true}, {"key": "specialty", "label": "Specialty", "type": "text"}, {"key": "jurisdiction", "label": "Jurisdiction", "type": "text"}, {"key": "expiry_date", "label": "Expiry Date", "type": "date"}]}',
+    true,
+    '2025-10-01 15:00:00+00',
+    '2025-10-01 15:00:00+00'
+  ),
+  -- Midwest Medical Board — Certificate template
+  (
+    'tttttttt-0000-0000-0000-000000000004',
+    'bbbbbbbb-0000-0000-0000-000000000001',
+    'Professional Certificate',
+    'Certificate of completion or continuing education',
+    'CERTIFICATE',
+    '{"fields": [{"key": "issuing_body", "label": "Issuing Body", "type": "text", "required": true}, {"key": "cert_number", "label": "Certificate Number", "type": "text"}, {"key": "recipient_name", "label": "Recipient Name", "type": "text", "required": true}, {"key": "program", "label": "Program / Course", "type": "text", "required": true}, {"key": "completion_date", "label": "Completion Date", "type": "date"}, {"key": "expiry_date", "label": "Expiry Date", "type": "date"}]}',
+    true,
+    '2025-10-01 15:00:00+00',
+    '2025-10-01 15:00:00+00'
+  )
+ON CONFLICT (id) DO NOTHING;
+
+
+-- =============================================================================
 -- 6. ANCHORS — the 8 demo credential records
 --
 -- Uses current schema column names:

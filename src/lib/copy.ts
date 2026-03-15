@@ -473,6 +473,85 @@ export const ANCHORING_STATUS_LABELS = {
 } as const;
 
 // =============================================================================
+// METADATA FIELD RENDERER (UF-05)
+// =============================================================================
+
+export const METADATA_FIELD_LABELS = {
+  SECTION_TITLE: 'Credential Details',
+  REQUIRED_MARKER: '*',
+  OPTIONAL: '(optional)',
+  SELECT_PLACEHOLDER: 'Select...',
+  FILE_PREVIEW_TITLE: 'Document Preview',
+  FILE_NAME: 'Filename',
+  FILE_SIZE: 'Size',
+  FINGERPRINT_PREVIEW: 'Fingerprint',
+  NO_TEMPLATE: 'No template found for this credential type. Metadata fields will be available after a template is created.',
+  LOADING_TEMPLATE: 'Loading template fields...',
+  RECIPIENT_EMAIL: 'Recipient Email',
+  RECIPIENT_EMAIL_PLACEHOLDER: 'recipient@example.com',
+  RECIPIENT_EMAIL_DESCRIPTION: 'The recipient will be able to view this credential in their inbox.',
+} as const;
+
+// =============================================================================
+// PUBLIC SEARCH (UF-02)
+// =============================================================================
+
+export const SEARCH_LABELS = {
+  PAGE_TITLE: 'Search Credentials',
+  PAGE_SUBTITLE: 'Find verified credentials by issuer or verification ID.',
+  SEARCH_PLACEHOLDER: 'Search by issuer name or verification ID...',
+  SEARCH_BY_ID: 'Verification ID',
+  SEARCH_BY_ISSUER: 'Issuer',
+  SEARCH_BUTTON: 'Search',
+  NO_RESULTS: 'No results found',
+  NO_RESULTS_DESC: 'Try a different search term or check the verification ID.',
+  NO_ISSUERS: 'No issuers found',
+  NO_ISSUERS_DESC: 'No public issuers match your search.',
+  ISSUER_REGISTRY_TITLE: 'Issuer Registry',
+  CREDENTIALS_COUNT: '{count} verified credentials',
+  VIEW_REGISTRY: 'View Credentials',
+  VERIFY_LINK: 'Verify',
+  ISSUED_ON: 'Issued',
+  SEARCH_TYPE: 'Search Type',
+  RECIPIENT_COMING_SOON: 'Recipient search coming soon',
+  LOADING: 'Searching...',
+} as const;
+
+// =============================================================================
+// USAGE WIDGET (UF-06)
+// =============================================================================
+
+export const USAGE_LABELS = {
+  TITLE: 'Monthly Usage',
+  RECORDS_USED: '{used} of {limit} records used',
+  RECORDS_UNLIMITED: 'Unlimited records',
+  CREDITS_REMAINING: '{count} credits remaining',
+  RESETS_ON: 'Resets on {date}',
+  WARNING_80: 'You have used 80% of your monthly records. Upgrade for more.',
+  WARNING_100: 'Monthly record limit reached. Upgrade to continue securing documents.',
+  UPGRADE_CTA: 'Upgrade Plan',
+  FREE_LIMIT: '{used} of {limit} records used \u2014 upgrade for more',
+} as const;
+
+// =============================================================================
+// ENHANCED VERIFICATION DISPLAY (UF-07)
+// =============================================================================
+
+export const VERIFICATION_DISPLAY_LABELS = {
+  ISSUER_SECTION: 'Issuer',
+  VIEW_ISSUER_REGISTRY: 'View all credentials from this issuer',
+  REVOCATION_SECTION: 'Revocation Details',
+  REVOCATION_REASON: 'Reason',
+  REVOCATION_DATE: 'Revoked',
+  DOWNLOAD_PROOF: 'Download Proof',
+  DOWNLOAD_JSON: 'JSON Proof Package',
+  DOWNLOAD_PDF: 'PDF Summary',
+  FINGERPRINT_TOOLTIP: 'This is the document\u2019s unique digital fingerprint \u2014 a cryptographic proof that identifies this exact file.',
+  EXPLORER_TOOLTIP: 'View the network receipt for this anchor',
+  NO_REVOCATION_REASON: 'No reason provided',
+} as const;
+
+// =============================================================================
 // FORBIDDEN TERMS (for lint script)
 // =============================================================================
 

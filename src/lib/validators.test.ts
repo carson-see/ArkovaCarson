@@ -13,6 +13,7 @@ import {
   validateProfileUpdate,
   normalizeFingerprint,
   isValidFilename,
+  validateMetadataAgainstTemplate,
 } from './validators';
 
 describe('AnchorCreateSchema', () => {
@@ -341,5 +342,71 @@ describe('isValidFilename helper', () => {
 
   it('returns false for filename exceeding 255 characters', () => {
     expect(isValidFilename('a'.repeat(256))).toBe(false);
+  });
+});
+
+// =============================================================================
+// validateMetadataAgainstTemplate (UF-05)
+// =============================================================================
+
+describe('validateMetadataAgainstTemplate', () => {
+  const fields = [
+    { key: 'name', label: 'Name', type: 'text' as const, required: true },
+    { key: 'gpa', label: 'GPA', type: 'number' as const, required: false },
+    { key: 'grad_date', label: 'Graduation Date', type: 'date' as const, required: true },
+    { key: 'level', label: 'Degree Level', type: 'select' as const, required: true, options: ['Bachelor', 'Master', 'Doctorate'] },
+  ];
+
+  it('returns empty map when all required fields are valid', () => {
+    const values = { name: 'John', gpa: '3.5', grad_date: '2025-06-15', level: 'Bachelor' };
+    expect(validateMetadataAgainstTemplate(values, fields)).toEqual({});
+  });
+
+  it('reports missing required text field', () => {
+    const values = { name: '', gpa: '', grad_date: '2025-06-15', level: 'Master' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.name).toBe('Name is required');
+  });
+
+  it('reports missing required select field', () => {
+    const values = { name: 'Jane', grad_date: '2025-06-15', level: '' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.level).toBe('Degree Level is required');
+  });
+
+  it('reports invalid number value', () => {
+    const values = { name: 'Jane', gpa: 'abc', grad_date: '2025-06-15', level: 'Bachelor' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.gpa).toBe('GPA must be a number');
+  });
+
+  it('reports invalid date value', () => {
+    const values = { name: 'Jane', grad_date: 'not-a-date', level: 'Bachelor' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.grad_date).toBe('Graduation Date must be a valid date');
+  });
+
+  it('reports invalid select value', () => {
+    const values = { name: 'Jane', grad_date: '2025-06-15', level: 'Associate' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.level).toBe('Degree Level must be one of: Bachelor, Master, Doctorate');
+  });
+
+  it('skips validation for empty optional fields', () => {
+    const values = { name: 'Jane', gpa: '', grad_date: '2025-06-15', level: 'Bachelor' };
+    expect(validateMetadataAgainstTemplate(values, fields)).toEqual({});
+  });
+
+  it('handles missing keys as empty strings', () => {
+    const values = { grad_date: '2025-06-15', level: 'Master' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.name).toBe('Name is required');
+    expect(errors.gpa).toBeUndefined();
+  });
+
+  it('trims whitespace-only values as empty', () => {
+    const values = { name: '   ', grad_date: '2025-06-15', level: 'Bachelor' };
+    const errors = validateMetadataAgainstTemplate(values, fields);
+    expect(errors.name).toBe('Name is required');
   });
 });

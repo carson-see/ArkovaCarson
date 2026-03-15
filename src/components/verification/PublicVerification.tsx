@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { RevocationDetails } from '@/components/verification/RevocationDetails';
+import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import {
   Card,
@@ -39,7 +41,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 
 interface PublicAnchorData {
@@ -273,6 +275,40 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         />
 
         {/* ============================================================
+            SECTION 2B: Issuer Info (UF-07) — links to issuer registry
+            ============================================================ */}
+        {data.issuer_name && data.org_id && (
+          <>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-muted-foreground">{VERIFICATION_DISPLAY_LABELS.ISSUER_SECTION}:</span>
+                <span className="font-medium">{data.issuer_name}</span>
+              </div>
+              <a
+                href={`/issuer/${data.org_id}`}
+                className="text-xs text-primary hover:underline"
+              >
+                {VERIFICATION_DISPLAY_LABELS.VIEW_ISSUER_REGISTRY}
+              </a>
+            </div>
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2C: Revocation Details (UF-07)
+            ============================================================ */}
+        {isRevoked && (
+          <>
+            <Separator />
+            <RevocationDetails
+              revocationReason={data.revocation_reason}
+              revokedAt={data.revoked_at}
+            />
+          </>
+        )}
+
+        {/* ============================================================
             SECTION 3: Cryptographic Proof (only for non-PENDING)
             ============================================================ */}
         {!isPending && (
@@ -361,6 +397,25 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               data={mapToLifecycleData(data)}
             />
           </div>
+        )}
+
+        {/* ============================================================
+            SECTION 5: Proof Download (UF-07)
+            ============================================================ */}
+        {!isPending && (
+          <>
+            <Separator />
+            <VerifierProofDownload
+              publicId={data.public_id}
+              fingerprint={data.fingerprint}
+              status={data.status}
+              issuerName={data.issuer_name}
+              credentialType={data.credential_type}
+              filename={data.filename}
+              securedAt={data.secured_at ?? data.anchor_timestamp}
+              networkReceiptId={data.network_receipt_id}
+            />
+          </>
         )}
 
         {/* Footer */}

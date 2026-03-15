@@ -2,16 +2,19 @@
  * Issue Credential Form
  *
  * Dialog for ORG_ADMIN users to issue credentials with
- * credential_type, label, and metadata. Reuses FileUpload
- * for document fingerprinting.
+ * credential_type, label, metadata (dynamic fields from template), and
+ * optional recipient email. Reuses FileUpload for document fingerprinting.
  *
  * Enhanced success screen (UF-04): shows verification URL, copy link,
  * and "anchoring in progress" messaging instead of closing immediately.
  *
- * @see P5-TS-05, UF-04
+ * Dynamic metadata fields (UF-05): when user selects a credential_type,
+ * loads matching template and renders form fields for structured metadata.
+ *
+ * @see P5-TS-05, UF-04, UF-05
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import {
   Shield,
   Loader2,
@@ -21,6 +24,7 @@ import {
   Check,
   ExternalLink,
   Plus,
+  FileText,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,18 +45,22 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
 import { FileUpload } from '@/components/anchor/FileUpload';
+import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import {
   FORM_LABELS,
   CREDENTIAL_TYPE_LABELS,
   TOAST,
   ANCHORING_STATUS_LABELS,
   ISSUE_CREDENTIAL_LABELS,
+  METADATA_FIELD_LABELS,
 } from '@/lib/copy';
 import { toast } from 'sonner';
 import { verifyPath, recordDetailPath } from '@/lib/routes';
@@ -87,15 +95,43 @@ export function IssueCredentialForm({
   const [credentialType, setCredentialType] = useState<CredentialType | ''>('');
   const [label, setLabel] = useState('');
   const [issuedAt, setIssuedAt] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
+  const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  // Fetch template when credential type is selected (UF-05)
+  const { template, loading: templateLoading } = useCredentialTemplate(
+    credentialType || null,
+    profile?.org_id || null,
+  );
+
+  const templateFields = useMemo(() => template?.fields ?? [], [template]);
+
   const handleFileSelect = useCallback((f: File, fp: string) => {
     setFile(f);
     setFingerprint(fp);
     setError(null);
+  }, []);
+
+  const handleCredentialTypeChange = useCallback((value: CredentialType) => {
+    setCredentialType(value);
+    // Reset metadata when type changes
+    setMetadataValues({});
+    setMetadataErrors({});
+  }, []);
+
+  const handleMetadataChange = useCallback((key: string, value: string) => {
+    setMetadataValues((prev) => ({ ...prev, [key]: value }));
+    // Clear error for this field
+    setMetadataErrors((prev) => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }, []);
 
   const resetForm = useCallback(() => {
@@ -105,6 +141,9 @@ export function IssueCredentialForm({
     setCredentialType('');
     setLabel('');
     setIssuedAt('');
+    setRecipientEmail('');
+    setMetadataValues({});
+    setMetadataErrors({});
     setCreating(false);
     setError(null);
     setCreatedAnchor(null);
@@ -118,13 +157,58 @@ export function IssueCredentialForm({
     }
   }, [creating, resetForm, onOpenChange]);
 
+  const validateMetadata = useCallback((): boolean => {
+    const errors: Record<string, string> = {};
+    for (const field of templateFields) {
+      if (field.required && !metadataValues[field.key]?.trim()) {
+        errors[field.key] = `${field.label} is required`;
+      }
+    }
+    setMetadataErrors(errors);
+    return Object.keys(errors).length === 0;
+  }, [templateFields, metadataValues]);
+
+  const buildMetadata = useCallback((): Record<string, unknown> | null => {
+    const entries: Record<string, unknown> = {};
+
+    // Add issued_at if provided
+    if (issuedAt) {
+      entries.issued_at = `${issuedAt}T00:00:00Z`;
+    }
+
+    // Add template-driven metadata values
+    for (const field of templateFields) {
+      const value = metadataValues[field.key]?.trim();
+      if (value) {
+        if (field.type === 'number') {
+          const num = Number(value);
+          if (!isNaN(num)) entries[field.key] = num;
+        } else {
+          entries[field.key] = value;
+        }
+      }
+    }
+
+    // Add recipient email if provided (for UF-03 future linking)
+    if (recipientEmail.trim()) {
+      entries._recipient_email = recipientEmail.trim();
+    }
+
+    return Object.keys(entries).length > 0 ? entries : null;
+  }, [issuedAt, templateFields, metadataValues, recipientEmail]);
+
   const handleSubmit = useCallback(async () => {
     if (!file || !fingerprint || !user || !credentialType) return;
+
+    // Validate required metadata fields
+    if (!validateMetadata()) return;
 
     setCreating(true);
     setError(null);
 
     try {
+      const metadata = buildMetadata();
+
       const validated = validateAnchorCreate({
         fingerprint,
         filename: file.name,
@@ -133,9 +217,7 @@ export function IssueCredentialForm({
         org_id: profile?.org_id || null,
         credential_type: credentialType,
         label: label.trim() || null,
-        metadata: issuedAt
-          ? { issued_at: `${issuedAt}T00:00:00Z` }
-          : null,
+        metadata,
       });
 
       const { data: inserted, error: insertError } = await supabase
@@ -187,8 +269,9 @@ export function IssueCredentialForm({
     profile,
     credentialType,
     label,
-    issuedAt,
     onSuccess,
+    validateMetadata,
+    buildMetadata,
   ]);
 
   const handleCopyLink = useCallback(async () => {
@@ -213,9 +296,16 @@ export function IssueCredentialForm({
 
   const canSubmit = !!file && !!fingerprint && !!credentialType && !creating;
 
+  // Format file size for display
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Award className="h-5 w-5 text-primary" />
@@ -234,6 +324,25 @@ export function IssueCredentialForm({
               {/* File upload */}
               <FileUpload onFileSelect={handleFileSelect} disabled={creating} />
 
+              {/* File preview (UF-05) */}
+              {file && fingerprint && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {METADATA_FIELD_LABELS.FILE_PREVIEW_TITLE}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-sm truncate">{file.name}</span>
+                    <span className="text-xs text-muted-foreground ml-auto shrink-0">
+                      {formatFileSize(file.size)}
+                    </span>
+                  </div>
+                  <div className="font-mono text-xs text-muted-foreground truncate">
+                    {fingerprint.slice(0, 16)}...
+                  </div>
+                </div>
+              )}
+
               {/* Credential type */}
               <div className="space-y-2">
                 <Label htmlFor="credential-type">
@@ -241,7 +350,7 @@ export function IssueCredentialForm({
                 </Label>
                 <Select
                   value={credentialType}
-                  onValueChange={(v) => setCredentialType(v as CredentialType)}
+                  onValueChange={(v) => handleCredentialTypeChange(v as CredentialType)}
                   disabled={creating}
                 >
                   <SelectTrigger id="credential-type">
@@ -258,6 +367,28 @@ export function IssueCredentialForm({
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Dynamic metadata fields from template (UF-05) */}
+              {credentialType && (
+                <>
+                  {templateLoading ? (
+                    <div className="text-sm text-muted-foreground py-2">
+                      {METADATA_FIELD_LABELS.LOADING_TEMPLATE}
+                    </div>
+                  ) : templateFields.length > 0 ? (
+                    <>
+                      <Separator />
+                      <MetadataFieldRenderer
+                        fields={templateFields}
+                        values={metadataValues}
+                        onChange={handleMetadataChange}
+                        disabled={creating}
+                        errors={metadataErrors}
+                      />
+                    </>
+                  ) : null}
+                </>
+              )}
 
               {/* Label */}
               <div className="space-y-2">
@@ -282,6 +413,27 @@ export function IssueCredentialForm({
                   onChange={(e) => setIssuedAt(e.target.value)}
                   disabled={creating}
                 />
+              </div>
+
+              {/* Recipient email (UF-05 → feeds into UF-03) */}
+              <div className="space-y-2">
+                <Label htmlFor="recipient-email">
+                  {METADATA_FIELD_LABELS.RECIPIENT_EMAIL}
+                  <span className="text-muted-foreground text-xs ml-1">
+                    {METADATA_FIELD_LABELS.OPTIONAL}
+                  </span>
+                </Label>
+                <Input
+                  id="recipient-email"
+                  type="email"
+                  value={recipientEmail}
+                  onChange={(e) => setRecipientEmail(e.target.value)}
+                  placeholder={METADATA_FIELD_LABELS.RECIPIENT_EMAIL_PLACEHOLDER}
+                  disabled={creating}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {METADATA_FIELD_LABELS.RECIPIENT_EMAIL_DESCRIPTION}
+                </p>
               </div>
 
               {/* Status notice */}

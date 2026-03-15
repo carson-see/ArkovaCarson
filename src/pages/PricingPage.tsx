@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { ROUTES } from '@/lib/routes';
 import { BILLING_LABELS } from '@/lib/copy';
+import { UsageWidget } from '@/components/billing/UsageWidget';
 import type { BillingInfo } from '@/components/billing/BillingOverview';
 
 export function PricingPage() {
@@ -123,6 +124,13 @@ export function PricingPage() {
         <Alert variant="destructive" className="mb-6">
           <AlertDescription>{billingError}</AlertDescription>
         </Alert>
+      )}
+
+      {/* Usage tracking (UF-06) */}
+      {hasActiveSubscription && (
+        <div className="mb-6">
+          <UsageWidget compact />
+        </div>
       )}
 
       {/* Show current subscription overview if active */}

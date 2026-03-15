@@ -18,6 +18,8 @@ export const ROUTES = {
   TERMS: '/terms',
   CONTACT: '/contact',
   EMBED_VERIFY: '/embed/verify/:publicId',
+  SEARCH: '/search',
+  ISSUER_REGISTRY: '/issuer/:orgId',
 
   // Onboarding routes (auth required, pre-setup)
   ONBOARDING_ROLE: '/onboarding/role',
