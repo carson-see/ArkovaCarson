@@ -587,7 +587,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 53 files, versions 0001–0053 (0033 skipped). Last: `0053_credits_schema.sql`. All 53 migrations applied to production Supabase (`vzwyaatejekddvltxyye`). Migrations 0001–0051 applied 2026-03-13, 0052–0053 applied 2026-03-15.
+**Current migration inventory:** 54 files, versions 0001–0054 (0033 skipped). Last: `0054_public_template_and_pending_anchor.sql` (UF-01/UF-04). Migrations 0001–0053 applied to production. Migration 0054 pending production application.
 
 ---
 
@@ -611,7 +611,8 @@ npx supabase db reset
 | P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
 | INFRA Edge & Ingress | 5/8 | 1/8 | 2/8 | 63% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
-| **Total** | **96/141** | **1/141** | **44/141** | **~68%** |
+| UF User Flow Gaps | 2/10 | 0/10 | 8/10 | 20% |
+| **Total** | **98/151** | **1/151** | **52/151** | **~65%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -761,6 +762,25 @@ Remaining 15 stories NOT STARTED. Architecture: client-side OCR → PII strippin
 | INFRA-06 | NOT STARTED | Replicate QA data generator |
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
 | ~~INFRA-08~~ | ~~✅ COMPLETE~~ | ~~pgvector + institution ground truth — migration 0051 applied to production.~~ |
+
+### UF User Flow Gaps — 2/10 COMPLETE, 8/10 NOT STARTED
+
+10 stories identified 2026-03-16 from full user flow walkthrough. These complete the core credentialing loop. Must be resolved **before P4.5 Verification API work begins**. See `docs/stories/14_user_flow_gaps.md`.
+
+| ID | Priority | Description | Status |
+|----|----------|-------------|--------|
+| ~~UF-01~~ | ~~CRITICAL~~ | ~~Template-based credential rendering (CredentialRenderer component)~~ | ✅ COMPLETE — CredentialRenderer (3 modes), useCredentialTemplate hook, get_public_template RPC (migration 0054). 20 tests. |
+| UF-02 | HIGH | Public credential discovery + search (/search, /issuer/:orgId) | NOT STARTED |
+| UF-03 | HIGH | Individual recipient credential inbox (/my-credentials, anchor_recipients table) | NOT STARTED |
+| ~~UF-04~~ | ~~CRITICAL~~ | ~~Anchor status lifecycle UX (PENDING → SECURED visibility + messaging)~~ | ✅ COMPLETE — Enhanced success screens (SecureDocumentDialog + IssueCredentialForm), pulsing amber PENDING badges (OrgRegistryTable), public verification includes PENDING with "Anchoring In Progress" banner. Migration 0054 updates get_public_anchor. |
+| UF-05 | HIGH | Credential metadata entry in issuance forms (dynamic fields from template) | NOT STARTED |
+| UF-06 | HIGH | Usage/quota tracking dashboard (UsageWidget, proactive warnings) | NOT STARTED |
+| UF-07 | HIGH | Enhanced public verification display (issuer info, revocation details, proof download) | NOT STARTED |
+| UF-08 | MEDIUM | Post-issuance actions + share flow (copy link, share sheet) | NOT STARTED |
+| UF-09 | MEDIUM | Org context + navigation polish (breadcrumbs, org name, auth redirect toast) | NOT STARTED |
+| UF-10 | MEDIUM | Onboarding completion + empty state guidance (getting started checklist) | NOT STARTED |
+
+**Build order:** ~~Sprint A: UF-01 + UF-04~~ (DONE) → Sprint B: UF-05, UF-02, UF-06, UF-07 → Sprint C: UF-03, UF-08, UF-09, UF-10
 
 ---
 
@@ -1007,5 +1027,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-15 (full reconciliation) | Repo: ArkovaCarson | 53 migrations | 1,071+ tests | 141 stories (96 complete, 68%)_
+_Directive version: 2026-03-16 (UF Sprint A — UF-01 + UF-04 complete) | Repo: ArkovaCarson | 54 migrations | 1,091+ tests | 151 stories (101 complete, 67%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

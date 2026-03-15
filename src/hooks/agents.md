@@ -5,6 +5,7 @@ _Last updated: 2026-03-12_
 React hooks for data fetching and mutations against Supabase. Each hook encapsulates a single concern (auth, profile, anchors, revocation, export, etc.).
 
 ## Recent Changes
+- 2026-03-16 UF-01: Created `useCredentialTemplate.ts` — fetches template by credential_type + org_id. Two modes: authenticated (direct Supabase query) and public (RPC via `get_public_template`). Exports `parseTemplateFields()` and `TemplateDisplayData`/`TemplateField` types.
 - 2026-03-11 SonarQube sprint: `useAuth.ts` — S6582 (optional chaining), S7772 (node: prefix). `useCredentialTemplates.ts` — S6582 (optional chaining). No behavioral changes.
 - 2026-03-07 Code-review fix: `useProfile.ts` — separated `updating` state from `loading` state in `updateProfile()`. Prevents RouteGuard full-page spinner flash when toggling profile fields.
 - 2026-03-07 P3-TS-02: Updated `useProfile.ts` — expanded `updateProfile` type to include `is_public_profile` for privacy toggle persistence.

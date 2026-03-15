@@ -13,7 +13,9 @@
 import { supabase } from '@/lib/supabase';
 
 type VerificationMethod = 'web' | 'api' | 'embed' | 'qr';
-type VerificationResult = 'verified' | 'revoked' | 'expired' | 'not_found' | 'error';
+// DB constraint allows: 'verified' | 'revoked' | 'not_found' | 'error'
+// PENDING anchors map to 'verified' (record exists) for logging purposes
+type VerificationResult = 'verified' | 'revoked' | 'not_found' | 'error';
 
 interface LogVerificationEventParams {
   publicId: string;
