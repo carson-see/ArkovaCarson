@@ -607,11 +607,11 @@ npx supabase db reset
 | P7 Go-Live | 11/13 | 0 | 2/13 | 85% | <!-- P7-TS-04 and P7-TS-06 not enumerated (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0 | 13/13 | 0% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
-| MVP Launch Gaps | 15/27 | 0 | 12/27 | 56% |
+| MVP Launch Gaps | 18/27 | 0 | 9/27 | 67% |
 | P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
 | INFRA Edge & Ingress | 5/8 | 1/8 | 2/8 | 63% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
-| **Total** | **96/141** | **1/141** | **44/141** | **~68%** |
+| **Total** | **99/141** | **1/141** | **41/141** | **~70%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -699,7 +699,7 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 ~~DH-01~~ Feature flag hot-reload · ~~DH-02~~ Advisory lock (migration 0052) · ~~DH-03~~ KMS operational docs (`14_kms_operations.md`) · ~~DH-04~~ Webhook circuit breaker · ~~DH-05~~ Chain index cache TTL · ~~DH-06~~ Quota error handling · ~~DH-07~~ Fee estimator timeout (PR #38) · ~~DH-08~~ Rate limiting (migration 0052) · ~~DH-09~~ UTXO retry logic (PR #39) · ~~DH-10~~ Entitlements realtime · ~~DH-11~~ RPC structured logging · ~~DH-12~~ Webhook DLQ (migration 0052)
 
-### MVP Launch Gaps — 15/27 COMPLETE, 12/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 18/27 COMPLETE, 9/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
@@ -729,9 +729,9 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 | MVP-23 | MEDIUM | Batch anchor processing | NOT STARTED |
 | ~~MVP-24~~ | ~~HIGH~~ | ~~Credits schema + monthly allocations~~ | ✅ COMPLETE (PR #50) — Migration 0053, RPCs, RLS |
 | ~~MVP-25~~ | ~~MEDIUM~~ | ~~Credits tracking + scheduling~~ | ✅ COMPLETE (PR #50) — useCredits hook, CreditUsageWidget, cron job |
-| MVP-26 | HIGH | GCP Cloud Run deployment | NOT STARTED |
-| MVP-27 | HIGH | GCP Secret Manager integration | NOT STARTED |
-| MVP-28 | MEDIUM | GCP Cloud Scheduler | NOT STARTED |
+| ~~MVP-26~~ | ~~HIGH~~ | ~~GCP Cloud Run deployment~~ | ✅ COMPLETE — `arkova-worker-kvojbeutfa-uc.a.run.app`, health verified, all secrets mounted. |
+| ~~MVP-27~~ | ~~HIGH~~ | ~~GCP Secret Manager integration~~ | ✅ COMPLETE — 7 secrets (supabase-url, supabase-service-role-key, stripe-secret-key, stripe-webhook-secret, cloudflare-tunnel-token, bitcoin-treasury-wif, api-key-hmac-secret). |
+| ~~MVP-28~~ | ~~MEDIUM~~ | ~~GCP Cloud Scheduler~~ | ✅ COMPLETE — 4 cron jobs created (process-anchors, webhook-retries, generate-reports, credit-expiry). OIDC auth with Cloud Run SA. |
 | MVP-29 | HIGH | GCP Cloud KMS integration | NOT STARTED |
 | MVP-30 | MEDIUM | GCP CI/CD pipeline | NOT STARTED |
 
@@ -1007,5 +1007,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-15 (full reconciliation) | Repo: ArkovaCarson | 53 migrations | 1,071+ tests | 141 stories (96 complete, 68%)_
+_Directive version: 2026-03-16 (ops sprint — Cloud Scheduler, runbook update) | Repo: ArkovaCarson | 53 migrations | 1,071+ tests | 141 stories (99 complete, 70%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

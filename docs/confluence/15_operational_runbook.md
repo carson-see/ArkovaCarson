@@ -1,5 +1,5 @@
 # Operational Runbook — Production Launch
-_Last updated: 2026-03-15 | Stories: P7-TS-05, MVP-01_
+_Last updated: 2026-03-16 | Stories: P7-TS-05, MVP-01_
 
 ## Overview
 
@@ -59,47 +59,101 @@ Set these in GCP Cloud Run configuration (or via `gcloud run services update`):
 | `NODE_ENV` | `production` | |
 | `API_KEY_HMAC_SECRET` | Generate with `openssl rand -hex 32` | For API key hashing |
 
-### 2.2 Stripe Webhook Registration
+### 2.2 Stripe Webhook Registration — COMPLETE
 
-| Step | Action |
-|------|--------|
-| 1 | Go to Stripe Dashboard → Developers → Webhooks |
-| 2 | Add endpoint: `https://arkova-worker-kvojbeutfa-uc.a.run.app/webhooks/stripe` |
-| 3 | Select events: `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed` |
-| 4 | Copy the webhook signing secret |
-| 5 | Set `STRIPE_WEBHOOK_SECRET` env var in Cloud Run |
+Webhook registered 2026-03-16.
 
-### 2.3 Cloud Scheduler (Cron Jobs)
+| Field | Value |
+|-------|-------|
+| Webhook ID | `we_1TBHb6BBeICNeQqrolzWA2yj` |
+| Endpoint URL | `https://arkova-worker-kvojbeutfa-uc.a.run.app/webhooks/stripe` |
+| Events | `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`, `invoice.payment_succeeded`, `invoice.payment_failed` |
+| Secret | Stored in GCP Secret Manager (`stripe-webhook-secret`, version 3) |
+| `API_KEY_HMAC_SECRET` | Stored in GCP Secret Manager, mounted to Cloud Run |
 
-| Job | Schedule | Target |
-|-----|----------|--------|
-| Process pending anchors | `*/5 * * * *` (every 5 min) | `POST /cron/process-anchors` |
-| Webhook retries | `*/10 * * * *` (every 10 min) | `POST /cron/webhook-retries` |
-| Report generation | `0 * * * *` (hourly) | `POST /cron/generate-reports` |
-| Credit expiry | `0 0 1 * *` (monthly) | `POST /cron/credit-expiry` |
+### 2.3 Cloud Scheduler (Cron Jobs) — COMPLETE
+
+All 4 cron jobs created 2026-03-16 via `gcloud scheduler jobs create http`. All use OIDC authentication with the Cloud Run service account.
+
+| Job | Schedule | Target | Status |
+|-----|----------|--------|--------|
+| `process-anchors` | `*/5 * * * *` (every 5 min) | `POST /cron/process-anchors` | ENABLED |
+| `webhook-retries` | `*/10 * * * *` (every 10 min) | `POST /cron/webhook-retries` | ENABLED |
+| `generate-reports` | `0 * * * *` (hourly) | `POST /cron/generate-reports` | ENABLED |
+| `credit-expiry` | `0 0 1 * *` (monthly) | `POST /cron/credit-expiry` | ENABLED |
+
+**Auth:** OIDC token with audience `https://arkova-worker-kvojbeutfa-uc.a.run.app`, service account `270018525501-compute@developer.gserviceaccount.com`.
+
+**Management:**
+```bash
+# List jobs
+gcloud scheduler jobs list --project=arkova1 --location=us-central1
+
+# Manually trigger a job
+gcloud scheduler jobs run process-anchors --project=arkova1 --location=us-central1
+
+# Pause/resume a job
+gcloud scheduler jobs pause process-anchors --project=arkova1 --location=us-central1
+gcloud scheduler jobs resume process-anchors --project=arkova1 --location=us-central1
+```
 
 ### 2.4 Deployment Verification
 
-```bash
-# Health check
-curl https://arkova-worker-kvojbeutfa-uc.a.run.app/api/health
+**Cloud Run URL:** `https://arkova-worker-kvojbeutfa-uc.a.run.app`
 
-# Expected: { "status": "ok", "chain": "signet|mainnet", "timestamp": "..." }
+> **Note:** `gcloud` may report both old and new revision URLs as aliases. The canonical URL above is stable.
+
+```bash
+# Health check (note: /health, NOT /api/health)
+curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
+
+# Expected: { "status": "ok", "timestamp": "..." }
 ```
+
+**Status as of 2026-03-16:** Health endpoint verified and returning 200 OK. All secrets mounted via GCP Secret Manager.
 
 ## 3. Other Pre-Launch Manual Steps
 
 | Task | Description | Who |
 |------|-------------|-----|
-| DNS | Point `app.arkova.io` to Vercel deployment | Ops |
-| Marketing DNS | Point `arkova.ai` to marketing site Vercel project | Ops |
-| Seed data strip | Remove demo users from production Supabase | Ops |
-| Sentry DSN | Set `VITE_SENTRY_DSN` (frontend) and `SENTRY_DSN` (worker) | Ops |
-| Apply migrations 0052-0053 | `supabase db push` against production | Ops |
-| Key rotation | Rotate Stripe live key + Supabase service role key post-setup | Security |
+| ~~Apply migrations 0052-0053~~ | ~~`supabase db push` against production~~ | ~~Ops~~ | ✅ DONE 2026-03-15 |
+| ~~Stripe webhook~~ | ~~Register webhook endpoint~~ | ~~Ops~~ | ✅ DONE 2026-03-16 (`we_1TBHb6BBeICNeQqrolzWA2yj`) |
+| ~~API_KEY_HMAC_SECRET~~ | ~~Generate + mount to Cloud Run~~ | ~~Ops~~ | ✅ DONE 2026-03-16 |
+| ~~Vercel env vars~~ | ~~Set `VITE_APP_URL` in production~~ | ~~Ops~~ | ✅ DONE 2026-03-16 — `VITE_APP_URL=https://arkova-carson.vercel.app` (prod + dev) |
+| ~~Vercel domains~~ | ~~Add custom domains to Vercel projects~~ | ~~Ops~~ | ✅ DONE 2026-03-16 — `app.arkova.ai` → arkova-carson, `arkova.ai` + `www.arkova.ai` → arkova-marketing |
+| DNS — Namecheap | Set A records at Namecheap (registrar) pointing to Vercel | Ops | PENDING — see Section 3.1 |
+| DNS — migration | Redirect `arkova.io` → `arkova.ai` (301) + cancel old Pro plan | Ops | PENDING |
+| Vercel env — Sentry | Set `VITE_SENTRY_DSN` in Vercel production | Ops | PENDING — need Sentry DSN value |
+| GCP secret — Sentry | Set `SENTRY_DSN` for worker in GCP Secret Manager | Ops | PENDING — need Sentry DSN value |
+| Key rotation | Rotate Stripe live key → update GCP secret | Security | PENDING |
+| Key rotation | Rotate Supabase service role key → update GCP secret | Security | PENDING |
+| Seed data strip | Remove demo users from production Supabase before public launch | Ops | PENDING |
+
+### 3.1 DNS Configuration (Namecheap)
+
+Domains are added to Vercel but DNS records need to be set at the registrar (Namecheap — `pdns1/pdns2.registrar-servers.com`).
+
+**Required A records:**
+
+| Host | Type | Value | Project |
+|------|------|-------|---------|
+| `@` (arkova.ai) | A | `76.76.21.21` | arkova-marketing |
+| `www` | A | `76.76.21.21` | arkova-marketing |
+| `app` | A | `76.76.21.21` | arkova-carson |
+
+**Alternative:** Change nameservers to Vercel DNS (`ns1.vercel-dns.com`, `ns2.vercel-dns.com`) for automatic configuration.
+
+**To set at Namecheap:**
+1. Log in to Namecheap → Domain List → arkova.ai → Manage → Advanced DNS
+2. Add three A records above
+3. Wait for DNS propagation (up to 48h, usually <1h)
+4. Verify: `dig app.arkova.ai` should return `76.76.21.21`
 
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-03-15 | Initial creation — consolidates P7-TS-05 + MVP-01 operational items |
+| 2026-03-16 | Updated: Stripe webhook COMPLETE (we_1TBHb6BBeICNeQqrolzWA2yj), API_KEY_HMAC_SECRET mounted, health endpoint corrected to /health, Cloud Run URL confirmed, remaining tasks itemized with status |
+| 2026-03-16 | Cloud Scheduler: 4 cron jobs created (process-anchors, webhook-retries, generate-reports, credit-expiry). MVP-28 COMPLETE. |
+| 2026-03-16 | Vercel: VITE_APP_URL set, domains added (app.arkova.ai, arkova.ai, www.arkova.ai). DNS instructions added (Section 3.1). |
