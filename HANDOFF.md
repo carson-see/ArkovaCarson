@@ -124,10 +124,10 @@ All HIGH+ launch blockers resolved:
 **Changes to arkova-marketing repo (`carson-see/arkova-marketing`, branch `geo/quick-wins-07-06-02-05`):**
 - **GEO-07 COMPLETE:** Fixed broken `og:image` (`og-image.png` → `arkova-logo.png`), added `og:site_name="Arkova"`, `twitter:site="@arkaboratory"`, `twitter:image`. Extended meta description to 153 chars.
 - **GEO-06 COMPLETE:** Deployed upgraded `llms.txt` (formal spec with API docs, MCP server reference, auth, rate limits). Replaced marketing-copy version.
-- **GEO-02 PARTIAL:** Fixed `sameAs` LinkedIn URL from `/company/arkova` (Arkova Partners) to `/company/arkova-technologies`. Added GitHub (`carson-see/ArkovaCarson`) to `sameAs` array. Remaining: create actual LinkedIn company page + Wikidata entry (external tasks).
+- **GEO-02 PARTIAL:** Fixed `sameAs` LinkedIn URL from `/company/arkova` (Arkova Partners) to `/company/arkovatech`. Added GitHub (`carson-see/ArkovaCarson`) to `sameAs` array. Remaining: create actual LinkedIn company page + Wikidata entry (external tasks).
 - **GEO-05 PARTIAL:** Added `WebSite` JSON-LD schema with `alternateName`, `publisher` reference. Now 4 JSON-LD blocks total (Organization, SoftwareApplication, FAQPage, WebSite). Remaining: `speakable` WebPage + `AggregateOffer` enhancement.
 
-**Story doc updates:** `docs/stories/15_geo_seo.md` updated (2 COMPLETE, 1 PARTIAL + GEO-05 partial = 2 partial, 9 NOT STARTED).
+**Story doc updates:** `docs/stories/15_geo_seo.md` updated (2 COMPLETE, 2 PARTIAL, 8 NOT STARTED). `00_stories_index.md` and CLAUDE.md Section 8 updated with GEO row.
 
 ### Session: 2026-03-15 — GEO Audit + Story Creation
 

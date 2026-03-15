@@ -36,7 +36,8 @@ For a new developer joining the project, read in this order:
 | INFRA | Infrastructure & Edge | 8 | 5 | 1 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
-| **Total** | | **151** | **109** | **1** | **41** | |
+| GEO | GEO & SEO Optimization | 12 | 2 | 2 | 8 | [15_geo_seo.md](./15_geo_seo.md) |
+| **Total** | | **163** | **111** | **3** | **49** | |
 
 ### All Stories by ID
 
@@ -176,6 +177,18 @@ For a new developer joining the project, read in this order:
 | UF-08 | Post-Issuance Actions + Share Flow | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 | UF-09 | Org Context + Navigation Polish | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 | UF-10 | Onboarding Completion + Empty State Guidance | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| GEO-01 | SSR for Marketing Site | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-02 | Fix LinkedIn Entity Collision + Expand sameAs | PARTIAL | [GEO](./15_geo_seo.md) | — |
+| GEO-03 | Publish Privacy + Terms on Marketing Site | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-04 | About Page + Team Bios + Person Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-05 | Enhanced Schema (WebSite, speakable, AggregateOffer) | PARTIAL | [GEO](./15_geo_seo.md) | — |
+| GEO-06 | Deploy Upgraded llms.txt | COMPLETE | [GEO](./15_geo_seo.md) | — |
+| GEO-07 | Fix Broken og:image + Complete Meta Tags | COMPLETE | [GEO](./15_geo_seo.md) | — |
+| GEO-08 | Content Expansion — 5 Core Pages | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-09 | Community & Brand Presence Launch | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-10 | IndexNow for Bing/Copilot | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-11 | YouTube Explainers + VideoObject Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-12 | Security Headers + Technical SEO Hardening | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 
 ## Bug Cross-Reference
 
