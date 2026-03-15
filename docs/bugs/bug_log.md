@@ -1,29 +1,29 @@
 # Arkova Bug Log
-_Last updated: 2026-03-15 ~12:00 PM EST | Active bugs: 22 (5 existing + 17 UAT) | Resolved: 15_
+_Last updated: 2026-03-16 ~11:30 AM EST | Active bugs: 5 (existing) | Resolved: 32 (15 prior + 17 UAT)_
 
 ## UAT Bug Bounty — 2026-03-15
 
-17 bugs discovered during comprehensive UAT testing. Full report: [uat_2026_03_15.md](./uat_2026_03_15.md). Sprint plans: [14_uat_sprints.md](../stories/14_uat_sprints.md).
+17 bugs discovered during comprehensive UAT testing. **All 17 resolved** in Sprint 5 (PR #47) and Sprint 6 (PR #48). Full report: [uat_2026_03_15.md](./uat_2026_03_15.md). Sprint plans: [14_uat_sprints.md](../stories/14_uat_sprints.md).
 
 | ID | Severity | Summary | Sprint | Status |
 |----|----------|---------|--------|--------|
-| BUG-UAT-01 | CRITICAL | Mobile sidebar does not auto-collapse | 5 | OPEN |
-| BUG-UAT-02 | CRITICAL | Console auth errors on every page load | 5 | OPEN |
-| BUG-UAT-03 | CRITICAL | `/billing` route inaccessible | 5 | OPEN |
-| BUG-UAT-04 | HIGH | Header always says "Dashboard" | 5 | OPEN |
-| BUG-UAT-05 | HIGH | "Help" sidebar link dead end | 5 | OPEN |
-| BUG-UAT-06 | HIGH | User avatar dropdown does nothing | 5 | OPEN |
-| BUG-UAT-07 | HIGH | Record card status badges overlap dates | 5 | OPEN |
-| BUG-UAT-08 | HIGH | Org records table missing columns | 5 | OPEN |
-| BUG-UAT-09 | HIGH | Redundant profile API calls (8+/load) | 5 | OPEN |
-| BUG-UAT-10 | MEDIUM | Secure Document button overlaps subtitle | 6 | OPEN |
-| BUG-UAT-11 | MEDIUM | Stat cards stacked vertically on desktop | 6 | OPEN |
-| BUG-UAT-12 | MEDIUM | Tablet viewport clips content | 6 | OPEN |
-| BUG-UAT-13 | MEDIUM | Account Type dual labels confusing | 6 | OPEN |
-| BUG-UAT-14 | MEDIUM | Seed data visible in prod-like env | 6 | OPEN |
-| BUG-UAT-15 | LOW | No "Forgot Password" link | 6 | OPEN |
-| BUG-UAT-16 | LOW | No loading states during data fetch | 6 | OPEN |
-| BUG-UAT-17 | LOW | QR code URL shows localhost | 6 | OPEN |
+| BUG-UAT-01 | CRITICAL | Mobile sidebar does not auto-collapse | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-02 | CRITICAL | Console auth errors on every page load | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-03 | CRITICAL | `/billing` route inaccessible | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-04 | HIGH | Header always says "Dashboard" | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-05 | HIGH | "Help" sidebar link dead end | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-06 | HIGH | User avatar dropdown does nothing | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-07 | HIGH | Record card status badges overlap dates | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-08 | HIGH | Org records table missing columns | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-09 | HIGH | Redundant profile API calls (8+/load) | 5 | ~~RESOLVED~~ PR #47 |
+| BUG-UAT-10 | MEDIUM | Secure Document button overlaps subtitle | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-11 | MEDIUM | Stat cards stacked vertically on desktop | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-12 | MEDIUM | Tablet viewport clips content | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-13 | MEDIUM | Account Type dual labels confusing | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-14 | MEDIUM | Seed data visible in prod-like env | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-15 | LOW | No "Forgot Password" link | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-16 | LOW | No loading states during data fetch | 6 | ~~RESOLVED~~ PR #48 |
+| BUG-UAT-17 | LOW | QR code URL shows localhost | 6 | ~~RESOLVED~~ PR #48 |
 
 ---
 

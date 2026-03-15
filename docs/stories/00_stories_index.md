@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-14 ~3:00 PM EST_
+_Last updated: 2026-03-16 ~11:30 AM EST_
 
 ## Overview
 
@@ -28,14 +28,14 @@ For a new developer joining the project, read in this order:
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 5 | 1 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 13 | 10 | 1 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P7 | Go-Live | 13 | 9 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 3 | 0 | 9 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 8 | 0 | 19 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| MVP | Launch Gaps | 27 | 10 | 1 | 16 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 0 | 5 | 3 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
-| UAT | Bug Fix Sprints (5+6) | 17 | 0 | 0 | 17 | [14_uat_sprints.md](./14_uat_sprints.md) |
-| **Total** | | **141** | **52** | **8** | **81** | |
+| UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
+| **Total** | | **141** | **68** | **8** | **65** | |
 
 ### All Stories by ID
 

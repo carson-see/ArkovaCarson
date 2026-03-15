@@ -19,14 +19,14 @@
 |----|-------|----------|--------|-------------|
 | CRIT-2 | Bitcoin chain client — operational items | **HIGH** | CODE COMPLETE | AWS KMS key provisioning, mainnet treasury funding |
 | ~~CRIT-3~~ | ~~Stripe plan change/downgrade~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14~~ | ~~PR #43~~ |
-| UAT-S5 | UAT Sprint 5 — 9 critical/high UI bugs | **HIGH** | NOT STARTED | Mobile sidebar, auth errors, billing route, header, help, dropdown, badges, org table, profile dedup |
-| UAT-S6 | UAT Sprint 6 — 8 medium/low UI polish bugs | **MEDIUM** | NOT STARTED | Stat cards, loading states, forgot password, QR URL |
+| ~~UAT-S5~~ | ~~UAT Sprint 5 — 9 critical/high UI bugs~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-15~~ | ~~PR #47~~ |
+| ~~UAT-S6~~ | ~~UAT Sprint 6 — 8 medium/low UI polish bugs~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-15~~ | ~~PR #48~~ |
 
 ### MVP Launch Gap Stories (testnet launch blockers)
 
 | Story | Priority | Description | Status |
 |-------|----------|-------------|--------|
-| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | NOT STARTED |
+| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | PARTIAL — `.env.example` + deploy workflow updated (PR #50). Needs env vars + manual deploy. |
 | ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system~~ | ~~COMPLETE (PRs #36, #37, #40)~~ |
 | ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages~~ | ~~COMPLETE~~ |
 | ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets~~ | ~~COMPLETE (PR #30)~~ |
@@ -90,6 +90,25 @@
 ---
 
 ## Session Log
+
+### Session: 2026-03-16 — Hardening Sprint 4 (Test Gaps + Route Fix + Doc Sync)
+
+**Fixes:**
+- Fix PricingPage test failure: `BILLING_LABELS.PAGE_TITLE` appeared in both Header and PricingPage `<h1>` — changed to `getAllByText` (PR #53)
+- Remove unused `mockSelect` variable in useAnchor.test.ts (lint error) (PR #53)
+- Fix SETTINGS_API_KEYS route mismatch: was rendering `DashboardPage`, now renders `ApiKeySettingsPage` placeholder with "coming soon" message (PR #54)
+- Add `API_KEY_LABELS` to `copy.ts` for centralized UI strings (PR #54)
+
+**Test Coverage:**
+- 41 new hook tests across 6 previously untested hooks (PR #55):
+  - useAuth (9 tests), useProfile (9 tests), useAnchors (4 tests)
+  - useCredentialLifecycle (8 tests), useCredentialTemplates (6 tests), useOrganization (5 tests)
+- Frontend test count: 467 (up from 426)
+
+**Documentation Sync:**
+- Bug log: all 17 UAT bugs marked RESOLVED (PRs #47, #48)
+- Stories index: completion counts updated (68/141 complete, up from 52/141)
+- HANDOFF.md: UAT sprints marked RESOLVED, BUG-AUDIT-01 marked RESOLVED, MVP-01 status updated
 
 ### Session: 2026-03-15 — UAT Bug Bounty Audit + Sprint Planning
 
@@ -275,7 +294,7 @@
 
 | ID | Date | Summary | Severity | Status | Detail |
 |----|------|---------|----------|--------|--------|
-| BUG-AUDIT-01 | 2026-03-12 | No global toast system | HIGH | PARTIAL | Sonner wired, toast calls not in hooks yet |
+| ~~BUG-AUDIT-01~~ | ~~2026-03-12~~ | ~~No global toast system~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-15~~ | ~~All mutation hooks have toasts (PRs #36, #37, #40)~~ |
 | BUG-AUDIT-02 | 2026-03-12 | Dead footer links | HIGH | RESOLVED | Pages created + routed (uncommitted) |
 | BUG-AUDIT-03 | 2026-03-12 | No favicon/logo/OG tags | HIGH | COMPLETE | PR #30 merged |
 
