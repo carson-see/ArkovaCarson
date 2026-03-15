@@ -2,7 +2,7 @@
 
 > Arkova is a privacy-first document verification platform. It creates tamper-proof cryptographic fingerprints of documents entirely in the user's browser (SHA-256 via Web Crypto API) and anchors them to a permanent public network. Documents never leave the user's device.
 
-## Description
+## About
 
 Arkova Technologies, Inc. builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform is designed for both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
 

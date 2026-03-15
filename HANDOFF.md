@@ -95,9 +95,48 @@ All HIGH+ launch blockers resolved:
 - **User Flow Gaps (UF-01 through UF-10) ALL COMPLETE** — CredentialRenderer, public search, recipient inbox, PENDING status UX, metadata entry, usage tracking, enhanced verification, share flow, breadcrumbs/nav polish, onboarding checklist
 - **GCP Infrastructure** — Cloud Run (worker deployed), Secret Manager (7 secrets), Cloud Scheduler (4 cron jobs)
 
+### GEO & SEO Optimization (NEW — 12 stories)
+
+| Story | Priority | Description | Status |
+|-------|----------|-------------|--------|
+| GEO-01 | CRITICAL | SSR for marketing site (crawlers see empty div) | NOT STARTED |
+| GEO-02 | CRITICAL | Fix LinkedIn entity collision + expand sameAs | NOT STARTED |
+| GEO-03 | CRITICAL | Publish /privacy and /terms on marketing site | NOT STARTED |
+| GEO-04 | HIGH | About page with team bios + Person schema | NOT STARTED |
+| GEO-05 | HIGH | Enhanced schema (WebSite, speakable, AggregateOffer) | NOT STARTED |
+| GEO-06 | HIGH | Deploy upgraded llms.txt | NOT STARTED |
+| GEO-07 | HIGH | Fix broken og:image + complete meta tags | NOT STARTED |
+| GEO-08 | HIGH | Content expansion — 5 core pages | NOT STARTED |
+| GEO-09 | MEDIUM | Community & brand presence launch | NOT STARTED |
+| GEO-10 | MEDIUM | IndexNow for Bing/Copilot | NOT STARTED |
+| GEO-11 | MEDIUM | YouTube explainers + VideoObject schema | NOT STARTED |
+| GEO-12 | MEDIUM | Security headers + technical SEO hardening | NOT STARTED |
+
+**GEO Audit Score:** 42/100 | **Target:** 72/100 in 90 days
+**Reports:** `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
+
 ---
 
 ## Session Log
+
+### Session: 2026-03-15 — GEO Audit + Story Creation
+
+**GEO Audit (5 parallel subagents):**
+- Full audit of arkova.ai — Composite GEO Score: **42/100**
+- AI Citability: 52, Brand Authority: 12, Content Quality: 24, Technical: 52, Schema: 52, Platform: 34
+- Critical finding: React SPA renders empty `<div id="root">` — AI crawlers see zero content
+- Critical finding: LinkedIn sameAs links to wrong company ("Arkova Partners")
+- Generated reports: `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
+- Generated ready-to-deploy `llms-txt-generated.txt` (95/100 score) and `GEO-SCHEMA-REPORT.md` with 5 JSON-LD blocks
+
+**Story Creation (12 new stories — GEO-01 through GEO-12):**
+- `docs/stories/15_geo_seo.md` — full story doc with research sections per story
+- Stories indexed in `00_stories_index.md`, added to CLAUDE.md Section 6, added to HANDOFF.md
+- Each story includes: research tasks, user story, acceptance criteria, effort estimate
+- Priorities: 3 CRITICAL (SSR, LinkedIn fix, privacy/terms), 5 HIGH, 4 MEDIUM
+- Total story count: 163 (was 151)
+
+**Updated llms.txt** (`public/llms.txt`) — upgraded from marketing copy to formal standard with API docs, MCP server reference, auth instructions
 
 ### Session: 2026-03-15 — UF Sprint C (Recipient Inbox, Share Flow, Nav Polish, Onboarding)
 
