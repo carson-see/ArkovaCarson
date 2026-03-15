@@ -543,7 +543,8 @@ npx supabase db reset
 | MVP Launch Gaps | 8/27 | 0/27 | 19/27 | 30% |
 | P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
 | INFRA Edge & Ingress | 0/8 | 5/8 | 3/8 | 31% |
-| **Total** | **52/124** | **8/124** | **64/124** | **~42%** |
+| UAT Bug Fixes | 0/17 | 0/17 | 17/17 | 0% |
+| **Total** | **52/141** | **8/141** | **81/141** | **~37%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -688,6 +689,37 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
 | INFRA-08 | ⚠️ PARTIAL | pgvector + institution ground truth — migration 0051 applied to production. Missing: data model doc update, seed data. |
 
+### UAT Bug Fixes — 0/17 NOT STARTED (Sprint 5 + Sprint 6)
+
+17 bugs discovered during comprehensive UAT testing on 2026-03-15. See `docs/bugs/uat_2026_03_15.md` for full details and `docs/stories/14_uat_sprints.md` for sprint plans.
+
+**Sprint 5 (Critical + High — 9 bugs, launch blockers):**
+
+| ID | Bug | Severity | Status |
+|----|-----|----------|--------|
+| BUG-UAT-01 | Mobile sidebar does not auto-collapse | CRITICAL | NOT STARTED |
+| BUG-UAT-02 | Console auth errors on every page load | CRITICAL | NOT STARTED |
+| BUG-UAT-03 | `/billing` route inaccessible (silent redirect) | CRITICAL | NOT STARTED |
+| BUG-UAT-04 | Header always says "Dashboard" | HIGH | NOT STARTED |
+| BUG-UAT-05 | "Help" sidebar link is dead end | HIGH | NOT STARTED |
+| BUG-UAT-06 | User avatar dropdown does nothing | HIGH | NOT STARTED |
+| BUG-UAT-07 | Record card status badges overlap dates | HIGH | NOT STARTED |
+| BUG-UAT-08 | Org records table missing columns | HIGH | NOT STARTED |
+| BUG-UAT-09 | Redundant profile API calls (8+ per load) | HIGH | NOT STARTED |
+
+**Sprint 6 (Medium + Low — 8 bugs, polish):**
+
+| ID | Bug | Severity | Status |
+|----|-----|----------|--------|
+| BUG-UAT-10 | Secure Document button overlaps subtitle | MEDIUM | NOT STARTED |
+| BUG-UAT-11 | Stat cards stacked vertically on desktop | MEDIUM | NOT STARTED |
+| BUG-UAT-12 | Tablet viewport clips content at right edge | MEDIUM | NOT STARTED |
+| BUG-UAT-13 | Account Type dual labels confusing | MEDIUM | NOT STARTED |
+| BUG-UAT-14 | Seed data visible in prod-like env | MEDIUM | NOT STARTED |
+| BUG-UAT-15 | No "Forgot Password" link | LOW | NOT STARTED |
+| BUG-UAT-16 | No loading states during data fetch | LOW | NOT STARTED |
+| BUG-UAT-17 | QR code URL shows localhost | LOW | NOT STARTED |
+
 ### Orphaned Code (built but never wired)
 
 | File | What It Does | Missing |
@@ -735,8 +767,27 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - ✅ MVP-09 records pagination + search (PR #44 — client-side search, filter, pagination)
 - ✅ MVP-11 Stripe plan change/downgrade (PR #43 — Billing Portal routing, webhook plan change detection)
 - ✅ CRIT-3 resolved (plan change/downgrade flows complete)
+- ✅ UAT Bug Bounty audit (17 bugs found across 12 pages, 3 viewports — 2026-03-15)
 
-### Current: Remaining Production Blockers
+### Current: Sprint 5 — UAT Critical + High (Launch Blockers)
+
+| Task | Bug ID | Severity | Detail |
+|------|--------|----------|--------|
+| Mobile sidebar auto-collapse | BUG-UAT-01 | CRITICAL | Sidebar fully expanded on mobile, covering ~65% viewport |
+| Console auth errors | BUG-UAT-02 | CRITICAL | `oauth_client_id` error fires 6x on every page load |
+| Billing route fix | BUG-UAT-03 | CRITICAL | `/billing` silently redirects to Dashboard, no sidebar link |
+| Dynamic header title | BUG-UAT-04 | HIGH | Header says "Dashboard" on all pages |
+| Help link fix | BUG-UAT-05 | HIGH | "Help" sidebar link redirects to Dashboard |
+| Avatar dropdown | BUG-UAT-06 | HIGH | User avatar button does nothing on click |
+| Badge/date overlap | BUG-UAT-07 | HIGH | Status badges overlap dates on record cards |
+| Org table columns | BUG-UAT-08 | HIGH | Org records table shows only Document column |
+| Profile API dedup | BUG-UAT-09 | HIGH | Profile fetched 8+ times per page load |
+
+### Next: Sprint 6 — UAT Medium + Low (Polish)
+
+See `docs/stories/14_uat_sprints.md` for Sprint 6 plan (8 bugs: layout, loading states, forgot password, QR URL).
+
+### Remaining Production Blockers
 
 | Task | Blocker | Detail |
 |------|---------|--------|

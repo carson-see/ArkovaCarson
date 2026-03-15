@@ -34,7 +34,8 @@ For a new developer joining the project, read in this order:
 | MVP | Launch Gaps | 27 | 8 | 0 | 19 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 0 | 5 | 3 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
-| **Total** | | **124** | **52** | **8** | **64** | |
+| UAT | Bug Fix Sprints (5+6) | 17 | 0 | 0 | 17 | [14_uat_sprints.md](./14_uat_sprints.md) |
+| **Total** | | **141** | **52** | **8** | **81** | |
 
 ### All Stories by ID
 
