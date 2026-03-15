@@ -113,7 +113,7 @@ export function ProofDownload({
             <Calendar className="h-4 w-4" />
             Network Receipt
           </h4>
-          <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="grid gap-4 text-sm sm:grid-cols-2">
             <div>
               <p className="text-muted-foreground mb-1">Receipt ID</p>
               <p className="font-mono text-xs truncate">{proof.networkReceipt.id}</p>

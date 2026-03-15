@@ -21,6 +21,8 @@ const {
   billingEventsSelect,
   billingEventsInsert,
   plansSelect,
+  plansSelectMaybeSingle,
+  plansSelectEq,
   subscriptionsUpsert,
   subscriptionsUpdate,
   subscriptionsSelect,
@@ -46,10 +48,20 @@ const {
   const billingEventsInsert = vi.fn();
 
   // plans.select('id, stripe_price_id').not('stripe_price_id', 'is', null)
+  // plans.select('id').eq('stripe_price_id', priceId).maybeSingle()
   const plansSelectNot = vi.fn();
+  const plansSelectMaybeSingle = vi.fn();
+  const plansSelectEq = vi.fn(() => ({ maybeSingle: plansSelectMaybeSingle }));
   const plansSelect = {
-    select: vi.fn(() => ({ not: plansSelectNot })),
+    select: vi.fn((fields: string) => {
+      if (fields === 'id') {
+        return { eq: plansSelectEq };
+      }
+      return { not: plansSelectNot, eq: plansSelectEq };
+    }),
     not: plansSelectNot,
+    eq: plansSelectEq,
+    maybeSingle: plansSelectMaybeSingle,
   };
 
   // subscriptions.upsert({}, { onConflict: 'user_id' })
@@ -62,7 +74,8 @@ const {
     eq: subscriptionsUpdateEq,
   };
 
-  // subscriptions.select('user_id').eq('stripe_subscription_id', id).maybeSingle()
+  // subscriptions.select('user_id').eq(...).maybeSingle()
+  // subscriptions.select('user_id, plan_id').eq(...).maybeSingle()
   const subscriptionsSelectMaybeSingle = vi.fn();
   const subscriptionsSelectEq = vi.fn(() => ({ maybeSingle: subscriptionsSelectMaybeSingle }));
   const subscriptionsSelect = {
@@ -102,6 +115,8 @@ const {
     billingEventsSelect,
     billingEventsInsert,
     plansSelect,
+    plansSelectMaybeSingle,
+    plansSelectEq,
     subscriptionsUpsert,
     subscriptionsUpdate,
     subscriptionsSelect,
@@ -180,16 +195,18 @@ function setupDefaults() {
   billingEventsSelect.maybeSingle.mockResolvedValue({ data: null });
   billingEventsInsert.mockResolvedValue({ error: null });
 
-  // plans: return some plans
+  // plans: return some plans (for checkout fallback)
   plansSelect.not.mockResolvedValue({
     data: [{ id: 'plan-ind', stripe_price_id: 'price_ind' }],
   });
+  // plans: price lookup (for subscription update plan change detection)
+  plansSelectMaybeSingle.mockResolvedValue({ data: null });
 
   // subscriptions: upsert succeeds
   subscriptionsUpsert.mockResolvedValue({ error: null });
   subscriptionsUpdate.eq.mockResolvedValue({ error: null });
   subscriptionsSelect.maybeSingle.mockResolvedValue({
-    data: { user_id: 'user-001' },
+    data: { user_id: 'user-001', plan_id: 'plan-ind' },
   });
 
   // audit: succeeds
@@ -483,6 +500,135 @@ describe('handleSubscriptionUpdated', () => {
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ subscriptionId: 'sub_test_001', status: 'active' }),
       expect.stringContaining('update'),
+    );
+  });
+
+  // ---- Plan change detection (MVP-11) ----
+
+  it('detects plan change and updates plan_id', async () => {
+    // Subscription event with price items
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      current_period_start: 1710000000,
+      current_period_end: 1712678400,
+      cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_pro' } }] },
+    });
+
+    // Plan lookup resolves new plan
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'plan-pro' } });
+    // Existing subscription has different plan
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind' },
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    // Should update with new plan_id
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: 'plan-pro' }),
+    );
+
+    // Should log audit event for plan change
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'payment.plan_changed',
+        event_category: 'ADMIN',
+        actor_id: 'user-001',
+      }),
+    );
+  });
+
+  it('does not log plan change when plan_id is the same', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      current_period_start: 1710000000,
+      current_period_end: 1712678400,
+      cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_ind' } }] },
+    });
+
+    // Same plan
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'plan-ind' } });
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind' },
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    // Should NOT log plan change audit event
+    expect(auditInsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'payment.plan_changed' }),
+    );
+  });
+
+  it('logs cancellation scheduled when cancel_at_period_end is true', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      current_period_start: 1710000000,
+      current_period_end: 1712678400,
+      cancel_at_period_end: true,
+    });
+
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind' },
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'payment.subscription_cancel_scheduled',
+        event_category: 'ADMIN',
+        actor_id: 'user-001',
+      }),
+    );
+  });
+
+  it('does not log cancellation when cancel_at_period_end is false', async () => {
+    await handleSubscriptionUpdated(SUBSCRIPTION_UPDATED_EVENT);
+
+    expect(auditInsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'payment.subscription_cancel_scheduled' }),
+    );
+  });
+
+  it('handles missing price items gracefully (no plan change)', async () => {
+    // Event without items (original fixture)
+    await handleSubscriptionUpdated(SUBSCRIPTION_UPDATED_EVENT);
+
+    // Should still update subscription
+    expect(subscriptionsUpdate.update).toHaveBeenCalled();
+    // Should not include plan_id in update (no price to resolve)
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.not.objectContaining({ plan_id: expect.anything() }),
+    );
+  });
+
+  it('handles unresolvable price (sets plan_id to null)', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_test_001',
+      customer: 'cus_test_001',
+      status: 'active',
+      current_period_start: 1710000000,
+      current_period_end: 1712678400,
+      cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_unknown' } }] },
+    });
+
+    plansSelectMaybeSingle.mockResolvedValue({ data: null });
+
+    await handleSubscriptionUpdated(event);
+
+    // Should update with plan_id explicitly set to null
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: null }),
     );
   });
 });

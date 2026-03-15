@@ -300,6 +300,11 @@ export const BILLING_LABELS = {
   CHECKOUT_CANCEL_TITLE: 'Checkout Cancelled',
   CHECKOUT_CANCEL_DESC: 'Your checkout was cancelled. No charges were made. You can try again whenever you are ready.',
   BACK_TO_PRICING: 'Back to Plans',
+  MANAGE_SUBSCRIPTION: 'Manage Subscription',
+  PLAN_CHANGE_VIA_PORTAL: 'To change or cancel your plan, you will be redirected to our secure billing portal.',
+  CURRENT_PLAN_BADGE: 'Current Plan',
+  DOWNGRADE_NOTE: 'Changes take effect at the end of your current billing period.',
+  CANCELLATION_SCHEDULED: 'Your subscription is set to cancel at the end of the current period.',
 } as const;
 
 // =============================================================================

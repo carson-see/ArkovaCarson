@@ -42,15 +42,30 @@ export function PricingPage() {
   const hasActiveSubscription = subscription &&
     (subscription.status === 'active' || subscription.status === 'trialing');
 
+  // Any non-canceled subscription should go through billing portal, not create a new checkout
+  const hasExistingSubscription = subscription &&
+    subscription.status !== 'canceled';
+
   const handleSelectPlan = async (planId: string) => {
     setCheckoutLoading(planId);
-
-    const url = await startCheckout(planId);
-    if (url) {
-      window.location.href = url;
+    try {
+      if (hasExistingSubscription) {
+        // Existing subscriber — open Stripe billing portal for plan change/downgrade/cancel.
+        // Stripe handles proration, confirmation, and effective dates.
+        const url = await openBillingPortal();
+        if (url) {
+          window.location.href = url;
+        }
+      } else {
+        // New subscriber — create checkout session
+        const url = await startCheckout(planId);
+        if (url) {
+          window.location.href = url;
+        }
+      }
+    } finally {
+      setCheckoutLoading(null);
     }
-
-    setCheckoutLoading(null);
   };
 
   const handleManageBilling = async () => {

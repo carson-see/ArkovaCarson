@@ -34,7 +34,7 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
   const initials = getInitials(displayName);
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-6">
+    <header className="flex h-full w-full items-center justify-between bg-background">
       {/* Page title area - can be dynamic */}
       <div>
         <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
