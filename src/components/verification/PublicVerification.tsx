@@ -115,9 +115,9 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
         // Log verification event based on status
         const status = anchorData.status;
+        // Map to DB-allowed values: verified, revoked, not_found, error
+        // PENDING anchors are 'verified' (record exists, just not yet secured)
         const logResult = status === 'REVOKED' ? 'revoked'
-          : status === 'EXPIRED' ? 'expired'
-          : status === 'PENDING' ? 'pending'
           : 'verified';
         logVerificationEvent({
           publicId,

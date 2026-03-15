@@ -116,6 +116,8 @@ export function useCredentialTemplate(
               name: data.name ?? ct,
               fields: parseTemplateFields(data.default_metadata),
             });
+          } else if (!cancelled) {
+            setTemplate(null);
           }
         } else {
           // Authenticated context: direct query
@@ -136,6 +138,8 @@ export function useCredentialTemplate(
               name: data.name,
               fields: parseTemplateFields(data.default_metadata),
             });
+          } else if (!cancelled) {
+            setTemplate(null);
           }
         }
       } catch (err) {
