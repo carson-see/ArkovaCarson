@@ -39,6 +39,7 @@ import { PrivacyPage } from '@/pages/PrivacyPage';
 import { TermsPage } from '@/pages/TermsPage';
 import { ContactPage } from '@/pages/ContactPage';
 import { ApiKeySettingsPage } from '@/pages/ApiKeySettingsPage';
+import { EmbedVerifyPage } from '@/pages/EmbedVerifyPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -110,6 +111,7 @@ export function App() {
           <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
           <Route path={ROUTES.TERMS} element={<TermsPage />} />
           <Route path={ROUTES.CONTACT} element={<ContactPage />} />
+          <Route path={ROUTES.EMBED_VERIFY} element={<EmbedVerifyPage />} />
 
           {/* Onboarding routes — auth required, only for users needing setup */}
           <Route

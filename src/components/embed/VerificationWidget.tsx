@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { logVerificationEvent } from '@/lib/logVerificationEvent';
 
 interface WidgetAnchorData {
   public_id: string;
@@ -59,15 +60,23 @@ export function VerificationWidget({ publicId, compact = false }: Readonly<Verif
 
         if (rpcError) {
           setError(rpcError.message);
+          logVerificationEvent({ publicId, method: 'embed', result: 'not_found' });
           return;
         }
 
         if (result?.error) {
           setError(result.error);
+          logVerificationEvent({ publicId, method: 'embed', result: 'not_found' });
           return;
         }
 
         setData(result as WidgetAnchorData);
+        const status = (result as WidgetAnchorData).status;
+        logVerificationEvent({
+          publicId,
+          method: 'embed',
+          result: status === 'REVOKED' ? 'revoked' : 'verified',
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Verification failed');
       } finally {

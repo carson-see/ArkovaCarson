@@ -1,0 +1,1 @@
+export { VerificationWidget } from './VerificationWidget';
