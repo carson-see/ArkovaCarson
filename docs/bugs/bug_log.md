@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-03-16 ~11:30 AM EST | Active bugs: 5 (existing) | Resolved: 32 (15 prior + 17 UAT)_
+_Last updated: 2026-03-16 ~11:30 AM EST | Active bugs: 1 (CRIT-2 operational) | Resolved: 36 (15 prior + 17 UAT + 4 audit)_
 
 ## UAT Bug Bounty — 2026-03-15
 
@@ -56,10 +56,6 @@ _For each bug: what it means in plain English and why it matters._
 | ID | Severity | Story | Summary | Status |
 |----|----------|-------|---------|--------|
 | CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client — CODE COMPLETE, operational items remaining | CODE COMPLETE |
-| CRIT-3 | HIGH | P7-TS-02 | Stripe checkout flow incomplete | PARTIAL — UI + tests + checkout/portal endpoints done (b1f798a), entitlements remain |
-| BUG-AUDIT-01 | HIGH | MVP-02 | No global toast/notification system — actions give no feedback | OPEN |
-| BUG-AUDIT-02 | HIGH | MVP-03 | Dead footer links (/privacy, /terms, /contact) return 404 | OPEN |
-| BUG-AUDIT-03 | HIGH | MVP-04 | No favicon, logo, or OG meta tags — placeholder Shield icon | OPEN |
 
 ## Resolved Bugs Summary
 
@@ -1035,11 +1031,11 @@ Sonner `<Toaster />` is not installed globally in `App.tsx`. Individual componen
 
 #### Resolution
 
-**Status:** OPEN — requires MVP-02 implementation (add Sonner `<Toaster />` globally + toast calls in all hooks/handlers)
+**Status:** RESOLVED 2026-03-14 — All mutation hooks have toast notifications (PRs #36, #37, #40). Sonner `<Toaster />` installed globally.
 
 #### Regression Test
 
-- None yet
+- Toast integration tests in useProfile, useOrganization, useBulkAnchors, useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember
 
 ---
 

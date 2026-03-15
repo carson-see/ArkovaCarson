@@ -33,9 +33,9 @@ For a new developer joining the project, read in this order:
 | DH | Deferred Hardening | 12 | 3 | 0 | 9 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
 | MVP | Launch Gaps | 27 | 10 | 1 | 16 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
-| INFRA | Infrastructure & Edge | 8 | 0 | 5 | 3 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
+| INFRA | Infrastructure & Edge | 8 | 0 | 6 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
-| **Total** | | **141** | **68** | **8** | **65** | |
+| **Total** | | **141** | **70** | **10** | **61** | |
 
 ### All Stories by ID
 
@@ -109,12 +109,12 @@ For a new developer joining the project, read in this order:
 | DH-10 | useEntitlements Realtime Subscription | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-11 | Worker RPC Logging Structured Format | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-12 | Webhook Delivery Dead Letter Queue | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| MVP-01 | Worker Production Deployment | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-01 | Worker Production Deployment | PARTIAL | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-02 | Toast/Notification System | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-01~~ RESOLVED |
 | MVP-03 | Legal Pages (Privacy, Terms, Contact) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-02~~ FIXED |
 | MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-03~~ FIXED |
 | MVP-05 | Error Boundary + 404 Page | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-06 | File-Based Public Verification | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-06 | File-Based Public Verification | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-07 | Mobile Responsive Layout | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-08 | Onboarding Progress Stepper | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-09 | Records Pagination + Search | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
@@ -123,16 +123,16 @@ For a new developer joining the project, read in this order:
 | MVP-12 | Dark Mode Toggle | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-13 | Organization Logo Upload | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-14 | Embeddable Verification Widget | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-16 | Block Explorer Deep Links | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-16 | Block Explorer Deep Links | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-17 | Credential Template Metadata Enhancement | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-18 | Enhanced Metadata Display | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | ~~MVP-19~~ | ~~AI Auto-Descriptions~~ | REMOVED | [MVP](./11_mvp_launch_gaps.md) | Superseded by P8-S4/S5 |
 | MVP-20 | LinkedIn Badge Integration (Phase 2) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-21 | Individual Self-Verification Flow | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-21 | Individual Self-Verification Flow | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | ~~MVP-22~~ | ~~AI Fraud Detection~~ | REMOVED | [MVP](./11_mvp_launch_gaps.md) | Superseded by P8-S7/S8/S9 |
 | MVP-23 | Batch Anchor Processing | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-24 | Credits Schema + Monthly Allocations | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-25 | Credits Tracking + Scheduling | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-24 | Credits Schema + Monthly Allocations | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-25 | Credits Tracking + Scheduling | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-26 | GCP Cloud Run Deployment | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-27 | GCP Secret Manager Integration | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-28 | GCP Cloud Scheduler | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |

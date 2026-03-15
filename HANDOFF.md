@@ -107,7 +107,7 @@
 
 **Documentation Sync:**
 - Bug log: all 17 UAT bugs marked RESOLVED (PRs #47, #48)
-- Stories index: completion counts updated (68/141 complete, up from 52/141)
+- Stories index: completion counts updated (70/141 complete, up from 52/141), INFRA partial count corrected (6 not 5)
 - HANDOFF.md: UAT sprints marked RESOLVED, BUG-AUDIT-01 marked RESOLVED, MVP-01 status updated
 
 ### Session: 2026-03-15 — UAT Bug Bounty Audit + Sprint Planning
