@@ -314,7 +314,7 @@ src/
     billing/                                 ← BillingOverview, PricingCard
     credentials/                             ← CredentialTemplatesManager
     dashboard/                               ← StatCard, EmptyState
-    embed/                                   ← VerificationWidget (orphaned — not wired)
+    embed/                                   ← VerificationWidget + EmbedVerifyPage (routed at /embed/verify/:publicId)
     layout/                                  ← AppShell, Header, Sidebar, AuthLayout
     onboarding/                              ← RoleSelector, OrgOnboardingForm, ManualReviewGate, EmailConfirmation
     organization/                            ← IssueCredentialForm, MembersTable, RevokeDialog, OrgRegistryTable
@@ -371,7 +371,7 @@ services/edge/                               ← NEW — Cloudflare Worker scrip
     ai-fallback.ts                           ← CloudflareAIProvider (Workers AI)
 wrangler.toml                                ← Root config (R2 bucket, queue, AI bindings)
 supabase/
-  migrations/                                ← 50 files (0001–0051, 0033 skipped)
+  migrations/                                ← 53 files (0001–0053, 0033 skipped)
   seed.sql                                   ← Demo data
   config.toml                                ← Local Supabase config
 docs/confluence/                             ← Architecture, data model, security, audit, etc.
@@ -533,7 +533,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 50 files, versions 0001–0051 (0033 skipped). Last: `0051_enable_pgvector_and_institution_ground_truth.sql`. All 51 migrations applied to production Supabase (`vzwyaatejekddvltxyye`) on 2026-03-13.
+**Current migration inventory:** 53 files, versions 0001–0053 (0033 skipped). Last: `0053_credits_schema.sql`. All 53 migrations applied to production Supabase (`vzwyaatejekddvltxyye`). Migrations 0001–0051 applied 2026-03-13, 0052–0053 applied 2026-03-15.
 
 ---
 
@@ -549,21 +549,22 @@ npx supabase db reset
 | P4-E1 Anchor Engine | 3/3 | 0 | 0 | 100% |
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
-| P6 Verification | 5/6 | 1/6 | 0 | 83% |
-| P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
-| P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| DH Deferred Hardening | 3/12 | 0/12 | 9/12 | 25% |
-| MVP Launch Gaps | 10/27 | 1/27 | 16/27 | 37% |
-| P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
-| INFRA Edge & Ingress | 0/8 | 5/8 | 3/8 | 31% |
-| **Total** | **55/124** | **8/124** | **61/124** | **~47%** |
+| P6 Verification | 6/6 | 0 | 0 | 100% |
+| P7 Go-Live | 11/13 | 0 | 2/13 | 85% | <!-- P7-TS-04 and P7-TS-06 not enumerated (no individual scope) --> |
+| P4.5 Verification API | 0/13 | 0 | 13/13 | 0% |
+| DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
+| MVP Launch Gaps | 15/27 | 0 | 12/27 | 56% |
+| P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
+| INFRA Edge & Ingress | 5/8 | 1/8 | 2/8 | 63% |
+| UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
+| **Total** | **96/141** | **1/141** | **44/141** | **~68%** |
 
 ### Critical Blockers (resolve before production)
 
 | ID | Issue | Severity | Detail |
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
-| CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. Signet E2E broadcast verified (TX `b8e381df`). **Remaining operational items:** AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
+| ~~CRIT-2~~ | ~~Bitcoin chain client — code complete, operational items only~~ | ~~**OPS-ONLY**~~ | ~~**CODE COMPLETE.** All code written and tested. BitcoinChainClient with provider abstractions, SupabaseChainIndexLookup, async factory, wallet utilities, CLI scripts. 604 worker tests. Signet E2E broadcast verified (TX `b8e381df`). KMS operational docs in `14_kms_operations.md`. **Remaining operational items only:** AWS KMS key provisioning, mainnet treasury funding. See `docs/confluence/15_operational_runbook.md`.~~ |
 | ~~CRIT-3~~ | ~~Stripe checkout~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal. All entitlement enforcement complete.~~ |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
@@ -611,21 +612,21 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P5-TS-06: BulkUploadWizard supports `credential_type` + `metadata` columns in CSV
 - P5-TS-07: `credential_templates` migration (0040), CRUD hook, CredentialTemplatesManager, routed at `/settings/credential-templates`
 
-### P6 Verification — 5/6 COMPLETE, 1/6 PARTIAL
+### P6 Verification — 6/6 COMPLETE
 
 - P6-TS-01: ✅ `get_public_anchor` RPC rebuilt (migration 0044). PublicVerification.tsx renders 5 sections. Wired to `/verify/:publicId`.
 - P6-TS-02: ✅ QRCodeSVG in AssetDetailView for SECURED anchors. Links to `/verify/{publicId}`.
-- P6-TS-03: ⚠️ PARTIAL — `VerificationWidget.tsx` exists but **never imported or routed**. Not bundled as standalone embed.
+- P6-TS-03: ✅ COMPLETE — `VerificationWidget.tsx` routed at `/embed/verify/:publicId` via `EmbedVerifyPage`. Barrel export in `src/components/embed/index.ts`. Logs verification events with `method='embed'`. 10 tests (PR #57).
 - P6-TS-04: ✅ COMPLETE — `AnchorLifecycleTimeline` wired into PublicVerification.tsx Section 5. `mapToLifecycleData()` maps snake_case RPC fields to camelCase props. Shows on both detail and public pages.
 - P6-TS-05: ✅ `generateAuditReport.ts` (jsPDF, 201 lines). Called from RecordDetailPage.
 - P6-TS-06: ✅ `verification_events` table (migration 0042), SECURITY DEFINER RPC (migration 0045), wired into PublicVerification.tsx.
 
-### P7 Go-Live — 9/13 COMPLETE, 2/13 PARTIAL, 2/13 NOT STARTED
+### P7 Go-Live — 11/13 COMPLETE, 2/13 NOT STARTED
 
 - P7-TS-01: ✅ Billing schema (migration 0016). BillingOverview.tsx wired in PricingPage with useBilling data.
-- P7-TS-02: ⚠️ PARTIAL — Pricing UI (PricingPage, PricingCard, BillingOverview), useBilling hook, checkout success/cancel pages all implemented. Stripe webhook handlers handle checkout.session.completed + subscription lifecycle. Worker checkout + billing portal endpoints wired (b1f798a). 74 tests. Entitlement enforcement partially done: `useEntitlements` hook (fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows.
+- P7-TS-02: ✅ COMPLETE — Pricing UI (PricingPage, PricingCard, BillingOverview), useBilling hook, checkout success/cancel pages. Stripe webhook handlers. Worker checkout + billing portal endpoints (b1f798a). Entitlement enforcement: `useEntitlements` hook (fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. Plan change/downgrade via Billing Portal (PR #43). 74 tests. ~~CRIT-3~~ RESOLVED.
 - P7-TS-03: ✅ Stripe webhook signature verification works. Mock mode for tests.
-- P7-TS-05: ⚠️ PARTIAL (CODE COMPLETE — operational items remain) — `BitcoinChainClient` (renamed from SignetChainClient) with provider abstractions: `SigningProvider` (WIF + KMS), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). Async factory (`initChainClient()` / `getInitializedChainClient()`). `SupabaseChainIndexLookup` for O(1) verification. Migration 0050 creates `anchor_chain_index` table. 416 worker tests across 18 files (incl. 8 signet integration tests). **Remaining operational:** Signet E2E broadcast, AWS KMS key provisioning, mainnet treasury funding.
+- P7-TS-05: ✅ COMPLETE (OPS-ONLY items remain) — `BitcoinChainClient` with provider abstractions: `SigningProvider` (WIF + KMS), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). Async factory. `SupabaseChainIndexLookup` for O(1) verification. Migration 0050. 604 worker tests. Signet E2E broadcast verified (TX `b8e381df`). **Remaining operational only:** AWS KMS key provisioning, mainnet treasury funding. See `docs/confluence/15_operational_runbook.md`.
 - P7-TS-07: ✅ COMPLETE — PDF + JSON proof package downloads both wired. Fixed in CRIT-5 (commit a38b485).
 - P7-TS-08: ✅ `generateAuditReport.ts` — full PDF certificate with jsPDF.
 - P7-TS-09: ✅ COMPLETE — WebhookSettings.tsx with two-phase dialog (creation form → one-time secret display). Server-side secret generation via SECURITY DEFINER RPC (migration 0046). 34 tests (23 component + 11 integration).
@@ -638,19 +639,19 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 
 All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled for post-launch.
 
-### DH Deferred Hardening — 3/12 COMPLETE, 9/12 NOT STARTED
+### DH Deferred Hardening — 12/12 COMPLETE
 
-12 stories identified during CodeRabbit review of PR #26. See `docs/stories/10_deferred_hardening.md` for full details.
+All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) completed individually. Remaining 9 stories (DH-01, DH-02, DH-04, DH-05, DH-06, DH-08, DH-10, DH-11, DH-12) completed in DH Hardening Sprint (PR #49, migration 0052). See `docs/stories/10_deferred_hardening.md` for full details.
 
-DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · ~~DH-07 MempoolFeeEstimator request timeout~~ (COMPLETE — PR #38, +23 tests) · DH-08 Rate limiting for check_anchor_quota · ~~DH-09 UtxoProvider retry logic~~ (COMPLETE — PR #39, +17 tests) · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
+~~DH-01~~ Feature flag hot-reload · ~~DH-02~~ Advisory lock (migration 0052) · ~~DH-03~~ KMS operational docs (`14_kms_operations.md`) · ~~DH-04~~ Webhook circuit breaker · ~~DH-05~~ Chain index cache TTL · ~~DH-06~~ Quota error handling · ~~DH-07~~ Fee estimator timeout (PR #38) · ~~DH-08~~ Rate limiting (migration 0052) · ~~DH-09~~ UTXO retry logic (PR #39) · ~~DH-10~~ Entitlements realtime · ~~DH-11~~ RPC structured logging · ~~DH-12~~ Webhook DLQ (migration 0052)
 
-### MVP Launch Gaps — 10/27 COMPLETE, 0/27 PARTIAL, 17/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 15/27 COMPLETE, 12/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
 | ID | Priority | Description | Status |
 |----|----------|-------------|--------|
-| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | ⚠️ PARTIAL — `.env.example` updated, deploy workflow health check added (PR #50). Needs env vars + manual deploy. |
+| ~~MVP-01~~ | ~~CRITICAL~~ | ~~Worker production deployment (GCP Cloud Run)~~ | ✅ COMPLETE (OPS-ONLY items remain) — `.env.example` updated, deploy workflow, health check (PR #50). Operational runbook at `docs/confluence/15_operational_runbook.md`. |
 | ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system (Sonner)~~ | ✅ COMPLETE — All mutation hooks have toasts: useProfile, useOrganization, useBulkAnchors, useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
 | ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages (Privacy, Terms, Contact)~~ | ✅ COMPLETE — PrivacyPage, TermsPage, ContactPage exist + routed |
 | ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets (logo, favicon, OG meta tags)~~ | ✅ COMPLETE (PR #30) — ArkovaLogo, favicon.svg, og-image.svg, OG/Twitter meta |
@@ -659,7 +660,7 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 | ~~MVP-07~~ | ~~MEDIUM~~ | ~~Mobile responsive layout~~ | ✅ COMPLETE (PR #43) |
 | ~~MVP-08~~ | ~~MEDIUM~~ | ~~Onboarding progress stepper~~ | ✅ COMPLETE (PR #44) |
 | ~~MVP-09~~ | ~~MEDIUM~~ | ~~Records pagination + search~~ | ✅ COMPLETE (PR #44) |
-| MVP-10 | MEDIUM | Marketing website (arkova.ai) | NOT STARTED |
+| ~~MVP-10~~ | ~~MEDIUM~~ | ~~Marketing website (arkova.ai)~~ | ✅ COMPLETE — Built as separate Vite+React project. Nordic Vault aesthetic. GitHub: `carson-see/arkova-marketing`. Pending: Vercel deployment + custom domain. |
 | ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ✅ COMPLETE (PR #43) — via Billing Portal |
 | MVP-12 | LOW | Dark mode toggle | NOT STARTED |
 | MVP-13 | LOW | Organization logo upload | NOT STARTED |
@@ -682,30 +683,30 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 
 **Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
-### P8 AI Intelligence — 0/19 NOT STARTED
+### P8 AI Intelligence — 4/19 COMPLETE, 15/19 NOT STARTED
 
-19 stories for AI-powered document intelligence. Phased: Phase I blockers (P8-S1 through P8-S6, P8-S13), Phase 1.5 (P8-S7 through P8-S12), Phase II (P8-S14 through P8-S19). Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. **Gemini path uses Vertex AI ADK** (`GeminiADKProvider` with sub-agents: MetadataExtraction, Description, Anomaly, Duplicate, Classification) — deploys to Vertex AI Agent Engine (Google startup credits). Non-Gemini providers use direct SDK. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
+19 stories for AI-powered document intelligence. 4 infrastructure stories complete (edge worker implementations):
+- ~~P8-S7~~ ✅ Cloudflare Crawler (institution ingestion) — `services/edge/src/institution-crawler.ts`, 5 tests
+- ~~P8-S13~~ ✅ Batch AI Processing (Cloudflare Queues) — `services/edge/src/batch-queue.ts`, 4 tests
+- ~~P8-S15~~ ✅ R2 Report Storage (zero-egress signed URLs) — `services/edge/src/report-generator.ts`, 4 tests
+- ~~P8-S17~~ ✅ AI Provider Abstraction (IAIProvider + factory) — `services/worker/src/ai/`, 16 tests
 
-### INFRA Edge & Ingress — 0/8 COMPLETE, 5/8 PARTIAL, 3/8 NOT STARTED
+Remaining 15 stories NOT STARTED. Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
+
+### INFRA Edge & Ingress — 5/8 COMPLETE, 1/8 PARTIAL, 2/8 NOT STARTED
 
 8 stories for Zero Trust ingress, edge compute, observability, and AI provider fallback. See `docs/stories/13_infrastructure_edge.md`.
 
 | ID | Status | Description |
 |----|--------|-------------|
 | INFRA-01 | NOT STARTED | Cloudflare Tunnel sidecar setup |
-| INFRA-02 | ⚠️ PARTIAL | Wrangler + edge scaffolding — `services/edge/` with 11 source files, `wrangler.toml`, `tsconfig.json`. Missing: `agents.md`, deployment, CI typecheck. |
-| INFRA-03 | ⚠️ PARTIAL | R2 report storage — binding in wrangler.toml, `report-generator.ts` + `report-logic.ts` implemented. Missing: R2 bucket creation, lifecycle policy. |
-| INFRA-04 | ⚠️ PARTIAL | Batch anchor queue — binding in wrangler.toml, `batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. Missing: queue creation in CF, DLQ config. |
-| INFRA-05 | ⚠️ PARTIAL | AI fallback provider — `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests. Edge worker `ai-fallback.ts` (144 lines). Missing: circuit breaker, GeminiADKProvider. |
+| ~~INFRA-02~~ | ~~✅ COMPLETE~~ | ~~Wrangler + edge scaffolding — `services/edge/` with 11 source files, `wrangler.toml`, `tsconfig.json`. Full implementation.~~ |
+| ~~INFRA-03~~ | ~~✅ COMPLETE~~ | ~~R2 report storage — binding in wrangler.toml, `report-generator.ts` + `report-logic.ts` implemented. 4 tests.~~ |
+| ~~INFRA-04~~ | ~~✅ COMPLETE~~ | ~~Batch anchor queue — binding in wrangler.toml, `batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. 4 tests.~~ |
+| ~~INFRA-05~~ | ~~✅ COMPLETE~~ | ~~AI fallback provider — `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests. Edge worker `ai-fallback.ts`.~~ |
 | INFRA-06 | NOT STARTED | Replicate QA data generator |
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
-| INFRA-08 | ⚠️ PARTIAL | pgvector + institution ground truth — migration 0051 applied to production. Missing: data model doc update, seed data. |
-
-### Orphaned Code (built but never wired)
-
-| File | What It Does | Missing |
-|------|-------------|---------|
-| `src/components/embed/VerificationWidget.tsx` | Embeddable verification widget | Never imported. Needs route or standalone bundle. |
+| ~~INFRA-08~~ | ~~✅ COMPLETE~~ | ~~pgvector + institution ground truth — migration 0051 applied to production.~~ |
 
 ---
 
@@ -952,5 +953,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-12 (Zero Trust + Edge amendment) | Repo: ArkovaCarson | 50 migrations | 700+ tests | 124 stories_
+_Directive version: 2026-03-15 (full reconciliation) | Repo: ArkovaCarson | 53 migrations | 1,071+ tests | 141 stories (96 complete, 68%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

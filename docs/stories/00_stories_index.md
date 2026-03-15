@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-16 ~11:30 AM EST_
+_Last updated: 2026-03-15 ~6:00 PM EST_
 
 ## Overview
 
@@ -27,15 +27,15 @@ For a new developer joining the project, read in this order:
 | P4-E1 | Anchor Engine | 3 | 3 | 0 | 0 | [04_p4e1_anchor_engine.md](./04_p4e1_anchor_engine.md) |
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
-| P6 | Verification | 6 | 5 | 1 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 13 | 9 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P6 | Verification | 6 | 6 | 0 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
+| P7 | Go-Live | 13 | 11 | 0 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| DH | Deferred Hardening | 12 | 3 | 0 | 9 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 10 | 1 | 16 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
-| P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
-| INFRA | Infrastructure & Edge | 8 | 0 | 6 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
+| DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
+| MVP | Launch Gaps | 27 | 15 | 0 | 12 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| P8 | AI Intelligence | 19 | 4 | 0 | 15 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
+| INFRA | Infrastructure & Edge | 8 | 5 | 1 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
-| **Total** | | **141** | **70** | **10** | **61** | |
+| **Total** | | **141** | **96** | **1** | **44** | |
 
 ### All Stories by ID
 
@@ -69,14 +69,14 @@ For a new developer joining the project, read in this order:
 | P5-TS-07 | credential_templates CRUD + Manager UI | COMPLETE | [P5](./06_p5_org_admin.md) | — |
 | P6-TS-01 | get_public_anchor RPC + PublicVerification | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-02 | QR Code in AssetDetailView | COMPLETE | [P6](./07_p6_verification.md) | — |
-| P6-TS-03 | Embeddable VerificationWidget | PARTIAL | [P6](./07_p6_verification.md) | — |
+| P6-TS-03 | Embeddable VerificationWidget | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-04 | Credential Lifecycle on Public Page | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-05 | PDF Audit Report (jsPDF) | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-06 | verification_events Table + RPC | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P7-TS-01 | Billing Schema (migration 0016) | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-02 | Stripe Checkout Flow | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-3~~ RESOLVED |
 | P7-TS-03 | Stripe Webhook Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
-| P7-TS-05 | Bitcoin Chain Client | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-2 |
+| P7-TS-05 | Bitcoin Chain Client | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-2~~ OPS-ONLY |
 | P7-TS-07 | Proof Package Download | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-5~~ FIXED |
 | P7-TS-08 | PDF Certificate (generateAuditReport) | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-09 | Webhook Settings UI | COMPLETE | [P7](./08_p7_go_live.md) | — |
@@ -97,19 +97,19 @@ For a new developer joining the project, read in this order:
 | P4.5-TS-11 | API Key Scope Display | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-12 | Feature Flag Middleware | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-13 | Rate Limit Load Tests | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
-| DH-01 | Feature Flag Kill-Switch Hot-Reload | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-02 | Advisory Lock for Migration 0049 Concurrency | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| DH-01 | Feature Flag Kill-Switch Hot-Reload | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| DH-02 | Advisory Lock for bulk_create_anchors Concurrency | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-03 | KMS Operational Documentation | COMPLETE | [DH](./10_deferred_hardening.md) | — |
-| DH-04 | Outbound Webhook Circuit Breaker | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-05 | Chain Index Lookup Cache TTL | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-06 | ConfirmAnchorModal Server-Side Quota Error Handling | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| DH-04 | Outbound Webhook Circuit Breaker | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| DH-05 | Chain Index Lookup Cache TTL | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| DH-06 | ConfirmAnchorModal Server-Side Quota Error Handling | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-07 | MempoolFeeEstimator Request Timeout | COMPLETE | [DH](./10_deferred_hardening.md) | — |
-| DH-08 | Rate Limiting for check_anchor_quota RPC | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| DH-08 | Rate Limiting for check_anchor_quota RPC | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-09 | UtxoProvider Retry Logic | COMPLETE | [DH](./10_deferred_hardening.md) | — |
-| DH-10 | useEntitlements Realtime Subscription | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-11 | Worker RPC Logging Structured Format | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-12 | Webhook Delivery Dead Letter Queue | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| MVP-01 | Worker Production Deployment | PARTIAL | [MVP](./11_mvp_launch_gaps.md) | — |
+| DH-10 | useEntitlements Realtime Subscription | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| DH-11 | Worker RPC Logging Structured Format | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| DH-12 | Webhook Delivery Dead Letter Queue | COMPLETE | [DH](./10_deferred_hardening.md) | — |
+| MVP-01 | Worker Production Deployment | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-02 | Toast/Notification System | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-01~~ RESOLVED |
 | MVP-03 | Legal Pages (Privacy, Terms, Contact) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-02~~ FIXED |
 | MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-03~~ FIXED |
@@ -118,7 +118,7 @@ For a new developer joining the project, read in this order:
 | MVP-07 | Mobile Responsive Layout | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-08 | Onboarding Progress Stepper | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-09 | Records Pagination + Search | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-10 | Marketing Website (arkova.ai) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-10 | Marketing Website (arkova.ai) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-11 | Stripe Plan Change/Downgrade | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~CRIT-3~~ RESOLVED |
 | MVP-12 | Dark Mode Toggle | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-13 | Organization Logo Upload | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
@@ -144,27 +144,27 @@ For a new developer joining the project, read in this order:
 | P8-S4 | Metadata Field Extraction | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S5 | Smart Description Generation | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S6 | AI Credits Metering + Rate Limiting | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S7 | Anomaly Detection Engine | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S7 | Cloudflare Crawler (Institution Ingestion) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S8 | Duplicate Detection (Cross-Org) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S9 | Admin Review Queue | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S10 | AI Provider Hot-Swap (OpenAI/Anthropic) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S11 | Batch AI Processing Pipeline | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S12 | AI Confidence Scoring + Human-in-the-Loop | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S13 | AI Feature Flags + Gradual Rollout | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S13 | Batch AI Processing (Cloudflare Queues) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S14 | Document Classification (Credential Types) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S15 | Expiry Date Extraction + Auto-Alerts | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S15 | R2 Report Storage (Zero-Egress Signed URLs) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S16 | Multi-Language OCR Support | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S17 | AI Usage Analytics Dashboard | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S17 | AI Provider Abstraction (IAIProvider + Factory) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S18 | AI Model Performance Monitoring | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S19 | AI Cost Optimization + Caching | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | INFRA-01 | Cloudflare Tunnel Sidecar Setup | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-02 | Wrangler + Edge Worker Scaffolding | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-03 | R2 Report Storage Bucket | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-05 | Cloudflare Workers AI Fallback Provider | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-02 | Wrangler + Edge Worker Scaffolding | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-03 | R2 Report Storage Bucket | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-05 | Cloudflare Workers AI Fallback Provider | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-06 | Replicate QA Data Generator | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-07 | Sentry Observability Integration | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-08 | pgvector Extension + Institution Ground Truth | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-08 | pgvector Extension + Institution Ground Truth | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 
 ## Bug Cross-Reference
 
@@ -172,11 +172,13 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 
 ### Active Bugs
 
+**No active code bugs.** All code is complete and tested.
+
 | Bug ID | Severity | Affects Stories | Summary |
 |--------|----------|-----------------|---------|
-| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client CODE COMPLETE — operational items only (AWS KMS provisioning, mainnet funding). Signet E2E broadcast verified (TX b8e381df). |
-| ~~CRIT-3~~ | ~~HIGH~~ | ~~P7-TS-02~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal. Webhook plan change detection. All entitlement enforcement in place.~~ |
-| ~~BUG-AUDIT-01~~ | ~~HIGH~~ | ~~MVP-02~~ | ~~RESOLVED 2026-03-14 — All mutation hooks now have toast notifications (PR #36 + copy.ts constants).~~ |
+| ~~CRIT-2~~ | ~~OPS-ONLY~~ | ~~P7-TS-05~~ | ~~CODE COMPLETE — operational items only (AWS KMS provisioning, mainnet funding). See `docs/confluence/15_operational_runbook.md`. Signet E2E broadcast verified (TX b8e381df).~~ |
+| ~~CRIT-3~~ | ~~HIGH~~ | ~~P7-TS-02~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal.~~ |
+| ~~BUG-AUDIT-01~~ | ~~HIGH~~ | ~~MVP-02~~ | ~~RESOLVED 2026-03-14 — All mutation hooks now have toast notifications.~~ |
 
 ### Resolved Bugs
 
@@ -237,3 +239,4 @@ Each story doc follows a consistent template:
 | 2026-03-13 | Production database deployment: all 51 migrations applied to production Supabase, Stripe Price IDs set, seed data loaded, `database.types.ts` regenerated, Vercel env vars configured and redeployed. No story status changes — infrastructure milestone. |
 | 2026-03-14 | Full doc sync audit. MVP-03 → COMPLETE (legal pages exist + routed). MVP-04 → COMPLETE (PR #30). MVP-05 → COMPLETE (ErrorBoundary + NotFoundPage exist + routed + Sentry wired). MVP-02 → PARTIAL (Sonner + toasts in 3 hooks, missing 4 hooks). INFRA-02/03/04/05 → PARTIAL (scaffolding + real logic exists). INFRA-07 → PARTIAL (Sentry fully integrated, source maps not yet uploaded). INFRA-08 → PARTIAL (migration 0051 exists). DH totals fixed (1 complete, was showing 0). BUG-AUDIT-02/03 moved to Resolved. Overall: 45 complete, 9 partial, 70 not started. |
 | 2026-03-14 ~3:00 PM EST | Status reconciliation. MVP-07 → COMPLETE (PR #43, mobile responsive layout). MVP-08 → COMPLETE (PR #44, onboarding stepper). MVP-09 → COMPLETE (PR #44, records pagination + search). MVP-11 → COMPLETE (PR #43, Stripe plan change/downgrade). DH-07 → COMPLETE (PR #38, fee timeout). DH-09 → COMPLETE (PR #39, UTXO retry). CRIT-3 → RESOLVED (plan change/downgrade done). MVP-02 → COMPLETE (all hooks have toasts). Overall: 52 complete, 8 partial, 64 not started (~42%). |
+| 2026-03-15 ~6:00 PM EST | **Full documentation reconciliation for board presentation.** P6-TS-03 → COMPLETE (VerificationWidget routed at `/embed/verify/:publicId`, 10 tests, PR #57). P7-TS-02 → COMPLETE (Stripe checkout + billing portal + entitlement enforcement, PR #43). P7-TS-05 → COMPLETE (OPS-ONLY — code complete, operational items remain). DH-01 through DH-12 all → COMPLETE (PR #49, migration 0052). MVP-01 → COMPLETE (OPS-ONLY — deploy prep done, env vars remain). MVP-10 → COMPLETE (marketing site built, pending Vercel deploy). MVP-06/16/21/24/25 → COMPLETE (PR #50). P8-S7/S13/S15/S17 → COMPLETE (edge workers implemented). INFRA-02/03/04/05/08 → COMPLETE (scaffolding + real logic). CRIT-2 reclassified HIGH → OPS-ONLY. Fixed summary math: 96/141 complete (68%), 1 partial, 44 not started. |

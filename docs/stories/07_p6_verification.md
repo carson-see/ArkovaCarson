@@ -1,5 +1,5 @@
 # P6 Verification — Story Documentation
-_Last updated: 2026-03-11 | 5/6 stories COMPLETE, 1/6 PARTIAL_
+_Last updated: 2026-03-15 ~6:00 PM EST | 6/6 stories COMPLETE_
 
 ## Group Overview
 
@@ -8,7 +8,7 @@ P6 Verification delivers the public-facing verification system: a 5-section publ
 Key deliverables:
 - `PublicVerification` — 5-section public page fetching via `get_public_anchor` RPC (SECURITY DEFINER)
 - `QRCodeSVG` in AssetDetailView — links to `/verify/{publicId}` for SECURED anchors
-- `VerificationWidget` — self-contained embed-ready component (PARTIAL: never imported or routed)
+- `VerificationWidget` — self-contained embed-ready component (COMPLETE: routed at `/embed/verify/:publicId` via `EmbedVerifyPage`)
 - `AnchorLifecycleTimeline` + `useCredentialLifecycle` — visual timeline for credential lifecycle (integrated on both detail and public pages)
 - `generateAuditReport` — jsPDF certificate with 7-section layout, downloads as PDF
 - `verification_events` table + `log_verification_event` RPC — fire-and-forget analytics
@@ -185,19 +185,25 @@ None.
 
 ### P6-TS-03: Embeddable VerificationWidget
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Dependencies:** P6-TS-01 (get_public_anchor RPC)
-**Blocked by:** None (implementation gap, not a dependency issue)
+**Blocked by:** None
+**Completed:** 2026-03-15 (PR #57)
 
 #### What This Story Delivers
 
-A self-contained, embed-ready verification widget designed for third-party website embedding. Supports compact (1-line summary) and full (4-section) render modes.
+A self-contained, embed-ready verification widget designed for third-party website embedding. Supports compact (1-line summary) and full (4-section) render modes. Routed at `/embed/verify/:publicId` via `EmbedVerifyPage`. Logs verification events with `method='embed'`.
 
 #### Implementation Files
 
 | Layer | File | Lines | Purpose |
 |-------|------|-------|---------|
 | Component | `src/components/embed/VerificationWidget.tsx` | 206 | Embeddable widget with compact/full modes |
+| Page | `src/pages/EmbedVerifyPage.tsx` | ~20 | Thin wrapper for iframe embedding |
+| Barrel | `src/components/embed/index.ts` | 1 | Re-export |
+| Route | `src/lib/routes.ts` | — | `EMBED_VERIFY: '/embed/verify/:publicId'` |
+| Test | `src/components/embed/VerificationWidget.test.tsx` | ~120 | 10 tests |
+| Test | `src/pages/EmbedVerifyPage.test.tsx` | ~30 | 2 tests |
 
 #### Component Details
 
@@ -211,36 +217,21 @@ Props: `publicId` (required), `compact` (optional boolean).
 The widget:
 - Fetches via `get_public_anchor` RPC (same as PublicVerification)
 - Uses inline brand color `#82b8d0` (Steel Blue) and system fonts
-- No Tailwind dark mode support
+- Logs verification events with `method: 'embed'` (verified, revoked, not_found)
 - Footer links to `/verify/{publicId}` for full details
-
-#### Completion Gaps
-
-| Gap | What's Missing | Effort |
-|-----|---------------|--------|
-| No route | Component never imported in App.tsx. No `/embed/verify/:publicId` route. | Small |
-| No standalone bundle | Would need separate Vite build config for iframe embedding. | Medium |
-| No barrel export | `src/components/embed/index.ts` does not exist. | Trivial |
-
-#### Remaining Work
-
-1. Create `src/components/embed/index.ts` with barrel export
-2. Add route (e.g., `/embed/verify/:publicId`) or create standalone bundle
-3. If standalone: add Vite entry point, build config, host as separate asset
-4. Add `logVerificationEvent()` call with `method: 'embed'`
-5. Test in cross-origin iframe context
 
 #### Security Considerations
 
 - Widget uses same RPC as public page — no additional attack surface
-- Cross-origin iframe embedding needs CORS/CSP review
+- Cross-origin iframe embedding needs CORS/CSP review for production
 - No authentication required (public data only)
 
 #### Test Coverage
 
 | Test File | Type | What It Validates |
 |-----------|------|-------------------|
-| — | — | No tests (component not wired) |
+| `src/components/embed/VerificationWidget.test.tsx` | Unit | Loading state, full mode (4 sections), compact mode, error states, revoked status, verification event logging (method='embed'), empty publicId guard. 10 tests. |
+| `src/pages/EmbedVerifyPage.test.tsx` | Unit | Renders widget with publicId, shows missing ID message. 2 tests. |
 
 #### Acceptance Criteria
 

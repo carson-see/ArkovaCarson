@@ -1,5 +1,5 @@
 # P8 AI Intelligence — Story Documentation
-_Last updated: 2026-03-12 | 0/19 stories — ALL NOT STARTED_
+_Last updated: 2026-03-15 ~6:00 PM EST | 4/19 stories COMPLETE, 15/19 NOT STARTED_
 
 ## Group Overview
 
@@ -292,7 +292,8 @@ As a platform operator, I need feature flags to enable/disable AI capabilities i
 ### P8-S17: AI Provider Abstraction (Multi-Provider)
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-14 (PR #31). `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests in `services/worker/src/ai/`.
 **Dependencies:** P8-S1
 **Estimated Points:** 3
 
@@ -567,10 +568,11 @@ As an org admin, I want to search my credentials using natural language queries 
 
 ---
 
-### P8-S13: Batch AI Processing
+### P8-S13: Batch AI Processing (Cloudflare Queues)
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-14 (PR #31). `services/edge/src/batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. 4 tests.
 **Dependencies:** P8-S4
 **Estimated Points:** 5
 
@@ -679,10 +681,11 @@ As a platform operator, I want the AI extraction to improve over time based on u
 
 ---
 
-### P8-S7: AI Fraud Analysis Engine
+### P8-S7: Cloudflare Crawler (Institution Ingestion)
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-14 (PR #31). `services/edge/src/institution-crawler.ts` — crawls university credential program pages. 5 tests.
 **Dependencies:** P8-S4, S11
 **Estimated Points:** 8
 
@@ -762,10 +765,11 @@ As an org admin, I want a workflow to review AI-flagged credentials so that susp
 
 ---
 
-### P8-S15: AI Report Generation
+### P8-S15: R2 Report Storage (Zero-Egress Signed URLs)
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-14 (PR #31). `services/edge/src/report-generator.ts` + `report-logic.ts`. R2 binding in wrangler.toml. 4 tests.
 **Dependencies:** P8-S7, S11
 **Estimated Points:** 5
 

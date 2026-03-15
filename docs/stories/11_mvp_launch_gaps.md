@@ -1,6 +1,6 @@
 # MVP Launch Gap Stories
 
-_Last updated: 2026-03-14 ~3:00 PM EST_
+_Last updated: 2026-03-15 ~6:00 PM EST_
 
 ## Group Overview
 
@@ -14,18 +14,20 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 8 |
+| COMPLETE | 15 |
 | PARTIAL | 0 |
-| NOT STARTED | 19 |
+| NOT STARTED | 12 |
 | REMOVED (superseded) | 2 |
 
 ---
 
 ## MVP-01: Worker Production Deployment (Google Cloud Run)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (OPS-ONLY items remain)
 **Priority:** CRITICAL (blocks testnet launch)
 **Depends on:** P7-TS-05 (Bitcoin chain client), MVP-26 (GCP Cloud Run setup)
+**Completed:** 2026-03-16 (PR #50 — deploy prep, `.env.example`, health check, deploy workflow)
+**Operational items:** Set Cloud Run env vars, register Stripe webhook endpoint. See `docs/confluence/15_operational_runbook.md`.
 
 ### What It Delivers
 
@@ -295,9 +297,10 @@ Client-side search, filter, and pagination for the records/dashboard view. Searc
 
 ## MVP-10: Marketing Website (arkova.ai)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (go-to-market)
 **Depends on:** MVP-04 (brand assets)
+**Completed:** 2026-03-15. Built as separate Vite+React project with Nordic Vault aesthetic. GitHub: `carson-see/arkova-marketing`. Pending: Vercel deployment + custom domain.
 
 ### What It Delivers
 

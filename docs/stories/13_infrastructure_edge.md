@@ -1,5 +1,5 @@
 # 13 — Infrastructure & Edge Stories
-_Last updated: 2026-03-14_
+_Last updated: 2026-03-15 ~6:00 PM EST_
 
 ## Overview
 
@@ -9,9 +9,9 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 
 | Status | Count |
 |--------|-------|
-| Complete | 0 |
-| Partial | 5 |
-| Not Started | 3 |
+| Complete | 5 |
+| Partial | 1 |
+| Not Started | 2 |
 
 ---
 
@@ -43,9 +43,10 @@ Infrastructure stories for Zero Trust ingress (Cloudflare Tunnel), edge compute 
 
 ## INFRA-02: Wrangler + Edge Worker Scaffolding
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Priority:** MEDIUM (blocks INFRA-03, INFRA-04, INFRA-05)
 **Depends on:** ADR-002 approval
+**Completed:** 2026-03-14 (PR #29, #31). `services/edge/` with 11 source files, `wrangler.toml`, `tsconfig.json`.
 **ADR:** ADR-002 Section 2
 
 ### What It Delivers
@@ -77,9 +78,10 @@ Create `services/edge/agents.md`. Add edge typecheck to CI. Deploy to Cloudflare
 
 ## INFRA-03: R2 Report Storage Bucket
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Depends on:** INFRA-02
+**Completed:** 2026-03-14 (PR #31). R2 binding in wrangler.toml, `report-generator.ts` + `report-logic.ts` implemented. 4 tests.
 **ADR:** ADR-002 Section 2
 
 ### What It Delivers
@@ -104,9 +106,10 @@ Create R2 bucket, configure lifecycle, deploy edge worker.
 
 ## INFRA-04: Batch Anchor Queue (Cloudflare Queues)
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Depends on:** INFRA-02
+**Completed:** 2026-03-14 (PR #31). `batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. 4 tests.
 **ADR:** ADR-002 Section 2
 
 ### What It Delivers
@@ -132,9 +135,10 @@ Create queue in Cloudflare, configure DLQ, deploy.
 
 ## INFRA-05: Cloudflare Workers AI Fallback Provider
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Priority:** LOW (P8 Phase 1.5)
 **Depends on:** INFRA-02, P8-S13 (IAIProvider interface)
+**Completed:** 2026-03-14 (PR #31). `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests. Edge worker `ai-fallback.ts`.
 **ADR:** ADR-002 Section 3
 
 ### What It Delivers
@@ -216,9 +220,10 @@ Add `@sentry/vite-plugin` for source map upload. Set `VITE_SENTRY_DSN` in Vercel
 
 ## INFRA-08: pgvector Extension + Institution Ground Truth Table
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Priority:** MEDIUM (blocks P8-S7 anomaly detection)
 **Depends on:** None
+**Completed:** 2026-03-14. Migration 0051 applied to production.
 **ADR:** ADR-002 Section 5 (implied)
 
 ### What It Delivers

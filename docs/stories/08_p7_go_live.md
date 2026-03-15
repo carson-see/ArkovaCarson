@@ -1,5 +1,5 @@
 # P7 Go-Live — Story Documentation
-_Last updated: 2026-03-14 ~3:00 PM EST | 10/13 stories COMPLETE, 1/13 PARTIAL, 2/13 NOT STARTED_
+_Last updated: 2026-03-15 ~6:00 PM EST | 11/13 stories COMPLETE, 2/13 NOT STARTED (P7-TS-04/06 no individual scope)_
 
 ## Group Overview
 
@@ -285,9 +285,10 @@ None (uses existing `audit_events` table for logging).
 
 ### P7-TS-05: Real Bitcoin Chain Client
 
-**Status:** PARTIAL (CODE COMPLETE — operational items remain)
+**Status:** COMPLETE (OPS-ONLY items remain — no code work left)
 **Dependencies:** P7-TS-01 (billing — entitlement check before anchoring)
-**Blocked by:** ~~Worker hardening sprint~~ DONE. ~~Code implementation~~ DONE. Remaining: operational only (Signet E2E broadcast, AWS KMS key provisioning, mainnet treasury funding).
+**Completed:** 2026-03-12 (code), 2026-03-15 (reclassified to COMPLETE)
+**Operational items:** AWS KMS key provisioning (follow `docs/confluence/14_kms_operations.md`), mainnet treasury funding. See `docs/confluence/15_operational_runbook.md`. Signet E2E broadcast verified (TX `b8e381df`).
 
 #### What This Story Delivers
 

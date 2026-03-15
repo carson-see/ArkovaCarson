@@ -1,23 +1,24 @@
 # 10 — Deferred Hardening Stories
-_Last updated: 2026-03-14 ~3:00 PM EST_
+_Last updated: 2026-03-15 ~6:00 PM EST_
 
 ## Overview
 
-These stories were identified during CodeRabbit review of PR #26 (CRIT-2 + CRIT-3). They are non-blocking operational improvements deferred to post-launch hardening.
+These stories were identified during CodeRabbit review of PR #26 (CRIT-2 + CRIT-3). All 12 complete. DH-03 (docs), DH-07 (PR #38), DH-09 (PR #39) completed individually. The remaining 9 stories (DH-01, DH-02, DH-04, DH-05, DH-06, DH-08, DH-10, DH-11, DH-12) completed in the DH Hardening Sprint (PR #49, migration 0052).
 
 | Status | Count |
 |--------|-------|
-| Complete | 3 |
+| Complete | 12 |
 | Partial | 0 |
-| Not Started | 9 |
+| Not Started | 0 |
 
 ---
 
 ## DH-01: Feature Flag Kill-Switch Hot-Reload
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on `services/worker/src/index.ts`
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 Hot-reload capability for the `ENABLE_PROD_NETWORK_ANCHORING` feature flag so it can be toggled without restarting the worker process. Currently requires worker restart.
@@ -32,9 +33,10 @@ Hot-reload capability for the `ENABLE_PROD_NETWORK_ANCHORING` feature flag so it
 
 ## DH-02: Advisory Lock for Migration 0049 Concurrency
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** LOW
 **Source:** CodeRabbit PR #26, comment on `supabase/migrations/0049_entitlement_quota_enforcement.sql`
+**Completed:** 2026-03-15 (PR #49, migration 0052)
 
 ### What It Delivers
 Add `pg_advisory_xact_lock()` in `bulk_create_anchors()` to prevent race conditions where concurrent requests could both pass the initial quota check but collectively exceed the limit.
@@ -71,9 +73,10 @@ Operational runbook for AWS KMS key provisioning and rotation for mainnet Bitcoi
 
 ## DH-04: Outbound Webhook Circuit Breaker
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on webhook delivery engine
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 Circuit breaker pattern for outbound webhook delivery. After N consecutive failures to a single endpoint, temporarily stop attempting delivery and alert the webhook owner.
@@ -89,9 +92,10 @@ Circuit breaker pattern for outbound webhook delivery. After N consecutive failu
 
 ## DH-05: Chain Index Lookup Cache TTL
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** LOW
 **Source:** CodeRabbit PR #26, comment on `services/worker/src/chain/client.ts`
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 In-memory TTL cache for `SupabaseChainIndexLookup.lookup()` to reduce repeated DB queries for the same fingerprint during high-traffic verification.
@@ -107,9 +111,10 @@ In-memory TTL cache for `SupabaseChainIndexLookup.lookup()` to reduce repeated D
 
 ## DH-06: ConfirmAnchorModal Server-Side Quota Error Handling
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on `src/components/anchor/ConfirmAnchorModal.tsx`
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 Graceful handling of server-side P0002 (quota_exceeded) errors from `bulk_create_anchors()` in the ConfirmAnchorModal, displaying the UpgradePrompt dialog instead of a generic error toast.
@@ -142,9 +147,10 @@ Configurable request timeout for `MempoolFeeEstimator` API calls to prevent hang
 
 ## DH-08: Rate Limiting for check_anchor_quota RPC
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** LOW
 **Source:** CodeRabbit PR #26, comment on `supabase/migrations/0049_entitlement_quota_enforcement.sql`
+**Completed:** 2026-03-15 (PR #49, migration 0052)
 
 ### What It Delivers
 Rate limiting on the `check_anchor_quota()` RPC to prevent abuse (e.g., polling for quota changes at high frequency).
@@ -177,9 +183,10 @@ Retry with exponential backoff for `UtxoProvider` API calls (both RPC and Mempoo
 
 ## DH-10: useEntitlements Realtime Subscription
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** LOW
 **Source:** CodeRabbit PR #26, comment on `src/hooks/useEntitlements.ts`
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 Supabase realtime subscription on the `anchors` table so the entitlement counter updates immediately when new anchors are created (rather than requiring manual refresh).
@@ -195,9 +202,10 @@ Supabase realtime subscription on the `anchors` table so the entitlement counter
 
 ## DH-11: Worker RPC Logging Structured Format
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** LOW
 **Source:** CodeRabbit PR #26, comment on worker logging
+**Completed:** 2026-03-15 (PR #49)
 
 ### What It Delivers
 Ensure all Bitcoin RPC and Mempool.space API interactions use structured logging with consistent fields (url, method, duration_ms, status, error).
@@ -212,9 +220,10 @@ Ensure all Bitcoin RPC and Mempool.space API interactions use structured logging
 
 ## DH-12: Webhook Delivery Dead Letter Queue
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on webhook delivery engine
+**Completed:** 2026-03-15 (PR #49, migration 0052)
 
 ### What It Delivers
 Dead letter queue for webhook deliveries that exhaust all retries, allowing admin review and manual re-delivery.
@@ -233,3 +242,5 @@ Dead letter queue for webhook deliveries that exhaust all retries, allowing admi
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-12 | DH-01 through DH-12 | Created from CodeRabbit PR #26 deferred items |
+| 2026-03-14 | DH-07, DH-09 | COMPLETE (PRs #38, #39) |
+| 2026-03-15 | DH-01, DH-02, DH-04, DH-05, DH-06, DH-08, DH-10, DH-11, DH-12 | All COMPLETE (PR #49, migration 0052). Full group now 12/12. |

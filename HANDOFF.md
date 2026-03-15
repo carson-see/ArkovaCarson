@@ -8,25 +8,30 @@
 
 ## Current State
 
-### Active Phase: Phase 3 — Go-Live (Production Launch) + P8 AI Intelligence (in progress)
+### Active Phase: Phase 3 — Go-Live (Production Launch) + P8 AI Intelligence (infrastructure done)
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
+**Overall progress:** 96/141 stories complete (68%). 1,071 tests (467 frontend + 604 worker). 53 migrations.
 
 ### Open Blockers
 
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
-| CRIT-2 | Bitcoin chain client — operational items | **HIGH** | CODE COMPLETE | AWS KMS key provisioning, mainnet treasury funding |
+| ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding. See `docs/confluence/15_operational_runbook.md`.~~ |
 | ~~CRIT-3~~ | ~~Stripe plan change/downgrade~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14~~ | ~~PR #43~~ |
 | ~~UAT-S5~~ | ~~UAT Sprint 5 — 9 critical/high UI bugs~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-15~~ | ~~PR #47~~ |
 | ~~UAT-S6~~ | ~~UAT Sprint 6 — 8 medium/low UI polish bugs~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-15~~ | ~~PR #48~~ |
 
+**No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
 ### MVP Launch Gap Stories (testnet launch blockers)
+
+All HIGH+ launch blockers resolved:
 
 | Story | Priority | Description | Status |
 |-------|----------|-------------|--------|
-| MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | PARTIAL — `.env.example` + deploy workflow updated (PR #50). Needs env vars + manual deploy. |
+| ~~MVP-01~~ | ~~CRITICAL~~ | ~~Worker production deployment~~ | ~~COMPLETE (OPS-ONLY — env vars, Stripe webhook). See runbook.~~ |
 | ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system~~ | ~~COMPLETE (PRs #36, #37, #40)~~ |
 | ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages~~ | ~~COMPLETE~~ |
 | ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets~~ | ~~COMPLETE (PR #30)~~ |
@@ -90,6 +95,26 @@
 ---
 
 ## Session Log
+
+### Session: 2026-03-15 — Full Documentation Reconciliation (Board Presentation Prep)
+
+**Documentation sync:**
+- Fixed math errors in stories index (89→96 complete, 51→44 not started)
+- Updated CLAUDE.md Section 8: P6 6/6, P7 11/13, DH 12/12, MVP 15/27, P8 4/19, INFRA 5/8+1 partial. Total 96/141 (68%)
+- Reclassified CRIT-2 from HIGH to OPS-ONLY (all code complete, operational items only)
+- Removed orphaned code section from CLAUDE.md (P6-TS-03 now wired)
+- Updated all 7 story group docs with correct statuses
+- Updated HANDOFF.md blockers (all resolved) and session log
+- Migration count updated: 53 files (0052-0053 applied to production)
+
+**P6-TS-03 completion (PR #57):**
+- `VerificationWidget` routed at `/embed/verify/:publicId` via `EmbedVerifyPage`
+- Barrel export `src/components/embed/index.ts`
+- `logVerificationEvent` calls with `method='embed'`
+- 12 new tests (10 widget + 2 page)
+
+**PRs merged:** #53, #54, #55, #56, #57
+**Migrations applied to production:** 0052, 0053
 
 ### Session: 2026-03-16 — Hardening Sprint 4 (Test Gaps + Route Fix + Doc Sync)
 
