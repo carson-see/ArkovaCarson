@@ -91,7 +91,7 @@ describe('PricingPage', () => {
 
   it('renders page title and description', () => {
     renderPage();
-    expect(screen.getByText(BILLING_LABELS.PAGE_TITLE)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: BILLING_LABELS.PAGE_TITLE })).toBeInTheDocument();
     expect(screen.getByText(BILLING_LABELS.PAGE_DESCRIPTION)).toBeInTheDocument();
   });
 
