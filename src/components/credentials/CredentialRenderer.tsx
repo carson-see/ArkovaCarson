@@ -154,7 +154,7 @@ export function CredentialRenderer({
         </div>
         <div className="min-w-0">
           <p className="text-sm font-medium truncate">
-            {template?.name ?? credentialLabel ?? filename ?? 'Record'}
+            {template?.name ?? credentialLabel ?? filename ?? LABELS.DOCUMENT_RECORD}
           </p>
           {issuerName && (
             <p className="text-xs text-muted-foreground truncate">{issuerName}</p>
@@ -240,7 +240,7 @@ export function CredentialRenderer({
         )}
 
         {/* No metadata fallback */}
-        {displayFields.length === 0 && !hasMetadata && filename && (
+        {displayFields.length === 0 && filename && (
           <div className="text-sm text-muted-foreground">
             <p>{filename}</p>
             <p className="text-xs mt-1">{LABELS.NO_METADATA}</p>
@@ -268,6 +268,7 @@ export function CredentialRenderer({
                 size="sm"
                 className="h-6 px-2 text-xs"
                 onClick={handleCopyFingerprint}
+                aria-label={LABELS.COPY_FINGERPRINT}
               >
                 {copied ? (
                   <Check className="h-3 w-3" />

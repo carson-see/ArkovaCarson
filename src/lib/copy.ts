@@ -390,6 +390,67 @@ export const CREDENTIAL_RENDERER_LABELS = {
 } as const;
 
 // =============================================================================
+// SECURE DOCUMENT DIALOG
+// =============================================================================
+
+export const SECURE_DIALOG_LABELS = {
+  TITLE: 'Secure Document',
+  DESCRIPTION: 'Create a permanent, tamper-proof record of your document.',
+  READY_TO_SECURE: 'Ready to Secure',
+  DOCUMENT_LABEL: 'Document',
+  SIZE_LABEL: 'Size',
+  SECURITY_NOTICE: 'Your document will be secured with cryptographic verification. This creates a permanent record that can be verified at any time.',
+  SECURING_LOADING: 'Securing your document...',
+  VERIFICATION_LINK: 'Verification Link',
+  SECURING_FAILED: 'Securing Failed',
+  CANCEL: 'Cancel',
+  CONTINUE: 'Continue',
+  BACK: 'Back',
+  SECURE_BUTTON: 'Secure Document',
+  TRY_AGAIN: 'Try Again',
+  COPY_LINK_ARIA: 'Copy verification link',
+} as const;
+
+// =============================================================================
+// ISSUE CREDENTIAL FORM
+// =============================================================================
+
+export const ISSUE_CREDENTIAL_LABELS = {
+  TITLE: 'Issue Credential',
+  DESCRIPTION: 'Create a verifiable credential record for your organization.',
+  PENDING_NOTICE: 'The credential will be created with Pending status and assigned a unique verification ID immediately.',
+  ISSUING_LOADING: 'Issuing...',
+  ISSUE_BUTTON: 'Issue Credential',
+  VERIFICATION_LINK: 'Verification Link',
+  COPY_LINK_ARIA: 'Copy verification link',
+} as const;
+
+// =============================================================================
+// PUBLIC VERIFICATION DISPLAY
+// =============================================================================
+
+export const PUBLIC_VERIFICATION_LABELS = {
+  VERIFICATION_FAILED: 'Verification Failed',
+  UNABLE_TO_VERIFY: 'Unable to verify this document',
+  NOT_FOUND_DESC: 'The document you are looking for may not exist or has not been verified yet.',
+  RECORD_REVOKED: 'Record Revoked',
+  RECORD_EXPIRED: 'Record Expired',
+  DOCUMENT_VERIFIED: 'Document Verified',
+  REVOKED_DESC: 'This record has been revoked by the issuing organization',
+  EXPIRED_DESC: 'This record has passed its expiration date',
+  VERIFIED_DESC: 'This document has been permanently secured',
+  CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
+  FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
+  NETWORK_RECEIPT: 'Network Receipt',
+  NETWORK_RECORD: 'Network Record',
+  OBSERVED_TIME: 'Observed Time',
+  LIFECYCLE: 'Lifecycle',
+  SECURED_BY: 'Secured by Arkova',
+  COPY_FINGERPRINT_ARIA: 'Copy document fingerprint',
+  COPY_RECEIPT_ARIA: 'Copy network receipt',
+} as const;
+
+// =============================================================================
 // ANCHORING STATUS (UF-04)
 // =============================================================================
 

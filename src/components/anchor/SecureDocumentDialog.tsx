@@ -37,7 +37,7 @@ import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
 import { verifyPath, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -174,10 +174,10 @@ export function SecureDocumentDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
-            Secure Document
+            {SECURE_DIALOG_LABELS.TITLE}
           </DialogTitle>
           <DialogDescription>
-            Create a permanent, tamper-proof record of your document.
+            {SECURE_DIALOG_LABELS.DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
 
@@ -192,16 +192,16 @@ export function SecureDocumentDialog({
           {step === 'confirm' && fileData && (
             <div className="space-y-4">
               <div className="rounded-lg border p-4">
-                <h4 className="text-sm font-medium mb-2">Ready to Secure</h4>
+                <h4 className="text-sm font-medium mb-2">{SECURE_DIALOG_LABELS.READY_TO_SECURE}</h4>
                 <dl className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Document</dt>
+                    <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.DOCUMENT_LABEL}</dt>
                     <dd className="font-medium truncate max-w-[200px]">
                       {fileData.file.name}
                     </dd>
                   </div>
                   <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Size</dt>
+                    <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.SIZE_LABEL}</dt>
                     <dd className="font-medium">
                       {(fileData.file.size / 1024).toFixed(1)} KB
                     </dd>
@@ -211,8 +211,7 @@ export function SecureDocumentDialog({
               <Alert>
                 <Shield className="h-4 w-4" />
                 <AlertDescription>
-                  Your document will be secured with cryptographic verification.
-                  This creates a permanent record that can be verified at any time.
+                  {SECURE_DIALOG_LABELS.SECURITY_NOTICE}
                 </AlertDescription>
               </Alert>
             </div>
@@ -224,7 +223,7 @@ export function SecureDocumentDialog({
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
               </div>
               <div className="space-y-2">
-                <p className="text-sm font-medium">Securing your document...</p>
+                <p className="text-sm font-medium">{SECURE_DIALOG_LABELS.SECURING_LOADING}</p>
               </div>
             </div>
           )}
@@ -247,7 +246,7 @@ export function SecureDocumentDialog({
               {createdAnchor && (
                 <div className="rounded-lg border bg-muted/50 p-3 space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Verification Link
+                    {SECURE_DIALOG_LABELS.VERIFICATION_LINK}
                   </p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs font-mono truncate">
@@ -259,6 +258,7 @@ export function SecureDocumentDialog({
                       size="sm"
                       className="h-7 px-2 shrink-0"
                       onClick={handleCopyLink}
+                      aria-label={SECURE_DIALOG_LABELS.COPY_LINK_ARIA}
                     >
                       {linkCopied ? (
                         <Check className="h-3.5 w-3.5 text-green-500" />
@@ -283,7 +283,7 @@ export function SecureDocumentDialog({
                 </div>
               </div>
               <div className="space-y-1">
-                <h4 className="text-lg font-semibold">Securing Failed</h4>
+                <h4 className="text-lg font-semibold">{SECURE_DIALOG_LABELS.SECURING_FAILED}</h4>
                 <p className="text-sm text-muted-foreground">
                   {error || 'An unexpected error occurred. Please try again.'}
                 </p>
@@ -296,13 +296,13 @@ export function SecureDocumentDialog({
           {step === 'upload' && (
             <>
               <Button variant="outline" onClick={handleClose}>
-                Cancel
+                {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button
                 onClick={() => setStep('confirm')}
                 disabled={!fileData}
               >
-                Continue
+                {SECURE_DIALOG_LABELS.CONTINUE}
               </Button>
             </>
           )}
@@ -310,11 +310,11 @@ export function SecureDocumentDialog({
           {step === 'confirm' && (
             <>
               <Button variant="outline" onClick={() => setStep('upload')}>
-                Back
+                {SECURE_DIALOG_LABELS.BACK}
               </Button>
               <Button onClick={handleConfirm}>
                 <Shield className="mr-2 h-4 w-4" />
-                Secure Document
+                {SECURE_DIALOG_LABELS.SECURE_BUTTON}
               </Button>
             </>
           )}
@@ -352,10 +352,10 @@ export function SecureDocumentDialog({
           {step === 'error' && (
             <>
               <Button variant="outline" onClick={handleClose}>
-                Cancel
+                {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button onClick={handleRetry}>
-                Try Again
+                {SECURE_DIALOG_LABELS.TRY_AGAIN}
               </Button>
             </>
           )}

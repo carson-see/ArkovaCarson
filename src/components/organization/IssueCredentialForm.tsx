@@ -52,6 +52,7 @@ import {
   CREDENTIAL_TYPE_LABELS,
   TOAST,
   ANCHORING_STATUS_LABELS,
+  ISSUE_CREDENTIAL_LABELS,
 } from '@/lib/copy';
 import { toast } from 'sonner';
 import { verifyPath, recordDetailPath } from '@/lib/routes';
@@ -218,11 +219,11 @@ export function IssueCredentialForm({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Award className="h-5 w-5 text-primary" />
-            Issue Credential
+            {ISSUE_CREDENTIAL_LABELS.TITLE}
           </DialogTitle>
           <DialogDescription>
             {step === 'form'
-              ? 'Create a verifiable credential record for your organization.'
+              ? ISSUE_CREDENTIAL_LABELS.DESCRIPTION
               : ANCHORING_STATUS_LABELS.SUCCESS_SUBTITLE}
           </DialogDescription>
         </DialogHeader>
@@ -288,8 +289,7 @@ export function IssueCredentialForm({
                 <Alert>
                   <Shield className="h-4 w-4" />
                   <AlertDescription>
-                    The credential will be created with <strong>Pending</strong>{' '}
-                    status and assigned a unique verification ID immediately.
+                    {ISSUE_CREDENTIAL_LABELS.PENDING_NOTICE}
                   </AlertDescription>
                 </Alert>
               )}
@@ -310,12 +310,12 @@ export function IssueCredentialForm({
                 {creating ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Issuing...
+                    {ISSUE_CREDENTIAL_LABELS.ISSUING_LOADING}
                   </>
                 ) : (
                   <>
                     <Award className="mr-2 h-4 w-4" />
-                    Issue Credential
+                    {ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON}
                   </>
                 )}
               </Button>
@@ -342,7 +342,7 @@ export function IssueCredentialForm({
               {createdAnchor && (
                 <div className="rounded-lg border bg-muted/50 p-3 space-y-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Verification Link
+                    {ISSUE_CREDENTIAL_LABELS.VERIFICATION_LINK}
                   </p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs font-mono truncate">
@@ -354,6 +354,7 @@ export function IssueCredentialForm({
                       size="sm"
                       className="h-7 px-2 shrink-0"
                       onClick={handleCopyLink}
+                      aria-label={ISSUE_CREDENTIAL_LABELS.COPY_LINK_ARIA}
                     >
                       {linkCopied ? (
                         <Check className="h-3.5 w-3.5 text-green-500" />

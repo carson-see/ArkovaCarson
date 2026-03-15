@@ -39,7 +39,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 
 interface PublicAnchorData {
@@ -160,14 +160,14 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 mb-4">
             <XCircle className="h-8 w-8 text-destructive" />
           </div>
-          <CardTitle>Verification Failed</CardTitle>
+          <CardTitle>{PUBLIC_VERIFICATION_LABELS.VERIFICATION_FAILED}</CardTitle>
           <p className="text-sm text-muted-foreground mt-2">
-            {error || 'Unable to verify this document'}
+            {error || PUBLIC_VERIFICATION_LABELS.UNABLE_TO_VERIFY}
           </p>
         </CardHeader>
         <CardContent className="text-center">
           <p className="text-sm text-muted-foreground">
-            The document you are looking for may not exist or has not been verified yet.
+            {PUBLIC_VERIFICATION_LABELS.NOT_FOUND_DESC}
           </p>
         </CardContent>
       </Card>
@@ -234,18 +234,18 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           <h2 className="text-xl font-semibold">
             {isPending
               ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE
-              : isRevoked ? 'Record Revoked'
-              : isExpired ? 'Record Expired'
-              : 'Document Verified'}
+              : isRevoked ? PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED
+              : isExpired ? PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED
+              : PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             {isPending
               ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE
               : isRevoked
-                ? 'This record has been revoked by the issuing organization'
+                ? PUBLIC_VERIFICATION_LABELS.REVOKED_DESC
                 : isExpired
-                  ? 'This record has passed its expiration date'
-                  : 'This document has been permanently secured'}
+                  ? PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC
+                  : PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC}
           </p>
           {pendingSince && (
             <p className="text-xs text-amber-600 mt-2">
@@ -281,7 +281,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <div>
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
                 <Shield className="h-4 w-4" />
-                Cryptographic Proof
+                {PUBLIC_VERIFICATION_LABELS.CRYPTOGRAPHIC_PROOF}
               </h3>
               <div className="space-y-3">
                 {/* Fingerprint with copy */}
@@ -289,13 +289,14 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-muted-foreground flex items-center gap-1.5">
                       <Fingerprint className="h-3.5 w-3.5" />
-                      Fingerprint (SHA-256)
+                      {PUBLIC_VERIFICATION_LABELS.FINGERPRINT_SHA256}
                     </span>
                     <Button
                       variant="ghost"
                       size="sm"
                       className="h-6 px-2 text-xs"
                       onClick={() => handleCopy(data.fingerprint, 'fingerprint')}
+                      aria-label={PUBLIC_VERIFICATION_LABELS.COPY_FINGERPRINT_ARIA}
                     >
                       {copied === 'fingerprint' ? (
                         <Check className="h-3 w-3" />
@@ -312,12 +313,13 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 {data.network_receipt_id && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm text-muted-foreground">Network Receipt</span>
+                      <span className="text-sm text-muted-foreground">{PUBLIC_VERIFICATION_LABELS.NETWORK_RECEIPT}</span>
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-6 px-2 text-xs"
                         onClick={() => handleCopy(data.network_receipt_id!, 'receipt')}
+                        aria-label={PUBLIC_VERIFICATION_LABELS.COPY_RECEIPT_ARIA}
                       >
                         {copied === 'receipt' ? (
                           <Check className="h-3 w-3" />
@@ -333,11 +335,11 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 )}
 
                 {networkRecordBlock && (
-                  <InfoRow label="Network Record" value={`#${networkRecordBlock.toLocaleString()}`} />
+                  <InfoRow label={PUBLIC_VERIFICATION_LABELS.NETWORK_RECORD} value={`#${networkRecordBlock.toLocaleString()}`} />
                 )}
 
                 {(data.secured_at ?? data.anchor_timestamp) && (
-                  <InfoRow label="Observed Time" value={formatDate((data.secured_at ?? data.anchor_timestamp)!)} />
+                  <InfoRow label={PUBLIC_VERIFICATION_LABELS.OBSERVED_TIME} value={formatDate((data.secured_at ?? data.anchor_timestamp)!)} />
                 )}
               </div>
             </div>
@@ -353,7 +355,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
               <Shield className="h-4 w-4" />
-              Lifecycle
+              {PUBLIC_VERIFICATION_LABELS.LIFECYCLE}
             </h3>
             <AnchorLifecycleTimeline
               data={mapToLifecycleData(data)}
@@ -364,7 +366,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* Footer */}
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">
           <p>Verification ID: {data.public_id}</p>
-          <p className="mt-1">Secured by Arkova</p>
+          <p className="mt-1">{PUBLIC_VERIFICATION_LABELS.SECURED_BY}</p>
         </div>
       </CardContent>
     </Card>

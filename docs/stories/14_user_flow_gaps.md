@@ -161,7 +161,7 @@ A public search interface at `/search` that allows:
 - Edit: `src/App.tsx` — add `/search` and `/issuer/:orgId` public routes
 - Edit: `src/lib/routes.ts` — add SEARCH and ISSUER_REGISTRY route constants
 - Edit: `src/lib/copy.ts` — search page copy
-- New migration: `supabase/migrations/0054_public_search.sql`
+- New migration: `supabase/migrations/0055_public_search.sql`
 
 ---
 
