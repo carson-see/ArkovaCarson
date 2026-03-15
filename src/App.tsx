@@ -38,6 +38,7 @@ import { NotFoundPage } from '@/pages/NotFoundPage';
 import { PrivacyPage } from '@/pages/PrivacyPage';
 import { TermsPage } from '@/pages/TermsPage';
 import { ContactPage } from '@/pages/ContactPage';
+import { ApiKeySettingsPage } from '@/pages/ApiKeySettingsPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -210,7 +211,7 @@ export function App() {
             element={
               <AuthGuard>
                 <RouteGuard allow={MAIN_APP_DESTINATIONS}>
-                  <DashboardPage />
+                  <ApiKeySettingsPage />
                 </RouteGuard>
               </AuthGuard>
             }

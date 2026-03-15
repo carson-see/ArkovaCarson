@@ -345,6 +345,16 @@ export const BILLING_LABELS = {
 } as const;
 
 // =============================================================================
+// API KEYS (P4.5 — deferred post-launch)
+// =============================================================================
+
+export const API_KEY_LABELS = {
+  PAGE_TITLE: 'API Keys',
+  PAGE_DESCRIPTION: 'Manage API keys for programmatic access to the Verification API.',
+  COMING_SOON: 'Coming soon — the Verification API and API key management will be available after launch.',
+} as const;
+
+// =============================================================================
 // ENTITLEMENTS / QUOTA
 // =============================================================================
 
