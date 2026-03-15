@@ -5,12 +5,15 @@
  * After role is set, refreshProfile recomputes destination and RouteGuard redirects.
  *
  * @see CRIT-4 — replaces DashboardPage placeholder
+ * @see MVP-08 — progress stepper
  */
 
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { RoleSelector } from '@/components/onboarding/RoleSelector';
+import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
 import { useProfile } from '@/hooks/useProfile';
 import { useOnboarding } from '@/hooks/useOnboarding';
+import { ONBOARDING_STEPS } from '@/lib/copy';
 
 export function OnboardingRolePage() {
   const { refreshProfile } = useProfile();
@@ -26,6 +29,9 @@ export function OnboardingRolePage() {
 
   return (
     <AuthLayout title="Welcome to Arkova" description="Choose how you'll use the platform">
+      <div className="mb-8">
+        <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
+      </div>
       <RoleSelector onSelect={handleRoleSelect} loading={loading} />
     </AuthLayout>
   );

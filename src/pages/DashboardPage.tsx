@@ -6,11 +6,12 @@
  * Uses approved terminology per Constitution.
  *
  * @see P3-TS-01 — Wired to real Supabase queries via useAnchors hook
+ * @see MVP-09 — Search, filter, and pagination
  */
 
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
@@ -27,8 +28,19 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { IDENTITY_LABELS } from '@/lib/copy';
+import { IDENTITY_LABELS, RECORDS_LIST_LABELS } from '@/lib/copy';
+
+const PAGE_SIZES = [10, 25, 50] as const;
+type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
 
 export function DashboardPage() {
   const navigate = useNavigate();
@@ -38,6 +50,12 @@ export function DashboardPage() {
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+
+  // Search, filter, pagination state (MVP-09)
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(10);
 
   const handleCopyId = useCallback(async () => {
     if (profile?.public_id) {
@@ -77,6 +95,52 @@ export function DashboardPage() {
     }
   }, [revokeAnchor, refreshAnchors]);
 
+  // Filtered + searched records (MVP-09)
+  const filteredRecords = useMemo(() => {
+    let result = records;
+
+    if (statusFilter !== 'ALL') {
+      result = result.filter(r => r.status === statusFilter);
+    }
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      result = result.filter(r =>
+        r.filename.toLowerCase().includes(query) ||
+        r.fingerprint.toLowerCase().includes(query)
+      );
+    }
+
+    return result;
+  }, [records, statusFilter, searchQuery]);
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedRecords = useMemo(() => {
+    const start = (safePage - 1) * pageSize;
+    return filteredRecords.slice(start, start + pageSize);
+  }, [filteredRecords, safePage, pageSize]);
+
+  const paginationStart = filteredRecords.length === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const paginationEnd = Math.min(safePage * pageSize, filteredRecords.length);
+
+  // Reset page when search/filter changes
+  const handleSearchChange = useCallback((value: string) => {
+    setSearchQuery(value);
+    setCurrentPage(1);
+  }, []);
+
+  const handleStatusFilterChange = useCallback((value: string) => {
+    setStatusFilter(value as StatusFilter);
+    setCurrentPage(1);
+  }, []);
+
+  const handlePageSizeChange = useCallback((value: string) => {
+    setPageSize(Number(value));
+    setCurrentPage(1);
+  }, []);
+
   const stats = {
     total: records.length,
     secured: records.filter(r => r.status === 'SECURED').length,
@@ -84,6 +148,9 @@ export function DashboardPage() {
   };
 
   const loading = profileLoading || recordsLoading;
+  const hasRecords = records.length > 0;
+  const hasFilteredResults = filteredRecords.length > 0;
+  const isFiltering = searchQuery.trim() !== '' || statusFilter !== 'ALL';
 
   return (
     <AppShell
@@ -189,23 +256,132 @@ export function DashboardPage() {
             Secure Document
           </Button>
         </CardHeader>
+
+        {/* Search + Filter controls (MVP-09) */}
+        {hasRecords && (
+          <div className="px-6 pb-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder={RECORDS_LIST_LABELS.SEARCH_PLACEHOLDER}
+                  value={searchQuery}
+                  onChange={(e) => handleSearchChange(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
+                <SelectTrigger className="w-full sm:w-[160px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">{RECORDS_LIST_LABELS.FILTER_ALL}</SelectItem>
+                  <SelectItem value="PENDING">{RECORDS_LIST_LABELS.FILTER_PENDING}</SelectItem>
+                  <SelectItem value="SECURED">{RECORDS_LIST_LABELS.FILTER_SECURED}</SelectItem>
+                  <SelectItem value="REVOKED">{RECORDS_LIST_LABELS.FILTER_REVOKED}</SelectItem>
+                  <SelectItem value="EXPIRED">{RECORDS_LIST_LABELS.FILTER_EXPIRED}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        )}
+
         <Separator />
         <CardContent className="pt-0">
-          {!loading && records.length === 0 ? (
+          {!loading && !hasRecords ? (
             <EmptyState
               title="No records yet"
               description="Secure your first document to create a permanent, tamper-proof record. Your documents never leave your device."
               actionLabel="Secure Document"
               onAction={() => setSecureDialogOpen(true)}
             />
+          ) : !loading && isFiltering && !hasFilteredResults ? (
+            <div className="py-12 text-center">
+              <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
+                {RECORDS_LIST_LABELS.NO_RESULTS}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {RECORDS_LIST_LABELS.NO_RESULTS_DESC}
+              </p>
+            </div>
           ) : (
             <RecordsList
-              records={records}
+              records={paginatedRecords}
               loading={recordsLoading}
               onViewRecord={handleViewRecord}
               onDownloadProof={handleDownloadProof}
               onRevokeRecord={handleRevokeRecord}
             />
+          )}
+
+          {/* Pagination controls (MVP-09) */}
+          {hasRecords && !recordsLoading && filteredRecords.length > 0 && (
+            <div className="flex flex-col gap-3 border-t pt-4 mt-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  {RECORDS_LIST_LABELS.SHOWING_RESULTS
+                    .replace('{start}', String(paginationStart))
+                    .replace('{end}', String(paginationEnd))
+                    .replace('{total}', String(filteredRecords.length))}
+                </span>
+                <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                  <SelectTrigger className="h-8 w-[70px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PAGE_SIZES.map(size => (
+                      <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-xs">{RECORDS_LIST_LABELS.PAGE_SIZE_LABEL}</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={safePage <= 1}
+                  aria-label="Previous page"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1)
+                  .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                  .reduce<(number | 'ellipsis-before')[]>((acc, p, idx, arr) => {
+                    if (idx > 0 && arr[idx - 1] !== p - 1) {
+                      acc.push(`ellipsis-before-${p}` as 'ellipsis-before');
+                    }
+                    acc.push(p as unknown as 'ellipsis-before');
+                    return acc;
+                  }, [])
+                  .map((item) =>
+                    typeof item === 'string' ? (
+                      <span key={item} className="px-2 text-sm text-muted-foreground">...</span>
+                    ) : (
+                      <Button
+                        key={item}
+                        variant={(item as number) === safePage ? 'default' : 'outline'}
+                        size="sm"
+                        className="h-8 w-8 p-0"
+                        onClick={() => setCurrentPage(item as number)}
+                      >
+                        {item as number}
+                      </Button>
+                    )
+                  )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={safePage >= totalPages}
+                  aria-label="Next page"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
