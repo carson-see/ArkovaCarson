@@ -389,7 +389,10 @@ export function OrgRegistryTable({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={status.variant}>
+                      <Badge
+                        variant={status.variant}
+                        className={anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}
+                      >
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
                       </Badge>
