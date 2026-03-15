@@ -271,6 +271,43 @@ export const VERIFICATION_LABELS = {
 } as const;
 
 // =============================================================================
+// RECORDS LIST — SEARCH & PAGINATION
+// =============================================================================
+
+export const RECORDS_LIST_LABELS = {
+  SEARCH_PLACEHOLDER: 'Search by filename or fingerprint...',
+  FILTER_ALL: 'All Statuses',
+  FILTER_PENDING: 'Pending',
+  FILTER_SECURED: 'Secured',
+  FILTER_REVOKED: 'Revoked',
+  FILTER_EXPIRED: 'Expired',
+  SHOWING_RESULTS: 'Showing {start}–{end} of {total} records',
+  NO_RESULTS: 'No records match your search',
+  NO_RESULTS_DESC: 'Try adjusting your search or filter criteria.',
+  PAGE_SIZE_LABEL: 'per page',
+} as const;
+
+// =============================================================================
+// ONBOARDING STEPPER
+// =============================================================================
+
+export const ONBOARDING_LABELS = {
+  STEP_ROLE: 'Account Type',
+  STEP_ORG: 'Organization',
+  STEP_CONFIRM: 'Confirmation',
+  STEP_ROLE_DESC: 'Choose your account type',
+  STEP_ORG_DESC: 'Set up your organization',
+  STEP_CONFIRM_DESC: 'Review and confirm',
+  STEPPER_ARIA_LABEL: 'Onboarding progress',
+} as const;
+
+export const ONBOARDING_STEPS = [
+  { label: ONBOARDING_LABELS.STEP_ROLE, description: ONBOARDING_LABELS.STEP_ROLE_DESC },
+  { label: ONBOARDING_LABELS.STEP_ORG, description: ONBOARDING_LABELS.STEP_ORG_DESC },
+  { label: ONBOARDING_LABELS.STEP_CONFIRM, description: ONBOARDING_LABELS.STEP_CONFIRM_DESC },
+] as const;
+
+// =============================================================================
 // TOOLTIPS
 // =============================================================================
 

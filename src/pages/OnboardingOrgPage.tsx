@@ -6,12 +6,15 @@
  * to avoid double-Card nesting.
  *
  * @see CRIT-4 — replaces DashboardPage placeholder
+ * @see MVP-08 — progress stepper
  */
 
 import { Shield } from 'lucide-react';
 import { OrgOnboardingForm } from '@/components/onboarding/OrgOnboardingForm';
+import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
 import { useProfile } from '@/hooks/useProfile';
 import { useOnboarding } from '@/hooks/useOnboarding';
+import { ONBOARDING_STEPS } from '@/lib/copy';
 
 export function OnboardingOrgPage() {
   const { refreshProfile } = useProfile();
@@ -38,6 +41,9 @@ export function OnboardingOrgPage() {
             <Shield className="h-8 w-8 text-primary" />
           </div>
         </div>
+
+        {/* Progress stepper — step 2 (org setup) */}
+        <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={1} />
 
         <OrgOnboardingForm
           onSubmit={handleSubmit}
