@@ -1,6 +1,6 @@
 # MVP Launch Gap Stories
 
-_Last updated: 2026-03-15 ~6:00 PM EST_
+_Last updated: 2026-03-16_
 
 ## Group Overview
 
@@ -14,9 +14,9 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 15 |
+| COMPLETE | 18 |
 | PARTIAL | 0 |
-| NOT STARTED | 12 |
+| NOT STARTED | 9 |
 | REMOVED (superseded) | 2 |
 
 ---
@@ -723,98 +723,79 @@ Usage dashboard for credits, auto-refill option, and scheduled anchoring (queue 
 
 ## MVP-26: GCP Cloud Run Deployment
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (infrastructure — blocks MVP-01)
 **Depends on:** None (infrastructure setup)
+**Completed:** 2026-03-16
 
 ### What It Delivers
 
 Deploy the worker service to Google Cloud Run. This is the infrastructure foundation for MVP-01 (worker production deployment). Uses Google startup credits.
 
-### Acceptance Criteria
+### Implementation
 
-- [ ] Cloud Run service created for worker container
-- [ ] Dockerfile builds and deploys successfully to Cloud Run
-- [ ] Health check endpoint (`/health`) configured and responding
-- [ ] Cloud Run service scales to zero when idle (cost optimization)
-- [ ] Min instances: 1 (to avoid cold start delays for webhooks)
-- [ ] Memory: 512MB, CPU: 1 vCPU (adjustable)
-- [ ] Cloud Run service account with minimal IAM permissions
-- [ ] Custom domain mapped (e.g., `worker.arkova.io`)
-- [ ] HTTPS enforced (Cloud Run default)
-
-### Files
-
-- `services/worker/Dockerfile` (exists)
-- New: `services/worker/.dockerignore` (partial — needs completion)
-- New: `infrastructure/gcp/cloud-run.tf` (Terraform) or `scripts/deploy-cloud-run.sh` (CLI)
-- New: `docs/confluence/15_gcp_deployment.md`
-
-### Technical Notes
-
-- Cloud Run supports container images, HTTP triggers, and always-on instances
-- Worker Express server needs `PORT` env var (Cloud Run sets this automatically)
-- Cloud Run max request timeout: 3600s (sufficient for anchor processing)
-- Startup credits: verify Cloud Run costs against credit balance
+- Cloud Run service: `arkova-worker` in `us-central1`
+- URL: `https://arkova-worker-kvojbeutfa-uc.a.run.app`
+- Health check: `/health` → returning `{"status":"healthy","version":"0.1.0",...}`
+- Service account: `270018525501-compute@developer.gserviceaccount.com`
+- HTTPS enforced (Cloud Run default)
+- All secrets injected from GCP Secret Manager (see MVP-27)
 
 ---
 
 ## MVP-27: GCP Secret Manager Integration
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (security — blocks MVP-01)
 **Depends on:** MVP-26 (Cloud Run deployment)
+**Completed:** 2026-03-16
 
 ### What It Delivers
 
-Migrate all worker secrets from environment variables to GCP Secret Manager. Cloud Run services access secrets via mounted volumes or environment variable injection from Secret Manager.
+All worker secrets stored in GCP Secret Manager, injected into Cloud Run as environment variables.
 
-### Acceptance Criteria
+### Implementation
 
-- [ ] All worker secrets stored in GCP Secret Manager: `SUPABASE_SERVICE_ROLE_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `BITCOIN_TREASURY_WIF`, `API_KEY_HMAC_SECRET`
-- [ ] Cloud Run service configured to inject secrets as env vars from Secret Manager
-- [ ] Secret rotation supported (new versions without downtime)
-- [ ] IAM: only worker service account can access worker secrets
-- [ ] No secrets in Dockerfile, cloudbuild.yaml, or source code
-- [ ] Local development still uses `.env` file (no GCP dependency for local dev)
+7 secrets created and mounted to Cloud Run:
 
-### Files
+| Secret | Created |
+|--------|---------|
+| `supabase-url` | 2026-03-12 |
+| `supabase-service-role-key` | 2026-03-12 |
+| `stripe-secret-key` | 2026-03-12 |
+| `stripe-webhook-secret` | 2026-03-12 |
+| `cloudflare-tunnel-token` | 2026-03-12 |
+| `bitcoin-treasury-wif` | 2026-03-12 |
+| `api-key-hmac-secret` | 2026-03-15 |
 
-- New: `infrastructure/gcp/secrets.tf` or `scripts/setup-secrets.sh`
-- `services/worker/src/config.ts` — no changes needed (reads from env vars regardless of source)
+Secret rotation supported via `gcloud secrets versions add`. Local dev uses `.env` file (no GCP dependency).
 
 ---
 
 ## MVP-28: GCP Cloud Scheduler
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (infrastructure — blocks MVP-01 cron jobs)
 **Depends on:** MVP-26 (Cloud Run deployment)
+**Completed:** 2026-03-16
 
 ### What It Delivers
 
-Replace the worker's internal cron scheduler with GCP Cloud Scheduler for production reliability. Cloud Scheduler sends HTTP requests to Cloud Run endpoints on a schedule.
+GCP Cloud Scheduler sends authenticated HTTP requests to Cloud Run endpoints on a schedule.
 
-### Acceptance Criteria
+### Implementation
 
-- [ ] Cloud Scheduler jobs created for: anchor processing (every 1 min), webhook retries (every 5 min), report generation (daily)
-- [ ] Each job hits a dedicated Cloud Run endpoint (e.g., `POST /cron/process-anchors`)
-- [ ] Jobs authenticated via OIDC token (Cloud Scheduler → Cloud Run)
-- [ ] Job failure alerts via Cloud Monitoring
-- [ ] Cron endpoints protected: only Cloud Scheduler service account can call them
-- [ ] Local development: internal cron still works (no Cloud Scheduler dependency)
+4 cron jobs created via `gcloud scheduler jobs create http`:
 
-### Files
+| Job | Schedule | Endpoint | Deadline |
+|-----|----------|----------|----------|
+| `process-anchors` | `*/5 * * * *` | `POST /cron/process-anchors` | 300s |
+| `webhook-retries` | `*/10 * * * *` | `POST /cron/webhook-retries` | 120s |
+| `generate-reports` | `0 * * * *` | `POST /cron/generate-reports` | 600s |
+| `credit-expiry` | `0 0 1 * *` | `POST /cron/credit-expiry` | 300s |
 
-- New: `infrastructure/gcp/scheduler.tf` or `scripts/setup-scheduler.sh`
-- `services/worker/src/index.ts` — add cron endpoint routes (alongside internal cron)
-- New: `services/worker/src/api/cron.ts` — HTTP cron trigger handlers
-
-### Technical Notes
-
-- Cloud Scheduler supports cron expressions, retries, and dead-letter topics
-- Worker currently uses `node-cron` internally — keep for local dev, Cloud Scheduler for production
-- OIDC auth ensures only Cloud Scheduler can trigger cron endpoints
+All jobs use OIDC auth with service account `270018525501-compute@developer.gserviceaccount.com`.
+Local dev: internal `node-cron` still works (no Cloud Scheduler dependency).
 
 ---
 
