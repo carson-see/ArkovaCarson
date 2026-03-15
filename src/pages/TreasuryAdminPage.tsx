@@ -3,7 +3,7 @@
  *
  * Internal-only ops page for Arkova platform administrators.
  * Shows anchor processing stats (real Supabase data) and
- * treasury wallet overview (requires worker API — placeholder until wired).
+ * treasury vault overview (requires worker API — placeholder until wired).
  *
  * Banned terminology rules are RELAXED for this internal page (per MVP-15 decision).
  *
@@ -14,11 +14,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   RefreshCw,
-  Shield,
   Clock,
   CheckCircle,
   XCircle,
-  Wallet,
+  Lock,
   Activity,
   Server,
   AlertTriangle,
@@ -199,25 +198,25 @@ export function TreasuryAdminPage() {
         />
       </div>
 
-      {/* Treasury Wallet (placeholder — requires worker API) */}
+      {/* Treasury Vault (placeholder — requires worker API) */}
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
-              {TREASURY_LABELS.WALLET_SECTION}
+              {TREASURY_LABELS.VAULT_SECTION}
             </CardTitle>
-            <Wallet className="h-4 w-4 text-muted-foreground" />
+            <Lock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.WALLET_NETWORK}</span>
+                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_NETWORK}</span>
                 <Badge variant="secondary" className="font-mono text-xs">
-                  {import.meta.env.VITE_BITCOIN_NETWORK ?? 'signet'}
+                  {import.meta.env.VITE_CHAIN_NETWORK ?? 'signet'}
                 </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.WALLET_BALANCE}</span>
+                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_BALANCE}</span>
                 <span className="font-mono text-sm text-muted-foreground italic">
                   {TREASURY_LABELS.API_UNAVAILABLE}
                 </span>
@@ -227,7 +226,7 @@ export function TreasuryAdminPage() {
                 <span className="font-mono text-sm text-muted-foreground italic">—</span>
               </div>
               <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
-                {TREASURY_LABELS.WALLET_NOT_CONFIGURED}
+                {TREASURY_LABELS.VAULT_NOT_CONFIGURED}
               </p>
             </div>
           </CardContent>

@@ -1,6 +1,6 @@
 # Arkova
 
-> Arkova is a privacy-first document verification platform. It creates tamper-proof cryptographic fingerprints of documents entirely in the user's browser (SHA-256 via Web Crypto API) and anchors them to a permanent public network. Documents never leave the user's device.
+> Arkova is a privacy-first document verification platform. It creates tamper-proof cryptographic fingerprints of documents entirely in the user's browser (SHA-256 via `Web Crypto API`) and anchors them to a permanent public network. Documents never leave the user's device.
 
 ## Description
 
@@ -20,7 +20,7 @@ Arkova Technologies, Inc. builds infrastructure for verifiable credentials. Orga
 
 ## Capabilities
 
-- Client-side SHA-256 cryptographic fingerprinting (Web Crypto API)
+- Client-side SHA-256 cryptographic fingerprinting (`Web Crypto API`)
 - Public verification via shareable links and QR codes (no login required)
 - AI-powered credential metadata extraction and classification
 - Verification API (REST) with batch processing (up to 100 per request)
@@ -31,7 +31,7 @@ Arkova Technologies, Inc. builds infrastructure for verifiable credentials. Orga
 - Webhook notifications for real-time event delivery
 - Downloadable JSON proof packages
 
-## Verification API
+## Endpoints
 
 Base URL: `https://app.arkova.io/api/v1`
 
@@ -91,7 +91,7 @@ Semantic search across verified credentials using natural language.
 
 Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) included on every response. HTTP 429 with `Retry-After` on excess.
 
-## MCP Server
+## Tools
 
 Arkova exposes a Model Context Protocol server for AI agent access:
 
