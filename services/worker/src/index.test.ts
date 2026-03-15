@@ -406,13 +406,13 @@ describe('worker server', () => {
     });
   });
 
-  describe('monthly reset cron', () => {
-    it('logs monthly reset message', async () => {
+  describe('monthly credit allocation cron', () => {
+    it('logs monthly credit allocation message', async () => {
       const monthlyCallback = cronCalls[2][1];
 
       await monthlyCallback();
 
-      expect(mockLogger.info).toHaveBeenCalledWith('Resetting monthly anchor counts');
+      expect(mockLogger.info).toHaveBeenCalledWith('Running monthly credit allocation');
     });
   });
 

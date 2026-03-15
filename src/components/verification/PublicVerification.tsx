@@ -39,6 +39,7 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
 import { CREDENTIAL_TYPE_LABELS, ANCHOR_STATUS_LABELS } from '@/lib/copy';
+import { ExplorerLink } from '@/components/ui/ExplorerLink';
 
 interface PublicAnchorData {
   public_id: string;
@@ -321,8 +322,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                     )}
                   </Button>
                 </div>
-                <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
-                  {data.network_receipt_id}
+                <div className="bg-muted rounded px-3 py-2 break-all">
+                  <ExplorerLink receiptId={data.network_receipt_id} showFull />
                 </div>
               </div>
             )}

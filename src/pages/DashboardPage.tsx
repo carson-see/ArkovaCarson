@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { IDENTITY_LABELS, RECORDS_LIST_LABELS } from '@/lib/copy';
+import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 
 const PAGE_SIZES = [10, 25, 50] as const;
 type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -192,6 +193,11 @@ export function DashboardPage() {
           variant="warning"
           loading={loading}
         />
+      </div>
+
+      {/* Credit usage (MVP-25) */}
+      <div className="mb-8">
+        <CreditUsageWidget />
       </div>
 
       {/* Privacy toggle */}

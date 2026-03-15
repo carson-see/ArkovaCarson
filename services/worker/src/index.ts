@@ -19,6 +19,7 @@ import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature, createCheckoutSession, createBillingPortalSession } from './stripe/client.js';
 import { processWebhookRetries } from './webhooks/delivery.js';
+import { processMonthlyCredits } from './jobs/credit-expiry.js';
 import { rateLimiters } from './utils/rateLimit.js';
 import { verifyAuthToken } from './auth.js';
 
@@ -374,10 +375,15 @@ function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // Reset monthly anchor counts on the 1st of each month at midnight
+  // Process monthly credit allocations on the 1st of each month at midnight (MVP-25)
   cron.schedule('0 0 1 * *', async () => {
-    logger.info('Resetting monthly anchor counts');
-    // Implementation would reset anchor_count_this_month in profiles
+    logger.info('Running monthly credit allocation');
+    try {
+      const processed = await processMonthlyCredits();
+      logger.info({ processed }, 'Monthly credit allocation complete');
+    } catch (error) {
+      logger.error({ error }, 'Monthly credit allocation failed');
+    }
   });
 
   logger.info('Scheduled jobs configured');

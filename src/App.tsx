@@ -33,6 +33,7 @@ import { CredentialTemplatesPage } from '@/pages/CredentialTemplatesPage';
 import { PricingPage } from '@/pages/PricingPage';
 import { CheckoutSuccessPage } from '@/pages/CheckoutSuccessPage';
 import { CheckoutCancelPage } from '@/pages/CheckoutCancelPage';
+import { VerifyMyRecordPage } from '@/pages/VerifyMyRecordPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { PrivacyPage } from '@/pages/PrivacyPage';
 import { TermsPage } from '@/pages/TermsPage';
@@ -101,6 +102,10 @@ export function App() {
             path={ROUTES.VERIFY}
             element={<PublicVerifyPage />}
           />
+          <Route
+            path={ROUTES.VERIFY_FORM}
+            element={<PublicVerifyPage />}
+          />
           <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
           <Route path={ROUTES.TERMS} element={<TermsPage />} />
           <Route path={ROUTES.CONTACT} element={<ContactPage />} />
@@ -166,6 +171,16 @@ export function App() {
               <AuthGuard>
                 <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                   <RecordDetailPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.VERIFY_MY_RECORD}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <VerifyMyRecordPage />
                 </RouteGuard>
               </AuthGuard>
             }

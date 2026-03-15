@@ -12,6 +12,8 @@ export const ROUTES = {
   LOGIN: '/login',
   SIGNUP: '/signup',
   VERIFY: '/verify/:publicId',
+  VERIFY_FORM: '/verify',
+  VERIFY_MY_RECORD: '/my-records/verify',
   PRIVACY: '/privacy',
   TERMS: '/terms',
   CONTACT: '/contact',
