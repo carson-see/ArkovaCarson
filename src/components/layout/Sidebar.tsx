@@ -86,14 +86,21 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Reado
         'flex h-16 items-center border-b px-4',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
-        <div className={cn('flex items-center', !collapsed && 'gap-3')}>
+        <Link
+          to={ROUTES.SEARCH}
+          className={cn(
+            'flex items-center rounded-lg transition-colors hover:opacity-80',
+            !collapsed && 'gap-3'
+          )}
+          aria-label="Arkova — go to search"
+        >
           <ArkovaLogo size={36} />
           {!collapsed && (
             <span className="text-lg font-semibold text-sidebar-foreground">
               Arkova
             </span>
           )}
-        </div>
+        </Link>
         {/* Mobile close button */}
         {mobileOpen && onMobileClose && !collapsed && (
           <Button

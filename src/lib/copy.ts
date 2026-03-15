@@ -498,10 +498,12 @@ export const METADATA_FIELD_LABELS = {
 
 export const SEARCH_LABELS = {
   PAGE_TITLE: 'Search Credentials',
-  PAGE_SUBTITLE: 'Find verified credentials by issuer or verification ID.',
+  PAGE_SUBTITLE: 'Find verified credentials by issuer, verification ID, or document fingerprint.',
   SEARCH_PLACEHOLDER: 'Search by issuer name or verification ID...',
   SEARCH_BY_ID: 'Verification ID',
   SEARCH_BY_ISSUER: 'Issuer',
+  SEARCH_BY_FINGERPRINT: 'Fingerprint',
+  FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
   NO_RESULTS: 'No results found',
   NO_RESULTS_DESC: 'Try a different search term or check the verification ID.',
@@ -515,6 +517,14 @@ export const SEARCH_LABELS = {
   SEARCH_TYPE: 'Search Type',
   RECIPIENT_COMING_SOON: 'Recipient search coming soon',
   LOADING: 'Searching...',
+  FINGERPRINT_VERIFIED: 'Document Verified',
+  FINGERPRINT_VERIFIED_DESC: 'This document has been secured with Arkova.',
+  FINGERPRINT_REVOKED: 'Record Revoked',
+  FINGERPRINT_REVOKED_DESC: 'This document was previously secured but has been revoked.',
+  FINGERPRINT_NOT_FOUND: 'No Record Found',
+  FINGERPRINT_NOT_FOUND_DESC: 'No secured record matches this fingerprint.',
+  FINGERPRINT_INVALID: 'Invalid fingerprint format. Enter a valid 64-character fingerprint.',
+  VIEW_FULL_RECORD: 'View Full Record',
 } as const;
 
 // =============================================================================
@@ -637,6 +647,35 @@ export const ONBOARDING_GUIDANCE_LABELS = {
   EMPTY_INDIVIDUAL_RECORDS: 'Your vault is empty',
   EMPTY_INDIVIDUAL_RECORDS_DESC: 'Secure your first document to create a permanent record.',
   EMPTY_INDIVIDUAL_RECORDS_CTA: 'Secure Document',
+} as const;
+
+// =============================================================================
+// ADMIN TREASURY DASHBOARD (GAP-01 — internal ops, banned terms exempt)
+// =============================================================================
+
+export const TREASURY_LABELS = {
+  PAGE_TITLE: 'Treasury Dashboard',
+  PAGE_SUBTITLE: 'Internal operations dashboard for Arkova platform administrators.',
+  VAULT_SECTION: 'Treasury Vault',
+  VAULT_ADDRESS: 'Address',
+  VAULT_BALANCE: 'Balance (sats)',
+  VAULT_NETWORK: 'Network',
+  UTXO_SECTION: 'Unspent Outputs',
+  UTXO_COUNT: 'Available Outputs',
+  ANCHOR_STATS_SECTION: 'Anchor Processing',
+  TOTAL_ANCHORS: 'Total Anchors',
+  PENDING_ANCHORS: 'Pending',
+  SECURED_ANCHORS: 'Secured',
+  REVOKED_ANCHORS: 'Revoked',
+  RECENT_ANCHORS: 'Recent Anchors',
+  NETWORK_STATUS: 'Network Status',
+  CONNECTED: 'Connected',
+  DISCONNECTED: 'Disconnected',
+  UNKNOWN: 'Unknown',
+  VAULT_NOT_CONFIGURED: 'Treasury vault not configured. Set signing key in worker environment.',
+  API_UNAVAILABLE: 'Treasury API not available. Ensure the worker is running.',
+  UNAUTHORIZED: 'Access denied. Platform administrator privileges required.',
+  REFRESH: 'Refresh',
 } as const;
 
 // =============================================================================

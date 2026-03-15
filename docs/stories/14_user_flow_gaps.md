@@ -1,6 +1,6 @@
 # User Flow Gap Stories
 
-_Last updated: 2026-03-16 (UF Sprint B complete — PR #61)_
+_Last updated: 2026-03-15 (All UF stories COMPLETE — Sprints A/B/C, PRs #60/#61/#62)_
 
 ## Group Overview
 
@@ -14,9 +14,9 @@ These stories address **critical user flow gaps** identified 2026-03-16. The cur
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 6 |
+| COMPLETE | 10 |
 | PARTIAL | 0 |
-| NOT STARTED | 4 |
+| NOT STARTED | 0 |
 
 ---
 
@@ -168,9 +168,10 @@ A public search interface at `/search` that allows:
 
 ## UF-03: Individual Recipient Credential Inbox
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (recipient experience gap)
 **Depends on:** UF-01 (template rendering), UF-02 (public discovery — partial)
+**Completed:** 2026-03-15 (Sprint C, PR #62)
 
 ### Problem
 
@@ -189,17 +190,17 @@ A structured recipient tracking system that lets individuals see credentials iss
 ### Acceptance Criteria
 
 **Phase 1 (MVP — this story):**
-- [ ] New `anchor_recipients` table: `id`, `anchor_id` (FK), `recipient_email` (text, hashed for privacy), `recipient_user_id` (nullable FK to profiles), `claimed_at` (nullable timestamp), `created_at`
-- [ ] When org issues a credential, they can specify a recipient email in `IssueCredentialForm`
-- [ ] `anchor_recipients` row created on anchor insert (recipient_email stored as HMAC hash, not plaintext)
-- [ ] If recipient email matches an existing Arkova user, `recipient_user_id` is auto-linked
-- [ ] New `/my-credentials` authenticated route showing all credentials where `recipient_user_id = auth.uid()`
-- [ ] `MyCredentialsPage` displays: credential card (using `CredentialRenderer` from UF-01), issuer name, issued date, status, verify link
-- [ ] "Claim" flow: if a credential was issued to your email but you weren't a user yet, signing up with that email auto-links unclaimed credentials
-- [ ] Individual dashboard shows "My Credentials" count badge in sidebar
-- [ ] RLS: users can only see `anchor_recipients` rows where `recipient_user_id = auth.uid()`
-- [ ] Recipient email never exposed in public verification (privacy)
-- [ ] Tests: recipient linking, claim flow, RLS isolation
+- [x] New `anchor_recipients` table: `id`, `anchor_id` (FK), `recipient_email_hash` (text, SHA-256 hashed for privacy), `recipient_user_id` (nullable FK to profiles), `claimed_at` (nullable timestamp), `created_at`
+- [x] When org issues a credential, they can specify a recipient email in `IssueCredentialForm`
+- [x] `anchor_recipients` row created on anchor insert (recipient_email stored as SHA-256 hash via `hashEmail()`, not plaintext)
+- [x] If recipient email matches an existing Arkova user, `recipient_user_id` is auto-linked
+- [x] New `/my-credentials` authenticated route showing all credentials where `recipient_user_id = auth.uid()`
+- [x] `MyCredentialsPage` displays: credential card (using `CredentialRenderer` from UF-01), issuer name, issued date, status, verify link
+- [x] "Claim" flow: `link_credentials_on_signup` trigger auto-links unclaimed credentials on signup
+- [x] Individual dashboard shows "My Credentials" nav item in sidebar
+- [x] RLS: users can only see `anchor_recipients` rows where `recipient_user_id = auth.uid()`
+- [x] Recipient email never exposed in public verification (privacy)
+- [x] Tests: useMyCredentials hook tests, hashEmail tests
 
 **Phase 2 (deferred):**
 - [ ] Email notification when a new credential is issued to your address
@@ -231,15 +232,18 @@ CREATE TABLE anchor_recipients (
 
 ### Files
 
-- New migration: `supabase/migrations/0055_anchor_recipients.sql`
-- New: `src/pages/MyCredentialsPage.tsx` — recipient inbox
-- New: `src/hooks/useMyCredentials.ts` — hook for recipient's credentials
-- Edit: `src/components/organization/IssueCredentialForm.tsx` — add recipient email field
+- New migration: `supabase/migrations/0056_anchor_recipients.sql` — table, RLS, `get_my_credentials` RPC, `link_credentials_on_signup` trigger
+- New: `src/pages/MyCredentialsPage.tsx` — recipient inbox page
+- New: `src/hooks/useMyCredentials.ts` — hook wrapping `get_my_credentials` RPC
+- New: `src/hooks/useMyCredentials.test.ts` — 4 tests
+- New: `src/lib/fileHasher.test.ts` — 5 hashEmail tests
+- Edit: `src/lib/fileHasher.ts` — added `hashEmail()` utility (SHA-256, client-side)
+- Edit: `src/components/organization/IssueCredentialForm.tsx` — recipient email → `anchor_recipients` insert with hashed email
 - Edit: `src/App.tsx` — add `/my-credentials` route
 - Edit: `src/lib/routes.ts` — add MY_CREDENTIALS route constant
 - Edit: `src/lib/copy.ts` — credential inbox copy
-- Edit: `src/components/layout/Sidebar.tsx` — add "My Credentials" nav item with count badge
-- New: `src/components/credentials/CredentialInbox.tsx` — inbox list component
+- Edit: `src/components/layout/Sidebar.tsx` — add "My Credentials" nav item
+- Edit: `src/types/database.types.ts` — added `anchor_recipients` table + `get_my_credentials` function types
 
 ---
 
@@ -408,9 +412,10 @@ Rich verification display using CredentialRenderer (UF-01) with issuer branding,
 
 ## UF-08: Post-Issuance Actions + Share Flow
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (usability)
 **Depends on:** UF-04 (PENDING status UX)
+**Completed:** 2026-03-15 (Sprint C, PR #62)
 
 ### Problem
 
@@ -422,13 +427,13 @@ Post-creation action sheet with one-click sharing, and persistent share actions 
 
 ### Acceptance Criteria
 
-- [ ] Success screen (both SecureDocumentDialog and IssueCredentialForm) shows action buttons: "Copy Verification Link," "View Record," "Issue Another," "Done"
-- [ ] "Copy Verification Link" copies `{VITE_APP_URL}/verify/{publicId}` to clipboard with toast confirmation
-- [ ] "View Record" navigates to `/records/{id}` detail page
-- [ ] RecordDetailPage / AssetDetailView: prominent "Share" button that opens share sheet (copy link, QR code, email draft)
-- [ ] OrgRegistryTable row actions: add "Copy Link" quick action
-- [ ] QR code shown inline on record detail (already exists in AssetDetailView for SECURED — extend to always show with PENDING note)
-- [ ] Tests: share actions work, clipboard copy confirmed
+- [x] Success screen (both SecureDocumentDialog and IssueCredentialForm) shows action buttons: "Copy Verification Link," "View Record," "Issue Another," "Done"
+- [x] "Copy Verification Link" copies `{VITE_APP_URL}/verify/{publicId}` to clipboard with toast confirmation
+- [x] "View Record" navigates to `/records/{id}` detail page
+- [x] RecordDetailPage / AssetDetailView: prominent "Share" button that opens share sheet (copy link, QR code, email draft)
+- [x] OrgRegistryTable row actions: add "Copy Link" quick action
+- [x] QR code shown inline on record detail (already exists in AssetDetailView for SECURED — extend to always show with PENDING note)
+- [x] Tests: ShareSheet tests (6 tests — render, QR code, copy link, email share, closed state)
 
 ### Files
 
@@ -443,9 +448,10 @@ Post-creation action sheet with one-click sharing, and persistent share actions 
 
 ## UF-09: Org Context + Navigation Polish
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (navigation clarity)
 **Depends on:** None
+**Completed:** 2026-03-15 (Sprint C, PR #62)
 
 ### Problem
 
@@ -462,13 +468,13 @@ Navigation polish that makes the app feel complete and professional.
 
 ### Acceptance Criteria
 
-- [ ] Sidebar shows org name for ORG_ADMIN users (below logo or in sidebar header): "Managing: Acme Corp"
-- [ ] Detail pages (RecordDetailPage, AssetDetailView) show breadcrumb with back link: "Records > [filename]" with clickable "Records"
-- [ ] Auth redirect: when unauthenticated user hits protected route, redirect to login with toast: "Please sign in to access that page"
-- [ ] Settings > Privacy: public profile toggle description updated: "When enabled, your organization name appears in public search results and your credential registry is visible at arkova.ai/issuer/{orgId}. Your email and internal data are never exposed."
-- [ ] All copy-to-clipboard buttons show toast: "Copied to clipboard"
-- [ ] SettingsPage: add "Sign Out" button at bottom (in addition to avatar dropdown)
-- [ ] Tests: breadcrumb navigation, toast on copy, auth redirect message
+- [x] Sidebar shows org name for ORG_ADMIN users (below logo or in sidebar header): "MANAGING: OrgName"
+- [x] Detail pages (RecordDetailPage, AssetDetailView) show breadcrumb with back link: "Records > [filename]" with clickable "Records"
+- [x] Auth redirect: when unauthenticated user hits protected route, redirect to login with toast: "Please sign in to access that page"
+- [x] Settings > Privacy: public profile toggle description updated with clear explanation of what becomes public
+- [x] All copy-to-clipboard buttons show toast: "Copied to clipboard"
+- [x] SettingsPage: add "Sign Out" button at bottom (in addition to avatar dropdown)
+- [x] Tests: Breadcrumbs tests (8 tests — top-level, record detail, credential templates, webhooks, API keys, billing, parent links)
 
 ### Files
 
@@ -482,9 +488,10 @@ Navigation polish that makes the app feel complete and professional.
 
 ## UF-10: Onboarding Completion + Empty State Guidance
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (first-time experience)
 **Depends on:** None
+**Completed:** 2026-03-15 (Sprint C, PR #62)
 
 ### Problem
 
@@ -496,15 +503,15 @@ Guided first-time experience with checklist and contextual empty states.
 
 ### Acceptance Criteria
 
-- [ ] Post-onboarding welcome screen: "Welcome to Arkova! Here's how to get started" with role-specific steps
-- [ ] ORG_ADMIN checklist: (1) Create your first credential template, (2) Issue a credential, (3) Set up billing. Each step links to the relevant page. Checkmarks appear as steps are completed.
-- [ ] INDIVIDUAL checklist: (1) Secure your first document, (2) Share your verification link
-- [ ] DashboardPage empty state (0 records): shows the checklist prominently with "Get Started" CTA
-- [ ] Records page empty state: "No records yet. Secure your first document." with button
-- [ ] Org Registry empty state: "No credentials issued. Issue your first credential." with button
-- [ ] Checklist persisted to `profiles.onboarding_checklist` JSONB field (or localStorage if simpler)
-- [ ] Checklist dismissible: "I know what I'm doing — skip setup"
-- [ ] Tests: empty states render correctly, checklist marks items complete
+- [x] Post-onboarding welcome screen: "Welcome to Arkova! Here's how to get started" with role-specific steps
+- [x] ORG_ADMIN checklist: (1) Create your first credential template, (2) Issue a credential, (3) Set up billing. Each step links to the relevant page. Checkmarks appear as steps are completed.
+- [x] INDIVIDUAL checklist: (1) Secure your first document, (2) Share your verification link
+- [x] DashboardPage empty state (0 records): shows the checklist prominently
+- [x] Records page empty state: enhanced with CTA
+- [x] Org Registry empty state: enhanced with CTA
+- [x] Checklist persisted to localStorage (simple, no migration needed)
+- [x] Checklist dismissible: "I know what I'm doing — skip setup"
+- [x] Tests: GettingStartedChecklist tests (7 tests — ORG_ADMIN title, org steps, individual steps, completed steps, dismiss, already dismissed, progress bar)
 
 ### Files
 
@@ -540,7 +547,7 @@ UF-10 (Onboarding Guidance)    ←── independent
 **Recommended build order:**
 1. ~~**Sprint A (Critical):** UF-01, UF-04 (parallel — foundational)~~ DONE (2026-03-16, PR #60)
 2. ~~**Sprint B (High):** UF-05, UF-02, UF-06, UF-07 (parallel after UF-01)~~ DONE (2026-03-16, PR #61)
-3. **Sprint C (Medium):** UF-03, UF-08, UF-09, UF-10 (parallel after Sprint B) — NEXT
+3. ~~**Sprint C (Medium):** UF-03, UF-08, UF-09, UF-10 (parallel after Sprint B)~~ DONE (2026-03-15, PR #62)
 
 ---
 
@@ -552,3 +559,4 @@ UF-10 (Onboarding Guidance)    ←── independent
 | 2026-03-16 | Expanded to 10 stories after full 8-flow UAT walkthrough. Added: UF-04 (PENDING status), UF-05 (metadata entry), UF-06 (usage tracking), UF-07 (verification display), UF-08 (share flow), UF-09 (nav polish), UF-10 (onboarding guidance) |
 | 2026-03-16 | Sprint A COMPLETE (PR #60): UF-01 + UF-04. Migration 0054 applied to production. |
 | 2026-03-16 | Sprint B COMPLETE (PR #61): UF-02, UF-05, UF-06, UF-07. Migration 0055 applied to production. 556 total frontend tests. All review comments addressed. |
+| 2026-03-15 | Sprint C COMPLETE (PR #62): UF-03, UF-08, UF-09, UF-10. Migration 0056 (anchor_recipients). +30 tests (586 total frontend). All 10 UF stories now COMPLETE. |

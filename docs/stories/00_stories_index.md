@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-16 ~1:00 PM EST_
+_Last updated: 2026-03-15 ~11:00 PM EST_
 
 ## Overview
 
@@ -31,12 +31,12 @@ For a new developer joining the project, read in this order:
 | P7 | Go-Live | 13 | 11 | 0 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 18 | 0 | 9 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| MVP | Launch Gaps | 27 | 21 | 0 | 6 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 4 | 0 | 15 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 5 | 1 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
-| UF | User Flow Gaps | 10 | 2 | 0 | 8 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
-| **Total** | | **151** | **101** | **1** | **49** | |
+| UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
+| **Total** | | **151** | **109** | **1** | **41** | |
 
 ### All Stories by ID
 
@@ -134,9 +134,9 @@ For a new developer joining the project, read in this order:
 | MVP-23 | Batch Anchor Processing | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-24 | Credits Schema + Monthly Allocations | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-25 | Credits Tracking + Scheduling | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-26 | GCP Cloud Run Deployment | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-27 | GCP Secret Manager Integration | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-28 | GCP Cloud Scheduler | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-26 | GCP Cloud Run Deployment | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-27 | GCP Secret Manager Integration | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-28 | GCP Cloud Scheduler | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-29 | GCP Cloud KMS Integration | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-30 | GCP CI/CD Pipeline | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | P8-S1 | IAIProvider Interface + Gemini Adapter | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
@@ -167,15 +167,15 @@ For a new developer joining the project, read in this order:
 | INFRA-07 | Sentry Observability Integration | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-08 | pgvector Extension + Institution Ground Truth | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | UF-01 | Template-Based Credential Rendering | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
-| UF-02 | Public Credential Discovery + Search | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-03 | Individual Recipient Credential Inbox | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
+| UF-02 | Public Credential Discovery + Search | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-03 | Individual Recipient Credential Inbox | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 | UF-04 | Anchor Status Lifecycle UX (PENDING → SECURED) | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
-| UF-05 | Credential Metadata Entry in Issuance Forms | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-06 | Usage/Quota Tracking Dashboard | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-07 | Enhanced Public Verification Display | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-08 | Post-Issuance Actions + Share Flow | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-09 | Org Context + Navigation Polish | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
-| UF-10 | Onboarding Completion + Empty State Guidance | NOT STARTED | [UF](./14_user_flow_gaps.md) | — |
+| UF-05 | Credential Metadata Entry in Issuance Forms | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-06 | Usage/Quota Tracking Dashboard | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-07 | Enhanced Public Verification Display | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-08 | Post-Issuance Actions + Share Flow | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-09 | Org Context + Navigation Polish | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
+| UF-10 | Onboarding Completion + Empty State Guidance | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 
 ## Bug Cross-Reference
 
@@ -252,3 +252,5 @@ Each story doc follows a consistent template:
 | 2026-03-14 ~3:00 PM EST | Status reconciliation. MVP-07 → COMPLETE (PR #43, mobile responsive layout). MVP-08 → COMPLETE (PR #44, onboarding stepper). MVP-09 → COMPLETE (PR #44, records pagination + search). MVP-11 → COMPLETE (PR #43, Stripe plan change/downgrade). DH-07 → COMPLETE (PR #38, fee timeout). DH-09 → COMPLETE (PR #39, UTXO retry). CRIT-3 → RESOLVED (plan change/downgrade done). MVP-02 → COMPLETE (all hooks have toasts). Overall: 52 complete, 8 partial, 64 not started (~42%). |
 | 2026-03-15 ~6:00 PM EST | **Full documentation reconciliation for board presentation.** P6-TS-03 → COMPLETE (VerificationWidget routed at `/embed/verify/:publicId`, 10 tests, PR #57). P7-TS-02 → COMPLETE (Stripe checkout + billing portal + entitlement enforcement, PR #43). P7-TS-05 → COMPLETE (OPS-ONLY — code complete, operational items remain). DH-01 through DH-12 all → COMPLETE (PR #49, migration 0052). MVP-01 → COMPLETE (OPS-ONLY — deploy prep done, env vars remain). MVP-10 → COMPLETE (marketing site built, pending Vercel deploy). MVP-06/16/21/24/25 → COMPLETE (PR #50). P8-S7/S13/S15/S17 → COMPLETE (edge workers implemented). INFRA-02/03/04/05/08 → COMPLETE (scaffolding + real logic). CRIT-2 reclassified HIGH → OPS-ONLY. Fixed summary math: 96/141 complete (68%), 1 partial, 44 not started. |
 | 2026-03-16 ~1:00 PM EST | UF Sprint A: UF-01 → COMPLETE (CredentialRenderer + useCredentialTemplate + get_public_template RPC, 20 tests). UF-04 → COMPLETE (PENDING status UX — enhanced success screens, pulsing amber badges, public verification includes PENDING). Migration 0054. 10 UF stories added to individual listing. Overall: 101/151 complete (67%). |
+| 2026-03-16 ~6:00 PM EST | UF Sprint B: UF-02, UF-05, UF-06, UF-07 → COMPLETE (PR #61). Migration 0055. MVP-26/27/28 → COMPLETE (ops sprint). Overall: 105/151. |
+| 2026-03-15 ~11:00 PM EST | UF Sprint C: UF-03, UF-08, UF-09, UF-10 → COMPLETE (PR #62). Migration 0056. All 10 UF stories done. Overall: 109/151 complete (72%). |

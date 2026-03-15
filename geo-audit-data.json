@@ -1,0 +1,187 @@
+{
+  "url": "https://arkova.ai",
+  "audit_date": "2026-03-15",
+  "business_type": "SaaS",
+  "redirect": "arkova.io → arkova.ai (301)",
+
+  "scores": {
+    "overall_geo": 62,
+    "ai_citability": 55,
+    "brand_authority": 40,
+    "content_quality": 65,
+    "technical_seo": 72,
+    "structured_data": 78,
+    "platform_optimization": 50
+  },
+
+  "ai_citability": {
+    "score": 55,
+    "strengths": [
+      "Clear value proposition: 'Verify Once. Trust Forever.'",
+      "Privacy-first messaging is distinctive and quotable",
+      "Technical accuracy: SHA-256, client-side hashing, OP_RETURN",
+      "FAQ schema with 6 Q&A pairs aids AI snippet generation"
+    ],
+    "weaknesses": [
+      "No blog or long-form content for AI to cite",
+      "Missing meta description — critical for AI snippet extraction",
+      "No author bylines or E-E-A-T signals for expertise",
+      "Single page site limits topical authority signals",
+      "No comparison content (vs competitors, vs alternatives)"
+    ]
+  },
+
+  "crawler_access": {
+    "score": 95,
+    "status": {
+      "GPTBot": "Allow",
+      "ChatGPT-User": "Allow",
+      "ClaudeBot": "Allow",
+      "Claude-Web": "Allow",
+      "Google-Extended": "Allow",
+      "PerplexityBot": "Allow",
+      "Bytespider": "Allow",
+      "CCBot": "Allow",
+      "Applebot-Extended": "Allow",
+      "cohere-ai": "Allow"
+    },
+    "notes": "All AI crawlers explicitly allowed. Excellent crawler access policy."
+  },
+
+  "llmstxt": {
+    "exists": true,
+    "score": 45,
+    "issues": [
+      "Reads as marketing copy, not LLM-specific guidance",
+      "Missing API endpoint specifications",
+      "No authentication examples or request/response schemas",
+      "No rate limit documentation",
+      "Missing formal ## section headers per llms.txt standard"
+    ]
+  },
+
+  "brand_mentions": {
+    "score": 40,
+    "platforms": {
+      "LinkedIn": "Present (company page exists)",
+      "X/Twitter": "Present (@arkaboratory)",
+      "Reddit": "Not found",
+      "Wikipedia": "Not found",
+      "YouTube": "Not found",
+      "GitHub": "Present (ArkovaCarson repo)",
+      "Crunchbase": "Not found",
+      "ProductHunt": "Not found"
+    }
+  },
+
+  "content_quality": {
+    "score": 65,
+    "eeat": {
+      "experience": 40,
+      "expertise": 70,
+      "authoritativeness": 35,
+      "trustworthiness": 75
+    },
+    "strengths": [
+      "Strong privacy narrative differentiator",
+      "Technical depth in cryptographic verification",
+      "Professional schema markup (Organization + SoftwareApplication + FAQ)"
+    ],
+    "weaknesses": [
+      "Single-page site — no content depth or topical clusters",
+      "No case studies, testimonials, or social proof",
+      "No blog, guides, or educational content",
+      "No team/about page for E-E-A-T expertise signals",
+      "No press mentions or media coverage"
+    ]
+  },
+
+  "technical_seo": {
+    "score": 72,
+    "strengths": [
+      "HTTPS enforced across all pages",
+      "301 redirect from arkova.io to arkova.ai",
+      "Sitemap.xml present",
+      "Clean URL structure",
+      "Robots.txt well-configured with all AI crawlers allowed"
+    ],
+    "weaknesses": [
+      "Sitemap contains only 1 URL (homepage only)",
+      "Missing meta description tag",
+      "No Open Graph or Twitter Card meta tags detected",
+      "No canonical tag verification",
+      "Single-page architecture limits crawl depth"
+    ]
+  },
+
+  "structured_data": {
+    "score": 78,
+    "schemas_found": [
+      {"type": "Organization", "status": "Valid", "notes": "Arkova Technologies, Inc. with social links"},
+      {"type": "SoftwareApplication", "status": "Valid", "notes": "Product details and features"},
+      {"type": "FAQPage", "status": "Valid", "notes": "6 Q&A pairs"}
+    ],
+    "missing": [
+      "WebSite schema with SearchAction (for sitelinks search)",
+      "Person schema for founders/team (E-E-A-T)",
+      "Article schema (when blog content is added)",
+      "BreadcrumbList schema",
+      "sameAs property completeness (add GitHub, Crunchbase)"
+    ]
+  },
+
+  "platform_optimization": {
+    "score": 50,
+    "platforms": {
+      "google_aio": {
+        "score": 55,
+        "status": "Partial",
+        "notes": "FAQ schema helps. Missing structured how-to content and comparison pages that trigger AI Overviews."
+      },
+      "chatgpt": {
+        "score": 50,
+        "status": "Partial",
+        "notes": "GPTBot allowed. Needs more citable long-form content. llms.txt needs improvement."
+      },
+      "perplexity": {
+        "score": 55,
+        "status": "Partial",
+        "notes": "PerplexityBot allowed. Clean site structure. Lacks citation-worthy deep content."
+      },
+      "gemini": {
+        "score": 45,
+        "status": "Needs Work",
+        "notes": "Google-Extended allowed. Thin content reduces Gemini citation likelihood."
+      },
+      "bing_copilot": {
+        "score": 45,
+        "status": "Needs Work",
+        "notes": "No Bing-specific optimizations. Missing IndexNow protocol."
+      }
+    }
+  },
+
+  "action_plan": {
+    "quick_wins": [
+      "Add meta description to homepage",
+      "Add Open Graph and Twitter Card meta tags",
+      "Expand sitemap.xml with all indexable pages",
+      "Upgrade llms.txt to formal standard with API docs and section headers",
+      "Add WebSite schema with SearchAction"
+    ],
+    "medium_term": [
+      "Create /about page with team bios (E-E-A-T)",
+      "Launch blog with 5-10 foundational articles on credential verification",
+      "Add case studies or testimonials for social proof",
+      "Create comparison pages (Arkova vs manual verification)",
+      "Register on Crunchbase and ProductHunt"
+    ],
+    "strategic": [
+      "Build topical authority cluster: credential verification, academic fraud, blockchain anchoring",
+      "Pursue press coverage and thought leadership (guest posts, podcasts)",
+      "Create YouTube explainer content for AI video citation",
+      "Implement IndexNow for faster Bing/Copilot indexing",
+      "Add speakable schema for voice search optimization"
+    ]
+  }
+}

@@ -43,6 +43,7 @@ import { EmbedVerifyPage } from '@/pages/EmbedVerifyPage';
 import { SearchPage } from '@/pages/SearchPage';
 import { IssuerRegistryPage } from '@/pages/IssuerRegistryPage';
 import { MyCredentialsPage } from '@/pages/MyCredentialsPage';
+import { TreasuryAdminPage } from '@/pages/TreasuryAdminPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -259,6 +260,18 @@ export function App() {
               <AuthGuard>
                 <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                   <HelpPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+
+          {/* Admin routes — auth required, platform admin only */}
+          <Route
+            path={ROUTES.ADMIN_TREASURY}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <TreasuryAdminPage />
                 </RouteGuard>
               </AuthGuard>
             }

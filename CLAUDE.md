@@ -309,24 +309,25 @@ src/
   index.css                                  ← Brand tokens (CSS custom properties)
   components/
     ui/                                      ← shadcn/ui primitives (do not edit)
-    anchor/                                  ← SecureDocumentDialog, FileUpload, AssetDetailView
+    anchor/                                  ← SecureDocumentDialog, FileUpload, AssetDetailView, ShareSheet
     auth/                                    ← LoginForm, SignUpForm, AuthGuard, RouteGuard
     billing/                                 ← BillingOverview, PricingCard
-    credentials/                             ← CredentialTemplatesManager
+    credentials/                             ← CredentialTemplatesManager, CredentialRenderer, MetadataFieldRenderer
     dashboard/                               ← StatCard, EmptyState
     embed/                                   ← VerificationWidget + EmbedVerifyPage (routed at /embed/verify/:publicId)
-    layout/                                  ← AppShell, Header, Sidebar, AuthLayout
-    onboarding/                              ← RoleSelector, OrgOnboardingForm, ManualReviewGate, EmailConfirmation
+    layout/                                  ← AppShell, Header, Sidebar, AuthLayout, Breadcrumbs
+    onboarding/                              ← RoleSelector, OrgOnboardingForm, ManualReviewGate, EmailConfirmation, GettingStartedChecklist
     organization/                            ← IssueCredentialForm, MembersTable, RevokeDialog, OrgRegistryTable
     public/                                  ← PublicVerifyPage, ProofDownload
     records/                                 ← RecordsList
     reports/                                 ← ReportsList
     upload/                                  ← BulkUploadWizard, CSVUploadWizard, CsvUploader
     vault/                                   ← VaultDashboard
-    verification/                            ← PublicVerification (5-section result display)
+    verification/                            ← PublicVerification (5-section result display), RevocationDetails, VerifierProofDownload
     verify/                                  ← VerificationForm
     webhooks/                                ← WebhookSettings
-  hooks/                                     ← useAuth, useAnchors, useProfile, useOnboarding, etc.
+    search/                                  ← SearchForm, IssuerCard, CredentialCard
+  hooks/                                     ← useAuth, useAnchors, useProfile, useOnboarding, useMyCredentials, useCredentialTemplate, etc.
   lib/
     copy.ts                                  ← All UI strings (enforced by CI)
     validators.ts                            ← Zod schemas for all writes
@@ -371,7 +372,7 @@ services/edge/                               ← NEW — Cloudflare Worker scrip
     ai-fallback.ts                           ← CloudflareAIProvider (Workers AI)
 wrangler.toml                                ← Root config (R2 bucket, queue, AI bindings)
 supabase/
-  migrations/                                ← 53 files (0001–0053, 0033 skipped)
+  migrations/                                ← 56 files (0001–0056, 0033 skipped)
   seed.sql                                   ← Demo data
   config.toml                                ← Local Supabase config
 docs/confluence/                             ← Architecture, data model, security, audit, etc.
@@ -587,7 +588,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 55 files, versions 0001–0055 (0033 skipped). Last: `0055_public_search.sql` (UF-02). Migrations 0001–0055 all applied to production.
+**Current migration inventory:** 56 files, versions 0001–0056 (0033 skipped). Last: `0056_anchor_recipients.sql` (UF-03). Migrations 0001–0055 applied to production. Migration 0056 pending (apply after PR #62 merge).
 
 ---
 
@@ -607,12 +608,12 @@ npx supabase db reset
 | P7 Go-Live | 11/13 | 0 | 2/13 | 85% | <!-- P7-TS-04 and P7-TS-06 not enumerated (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0 | 13/13 | 0% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
-| MVP Launch Gaps | 18/27 | 0 | 9/27 | 67% |
+| MVP Launch Gaps | 21/27 | 0 | 6/27 | 78% |
 | P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
 | INFRA Edge & Ingress | 5/8 | 1/8 | 2/8 | 63% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
-| UF User Flow Gaps | 6/10 | 0/10 | 4/10 | 60% |
-| **Total** | **105/151** | **1/151** | **45/151** | **~70%** |
+| UF User Flow Gaps | 10/10 | 0 | 0 | 100% |
+| **Total** | **109/151** | **1/151** | **41/151** | **~72%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -700,7 +701,7 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 ~~DH-01~~ Feature flag hot-reload · ~~DH-02~~ Advisory lock (migration 0052) · ~~DH-03~~ KMS operational docs (`14_kms_operations.md`) · ~~DH-04~~ Webhook circuit breaker · ~~DH-05~~ Chain index cache TTL · ~~DH-06~~ Quota error handling · ~~DH-07~~ Fee estimator timeout (PR #38) · ~~DH-08~~ Rate limiting (migration 0052) · ~~DH-09~~ UTXO retry logic (PR #39) · ~~DH-10~~ Entitlements realtime · ~~DH-11~~ RPC structured logging · ~~DH-12~~ Webhook DLQ (migration 0052)
 
-### MVP Launch Gaps — 18/27 COMPLETE, 9/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 21/27 COMPLETE, 6/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
@@ -763,24 +764,24 @@ Remaining 15 stories NOT STARTED. Architecture: client-side OCR → PII strippin
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
 | ~~INFRA-08~~ | ~~✅ COMPLETE~~ | ~~pgvector + institution ground truth — migration 0051 applied to production.~~ |
 
-### UF User Flow Gaps — 2/10 COMPLETE, 8/10 NOT STARTED
+### UF User Flow Gaps — 10/10 COMPLETE
 
-10 stories identified 2026-03-16 from full user flow walkthrough. These complete the core credentialing loop. Must be resolved **before P4.5 Verification API work begins**. See `docs/stories/14_user_flow_gaps.md`.
+10 stories identified 2026-03-16 from full user flow walkthrough. All complete across Sprints A, B, and C. See `docs/stories/14_user_flow_gaps.md`.
 
 | ID | Priority | Description | Status |
 |----|----------|-------------|--------|
 | ~~UF-01~~ | ~~CRITICAL~~ | ~~Template-based credential rendering (CredentialRenderer component)~~ | ✅ COMPLETE — CredentialRenderer (3 modes), useCredentialTemplate hook, get_public_template RPC (migration 0054). 20 tests. |
 | ~~UF-02~~ | ~~HIGH~~ | ~~Public credential discovery + search (/search, /issuer/:orgId)~~ | ✅ COMPLETE — SearchPage + IssuerRegistryPage, search_public_issuers + get_public_issuer_registry RPCs, migration 0055. |
-| UF-03 | HIGH | Individual recipient credential inbox (/my-credentials, anchor_recipients table) | NOT STARTED |
+| ~~UF-03~~ | ~~HIGH~~ | ~~Individual recipient credential inbox (/my-credentials, anchor_recipients table)~~ | ✅ COMPLETE — anchor_recipients table (migration 0056), useMyCredentials hook, MyCredentialsPage, hashEmail for privacy-preserving recipient matching, auto-link on signup trigger. |
 | ~~UF-04~~ | ~~CRITICAL~~ | ~~Anchor status lifecycle UX (PENDING → SECURED visibility + messaging)~~ | ✅ COMPLETE — Enhanced success screens (SecureDocumentDialog + IssueCredentialForm), pulsing amber PENDING badges (OrgRegistryTable), public verification includes PENDING with "Anchoring In Progress" banner. Migration 0054 updates get_public_anchor. |
 | ~~UF-05~~ | ~~HIGH~~ | ~~Credential metadata entry in issuance forms (dynamic fields from template)~~ | ✅ COMPLETE — Dynamic form fields from template schema, MetadataFieldRenderer, seed template schemas (DIPLOMA, CERTIFICATE, LICENSE). |
 | ~~UF-06~~ | ~~HIGH~~ | ~~Usage/quota tracking dashboard (UsageWidget, proactive warnings)~~ | ✅ COMPLETE — UsageWidget component, usage progress bar on Dashboard + PricingPage, 80%/100% warning toasts, credit balance display. |
 | ~~UF-07~~ | ~~HIGH~~ | ~~Enhanced public verification display (issuer info, revocation details, proof download)~~ | ✅ COMPLETE — RevocationDetails component, VerifierProofDownload, issuer section with public registry link, mobile-optimized layout. |
-| UF-08 | MEDIUM | Post-issuance actions + share flow (copy link, share sheet) | NOT STARTED |
-| UF-09 | MEDIUM | Org context + navigation polish (breadcrumbs, org name, auth redirect toast) | NOT STARTED |
-| UF-10 | MEDIUM | Onboarding completion + empty state guidance (getting started checklist) | NOT STARTED |
+| ~~UF-08~~ | ~~MEDIUM~~ | ~~Post-issuance actions + share flow (copy link, share sheet)~~ | ✅ COMPLETE — ShareSheet component (copy link, QR code, email), OrgRegistryTable copy link row action, success screen action buttons. |
+| ~~UF-09~~ | ~~MEDIUM~~ | ~~Org context + navigation polish (breadcrumbs, org name, auth redirect toast)~~ | ✅ COMPLETE — Breadcrumbs component, org name in sidebar ("MANAGING: OrgName"), auth redirect toast, Settings privacy description, Sign Out button. |
+| ~~UF-10~~ | ~~MEDIUM~~ | ~~Onboarding completion + empty state guidance (getting started checklist)~~ | ✅ COMPLETE — GettingStartedChecklist (role-specific, localStorage-persisted, progress bar), enhanced empty states with CTAs. |
 
-**Build order:** ~~Sprint A: UF-01 + UF-04~~ (DONE) → ~~Sprint B: UF-05, UF-02, UF-06, UF-07~~ (DONE) → **Sprint C (next): UF-03, UF-08, UF-09, UF-10**
+**Build order:** ~~Sprint A: UF-01 + UF-04~~ (DONE) → ~~Sprint B: UF-05, UF-02, UF-06, UF-07~~ (DONE) → ~~Sprint C: UF-03, UF-08, UF-09, UF-10~~ (DONE)
 
 ---
 
@@ -815,6 +816,10 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - ✅ MCP server + verify-anchor API endpoint + vulnerability fixes — PR #31
 - ✅ MVP-03 legal pages (PrivacyPage, TermsPage, ContactPage — exist + routed)
 - ✅ MVP-05 error boundary + 404 (ErrorBoundary + NotFoundPage — exist + routed + Sentry-wired)
+- ✅ UF Sprint A: UF-01 (CredentialRenderer) + UF-04 (PENDING status UX) — PR #60, migration 0054
+- ✅ UF Sprint B: UF-05 (metadata entry) + UF-02 (public search) + UF-06 (usage dashboard) + UF-07 (enhanced verification) — PR #61, migration 0055
+- ✅ UF Sprint C: UF-03 (recipient inbox) + UF-08 (share flow) + UF-09 (nav polish) + UF-10 (onboarding) — PR #62, migration 0056
+- ✅ MVP-26 GCP Cloud Run deployment + MVP-27 GCP Secret Manager + MVP-28 GCP Cloud Scheduler
 
 ### Current: Remaining Production Blockers
 
@@ -1027,5 +1032,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-16 (UF Sprint B — UF-02, UF-05, UF-06, UF-07 complete) | Repo: ArkovaCarson | 55 migrations | 1,160+ tests | 151 stories (105 complete, 70%)_
+_Directive version: 2026-03-16 (UF Sprint C — all 10 UF stories complete) | Repo: ArkovaCarson | 56 migrations | 1,190+ tests | 151 stories (109 complete, 72%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

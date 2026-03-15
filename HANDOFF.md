@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 96/141 stories complete (68%). 1,071 tests (467 frontend + 604 worker). 53 migrations.
+**Overall progress:** 109/151 stories complete (72%). 1,190 tests (586 frontend + 604 worker). 56 migrations. All 10 UF stories COMPLETE.
 
 ### Open Blockers
 
@@ -74,12 +74,12 @@ All HIGH+ launch blockers resolved:
 
 ### What's Production-Ready
 
-- Database layer (51 migrations, RLS on all tables, audit trail immutable)
+- Database layer (56 migrations, RLS on all tables, audit trail immutable)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
 - CI/CD pipeline (typecheck, lint, test, copy-lint, build-check, E2E)
-- Worker test coverage (492 tests across 24 files, 80%+ on all critical paths)
+- Worker test coverage (604 tests across 24+ files, 80%+ on all critical paths)
 - Webhook delivery engine + settings UI
 - Stripe webhook handlers + billing UI
 - PDF + JSON proof downloads
@@ -92,10 +92,87 @@ All HIGH+ launch blockers resolved:
 - AI documentation (llms.txt + AGENTS.md for agent discovery)
 - Remote MCP server (Cloudflare Worker, Streamable HTTP, OAuth + API key auth)
 - **"Nordic Vault" UI design system** (PR #42) — DM Sans + JetBrains Mono fonts, mesh gradients, glassmorphism, glow shadows, staggered animations. Full rules in CLAUDE.md Section 5 + `feedback_frontend_aesthetics.md`.
+- **User Flow Gaps (UF-01 through UF-10) ALL COMPLETE** — CredentialRenderer, public search, recipient inbox, PENDING status UX, metadata entry, usage tracking, enhanced verification, share flow, breadcrumbs/nav polish, onboarding checklist
+- **GCP Infrastructure** — Cloud Run (worker deployed), Secret Manager (7 secrets), Cloud Scheduler (4 cron jobs)
+
+### GEO & SEO Optimization (NEW — 12 stories)
+
+| Story | Priority | Description | Status |
+|-------|----------|-------------|--------|
+| GEO-01 | CRITICAL | SSR for marketing site (crawlers see empty div) | NOT STARTED |
+| GEO-02 | CRITICAL | Fix LinkedIn entity collision + expand sameAs | NOT STARTED |
+| GEO-03 | CRITICAL | Publish /privacy and /terms on marketing site | NOT STARTED |
+| GEO-04 | HIGH | About page with team bios + Person schema | NOT STARTED |
+| GEO-05 | HIGH | Enhanced schema (WebSite, speakable, AggregateOffer) | NOT STARTED |
+| GEO-06 | HIGH | Deploy upgraded llms.txt | NOT STARTED |
+| GEO-07 | HIGH | Fix broken og:image + complete meta tags | NOT STARTED |
+| GEO-08 | HIGH | Content expansion — 5 core pages | NOT STARTED |
+| GEO-09 | MEDIUM | Community & brand presence launch | NOT STARTED |
+| GEO-10 | MEDIUM | IndexNow for Bing/Copilot | NOT STARTED |
+| GEO-11 | MEDIUM | YouTube explainers + VideoObject schema | NOT STARTED |
+| GEO-12 | MEDIUM | Security headers + technical SEO hardening | NOT STARTED |
+
+**GEO Audit Score:** 42/100 | **Target:** 72/100 in 90 days
+**Reports:** `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
 
 ---
 
 ## Session Log
+
+### Session: 2026-03-15 — GEO Audit + Story Creation
+
+**GEO Audit (5 parallel subagents):**
+- Full audit of arkova.ai — Composite GEO Score: **42/100**
+- AI Citability: 52, Brand Authority: 12, Content Quality: 24, Technical: 52, Schema: 52, Platform: 34
+- Critical finding: React SPA renders empty `<div id="root">` — AI crawlers see zero content
+- Critical finding: LinkedIn sameAs links to wrong company ("Arkova Partners")
+- Generated reports: `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
+- Generated ready-to-deploy `llms-txt-generated.txt` (95/100 score) and `GEO-SCHEMA-REPORT.md` with 5 JSON-LD blocks
+
+**Story Creation (12 new stories — GEO-01 through GEO-12):**
+- `docs/stories/15_geo_seo.md` — full story doc with research sections per story
+- Stories indexed in `00_stories_index.md`, added to CLAUDE.md Section 6, added to HANDOFF.md
+- Each story includes: research tasks, user story, acceptance criteria, effort estimate
+- Priorities: 3 CRITICAL (SSR, LinkedIn fix, privacy/terms), 5 HIGH, 4 MEDIUM
+- Total story count: 163 (was 151)
+
+**Updated llms.txt** (`public/llms.txt`) — upgraded from marketing copy to formal standard with API docs, MCP server reference, auth instructions
+
+### Session: 2026-03-15 — UF Sprint C (Recipient Inbox, Share Flow, Nav Polish, Onboarding)
+
+**UF Sprint C (PR #62):**
+- **UF-03:** `anchor_recipients` table (migration 0056), `get_my_credentials` RPC, `link_credentials_on_signup` trigger, `useMyCredentials` hook, `MyCredentialsPage`, `hashEmail()` utility in `fileHasher.ts`. IssueCredentialForm wired to insert recipient records. 9 tests (4 useMyCredentials + 5 hashEmail).
+- **UF-08:** `ShareSheet` component (copy link, QR code, email share via `window.open`). OrgRegistryTable "Copy Link" row action. 6 tests.
+- **UF-09:** `Breadcrumbs` component (route-aware, nested paths). Sidebar org context ("MANAGING: OrgName"). Auth redirect toast via Sonner. Settings privacy description + Sign Out button. 8 tests.
+- **UF-10:** `GettingStartedChecklist` (role-specific ORG_ADMIN/INDIVIDUAL steps, localStorage-persisted, progress bar, dismissible). Enhanced empty states with CTAs. 7 tests.
+- **All 10 UF stories now COMPLETE.** +30 tests (586 total frontend). Migration 0056 pending production application.
+
+**UAT verified:** Desktop (1280px) + mobile (375px) screenshots confirm all Sprint C features render correctly. No console errors.
+
+### Session: 2026-03-16 — UF Sprint B (Metadata Entry, Public Search, Usage, Verification)
+
+**UF Sprint B (PR #61):**
+- **UF-05:** Dynamic metadata form fields from template schema, MetadataFieldRenderer, seed DIPLOMA/CERTIFICATE/LICENSE schemas
+- **UF-02:** SearchPage + IssuerRegistryPage, `search_public_issuers` + `get_public_issuer_registry` RPCs, migration 0055
+- **UF-06:** UsageWidget, usage progress bar on Dashboard + PricingPage, 80%/100% warning toasts
+- **UF-07:** RevocationDetails, VerifierProofDownload, issuer section with public registry link, mobile-optimized layout
+- +54 tests. 556 total frontend. Migrations 0054 + 0055 applied to production.
+
+### Session: 2026-03-16 — UF Sprint A (CredentialRenderer + PENDING Status UX)
+
+**UF Sprint A (PR #60):**
+- **UF-01:** CredentialRenderer (3 modes: template+metadata, metadata-only, filename-only), useCredentialTemplate hook, `get_public_template` RPC (migration 0054)
+- **UF-04:** Enhanced success screens (SecureDocumentDialog + IssueCredentialForm), pulsing amber PENDING badges, public verification includes PENDING with "Anchoring In Progress" banner
+- +20 tests. 502 total frontend.
+
+### Session: 2026-03-16 — Ops Sprint (GCP, DNS, Stripe)
+
+- GCP Cloud Scheduler: 4 cron jobs (process-anchors, webhook-retries, generate-reports, credit-expiry). MVP-28 COMPLETE.
+- GCP Cloud Run deployed + verified. MVP-26 COMPLETE.
+- GCP Secret Manager: 7 secrets mounted. MVP-27 COMPLETE.
+- Vercel: VITE_APP_URL set, domains configured.
+- DNS: arkova.ai → Cloudflare (owen/sandra NS), arkova.io decommissioned.
+- Stripe webhook: `we_1TBHb6BBeICNeQqrolzWA2yj` registered.
 
 ### Session: 2026-03-15 — Full Documentation Reconciliation (Board Presentation Prep)
 

@@ -38,6 +38,9 @@ export const ROUTES = {
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
+  // Admin routes (internal ops)
+  ADMIN_TREASURY: '/admin/treasury',
+
   // Billing routes
   BILLING: '/billing',
   BILLING_SUCCESS: '/billing/success',

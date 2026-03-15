@@ -14,9 +14,9 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 18 |
+| COMPLETE | 21 |
 | PARTIAL | 0 |
-| NOT STARTED | 9 |
+| NOT STARTED | 6 |
 | REMOVED (superseded) | 2 |
 
 ---
