@@ -371,6 +371,47 @@ export const ENTITLEMENT_LABELS = {
 } as const;
 
 // =============================================================================
+// CREDENTIAL RENDERER
+// =============================================================================
+
+export const CREDENTIAL_RENDERER_LABELS = {
+  CREDENTIAL_DETAILS: 'Credential Details',
+  DOCUMENT_RECORD: 'Document Record',
+  NO_TEMPLATE: 'Record Details',
+  ISSUED_BY: 'Issued by',
+  ISSUED_ON: 'Issued',
+  EXPIRES_ON: 'Expires',
+  STATUS: 'Status',
+  FINGERPRINT_LABEL: 'Document Fingerprint',
+  FINGERPRINT_TOOLTIP: 'This is the document\'s unique digital fingerprint — a cryptographic proof that identifies this exact file.',
+  NO_METADATA: 'No additional details available for this record.',
+  COPY_FINGERPRINT: 'Copy fingerprint',
+  COPIED: 'Copied',
+} as const;
+
+// =============================================================================
+// ANCHORING STATUS (UF-04)
+// =============================================================================
+
+export const ANCHORING_STATUS_LABELS = {
+  PENDING_TITLE: 'Anchoring In Progress',
+  PENDING_SUBTITLE: 'Your document has been submitted for anchoring. This typically takes 5\u201315 minutes.',
+  PENDING_PUBLIC_TITLE: 'Record Found \u2014 Anchoring In Progress',
+  PENDING_PUBLIC_SUBTITLE: 'This record has been submitted and is being permanently secured. Anchoring is not yet complete.',
+  PENDING_BADGE: 'Processing',
+  PENDING_SINCE: 'Submitted {time} ago',
+  SHARE_LINK_NOTE: 'You can share this verification link now \u2014 verifiers will see the current anchoring status.',
+  SUCCESS_TITLE: 'Document Submitted',
+  SUCCESS_SUBTITLE: 'Your document has been submitted for anchoring.',
+  SUCCESS_PROCESSING: 'Anchoring typically takes 5\u201315 minutes. You\u2019ll see the status update on your dashboard.',
+  COPY_LINK: 'Copy Verification Link',
+  LINK_COPIED: 'Verification link copied to clipboard',
+  VIEW_RECORD: 'View Record',
+  ISSUE_ANOTHER: 'Issue Another',
+  DONE: 'Done',
+} as const;
+
+// =============================================================================
 // FORBIDDEN TERMS (for lint script)
 // =============================================================================
 

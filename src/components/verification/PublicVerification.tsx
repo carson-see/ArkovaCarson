@@ -1,16 +1,16 @@
 /**
  * Public Verification Component
  *
- * Full 5-section verification display for public anchor lookups:
- * 1. Status banner (SECURED / REVOKED)
- * 2. Document info (filename, size, credential type)
- * 3. Issuer info (organization name, issued date)
- * 4. Cryptographic proof (fingerprint, network receipt, block height)
- * 5. Lifecycle info (timestamps, revocation, expiry)
+ * Full verification display for public anchor lookups with:
+ * - CredentialRenderer for template-based display (UF-01)
+ * - PENDING status support with "Anchoring In Progress" banner (UF-04)
+ * - Status banner (SECURED / PENDING / REVOKED / EXPIRED)
+ * - Cryptographic proof (fingerprint, network receipt, block height)
+ * - Lifecycle timeline
  *
  * Shows redacted information - no sensitive data exposed.
  *
- * @see P6-TS-01, P6-TS-04
+ * @see P6-TS-01, P6-TS-04, UF-01, UF-04
  */
 
 import { useState, useEffect } from 'react';
@@ -18,15 +18,16 @@ import {
   CheckCircle,
   XCircle,
   Loader2,
-  FileText,
   Fingerprint,
-  Building2,
   Shield,
   Copy,
   Check,
   Ban,
+  Clock,
 } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
+import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import {
   Card,
   CardContent,
@@ -38,7 +39,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { CREDENTIAL_TYPE_LABELS, ANCHOR_STATUS_LABELS } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 
 interface PublicAnchorData {
@@ -50,6 +51,8 @@ interface PublicAnchorData {
   verified: boolean;
   credential_type?: string;
   issuer_name?: string;
+  org_id?: string;
+  metadata?: Record<string, unknown>;
   // Lifecycle fields (from migration 0047)
   created_at?: string;
   secured_at?: string;
@@ -63,7 +66,6 @@ interface PublicAnchorData {
   expiry_date?: string;
   network_receipt_id?: string;
   bitcoin_block?: number;
-  metadata?: Record<string, unknown>;
   error?: string;
 }
 
@@ -76,6 +78,13 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
+
+  // Fetch template for credential rendering (UF-01)
+  const { template } = useCredentialTemplate(
+    data?.credential_type,
+    data?.org_id,
+    { public: true }
+  );
 
   useEffect(() => {
     async function fetchVerification() {
@@ -108,6 +117,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         const status = anchorData.status;
         const logResult = status === 'REVOKED' ? 'revoked'
           : status === 'EXPIRED' ? 'expired'
+          : status === 'PENDING' ? 'pending'
           : 'verified';
         logVerificationEvent({
           publicId,
@@ -172,176 +182,172 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     }) + ' UTC';
   };
 
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
   const isRevoked = data.status === 'REVOKED';
   const isExpired = data.status === 'EXPIRED';
+  const isPending = data.status === 'PENDING';
   const isInactive = isRevoked || isExpired;
-  const credentialLabel = data.credential_type
-    ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[data.credential_type] ?? data.credential_type
-    : null;
   const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
+
+  // Calculate time since creation for PENDING anchors
+  const pendingSince = isPending && data.created_at
+    ? formatTimeSince(data.created_at)
+    : null;
 
   return (
     <Card className="max-w-2xl mx-auto overflow-hidden">
       {/* ============================================================
           SECTION 1: Status Banner
           ============================================================ */}
-      <div className={isInactive
-        ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
-        : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
+      <div className={
+        isPending
+          ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
+          : isInactive
+            ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
+            : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
       }>
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
-            isInactive ? 'bg-gray-500/10' : 'bg-green-500/10'
+            isPending ? 'bg-amber-500/10'
+            : isInactive ? 'bg-gray-500/10'
+            : 'bg-green-500/10'
           }`}>
-            {isInactive ? (
+            {isPending ? (
+              <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
+            ) : isInactive ? (
               <Ban className="h-8 w-8 text-gray-500" />
             ) : (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
           </div>
           <Badge
-            variant={isInactive ? 'secondary' : 'default'}
-            className={`mb-2 text-sm px-4 py-1 ${isInactive ? '' : 'bg-green-600 hover:bg-green-700'}`}
+            variant={isPending ? 'outline' : isInactive ? 'secondary' : 'default'}
+            className={`mb-2 text-sm px-4 py-1 ${
+              isPending ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
+              : isInactive ? ''
+              : 'bg-green-600 hover:bg-green-700'
+            }`}
           >
-            {statusLabel}
+            {isPending ? ANCHORING_STATUS_LABELS.PENDING_BADGE : statusLabel}
           </Badge>
           <h2 className="text-xl font-semibold">
-            {isRevoked ? 'Record Revoked' : isExpired ? 'Record Expired' : 'Document Verified'}
+            {isPending
+              ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE
+              : isRevoked ? 'Record Revoked'
+              : isExpired ? 'Record Expired'
+              : 'Document Verified'}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {isRevoked
-              ? 'This record has been revoked by the issuing organization'
-              : isExpired
-                ? 'This record has passed its expiration date'
-                : 'This document has been permanently secured'}
+            {isPending
+              ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE
+              : isRevoked
+                ? 'This record has been revoked by the issuing organization'
+                : isExpired
+                  ? 'This record has passed its expiration date'
+                  : 'This document has been permanently secured'}
           </p>
+          {pendingSince && (
+            <p className="text-xs text-amber-600 mt-2">
+              {ANCHORING_STATUS_LABELS.PENDING_SINCE.replace('{time}', pendingSince)}
+            </p>
+          )}
         </div>
       </div>
 
       <CardContent className="p-6 space-y-6">
         {/* ============================================================
-            SECTION 2: Document Info
+            SECTION 2: Credential Card (UF-01)
             ============================================================ */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-            <FileText className="h-4 w-4" />
-            Document
-          </h3>
-          <div className="space-y-2">
-            <InfoRow label="Filename" value={data.filename} />
-            {data.file_size && (
-              <InfoRow label="Size" value={formatFileSize(data.file_size)} />
-            )}
-            {credentialLabel && (
-              <InfoRow label="Credential Type" value={credentialLabel} />
-            )}
-          </div>
-        </div>
-
-        <Separator />
+        <CredentialRenderer
+          credentialType={data.credential_type}
+          metadata={data.metadata}
+          template={template}
+          issuerName={data.issuer_name}
+          status={data.status === 'ACTIVE' ? 'SECURED' : data.status}
+          filename={data.filename}
+          fingerprint={data.fingerprint}
+          issuedDate={data.issued_at ?? data.issued_date}
+          expiryDate={data.expires_at ?? data.expiry_date}
+          showFingerprint
+        />
 
         {/* ============================================================
-            SECTION 3: Issuer Info
+            SECTION 3: Cryptographic Proof (only for non-PENDING)
             ============================================================ */}
-        {(data.issuer_name || data.issued_at || data.issued_date) && (
+        {!isPending && (
           <>
+            <Separator />
             <div>
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Building2 className="h-4 w-4" />
-                Issuer
+                <Shield className="h-4 w-4" />
+                Cryptographic Proof
               </h3>
-              <div className="space-y-2">
-                {data.issuer_name && (
-                  <InfoRow label="Organization" value={data.issuer_name} />
+              <div className="space-y-3">
+                {/* Fingerprint with copy */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm text-muted-foreground flex items-center gap-1.5">
+                      <Fingerprint className="h-3.5 w-3.5" />
+                      Fingerprint (SHA-256)
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 px-2 text-xs"
+                      onClick={() => handleCopy(data.fingerprint, 'fingerprint')}
+                    >
+                      {copied === 'fingerprint' ? (
+                        <Check className="h-3 w-3" />
+                      ) : (
+                        <Copy className="h-3 w-3" />
+                      )}
+                    </Button>
+                  </div>
+                  <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
+                    {data.fingerprint}
+                  </div>
+                </div>
+
+                {data.network_receipt_id && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm text-muted-foreground">Network Receipt</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => handleCopy(data.network_receipt_id!, 'receipt')}
+                      >
+                        {copied === 'receipt' ? (
+                          <Check className="h-3 w-3" />
+                        ) : (
+                          <Copy className="h-3 w-3" />
+                        )}
+                      </Button>
+                    </div>
+                    <div className="bg-muted rounded px-3 py-2 break-all">
+                      <ExplorerLink receiptId={data.network_receipt_id} showFull />
+                    </div>
+                  </div>
                 )}
-                {(data.issued_at ?? data.issued_date) && (
-                  <InfoRow label="Issued" value={formatDate((data.issued_at ?? data.issued_date)!)} />
+
+                {networkRecordBlock && (
+                  <InfoRow label="Network Record" value={`#${networkRecordBlock.toLocaleString()}`} />
+                )}
+
+                {(data.secured_at ?? data.anchor_timestamp) && (
+                  <InfoRow label="Observed Time" value={formatDate((data.secured_at ?? data.anchor_timestamp)!)} />
                 )}
               </div>
             </div>
-            <Separator />
           </>
         )}
 
-        {/* ============================================================
-            SECTION 4: Cryptographic Proof
-            ============================================================ */}
-        <div>
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-            <Shield className="h-4 w-4" />
-            Cryptographic Proof
-          </h3>
-          <div className="space-y-3">
-            {/* Fingerprint with copy */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-muted-foreground flex items-center gap-1.5">
-                  <Fingerprint className="h-3.5 w-3.5" />
-                  Fingerprint (SHA-256)
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-6 px-2 text-xs"
-                  onClick={() => handleCopy(data.fingerprint, 'fingerprint')}
-                >
-                  {copied === 'fingerprint' ? (
-                    <Check className="h-3 w-3" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
-              </div>
-              <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
-                {data.fingerprint}
-              </div>
-            </div>
-
-            {data.network_receipt_id && (
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-sm text-muted-foreground">Network Receipt</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 px-2 text-xs"
-                    onClick={() => handleCopy(data.network_receipt_id!, 'receipt')}
-                  >
-                    {copied === 'receipt' ? (
-                      <Check className="h-3 w-3" />
-                    ) : (
-                      <Copy className="h-3 w-3" />
-                    )}
-                  </Button>
-                </div>
-                <div className="bg-muted rounded px-3 py-2 break-all">
-                  <ExplorerLink receiptId={data.network_receipt_id} showFull />
-                </div>
-              </div>
-            )}
-
-            {networkRecordBlock && (
-              <InfoRow label="Network Record" value={`#${networkRecordBlock.toLocaleString()}`} />
-            )}
-
-            {(data.secured_at ?? data.anchor_timestamp) && (
-              <InfoRow label="Observed Time" value={formatDate((data.secured_at ?? data.anchor_timestamp)!)} />
-            )}
-          </div>
-        </div>
-
         <Separator />
 
         {/* ============================================================
-            SECTION 5: Lifecycle Timeline (P6-TS-04)
+            SECTION 4: Lifecycle Timeline (P6-TS-04)
             ============================================================ */}
         {data.created_at && (
           <div>
@@ -369,7 +375,6 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
  * The RPC maps SECURED→ACTIVE for the frozen API schema, so we reverse it here. */
 function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
   // Reverse the RPC status mapping: ACTIVE→SECURED for the lifecycle component
-  // Validate against known statuses to prevent unexpected strings
   const validStatuses: Record<string, AnchorLifecycleData['status']> = {
     ACTIVE: 'SECURED',
     SECURED: 'SECURED',
@@ -387,6 +392,21 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
     revocationReason: data.revocation_reason,
     expiresAt: data.expires_at ?? data.expiry_date,
   };
+}
+
+/** Format time since a given ISO timestamp (e.g., "3 minutes", "1 hour") */
+function formatTimeSince(isoTimestamp: string): string {
+  const now = Date.now();
+  const created = new Date(isoTimestamp).getTime();
+  const diffMs = now - created;
+  const diffMin = Math.floor(diffMs / 60_000);
+
+  if (diffMin < 1) return 'less than a minute';
+  if (diffMin === 1) return '1 minute';
+  if (diffMin < 60) return `${diffMin} minutes`;
+  const diffHr = Math.floor(diffMin / 60);
+  if (diffHr === 1) return '1 hour';
+  return `${diffHr} hours`;
 }
 
 /** Reusable info row */

@@ -29,6 +29,8 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from './FileUpload';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
+import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
 import { verifyPath } from '@/lib/routes';
@@ -48,6 +50,9 @@ interface AnchorRecord {
   fileSize: number;
   fileMime?: string;
   credentialType?: string;
+  orgId?: string;
+  metadata?: Record<string, unknown> | null;
+  issuerName?: string;
 }
 
 interface AssetDetailViewProps {
@@ -90,6 +95,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
+
+  // Fetch template for credential rendering (UF-01)
+  const { template } = useCredentialTemplate(anchor.credentialType, anchor.orgId);
 
   const status = statusConfig[anchor.status];
   const StatusIcon = status.icon;
@@ -253,6 +261,20 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           </div>
         </CardContent>
       </Card>
+
+      {/* Credential Details (UF-01) — template-driven rendering */}
+      {(anchor.credentialType || anchor.metadata) && (
+        <CredentialRenderer
+          credentialType={anchor.credentialType}
+          metadata={anchor.metadata ?? undefined}
+          template={template}
+          issuerName={anchor.issuerName}
+          status={anchor.status}
+          filename={anchor.filename}
+          issuedDate={anchor.issuedAt}
+          expiryDate={anchor.expiresAt}
+        />
+      )}
 
       {/* Lifecycle Timeline */}
       <Card>
