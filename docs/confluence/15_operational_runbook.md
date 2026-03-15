@@ -85,6 +85,7 @@ All 4 cron jobs created 2026-03-16 via `gcloud scheduler jobs create http`. All 
 **Auth:** OIDC token with audience `https://arkova-worker-kvojbeutfa-uc.a.run.app`, service account `270018525501-compute@developer.gserviceaccount.com`.
 
 **Management:**
+
 ```bash
 # List jobs
 gcloud scheduler jobs list --project=arkova1 --location=us-central1
@@ -114,8 +115,8 @@ curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
 
 ## 3. Other Pre-Launch Manual Steps
 
-| Task | Description | Who |
-|------|-------------|-----|
+| Task | Description | Who | Status |
+|------|-------------|-----|--------|
 | ~~Apply migrations 0052-0053~~ | ~~`supabase db push` against production~~ | ~~Ops~~ | ✅ DONE 2026-03-15 |
 | ~~Stripe webhook~~ | ~~Register webhook endpoint~~ | ~~Ops~~ | ✅ DONE 2026-03-16 (`we_1TBHb6BBeICNeQqrolzWA2yj`) |
 | ~~API_KEY_HMAC_SECRET~~ | ~~Generate + mount to Cloud Run~~ | ~~Ops~~ | ✅ DONE 2026-03-16 |
