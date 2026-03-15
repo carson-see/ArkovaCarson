@@ -111,6 +111,7 @@ describe('useAuth', () => {
   it('signUp calls supabase signUp with full_name metadata', async () => {
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     mockSignUp.mockResolvedValue({ error: null });
+    const testCredential = 'unit-test-credential';
 
     const { useAuth } = await import('./useAuth');
     const { result } = renderHook(() => useAuth());
@@ -120,12 +121,12 @@ describe('useAuth', () => {
     });
 
     await act(async () => {
-      await result.current.signUp('new@test.com', 'pass123', 'Test User');
+      await result.current.signUp('new@test.com', testCredential, 'Test User');
     });
 
     expect(mockSignUp).toHaveBeenCalledWith({
       email: 'new@test.com',
-      password: 'pass123',
+      password: testCredential,
       options: { data: { full_name: 'Test User' } },
     });
   });

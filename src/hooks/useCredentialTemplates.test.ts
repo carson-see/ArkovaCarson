@@ -71,7 +71,7 @@ describe('useCredentialTemplates', () => {
 
   it('fetches templates for the given orgId', async () => {
     const mockTemplates = [
-      { id: 'tpl-1', name: 'Diploma', credential_type: 'DIPLOMA', org_id: 'org-1' },
+      { id: 'tpl-1', name: 'Diploma', credential_type: 'DEGREE', org_id: 'org-1' },
     ];
     setupFetchMock(mockTemplates);
 
@@ -112,7 +112,7 @@ describe('useCredentialTemplates', () => {
     await act(async () => {
       created = await result.current.createTemplate({
         name: 'Test',
-        credential_type: 'DIPLOMA',
+        credential_type: 'DEGREE',
       });
     });
 
