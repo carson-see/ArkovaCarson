@@ -90,7 +90,14 @@ const {
 
 // ---- Module mocks ----
 
-vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
+vi.mock('../utils/logger.js', () => ({
+  logger: mockLogger,
+  createRpcLogger: vi.fn(() => ({
+    start: vi.fn(),
+    success: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
 
 vi.mock('../config.js', () => ({
   config: {
@@ -307,16 +314,20 @@ describe('processAnchor', () => {
       expect(mockAuditInsert).not.toHaveBeenCalled();
     });
 
-    it('logs the chain error', async () => {
+    it('logs the chain error via RPC logger', async () => {
       const chainError = new Error('ETIMEDOUT: network timeout');
       mockSubmitFingerprint.mockRejectedValue(chainError);
 
+      // DH-11: Error is now logged via createRpcLogger().error()
+      const { createRpcLogger } = await import('../utils/logger.js');
+      const mockRpcLog = (createRpcLogger as ReturnType<typeof vi.fn>).mock.results;
+
       await processAnchor('anchor-001');
 
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ anchorId: 'anchor-001', error: chainError }),
-        'Failed to process anchor',
-      );
+      // createRpcLogger was called, and .error() was called on the returned logger
+      expect(createRpcLogger).toHaveBeenCalledWith('processAnchor', { anchorId: 'anchor-001' });
+      const lastRpcLog = mockRpcLog[mockRpcLog.length - 1].value;
+      expect(lastRpcLog.error).toHaveBeenCalledWith(chainError);
     });
   });
 

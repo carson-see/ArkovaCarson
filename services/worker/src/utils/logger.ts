@@ -31,3 +31,25 @@ export const logger = pinoFn({
 });
 
 export type Logger = PinoLogger;
+
+// ─── DH-11: Structured RPC Logging Helpers ─────────────────────────────
+
+/**
+ * Create a child logger scoped to an RPC call.
+ * Automatically includes rpc name, timing, and correlation context.
+ */
+export function createRpcLogger(rpcName: string, context?: Record<string, unknown>) {
+  const child = logger.child({ rpc: rpcName, ...context });
+  const startTime = Date.now();
+
+  return {
+    start: () => child.info('RPC call started'),
+    success: (result?: Record<string, unknown>) =>
+      child.info({ durationMs: Date.now() - startTime, ...result }, 'RPC call succeeded'),
+    error: (error: unknown) =>
+      child.error(
+        { durationMs: Date.now() - startTime, error },
+        'RPC call failed',
+      ),
+  };
+}

@@ -140,6 +140,45 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     fetchEntitlements();
   }, [fetchEntitlements]);
 
+  // DH-10: Subscribe to billing_subscriptions changes for live quota updates
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel(`entitlements-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'subscriptions',
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          // Re-fetch entitlements when subscription changes
+          fetchEntitlements();
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'anchors',
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          // Re-fetch when new anchors are created (quota decrement)
+          fetchEntitlements();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, fetchEntitlements]);
+
   const isUnlimited = recordsLimit === null;
   const remaining = isUnlimited ? null : Math.max(0, recordsLimit - recordsUsed);
   const percentUsed = isUnlimited ? null : Math.min(100, (recordsUsed / recordsLimit) * 100);

@@ -39,7 +39,14 @@ const {
 
 // ---- Module mocks ----
 
-vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
+vi.mock('../utils/logger.js', () => ({
+  logger: mockLogger,
+  createRpcLogger: vi.fn(() => ({
+    start: vi.fn(),
+    success: vi.fn(),
+    error: vi.fn(),
+  })),
+}));
 
 vi.mock('../config.js', () => ({
   config: {

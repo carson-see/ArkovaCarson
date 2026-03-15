@@ -5,7 +5,7 @@
  */
 
 import { db } from '../utils/db.js';
-import { logger } from '../utils/logger.js';
+import { logger, createRpcLogger } from '../utils/logger.js';
 import { getInitializedChainClient } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -14,7 +14,8 @@ import { dispatchWebhookEvent } from '../webhooks/delivery.js';
  * Process a single anchor
  */
 export async function processAnchor(anchorId: string): Promise<boolean> {
-  logger.info({ anchorId }, 'Processing anchor');
+  const rpcLog = createRpcLogger('processAnchor', { anchorId });
+  rpcLog.start();
 
   // Fetch anchor with PENDING status
   const { data: anchor, error: fetchError } = await db
@@ -104,10 +105,10 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       }
     }
 
-    logger.info({ anchorId, receiptId: receipt.receiptId }, 'Anchor secured successfully');
+    rpcLog.success({ receiptId: receipt.receiptId });
     return true;
   } catch (error) {
-    logger.error({ anchorId, error }, 'Failed to process anchor');
+    rpcLog.error(error);
     return false;
   }
 }

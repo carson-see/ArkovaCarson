@@ -122,7 +122,14 @@ export function ConfirmAnchorModal({
         const message = zodErr.issues.map((i) => i.message).join('; ');
         onError?.(message);
       } else {
-        const message = err instanceof Error ? err.message : 'Failed to create anchor';
+        // DH-06: Handle server-side quota exceeded error (ERRCODE P0002)
+        const pgError = err as { code?: string; message?: string };
+        if (pgError.code === 'P0002' || pgError.message?.includes('Quota exceeded')) {
+          setShowUpgrade(true);
+          return;
+        }
+        const errObj = err as { message?: string };
+        const message = errObj.message || (err instanceof Error ? err.message : 'Failed to create anchor');
         onError?.(message);
       }
     } finally {

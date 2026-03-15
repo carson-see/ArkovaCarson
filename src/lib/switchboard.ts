@@ -127,3 +127,47 @@ export async function isReportsEnabled(): Promise<boolean> {
 export async function isMaintenanceMode(): Promise<boolean> {
   return getFlag('MAINTENANCE_MODE');
 }
+
+// =============================================================================
+// REALTIME FLAG HOT-RELOAD (DH-01)
+// =============================================================================
+
+import type { RealtimeChannel } from '@supabase/supabase-js';
+
+let _flagChannel: RealtimeChannel | null = null;
+
+/**
+ * Subscribe to realtime flag changes so flag updates take effect without restart.
+ * Calls the provided callback whenever a flag value changes.
+ */
+export function subscribeFlagChanges(
+  onFlagChange: (flagId: FlagId, value: boolean) => void,
+): void {
+  // Clean up existing subscription
+  unsubscribeFlagChanges();
+
+  _flagChannel = supabase
+    .channel('switchboard-flags-realtime')
+    .on(
+      'postgres_changes',
+      { event: '*', schema: 'public', table: 'switchboard_flags' },
+      (payload) => {
+        const newRow = payload.new as { id?: string; value?: boolean } | undefined;
+        if (!newRow?.id || typeof newRow.value !== 'boolean') return;
+        // Only process known flags
+        if (!(newRow.id in FLAGS)) return;
+        onFlagChange(newRow.id as FlagId, newRow.value);
+      },
+    )
+    .subscribe();
+}
+
+/**
+ * Unsubscribe from realtime flag changes.
+ */
+export function unsubscribeFlagChanges(): void {
+  if (_flagChannel) {
+    supabase.removeChannel(_flagChannel);
+    _flagChannel = null;
+  }
+}

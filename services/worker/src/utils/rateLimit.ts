@@ -137,4 +137,10 @@ export const rateLimiters = {
     maxRequests: 5,
     skipFailedRequests: true,
   }),
+
+  // DH-08: Quota check: 10 req/min per IP
+  quotaCheck: rateLimit({
+    windowMs: 60000,
+    maxRequests: 10,
+  }),
 };

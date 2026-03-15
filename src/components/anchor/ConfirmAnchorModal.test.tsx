@@ -158,4 +158,74 @@ describe('ConfirmAnchorModal', () => {
     // Reset for other tests
     mockCanCreateAnchor.current = true;
   });
+
+  // DH-06: Server-side quota error handling
+  it('should show upgrade prompt on server-side P0002 quota error', async () => {
+    // Mock supabase to return P0002 error
+    const { supabase } = await import('@/lib/supabase');
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn().mockResolvedValue({
+            data: null,
+            error: { code: 'P0002', message: 'Quota exceeded: 0 records remaining but 1 requested' },
+          }),
+        })),
+      })),
+    });
+
+    const onError = vi.fn();
+
+    const { getByText } = render(
+      <ConfirmAnchorModal
+        open={true}
+        onOpenChange={() => {}}
+        file={mockFile}
+        fingerprint={mockFingerprint}
+        onError={onError}
+      />
+    );
+
+    fireEvent.click(getByText('Create Anchor'));
+
+    // Should show upgrade prompt, not call onError
+    await waitFor(() => {
+      expect(getByText('Monthly Limit Reached')).toBeInTheDocument();
+    });
+
+    // onError should NOT have been called for quota errors
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('should call onError for non-quota server errors', async () => {
+    const { supabase } = await import('@/lib/supabase');
+    (supabase.from as ReturnType<typeof vi.fn>).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn().mockResolvedValue({
+            data: null,
+            error: { code: '23505', message: 'Duplicate key violation' },
+          }),
+        })),
+      })),
+    });
+
+    const onError = vi.fn();
+
+    const { getByText } = render(
+      <ConfirmAnchorModal
+        open={true}
+        onOpenChange={() => {}}
+        file={mockFile}
+        fingerprint={mockFingerprint}
+        onError={onError}
+      />
+    );
+
+    fireEvent.click(getByText('Create Anchor'));
+
+    await waitFor(() => {
+      expect(onError).toHaveBeenCalledWith('Duplicate key violation');
+    });
+  });
 });

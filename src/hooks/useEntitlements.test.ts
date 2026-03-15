@@ -8,9 +8,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockUser = vi.hoisted(() => ({ current: { id: 'test-user-id' } as { id: string } | null }));
 
+const mockChannel = vi.hoisted(() => ({
+  on: vi.fn().mockReturnThis(),
+  subscribe: vi.fn().mockReturnThis(),
+}));
+const mockRemoveChannel = vi.hoisted(() => vi.fn());
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: mockFrom,
+    channel: vi.fn(() => mockChannel),
+    removeChannel: mockRemoveChannel,
   },
 }));
 
@@ -257,5 +265,68 @@ describe('useEntitlements', () => {
     });
 
     expect(result.current.recordsUsed).toBe(2);
+  });
+
+  // DH-10: Realtime subscription
+  describe('DH-10: realtime subscription', () => {
+    it('subscribes to subscriptions and anchors changes when user is present', async () => {
+      setupMocks({ count: 0 });
+
+      renderHook(() => useEntitlements());
+
+      await waitFor(() => {
+        // Channel should be set up with postgres_changes listeners
+        expect(mockChannel.on).toHaveBeenCalledTimes(2);
+        expect(mockChannel.subscribe).toHaveBeenCalled();
+      });
+
+      // First on() call: subscriptions table
+      expect(mockChannel.on).toHaveBeenCalledWith(
+        'postgres_changes',
+        expect.objectContaining({
+          event: '*',
+          schema: 'public',
+          table: 'subscriptions',
+        }),
+        expect.any(Function),
+      );
+
+      // Second on() call: anchors table INSERT
+      expect(mockChannel.on).toHaveBeenCalledWith(
+        'postgres_changes',
+        expect.objectContaining({
+          event: 'INSERT',
+          schema: 'public',
+          table: 'anchors',
+        }),
+        expect.any(Function),
+      );
+    });
+
+    it('does not subscribe when user is null', async () => {
+      mockUser.current = null;
+      mockChannel.on.mockClear();
+      mockChannel.subscribe.mockClear();
+
+      renderHook(() => useEntitlements());
+
+      await waitFor(() => {
+        expect(mockChannel.on).not.toHaveBeenCalled();
+      });
+    });
+
+    it('cleans up channel on unmount', async () => {
+      setupMocks({ count: 0 });
+
+      const { unmount } = renderHook(() => useEntitlements());
+
+      await waitFor(() => {
+        expect(mockChannel.subscribe).toHaveBeenCalled();
+      });
+
+      unmount();
+
+      expect(mockRemoveChannel).toHaveBeenCalledWith(mockChannel);
+    });
   });
 });

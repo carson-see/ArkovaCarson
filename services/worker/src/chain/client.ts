@@ -30,18 +30,41 @@ import { createUtxoProvider } from './utxo-provider.js';
 import { createSigningProvider } from './signing-provider.js';
 import { createFeeEstimator } from './fee-estimator.js';
 
-// ─── Supabase-backed ChainIndexLookup (P7-TS-13) ─────────────────────
+// ─── Supabase-backed ChainIndexLookup (P7-TS-13 + DH-05 Cache) ──────
+
+/** DH-05: Cache entry with TTL */
+interface CacheEntry {
+  value: IndexEntry | null;
+  expiresAt: number;
+}
+
+const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * O(1) fingerprint verification via the `anchor_chain_index` table.
  *
- * Used by BitcoinChainClient.verifyFingerprint() to skip the O(n) UTXO
- * scan when the index contains a match.
+ * DH-05: Includes TTL-based in-memory cache (default 5 min).
+ * Fingerprints are immutable once anchored, so caching is safe.
  */
 export class SupabaseChainIndexLookup implements ChainIndexLookup {
+  private _cache = new Map<string, CacheEntry>();
+  private _ttlMs: number;
+
+  constructor(ttlMs: number = DEFAULT_CACHE_TTL_MS) {
+    this._ttlMs = ttlMs;
+  }
+
   async lookupFingerprint(fingerprint: string): Promise<IndexEntry | null> {
     // Normalize to lowercase — fingerprints are stored lowercase
     const normalizedFingerprint = fingerprint.toLowerCase();
+
+    // DH-05: Check cache first
+    const cached = this._cache.get(normalizedFingerprint);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    // Cache miss or expired — query DB
     const { data, error } = await db
       .from('anchor_chain_index')
       .select('chain_tx_id, chain_block_height, chain_block_timestamp, confirmations, anchor_id')
@@ -54,17 +77,33 @@ export class SupabaseChainIndexLookup implements ChainIndexLookup {
       return null;
     }
 
-    if (!data) {
-      return null;
-    }
+    const result = data
+      ? {
+          chainTxId: data.chain_tx_id,
+          blockHeight: data.chain_block_height,
+          blockTimestamp: data.chain_block_timestamp,
+          confirmations: data.confirmations,
+          anchorId: data.anchor_id,
+        }
+      : null;
 
-    return {
-      chainTxId: data.chain_tx_id,
-      blockHeight: data.chain_block_height,
-      blockTimestamp: data.chain_block_timestamp,
-      confirmations: data.confirmations,
-      anchorId: data.anchor_id,
-    };
+    // Cache the result (including null/miss)
+    this._cache.set(normalizedFingerprint, {
+      value: result,
+      expiresAt: Date.now() + this._ttlMs,
+    });
+
+    return result;
+  }
+
+  /** Clear the cache (for testing or manual invalidation) */
+  clearCache(): void {
+    this._cache.clear();
+  }
+
+  /** Get current cache size (for monitoring) */
+  get cacheSize(): number {
+    return this._cache.size;
   }
 }
 

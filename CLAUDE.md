@@ -533,7 +533,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 50 files, versions 0001–0051 (0033 skipped). Last: `0051_enable_pgvector_and_institution_ground_truth.sql`. All 51 migrations applied to production Supabase (`vzwyaatejekddvltxyye`) on 2026-03-13.
+**Current migration inventory:** 51 files, versions 0001–0052 (0033 skipped). Last: `0052_webhook_dead_letter_queue.sql` (DH-02, DH-12). 51 migrations applied to production Supabase (`vzwyaatejekddvltxyye`) on 2026-03-13; migration 0052 pending deploy.
 
 ---
 
@@ -550,14 +550,13 @@ npx supabase db reset
 | P4-E2 Credential Metadata | 3/3 | 0 | 0 | 100% |
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
 | P6 Verification | 5/6 | 1/6 | 0 | 83% |
-| P7 Go-Live | 10/13 | 1/13 | 2/13 | 77% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
+| P7 Go-Live | 9/13 | 2/13 | 2/13 | 69% | <!-- 13 stories: P7-TS-01 through P7-TS-13, P7-TS-04 and P7-TS-06 not enumerated below (no individual scope) --> |
 | P4.5 Verification API | 0/13 | 0/13 | 13/13 | 0% |
-| DH Deferred Hardening | 3/12 | 0/12 | 9/12 | 25% |
-| MVP Launch Gaps | 8/27 | 0/27 | 19/27 | 30% |
+| DH Deferred Hardening | 10/12 | 0/12 | 2/12 | 83% |
+| MVP Launch Gaps | 3/27 | 1/27 | 23/27 | 11% |
 | P8 AI Intelligence | 0/19 | 0/19 | 19/19 | 0% |
 | INFRA Edge & Ingress | 0/8 | 5/8 | 3/8 | 31% |
-| UAT Bug Fixes | 0/17 | 0/17 | 17/17 | 0% |
-| **Total** | **52/141** | **8/141** | **81/141** | **~37%** |
+| **Total** | **54/124** | **9/124** | **61/124** | **~44%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -565,7 +564,7 @@ npx supabase db reset
 |----|-------|----------|--------|
 | ~~CRIT-1~~ | ~~`SecureDocumentDialog` fakes anchor creation~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-10. Real Supabase insert replacing setTimeout simulation. Commit a38b485.~~ |
 | CRIT-2 | Bitcoin chain client — code complete, operational items remain | **HIGH** | **CODE COMPLETE.** BitcoinChainClient with provider abstractions: `SigningProvider` (WIF + KMS, 98%+ coverage), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). `SupabaseChainIndexLookup` for O(1) verification (migration 0050). Async factory. Wallet utilities + CLI scripts. KMS operational docs (`14_kms_operations.md`). 455 worker tests across 19 files. Signet E2E broadcast verified (TX `b8e381df`). **Remaining operational items:** AWS KMS key provisioning (follow 14_kms_operations.md), mainnet treasury funding. |
-| ~~CRIT-3~~ | ~~Stripe checkout — partial~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. Plan change/downgrade handled via Stripe Billing Portal (PR #43). `handleSubscriptionUpdated` detects plan changes by resolving plan_id from subscription price items. Cancellation scheduled handling. PricingPage routes existing subscribers to Billing Portal. All entitlement enforcement in place.~~ |
+| CRIT-3 | Stripe checkout — partial | **HIGH** | Pricing UI + useBilling hook + checkout pages + checkout/portal worker endpoints all implemented (b1f798a). Webhook handlers work. Entitlement enforcement partially done: `useEntitlements` hook (client-side quota check, fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows. |
 | ~~CRIT-4~~ | ~~Onboarding routes are placeholders~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. Commit a38b485.~~ |
 | ~~CRIT-5~~ | ~~Proof export JSON download is no-op~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. onDownloadProofJson wired in RecordDetailPage + AssetDetailView. Commit a38b485.~~ |
 | ~~CRIT-6~~ | ~~`CSVUploadWizard` uses simulated processing~~ | ~~MEDIUM~~ | ~~RESOLVED 2026-03-10. Connected to csvParser + useBulkAnchors hook. Commit a38b485.~~ |
@@ -621,10 +620,10 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P6-TS-05: ✅ `generateAuditReport.ts` (jsPDF, 201 lines). Called from RecordDetailPage.
 - P6-TS-06: ✅ `verification_events` table (migration 0042), SECURITY DEFINER RPC (migration 0045), wired into PublicVerification.tsx.
 
-### P7 Go-Live — 10/13 COMPLETE, 1/13 PARTIAL, 2/13 NOT STARTED
+### P7 Go-Live — 9/13 COMPLETE, 2/13 PARTIAL, 2/13 NOT STARTED
 
 - P7-TS-01: ✅ Billing schema (migration 0016). BillingOverview.tsx wired in PricingPage with useBilling data.
-- P7-TS-02: ✅ COMPLETE — Pricing UI, useBilling hook, checkout success/cancel pages, Stripe webhook handlers (checkout.session.completed + subscription lifecycle + plan change detection), worker checkout + billing portal endpoints, entitlement enforcement (`useEntitlements` hook, `check_anchor_quota()` RPC, server-side quota, `ConfirmAnchorModal` quota gate, `UpgradePrompt`). Plan change/downgrade via Billing Portal (PR #43). 74+ tests.
+- P7-TS-02: ⚠️ PARTIAL — Pricing UI (PricingPage, PricingCard, BillingOverview), useBilling hook, checkout success/cancel pages all implemented. Stripe webhook handlers handle checkout.session.completed + subscription lifecycle. Worker checkout + billing portal endpoints wired (b1f798a). 74 tests. Entitlement enforcement partially done: `useEntitlements` hook (fail-closed), `check_anchor_quota()` RPC + server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component. **Remaining:** plan change/downgrade flows.
 - P7-TS-03: ✅ Stripe webhook signature verification works. Mock mode for tests.
 - P7-TS-05: ⚠️ PARTIAL (CODE COMPLETE — operational items remain) — `BitcoinChainClient` (renamed from SignetChainClient) with provider abstractions: `SigningProvider` (WIF + KMS), `FeeEstimator` (static + mempool), `UtxoProvider` (RPC + Mempool.space). Async factory (`initChainClient()` / `getInitializedChainClient()`). `SupabaseChainIndexLookup` for O(1) verification. Migration 0050 creates `anchor_chain_index` table. 416 worker tests across 18 files (incl. 8 signet integration tests). **Remaining operational:** Signet E2E broadcast, AWS KMS key provisioning, mainnet treasury funding.
 - P7-TS-07: ✅ COMPLETE — PDF + JSON proof package downloads both wired. Fixed in CRIT-5 (commit a38b485).
@@ -639,29 +638,29 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 
 All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled for post-launch.
 
-### DH Deferred Hardening — 3/12 COMPLETE, 9/12 NOT STARTED
+### DH Deferred Hardening — 10/12 COMPLETE, 2/12 NOT STARTED
 
 12 stories identified during CodeRabbit review of PR #26. See `docs/stories/10_deferred_hardening.md` for full details.
 
-DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · DH-04 Webhook circuit breaker · DH-05 Chain index cache TTL · DH-06 ConfirmAnchorModal server-side quota error handling · ~~DH-07 MempoolFeeEstimator request timeout~~ (COMPLETE — PR #38, +23 tests) · DH-08 Rate limiting for check_anchor_quota · ~~DH-09 UtxoProvider retry logic~~ (COMPLETE — PR #39, +17 tests) · DH-10 useEntitlements realtime subscription · DH-11 Worker RPC structured logging · DH-12 Webhook dead letter queue
+~~DH-01 Feature flag hot-reload~~ (COMPLETE — realtime subscription on switchboard_flags) · ~~DH-02 Advisory lock for bulk_create_anchors~~ (COMPLETE — pg_advisory_xact_lock in migration 0052) · ~~DH-03 KMS operational docs~~ (COMPLETE — `docs/confluence/14_kms_operations.md`) · ~~DH-04 Webhook circuit breaker~~ (COMPLETE — 5 failures → open, 60s half-open) · ~~DH-05 Chain index cache TTL~~ (COMPLETE — 5-min in-memory cache) · ~~DH-06 ConfirmAnchorModal server-side quota error handling~~ (COMPLETE — catches P0002 + Quota exceeded) · ~~DH-07 MempoolFeeEstimator request timeout~~ (COMPLETE — PR #38) · ~~DH-08 Rate limiting for check_anchor_quota~~ (COMPLETE — 10 req/min per IP) · ~~DH-09 UtxoProvider retry logic~~ (COMPLETE — PR #39) · ~~DH-10 useEntitlements realtime subscription~~ (COMPLETE — subscriptions + anchors INSERT) · ~~DH-11 Worker RPC structured logging~~ (COMPLETE — createRpcLogger with child logger + timing) · ~~DH-12 Webhook dead letter queue~~ (COMPLETE — webhook_dead_letter_queue table, migration 0052)
 
-### MVP Launch Gaps — 8/27 COMPLETE, 0/27 PARTIAL, 19/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 3/27 COMPLETE, 1/27 PARTIAL, 23/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
 | ID | Priority | Description | Status |
 |----|----------|-------------|--------|
 | MVP-01 | CRITICAL | Worker production deployment (GCP Cloud Run) | NOT STARTED |
-| ~~MVP-02~~ | ~~HIGH~~ | ~~Global toast/notification system (Sonner)~~ | ✅ COMPLETE — Sonner wired, toasts in all mutation hooks (PRs #36, #37, #40). |
+| MVP-02 | HIGH | Global toast/notification system (Sonner) | ⚠️ PARTIAL — Sonner wired, toasts in useProfile + useOrganization + useBulkAnchors. Missing: useAnchors, useCredentialTemplates, useRevokeAnchor, useInviteMember. |
 | ~~MVP-03~~ | ~~HIGH~~ | ~~Legal pages (Privacy, Terms, Contact)~~ | ✅ COMPLETE — PrivacyPage, TermsPage, ContactPage exist + routed |
 | ~~MVP-04~~ | ~~HIGH~~ | ~~Brand assets (logo, favicon, OG meta tags)~~ | ✅ COMPLETE (PR #30) — ArkovaLogo, favicon.svg, og-image.svg, OG/Twitter meta |
 | ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404 page~~ | ✅ COMPLETE — ErrorBoundary (Sentry-wired) + NotFoundPage, both routed |
 | MVP-06 | MEDIUM | File-based public verification (drag-and-drop) | NOT STARTED |
-| ~~MVP-07~~ | ~~MEDIUM~~ | ~~Mobile responsive layout~~ | ✅ COMPLETE (PR #43) — Sidebar hamburger menu, overlay, responsive grids |
-| ~~MVP-08~~ | ~~MEDIUM~~ | ~~Onboarding progress stepper~~ | ✅ COMPLETE (PR #44) — OnboardingStepper component with 3 visual states |
-| ~~MVP-09~~ | ~~MEDIUM~~ | ~~Records pagination + search~~ | ✅ COMPLETE (PR #44) — Client-side search, status filter, pagination |
+| MVP-07 | MEDIUM | Mobile responsive layout | NOT STARTED |
+| MVP-08 | MEDIUM | Onboarding progress stepper | NOT STARTED |
+| MVP-09 | MEDIUM | Records pagination + search | NOT STARTED |
 | MVP-10 | MEDIUM | Marketing website (arkova.ai) | NOT STARTED |
-| ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ✅ COMPLETE (PR #43) — Billing Portal routing, webhook plan change detection |
+| MVP-11 | HIGH | Stripe plan change/downgrade (CRIT-3 remaining) | NOT STARTED |
 | MVP-12 | LOW | Dark mode toggle | NOT STARTED |
 | MVP-13 | LOW | Organization logo upload | NOT STARTED |
 | MVP-14 | LOW | Embeddable verification widget | NOT STARTED |
@@ -681,7 +680,7 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 | MVP-29 | HIGH | GCP Cloud KMS integration | NOT STARTED |
 | MVP-30 | MEDIUM | GCP CI/CD pipeline | NOT STARTED |
 
-**Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
+**Bugs linked:** BUG-AUDIT-01 (→MVP-02 PARTIAL), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
 ### P8 AI Intelligence — 0/19 NOT STARTED
 
@@ -701,37 +700,6 @@ DH-01 Feature flag hot-reload · DH-02 Advisory lock for bulk_create_anchors · 
 | INFRA-06 | NOT STARTED | Replicate QA data generator |
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
 | INFRA-08 | ⚠️ PARTIAL | pgvector + institution ground truth — migration 0051 applied to production. Missing: data model doc update, seed data. |
-
-### UAT Bug Fixes — 0/17 NOT STARTED (Sprint 5 + Sprint 6)
-
-17 bugs discovered during comprehensive UAT testing on 2026-03-15. See `docs/bugs/uat_2026_03_15.md` for full details and `docs/stories/14_uat_sprints.md` for sprint plans.
-
-**Sprint 5 (Critical + High — 9 bugs, launch blockers):**
-
-| ID | Bug | Severity | Status |
-|----|-----|----------|--------|
-| BUG-UAT-01 | Mobile sidebar does not auto-collapse | CRITICAL | NOT STARTED |
-| BUG-UAT-02 | Console auth errors on every page load | CRITICAL | NOT STARTED |
-| BUG-UAT-03 | `/billing` route inaccessible (silent redirect) | CRITICAL | NOT STARTED |
-| BUG-UAT-04 | Header always says "Dashboard" | HIGH | NOT STARTED |
-| BUG-UAT-05 | "Help" sidebar link is dead end | HIGH | NOT STARTED |
-| BUG-UAT-06 | User avatar dropdown does nothing | HIGH | NOT STARTED |
-| BUG-UAT-07 | Record card status badges overlap dates | HIGH | NOT STARTED |
-| BUG-UAT-08 | Org records table missing columns | HIGH | NOT STARTED |
-| BUG-UAT-09 | Redundant profile API calls (8+ per load) | HIGH | NOT STARTED |
-
-**Sprint 6 (Medium + Low — 8 bugs, polish):**
-
-| ID | Bug | Severity | Status |
-|----|-----|----------|--------|
-| BUG-UAT-10 | Secure Document button overlaps subtitle | MEDIUM | NOT STARTED |
-| BUG-UAT-11 | Stat cards stacked vertically on desktop | MEDIUM | NOT STARTED |
-| BUG-UAT-12 | Tablet viewport clips content at right edge | MEDIUM | NOT STARTED |
-| BUG-UAT-13 | Account Type dual labels confusing | MEDIUM | NOT STARTED |
-| BUG-UAT-14 | Seed data visible in prod-like env | MEDIUM | NOT STARTED |
-| BUG-UAT-15 | No "Forgot Password" link | LOW | NOT STARTED |
-| BUG-UAT-16 | No loading states during data fetch | LOW | NOT STARTED |
-| BUG-UAT-17 | QR code URL shows localhost | LOW | NOT STARTED |
 
 ### Orphaned Code (built but never wired)
 
@@ -772,54 +740,27 @@ All of the following are done. Details in MEMORY.md completed sprints.
 - ✅ MCP server + verify-anchor API endpoint + vulnerability fixes — PR #31
 - ✅ MVP-03 legal pages (PrivacyPage, TermsPage, ContactPage — exist + routed)
 - ✅ MVP-05 error boundary + 404 (ErrorBoundary + NotFoundPage — exist + routed + Sentry-wired)
-- ✅ MVP-02 toast system complete (all mutation hooks have toast notifications — PRs #36, #37, #40)
-- ✅ DH-07 MempoolFeeEstimator request timeout (PR #38, +23 tests)
-- ✅ DH-09 UtxoProvider retry logic (PR #39, +17 tests)
-- ✅ MVP-07 mobile responsive layout (PR #43 — sidebar hamburger, overlay, responsive grids)
-- ✅ MVP-08 onboarding progress stepper (PR #44 — OnboardingStepper component)
-- ✅ MVP-09 records pagination + search (PR #44 — client-side search, filter, pagination)
-- ✅ MVP-11 Stripe plan change/downgrade (PR #43 — Billing Portal routing, webhook plan change detection)
-- ✅ CRIT-3 resolved (plan change/downgrade flows complete)
-- ✅ UAT Bug Bounty audit (17 bugs found across 12 pages, 3 viewports — 2026-03-15)
 
-### Current: Sprint 5 — UAT Critical + High (Launch Blockers)
-
-| Task | Bug ID | Severity | Detail |
-|------|--------|----------|--------|
-| Mobile sidebar auto-collapse | BUG-UAT-01 | CRITICAL | Sidebar fully expanded on mobile, covering ~65% viewport |
-| Console auth errors | BUG-UAT-02 | CRITICAL | `oauth_client_id` error fires 6x on every page load |
-| Billing route fix | BUG-UAT-03 | CRITICAL | `/billing` silently redirects to Dashboard, no sidebar link |
-| Dynamic header title | BUG-UAT-04 | HIGH | Header says "Dashboard" on all pages |
-| Help link fix | BUG-UAT-05 | HIGH | "Help" sidebar link redirects to Dashboard |
-| Avatar dropdown | BUG-UAT-06 | HIGH | User avatar button does nothing on click |
-| Badge/date overlap | BUG-UAT-07 | HIGH | Status badges overlap dates on record cards |
-| Org table columns | BUG-UAT-08 | HIGH | Org records table shows only Document column |
-| Profile API dedup | BUG-UAT-09 | HIGH | Profile fetched 8+ times per page load |
-
-### Next: Sprint 6 — UAT Medium + Low (Polish)
-
-See `docs/stories/14_uat_sprints.md` for Sprint 6 plan (8 bugs: layout, loading states, forgot password, QR URL).
-
-### Remaining Production Blockers
+### Current: Remaining Production Blockers
 
 | Task | Blocker | Detail |
 |------|---------|--------|
 | AWS KMS signing | CRIT-2 | Key provisioning for mainnet signing. SignetChainClient done, mainnet needs KMS. |
 | ~~Signet node connectivity test~~ | ~~CRIT-2~~ | ~~DONE — Signet E2E broadcast verified (TX `b8e381df`).~~ |
 | Mainnet treasury funding | CRIT-2 | Fund the production treasury wallet. |
-| ~~Entitlement enforcement~~ | ~~CRIT-3~~ | ~~DONE. useEntitlements hook (fail-closed) + server-side quota + ConfirmAnchorModal quota gate + UpgradePrompt + plan change/downgrade via Billing Portal (PR #43).~~ |
-| ~~Plan change/downgrade~~ | ~~CRIT-3~~ | ~~DONE (PR #43). Billing Portal routing for existing subscribers + webhook plan change detection + cancellation scheduled handling.~~ |
+| Entitlement enforcement | CRIT-3 | PARTIALLY DONE. useEntitlements hook (fail-closed) + server-side quota in bulk_create_anchors (migration 0049) + ConfirmAnchorModal quota gate + UpgradePrompt. Remaining: plan change/downgrade flows only. |
+| Plan change/downgrade | CRIT-3 | Handle subscription upgrades, downgrades, cancellations. |
 
 ### MVP Launch Gap Stories (testnet launch blockers)
 
 | Task | Story | Priority | Detail |
 |------|-------|----------|--------|
 | Worker deployment | MVP-01 | CRITICAL | Deploy Express worker to production host. Blocks all anchor processing. |
-| ~~Toast system~~ | ~~MVP-02~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. All mutation hooks have toast notifications (PRs #36, #37, #40).~~ |
+| Toast system | MVP-02 | HIGH | ⚠️ PARTIAL — Sonner wired, toasts in 3 hooks. Missing 4+ hooks (BUG-AUDIT-01). |
 | ~~Legal pages~~ | ~~MVP-03~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. PrivacyPage + TermsPage + ContactPage exist + routed.~~ |
 | ~~Brand assets~~ | ~~MVP-04~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ArkovaLogo component, favicon.svg, OG meta tags. PR #30.~~ |
 | ~~Error boundary~~ | ~~MVP-05~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. ErrorBoundary (Sentry-wired) + NotFoundPage, both routed.~~ |
-| ~~Stripe plan change~~ | ~~MVP-11~~ | ~~HIGH~~ | ~~RESOLVED 2026-03-14. Billing Portal + webhook plan change detection (PR #43).~~ |
+| Stripe plan change | MVP-11 | HIGH | Upgrades, downgrades, cancellations (CRIT-3 remaining). |
 
 ### Pre-Launch (after blockers + MVP gaps resolved)
 
@@ -1012,5 +953,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-14 (status reconciliation) | Repo: ArkovaCarson | 51 migrations | 900+ tests | 124 stories (52 complete)_
+_Directive version: 2026-03-12 (Zero Trust + Edge amendment) | Repo: ArkovaCarson | 50 migrations | 700+ tests | 124 stories_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

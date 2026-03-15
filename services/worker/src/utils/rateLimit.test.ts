@@ -348,5 +348,28 @@ describe('rateLimit', () => {
       expect(rateLimiters.auth).toBeDefined();
       expect(typeof rateLimiters.auth).toBe('function');
     });
+
+    // DH-08: Quota check rate limiter
+    it('exports quotaCheck limiter', () => {
+      expect(rateLimiters.quotaCheck).toBeDefined();
+      expect(typeof rateLimiters.quotaCheck).toBe('function');
+    });
+
+    it('quotaCheck limiter allows 10 requests per minute', () => {
+      const ip = '192.168.200.1';
+      const path = '/quota-check-test';
+
+      // First 10 requests should pass
+      for (let i = 0; i < 10; i++) {
+        const { req, res, next } = createMockReqResWithKey(ip, path);
+        rateLimiters.quotaCheck(req, res, next);
+        expect(next).toHaveBeenCalled();
+      }
+
+      // 11th should be blocked
+      const { req, res, next } = createMockReqResWithKey(ip, path);
+      rateLimiters.quotaCheck(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(429);
+    });
   });
 });

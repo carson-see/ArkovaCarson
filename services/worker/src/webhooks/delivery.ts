@@ -12,6 +12,66 @@ import { logger } from '../utils/logger.js';
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
 
+// ─── Circuit Breaker (DH-04) ──────────────────────────────────────────
+const CIRCUIT_BREAKER_THRESHOLD = 5; // consecutive failures to open
+const CIRCUIT_BREAKER_HALF_OPEN_MS = 60_000; // 60s before half-open
+
+interface CircuitState {
+  consecutiveFailures: number;
+  openedAt: number | null; // timestamp when circuit opened
+}
+
+// Per-endpoint circuit breaker state
+const circuitBreakers = new Map<string, CircuitState>();
+
+/** Get or create circuit state for an endpoint */
+function getCircuit(endpointId: string): CircuitState {
+  let state = circuitBreakers.get(endpointId);
+  if (!state) {
+    state = { consecutiveFailures: 0, openedAt: null };
+    circuitBreakers.set(endpointId, state);
+  }
+  return state;
+}
+
+/** Check if the circuit is open (blocking delivery) */
+export function isCircuitOpen(endpointId: string): boolean {
+  const state = getCircuit(endpointId);
+  if (state.openedAt === null) return false;
+
+  const elapsed = Date.now() - state.openedAt;
+  if (elapsed >= CIRCUIT_BREAKER_HALF_OPEN_MS) {
+    // Transition to half-open: allow one attempt
+    return false;
+  }
+  return true;
+}
+
+/** Record a successful delivery (resets circuit) */
+function recordSuccess(endpointId: string): void {
+  const state = getCircuit(endpointId);
+  state.consecutiveFailures = 0;
+  state.openedAt = null;
+}
+
+/** Record a failed delivery (may open circuit) */
+function recordFailure(endpointId: string): void {
+  const state = getCircuit(endpointId);
+  state.consecutiveFailures++;
+  if (state.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    state.openedAt = Date.now();
+    logger.warn(
+      { endpointId, failures: state.consecutiveFailures },
+      'Circuit breaker OPEN — blocking deliveries',
+    );
+  }
+}
+
+/** Exported for testing — clear all circuit state */
+export function resetCircuitBreakers(): void {
+  circuitBreakers.clear();
+}
+
 interface WebhookPayload {
   event_type: string;
   event_id: string;
@@ -50,6 +110,15 @@ async function deliverToEndpoint(
   payload: WebhookPayload,
   attempt: number = 1
 ): Promise<boolean> {
+  // DH-04: Circuit breaker check
+  if (isCircuitOpen(endpoint.id)) {
+    logger.warn(
+      { endpointId: endpoint.id, eventId: payload.event_id },
+      'Circuit breaker OPEN — skipping delivery',
+    );
+    return false;
+  }
+
   const payloadString = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
@@ -119,6 +188,8 @@ async function deliverToEndpoint(
         { endpointId: endpoint.id, eventId: payload.event_id, status: response.status },
         'Webhook delivered successfully'
       );
+      // DH-04: Reset circuit on success
+      recordSuccess(endpoint.id);
       return true;
     } else {
       // HTTP error - schedule retry if attempts remaining
@@ -136,6 +207,14 @@ async function deliverToEndpoint(
             : null,
         })
         .eq('id', logEntry.id);
+
+      // DH-04: Record failure for circuit breaker
+      recordFailure(endpoint.id);
+
+      // DH-12: Move to dead letter queue if permanently failed
+      if (!shouldRetry) {
+        await moveToDeadLetterQueue(endpoint, payload, `HTTP ${response.status}`, attempt);
+      }
 
       logger.warn(
         {
@@ -165,6 +244,14 @@ async function deliverToEndpoint(
           : null,
       })
       .eq('id', logEntry.id);
+
+    // DH-04: Record failure for circuit breaker
+    recordFailure(endpoint.id);
+
+    // DH-12: Move to dead letter queue if permanently failed
+    if (!shouldRetry) {
+      await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt);
+    }
 
     logger.error(
       { endpointId: endpoint.id, eventId: payload.event_id, error, attempt },
@@ -218,6 +305,87 @@ export async function dispatchWebhookEvent(
 
   // Deliver to all endpoints (in parallel)
   await Promise.all(endpoints.map((endpoint) => deliverToEndpoint(endpoint, payload)));
+}
+
+// ─── Dead Letter Queue (DH-12) ─────────────────────────────────────────
+
+/**
+ * Move permanently failed webhook deliveries to a dead letter queue
+ * for manual inspection and retry.
+ */
+async function moveToDeadLetterQueue(
+  endpoint: WebhookEndpoint,
+  payload: WebhookPayload,
+  errorMessage: string,
+  lastAttempt: number,
+): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (db as any)
+      .from('webhook_dead_letter_queue')
+      .insert({
+        endpoint_id: endpoint.id,
+        endpoint_url: endpoint.url,
+        org_id: endpoint.org_id,
+        event_type: payload.event_type,
+        event_id: payload.event_id,
+        payload: payload as unknown as Json,
+        error_message: errorMessage,
+        last_attempt: lastAttempt,
+        failed_at: new Date().toISOString(),
+      });
+
+    logger.info(
+      { endpointId: endpoint.id, eventId: payload.event_id, lastAttempt },
+      'Moved to dead letter queue',
+    );
+  } catch (dlqError) {
+    logger.error(
+      { endpointId: endpoint.id, eventId: payload.event_id, error: dlqError },
+      'Failed to write to dead letter queue',
+    );
+  }
+}
+
+/**
+ * Get dead letter queue entries for an org (for manual retry UI).
+ */
+export async function getDeadLetterEntries(
+  orgId: string,
+  limit: number = 50,
+): Promise<Array<Record<string, unknown>>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('webhook_dead_letter_queue')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('resolved', false)
+    .order('failed_at', { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    logger.error({ error, orgId }, 'Failed to fetch DLQ entries');
+    return [];
+  }
+
+  return data || [];
+}
+
+/**
+ * Mark a DLQ entry as resolved (after manual retry or dismissal).
+ */
+export async function resolveDlqEntry(entryId: string): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { error } = await (db as any)
+    .from('webhook_dead_letter_queue')
+    .update({ resolved: true, resolved_at: new Date().toISOString() })
+    .eq('id', entryId);
+
+  if (error) {
+    logger.error({ error, entryId }, 'Failed to resolve DLQ entry');
+    return false;
+  }
+  return true;
 }
 
 /**
