@@ -371,6 +371,108 @@ export const ENTITLEMENT_LABELS = {
 } as const;
 
 // =============================================================================
+// CREDENTIAL RENDERER
+// =============================================================================
+
+export const CREDENTIAL_RENDERER_LABELS = {
+  CREDENTIAL_DETAILS: 'Credential Details',
+  DOCUMENT_RECORD: 'Document Record',
+  NO_TEMPLATE: 'Record Details',
+  ISSUED_BY: 'Issued by',
+  ISSUED_ON: 'Issued',
+  EXPIRES_ON: 'Expires',
+  STATUS: 'Status',
+  FINGERPRINT_LABEL: 'Document Fingerprint',
+  FINGERPRINT_TOOLTIP: 'This is the document\'s unique digital fingerprint — a cryptographic proof that identifies this exact file.',
+  NO_METADATA: 'No additional details available for this record.',
+  COPY_FINGERPRINT: 'Copy fingerprint',
+  COPIED: 'Copied',
+} as const;
+
+// =============================================================================
+// SECURE DOCUMENT DIALOG
+// =============================================================================
+
+export const SECURE_DIALOG_LABELS = {
+  TITLE: 'Secure Document',
+  DESCRIPTION: 'Create a permanent, tamper-proof record of your document.',
+  READY_TO_SECURE: 'Ready to Secure',
+  DOCUMENT_LABEL: 'Document',
+  SIZE_LABEL: 'Size',
+  SECURITY_NOTICE: 'Your document will be secured with cryptographic verification. This creates a permanent record that can be verified at any time.',
+  SECURING_LOADING: 'Securing your document...',
+  VERIFICATION_LINK: 'Verification Link',
+  SECURING_FAILED: 'Securing Failed',
+  CANCEL: 'Cancel',
+  CONTINUE: 'Continue',
+  BACK: 'Back',
+  SECURE_BUTTON: 'Secure Document',
+  TRY_AGAIN: 'Try Again',
+  COPY_LINK_ARIA: 'Copy verification link',
+} as const;
+
+// =============================================================================
+// ISSUE CREDENTIAL FORM
+// =============================================================================
+
+export const ISSUE_CREDENTIAL_LABELS = {
+  TITLE: 'Issue Credential',
+  DESCRIPTION: 'Create a verifiable credential record for your organization.',
+  PENDING_NOTICE: 'The credential will be created with Pending status and assigned a unique verification ID immediately.',
+  ISSUING_LOADING: 'Issuing...',
+  ISSUE_BUTTON: 'Issue Credential',
+  VERIFICATION_LINK: 'Verification Link',
+  COPY_LINK_ARIA: 'Copy verification link',
+} as const;
+
+// =============================================================================
+// PUBLIC VERIFICATION DISPLAY
+// =============================================================================
+
+export const PUBLIC_VERIFICATION_LABELS = {
+  VERIFICATION_FAILED: 'Verification Failed',
+  UNABLE_TO_VERIFY: 'Unable to verify this document',
+  NOT_FOUND_DESC: 'The document you are looking for may not exist or has not been verified yet.',
+  RECORD_REVOKED: 'Record Revoked',
+  RECORD_EXPIRED: 'Record Expired',
+  DOCUMENT_VERIFIED: 'Document Verified',
+  REVOKED_DESC: 'This record has been revoked by the issuing organization',
+  EXPIRED_DESC: 'This record has passed its expiration date',
+  VERIFIED_DESC: 'This document has been permanently secured',
+  CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
+  FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
+  NETWORK_RECEIPT: 'Network Receipt',
+  NETWORK_RECORD: 'Network Record',
+  OBSERVED_TIME: 'Observed Time',
+  LIFECYCLE: 'Lifecycle',
+  SECURED_BY: 'Secured by Arkova',
+  COPY_FINGERPRINT_ARIA: 'Copy document fingerprint',
+  COPY_RECEIPT_ARIA: 'Copy network receipt',
+} as const;
+
+// =============================================================================
+// ANCHORING STATUS (UF-04)
+// =============================================================================
+
+export const ANCHORING_STATUS_LABELS = {
+  PENDING_TITLE: 'Anchoring In Progress',
+  PENDING_SUBTITLE: 'Your document has been submitted for anchoring. This typically takes 5\u201315 minutes.',
+  PENDING_PUBLIC_TITLE: 'Record Found \u2014 Anchoring In Progress',
+  PENDING_PUBLIC_SUBTITLE: 'This record has been submitted and is being permanently secured. Anchoring is not yet complete.',
+  PENDING_BADGE: 'Processing',
+  PENDING_SINCE: 'Submitted {time} ago',
+  SHARE_LINK_NOTE: 'You can share this verification link now \u2014 verifiers will see the current anchoring status.',
+  SUCCESS_TITLE: 'Document Submitted',
+  SUCCESS_SUBTITLE: 'Your document has been submitted for anchoring.',
+  SUCCESS_PROCESSING: 'Anchoring typically takes 5\u201315 minutes. You\u2019ll see the status update on your dashboard.',
+  COPY_LINK: 'Copy Verification Link',
+  LINK_COPIED: 'Verification link copied to clipboard',
+  VIEW_RECORD: 'View Record',
+  ISSUE_ANOTHER: 'Issue Another',
+  DONE: 'Done',
+} as const;
+
+// =============================================================================
 // FORBIDDEN TERMS (for lint script)
 // =============================================================================
 
