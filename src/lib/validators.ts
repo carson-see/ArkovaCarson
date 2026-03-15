@@ -365,6 +365,23 @@ interface TemplateFieldDef {
   options?: string[];
 }
 
+/** Validate a single field value by type. Returns error message or null. */
+function validateFieldType(value: string, field: TemplateFieldDef): string | null {
+  switch (field.type) {
+    case 'number':
+      return Number.isNaN(Number(value)) ? `${field.label} must be a number` : null;
+    case 'date':
+      return Number.isNaN(Date.parse(value)) ? `${field.label} must be a valid date` : null;
+    case 'select':
+      if (field.options && !field.options.includes(value)) {
+        return `${field.label} must be one of: ${field.options.join(', ')}`;
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Validate metadata values against a template's field definitions.
  * Returns a map of field key → error message for invalid fields.
@@ -379,29 +396,15 @@ export function validateMetadataAgainstTemplate(
   for (const field of fields) {
     const value = values[field.key]?.trim() ?? '';
 
-    // Required check
     if (field.required && !value) {
       errors[field.key] = `${field.label} is required`;
       continue;
     }
 
-    // Skip further validation if empty and not required
     if (!value) continue;
 
-    // Type-specific validation
-    if (field.type === 'number') {
-      if (isNaN(Number(value))) {
-        errors[field.key] = `${field.label} must be a number`;
-      }
-    } else if (field.type === 'date') {
-      if (isNaN(Date.parse(value))) {
-        errors[field.key] = `${field.label} must be a valid date`;
-      }
-    } else if (field.type === 'select' && field.options) {
-      if (!field.options.includes(value)) {
-        errors[field.key] = `${field.label} must be one of: ${field.options.join(', ')}`;
-      }
-    }
+    const typeError = validateFieldType(value, field);
+    if (typeError) errors[field.key] = typeError;
   }
 
   return errors;

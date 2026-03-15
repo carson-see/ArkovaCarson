@@ -36,17 +36,18 @@ export function UsageWidget({ compact = false }: Readonly<UsageWidgetProps>) {
     error,
   } = useEntitlements();
 
-  const warningShown = useRef(false);
+  const warning80Shown = useRef(false);
+  const warning100Shown = useRef(false);
 
-  // Show warning toast at 80% (once per mount)
+  // Show warning toasts at 80% and 100% (each fires once per mount)
   useEffect(() => {
-    if (warningShown.current || loading) return;
-    if (percentUsed !== null && percentUsed >= 100) {
+    if (loading || percentUsed === null) return;
+    if (percentUsed >= 100 && !warning100Shown.current) {
       toast.warning(USAGE_LABELS.WARNING_100);
-      warningShown.current = true;
-    } else if (percentUsed !== null && percentUsed >= 80) {
+      warning100Shown.current = true;
+    } else if (percentUsed >= 80 && !warning80Shown.current) {
       toast.warning(USAGE_LABELS.WARNING_80);
-      warningShown.current = true;
+      warning80Shown.current = true;
     }
   }, [percentUsed, loading]);
 
@@ -75,12 +76,12 @@ export function UsageWidget({ compact = false }: Readonly<UsageWidgetProps>) {
   const progressValue = percentUsed ?? 0;
 
   // Color coding: green <50%, amber 50-80%, red >80%
-  const progressColor =
-    progressValue >= 80
-      ? 'bg-red-500'
-      : progressValue >= 50
-        ? 'bg-amber-500'
-        : 'bg-green-500';
+  function getProgressColor(pct: number): string {
+    if (pct >= 80) return 'bg-red-500';
+    if (pct >= 50) return 'bg-amber-500';
+    return 'bg-green-500';
+  }
+  const progressColor = getProgressColor(progressValue);
 
   const usageText = isUnlimited
     ? USAGE_LABELS.RECORDS_UNLIMITED

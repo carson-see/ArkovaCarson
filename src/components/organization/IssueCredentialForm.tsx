@@ -80,6 +80,13 @@ interface CreatedAnchor {
   publicId: string;
 }
 
+/** Format file size for display */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export function IssueCredentialForm({
   open,
   onOpenChange,
@@ -164,9 +171,14 @@ export function IssueCredentialForm({
         errors[field.key] = `${field.label} is required`;
       }
     }
+    // Validate email format if provided
+    const emailTrimmed = recipientEmail.trim();
+    if (emailTrimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed)) {
+      errors._recipient_email = 'Invalid email format';
+    }
     setMetadataErrors(errors);
     return Object.keys(errors).length === 0;
-  }, [templateFields, metadataValues]);
+  }, [templateFields, metadataValues, recipientEmail]);
 
   const buildMetadata = useCallback((): Record<string, unknown> | null => {
     const entries: Record<string, unknown> = {};
@@ -182,7 +194,7 @@ export function IssueCredentialForm({
       if (value) {
         if (field.type === 'number') {
           const num = Number(value);
-          if (!isNaN(num)) entries[field.key] = num;
+          if (!Number.isNaN(num)) entries[field.key] = num;
         } else {
           entries[field.key] = value;
         }
@@ -294,14 +306,7 @@ export function IssueCredentialForm({
     resetForm();
   }, [resetForm]);
 
-  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating;
-
-  // Format file size for display
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
+  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating && !templateLoading;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -369,24 +374,21 @@ export function IssueCredentialForm({
               </div>
 
               {/* Dynamic metadata fields from template (UF-05) */}
-              {credentialType && (
+              {credentialType && templateLoading && (
+                <div className="text-sm text-muted-foreground py-2">
+                  {METADATA_FIELD_LABELS.LOADING_TEMPLATE}
+                </div>
+              )}
+              {credentialType && !templateLoading && templateFields.length > 0 && (
                 <>
-                  {templateLoading ? (
-                    <div className="text-sm text-muted-foreground py-2">
-                      {METADATA_FIELD_LABELS.LOADING_TEMPLATE}
-                    </div>
-                  ) : templateFields.length > 0 ? (
-                    <>
-                      <Separator />
-                      <MetadataFieldRenderer
-                        fields={templateFields}
-                        values={metadataValues}
-                        onChange={handleMetadataChange}
-                        disabled={creating}
-                        errors={metadataErrors}
-                      />
-                    </>
-                  ) : null}
+                  <Separator />
+                  <MetadataFieldRenderer
+                    fields={templateFields}
+                    values={metadataValues}
+                    onChange={handleMetadataChange}
+                    disabled={creating}
+                    errors={metadataErrors}
+                  />
                 </>
               )}
 

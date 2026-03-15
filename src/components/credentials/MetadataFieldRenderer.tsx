@@ -112,7 +112,7 @@ function MetadataField({
       ) : (
         <Input
           id={labelId}
-          type={field.type === 'date' ? 'date' : field.type === 'number' ? 'number' : 'text'}
+          type={field.type === 'text' ? 'text' : field.type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           disabled={disabled}

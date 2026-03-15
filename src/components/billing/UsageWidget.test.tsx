@@ -141,4 +141,20 @@ describe('UsageWidget', () => {
     renderWidget(true);
     expect(screen.getByText('Upgrade Plan')).toBeInTheDocument();
   });
+
+  it('fires toast warning at 80% usage', async () => {
+    const { toast } = await import('sonner');
+    mockEntitlements.percentUsed = 80;
+    mockEntitlements.isNearLimit = true;
+    renderWidget();
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('80%'));
+  });
+
+  it('fires toast warning at 100% usage', async () => {
+    const { toast } = await import('sonner');
+    mockEntitlements.percentUsed = 100;
+    mockEntitlements.isNearLimit = true;
+    renderWidget();
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('limit reached'));
+  });
 });

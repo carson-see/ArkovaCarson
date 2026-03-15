@@ -34,7 +34,7 @@ export function CredentialCard({ anchor }: Readonly<CredentialCardProps>) {
   return (
     <div className="glass-card rounded-xl p-4 shadow-card-rest hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 animate-in-view">
       <div className="flex items-start gap-3">
-        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 shrink-0">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 shrink-0">
           <Award className="h-4 w-4 text-primary" />
         </div>
         <div className="flex-1 min-w-0">

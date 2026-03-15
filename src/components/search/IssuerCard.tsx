@@ -11,6 +11,7 @@ import { Building2, Award, ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { SEARCH_LABELS } from '@/lib/copy';
+import { issuerRegistryPath } from '@/lib/routes';
 import type { IssuerResult } from '@/hooks/usePublicSearch';
 
 interface IssuerCardProps {
@@ -20,7 +21,7 @@ interface IssuerCardProps {
 export function IssuerCard({ issuer }: Readonly<IssuerCardProps>) {
   return (
     <Link
-      to={`/issuer/${issuer.org_id}`}
+      to={issuerRegistryPath(issuer.org_id)}
       className="glass-card rounded-xl p-5 shadow-card-rest hover:shadow-card-hover hover:-translate-y-0.5 transition-all duration-300 animate-in-view group"
     >
       <div className="flex items-start gap-4">

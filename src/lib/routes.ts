@@ -75,3 +75,8 @@ export function verifyPath(publicId: string): string {
 export function recordDetailPath(id: string): string {
   return `/records/${id}`;
 }
+
+/** Build an issuer registry URL for a given org ID */
+export function issuerRegistryPath(orgId: string): string {
+  return `/issuer/${orgId}`;
+}

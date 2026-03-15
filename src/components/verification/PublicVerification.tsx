@@ -41,6 +41,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
+import { issuerRegistryPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 
@@ -286,7 +287,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 <span className="font-medium">{data.issuer_name}</span>
               </div>
               <a
-                href={`/issuer/${data.org_id}`}
+                href={issuerRegistryPath(data.org_id)}
                 className="text-xs text-primary hover:underline"
               >
                 {VERIFICATION_DISPLAY_LABELS.VIEW_ISSUER_REGISTRY}

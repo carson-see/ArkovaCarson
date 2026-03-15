@@ -4,7 +4,7 @@
  * @see UF-07
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { VerifierProofDownload } from './VerifierProofDownload';
 
