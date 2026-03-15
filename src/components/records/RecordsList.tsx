@@ -1,7 +1,7 @@
 /**
  * Records List Component
  *
- * Displays a list of secured documents with status and actions.
+ * Refined list with hover transitions, status glows, and polished typography.
  */
 
 import { FileText, CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, GraduationCap } from 'lucide-react';
@@ -15,7 +15,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Skeleton } from '@/components/ui/skeleton';
 
 export interface Record {
   id: string;
@@ -68,7 +67,7 @@ export function RecordsList({
 }: Readonly<RecordsListProps>) {
   if (loading) {
     return (
-      <div className="divide-y">
+      <div className="divide-y divide-border/60">
         {Array.from({ length: 3 }).map((_, idx) => (
           <RecordSkeleton key={`skeleton-${idx}`} />
         ))}
@@ -81,7 +80,7 @@ export function RecordsList({
   }
 
   return (
-    <div className="divide-y">
+    <div className="divide-y divide-border/60">
       {records.map((record) => (
         <RecordRow
           key={record.id}
@@ -107,27 +106,33 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
   const StatusIcon = status.icon;
 
   return (
-    <div className="flex items-center gap-4 py-4 px-2 hover:bg-muted/50 transition-colors">
-      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-        <FileText className="h-5 w-5 text-muted-foreground" />
+    <div
+      className="group flex items-center gap-4 py-4 px-3 -mx-1 rounded-lg hover:bg-muted/40 transition-all duration-200 cursor-pointer"
+      onClick={onView}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') onView(); }}
+    >
+      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-muted/70 shrink-0 group-hover:bg-primary/8 transition-colors duration-200">
+        <FileText className="h-5 w-5 text-muted-foreground group-hover:text-primary/70 transition-colors duration-200" />
       </div>
 
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <p className="text-sm font-medium truncate">
+        <div className="flex items-center gap-2.5 mb-1">
+          <p className="text-sm font-semibold truncate group-hover:text-primary transition-colors duration-200">
             {record.filename}
           </p>
-          <Badge variant={status.variant} className="shrink-0">
+          <Badge variant={status.variant} className="shrink-0 text-[0.65rem] px-2 py-0.5">
             <StatusIcon className="mr-1 h-3 w-3" />
             {status.label}
           </Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <p className="text-xs text-muted-foreground font-mono truncate">
+        <div className="flex items-center gap-2.5">
+          <p className="text-[0.7rem] text-muted-foreground font-mono truncate opacity-70">
             {record.fingerprint.slice(0, 16)}...{record.fingerprint.slice(-8)}
           </p>
           {record.credentialType && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-1 text-[0.7rem] text-muted-foreground">
               <GraduationCap className="h-3 w-3" />
               {CREDENTIAL_TYPE_LABELS[record.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? record.credentialType}
             </span>
@@ -136,28 +141,33 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
       </div>
 
       <div className="text-right hidden sm:block shrink-0">
-        <p className="text-sm text-muted-foreground">
+        <p className="text-xs font-medium text-muted-foreground">
           {formatDate(record.createdAt)}
         </p>
-        <p className="text-xs text-muted-foreground">
+        <p className="text-[0.65rem] text-muted-foreground/60 mt-0.5">
           {formatFileSize(record.fileSize)}
         </p>
       </div>
 
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="shrink-0">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="shrink-0 h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
             <MoreHorizontal className="h-4 w-4" />
             <span className="sr-only">Actions</span>
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onClick={onView}>
+        <DropdownMenuContent align="end" className="animate-scale-in">
+          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onView(); }}>
             <Eye className="mr-2 h-4 w-4" />
             View Record
           </DropdownMenuItem>
           {record.status === 'SECURED' && (
-            <DropdownMenuItem onClick={onDownload}>
+            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDownload(); }}>
               <Download className="mr-2 h-4 w-4" />
               Download Proof
             </DropdownMenuItem>
@@ -166,7 +176,7 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
             <>
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={onRevoke}
+                onClick={(e) => { e.stopPropagation(); onRevoke(); }}
                 className="text-destructive focus:text-destructive"
               >
                 <XCircle className="mr-2 h-4 w-4" />
@@ -182,13 +192,13 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
 
 function RecordSkeleton() {
   return (
-    <div className="flex items-center gap-4 py-4 px-2">
-      <Skeleton className="h-10 w-10 rounded-lg" />
-      <div className="flex-1 space-y-2">
-        <Skeleton className="h-4 w-48" />
-        <Skeleton className="h-3 w-32" />
+    <div className="flex items-center gap-4 py-4 px-3">
+      <div className="h-10 w-10 rounded-xl shimmer" />
+      <div className="flex-1 space-y-2.5">
+        <div className="h-4 w-48 rounded shimmer" />
+        <div className="h-3 w-32 rounded shimmer" />
       </div>
-      <Skeleton className="h-8 w-8" />
+      <div className="h-8 w-8 rounded shimmer" />
     </div>
   );
 }

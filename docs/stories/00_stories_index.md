@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-14_
+_Last updated: 2026-03-14 ~3:00 PM EST_
 
 ## Overview
 
@@ -28,13 +28,14 @@ For a new developer joining the project, read in this order:
 | P4-E2 | Credential Metadata | 3 | 3 | 0 | 0 | [05_p4e2_credential_metadata.md](./05_p4e2_credential_metadata.md) |
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 5 | 1 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
-| P7 | Go-Live | 13 | 9 | 2 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
+| P7 | Go-Live | 13 | 10 | 1 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 0 | 0 | 13 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
-| DH | Deferred Hardening | 12 | 1 | 0 | 11 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 4 | 0 | 23 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| DH | Deferred Hardening | 12 | 3 | 0 | 9 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
+| MVP | Launch Gaps | 27 | 8 | 0 | 19 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 0 | 0 | 19 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 0 | 5 | 3 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
-| **Total** | | **124** | **46** | **8** | **70** | |
+| UAT | Bug Fix Sprints (5+6) | 17 | 0 | 0 | 17 | [14_uat_sprints.md](./14_uat_sprints.md) |
+| **Total** | | **141** | **52** | **8** | **81** | |
 
 ### All Stories by ID
 
@@ -73,7 +74,7 @@ For a new developer joining the project, read in this order:
 | P6-TS-05 | PDF Audit Report (jsPDF) | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P6-TS-06 | verification_events Table + RPC | COMPLETE | [P6](./07_p6_verification.md) | — |
 | P7-TS-01 | Billing Schema (migration 0016) | COMPLETE | [P7](./08_p7_go_live.md) | — |
-| P7-TS-02 | Stripe Checkout Flow | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-3 |
+| P7-TS-02 | Stripe Checkout Flow | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-3~~ RESOLVED |
 | P7-TS-03 | Stripe Webhook Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-05 | Bitcoin Chain Client | PARTIAL | [P7](./08_p7_go_live.md) | CRIT-2 |
 | P7-TS-07 | Proof Package Download | COMPLETE | [P7](./08_p7_go_live.md) | ~~CRIT-5~~ FIXED |
@@ -102,9 +103,9 @@ For a new developer joining the project, read in this order:
 | DH-04 | Outbound Webhook Circuit Breaker | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-05 | Chain Index Lookup Cache TTL | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-06 | ConfirmAnchorModal Server-Side Quota Error Handling | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-07 | MempoolFeeEstimator Request Timeout | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| DH-07 | MempoolFeeEstimator Request Timeout | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-08 | Rate Limiting for check_anchor_quota RPC | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
-| DH-09 | UtxoProvider Retry Logic | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
+| DH-09 | UtxoProvider Retry Logic | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-10 | useEntitlements Realtime Subscription | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-11 | Worker RPC Logging Structured Format | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
 | DH-12 | Webhook Delivery Dead Letter Queue | NOT STARTED | [DH](./10_deferred_hardening.md) | — |
@@ -114,11 +115,11 @@ For a new developer joining the project, read in this order:
 | MVP-04 | Brand Assets (Logo, Favicon, OG Tags) | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~BUG-AUDIT-03~~ FIXED |
 | MVP-05 | Error Boundary + 404 Page | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-06 | File-Based Public Verification | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-07 | Mobile Responsive Layout | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-08 | Onboarding Progress Stepper | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-09 | Records Pagination + Search | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-07 | Mobile Responsive Layout | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-08 | Onboarding Progress Stepper | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-09 | Records Pagination + Search | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-10 | Marketing Website (arkova.ai) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-11 | Stripe Plan Change/Downgrade | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | CRIT-3 |
+| MVP-11 | Stripe Plan Change/Downgrade | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~CRIT-3~~ RESOLVED |
 | MVP-12 | Dark Mode Toggle | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-13 | Organization Logo Upload | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-14 | Embeddable Verification Widget | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
@@ -174,7 +175,7 @@ See [docs/bugs/bug_log.md](../bugs/bug_log.md) for full details on all bugs (inc
 | Bug ID | Severity | Affects Stories | Summary |
 |--------|----------|-----------------|---------|
 | CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client CODE COMPLETE — operational items only (AWS KMS provisioning, mainnet funding). Signet E2E broadcast verified (TX b8e381df). |
-| CRIT-3 | HIGH | P7-TS-02 | Stripe checkout PARTIAL — checkout/portal/webhooks done. Remaining: plan change/downgrade flows (→ MVP-11). |
+| ~~CRIT-3~~ | ~~HIGH~~ | ~~P7-TS-02~~ | ~~RESOLVED 2026-03-14 (PR #43). Plan change/downgrade via Billing Portal. Webhook plan change detection. All entitlement enforcement in place.~~ |
 | ~~BUG-AUDIT-01~~ | ~~HIGH~~ | ~~MVP-02~~ | ~~RESOLVED 2026-03-14 — All mutation hooks now have toast notifications (PR #36 + copy.ts constants).~~ |
 
 ### Resolved Bugs
@@ -235,3 +236,4 @@ Each story doc follows a consistent template:
 | 2026-03-12 ~11:30 AM EST | Added P8 AI Intelligence group (19 stories, P8-S1 through P8-S19). Removed MVP-19 (superseded by P8-S4/S5) and MVP-22 (superseded by P8-S7/S8/S9). Renamed MVP-23 → Batch Anchor Processing, MVP-24 → Credits Schema + Monthly Allocations. MVP count 29→27. Total: 116 stories (41 complete, 3 partial, 72 not started). |
 | 2026-03-13 | Production database deployment: all 51 migrations applied to production Supabase, Stripe Price IDs set, seed data loaded, `database.types.ts` regenerated, Vercel env vars configured and redeployed. No story status changes — infrastructure milestone. |
 | 2026-03-14 | Full doc sync audit. MVP-03 → COMPLETE (legal pages exist + routed). MVP-04 → COMPLETE (PR #30). MVP-05 → COMPLETE (ErrorBoundary + NotFoundPage exist + routed + Sentry wired). MVP-02 → PARTIAL (Sonner + toasts in 3 hooks, missing 4 hooks). INFRA-02/03/04/05 → PARTIAL (scaffolding + real logic exists). INFRA-07 → PARTIAL (Sentry fully integrated, source maps not yet uploaded). INFRA-08 → PARTIAL (migration 0051 exists). DH totals fixed (1 complete, was showing 0). BUG-AUDIT-02/03 moved to Resolved. Overall: 45 complete, 9 partial, 70 not started. |
+| 2026-03-14 ~3:00 PM EST | Status reconciliation. MVP-07 → COMPLETE (PR #43, mobile responsive layout). MVP-08 → COMPLETE (PR #44, onboarding stepper). MVP-09 → COMPLETE (PR #44, records pagination + search). MVP-11 → COMPLETE (PR #43, Stripe plan change/downgrade). DH-07 → COMPLETE (PR #38, fee timeout). DH-09 → COMPLETE (PR #39, UTXO retry). CRIT-3 → RESOLVED (plan change/downgrade done). MVP-02 → COMPLETE (all hooks have toasts). Overall: 52 complete, 8 partial, 64 not started (~42%). |

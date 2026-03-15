@@ -1,5 +1,5 @@
 # 10 — Deferred Hardening Stories
-_Last updated: 2026-03-12 ~5:00 AM EST_
+_Last updated: 2026-03-14 ~3:00 PM EST_
 
 ## Overview
 
@@ -7,9 +7,9 @@ These stories were identified during CodeRabbit review of PR #26 (CRIT-2 + CRIT-
 
 | Status | Count |
 |--------|-------|
-| Complete | 1 |
+| Complete | 3 |
 | Partial | 0 |
-| Not Started | 11 |
+| Not Started | 9 |
 
 ---
 
@@ -124,18 +124,19 @@ Graceful handling of server-side P0002 (quota_exceeded) errors from `bulk_create
 
 ## DH-07: MempoolFeeEstimator Request Timeout
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on `services/worker/src/chain/fee-estimator.ts`
+**Completed:** 2026-03-14 (PR #38)
 
 ### What It Delivers
 Configurable request timeout for `MempoolFeeEstimator` API calls to prevent hanging requests blocking the anchor processing pipeline.
 
 ### Acceptance Criteria
-- [ ] `AbortController` with configurable timeout (default 5s)
-- [ ] Timeout falls back to static fee rate
-- [ ] Structured log on timeout with URL and duration
-- [ ] Test for timeout behavior
+- [x] `AbortController` with configurable timeout (default 5s)
+- [x] Timeout falls back to static fee rate
+- [x] Structured log on timeout with URL and duration
+- [x] Test for timeout behavior (+23 tests in fee-estimator.test.ts)
 
 ---
 
@@ -157,19 +158,20 @@ Rate limiting on the `check_anchor_quota()` RPC to prevent abuse (e.g., polling 
 
 ## DH-09: UtxoProvider Retry Logic
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Source:** CodeRabbit PR #26, comment on `services/worker/src/chain/utxo-provider.ts`
+**Completed:** 2026-03-14 (PR #39)
 
 ### What It Delivers
 Retry with exponential backoff for `UtxoProvider` API calls (both RPC and Mempool.space) to handle transient network failures gracefully.
 
 ### Acceptance Criteria
-- [ ] 3 retries with exponential backoff (1s, 2s, 4s)
-- [ ] Only retry on transient errors (5xx, network timeout)
-- [ ] Do not retry on 4xx (bad request, not found)
-- [ ] Structured logging for each retry attempt
-- [ ] Tests with mock transient failures
+- [x] 3 retries with exponential backoff (1s, 2s, 4s) with jitter
+- [x] Only retry on transient errors (5xx, network timeout)
+- [x] Do not retry on 4xx (bad request, not found)
+- [x] Structured logging for each retry attempt
+- [x] Tests with mock transient failures (+17 tests in utxo-provider.test.ts)
 
 ---
 

@@ -1,7 +1,7 @@
 /**
  * Header Component
  *
- * Top navigation bar with user menu.
+ * Glassmorphism top bar with refined user menu.
  */
 
 import { LogOut, User, Settings, ChevronDown } from 'lucide-react';
@@ -34,61 +34,61 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
   const initials = getInitials(displayName);
 
   return (
-    <header className="flex h-16 items-center justify-between border-b bg-background px-6">
+    <header className="flex h-14 items-center justify-between border-b glass-header px-6 sticky top-0 z-10">
       {/* Page title area - can be dynamic */}
       <div>
-        <h1 className="text-lg font-semibold text-foreground">Dashboard</h1>
+        <h1 className="text-sm font-semibold text-foreground tracking-tight">Dashboard</h1>
       </div>
 
       {/* User menu */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" className="flex items-center gap-2 px-2">
+          <Button variant="ghost" className="flex items-center gap-2.5 px-2 h-9 rounded-full hover:bg-muted/80 transition-all duration-200">
             {profileLoading ? (
               <>
-                <Skeleton className="h-8 w-8 rounded-full" />
-                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-7 w-7 rounded-full" />
+                <Skeleton className="h-3.5 w-20" />
               </>
             ) : (
               <>
-                <Avatar className="h-8 w-8">
+                <Avatar className="h-7 w-7 ring-2 ring-primary/10">
                   <AvatarImage src={profile?.avatar_url || undefined} alt={displayName} />
-                  <AvatarFallback className="bg-primary/10 text-primary text-xs">
+                  <AvatarFallback className="bg-gradient-to-br from-primary/20 to-primary/5 text-primary text-[0.65rem] font-semibold">
                     {initials}
                   </AvatarFallback>
                 </Avatar>
                 <span className="hidden text-sm font-medium md:inline-block">
                   {displayName}
                 </span>
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                <ChevronDown className="h-3.5 w-3.5 text-muted-foreground/60" />
               </>
             )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuContent align="end" className="w-56 animate-scale-in">
           <DropdownMenuLabel>
             <div className="flex flex-col space-y-1">
               <p className="text-sm font-medium">{displayName}</p>
               {user?.email && (
-                <p className="text-xs text-muted-foreground">{user.email}</p>
+                <p className="text-xs text-muted-foreground font-normal">{user.email}</p>
               )}
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem>
-            <User className="mr-2 h-4 w-4" />
+          <DropdownMenuItem className="gap-2.5">
+            <User className="h-4 w-4 text-muted-foreground" />
             Profile
           </DropdownMenuItem>
-          <DropdownMenuItem>
-            <Settings className="mr-2 h-4 w-4" />
+          <DropdownMenuItem className="gap-2.5">
+            <Settings className="h-4 w-4 text-muted-foreground" />
             Settings
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={onSignOut}
-            className="text-destructive focus:text-destructive"
+            className="text-destructive focus:text-destructive gap-2.5"
           >
-            <LogOut className="mr-2 h-4 w-4" />
+            <LogOut className="h-4 w-4" />
             Sign out
           </DropdownMenuItem>
         </DropdownMenuContent>

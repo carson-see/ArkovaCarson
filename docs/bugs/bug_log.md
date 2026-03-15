@@ -1,5 +1,31 @@
 # Arkova Bug Log
-_Last updated: 2026-03-12 ~6:00 AM EST | Active bugs: 5 | Resolved: 15_
+_Last updated: 2026-03-15 ~12:00 PM EST | Active bugs: 22 (5 existing + 17 UAT) | Resolved: 15_
+
+## UAT Bug Bounty — 2026-03-15
+
+17 bugs discovered during comprehensive UAT testing. Full report: [uat_2026_03_15.md](./uat_2026_03_15.md). Sprint plans: [14_uat_sprints.md](../stories/14_uat_sprints.md).
+
+| ID | Severity | Summary | Sprint | Status |
+|----|----------|---------|--------|--------|
+| BUG-UAT-01 | CRITICAL | Mobile sidebar does not auto-collapse | 5 | OPEN |
+| BUG-UAT-02 | CRITICAL | Console auth errors on every page load | 5 | OPEN |
+| BUG-UAT-03 | CRITICAL | `/billing` route inaccessible | 5 | OPEN |
+| BUG-UAT-04 | HIGH | Header always says "Dashboard" | 5 | OPEN |
+| BUG-UAT-05 | HIGH | "Help" sidebar link dead end | 5 | OPEN |
+| BUG-UAT-06 | HIGH | User avatar dropdown does nothing | 5 | OPEN |
+| BUG-UAT-07 | HIGH | Record card status badges overlap dates | 5 | OPEN |
+| BUG-UAT-08 | HIGH | Org records table missing columns | 5 | OPEN |
+| BUG-UAT-09 | HIGH | Redundant profile API calls (8+/load) | 5 | OPEN |
+| BUG-UAT-10 | MEDIUM | Secure Document button overlaps subtitle | 6 | OPEN |
+| BUG-UAT-11 | MEDIUM | Stat cards stacked vertically on desktop | 6 | OPEN |
+| BUG-UAT-12 | MEDIUM | Tablet viewport clips content | 6 | OPEN |
+| BUG-UAT-13 | MEDIUM | Account Type dual labels confusing | 6 | OPEN |
+| BUG-UAT-14 | MEDIUM | Seed data visible in prod-like env | 6 | OPEN |
+| BUG-UAT-15 | LOW | No "Forgot Password" link | 6 | OPEN |
+| BUG-UAT-16 | LOW | No loading states during data fetch | 6 | OPEN |
+| BUG-UAT-17 | LOW | QR code URL shows localhost | 6 | OPEN |
+
+---
 
 ## Layman's Summary
 

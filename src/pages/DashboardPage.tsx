@@ -26,6 +26,7 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { IDENTITY_LABELS } from '@/lib/copy';
 
@@ -91,18 +92,18 @@ export function DashboardPage() {
       profileLoading={profileLoading}
       onSignOut={handleSignOut}
     >
-      {/* Welcome section */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">
+      {/* Welcome section — stagger 1 */}
+      <div className="mb-10 animate-in-view stagger-1">
+        <h1 className="text-heading-lg font-bold tracking-tight">
           Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}
         </h1>
-        <p className="text-muted-foreground mt-1">
+        <p className="text-muted-foreground mt-1.5 text-sm">
           Manage and verify your secured documents
         </p>
       </div>
 
-      {/* Stats grid */}
-      <div className="grid gap-4 md:grid-cols-3 mb-8">
+      {/* Stats grid — stagger 2 */}
+      <div className="grid gap-5 grid-cols-1 sm:grid-cols-3 mb-10 animate-in-view stagger-2">
         <StatCard
           label="Total Records"
           value={stats.total}
@@ -126,33 +127,46 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* Privacy toggle */}
-      <Card className="mb-8">
-        <CardContent className="flex items-center justify-between py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-              {isPublicProfile ? (
-                <Eye className="h-5 w-5 text-primary" />
-              ) : (
-                <EyeOff className="h-5 w-5 text-muted-foreground" />
-              )}
+      {/* Privacy toggle — stagger 3 */}
+      <Card className="mb-10 shadow-card-rest animate-in-view stagger-3">
+        <CardContent className="flex items-center justify-between py-5 px-6">
+          {profileLoading ? (
+            <div className="flex items-center gap-4 w-full">
+              <Skeleton className="h-10 w-10 rounded-xl" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <Skeleton className="h-5 w-9 rounded-full" />
             </div>
-            <div className="space-y-0.5">
-              <Label htmlFor="public-profile" className="text-sm font-medium">
-                Public Verification Profile
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                {isPublicProfile
-                  ? 'Your records can be verified by anyone with the fingerprint'
-                  : 'Only you can access your verification records'}
-              </p>
-            </div>
-          </div>
-          <Switch
-            id="public-profile"
-            checked={isPublicProfile}
-            onCheckedChange={handleTogglePublicProfile}
-          />
+          ) : (
+            <>
+              <div className="flex items-center gap-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/8">
+                  {isPublicProfile ? (
+                    <Eye className="h-5 w-5 text-primary" />
+                  ) : (
+                    <EyeOff className="h-5 w-5 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  <Label htmlFor="public-profile" className="text-sm font-semibold">
+                    Public Verification Profile
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    {isPublicProfile
+                      ? 'Your records can be verified by anyone with the fingerprint'
+                      : 'Only you can access your verification records'}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="public-profile"
+                checked={isPublicProfile}
+                onCheckedChange={handleTogglePublicProfile}
+              />
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -166,17 +180,25 @@ export function DashboardPage() {
         </Alert>
       )}
 
-      {/* Records section */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <CardTitle className="text-lg font-semibold">My Records</CardTitle>
-          <Button onClick={() => setSecureDialogOpen(true)}>
+      {/* Records section — stagger 4 */}
+      <Card className="shadow-card-rest animate-in-view stagger-4">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4 px-6">
+          <div>
+            <CardTitle className="text-lg font-semibold tracking-tight">My Records</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {stats.total > 0 ? `${stats.total} document${stats.total !== 1 ? 's' : ''} secured` : 'No documents yet'}
+            </p>
+          </div>
+          <Button
+            onClick={() => setSecureDialogOpen(true)}
+            className="shadow-glow-sm hover:shadow-glow-md transition-all duration-300"
+          >
             <Plus className="mr-2 h-4 w-4" />
             Secure Document
           </Button>
         </CardHeader>
         <Separator />
-        <CardContent className="pt-0">
+        <CardContent className="pt-0 px-6">
           {!loading && records.length === 0 ? (
             <EmptyState
               title="No records yet"
@@ -196,48 +218,48 @@ export function DashboardPage() {
         </CardContent>
       </Card>
 
-      {/* Account info */}
+      {/* Account info — stagger 5 */}
       {profile && (
-        <Card className="mt-6">
-          <CardContent className="py-4 space-y-4">
+        <Card className="mt-6 shadow-card-rest animate-in-view stagger-5">
+          <CardContent className="py-5 px-6 space-y-4">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+              <div className="flex items-center gap-4">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
                   <Shield className="h-5 w-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium">Account Type</p>
-                  <p className="text-sm text-muted-foreground">
-                    {profile.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Individual'}
+                  <p className="text-sm font-semibold">Account Type</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {profile.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Individual Account'}
                   </p>
                 </div>
               </div>
-              {profile.org_id && (
-                <Badge variant="secondary">Organization Member</Badge>
-              )}
+              <Badge variant="secondary" className="text-xs font-medium">
+                {profile.role === 'ORG_ADMIN' ? 'Org Admin' : 'Individual'}
+              </Badge>
             </div>
             {profile.public_id && (
               <>
                 <Separator />
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">{IDENTITY_LABELS.USER_ID}</p>
+                    <p className="text-sm font-semibold">{IDENTITY_LABELS.USER_ID}</p>
                     <p className="text-xs text-muted-foreground">{IDENTITY_LABELS.USER_ID_DESC}</p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <code className="text-sm font-mono bg-muted rounded px-2 py-1">
+                    <code className="text-xs font-mono bg-muted/80 rounded-md px-2.5 py-1.5 text-muted-foreground">
                       {profile.public_id}
                     </code>
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
+                      className="h-8 w-8 hover:bg-primary/10 transition-colors duration-200"
                       onClick={handleCopyId}
                     >
                       {copiedId ? (
-                        <Check className="h-4 w-4 text-green-600" />
+                        <Check className="h-3.5 w-3.5 text-success" />
                       ) : (
-                        <Copy className="h-4 w-4" />
+                        <Copy className="h-3.5 w-3.5 text-muted-foreground" />
                       )}
                       <span className="sr-only">Copy User ID</span>
                     </Button>

@@ -292,13 +292,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           <CardContent className="flex flex-col items-center gap-4">
             <div className="rounded-lg border bg-white p-4">
               <QRCodeSVG
-                value={`${location.origin}${verifyPath(anchor.publicId)}`}
+                value={`${import.meta.env.VITE_APP_URL || location.origin}${verifyPath(anchor.publicId)}`}
                 size={180}
                 level="M"
               />
             </div>
             <p className="text-xs text-muted-foreground text-center">
-              {location.origin}{verifyPath(anchor.publicId)}
+              {import.meta.env.VITE_APP_URL || location.origin}{verifyPath(anchor.publicId)}
             </p>
           </CardContent>
         </Card>

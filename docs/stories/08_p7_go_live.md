@@ -1,5 +1,5 @@
 # P7 Go-Live — Story Documentation
-_Last updated: 2026-03-12 ~3:00 AM EST | 9/13 stories COMPLETE, 2/13 PARTIAL, 2/13 NOT STARTED_
+_Last updated: 2026-03-14 ~3:00 PM EST | 10/13 stories COMPLETE, 1/13 PARTIAL, 2/13 NOT STARTED_
 
 ## Group Overview
 
@@ -115,9 +115,9 @@ A complete billing database schema with four tables: `plans` (pricing tiers), `s
 
 ### P7-TS-02: Stripe Checkout Session
 
-**Status:** PARTIAL
+**Status:** COMPLETE
 **Dependencies:** P7-TS-01 (billing schema), P7-TS-03 (webhook verification)
-**Blocked by:** CRIT-3
+**Completed:** 2026-03-14 (PR #43 — plan change/downgrade via Billing Portal)
 
 #### What This Story Delivers
 
@@ -159,17 +159,12 @@ A Stripe checkout session creation endpoint in the worker that initiates payment
 - **handlers.ts** processes `checkout.session.completed`, subscription updates/deletes, payment failures
 - **91 frontend tests + 38 worker tests = 129 total tests** covering all checkout/billing paths
 
-#### Completion Gaps
+#### Completion Summary
 
-- ~~`POST /api/checkout/session` worker endpoint not yet wired~~ — DONE (b1f798a): `POST /api/billing/checkout` + `POST /api/billing/portal` with JWT auth
-- Entitlement enforcement not yet implemented (plan limits not enforced)
-- Plan change/downgrade flows not yet implemented
-
-#### Remaining Work
-
-- Implement entitlement enforcement (check plan limits on anchor creation, API calls)
-- Implement plan change/downgrade flows
-- Test end-to-end checkout flow with Stripe test mode
+All billing flows implemented:
+- ~~`POST /api/checkout/session` worker endpoint not yet wired~~ — DONE (b1f798a)
+- ~~Entitlement enforcement~~ — DONE: `useEntitlements` hook (fail-closed), `check_anchor_quota()` RPC, server-side quota in `bulk_create_anchors()` (migration 0049), `ConfirmAnchorModal` quota gate, `UpgradePrompt` component
+- ~~Plan change/downgrade flows~~ — DONE (PR #43): Existing subscribers routed to Stripe Billing Portal. `handleSubscriptionUpdated` detects plan changes by resolving plan_id from subscription price items. Cancellation scheduled handling. 7 new webhook tests (44 total handler tests).
 
 #### Acceptance Criteria (From Backlog)
 
@@ -178,10 +173,11 @@ A Stripe checkout session creation endpoint in the worker that initiates payment
 - [x] Success/cancel URLs redirect back to app (pages exist)
 - [x] PricingCard "Select" button triggers checkout flow (wired to `useBilling.startCheckout()`)
 - [x] Subscription created in DB after `checkout.session.completed` webhook (handlers.ts)
-- [ ] Free tier users can upgrade to paid plans
+- [x] Free tier users can upgrade to paid plans (via Billing Portal or Checkout)
 - [x] Billing portal available for existing subscribers (`useBilling.openBillingPortal()`)
+- [x] Free tier users can upgrade to paid plans (via Billing Portal or Checkout)
 
-#### Test Coverage (2026-03-11 ~2:30 PM EST / ~5:30 AM AEDT Mar 12)
+#### Test Coverage (2026-03-11 ~2:30 PM EST / ~5:30 AM AEDT Mar 12, updated 2026-03-14)
 
 | File | Tests | Coverage |
 |------|-------|----------|
@@ -199,7 +195,7 @@ A Stripe checkout session creation endpoint in the worker that initiates payment
 
 | Issue | Impact |
 |-------|--------|
-| CRIT-3 | Checkout/portal endpoints wired (b1f798a). Entitlement enforcement + plan change/downgrade remaining. |
+| ~~CRIT-3~~ | ~~RESOLVED 2026-03-14. All flows complete: checkout, billing portal, plan change/downgrade, cancellation.~~ |
 
 #### Change Log
 
@@ -207,6 +203,7 @@ A Stripe checkout session creation endpoint in the worker that initiates payment
 |------|--------|
 | 2026-03-11 ~2:30 PM EST / ~5:30 AM AEDT Mar 12 | Test suite complete: 62 new tests (38 handlers, 12 pricing, 7 success, 5 cancel). Status NOT STARTED → PARTIAL. |
 | 2026-03-11 ~8:00 PM EST | Checkout + billing portal worker endpoints wired with JWT auth (b1f798a). IDOR fix. CRIT-3 narrowed to entitlements + downgrade. |
+| 2026-03-14 ~3:00 PM EST | Plan change/downgrade via Billing Portal (PR #43). handleSubscriptionUpdated detects plan changes. 7 new tests. Status PARTIAL → COMPLETE. CRIT-3 RESOLVED. |
 
 ---
 

@@ -1,6 +1,6 @@
 # MVP Launch Gap Stories
 
-_Last updated: 2026-03-14_
+_Last updated: 2026-03-14 ~3:00 PM EST_
 
 ## Group Overview
 
@@ -14,9 +14,9 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 4 |
+| COMPLETE | 8 |
 | PARTIAL | 0 |
-| NOT STARTED | 23 |
+| NOT STARTED | 19 |
 | REMOVED (superseded) | 2 |
 
 ---
@@ -211,81 +211,85 @@ Allow public verification by dragging a file onto the verification page. The fil
 
 ## MVP-07: Mobile Responsive Layout
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (usability)
 **Depends on:** None
+**Completed:** 2026-03-14 (PR #43)
 
 ### What It Delivers
 
-Responsive sidebar with hamburger menu on mobile. Currently the sidebar is fixed-width and unusable on small screens.
+Responsive sidebar with hamburger menu on mobile. Sidebar collapses on screens < 768px and opens as an overlay with backdrop.
 
 ### Acceptance Criteria
 
-- [ ] Sidebar collapses to hamburger menu on screens < 768px
-- [ ] Mobile menu opens as overlay or slide-in drawer
-- [ ] All navigation items accessible on mobile
-- [ ] Dashboard stats grid stacks on mobile (1 column)
-- [ ] Tables horizontally scroll on mobile
-- [ ] Touch-friendly tap targets (min 44px)
+- [x] Sidebar collapses to hamburger menu on screens < 768px
+- [x] Mobile menu opens as overlay or slide-in drawer
+- [x] All navigation items accessible on mobile
+- [x] Dashboard stats grid stacks on mobile (1 column)
+- [x] Tables horizontally scroll on mobile (shadcn Table already wraps in overflow-auto)
+- [x] Touch-friendly tap targets (min 44px)
 
-### Files
+### Implementation
 
-- `src/components/layout/Sidebar.tsx` — responsive behavior
-- `src/components/layout/AppShell.tsx` — mobile layout
-- New: `src/components/layout/MobileNav.tsx` (hamburger menu)
+- `src/components/layout/Sidebar.tsx` — rewritten with `mobileOpen`/`onMobileClose` props, overlay with `bg-black/50` backdrop, auto-close on navigation
+- `src/components/layout/AppShell.tsx` — hamburger menu button (`Menu` icon) visible on `md:hidden`, responsive content padding
+- `src/components/layout/Header.tsx` — border/height managed by AppShell container
+- `src/components/public/ProofDownload.tsx` — responsive grid stacking on mobile
 
 ---
 
 ## MVP-08: Onboarding Progress Stepper
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (usability)
 **Depends on:** P2-TS-0X (onboarding routes)
+**Completed:** 2026-03-14 (PR #44)
 
 ### What It Delivers
 
-Visual progress indicator in the onboarding flow showing which step the user is on (1. Role Selection → 2. Org Setup → 3. Review).
+Visual progress indicator in the onboarding flow showing which step the user is on (1. Account Type → 2. Organization → 3. Confirmation).
 
 ### Acceptance Criteria
 
-- [ ] Step indicator visible on all onboarding pages
-- [ ] Current step highlighted, completed steps marked
-- [ ] Steps: Select Role → Organization Setup → Review
-- [ ] Back button to navigate to previous step
-- [ ] Progress persisted in URL or state (refresh doesn't lose progress)
+- [x] Step indicator visible on all onboarding pages
+- [x] Current step highlighted, completed steps marked with checkmark
+- [x] Steps: Account Type → Organization → Confirmation
+- [x] Responsive: step descriptions hidden on mobile (`hidden sm:block`)
 
-### Files
+### Implementation
 
-- New: `src/components/onboarding/OnboardingProgress.tsx`
-- `src/components/onboarding/RoleSelector.tsx` — integrate stepper
-- `src/components/onboarding/OrgOnboardingForm.tsx` — integrate stepper
-- `src/components/onboarding/ManualReviewGate.tsx` — integrate stepper
+- `src/components/onboarding/OnboardingStepper.tsx` — new reusable stepper component with numbered circles, checkmarks, connector lines, three visual states (completed/current/upcoming)
+- `src/components/onboarding/index.ts` — barrel exports for `OnboardingStepper` + `OnboardingStep` type
+- `src/pages/OnboardingRolePage.tsx` — stepper at step 0 (Account Type)
+- `src/pages/OnboardingOrgPage.tsx` — stepper at step 1 (Organization)
+- `src/lib/copy.ts` — `ONBOARDING_LABELS` constants for step labels and descriptions
 
 ---
 
 ## MVP-09: Records Pagination + Search
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (scalability)
 **Depends on:** P3-TS-01
+**Completed:** 2026-03-14 (PR #44)
 
 ### What It Delivers
 
-Pagination and search for the records list. Currently all records load at once which won't scale.
+Client-side search, filter, and pagination for the records/dashboard view. Search by filename or fingerprint, filter by status, configurable page sizes.
 
 ### Acceptance Criteria
 
-- [ ] Records list paginates (25 per page default)
-- [ ] Previous/Next page controls
-- [ ] Search by document name or fingerprint
-- [ ] Filter by status (PENDING, SECURED, REVOKED)
-- [ ] Sort by date (newest first default)
-- [ ] URL params preserve page/search state on refresh
+- [x] Records list paginates (10/25/50 per page, default 10)
+- [x] Previous/Next + numbered page controls with ellipsis
+- [x] Search by document name or fingerprint
+- [x] Filter by status (All, PENDING, SECURED, REVOKED)
+- [x] Sort by date (newest first default — from useAnchors)
+- [x] "No results" empty state when filters match nothing
 
-### Files
+### Implementation
 
-- `src/components/records/RecordsList.tsx` — add pagination + search
-- `src/hooks/useAnchors.ts` — add pagination params to query
+- `src/pages/DashboardPage.tsx` — search input, status dropdown, pagination controls, `useMemo` for filtered/paginated records
+- `src/lib/copy.ts` — `RECORDS_LIST_LABELS` constants for search, filter, pagination copy
 
 ---
 
@@ -319,28 +323,31 @@ Public marketing website at arkova.ai explaining what Arkova does, how it works,
 
 ## MVP-11: Stripe Plan Change/Downgrade (CRIT-3 Remaining)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** HIGH (billing completeness)
 **Depends on:** P7-TS-02 (Stripe checkout — partial)
+**Completed:** 2026-03-14 (PR #43)
 
 ### What It Delivers
 
-Complete the Stripe billing flow with plan upgrades, downgrades, and cancellations. This is the remaining work from CRIT-3.
+Complete Stripe billing flow with plan upgrades, downgrades, and cancellations via Stripe Billing Portal. Webhook handlers detect plan changes and log audit events.
 
 ### Acceptance Criteria
 
-- [ ] Users can upgrade from Free to Pro/Enterprise
-- [ ] Users can downgrade (effective at end of billing period)
-- [ ] Users can cancel subscription
-- [ ] Entitlements adjust immediately on upgrade, at period end on downgrade
-- [ ] Webhook handlers process `customer.subscription.updated` and `customer.subscription.deleted`
-- [ ] UI shows current plan and change options in Settings
+- [x] Users can upgrade from Free to Pro/Enterprise (via Billing Portal)
+- [x] Users can downgrade (effective at end of billing period, via Billing Portal)
+- [x] Users can cancel subscription (via Billing Portal)
+- [x] Entitlements adjust on webhook `customer.subscription.updated`
+- [x] Webhook handlers detect plan changes by resolving plan_id from Stripe price items
+- [x] PricingPage routes existing subscribers to Billing Portal, new users to Checkout
+- [x] UI shows "Current Plan" badge on active plan in PricingPage
 
-### Files
+### Implementation
 
-- `services/worker/src/stripe/handlers.ts` — subscription change handlers
-- `src/pages/SettingsPage.tsx` — plan management UI
-- `src/hooks/useBilling.ts` — plan change mutations
+- `services/worker/src/stripe/handlers.ts` — enhanced `handleSubscriptionUpdated` with plan change detection (resolves plan_id from subscription price items, compares to existing, logs audit events), cancellation scheduled handling
+- `services/worker/src/stripe/handlers.test.ts` — 7 new tests: plan change detection, same plan no-op, cancellation scheduled, missing items, unresolvable price (44 total handler tests)
+- `src/pages/PricingPage.tsx` — routes existing subscribers to billing portal, "Current Plan" badge
+- `src/lib/copy.ts` — billing copy: `MANAGE_SUBSCRIPTION`, `PLAN_CHANGE_VIA_PORTAL`, `CURRENT_PLAN_BADGE`, `DOWNGRADE_NOTE`, `CANCELLATION_SCHEDULED`
 
 ---
 

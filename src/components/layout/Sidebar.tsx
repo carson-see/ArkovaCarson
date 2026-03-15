@@ -1,7 +1,7 @@
 /**
  * Sidebar Navigation Component
  *
- * Professional sidebar with navigation links.
+ * Dark, atmospheric sidebar with glow active states and refined typography.
  */
 
 import { useState } from 'react';
@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import {
   Tooltip,
   TooltipContent,
@@ -56,26 +55,31 @@ export function Sidebar({ className }: Readonly<SidebarProps>) {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'flex flex-col border-r bg-sidebar transition-all duration-300',
+          'flex flex-col sidebar-gradient border-r border-sidebar-border transition-all duration-300 ease-out',
           collapsed ? 'w-16' : 'w-64',
           className
         )}
       >
-        {/* Logo */}
+        {/* Logo area */}
         <div className={cn(
-          'flex h-16 items-center border-b px-4',
-          collapsed ? 'justify-center' : 'gap-3'
+          'flex h-16 items-center border-b border-sidebar-border',
+          collapsed ? 'justify-center px-2' : 'gap-3 px-5'
         )}>
-          <ArkovaLogo size={36} />
+          <ArkovaLogo size={collapsed ? 28 : 32} />
           {!collapsed && (
-            <span className="text-lg font-semibold text-sidebar-foreground">
+            <span className="text-lg font-semibold tracking-tight text-white">
               Arkova
             </span>
           )}
         </div>
 
         {/* Main Navigation */}
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-1 px-3 pt-5 pb-3">
+          {!collapsed && (
+            <p className="text-[0.625rem] font-medium uppercase tracking-[0.1em] text-sidebar-foreground/40 mb-3 px-3">
+              Navigation
+            </p>
+          )}
           {mainNavItems.map((item) => (
             <SidebarNavLink
               key={item.label}
@@ -86,10 +90,11 @@ export function Sidebar({ className }: Readonly<SidebarProps>) {
           ))}
         </nav>
 
-        <Separator className="mx-3" />
+        {/* Separator with subtle gradient */}
+        <div className="mx-4 h-px bg-gradient-to-r from-transparent via-sidebar-border to-transparent" />
 
         {/* Secondary Navigation */}
-        <nav className="space-y-1 p-3">
+        <nav className="space-y-1 px-3 py-4">
           {secondaryNavItems.map((item) => (
             <SidebarNavLink
               key={item.label}
@@ -101,14 +106,14 @@ export function Sidebar({ className }: Readonly<SidebarProps>) {
         </nav>
 
         {/* Collapse Toggle */}
-        <div className="border-t p-3">
+        <div className="border-t border-sidebar-border p-3">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setCollapsed(!collapsed)}
             className={cn(
-              'w-full justify-center',
-              !collapsed && 'justify-start'
+              'w-full text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-all duration-200',
+              collapsed ? 'justify-center' : 'justify-start'
             )}
           >
             {collapsed ? (
@@ -116,7 +121,7 @@ export function Sidebar({ className }: Readonly<SidebarProps>) {
             ) : (
               <>
                 <ChevronLeft className="h-4 w-4 mr-2" />
-                <span>Collapse</span>
+                <span className="text-sm">Collapse</span>
               </>
             )}
           </Button>
@@ -139,14 +144,17 @@ function SidebarNavLink({ item, collapsed, active }: Readonly<SidebarNavLinkProp
     <Link
       to={item.to}
       className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+        'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200',
         active
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+          ? 'bg-sidebar-accent text-white nav-glow'
+          : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/40 hover:text-sidebar-foreground',
         collapsed && 'justify-center px-2'
       )}
     >
-      <Icon className="h-4 w-4 shrink-0" />
+      <Icon className={cn(
+        'h-[18px] w-[18px] shrink-0 transition-colors duration-200',
+        active ? 'text-arkova-steel' : 'text-sidebar-foreground/50 group-hover:text-sidebar-foreground/80'
+      )} />
       {!collapsed && <span>{item.label}</span>}
     </Link>
   );
@@ -155,7 +163,7 @@ function SidebarNavLink({ item, collapsed, active }: Readonly<SidebarNavLinkProp
     return (
       <Tooltip>
         <TooltipTrigger asChild>{link}</TooltipTrigger>
-        <TooltipContent side="right">
+        <TooltipContent side="right" className="font-medium">
           {item.label}
         </TooltipContent>
       </Tooltip>

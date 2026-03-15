@@ -105,14 +105,14 @@ export function MyRecordsPage() {
       onSignOut={handleSignOut}
     >
       {/* Page header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between mb-6">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">My Records</h1>
           <p className="text-muted-foreground mt-1">
             Browse and manage all your secured documents
           </p>
         </div>
-        <Button onClick={() => setSecureDialogOpen(true)}>
+        <Button onClick={() => setSecureDialogOpen(true)} className="shrink-0 self-start sm:self-auto">
           <Plus className="mr-2 h-4 w-4" />
           Secure Document
         </Button>

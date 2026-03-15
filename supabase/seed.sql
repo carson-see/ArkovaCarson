@@ -4,6 +4,17 @@
 -- Updated: March 2026
 -- Story: Demo Quality / 07_seed_clickthrough.md
 --
+-- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+-- PRE-LAUNCH ACTION REQUIRED: STRIP ALL DEMO DATA BEFORE PRODUCTION LAUNCH
+-- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+--
+-- This file contains DEMO DATA ONLY for local development and sales demos.
+-- Before production launch:
+--   1. Remove ALL demo user accounts (auth.users inserts below)
+--   2. Remove ALL demo profiles, organizations, and anchors
+--   3. Keep only schema-required default rows (e.g., switchboard_flags)
+--   4. Verify with: SELECT count(*) FROM auth.users; -- should be 0
+--
 -- PURPOSE
 -- -------
 -- Hand-crafted demo records for local development and sales demos.
