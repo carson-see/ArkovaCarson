@@ -46,7 +46,6 @@ describe('logAuditEvent', () => {
       event_type: 'ANCHOR_CREATED',
       event_category: 'ANCHOR',
       actor_id: 'user-1',
-      actor_email: 'test@test.com',
       target_type: 'anchor',
       target_id: 'anchor-1',
       org_id: 'org-1',
@@ -66,7 +65,6 @@ describe('logAuditEvent', () => {
     expect(mockInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         actor_id: null,
-        actor_email: null,
       }),
     );
   });

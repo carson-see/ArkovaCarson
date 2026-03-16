@@ -38,11 +38,12 @@ export async function logAuditEvent({
       data: { user },
     } = await supabase.auth.getUser();
 
+    // GDPR Art. 5(1)(c): Never store actor_email in audit_events.
+    // actor_id UUID is sufficient; email can be looked up via JOIN when needed.
     await supabase.from('audit_events').insert({
       event_type: eventType,
       event_category: eventCategory,
       actor_id: user?.id ?? null,
-      actor_email: user?.email ?? null,
       target_type: targetType ?? null,
       target_id: targetId ?? null,
       org_id: orgId ?? null,
