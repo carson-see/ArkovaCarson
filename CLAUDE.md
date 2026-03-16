@@ -1,6 +1,6 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-15 (P8 Phase I complete — 10/19 AI stories, migration 0059)
+> **Version:** 2026-03-15 (P8 Phase 1.5 complete — 15/19 AI stories, migration 0060)
 > **Repo:** ArkovaCarson | **Branch:** main | **Deploy:** arkova-carson.vercel.app
 > **Companion files:** `HANDOFF.md` (living state — Phase 3/4 tracking), `ARCHIVE_memory.md` (historical context)
 
@@ -605,7 +605,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 59 files, versions 0001–0059 (0033 skipped). Last: `0059_ai_credits_usage.sql` (P8-S2). Migrations 0001–0058 applied to production. Migration 0059 pending (apply after P8 Phase I PR merge).
+**Current migration inventory:** 60 files, versions 0001–0060 (0033 skipped). Last: `0060_credential_embeddings.sql` (P8-S10). Migrations 0001–0058 applied to production. Migrations 0059–0060 pending (apply after P8 Phase 1.5 PR merge).
 
 ---
 
@@ -626,12 +626,12 @@ npx supabase db reset
 | P4.5 Verification API | 13/13 | 0 | 0 | 100% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
 | MVP Launch Gaps | 25/27 | 0 | 2/27 | 93% |
-| P8 AI Intelligence | 10/19 | 0 | 9/19 | 53% |
+| P8 AI Intelligence | 15/19 | 0 | 4/19 | 79% |
 | INFRA Edge & Ingress | 7/8 | 1/8 | 0/8 | 88% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
 | UF User Flow Gaps | 10/10 | 0 | 0 | 100% |
 | GEO SEO Optimization | 4/12 | 3/12 | 5/12 | 33% |
-| **Total** | **141/163** | **4/163** | **18/163** | **~86%** |
+| **Total** | **146/163** | **4/163** | **13/163** | **~90%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -771,21 +771,26 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 **Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
-### P8 AI Intelligence — 10/19 COMPLETE, 9/19 NOT STARTED
+### P8 AI Intelligence — 15/19 COMPLETE, 4/19 NOT STARTED
 
-19 stories for AI-powered document intelligence. Phase I (6 stories) + 4 infrastructure stories complete:
+19 stories for AI-powered document intelligence. Phase I (6 stories) + Phase 1.5 (5 stories) + 4 infrastructure stories complete:
 - ~~P8-S1~~ ✅ Gemini API Integration — `GeminiProvider` implementing `IAIProvider`, structured JSON output, retry + circuit breaker, Zod schemas, prompt templates. 13 tests.
 - ~~P8-S2~~ ✅ AI Cost Tracking — Migration 0059 (`ai_credits` + `ai_usage_events`), `cost-tracker.ts`, `check_ai_credits`/`deduct_ai_credits` RPCs, `GET /api/v1/ai/usage`. 17 tests.
 - ~~P8-S3~~ ✅ AI Feature Flags — `ENABLE_AI_EXTRACTION`, `ENABLE_SEMANTIC_SEARCH`, `ENABLE_AI_FRAUD` in switchboard + seed SQL. `aiFeatureGate.ts` middleware. 17 tests.
 - ~~P8-S4~~ ✅ AI Extraction Service — `POST /api/v1/ai/extract` endpoint. PII-stripped metadata in → structured fields out. Credit check + deduction. Feature flag gate. Audit logging. 6 tests.
 - ~~P8-S5~~ ✅ AI Extraction UI — `ocrWorker.ts` (PDF.js + Tesseract.js), `aiExtraction.ts` (orchestrator: OCR → stripPII → API → render), `AIFieldSuggestions.tsx` (confidence badges, accept/reject/edit). 18 tests.
 - ~~P8-S7~~ ✅ Cloudflare Crawler (institution ingestion) — `services/edge/src/institution-crawler.ts`, 5 tests
+- ~~P8-S10~~ ✅ pgvector Embedding Schema — Migration 0060 (`credential_embeddings` table, HNSW index, org-scoped RLS, 2 SECURITY DEFINER RPCs).
+- ~~P8-S11~~ ✅ Embedding Generation Pipeline — `embeddings.ts` service + `POST /api/v1/ai/embed` + batch endpoint. Credit check/deduction, source text hashing. 18 tests.
+- ~~P8-S12~~ ✅ Semantic Search UI — `GET /api/v1/ai/search` endpoint + `SemanticSearch` component + `useSemanticSearch` hook. Nordic Vault aesthetic. 20 tests.
 - ~~P8-S13~~ ✅ Batch AI Processing (Cloudflare Queues) — `services/edge/src/batch-queue.ts`, 4 tests
+- ~~P8-S14~~ ✅ Batch AI Dashboard — `BatchAIDashboard` component with glass-card, shimmer, auto-refresh. 5 tests.
 - ~~P8-S15~~ ✅ R2 Report Storage (zero-egress signed URLs) — `services/edge/src/report-generator.ts`, 4 tests
 - ~~P8-S17~~ ✅ AI Provider Abstraction (IAIProvider + factory) — `services/worker/src/ai/`, 16 tests
 - ~~P8-S18~~ ✅ Client-Side PII Stripping — `piiStripper.ts` with `stripPII()`. Regex for SSN, phone, email, DOB, student ID, name matching. Returns `StrippingReport`. 27 tests.
+- ~~P8-S19~~ ✅ Agentic Verification Endpoint — `GET /api/v1/verify/search` with frozen schema results, API key auth, similarity scores. 5 tests.
 
-Remaining 9 stories NOT STARTED (Phase 1.5 + Phase II). See `docs/stories/12_p8_ai_intelligence.md` for full details.
+Remaining 4 stories NOT STARTED (Phase II). See `docs/stories/12_p8_ai_intelligence.md` for full details.
 
 ### INFRA Edge & Ingress — 7/8 COMPLETE, 1/8 PARTIAL, 0/8 NOT STARTED
 
@@ -1076,5 +1081,5 @@ AI_PROVIDER=mock                   # gemini | cloudflare | replicate | mock
 
 ---
 
-_Directive version: 2026-03-15 (P8 Phase I COMPLETE — 6 AI stories) | Repo: ArkovaCarson | 59 migrations | 1,538+ tests | 163 stories (141 complete, 86%)_
+_Directive version: 2026-03-15 (P8 Phase 1.5 COMPLETE — 15 AI stories) | Repo: ArkovaCarson | 60 migrations | 1,586+ tests | 163 stories (146 complete, 90%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

@@ -53,7 +53,9 @@ export async function checkAICredits(
   userId?: string,
 ): Promise<CreditBalance | null> {
   try {
-    const { data, error } = await db.rpc('check_ai_credits', {
+    // New RPCs not yet in generated types — use any bypass
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db.rpc as any)('check_ai_credits', {
       p_org_id: orgId ?? null,
       p_user_id: userId ?? null,
     });
@@ -62,7 +64,8 @@ export async function checkAICredits(
       return null;
     }
 
-    const row = Array.isArray(data) ? data[0] : data;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const row: any = Array.isArray(data) ? data[0] : data;
     return {
       monthlyAllocation: row.monthly_allocation,
       usedThisMonth: row.used_this_month,
@@ -85,7 +88,8 @@ export async function deductAICredits(
   amount: number = 1,
 ): Promise<boolean> {
   try {
-    const { data, error } = await db.rpc('deduct_ai_credits', {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db.rpc as any)('deduct_ai_credits', {
       p_org_id: orgId ?? null,
       p_user_id: userId ?? null,
       p_amount: amount,
@@ -109,7 +113,9 @@ export async function deductAICredits(
  */
 export async function logAIUsageEvent(event: UsageEvent): Promise<void> {
   try {
-    const { error } = await db.from('ai_usage_events').insert({
+    // New table not yet in generated types — use any bypass
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any).from('ai_usage_events').insert({
       org_id: event.orgId ?? null,
       user_id: event.userId ?? null,
       event_type: event.eventType,

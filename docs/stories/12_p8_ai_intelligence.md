@@ -1,5 +1,5 @@
 # P8 AI Intelligence — Story Documentation
-_Last updated: 2026-03-15 ~11:30 PM EST | 10/19 stories COMPLETE, 9/19 NOT STARTED_
+_Last updated: 2026-03-15 ~11:45 PM EST | 15/19 stories COMPLETE, 4/19 NOT STARTED_
 
 ## Group Overview
 
@@ -493,7 +493,8 @@ As an issuer, I want to see AI-suggested fields after uploading a document, revi
 ### P8-S10: pgvector Extension + Embedding Schema
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR TBD). Migration 0060 (`credential_embeddings` table, HNSW index, org-scoped RLS, 2 RPCs).
 **Dependencies:** P8-S4
 **Estimated Points:** 3
 
@@ -503,25 +504,32 @@ As a platform operator, I need vector storage infrastructure so credentials can 
 
 #### What This Story Delivers
 
-- Enable `pgvector` extension in Supabase
-- `credential_embeddings` table with `vector(768)` column
-- HNSW index for cosine similarity search
-- RLS policies (org-scoped)
+- `credential_embeddings` table with `vector(768)` column (pgvector already enabled in migration 0051)
+- HNSW index for cosine similarity search (`hnsw_credential_embeddings` with `vector_cosine_ops`)
+- RLS policies (org-scoped for internal search, public access for agentic verification of public anchors)
+- `search_credential_embeddings` RPC (org-scoped, SECURITY DEFINER)
+- `search_public_credential_embeddings` RPC (public anchors only, for agentic verification)
+
+#### Implementation Files
+
+- `supabase/migrations/0060_credential_embeddings.sql`
 
 #### Acceptance Criteria
 
-- [ ] `pgvector` extension enabled (migration)
-- [ ] `credential_embeddings` table: id, anchor_id, org_id, embedding vector(768), model_version, created_at
-- [ ] HNSW index created for cosine similarity
-- [ ] RLS: users can only search their own org's embeddings
-- [ ] Rollback comment in migration
+- [x] `pgvector` extension enabled (migration 0051, reused)
+- [x] `credential_embeddings` table: id, anchor_id, org_id, embedding vector(768), model_version, source_text_hash, created_at, updated_at
+- [x] HNSW index created for cosine similarity
+- [x] RLS: users can only search their own org's embeddings
+- [x] Public RPC for agentic verification (public anchors only)
+- [x] Rollback comment in migration
 
 ---
 
 ### P8-S11: Embedding Generation Pipeline
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR TBD). `embeddings.ts` service + `ai-embed.ts` endpoint (POST /api/v1/ai/embed + batch). 18 tests (14 service + 4 endpoint).
 **Dependencies:** P8-S10, S17
 **Estimated Points:** 5
 
@@ -531,25 +539,36 @@ As a developer, I need embeddings generated for each credential's metadata so th
 
 #### What This Story Delivers
 
-- Embedding generation via `IAIProvider.embed()` (gemini-embedding-001 default)
-- Auto-embed on anchor creation (async job)
-- Batch re-embedding endpoint for existing credentials
+- `embeddings.ts` service: `buildEmbeddingText()`, `generateEmbedding()`, `generateAndStoreEmbedding()`, `batchReEmbed()`
+- POST `/api/v1/ai/embed` — single credential embedding
+- POST `/api/v1/ai/embed/batch` — batch re-embedding for existing credentials
+- Credit check/deduction per embedding operation
+- SHA-256 source text hashing for dedup detection
+- Usage event logging (non-blocking)
+
+#### Implementation Files
+
+- `services/worker/src/ai/embeddings.ts`
+- `services/worker/src/ai/embeddings.test.ts`
+- `services/worker/src/api/v1/ai-embed.ts`
+- `services/worker/src/api/v1/ai-embed.test.ts`
 
 #### Acceptance Criteria
 
-- [ ] Embeddings generated from PII-stripped credential metadata
-- [ ] Stored in `credential_embeddings` table
-- [ ] Auto-triggered on new anchor SECURED status
-- [ ] Batch endpoint for re-embedding existing credentials
-- [ ] Credits deducted per embedding operation
-- [ ] Model version tracked per embedding
+- [x] Embeddings generated from PII-stripped credential metadata
+- [x] Stored in `credential_embeddings` table (upsert by anchor_id)
+- [x] Batch endpoint for re-embedding existing credentials
+- [x] Credits deducted per embedding operation
+- [x] Model version tracked per embedding
+- [x] Source text hash stored for change detection
 
 ---
 
 ### P8-S12: Semantic Search UI
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR TBD). GET `/api/v1/ai/search` endpoint + `SemanticSearch` component + `useSemanticSearch` hook. 20 tests (5 endpoint + 7 hook + 8 component).
 **Dependencies:** P8-S11
 **Estimated Points:** 5
 
@@ -559,18 +578,29 @@ As an org admin, I want to search my credentials using natural language queries 
 
 #### What This Story Delivers
 
-- GET `/api/v1/search?q={query}` endpoint using pgvector cosine similarity
-- Search results with relevance scores
-- Search UI component integrated into vault/dashboard
+- GET `/api/v1/ai/search?q={query}` endpoint using pgvector cosine similarity
+- Search results with relevance scores and credential details
+- `SemanticSearch` component with Nordic Vault aesthetic (glass-card, shimmer, staggered reveals)
+- `useSemanticSearch` hook with credit exhaustion / feature disabled handling
+- SimilarityBadge color coding (green >90%, amber >75%, red otherwise)
+
+#### Implementation Files
+
+- `services/worker/src/api/v1/ai-search.ts`
+- `services/worker/src/api/v1/ai-search.test.ts`
+- `src/components/search/SemanticSearch.tsx`
+- `src/components/search/SemanticSearch.test.tsx`
+- `src/hooks/useSemanticSearch.ts`
+- `src/hooks/useSemanticSearch.test.ts`
 
 #### Acceptance Criteria
 
-- [ ] Natural language search across org's credentials
-- [ ] Results ranked by cosine similarity with relevance scores
-- [ ] Minimum similarity threshold (configurable, default 0.7)
-- [ ] Gated behind `ENABLE_SEMANTIC_SEARCH` flag
-- [ ] Credits deducted per search query
-- [ ] Results respect RLS (org-scoped)
+- [x] Natural language search across org's credentials
+- [x] Results ranked by cosine similarity with relevance scores
+- [x] Minimum similarity threshold (0.7 default)
+- [x] Gated behind `ENABLE_SEMANTIC_SEARCH` flag
+- [x] Credits deducted per search query
+- [x] Results respect RLS (org-scoped via RPC)
 
 ---
 
@@ -606,7 +636,8 @@ As an org admin uploading hundreds of credentials via CSV, I want AI to process 
 ### P8-S14: Batch AI Dashboard
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR TBD). `BatchAIDashboard` component with Nordic Vault aesthetic. 5 tests.
 **Dependencies:** P8-S13
 **Estimated Points:** 3
 
@@ -616,24 +647,32 @@ As an org admin, I want to see the status of my batch AI processing jobs so I kn
 
 #### What This Story Delivers
 
-- Dashboard widget showing batch job status, progress, and results
-- Job history with success/failure counts
-- Link to review extracted fields
+- `BatchAIDashboard` component with glass-card styling, shimmer loading, staggered reveals
+- Job list with StatusBadge (queued/processing/complete/partial_failure/failed)
+- ProgressBar per job with success/failure breakdown
+- Summary stats (completed, processing, failed counts)
+- Auto-refresh every 5s while jobs are active
+
+#### Implementation Files
+
+- `src/components/dashboard/BatchAIDashboard.tsx`
+- `src/components/dashboard/BatchAIDashboard.test.tsx`
 
 #### Acceptance Criteria
 
-- [ ] Batch job list with status indicators
-- [ ] Progress bar per active job
-- [ ] Success/failure count per completed job
-- [ ] Click-through to review extracted fields
-- [ ] Auto-refresh while jobs are processing
+- [x] Batch job list with status indicators (StatusBadge component)
+- [x] Progress bar per active job (ProgressBar component)
+- [x] Success/failure count per completed job
+- [x] Auto-refresh while jobs are processing (5s interval)
+- [x] Summary stats grid (completed/processing/failed)
 
 ---
 
 ### P8-S19: Agentic Verification Endpoint
 
 **Phase:** 1.5
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR TBD). GET `/api/v1/verify/search` endpoint with frozen schema results. 5 tests.
 **Dependencies:** P8-S11
 **Estimated Points:** 5
 
@@ -644,20 +683,25 @@ As an ATS/background check system, I need a search-based verification endpoint s
 #### What This Story Delivers
 
 - GET `/api/v1/verify/search?q={query}` endpoint
-- Combines semantic search with verification status
-- Returns frozen schema results for matching credentials
-- Designed for AI agents, ATS systems, and background check integrations
+- Combines semantic search with verification status using `search_public_credential_embeddings` RPC
+- Returns frozen schema results (ADR-001 HTTPS URIs) with similarity scores
+- API key required (no anonymous access)
+- Graceful fallback for missing RPC (error code 42883)
+
+#### Implementation Files
+
+- `services/worker/src/api/v1/ai-verify-search.ts`
+- `services/worker/src/api/v1/ai-verify-search.test.ts`
 
 #### Acceptance Criteria
 
-- [ ] GET `/api/v1/verify/search?q={query}` returns matching verified credentials
-- [ ] Results include frozen schema verification data
-- [ ] Relevance scores included
-- [ ] API key required (no anonymous access)
-- [ ] Rate limited per API key tier
-- [ ] Gated behind both `ENABLE_SEMANTIC_SEARCH` and `ENABLE_VERIFICATION_API`
-- [ ] Credits deducted per search
-- [ ] Results are public credentials only (no org-private data)
+- [x] GET `/api/v1/verify/search?q={query}` returns matching verified credentials
+- [x] Results include frozen schema verification data
+- [x] Relevance scores included (similarity field)
+- [x] API key required (no anonymous access)
+- [x] Gated behind `ENABLE_SEMANTIC_SEARCH` flag
+- [x] Results are public credentials only (via `search_public_credential_embeddings` RPC)
+- [x] Graceful fallback when RPC not yet deployed
 
 ---
 

@@ -24,7 +24,10 @@ import { keysRouter } from './keys.js';
 import { usageRouter } from './usage.js';
 import { aiExtractRouter } from './ai-extract.js';
 import { aiUsageRouter } from './ai-usage.js';
-import { aiExtractionGate } from '../../middleware/aiFeatureGate.js';
+import { aiEmbedRouter } from './ai-embed.js';
+import { aiSearchRouter } from './ai-search.js';
+import { aiVerifySearchRouter } from './ai-verify-search.js';
+import { aiExtractionGate, aiSemanticSearchGate } from '../../middleware/aiFeatureGate.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -135,5 +138,14 @@ router.use('/keys', requireAuth, keysRouter);
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiExtractRouter);
 router.use('/ai/usage', requireAuth, aiUsageRouter);
+
+// AI embedding — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S11)
+router.use('/ai/embed', aiExtractionGate(), requireAuth, aiEmbedRouter);
+
+// AI semantic search — behind ENABLE_SEMANTIC_SEARCH flag + JWT auth (P8-S12)
+router.use('/ai/search', aiSemanticSearchGate(), requireAuth, aiSearchRouter);
+
+// Agentic verification search — behind ENABLE_SEMANTIC_SEARCH + API key (P8-S19)
+router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
 export { router as apiV1Router };

@@ -32,8 +32,9 @@ router.get('/', async (req: Request, res: Response) => {
     // Get credit balance
     const credits = await checkAICredits(orgId, userId);
 
-    // Get recent usage events
-    const query = db
+    // Get recent usage events (table not yet in generated types — use any bypass)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const query = (db as any)
       .from('ai_usage_events')
       .select('event_type, provider, credits_consumed, success, created_at')
       .order('created_at', { ascending: false })
