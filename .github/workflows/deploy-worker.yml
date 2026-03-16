@@ -96,8 +96,8 @@ jobs:
             --min-instances 0 \
             --max-instances 3 \
             --timeout 300 \
-            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest" \
-            --set-env-vars "NODE_ENV=production,LOG_LEVEL=info,BITCOIN_NETWORK=signet,ENABLE_PROD_NETWORK_ANCHORING=false,USE_MOCKS=false,FRONTEND_URL=https://arkova-carson.vercel.app" \
+            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest" \
+            --set-env-vars "NODE_ENV=production,LOG_LEVEL=info,BITCOIN_NETWORK=testnet4,ENABLE_PROD_NETWORK_ANCHORING=true,USE_MOCKS=false,FRONTEND_URL=https://arkova-carson.vercel.app,AI_PROVIDER=gemini,ENABLE_AI_EXTRACTION=true,ENABLE_SEMANTIC_SEARCH=true" \
             --quiet
 
       - name: Verify deployment health
