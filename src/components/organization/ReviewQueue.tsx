@@ -23,14 +23,15 @@ import { useReviewQueue } from '@/hooks/useReviewQueue';
 import type { ReviewAction, ReviewStatus } from '@/hooks/useReviewQueue';
 import { IntegrityScoreBadge } from '@/components/anchor/IntegrityScoreBadge';
 import { toast } from 'sonner';
+import { REVIEW_QUEUE_LABELS } from '@/lib/copy';
 
 const STATUS_FILTERS: { value: ReviewStatus | 'ALL'; label: string }[] = [
   { value: 'ALL', label: 'All' },
-  { value: 'PENDING', label: 'Pending' },
-  { value: 'INVESTIGATING', label: 'Investigating' },
-  { value: 'ESCALATED', label: 'Escalated' },
-  { value: 'APPROVED', label: 'Approved' },
-  { value: 'DISMISSED', label: 'Dismissed' },
+  { value: 'PENDING', label: REVIEW_QUEUE_LABELS.PENDING },
+  { value: 'INVESTIGATING', label: REVIEW_QUEUE_LABELS.INVESTIGATING },
+  { value: 'ESCALATED', label: REVIEW_QUEUE_LABELS.ESCALATED },
+  { value: 'APPROVED', label: REVIEW_QUEUE_LABELS.APPROVED },
+  { value: 'DISMISSED', label: REVIEW_QUEUE_LABELS.DISMISSED },
 ];
 
 const ACTION_CONFIG: Record<ReviewAction, {
@@ -41,25 +42,25 @@ const ACTION_CONFIG: Record<ReviewAction, {
 }> = {
   APPROVE: {
     icon: CheckCircle2,
-    label: 'Approve',
+    label: REVIEW_QUEUE_LABELS.ACTION_APPROVE,
     color: 'text-green-600 hover:bg-green-50',
     confirm: 'Approve this credential?',
   },
   INVESTIGATE: {
     icon: Search,
-    label: 'Investigate',
+    label: REVIEW_QUEUE_LABELS.ACTION_INVESTIGATE,
     color: 'text-amber-600 hover:bg-amber-50',
     confirm: 'Mark for investigation?',
   },
   ESCALATE: {
     icon: ArrowUpCircle,
-    label: 'Escalate',
+    label: REVIEW_QUEUE_LABELS.ACTION_ESCALATE,
     color: 'text-red-600 hover:bg-red-50',
     confirm: 'Escalate this item?',
   },
   DISMISS: {
     icon: XCircle,
-    label: 'Dismiss',
+    label: REVIEW_QUEUE_LABELS.ACTION_DISMISS,
     color: 'text-muted-foreground hover:bg-muted/50',
     confirm: 'Dismiss this flag?',
   },

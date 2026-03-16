@@ -211,7 +211,7 @@ CREATE TRIGGER trg_review_queue_updated_at
 CREATE TABLE ai_reports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  requested_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
+  requested_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   report_type TEXT NOT NULL CHECK (report_type IN ('integrity_summary', 'extraction_accuracy', 'credential_analytics', 'compliance_overview')),
   status report_status NOT NULL DEFAULT 'QUEUED',
   title TEXT NOT NULL,
@@ -247,6 +247,6 @@ CREATE INDEX idx_ai_reports_org_status
 -- SEED: Add ENABLE_AI_REPORTS flag to switchboard
 -- =============================================================================
 
-INSERT INTO switchboard_flags (id, value, description)
+INSERT INTO switchboard_flags (flag_key, enabled, description)
 VALUES ('ENABLE_AI_REPORTS', false, 'Enable AI report generation (P8-S16)')
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (flag_key) DO NOTHING;

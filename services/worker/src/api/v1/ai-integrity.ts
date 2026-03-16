@@ -43,14 +43,32 @@ router.post('/compute', async (req: Request, res: Response) => {
   }
 
   try {
-    // Get org_id from profile
+    // Get org_id from profile — fail closed
     const { data: profile } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    const orgId = profile?.org_id ?? undefined;
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
+    const orgId = profile.org_id;
+
+    // Verify anchor belongs to user's org
+    const { data: anchor } = await db
+      .from('anchors')
+      .select('org_id')
+      .eq('id', parsed.data.anchorId)
+      .single();
+
+    if (!anchor || anchor.org_id !== orgId) {
+      res.status(404).json({ error: 'Anchor not found' });
+      return;
+    }
+
     const result = await computeIntegrityScore(parsed.data.anchorId, orgId);
     const stored = await upsertIntegrityScore(parsed.data.anchorId, orgId, result);
 
@@ -97,8 +115,26 @@ router.get('/:anchorId', async (req: Request, res: Response) => {
   }
 
   try {
+    // Get org_id from profile — fail closed
+    const { data: profile } = await db
+      .from('profiles')
+      .select('org_id')
+      .eq('id', userId)
+      .single();
+
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
     const score = await getIntegrityScore(anchorId);
     if (!score) {
+      res.status(404).json({ error: 'No integrity score found for this anchor' });
+      return;
+    }
+
+    // Verify the score belongs to user's org — return 404 to avoid leaking existence
+    if (score.orgId !== profile.org_id) {
       res.status(404).json({ error: 'No integrity score found for this anchor' });
       return;
     }

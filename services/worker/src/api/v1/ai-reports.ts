@@ -90,8 +90,8 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const limit = parseInt(req.query.limit as string, 10) || 20;
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = Math.max(0, parseInt(req.query.limit as string, 10) || 20);
+    const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
 
     const reports = await listReports(profile.org_id, Math.min(limit, 100), offset);
     res.json({ reports });
@@ -116,21 +116,22 @@ router.get('/:reportId', async (req: Request, res: Response) => {
   }
 
   try {
-    const report = await getReport(reportId);
-    if (!report) {
-      res.status(404).json({ error: 'Report not found' });
-      return;
-    }
-
-    // Verify org membership
+    // Get profile org FIRST, then do org-scoped lookup
     const { data: profile } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    if (profile?.org_id !== report.orgId) {
-      res.status(403).json({ error: 'Access denied' });
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
+    const report = await getReport(reportId);
+    // Return 404 for any not-found OR unauthorized — avoids leaking existence
+    if (!report || report.orgId !== profile.org_id) {
+      res.status(404).json({ error: 'Report not found' });
       return;
     }
 

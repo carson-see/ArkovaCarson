@@ -9,6 +9,7 @@
 
 import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
 import type { IntegrityLevel } from '@/hooks/useIntegrityScore';
+import { INTEGRITY_LABELS } from '@/lib/copy';
 
 interface IntegrityScoreBadgeProps {
   score: number;
@@ -30,28 +31,28 @@ const LEVEL_CONFIG: Record<IntegrityLevel, {
     bg: 'bg-green-50',
     border: 'border-green-200',
     icon: ShieldCheck,
-    label: 'High Integrity',
+    label: INTEGRITY_LABELS.SCORE_HIGH,
   },
   MEDIUM: {
     color: 'text-amber-700',
     bg: 'bg-amber-50',
     border: 'border-amber-200',
     icon: Shield,
-    label: 'Medium Integrity',
+    label: INTEGRITY_LABELS.SCORE_MEDIUM,
   },
   LOW: {
     color: 'text-orange-700',
     bg: 'bg-orange-50',
     border: 'border-orange-200',
     icon: ShieldQuestion,
-    label: 'Low Integrity',
+    label: INTEGRITY_LABELS.SCORE_LOW,
   },
   FLAGGED: {
     color: 'text-red-700',
     bg: 'bg-red-50',
     border: 'border-red-200',
     icon: ShieldAlert,
-    label: 'Flagged',
+    label: INTEGRITY_LABELS.SCORE_FLAGGED,
   },
 };
 

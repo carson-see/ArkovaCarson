@@ -783,6 +783,30 @@ export const INTEGRITY_LABELS = {
 } as const;
 
 // =============================================================================
+// INTEGRITY DETAIL VIEW (P8-S8)
+// =============================================================================
+
+export const INTEGRITY_DETAIL_LABELS = {
+  // Breakdown dimension labels
+  METADATA_COMPLETENESS: 'Metadata Completeness',
+  EXTRACTION_CONFIDENCE: 'Extraction Confidence',
+  ISSUER_VERIFICATION: 'Issuer Verification',
+  DUPLICATE_CHECK: 'Duplicate Check',
+  TEMPORAL_CONSISTENCY: 'Temporal Consistency',
+  // Flag labels
+  FLAG_MISSING_ISSUED_DATE: 'Missing issue date',
+  FLAG_FUTURE_ISSUED_DATE: 'Issue date is in the future',
+  FLAG_VERY_OLD_CREDENTIAL: 'Credential is over 50 years old',
+  FLAG_EXPIRY_BEFORE_ISSUED: 'Expiry date is before issue date',
+  FLAG_DUPLICATE_FINGERPRINT: 'Duplicate document fingerprint found',
+  FLAG_ISSUER_NOT_IN_REGISTRY: 'Issuer not found in registry',
+  FLAG_MISSING_ISSUER: 'Missing issuer information',
+  FLAG_ANCHOR_NOT_FOUND: 'Record not found',
+  // Status messages
+  NO_ISSUES: 'No integrity issues detected',
+} as const;
+
+// =============================================================================
 // REVIEW QUEUE (P8-S9)
 // =============================================================================
 

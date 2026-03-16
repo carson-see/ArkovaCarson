@@ -46,8 +46,8 @@ router.get('/', async (req: Request, res: Response) => {
     }
 
     const status = req.query.status as string | undefined;
-    const limit = parseInt(req.query.limit as string, 10) || 20;
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = Math.max(0, parseInt(req.query.limit as string, 10) || 20);
+    const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
 
     const items = await listReviewItems({
       orgId: profile.org_id,
@@ -74,12 +74,17 @@ router.get('/stats', async (req: Request, res: Response) => {
   try {
     const { data: profile } = await db
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', userId)
       .single();
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Admin access required to view review queue stats' });
       return;
     }
 

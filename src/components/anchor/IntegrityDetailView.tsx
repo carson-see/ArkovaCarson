@@ -10,6 +10,7 @@
 import { Shield, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
 import { IntegrityScoreBadge } from './IntegrityScoreBadge';
 import type { IntegrityScore } from '@/hooks/useIntegrityScore';
+import { INTEGRITY_DETAIL_LABELS } from '@/lib/copy';
 
 interface IntegrityDetailViewProps {
   score: IntegrityScore;
@@ -17,22 +18,22 @@ interface IntegrityDetailViewProps {
 }
 
 const BREAKDOWN_LABELS: Record<string, string> = {
-  metadataCompleteness: 'Metadata Completeness',
-  extractionConfidence: 'Extraction Confidence',
-  issuerVerification: 'Issuer Verification',
-  duplicateCheck: 'Duplicate Check',
-  temporalConsistency: 'Temporal Consistency',
+  metadataCompleteness: INTEGRITY_DETAIL_LABELS.METADATA_COMPLETENESS,
+  extractionConfidence: INTEGRITY_DETAIL_LABELS.EXTRACTION_CONFIDENCE,
+  issuerVerification: INTEGRITY_DETAIL_LABELS.ISSUER_VERIFICATION,
+  duplicateCheck: INTEGRITY_DETAIL_LABELS.DUPLICATE_CHECK,
+  temporalConsistency: INTEGRITY_DETAIL_LABELS.TEMPORAL_CONSISTENCY,
 };
 
 const FLAG_LABELS: Record<string, string> = {
-  missing_issued_date: 'Missing issue date',
-  future_issued_date: 'Issue date is in the future',
-  very_old_credential: 'Credential is over 50 years old',
-  expiry_before_issued: 'Expiry date is before issue date',
-  duplicate_fingerprint: 'Duplicate document fingerprint found',
-  issuer_not_in_registry: 'Issuer not found in registry',
-  missing_issuer: 'Missing issuer information',
-  anchor_not_found: 'Record not found',
+  missing_issued_date: INTEGRITY_DETAIL_LABELS.FLAG_MISSING_ISSUED_DATE,
+  future_issued_date: INTEGRITY_DETAIL_LABELS.FLAG_FUTURE_ISSUED_DATE,
+  very_old_credential: INTEGRITY_DETAIL_LABELS.FLAG_VERY_OLD_CREDENTIAL,
+  expiry_before_issued: INTEGRITY_DETAIL_LABELS.FLAG_EXPIRY_BEFORE_ISSUED,
+  duplicate_fingerprint: INTEGRITY_DETAIL_LABELS.FLAG_DUPLICATE_FINGERPRINT,
+  issuer_not_in_registry: INTEGRITY_DETAIL_LABELS.FLAG_ISSUER_NOT_IN_REGISTRY,
+  missing_issuer: INTEGRITY_DETAIL_LABELS.FLAG_MISSING_ISSUER,
+  anchor_not_found: INTEGRITY_DETAIL_LABELS.FLAG_ANCHOR_NOT_FOUND,
 };
 
 function getBarColor(value: number): string {
@@ -124,7 +125,7 @@ export function IntegrityDetailView({ score, onClose }: IntegrityDetailViewProps
       {score.flags.length === 0 && score.overallScore >= 80 && (
         <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-md px-3 py-1.5 border border-green-200">
           <CheckCircle2 className="h-3.5 w-3.5" />
-          <span>No integrity issues detected</span>
+          <span>{INTEGRITY_DETAIL_LABELS.NO_ISSUES}</span>
         </div>
       )}
     </div>

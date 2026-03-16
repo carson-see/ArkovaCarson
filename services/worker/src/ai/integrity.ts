@@ -153,7 +153,7 @@ export async function computeIntegrityScore(
   // Fetch anchor data
   const { data: anchor, error: anchorErr } = await db
     .from('anchors')
-    .select('id, credential_type, metadata, file_fingerprint_sha256, created_at, issued_date, expiry_date, status')
+    .select('id, credential_type, metadata, fingerprint, created_at, issued_at, expires_at, status')
     .eq('id', anchorId)
     .single();
 
@@ -180,7 +180,7 @@ export async function computeIntegrityScore(
     const { data: usageData } = await (db as any)
       .from('ai_usage_events')
       .select('confidence')
-      .eq('fingerprint', anchor.file_fingerprint_sha256)
+      .eq('fingerprint', anchor.fingerprint)
       .eq('event_type', 'extraction')
       .eq('success', true)
       .order('created_at', { ascending: false })
@@ -229,7 +229,7 @@ export async function computeIntegrityScore(
         .from('anchors')
         .select('id', { count: 'exact', head: true })
         .eq('org_id', orgId)
-        .eq('file_fingerprint_sha256', anchor.file_fingerprint_sha256)
+        .eq('fingerprint', anchor.fingerprint)
         .neq('id', anchorId);
 
       if (count && count > 0) {
@@ -244,8 +244,8 @@ export async function computeIntegrityScore(
 
   // 5. Temporal consistency
   const temporal = calculateTemporalConsistency(
-    anchor.issued_date as string | null,
-    anchor.expiry_date as string | null,
+    anchor.issued_at as string | null,
+    anchor.expires_at as string | null,
   );
   flags.push(...temporal.flags);
 

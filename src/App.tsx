@@ -278,7 +278,10 @@ export function App() {
             }
           />
 
-          {/* AI Intelligence routes — auth required, org admin (P8 Phase II) */}
+          {/* AI Intelligence routes — auth required, org admin (P8 Phase II)
+              ORG_ADMIN role is enforced server-side by the worker API endpoints
+              (ai-review.ts and ai-reports.ts both check profile.role === 'ORG_ADMIN').
+              Client-side RouteGuard ensures onboarding is complete. */}
           <Route
             path={ROUTES.REVIEW_QUEUE}
             element={

@@ -146,7 +146,7 @@ export async function listReviewItems(
       .from('review_queue_items')
       .select(`
         *,
-        anchors!inner(label, file_fingerprint_sha256, credential_type),
+        anchors!inner(label, fingerprint, credential_type),
         integrity_scores(overall_score, level)
       `)
       .eq('org_id', filters.orgId)
@@ -185,7 +185,7 @@ export async function listReviewItems(
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       anchorTitle: row.anchors?.label ?? 'Untitled',
-      anchorFingerprint: row.anchors?.file_fingerprint_sha256,
+      anchorFingerprint: row.anchors?.fingerprint,
       anchorCredentialType: row.anchors?.credential_type,
       integrityScore: row.integrity_scores?.overall_score != null
         ? Number(row.integrity_scores.overall_score) : undefined,
