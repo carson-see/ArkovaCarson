@@ -1,9 +1,11 @@
-# UAT Bug Fix Sprints — Sprint 5 & Sprint 6
-_Last updated: 2026-03-15 | Source: UAT Bug Bounty Report_
+# UAT Bug Fix Sprints — Sprint 5, Sprint 6 & Launch Readiness
+_Last updated: 2026-03-16 | Source: UAT Bug Bounty Report + UAT Launch Readiness Reports_
 
 ## Overview
 
-17 bugs discovered during comprehensive UAT testing on 2026-03-15. Split into two sprints by severity.
+17 bugs discovered during comprehensive UAT testing on 2026-03-15. Split into two sprints by severity. **All 17 resolved** (PRs #47, #48).
+
+An additional 21 bugs documented during UAT launch readiness testing on 2026-03-16 across three reports. 2 fixed immediately (auth bugs), 19 remain open. See `docs/bugs/uat_launch_readiness_{1,2,3}.md`.
 
 | Sprint | Focus | Bugs | Priority |
 |--------|-------|------|----------|

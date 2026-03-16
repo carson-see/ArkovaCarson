@@ -1,5 +1,17 @@
 # Arkova Bug Log
-_Last updated: 2026-03-16 ~11:30 AM EST | Active bugs: 1 (CRIT-2 operational) | Resolved: 36 (15 prior + 17 UAT + 4 audit)_
+_Last updated: 2026-03-16 ~6:00 PM EST | Active bugs: 21 (UAT launch readiness) + 1 (CRIT-2 operational) | Resolved: 38 (15 prior + 17 UAT S5/S6 + 4 audit + 2 UAT-LR1)_
+
+## UAT Launch Readiness Reports — 2026-03-16
+
+Three comprehensive UAT launch readiness reports documenting 21 additional bugs found during pre-launch verification:
+
+| Report | Focus | Bugs | Resolved | Open |
+|--------|-------|------|----------|------|
+| [uat_launch_readiness_1.md](./uat_launch_readiness_1.md) | Auth, onboarding, individual flows | 2 | 2 (fixed in code) | 0 |
+| [uat_launch_readiness_2.md](./uat_launch_readiness_2.md) | Org admin flows | 14 | 0 | 14 |
+| [uat_launch_readiness_3.md](./uat_launch_readiness_3.md) | Public verification, billing, treasury | 5 | 0 | 5 |
+
+**Key findings:** Revoke action not wired (UAT2-01), template metadata fields missing from issuance form (UAT2-02), DM Sans/JetBrains Mono fonts not loaded (UAT3-01), PENDING anchors show "Verification Failed" (UAT3-02).
 
 ## UAT Bug Bounty — 2026-03-15
 
@@ -35,7 +47,7 @@ _For each bug: what it means in plain English and why it matters._
 |----|------------------------------|
 | ~~CRIT-1~~ | ~~When a regular user tries to secure a document, the app **pretends** it worked (shows a fake progress bar) but never actually saves anything.~~ **FIXED** — real Supabase insert replacing setTimeout simulation. |
 | CRIT-2 | The system that writes permanent records to the Bitcoin network is **code complete**. `BitcoinChainClient` supports signet, testnet, and mainnet via provider abstractions (`SigningProvider`, `FeeEstimator`, `UtxoProvider`). Async factory pattern, `SupabaseChainIndexLookup` for O(1) fingerprint verification, and migration 0050 all implemented. 408 worker tests. **Remaining (operational only):** AWS KMS key provisioning for mainnet, live Signet broadcast test, mainnet treasury funding. |
-| CRIT-3 | The payment system is **partially built**. Pricing UI, checkout pages, billing hooks, webhook handlers, and checkout/portal worker endpoints are implemented with 91+ tests. **Remaining:** entitlement enforcement and plan change/downgrade flows. |
+| ~~CRIT-3~~ | ~~The payment system is **fully built**. Pricing UI, checkout pages, billing hooks, webhook handlers, checkout/portal worker endpoints, entitlement enforcement, and plan change/downgrade (via Billing Portal) all implemented with 91+ tests.~~ **RESOLVED** 2026-03-14 (PR #43). |
 | ~~CRIT-4~~ | ~~New users who sign up get **dumped straight onto the dashboard** instead of going through the setup wizard.~~ **FIXED** — OnboardingRolePage, OnboardingOrgPage, ReviewPendingPage wired into App.tsx. |
 | ~~CRIT-5~~ | ~~The "Download JSON Proof" button **does absolutely nothing** when clicked.~~ **FIXED** — onDownloadProofJson wired in RecordDetailPage with generateProofPackage + downloadProofPackage. |
 | ~~CRIT-6~~ | ~~The CSV bulk upload wizard **ignores whatever file you upload** and shows fake results.~~ **FIXED** — CSVUploadWizard connected to csvParser functions + useBulkAnchors hook. |
@@ -55,13 +67,16 @@ _For each bug: what it means in plain English and why it matters._
 
 | ID | Severity | Story | Summary | Status |
 |----|----------|-------|---------|--------|
-| CRIT-2 | HIGH | P7-TS-05 | Bitcoin chain client — CODE COMPLETE, operational items remaining | CODE COMPLETE |
+| CRIT-2 | OPS-ONLY | P7-TS-05 | Bitcoin chain client — CODE COMPLETE, operational items remaining | CODE COMPLETE |
+
+**UAT Launch Readiness (19 open):** See reports above. Priority fix order in [uat_launch_readiness_2.md](./uat_launch_readiness_2.md).
 
 ## Resolved Bugs Summary
 
 | ID | Severity | Story | Summary | Resolution |
 |----|----------|-------|---------|------------|
 | CRIT-1 | HIGH | P4-E1 | SecureDocumentDialog fakes anchor creation | FIXED 2026-03-10 (commit a38b485) |
+| CRIT-3 | HIGH | P7-TS-02 | Stripe entitlement enforcement + plan change | FIXED 2026-03-14 (PR #43) |
 | CRIT-4 | MEDIUM | P2 | Onboarding routes are placeholders | FIXED 2026-03-10 (commit a38b485) |
 | CRIT-5 | MEDIUM | P7-TS-07 | JSON proof download is no-op | FIXED 2026-03-10 (commit a38b485) |
 | CRIT-6 | MEDIUM | P5-TS-06 | CSVUploadWizard uses simulated processing | FIXED 2026-03-10 (commit a38b485) |
