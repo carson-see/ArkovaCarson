@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { batchRequestSchema, processBatchSync, type BatchResultItem } from './batch.js';
+import { batchRequestSchema, processBatchSync } from './batch.js';
 import { type PublicIdLookup, type AnchorByPublicId } from './verify.js';
 
 vi.mock('../../utils/db.js', () => ({

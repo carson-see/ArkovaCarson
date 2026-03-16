@@ -9,7 +9,7 @@
  * Stripe or Bitcoin API calls in tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as bitcoin from 'bitcoinjs-lib';
 import * as ecc from 'tiny-secp256k1';
 import { ECPairFactory } from 'ecpair';
@@ -40,7 +40,6 @@ import {
 } from './signet.js';
 import type { UtxoProvider, Utxo } from './utxo-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
-import type { SigningProvider } from './signing-provider.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
 import type { FeeEstimator } from './fee-estimator.js';
 import type { ChainIndexLookup, IndexEntry } from './types.js';

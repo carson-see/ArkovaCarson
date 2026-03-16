@@ -67,8 +67,8 @@ vi.mock('../webhooks/delivery.js', () => ({
 
 // Stateful DB mock that tracks mutations
 vi.mock('../utils/db.js', () => {
-  const createSelectChain = (anchorId?: string) => {
-    const chain: Record<string, any> = {};
+  const createSelectChain = (_anchorId?: string) => {
+    const chain: Record<string, unknown> & { _id?: string; _status?: string } = {};
 
     chain.eq = vi.fn((field: string, value: string) => {
       if (field === 'id') chain._id = value;
@@ -78,7 +78,7 @@ vi.mock('../utils/db.js', () => {
     chain.is = vi.fn(() => chain);
     chain.single = vi.fn(() => {
       const id = chain._id;
-      const anchor = dbState.anchors.get(id);
+      const anchor = id ? dbState.anchors.get(id) : undefined;
       if (!anchor || (chain._status && anchor.status !== chain._status)) {
         return Promise.resolve({ data: null, error: null });
       }
@@ -324,7 +324,7 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
     // Intercept audit insert to track ordering
     const originalAuditEvents = dbState.auditEvents;
     const originalPush = originalAuditEvents.push.bind(originalAuditEvents);
-    dbState.auditEvents.push = ((...args: any[]) => {
+    dbState.auditEvents.push = ((...args: Record<string, unknown>[]) => {
       callOrder.push('audit_log');
       return originalPush(...args);
     }) as typeof originalAuditEvents.push;

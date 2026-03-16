@@ -47,10 +47,16 @@ const ConfigSchema = z.object({
   bitcoinFallbackFeeRate: z.coerce.number().positive().optional(),
 
   // Bitcoin mainnet KMS signing (Constitution 1.1)
+  /** KMS provider selection: 'aws' or 'gcp' (default: 'aws') */
+  kmsProvider: z.enum(['aws', 'gcp']).default('aws'),
   /** AWS KMS key ID for mainnet transaction signing */
   bitcoinKmsKeyId: z.string().optional(),
   /** AWS region for KMS key */
   bitcoinKmsRegion: z.string().optional(),
+  /** GCP KMS key resource name for mainnet transaction signing (MVP-29) */
+  gcpKmsKeyResourceName: z.string().optional(),
+  /** GCP project ID for KMS (optional — defaults to application default) */
+  gcpKmsProjectId: z.string().optional(),
 
   // Legacy chain API fields (kept for backward compat with existing tests)
   chainApiUrl: z.string().url().optional(),
@@ -99,8 +105,11 @@ function loadConfig(): Config {
     bitcoinFeeStrategy: process.env.BITCOIN_FEE_STRATEGY,
     bitcoinStaticFeeRate: process.env.BITCOIN_STATIC_FEE_RATE,
     bitcoinFallbackFeeRate: process.env.BITCOIN_FALLBACK_FEE_RATE,
+    kmsProvider: process.env.KMS_PROVIDER,
     bitcoinKmsKeyId: process.env.BITCOIN_KMS_KEY_ID,
     bitcoinKmsRegion: process.env.BITCOIN_KMS_REGION,
+    gcpKmsKeyResourceName: process.env.GCP_KMS_KEY_RESOURCE_NAME,
+    gcpKmsProjectId: process.env.GCP_KMS_PROJECT_ID,
     chainApiUrl: process.env.CHAIN_API_URL,
     chainApiKey: process.env.CHAIN_API_KEY,
     chainNetwork: process.env.CHAIN_NETWORK,

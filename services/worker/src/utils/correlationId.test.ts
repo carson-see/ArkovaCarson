@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Request, Response, NextFunction } from 'express';
 import {
   generateCorrelationId,
   getCorrelationId,
@@ -67,15 +68,14 @@ describe('withCorrelationId', () => {
 });
 
 describe('correlationIdMiddleware', () => {
-  let req: any;
-  let res: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let next: any;
+  let req: Request;
+  let res: Response;
+  let next: NextFunction;
 
   beforeEach(() => {
-    req = { headers: {} };
-    res = { setHeader: vi.fn() };
-    next = vi.fn();
+    req = { headers: {} } as unknown as Request;
+    res = { setHeader: vi.fn() } as unknown as Response;
+    next = vi.fn() as unknown as NextFunction;
   });
 
   it('generates a new correlation ID when no header present', () => {
@@ -118,7 +118,7 @@ describe('correlationIdMiddleware', () => {
   it('sets correlation context for downstream handlers', () => {
     let capturedId: string | undefined;
 
-    next.mockImplementation(() => {
+    (next as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
       capturedId = getCorrelationId();
     });
 

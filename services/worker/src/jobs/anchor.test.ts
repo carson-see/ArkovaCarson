@@ -20,7 +20,6 @@ const {
   mockDispatchWebhookEvent,
   mockLogger,
   anchorsTable,
-  updateChain,
   selectChain,
 } = vi.hoisted(() => {
   // Terminal operations — configured per test
@@ -40,7 +39,7 @@ const {
   };
 
   // Select chain: .select().eq().eq().single() or .select().eq().is().limit()
-  const selectChain: Record<string, any> = {};
+  const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
   selectChain.is = vi.fn(() => selectChain);
   selectChain.single = mockSingle;

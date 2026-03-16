@@ -69,7 +69,7 @@ const {
   const retryLogsLte = vi.fn(() => ({ limit: retryLogsLimit }));
   const retryLogsEq = vi.fn(() => ({ lte: retryLogsLte }));
   const retryLogsSelect = {
-    select: vi.fn(() => ({ eq: retryLogsEq })),
+    select: vi.fn((_columns?: string) => ({ eq: retryLogsEq })),
     eq: retryLogsEq,
     lte: retryLogsLte,
     limit: retryLogsLimit,
@@ -143,7 +143,7 @@ const MOCK_PAYLOAD_DATA = {
 
 // ---- Helper to set up DB from() routing ----
 
-function setupDbRouting(overrides: Record<string, any> = {}) {
+function setupDbRouting(overrides: Record<string, unknown> = {}) {
   mockDbFrom.mockImplementation((table: string) => {
     if (overrides[table]) return overrides[table];
 
@@ -152,13 +152,13 @@ function setupDbRouting(overrides: Record<string, any> = {}) {
         return {
           select: deliveryLogSelect.eq === undefined
             ? vi.fn()
-            : (...args: any[]) => {
+            : (selectArg: string) => {
                 // Distinguish between idempotency check (select('id')) and retry query (select('*, ...'))
-                if (args[0] === 'id') {
+                if (selectArg === 'id') {
                   return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
                 }
                 // Retry query with join
-                return (retryLogsSelect.select as any)(...args);
+                return retryLogsSelect.select(selectArg);
               },
           insert: deliveryLogInsert.insert,
           update: deliveryLogUpdate.update,
@@ -303,7 +303,7 @@ describe('exponential backoff', () => {
 
     // The update should set status to 'retrying' with next_retry_at
     expect(deliveryLogUpdate.update).toHaveBeenCalled();
-    const updateArg = (deliveryLogUpdate.update.mock.calls as any[][])[0][0];
+    const updateArg = (deliveryLogUpdate.update.mock.calls as unknown[][])[0][0] as Record<string, string>;
     expect(updateArg.status).toBe('retrying');
     expect(updateArg.next_retry_at).toBeDefined();
 
@@ -566,7 +566,7 @@ describe('deliverToEndpoint', () => {
 
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
-    const updateArg = (deliveryLogUpdate.update.mock.calls as any[][])[0][0];
+    const updateArg = (deliveryLogUpdate.update.mock.calls as unknown[][])[0][0] as Record<string, string>;
     expect(updateArg.response_body.length).toBe(1000);
   });
 
@@ -794,7 +794,7 @@ describe('processWebhookRetries', () => {
     mockDbFrom.mockImplementation((table: string) => {
       if (table === 'webhook_delivery_logs') {
         return {
-          select: (...args: any[]) => {
+          select: (...args: string[]) => {
             // Retry query (first call)
             if (args[0]?.includes('webhook_endpoints')) {
               return { eq: retryLogsSelect.eq };

@@ -20,8 +20,6 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
-import * as ecc from 'tiny-secp256k1';
-import { ECPairFactory } from 'ecpair';
 import { logger } from '../utils/logger.js';
 import type {
   ChainClient,
@@ -35,8 +33,6 @@ import type { SigningProvider } from './signing-provider.js';
 import { WifSigningProvider } from './signing-provider.js';
 import type { FeeEstimator } from './fee-estimator.js';
 import { StaticFeeEstimator } from './fee-estimator.js';
-
-const ECPair = ECPairFactory(ecc);
 
 // Default network: Signet uses testnet network parameters
 const SIGNET_NETWORK = bitcoin.networks.testnet;

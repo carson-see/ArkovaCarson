@@ -1,0 +1,50 @@
+# Arkova Worker — Docker Compose
+# Runs Express worker + optional Cloudflare Tunnel sidecar
+#
+# Usage:
+#   Standard mode:  docker compose up worker
+#   Tunnel mode:    docker compose --profile tunnel up
+#
+# ADR: docs/confluence/15_zero_trust_edge_architecture.md
+# Story: INFRA-01
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${WORKER_PORT:-3001}:${WORKER_PORT:-3001}"
+    environment:
+      - PORT=${WORKER_PORT:-3001}
+      - NODE_ENV=${NODE_ENV:-development}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+      - BITCOIN_NETWORK=${BITCOIN_NETWORK:-signet}
+      - BITCOIN_TREASURY_WIF=${BITCOIN_TREASURY_WIF}
+      - USE_MOCKS=${USE_MOCKS:-true}
+      - ENABLE_PROD_NETWORK_ANCHORING=${ENABLE_PROD_NETWORK_ANCHORING:-false}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:5173}
+      - API_KEY_HMAC_SECRET=${API_KEY_HMAC_SECRET}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:${WORKER_PORT:-3001}/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run --url http://worker:${WORKER_PORT:-3001}
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      worker:
+        condition: service_healthy
+    profiles:
+      - tunnel
+    restart: unless-stopped

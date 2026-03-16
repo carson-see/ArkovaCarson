@@ -5,7 +5,7 @@
  * Cloudflare Workers AI fallback gated by ENABLE_AI_FALLBACK.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { createAIProvider, getProviderName } from './factory.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';

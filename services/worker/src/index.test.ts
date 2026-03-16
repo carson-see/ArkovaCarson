@@ -131,7 +131,7 @@ vi.mock('dotenv/config', () => ({}));
 
 // Bypass rate limiters in tests so requests aren't 429'd
 vi.mock('./utils/rateLimit.js', () => {
-  const passthrough = (_req: any, _res: any, next: any) => next();
+  const passthrough = (_req: unknown, _res: unknown, next: () => void) => next();
   return {
     rateLimit: () => passthrough,
     rateLimiters: {
@@ -143,21 +143,20 @@ vi.mock('./utils/rateLimit.js', () => {
 
 // Preserve express static methods (raw, json, etc.) while overriding listen
 vi.mock('express', async () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const actual: any = await vi.importActual('express');
-  const originalExpress: any = actual.default;
+  const actual = await vi.importActual<Record<string, unknown>>('express');
+  const originalExpress = actual.default as ((...args: unknown[]) => Record<string, unknown>) & Record<string, unknown>;
 
-  const wrappedExpress: any = (...args: any[]) => {
+  const wrappedExpress = ((...args: unknown[]) => {
     const app = originalExpress(...args);
     app.listen = vi.fn((_port: number, cb?: () => void) => {
       cb?.();
       return {
         close: vi.fn((closeCb?: () => void) => closeCb?.()),
         address: () => ({ port: 3099 }),
-      } as any;
+      } as unknown as ReturnType<typeof import('net').Server.prototype.listen>;
     });
     return app;
-  };
+  }) as typeof originalExpress;
 
   // Copy static methods from original express
   wrappedExpress.raw = originalExpress.raw;
@@ -170,13 +169,19 @@ vi.mock('express', async () => {
 });
 
 // Helper to make HTTP-like requests to Express app
-async function request(app: Express, method: string, path: string, body?: any, headers?: Record<string, string>) {
-  return new Promise<{ status: number; body: any; headers: Record<string, string> }>((resolve) => {
+interface MockResponse {
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+}
+
+async function request(app: Express, method: string, path: string, body?: unknown, headers?: Record<string, string>) {
+  return new Promise<MockResponse>((resolve) => {
     const responseHeaders: Record<string, string> = {};
-    let responseBody: any;
+    let responseBody: Record<string, unknown>;
     let responseStatus = 200;
 
-    const req: any = {
+    const req = {
       method: method.toUpperCase(),
       url: path,
       path,
@@ -184,21 +189,30 @@ async function request(app: Express, method: string, path: string, body?: any, h
       body,
       ip: '127.0.0.1',
       get: (name: string) => headers?.[name.toLowerCase()],
-    };
+    } as unknown as import('express').Request;
 
-    const res: any = {
+    interface MockRes {
+      statusCode: number;
+      status(code: number): MockRes;
+      json(data: Record<string, unknown>): MockRes;
+      send(data: Record<string, unknown>): MockRes;
+      setHeader(name: string, value: string): MockRes;
+      end(): void;
+    }
+
+    const res: MockRes = {
       statusCode: 200,
       status(code: number) {
         responseStatus = code;
         this.statusCode = code;
         return this;
       },
-      json(data: any) {
+      json(data: Record<string, unknown>) {
         responseBody = data;
         resolve({ status: responseStatus, body: responseBody, headers: responseHeaders });
         return this;
       },
-      send(data: any) {
+      send(data: Record<string, unknown>) {
         responseBody = data;
         resolve({ status: responseStatus, body: responseBody, headers: responseHeaders });
         return this;
@@ -212,7 +226,7 @@ async function request(app: Express, method: string, path: string, body?: any, h
       },
     };
 
-    (app as any).handle(req, res, () => {
+    (app as unknown as { handle: (req: import('express').Request, res: MockRes, next: () => void) => void }).handle(req, res, () => {
       responseStatus = 404;
       resolve({ status: 404, body: { error: 'Not Found' }, headers: responseHeaders });
     });
@@ -220,8 +234,8 @@ async function request(app: Express, method: string, path: string, body?: any, h
 }
 
 /** Shared mock DB chain builder — avoids duplication across describe blocks */
-function mockDbChain(result: { data: any; error: any }) {
-  const chain: any = {
+function mockDbChain(result: { data: unknown; error: unknown }) {
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     in: vi.fn().mockReturnThis(),
@@ -237,8 +251,8 @@ function mockDbChain(result: { data: any; error: any }) {
 
 // Import module once — side effects (listen, cron, shutdown) run at import time
 let app: Express;
-let server: any;
-let cronCalls: any[];
+let server: unknown;
+let cronCalls: unknown[][];
 
 beforeAll(async () => {
   const mod = await import('./index.js');
@@ -331,7 +345,7 @@ describe('worker server', () => {
 
   describe('scheduled job error handling', () => {
     it('anchor processing cron catches and logs errors', async () => {
-      const anchorCallback = cronCalls[0][1];
+      const anchorCallback = cronCalls[0][1] as () => Promise<void>;
       mockProcessPendingAnchors.mockRejectedValue(new Error('cron fail'));
 
       await anchorCallback();
@@ -343,7 +357,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron catches and logs errors', async () => {
-      const webhookCallback = cronCalls[1][1];
+      const webhookCallback = cronCalls[1][1] as () => Promise<void>;
       mockProcessWebhookRetries.mockRejectedValue(new Error('retry fail'));
 
       await webhookCallback();
@@ -355,7 +369,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron logs count when retries processed', async () => {
-      const webhookCallback = cronCalls[1][1];
+      const webhookCallback = cronCalls[1][1] as () => Promise<void>;
       mockProcessWebhookRetries.mockResolvedValue(5);
 
       await webhookCallback();
@@ -409,7 +423,7 @@ describe('worker server', () => {
 
   describe('monthly credit allocation cron', () => {
     it('logs monthly credit allocation message', async () => {
-      const monthlyCallback = cronCalls[2][1];
+      const monthlyCallback = cronCalls[2][1] as () => Promise<void>;
 
       await monthlyCallback();
 
@@ -419,7 +433,7 @@ describe('worker server', () => {
 
   describe('graceful shutdown', () => {
     it('handles SIGTERM by logging and closing server', () => {
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+      const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as unknown as typeof process.exit);
 
       process.emit('SIGTERM');
 
@@ -435,7 +449,7 @@ describe('worker server', () => {
 
     it('forces exit after 30 second timeout', () => {
       vi.useFakeTimers();
-      const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => {}) as any);
+      const mockExit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as unknown as typeof process.exit);
 
       process.emit('SIGINT');
 
@@ -759,7 +773,7 @@ describe('worker server', () => {
     });
 
     it('returns verification result for valid fingerprint', async () => {
-      const chain: any = {
+      const chain: Record<string, ReturnType<typeof vi.fn>> = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         is: vi.fn().mockReturnThis(),

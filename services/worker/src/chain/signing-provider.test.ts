@@ -8,12 +8,13 @@
  * Constitution 1.7 requires no real AWS API calls in tests.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import * as bitcoin from 'bitcoinjs-lib';
 import * as ecc from 'tiny-secp256k1';
 import { ECPairFactory } from 'ecpair';
 
-const ECPair = ECPairFactory(ecc);
+// ECPairFactory initialized for ecc setup (used by bitcoinjs-lib internally)
+ECPairFactory(ecc);
 
 vi.mock('../utils/logger.js', () => ({
   logger: {
@@ -31,7 +32,6 @@ import {
   compressPublicKey,
   createSigningProvider,
   type KmsClientLike,
-  type SigningProvider,
 } from './signing-provider.js';
 
 // ─── Test Constants ───────────────────────────────────────────────────────
@@ -517,7 +517,7 @@ describe('createSigningProvider', () => {
 
   it('throws on unknown provider type', async () => {
     await expect(
-      createSigningProvider({ type: 'unknown' as any }),
+      createSigningProvider({ type: 'unknown' as unknown as 'wif' | 'kms' }),
     ).rejects.toThrow('Unknown signing provider type');
   });
 

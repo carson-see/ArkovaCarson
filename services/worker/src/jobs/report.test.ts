@@ -27,7 +27,7 @@ const {
   };
 
   /** Assigns a `.then` property — intentional thenable mock matching Supabase's PostgREST builder. */
-  function setThenable(obj: any, handler: (onFulfilled: any, onRejected?: any) => any) {
+  function setThenable(obj: Record<string, unknown>, handler: (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => unknown) {
     Object.defineProperty(obj, 'then', { // NOSONAR — intentional thenable for Supabase mock
       value: vi.fn(handler),
       configurable: true,
@@ -37,7 +37,16 @@ const {
 
   // Build chainable query mocks per table
   function createChainableMock() {
-    const chain: any = {};
+    const chain: Record<string, unknown> & { _resolve: { data: unknown; error: unknown } } = {
+      _resolve: { data: null, error: null },
+      select: undefined as unknown,
+      insert: undefined as unknown,
+      update: undefined as unknown,
+      eq: undefined as unknown,
+      is: undefined as unknown,
+      order: undefined as unknown,
+      limit: undefined as unknown,
+    };
     chain.select = vi.fn(() => chain);
     chain.insert = vi.fn(() => chain);
     chain.update = vi.fn(() => chain);
@@ -45,10 +54,8 @@ const {
     chain.is = vi.fn(() => chain);
     chain.order = vi.fn(() => chain);
     chain.limit = vi.fn(() => chain);
-    // Terminal: resolve to { data, error }
-    chain._resolve = { data: null, error: null };
     // Make the chain thenable
-    setThenable(chain, (onFulfilled: any) => Promise.resolve(onFulfilled(chain._resolve)));
+    setThenable(chain, (onFulfilled: (value: unknown) => unknown) => Promise.resolve(onFulfilled(chain._resolve)));
     return chain;
   }
 
@@ -119,23 +126,23 @@ describe('processReport', () => {
     vi.clearAllMocks();
     // Default: all DB ops succeed
     reportsTable._resolve = { data: null, error: null };
-    setThenable(reportsTable, (onFulfilled: any) =>
+    setThenable(reportsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(reportsTable._resolve))
     );
     reportArtifactsTable._resolve = { data: null, error: null };
-    setThenable(reportArtifactsTable, (onFulfilled: any) =>
+    setThenable(reportArtifactsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(reportArtifactsTable._resolve))
     );
     anchorsTable._resolve = { data: [], error: null };
-    setThenable(anchorsTable, (onFulfilled: any) =>
+    setThenable(anchorsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(anchorsTable._resolve))
     );
     auditEventsTable._resolve = { data: [], error: null };
-    setThenable(auditEventsTable, (onFulfilled: any) =>
+    setThenable(auditEventsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(auditEventsTable._resolve))
     );
     billingEventsTable._resolve = { data: [], error: null };
-    setThenable(billingEventsTable, (onFulfilled: any) =>
+    setThenable(billingEventsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(billingEventsTable._resolve))
     );
   });
@@ -242,8 +249,9 @@ describe('processReport', () => {
     await processReport(makeReport());
 
     // Check the final update call sets completed status
-    const updateCalls = reportsTable.update.mock.calls;
-    const lastUpdate = updateCalls[updateCalls.length - 1][0];
+    const updateMock = reportsTable.update as ReturnType<typeof vi.fn>;
+    const updateCalls = updateMock.mock.calls;
+    const lastUpdate = updateCalls[updateCalls.length - 1][0] as Record<string, string>;
     expect(lastUpdate.status).toBe('completed');
     expect(lastUpdate.completed_at).toBeDefined();
     expect(lastUpdate.expires_at).toBeDefined();
@@ -259,8 +267,8 @@ describe('processReport', () => {
   it('marks report as failed on generation error', async () => {
     // Make anchors query throw by having .then() reject properly
     // We override .then so the thenable rejects when awaited
-    const originalThen = anchorsTable.then;
-    setThenable(anchorsTable, (onFulfilled: any, onRejected?: any) => {
+    const originalThen = anchorsTable.then as (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => unknown;
+    setThenable(anchorsTable, (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => {
       const rejection = Promise.reject(new Error('DB connection lost'));
       return rejection.then(onFulfilled, onRejected);
     });
@@ -268,8 +276,9 @@ describe('processReport', () => {
     const result = await processReport(makeReport({ report_type: 'anchor_summary' }));
 
     expect(result).toBe(false);
-    const updateCalls = reportsTable.update.mock.calls;
-    const lastUpdate = updateCalls[updateCalls.length - 1][0];
+    const updateMock = reportsTable.update as ReturnType<typeof vi.fn>;
+    const updateCalls = updateMock.mock.calls;
+    const lastUpdate = updateCalls[updateCalls.length - 1][0] as Record<string, string>;
     expect(lastUpdate.status).toBe('failed');
     expect(lastUpdate.error_message).toBe('DB connection lost');
 
@@ -288,23 +297,23 @@ describe('processPendingReports', () => {
     vi.clearAllMocks();
     // Defaults
     reportsTable._resolve = { data: null, error: null };
-    setThenable(reportsTable, (onFulfilled: any) =>
+    setThenable(reportsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(reportsTable._resolve))
     );
     reportArtifactsTable._resolve = { data: null, error: null };
-    setThenable(reportArtifactsTable, (onFulfilled: any) =>
+    setThenable(reportArtifactsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(reportArtifactsTable._resolve))
     );
     anchorsTable._resolve = { data: [], error: null };
-    setThenable(anchorsTable, (onFulfilled: any) =>
+    setThenable(anchorsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(anchorsTable._resolve))
     );
     auditEventsTable._resolve = { data: [], error: null };
-    setThenable(auditEventsTable, (onFulfilled: any) =>
+    setThenable(auditEventsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(auditEventsTable._resolve))
     );
     billingEventsTable._resolve = { data: [], error: null };
-    setThenable(billingEventsTable, (onFulfilled: any) =>
+    setThenable(billingEventsTable, (onFulfilled: (value: unknown) => unknown) =>
       Promise.resolve(onFulfilled(billingEventsTable._resolve))
     );
   });
@@ -350,7 +359,7 @@ describe('processPendingReports', () => {
   it('processes multiple reports and counts successes', async () => {
     // Return two pending reports on the first call, then succeed on subsequent calls
     let callCount = 0;
-    setThenable(reportsTable, (onFulfilled: any) => {
+    setThenable(reportsTable, (onFulfilled: (value: unknown) => unknown) => {
       callCount++;
       if (callCount === 1) {
         // First call: the pending query
@@ -376,7 +385,7 @@ describe('processPendingReports', () => {
 
   it('counts failed reports separately', async () => {
     let callCount = 0;
-    setThenable(reportsTable, (onFulfilled: any) => {
+    setThenable(reportsTable, (onFulfilled: (value: unknown) => unknown) => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve(

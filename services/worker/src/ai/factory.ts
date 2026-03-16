@@ -16,6 +16,7 @@
 import type { IAIProvider } from './types.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
+import { ReplicateProvider } from './replicate.js';
 
 /**
  * Get the provider name that will be used based on current env.
@@ -60,6 +61,11 @@ export function createAIProvider(): IAIProvider {
       console.warn(`[AI Factory] Gemini provider "${providerName}" not yet implemented — using mock`);
       return new MockAIProvider();
 
+    case 'replicate': {
+      // Production check is in ReplicateProvider constructor (Constitution 1.1)
+      return new ReplicateProvider();
+    }
+
     case 'openai':
       throw new Error('OpenAI provider not yet implemented (Phase 1.5+)');
 
@@ -67,6 +73,6 @@ export function createAIProvider(): IAIProvider {
       throw new Error('Anthropic provider not yet implemented (Phase 1.5+)');
 
     default:
-      throw new Error(`Unknown AI provider: "${providerName}". Valid: gemini, cloudflare, openai, anthropic, mock`);
+      throw new Error(`Unknown AI provider: "${providerName}". Valid: gemini, cloudflare, replicate, openai, anthropic, mock`);
   }
 }
