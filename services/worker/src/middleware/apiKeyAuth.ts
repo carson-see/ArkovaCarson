@@ -95,6 +95,17 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const rawKey = extractApiKey(req);
 
+    // AUTH-02: Reject all API keys when HMAC secret is not configured
+    // An empty HMAC secret makes hashes publicly reproducible — complete auth bypass
+    if (rawKey && !hmacSecret) {
+      logger.warn('API key presented but API_KEY_HMAC_SECRET is not configured');
+      res.status(500).json({
+        error: 'server_configuration_error',
+        message: 'API key authentication is not available.',
+      });
+      return;
+    }
+
     // No key provided
     if (!rawKey) {
       if (options.required) {

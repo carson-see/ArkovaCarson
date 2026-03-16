@@ -33,6 +33,12 @@ const app = express();
 // Disable x-powered-by header to prevent Express version disclosure
 app.disable('x-powered-by');
 
+// AUTH-03: Trust proxy for correct client IP behind Cloud Run / Cloudflare Tunnel
+// 2 = trust up to 2 proxy hops (Cloudflare → Cloud Run load balancer → app)
+if (config.nodeEnv === 'production') {
+  app.set('trust proxy', 2);
+}
+
 // Health check endpoint — enhanced for production monitoring (H3-08)
 app.get('/health', async (_req, res) => {
   const checks: Record<string, 'ok' | 'error'> = {};
@@ -334,16 +340,18 @@ app.post('/api/verify-anchor', rateLimiters.checkout, async (req, res) => {
 // CORS preflight for verify-anchor
 app.options('/api/verify-anchor', (req, res) => { setCorsHeaders(req, res); });
 
-// Manual trigger for anchor processing (for testing)
-app.post('/jobs/process-anchors', async (_req, res) => {
-  try {
-    const result = await processPendingAnchors();
-    res.json(result);
-  } catch (error) {
-    logger.error({ error }, 'Manual anchor processing failed');
-    res.status(500).json({ error: 'Processing failed' });
-  }
-});
+// Manual trigger for anchor processing — dev/test only (AUTH-01: removed from production)
+if (config.nodeEnv !== 'production') {
+  app.post('/jobs/process-anchors', async (_req, res) => {
+    try {
+      const result = await processPendingAnchors();
+      res.json(result);
+    } catch (error) {
+      logger.error({ error }, 'Manual anchor processing failed');
+      res.status(500).json({ error: 'Processing failed' });
+    }
+  });
+}
 
 // =========================================================================
 // API Documentation — accessible without auth or feature flag (P4.5-TS-04)

@@ -65,8 +65,12 @@ router.use((_req: Request, res: Response, next: NextFunction) => {
 });
 
 // ─── API key auth (optional — attaches req.apiKey if present) ───
-const hmacSecret = config.apiKeyHmacSecret ?? '';
-router.use(apiKeyAuth(hmacSecret));
+// AUTH-02: Fail fast if HMAC secret is unset — empty string would make all key hashes reproducible
+const hmacSecret = config.apiKeyHmacSecret;
+if (!hmacSecret) {
+  logger.warn('API_KEY_HMAC_SECRET not configured — API key auth will reject all keys');
+}
+router.use(apiKeyAuth(hmacSecret ?? ''));
 
 // ─── Rate limiting (Constitution 1.10) ───
 // Anonymous: 100 req/min per IP, API key holders: 1,000 req/min per key

@@ -182,15 +182,22 @@ export async function handleSearchCredentials(
   const maxResults = Math.min(input.max_results ?? 10, 50);
 
   try {
-    // Use text search across anchors with public visibility
-    const searchQuery = encodeURIComponent(input.query);
+    // INJ-01: Use RPC with bound parameters instead of URL interpolation
+    // Direct PostgREST filter construction is vulnerable to operator injection
+    const sanitizedQuery = input.query.replace(/[%_\\]/g, '\\$&'); // escape LIKE wildcards
     const response = await fetch(
-      `${config.supabaseUrl}/rest/v1/anchors?select=public_id,title,credential_type,status,created_at,org_id&or=(title.ilike.*${searchQuery}*,credential_type.ilike.*${searchQuery}*)&status=in.(SECURED,ACTIVE)&limit=${maxResults}`,
+      `${config.supabaseUrl}/rest/v1/rpc/search_public_credentials`,
       {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           apikey: config.supabaseKey,
           Authorization: `Bearer ${config.supabaseKey}`,
         },
+        body: JSON.stringify({
+          p_query: sanitizedQuery,
+          p_limit: maxResults,
+        }),
       },
     );
 
