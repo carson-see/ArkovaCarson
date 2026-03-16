@@ -9,92 +9,81 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 
 | Category | Total | Done | Open | Blocking Launch? |
 |----------|-------|------|------|:----------------:|
-| Stories (NOT STARTED) | 9 | — | 9 | No (post-launch) |
-| Stories (PARTIAL) | 2 | — | 2 | No (GEO-12 cosmetic, INFRA-07 ops-only) |
-| Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 38 | 27 | 11 | No (all MEDIUM/LOW) |
-| Operational Tasks | 7 | 0 | 7 | **YES** (OPS-01/02 CRITICAL) |
+| Stories (NOT STARTED) | 13 | — | 13 | No (post-launch) |
+| Stories (PARTIAL) | 4 | — | 4 | 1 blocking (INFRA-07) |
+| Security Findings | 12 | 10 fixed | 2 | **YES** (AUTH-01, SEC-01) |
+| UAT Bugs | 38 | 10 | 28 | Some HIGH |
+| Operational Tasks | 7 | 0 | 7 | **YES** |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **30** | |
+| **Total Open Items** | | | **55** | |
 
 ---
 
-## TIER 1: LAUNCH BLOCKERS — ~~ALL SECURITY FINDINGS RESOLVED~~
+## TIER 1: LAUNCH BLOCKERS (must fix before any user touches production)
 
 ### Security (from CISO audit — `docs/security/launch_readiness_security_audit.md`)
 
-| # | ID | Severity | Issue | Status |
-|---|-----|----------|-------|--------|
-| ~~1~~ | ~~PII-01~~ | ~~**CRITICAL**~~ | ~~`actor_email` plaintext in audit_events~~ | ~~**FIXED** (migration 0061 — null_audit_pii_fields trigger + backfill)~~ |
-| ~~2~~ | ~~PII-02~~ | ~~**CRITICAL**~~ | ~~No right-to-erasure / account deletion~~ | ~~**FIXED** (migration 0061+0065, account-delete.ts, DeleteAccountDialog.tsx)~~ |
-| ~~3~~ | ~~INJ-01~~ | ~~**HIGH**~~ | ~~PostgREST filter injection in MCP tools~~ | ~~**FIXED** (migration 0062 — search_public_credentials parameterized RPC)~~ |
-| ~~4~~ | ~~RLS-01~~ | ~~**HIGH**~~ | ~~13 tables missing GRANT to authenticated~~ | ~~**FIXED** (migration 0062 — GRANT on all 13 tables)~~ |
-| ~~5~~ | ~~RLS-02~~ | ~~**HIGH**~~ | ~~api_keys readable by non-admin org members~~ | ~~**FIXED** (migration 0062 — ORG_ADMIN-only RLS policy)~~ |
-| ~~6~~ | ~~AUTH-01~~ | ~~**HIGH**~~ | ~~`/jobs/process-anchors` unauthenticated~~ | ~~**FIXED** — verifyCronAuth (OIDC + CRON_SECRET), cronJobsLimiter rate limiting, audience check~~ |
-| ~~7~~ | ~~SEC-01~~ | ~~**HIGH**~~ | ~~Demo seed credentials in production Supabase~~ | ~~**FIXED** — `scripts/strip-demo-seeds.sql` created. OPS-02 tracks execution on prod.~~ |
-| ~~8~~ | ~~PII-03~~ | ~~**HIGH**~~ | ~~No data retention policy~~ | ~~**FIXED** (migration 0062 — cleanup_expired_data RPC + worker cron)~~ |
+| # | ID | Severity | Issue | File | Status |
+|---|-----|----------|-------|------|--------|
+| ~~1~~ | ~~PII-01~~ | ~~**CRITICAL**~~ | ~~`actor_email` plaintext in append-only `audit_events` — GDPR Art. 17 violation~~ | ~~migration 0061~~ | ~~**FIXED** (migration 0061 — null_audit_pii_fields trigger + backfill)~~ |
+| ~~2~~ | ~~PII-02~~ | ~~**CRITICAL**~~ | ~~No right-to-erasure — no account deletion, no anonymization RPC~~ | ~~migration 0061 + 0065, account-delete.ts, DeleteAccountDialog.tsx~~ | ~~**FIXED** (anonymize_user_data RPC, delete_own_account RPC, worker endpoint, UI)~~ |
+| ~~3~~ | ~~INJ-01~~ | ~~**HIGH**~~ | ~~PostgREST filter injection in MCP tools search~~ | ~~migration 0062, mcp-tools.ts~~ | ~~**FIXED** (search_public_credentials parameterized RPC)~~ |
+| ~~4~~ | ~~RLS-01~~ | ~~**HIGH**~~ | ~~13 tables missing GRANT to authenticated role~~ | ~~migration 0062~~ | ~~**FIXED** (GRANT on all 13 tables)~~ |
+| ~~5~~ | ~~RLS-02~~ | ~~**HIGH**~~ | ~~api_keys readable by non-admin org members~~ | ~~migration 0062~~ | ~~**FIXED** (ORG_ADMIN-only RLS policy)~~ |
+| 6 | AUTH-01 | **HIGH** | `/jobs/process-anchors` unauthenticated, no rate limit | index.ts:338 | OPEN |
+| 7 | SEC-01 | **HIGH** | Demo seed credentials in production Supabase | seed.sql | OPEN |
+| ~~8~~ | ~~PII-03~~ | ~~**HIGH**~~ | ~~No data retention policy — tables grow unbounded~~ | ~~migration 0062~~ | ~~**FIXED** (cleanup_expired_data RPC + worker cron)~~ |
 
 ### Operational (from `docs/confluence/15_operational_runbook.md`)
 
-| # | ID | Priority | Issue | Status | Runbook |
-|---|-----|----------|-------|--------|---------|
-| 9 | OPS-01 | **CRITICAL** | Apply migrations 0059-0065 to production Supabase — blocks P8 AI, GDPR, security | PENDING | Section 3 |
-| 10 | OPS-02 | **CRITICAL** | Run `scripts/strip-demo-seeds.sql` — demo accounts with known passwords are live | PENDING | Section 4 |
-| 11 | OPS-03 | **HIGH** | Set Sentry DSN env vars (Vercel + Cloud Run) — error tracking not connected | PENDING | Section 5 |
-| 12 | OPS-04 | **HIGH** | Sentry source map upload — production stack traces obfuscated | PENDING | Section 6 |
-| 13 | OPS-05 | **HIGH** | AWS KMS key provisioning — blocks production Bitcoin anchoring | PENDING | Section 1.1 |
-| 14 | OPS-06 | **HIGH** | Fund mainnet treasury wallet — blocks production anchoring after KMS | PENDING | Section 1.2 |
-| 15 | OPS-07 | MEDIUM | Key rotation (Stripe + Supabase service role) | PENDING | Section 7 |
+| # | ID | Issue | Status |
+|---|-----|-------|--------|
+| 9 | OPS-01 | Apply migrations 0059-0063 to production Supabase | PENDING |
+| 10 | OPS-02 | Strip demo seed accounts from production | PENDING |
+| 11 | OPS-03 | Set Sentry DSN env vars (Vercel + Cloud Run) | PENDING |
+| 12 | OPS-04 | Sentry source map upload plugin | PENDING |
+| 13 | OPS-05 | AWS KMS key provisioning (mainnet signing) | PENDING |
+| 14 | OPS-06 | Mainnet treasury funding | PENDING |
+| 15 | OPS-07 | Key rotation (Stripe + Supabase service role) | PENDING |
 
 ---
 
-## TIER 2: ~~HIGH-PRIORITY UAT BUGS~~ — ALL RESOLVED
+## TIER 2: HIGH-PRIORITY UAT BUGS (user-facing, should fix before demo)
 
-| # | ID | Severity | Bug | Status |
-|---|-----|----------|-----|--------|
-| ~~16~~ | ~~UAT2-01~~ | ~~HIGH~~ | ~~Revoke action not wired in org table~~ | ~~**FIXED** — `onRevokeAnchor` prop wired in OrganizationPage + OrgRegistryTable dropdown~~ |
-| ~~17~~ | ~~UAT2-02~~ | ~~HIGH~~ | ~~Template metadata fields not rendering~~ | ~~**FIXED** — `useCredentialTemplate` + `MetadataFieldRenderer` integrated in IssueCredentialForm (UF-05)~~ |
-| ~~18~~ | ~~UAT2-03~~ | ~~HIGH~~ | ~~Settings page missing sub-page navigation~~ | ~~**FIXED** — Organization Settings card with links to Templates/Webhooks/API Keys (ORG_ADMIN-only)~~ |
-| ~~19~~ | ~~UAT2-04~~ | ~~HIGH~~ | ~~Bulk upload not accessible from any page~~ | ~~**FIXED** — "Bulk Upload" button in Organization Records header~~ |
-| ~~20~~ | ~~UAT2-05~~ | ~~HIGH~~ | ~~Org record rows not clickable to detail~~ | ~~**FIXED** — `onClick={() => onViewAnchor?.(anchor)}` on both mobile cards and desktop table rows~~ |
-| ~~21~~ | ~~UAT3-01~~ | ~~HIGH~~ | ~~DM Sans + JetBrains Mono fonts NOT loaded~~ | ~~**FIXED** — Google Fonts link in index.html, font-family in CSS + Tailwind config verified~~ |
+| # | ID | Severity | Bug | Component | Source |
+|---|-----|----------|-----|-----------|--------|
+| 16 | UAT2-01 | HIGH | Revoke action not wired in org table | OrganizationPage.tsx | uat_launch_readiness_2.md |
+| 17 | UAT2-02 | HIGH | Template metadata fields not rendering in issuance form | IssueCredentialForm.tsx | uat_launch_readiness_2.md |
+| 18 | UAT2-03 | HIGH | Settings page missing sub-page navigation | SettingsPage.tsx | uat_launch_readiness_2.md |
+| 19 | UAT2-04 | HIGH | Bulk upload not accessible from any page | OrganizationPage.tsx | uat_launch_readiness_2.md |
+| 20 | UAT2-05 | HIGH | Org record rows not clickable to detail | OrgRegistryTable.tsx | uat_launch_readiness_2.md |
+| 21 | UAT3-01 | HIGH | DM Sans + JetBrains Mono fonts NOT loaded in app | index.html | uat_launch_readiness_3.md |
 
 ---
 
-## TIER 3: MEDIUM UAT BUGS — MOSTLY RESOLVED
+## TIER 3: MEDIUM UAT BUGS (polish, fix when possible)
 
-| # | ID | Severity | Bug | Status |
+| # | ID | Severity | Bug | Source |
 |---|-----|----------|-----|--------|
-| ~~22~~ | ~~UAT-10~~ | ~~MEDIUM~~ | ~~Secure Document button overlaps subtitle~~ | ~~**FIXED** (PR #48)~~ |
-| ~~23~~ | ~~UAT-11~~ | ~~MEDIUM~~ | ~~Stat cards stacked vertically on desktop~~ | ~~**FIXED** (PR #48)~~ |
-| ~~24~~ | ~~UAT-12~~ | ~~MEDIUM~~ | ~~Tablet viewport clips content~~ | ~~**FIXED** (PR #48)~~ |
-| ~~25~~ | ~~UAT-13~~ | ~~MEDIUM~~ | ~~Account Type dual labels confusing~~ | ~~**FIXED** (PR #48)~~ |
-| ~~26~~ | ~~UAT-14~~ | ~~MEDIUM~~ | ~~Seed data visible in prod-like env~~ | ~~**FIXED** (PR #48 + SEC-01 strip script)~~ |
-| ~~27~~ | ~~UAT3-02~~ | ~~MEDIUM~~ | ~~PENDING anchor shows "Verification Failed"~~ | ~~**FIXED** — Code handles PENDING (PublicVerification.tsx). Migration 0054 adds PENDING to get_public_anchor. Apply OPS-01 to production.~~ |
-| ~~28~~ | ~~UAT2-06~~ | ~~MEDIUM~~ | ~~No "Invite Member" button~~ | ~~**FIXED** — Invite Member button + InviteMemberModal wired in OrganizationPage~~ |
-| ~~29~~ | ~~UAT2-07~~ | ~~MEDIUM~~ | ~~No "Change Role" action in member dropdown~~ | ~~**FIXED** — onChangeRole prop wired in MembersTable with toggle Admin/Member~~ |
-| ~~30~~ | ~~UAT2-10~~ | ~~MEDIUM~~ | ~~Mobile records table shows only Document column~~ | ~~**FIXED** — Mobile card layout (`sm:hidden`) with status badges + actions~~ |
-| 31 | UAT2-08 | MEDIUM | Member names not clickable — no member detail view | OPEN (enhancement) |
-| 32 | UAT2-09 | MEDIUM | Credential Templates page shows empty state | OPEN (seed data — production templates needed) |
-| 33 | UAT2-15 | MEDIUM | Mobile sidebar missing bottom nav items | OPEN |
+| 22 | UAT-10 | MEDIUM | Secure Document button overlaps subtitle | uat_2026_03_15.md |
+| 23 | UAT-11 | MEDIUM | Stat cards stacked vertically on desktop | uat_2026_03_15.md |
+| 24 | UAT-12 | MEDIUM | Tablet viewport clips content | uat_2026_03_15.md |
+| 25 | UAT-13 | MEDIUM | Account Type dual labels confusing | uat_2026_03_15.md |
+| 26 | UAT-14 | MEDIUM | Seed data visible in prod-like env | uat_2026_03_15.md |
+| 27 | UAT3-02 | MEDIUM | PENDING anchor shows "Verification Failed" | uat_launch_readiness_3.md |
+| 28-35 | UAT2-06–13 | MEDIUM | 8 additional org admin flow bugs | uat_launch_readiness_2.md |
 
 ---
 
 ## TIER 4: LOW PRIORITY BUGS
 
-| # | ID | Severity | Bug | Status |
+| # | ID | Severity | Bug | Source |
 |---|-----|----------|-----|--------|
-| ~~34~~ | ~~UAT-15~~ | ~~LOW~~ | ~~No "Forgot Password" link~~ | ~~**FIXED** (PR #48)~~ |
-| ~~35~~ | ~~UAT-16~~ | ~~LOW~~ | ~~No loading states during data fetch~~ | ~~**FIXED** (PR #48)~~ |
-| ~~36~~ | ~~UAT-17~~ | ~~LOW~~ | ~~QR code URL shows localhost~~ | ~~**FIXED** (PR #48)~~ |
-| 37 | UAT-LR1-02 | LOW | Misleading toast after sign-out | OPEN |
-| 38 | UAT2-11 | LOW | Expired/Revoked badges visually identical | OPEN (cosmetic) |
-| 39 | UAT2-12 | LOW | Template creation uses raw JSON instead of visual builder | OPEN |
-| 40 | UAT2-13 | LOW | No "Recipient" column in org records table | OPEN — column exists (`hidden md:table-cell`) but may not show recipient |
-| 41 | UAT2-14 | LOW | "Failed to fetch" error on API Keys page | OPEN (requires worker running) |
-| 42 | UAT3-03 | LOW | No loading skeleton on verification page | OPEN (cosmetic) |
-| 43 | UAT3-04 | LOW | QR code on detail page links to localhost | OPEN (same as UAT-17 for authenticated views) |
-| 44 | UAT3-05 | LOW | Missing toast on billing page auth redirect | OPEN |
+| 36 | UAT-15 | LOW | No "Forgot Password" link | uat_2026_03_15.md |
+| 37 | UAT-16 | LOW | No loading states during data fetch | uat_2026_03_15.md |
+| 38 | UAT-17 | LOW | QR code URL shows localhost | uat_2026_03_15.md |
+| 39 | UAT-LR1-02 | LOW | Misleading toast after sign-out | uat_launch_readiness_1.md |
+| 40-43 | UAT2-14, UAT3-03–05 | LOW | 4 additional low bugs | uat_launch_readiness_2/3.md |
 
 ---
 
@@ -112,13 +101,13 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | MVP-12 | Dark mode toggle | LOW |
 | MVP-20 | LinkedIn badge integration | LOW |
 
-### ~~P8 AI Intelligence — 4 stories COMPLETE (PR #80)~~
-| ID | Description | Status |
-|----|-------------|--------|
-| ~~P8-S6~~ | ~~Extraction learning / feedback loop~~ | ~~**COMPLETE** (PR #80)~~ |
-| ~~P8-S8~~ | ~~Integrity scoring + duplicate detection~~ | ~~**COMPLETE** (PR #80)~~ |
-| ~~P8-S9~~ | ~~Admin review queue~~ | ~~**COMPLETE** (PR #80)~~ |
-| ~~P8-S16~~ | ~~AI Reports~~ | ~~**COMPLETE** (PR #80)~~ |
+### P8 AI Intelligence — 4 not started (Phase II)
+| ID | Description | Priority |
+|----|-------------|----------|
+| P8-S6 | Extraction learning / feedback loop | MEDIUM |
+| P8-S8 | Duplicate detection (cross-org) | HIGH |
+| P8-S9 | Admin review queue | HIGH |
+| P8-S16 | Multi-language OCR support | LOW |
 
 ### GEO & SEO — 5 not started
 | ID | Description | Priority |
@@ -129,25 +118,17 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | GEO-10 | IndexNow for Bing/Copilot | MEDIUM |
 | GEO-11 | YouTube explainers + VideoObject schema | MEDIUM |
 
-### GEO & SEO — 2 partial (see `docs/stories/15_geo_seo.md` for all 12 stories)
-| ID | Story Doc Name | Status |
-|----|----------------|--------|
-| GEO-02 | LinkedIn entity collision + sameAs | ⚠️ PARTIAL — sameAs updated; LinkedIn company page + Wikidata entry are external tasks |
-| GEO-08 | Content expansion — 5 core pages | ⚠️ PARTIAL — Research section + first article done; 5 core pages remaining |
-
-### GEO & SEO — 5 complete
-| ID | Story Doc Name | Status |
-|----|----------------|--------|
-| ~~GEO-01~~ | ~~Server-Side Rendering for marketing site~~ | ✅ COMPLETE (PR #2 arkova-marketing) |
-| ~~GEO-05~~ | ~~Enhanced schema (speakable + AggregateOffer)~~ | ✅ COMPLETE — SoftwareApplication + AggregateOffer + speakable in app index.html |
-| ~~GEO-06~~ | ~~llms.txt deployment~~ | ✅ COMPLETE — llms.txt + robots.txt with AI crawler rules, canonical URLs |
-| ~~GEO-07~~ | ~~Fix og:image + meta tags~~ | ✅ COMPLETE — og:image, twitter:site, og:site_name |
-| ~~GEO-12~~ | ~~Security headers~~ | ✅ COMPLETE — vercel.json with 7 headers + CSP + SPA rewrite, 10 tests |
+### GEO & SEO — 3 partial
+| ID | Description | Remaining |
+|----|-------------|-----------|
+| GEO-02 | LinkedIn entity + sameAs | Wikidata entry (external) |
+| GEO-05 | Enhanced schema | speakable + AggregateOffer |
+| GEO-12 | Security headers | CSP header (complex with Google Fonts) |
 
 ### INFRA — 1 partial
 | ID | Description | Remaining |
 |----|-------------|-----------|
-| INFRA-07 | Sentry integration | Code COMPLETE. OPS-only: DSN env vars (OPS-03) + source map auth token (OPS-04). Runbook sections 5-6 have exact commands. |
+| INFRA-07 | Sentry integration | Source map upload + DSN env vars in production |
 
 ---
 

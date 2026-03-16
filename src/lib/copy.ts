@@ -738,6 +738,24 @@ export const SETTINGS_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// ACCOUNT DELETION (PII-02 — GDPR Art. 17)
+// =============================================================================
+
+export const ACCOUNT_DELETE_LABELS = {
+  DELETE_BUTTON: 'Delete Account',
+  DIALOG_TITLE: 'Delete Your Account',
+  DIALOG_DESCRIPTION: 'This action is permanent and cannot be undone.',
+  WARNING: 'All your personal data will be permanently anonymized. This cannot be reversed.',
+  CONSEQUENCES_INTRO: 'Deleting your account will:',
+  CONSEQUENCE_1: 'Anonymize all your audit trail records',
+  CONSEQUENCE_2: 'Remove your profile and sign-in credentials',
+  CONSEQUENCE_3: 'Revoke all active API keys',
+  CONSEQUENCE_4: 'Preserved records will be disassociated from your identity',
+  CONFIRM_BUTTON: 'Permanently Delete Account',
+  DELETING: 'Deleting...',
+} as const;
+
+// =============================================================================
 // ADMIN TREASURY DASHBOARD (GAP-01 — internal ops, banned terms exempt)
 // =============================================================================
 

@@ -103,7 +103,7 @@ function setCorsHeaders(req: express.Request, res: express.Response): boolean {
   const origin = req.headers.origin;
   if (origin && CORS_ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
@@ -339,6 +339,29 @@ app.post('/api/verify-anchor', rateLimiters.checkout, async (req, res) => {
 
 // CORS preflight for verify-anchor
 app.options('/api/verify-anchor', (req, res) => { setCorsHeaders(req, res); });
+
+// =========================================================================
+// Account Deletion — GDPR Art. 17 Right to Erasure (PII-02)
+// =========================================================================
+app.options('/api/account', (req, res) => { setCorsHeaders(req, res); });
+
+app.delete('/api/account', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { handleAccountDelete } = await import('./api/account-delete.js');
+    await handleAccountDelete(userId, { db, logger }, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Account deletion failed');
+    res.status(500).json({ error: 'Account deletion failed' });
+  }
+});
 
 // =========================================================================
 // Cron Job HTTP Endpoints — Cloud Scheduler (MVP-28) + dev manual trigger

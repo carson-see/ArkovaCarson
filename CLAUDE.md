@@ -628,7 +628,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 62 files, versions 0001–0063 (0033 skipped). Last: `0063_security_sprint2.sql`. Migrations 0001–0058 applied to production. Migrations 0059–0063 pending production apply.
+**Current migration inventory:** 63 files, versions 0001–0065 (0033 skipped). Last: `0065_account_deletion.sql`. Migrations 0001–0058 applied to production. Migrations 0059–0065 pending production apply.
 
 ---
 
@@ -1105,5 +1105,5 @@ AI_PROVIDER=mock                   # gemini | cloudflare | replicate | mock
 
 ---
 
-_Directive version: 2026-03-16 (Sprint 4 polish + testnet4 anchoring merged) | Repo: ArkovaCarson | 62 migrations | 1,631 tests | 163 stories (146 complete, 90%)_
+_Directive version: 2026-03-16 (Security Tier 1 fixes — PII-01/02, INJ-01, RLS-01/02, PII-03) | Repo: ArkovaCarson | 63 migrations | 1,745 tests | 163 stories (146 complete, 90%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

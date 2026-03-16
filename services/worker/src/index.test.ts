@@ -491,7 +491,7 @@ describe('worker server', () => {
 
       expect(res.status).toBe(204);
       expect(res.headers['Access-Control-Allow-Origin']).toBe('http://localhost:5173');
-      expect(res.headers['Access-Control-Allow-Methods']).toBe('POST, OPTIONS');
+      expect(res.headers['Access-Control-Allow-Methods']).toBe('POST, DELETE, OPTIONS');
       expect(res.headers['Access-Control-Allow-Headers']).toBe('Content-Type, Authorization');
     });
 
