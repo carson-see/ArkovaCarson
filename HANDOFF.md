@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 115/163 stories complete (71%). 1,190 tests (586 frontend + 604 worker). 56 migrations. All 10 UF stories COMPLETE. GEO: 3 complete, 3 partial, 6 not started.
+**Overall progress:** 128/163 stories complete (79%). 1,327+ tests. 58 migrations. P4.5 Verification API COMPLETE (13/13). GEO: 3 complete, 3 partial, 6 not started.
 
 ### Open Blockers
 
@@ -74,7 +74,7 @@ All HIGH+ launch blockers resolved:
 
 ### What's Production-Ready
 
-- Database layer (56 migrations, RLS on all tables, audit trail immutable)
+- Database layer (58 migrations, RLS on all tables, audit trail immutable)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
@@ -364,9 +364,7 @@ All HIGH+ launch blockers resolved:
 
 ## Phase 4 Readiness (Verification API — Post-Launch)
 
-**Status:** 0/13 P4.5 stories (deferred). P8-S19 (Agentic Verification) **COMPLETE** via MCP server.
-**Prerequisite:** Phase 3 production launch complete.
-**Build order:** See CLAUDE.md Section 10.
+**Status:** **13/13 P4.5 stories COMPLETE.** Full Verification API with batch processing, job polling, usage tracking, OpenAPI docs, API key management UI, and load tests. Migrations 0057-0058. P8-S19 (Agentic Verification) also **COMPLETE** via MCP server.
 
 ---
 
