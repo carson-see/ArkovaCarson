@@ -126,12 +126,56 @@ All HIGH+ launch blockers resolved:
 | GEO-11 | MEDIUM | YouTube explainers + VideoObject schema | NOT STARTED |
 | GEO-12 | MEDIUM | Security headers + technical SEO hardening | NOT STARTED |
 
-**GEO Audit Score:** 42/100 | **Target:** 72/100 in 90 days
+**GEO Audit Score:** 42→63→~72/100 (re-audited 2026-03-16) | **Target:** 80/100
 **Reports:** `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
 
 ---
 
 ## Session Log
+
+### Session: 2026-03-16 — GEO Re-Audit + Marketing Site Polish + Doc Sync
+
+**GEO Re-Audit Results (5 parallel subagents):**
+- **Score: 42→63→~72/100** (+30 points from first audit)
+- AI Citability: 74 (+22), Brand Authority: 28 (+16), Content Quality: ~55 (+31), Technical: 72 (+20), Schema: 62 (+10), Platform: 68 (+34)
+
+**Critical SEO fixes applied:**
+- Per-page meta tags: prerender.mjs now injects unique title, description, canonical, OG, Twitter tags per route (was sharing homepage's tags on all 10 pages)
+- Sitemap: expanded from 3→10 URLs with correct lastmod dates
+- Security headers: X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy via vercel.json
+
+**Marketing site updates:**
+- Tagline: "Verify Once. Trust Forever." → "Issue Once. Verify Forever." (all pages + meta)
+- Hero subtitle: "AI and blockchain" mentioned prominently
+- Section reorder: Agentic → AI → API now before How It Works (lead with vision)
+- "Agentic Record Keeping" → "Agentic Verification"
+- Blockchain mentioned in 6 places (trust bar, step 2, features, FAQ)
+- Team bios updated with founding stories
+- Sarah Rushton's research article published
+- Research articles: reverse chronological order
+- "No Account Required" → "No Account Required to Verify"
+- Light mode darkened (mist #e9eef2, frost #e2eaef)
+- X handle: @arkaboratory → @arkovatech everywhere
+- YouTube channel added to sameAs schema + footer
+- Favicon: proper ICO/PNG from actual Arkova logo
+- Whitepaper page + Roadmap page published
+- Contact form live (Formspree xojkngwn)
+- Scroll-to-top fix on route navigation
+
+**Social accounts (source of truth):**
+- LinkedIn: https://www.linkedin.com/company/arkovatech
+- X/Twitter: https://x.com/arkovatech
+- YouTube: https://www.youtube.com/channel/UCTTDFFSLxl85omCeJ9DBvrg
+- GitHub: https://github.com/carson-see/ArkovaCarson
+- Email: hello@arkova.ai
+
+**Doc sync:**
+- CLAUDE.md: migration count 62 files (0001-0063), test count 1,621, ai/ + api/v1/ file map
+- HANDOFF.md: progress 146/163, GEO score updated, session log
+- MEMORY.md: test counts, social accounts reference, strategic direction, positioning feedback
+- Stories index: totals reconciled
+- Confluence index: 15→18 documents
+- Data model: 21→32 tables, 50→62 migration files
 
 ### Session: 2026-03-16 — Bitcoin Testnet 4 Migration + Launch Readiness Audit
 
@@ -247,7 +291,7 @@ All HIGH+ launch blockers resolved:
 ### Session: 2026-03-15 — GEO Quick Wins (GEO-07, GEO-06, GEO-02, GEO-05)
 
 **Changes to arkova-marketing repo (`carson-see/arkova-marketing`, branch `geo/quick-wins-07-06-02-05`):**
-- **GEO-07 COMPLETE:** Fixed broken `og:image` (`og-image.png` → `arkova-logo.png`), added `og:site_name="Arkova"`, `twitter:site="@arkaboratory"`, `twitter:image`. Extended meta description to 153 chars.
+- **GEO-07 COMPLETE:** Fixed broken `og:image` (`og-image.png` → `arkova-logo.png`), added `og:site_name="Arkova"`, `twitter:site="@arkovatech"`, `twitter:image`. Extended meta description to 153 chars.
 - **GEO-06 COMPLETE:** Deployed upgraded `llms.txt` (formal spec with API docs, MCP server reference, auth, rate limits). Replaced marketing-copy version.
 - **GEO-02 PARTIAL:** Fixed `sameAs` LinkedIn URL from `/company/arkova` (Arkova Partners) to `/company/arkovatech`. Added GitHub (`carson-see/ArkovaCarson`) to `sameAs` array. Remaining: create actual LinkedIn company page + Wikidata entry (external tasks).
 - **GEO-05 PARTIAL:** Added `WebSite` JSON-LD schema with `alternateName`, `publisher` reference. Now 4 JSON-LD blocks total (Organization, SoftwareApplication, FAQPage, WebSite). Remaining: `speakable` WebPage + `AggregateOffer` enhancement.
