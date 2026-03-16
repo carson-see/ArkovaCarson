@@ -188,7 +188,6 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const isRevoked = data.status === 'REVOKED';
   const isExpired = data.status === 'EXPIRED';
   const isPending = data.status === 'PENDING';
-  const isInactive = isRevoked || isExpired;
   const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
@@ -206,29 +205,35 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       <div className={
         isPending
           ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
-          : isInactive
-            ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
-            : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
+          : isExpired
+            ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
+            : isRevoked
+              ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
+              : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
       }>
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
             isPending ? 'bg-amber-500/10'
-            : isInactive ? 'bg-gray-500/10'
+            : isExpired ? 'bg-amber-500/10'
+            : isRevoked ? 'bg-gray-500/10'
             : 'bg-green-500/10'
           }`}>
             {isPending ? (
               <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
-            ) : isInactive ? (
+            ) : isExpired ? (
+              <Clock className="h-8 w-8 text-amber-500" />
+            ) : isRevoked ? (
               <Ban className="h-8 w-8 text-gray-500" />
             ) : (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
           </div>
           <Badge
-            variant={isPending ? 'outline' : isInactive ? 'secondary' : 'default'}
+            variant={isPending ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
             className={`mb-2 text-sm px-4 py-1 ${
               isPending ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
-              : isInactive ? ''
+              : isExpired ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
+              : isRevoked ? ''
               : 'bg-green-600 hover:bg-green-700'
             }`}
           >

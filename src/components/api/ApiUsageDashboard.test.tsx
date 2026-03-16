@@ -54,6 +54,11 @@ describe('ApiUsageDashboard', () => {
     expect(screen.getByText('Failed to load')).toBeInTheDocument();
   });
 
+  it('renders friendly message for network errors', () => {
+    render(<ApiUsageDashboard usage={null} error="Failed to fetch" />);
+    expect(screen.getByText('Usage data unavailable — worker service not connected')).toBeInTheDocument();
+  });
+
   it('renders reset date', () => {
     render(<ApiUsageDashboard usage={mockUsage} />);
     // Date may render as March 31 or April 1 depending on timezone

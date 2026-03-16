@@ -205,50 +205,53 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         </div>
       )}
 
-      {/* Main Navigation */}
-      <nav className="flex-1 space-y-1 p-3">
-        {mainNavItems.map((item) => (
-          <SidebarNavLink
-            key={item.label}
-            item={item}
-            collapsed={collapsed}
-            active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
-          />
-        ))}
+      {/* Scrollable nav area — ensures bottom items visible on short screens */}
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {/* Main Navigation */}
+        <nav className="space-y-1 p-3">
+          {mainNavItems.map((item) => (
+            <SidebarNavLink
+              key={item.label}
+              item={item}
+              collapsed={collapsed}
+              active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+            />
+          ))}
 
-        {/* Admin-only items */}
-        {isPlatformAdmin && (
-          <>
-            {!collapsed && (
-              <p className="px-3 pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Admin
-              </p>
-            )}
-            {adminNavItems.map((item) => (
-              <SidebarNavLink
-                key={item.label}
-                item={item}
-                collapsed={collapsed}
-                active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
-              />
-            ))}
-          </>
-        )}
-      </nav>
+          {/* Admin-only items */}
+          {isPlatformAdmin && (
+            <>
+              {!collapsed && (
+                <p className="px-3 pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Admin
+                </p>
+              )}
+              {adminNavItems.map((item) => (
+                <SidebarNavLink
+                  key={item.label}
+                  item={item}
+                  collapsed={collapsed}
+                  active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+                />
+              ))}
+            </>
+          )}
+        </nav>
 
-      <Separator className="mx-3" />
+        <Separator className="mx-3" />
 
-      {/* Secondary Navigation */}
-      <nav className="space-y-1 p-3">
-        {secondaryNavItems.map((item) => (
-          <SidebarNavLink
-            key={item.label}
-            item={item}
-            collapsed={collapsed}
-            active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
-          />
-        ))}
-      </nav>
+        {/* Secondary Navigation */}
+        <nav className="space-y-1 p-3">
+          {secondaryNavItems.map((item) => (
+            <SidebarNavLink
+              key={item.label}
+              item={item}
+              collapsed={collapsed}
+              active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+            />
+          ))}
+        </nav>
+      </div>
 
       {/* Theme Toggle + Collapse — desktop only */}
       <div className="hidden border-t p-3 md:block space-y-1">
