@@ -42,7 +42,7 @@ router.use(verificationApiGate());
 // In development, allow all origins for convenience.
 // In production, CORS_ALLOWED_ORIGINS must be explicitly set.
 const API_CORS_ORIGINS: string[] = config.corsAllowedOrigins
-  ? config.corsAllowedOrigins.split(',').map((o) => o.trim())
+  ? config.corsAllowedOrigins.split(',').map((o) => o.trim()).filter((o) => o.length > 0)
   : config.nodeEnv === 'production'
     ? [] // Production: reject all cross-origin requests unless explicitly configured
     : ['*']; // Development: allow all origins

@@ -45,7 +45,8 @@ const BLOCKED_HOSTNAMES = new Set([
 export function isPrivateUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    const hostname = parsed.hostname.toLowerCase();
+    // Strip IPv6 brackets: URL.hostname returns "[::1]" → "::1"
+    const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
     // Block known internal hostnames
     if (BLOCKED_HOSTNAMES.has(hostname)) return true;
@@ -165,7 +166,7 @@ async function deliverToEndpoint(
   // INJ-02: SSRF protection — block private/internal URLs
   if (isPrivateUrl(endpoint.url)) {
     logger.warn(
-      { endpointId: endpoint.id, url: endpoint.url },
+      { endpointId: endpoint.id },
       'Blocked webhook delivery to private/internal URL (SSRF protection)',
     );
     return false;
@@ -228,6 +229,7 @@ async function deliverToEndpoint(
         'X-Arkova-Event': payload.event_type,
       },
       body: payloadString,
+      redirect: 'manual', // Prevent SSRF via redirect to internal URL
       signal: AbortSignal.timeout(10000), // 10 second timeout
     });
 

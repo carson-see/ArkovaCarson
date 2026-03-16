@@ -92,10 +92,6 @@ const config: Config = {
       fontFamily: {
         sans: [
           'DM Sans',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          'Segoe UI',
-          'sans-serif',
         ],
         mono: [
           'JetBrains Mono',

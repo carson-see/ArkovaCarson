@@ -80,6 +80,12 @@ BEGIN
   DELETE FROM credits
   WHERE org_id = ANY(demo_org_ids);
 
+  -- Batch verification jobs (references api_keys — must delete before api_keys)
+  DELETE FROM batch_verification_jobs
+  WHERE api_key_id IN (
+    SELECT id FROM api_keys WHERE org_id = ANY(demo_org_ids)
+  );
+
   -- API key usage
   DELETE FROM api_key_usage
   WHERE api_key_id IN (
@@ -118,12 +124,6 @@ BEGIN
   DELETE FROM verification_events
   WHERE anchor_id IN (
     SELECT id FROM anchors WHERE org_id = ANY(demo_org_ids) OR user_id = ANY(demo_user_ids)
-  );
-
-  -- Batch verification jobs
-  DELETE FROM batch_verification_jobs
-  WHERE api_key_id IN (
-    SELECT id FROM api_keys WHERE org_id = ANY(demo_org_ids)
   );
 
   -- Anchors

@@ -421,11 +421,11 @@ function setupScheduledJobs(chainInitialized: boolean): void {
     logger.info('Running GDPR data retention cleanup');
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (db.rpc as any)('cleanup_expired_data');
+      const { data: result, error } = await (db.rpc as any)('cleanup_expired_data');
       if (error) {
         logger.error({ error }, 'Data retention cleanup RPC failed');
       } else {
-        logger.info('Data retention cleanup complete');
+        logger.info({ result }, 'Data retention cleanup complete');
       }
     } catch (error) {
       logger.error({ error }, 'Data retention cleanup failed');
