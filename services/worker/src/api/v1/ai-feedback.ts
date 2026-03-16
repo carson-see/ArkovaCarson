@@ -35,15 +35,19 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Get org_id from profile
+    // Get org_id from profile — require org membership for feedback
     const { data: profile } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    const orgId = profile?.org_id ?? undefined;
-    const result = await storeExtractionFeedback(orgId, userId, parsed.data.items);
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
+    const result = await storeExtractionFeedback(profile.org_id, userId, parsed.data.items);
 
     res.json({
       stored: result.stored,
@@ -71,11 +75,16 @@ router.get('/accuracy', async (req: Request, res: Response) => {
       .eq('id', userId)
       .single();
 
-    const orgId = profile?.org_id ?? undefined;
-    const credentialType = req.query.credentialType as string | undefined;
-    const days = parseInt(req.query.days as string, 10) || 30;
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
 
-    const stats = await getExtractionAccuracy(credentialType, orgId, days);
+    const credentialType = req.query.credentialType as string | undefined;
+    const rawDays = Number.parseInt(req.query.days as string, 10) || 30;
+    const days = Math.max(1, Math.min(rawDays, 365));
+
+    const stats = await getExtractionAccuracy(credentialType, profile.org_id, days);
     res.json({ stats, days });
   } catch (err) {
     logger.error({ error: err }, 'Failed to get accuracy stats');

@@ -7,6 +7,7 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import {
   CreateReportSchema,
   createReport,
@@ -18,6 +19,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
+const UuidSchema = z.string().uuid();
 
 // POST / — Create and generate a report
 router.post('/', async (req: Request, res: Response) => {
@@ -90,10 +92,10 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const limit = parseInt(req.query.limit as string, 10) || 20;
-    const offset = parseInt(req.query.offset as string, 10) || 0;
+    const limit = Math.max(1, Math.min(Number.parseInt(req.query.limit as string, 10) || 20, 100));
+    const offset = Math.max(0, Number.parseInt(req.query.offset as string, 10) || 0);
 
-    const reports = await listReports(profile.org_id, Math.min(limit, 100), offset);
+    const reports = await listReports(profile.org_id, limit, offset);
     res.json({ reports });
   } catch (err) {
     logger.error({ error: err }, 'Failed to list reports');
@@ -110,27 +112,29 @@ router.get('/:reportId', async (req: Request, res: Response) => {
   }
 
   const { reportId } = req.params;
-  if (!reportId) {
-    res.status(400).json({ error: 'reportId is required' });
+  const uuidParsed = UuidSchema.safeParse(reportId);
+  if (!uuidParsed.success) {
+    res.status(400).json({ error: 'Invalid reportId format' });
     return;
   }
 
   try {
-    const report = await getReport(reportId);
-    if (!report) {
-      res.status(404).json({ error: 'Report not found' });
-      return;
-    }
-
-    // Verify org membership
+    // Get org first, then fetch report scoped to org (prevents info disclosure)
     const { data: profile } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    if (profile?.org_id !== report.orgId) {
-      res.status(403).json({ error: 'Access denied' });
+    if (!profile?.org_id) {
+      res.status(403).json({ error: 'Organization membership required' });
+      return;
+    }
+
+    const report = await getReport(reportId);
+    // Return 404 for both missing and wrong-org reports (no info leak)
+    if (!report || report.orgId !== profile.org_id) {
+      res.status(404).json({ error: 'Report not found' });
       return;
     }
 

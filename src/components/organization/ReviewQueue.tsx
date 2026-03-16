@@ -84,7 +84,7 @@ function getStatusBadge(status: ReviewStatus) {
 export function ReviewQueue() {
   const { items, stats, loading, acting, fetchItems, fetchStats, applyAction } = useReviewQueue();
   const [activeFilter, setActiveFilter] = useState<ReviewStatus | 'ALL'>('PENDING');
-  const [actionNotes, setActionNotes] = useState('');
+  const [notesByItem, setNotesByItem] = useState<Record<string, string>>({});
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,10 +94,13 @@ export function ReviewQueue() {
 
   const handleAction = async (itemId: string, action: ReviewAction) => {
     try {
-      await applyAction(itemId, action, actionNotes || undefined);
-      setActionNotes('');
+      const notes = notesByItem[itemId] || undefined;
+      await applyAction(itemId, action, notes);
+      setNotesByItem((prev) => { const next = { ...prev }; delete next[itemId]; return next; });
       setExpandedItem(null);
       toast.success(`Item ${action.toLowerCase()}d successfully`);
+      // Refresh the list after action
+      fetchItems(activeFilter === 'ALL' ? undefined : activeFilter);
       fetchStats();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Action failed');
@@ -191,9 +194,11 @@ export function ReviewQueue() {
               }`}
             >
               {/* Item header */}
-              <div
-                className="flex items-center justify-between p-4 cursor-pointer"
+              <button
+                type="button"
+                className="flex items-center justify-between p-4 cursor-pointer w-full text-left"
                 onClick={() => setExpandedItem(expandedItem === item.id ? null : item.id)}
+                aria-expanded={expandedItem === item.id}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   {item.integrityScore != null && item.integrityLevel && (
@@ -220,7 +225,7 @@ export function ReviewQueue() {
                   )}
                   {getStatusBadge(item.status)}
                 </div>
-              </div>
+              </button>
 
               {/* Expanded section */}
               {expandedItem === item.id && (
@@ -252,8 +257,8 @@ export function ReviewQueue() {
                     <div className="space-y-2">
                       <textarea
                         placeholder="Add review notes (optional)..."
-                        value={expandedItem === item.id ? actionNotes : ''}
-                        onChange={(e) => setActionNotes(e.target.value)}
+                        value={notesByItem[item.id] ?? ''}
+                        onChange={(e) => setNotesByItem((prev) => ({ ...prev, [item.id]: e.target.value }))}
                         className="w-full text-sm border rounded-md px-3 py-2 bg-background resize-none"
                         rows={2}
                       />

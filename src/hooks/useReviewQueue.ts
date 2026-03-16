@@ -46,19 +46,29 @@ export function useReviewQueue() {
   const [stats, setStats] = useState<ReviewQueueStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchItems = useCallback(async (status?: ReviewStatus) => {
     setLoading(true);
+    setError(null);
     try {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       params.set('limit', '50');
 
       const res = await workerFetch(`/api/v1/ai/review?${params}`);
-      if (!res.ok) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setError((err as Record<string, string>).error ?? 'Failed to fetch review items');
+        setItems([]);
+        return;
+      }
 
       const data = await res.json() as { items: ReviewQueueItem[] };
       setItems(data.items);
+    } catch {
+      setError('Failed to fetch review items');
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -108,7 +118,7 @@ export function useReviewQueue() {
     }
   }, []);
 
-  return { items, stats, loading, acting, fetchItems, fetchStats, applyAction };
+  return { items, stats, loading, acting, error, fetchItems, fetchStats, applyAction };
 }
 
 function actionToStatus(action: ReviewAction): ReviewStatus {

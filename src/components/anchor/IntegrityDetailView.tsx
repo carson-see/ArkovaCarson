@@ -73,6 +73,7 @@ export function IntegrityDetailView({ score, onClose }: IntegrityDetailViewProps
               type="button"
               onClick={onClose}
               className="text-muted-foreground hover:text-foreground p-1 rounded"
+              aria-label="Close integrity details"
             >
               <XCircle className="h-4 w-4" />
             </button>

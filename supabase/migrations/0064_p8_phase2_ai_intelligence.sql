@@ -51,9 +51,12 @@ CREATE POLICY extraction_feedback_select ON extraction_feedback
     OR user_id = auth.uid()
   );
 
--- Users can insert their own feedback
+-- Users can insert feedback for their own org only
 CREATE POLICY extraction_feedback_insert ON extraction_feedback
-  FOR INSERT WITH CHECK (user_id = auth.uid());
+  FOR INSERT WITH CHECK (
+    user_id = auth.uid()
+    AND org_id IN (SELECT org_id FROM profiles WHERE id = auth.uid())
+  );
 
 -- Index for accuracy tracking queries
 CREATE INDEX idx_extraction_feedback_type_field
@@ -192,7 +195,9 @@ CREATE INDEX idx_review_queue_anchor
 
 -- Update trigger for updated_at
 CREATE OR REPLACE FUNCTION update_review_queue_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SET search_path = public
+AS $$
 BEGIN
   NEW.updated_at = now();
   RETURN NEW;
@@ -211,7 +216,7 @@ CREATE TRIGGER trg_review_queue_updated_at
 CREATE TABLE ai_reports (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-  requested_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE SET NULL,
+  requested_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
   report_type TEXT NOT NULL CHECK (report_type IN ('integrity_summary', 'extraction_accuracy', 'credential_analytics', 'compliance_overview')),
   status ai_report_status NOT NULL DEFAULT 'QUEUED',
   title TEXT NOT NULL,

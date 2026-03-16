@@ -29,15 +29,25 @@ export function useAIReports() {
   const [reports, setReports] = useState<AIReport[]>([]);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const res = await workerFetch('/api/v1/ai/reports');
-      if (!res.ok) return;
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setError((err as Record<string, string>).error ?? 'Failed to fetch reports');
+        setReports([]);
+        return;
+      }
 
       const data = await res.json() as { reports: AIReport[] };
       setReports(data.reports);
+    } catch {
+      setError('Failed to fetch reports');
+      setReports([]);
     } finally {
       setLoading(false);
     }
@@ -76,5 +86,5 @@ export function useAIReports() {
     return await res.json() as AIReport;
   }, []);
 
-  return { reports, loading, creating, fetchReports, createReport, fetchReport };
+  return { reports, loading, creating, error, fetchReports, createReport, fetchReport };
 }

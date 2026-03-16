@@ -206,6 +206,7 @@ export async function listReviewItems(
  */
 export async function updateReviewItem(
   itemId: string,
+  orgId: string,
   userId: string,
   action: ReviewAction,
   notes?: string,
@@ -218,8 +219,9 @@ export async function updateReviewItem(
       DISMISS: 'DISMISSED',
     };
 
+    // Scope update to caller's org_id to prevent cross-tenant modification
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any)
+    const { data, error } = await (db as any)
       .from('review_queue_items')
       .update({
         status: statusMap[action],
@@ -228,10 +230,13 @@ export async function updateReviewItem(
         review_action: action,
         review_notes: notes ?? null,
       })
-      .eq('id', itemId);
+      .eq('id', itemId)
+      .eq('org_id', orgId)
+      .select('id')
+      .single();
 
-    if (error) {
-      logger.error({ error, itemId }, 'Failed to update review item');
+    if (error || !data) {
+      logger.error({ error, itemId, orgId }, 'Failed to update review item (not found or wrong org)');
       return false;
     }
 

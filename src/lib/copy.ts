@@ -766,7 +766,7 @@ export const TREASURY_LABELS = {
   REFRESH: 'Refresh',
   FEE_RATE: 'Fee Rate (sat/vB)',
   FEE_ESTIMATOR: 'Estimator',
-  BLOCK_HEIGHT: 'Block Height',
+  BLOCK_HEIGHT: 'Network Record Height',
   CHAIN_NAME: 'Chain',
   LAST_24H: 'Last 24 Hours',
   WORKER_STATUS: 'Worker',

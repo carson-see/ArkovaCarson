@@ -64,7 +64,7 @@ function ReportResultViewer({ report }: { report: AIReport }) {
     a.href = url;
     a.download = `${report.title.replace(/\s+/g, '_')}_${report.id.slice(0, 8)}.json`;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   return (
@@ -217,6 +217,7 @@ export function AIReportsPanel() {
             onClick={fetchReports}
             className="p-2 text-muted-foreground hover:text-foreground rounded-md transition-colors"
             disabled={loading}
+            aria-label="Refresh reports"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </button>

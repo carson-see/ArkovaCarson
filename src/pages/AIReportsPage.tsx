@@ -4,7 +4,7 @@
  * Thin page wrapper for the AIReportsPanel component.
  */
 
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Navigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
@@ -21,6 +21,11 @@ export function AIReportsPage() {
     await signOut();
     navigate(ROUTES.LOGIN);
   };
+
+  // Redirect non-admins to dashboard
+  if (!profileLoading && profile?.role !== 'ORG_ADMIN') {
+    return <Navigate to={ROUTES.DASHBOARD} replace />;
+  }
 
   return (
     <AppShell
