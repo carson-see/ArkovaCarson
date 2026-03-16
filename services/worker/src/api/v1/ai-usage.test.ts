@@ -48,7 +48,7 @@ describe('AI Usage Endpoint', () => {
     const { req, res } = createMockReqRes();
 
     // Extract the GET handler from the router
-    const layer = (aiUsageRouter as { stack: Array<{ route?: { methods: { get: boolean }; stack: Array<{ handle: Function }> } }> }).stack
+    const layer = (aiUsageRouter as { stack: Array<{ route?: { methods: { get: boolean }; stack: Array<{ handle: (...args: unknown[]) => unknown }> } }> }).stack
       .find((l) => l.route?.methods?.get);
     const handler = layer?.route?.stack[0].handle;
 
@@ -99,7 +99,7 @@ describe('AI Usage Endpoint', () => {
       error: null,
     });
 
-    const layer = (aiUsageRouter as { stack: Array<{ route?: { methods: { get: boolean }; stack: Array<{ handle: Function }> } }> }).stack
+    const layer = (aiUsageRouter as { stack: Array<{ route?: { methods: { get: boolean }; stack: Array<{ handle: (...args: unknown[]) => unknown }> } }> }).stack
       .find((l) => l.route?.methods?.get);
     const handler = layer?.route?.stack[0].handle;
 

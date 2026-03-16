@@ -37,7 +37,7 @@ import { Request, Response } from 'express';
 import { aiExtractRouter } from './ai-extract.js';
 
 function getPostHandler() {
-  const layer = (aiExtractRouter as { stack: Array<{ route?: { methods: { post: boolean }; stack: Array<{ handle: Function }> } }> }).stack
+  const layer = (aiExtractRouter as { stack: Array<{ route?: { methods: { post: boolean }; stack: Array<{ handle: (...args: unknown[]) => unknown }> } }> }).stack
     .find((l) => l.route?.methods?.post);
   return layer?.route?.stack[0].handle;
 }

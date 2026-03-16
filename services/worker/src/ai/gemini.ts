@@ -90,7 +90,7 @@ export class GeminiProvider implements IAIProvider {
         // Parse and validate inside retry so malformed output is retried
         const parsed = JSON.parse(text);
         const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
-        const { confidence: _conf, ...rawFields } = parsed;
+        const { confidence: _, ...rawFields } = parsed;
         const validated = ExtractedFieldsSchema.safeParse(rawFields);
         if (!validated.success) {
           throw new Error(`Schema validation failed: ${validated.error.message}`);
