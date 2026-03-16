@@ -20,6 +20,11 @@ import {
   ChevronRight,
   X,
   Inbox,
+  Search,
+  Landmark,
+  Moon,
+  Sun,
+  Monitor,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -27,6 +32,7 @@ import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
+import { useTheme, type Theme } from '@/hooks/useTheme';
 import {
   Tooltip,
   TooltipContent,
@@ -45,6 +51,15 @@ const mainNavItems: NavItem[] = [
   { label: NAV_LABELS.MY_RECORDS, icon: FileText, to: ROUTES.RECORDS },
   { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Inbox, to: ROUTES.MY_CREDENTIALS },
   { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATION },
+  { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
+];
+
+// UI-only visibility hint — NOT a security control. Actual admin access must be
+// enforced server-side via RLS/roles. TODO: migrate to profiles.is_platform_admin flag.
+const PLATFORM_ADMIN_EMAILS = ['carson@arkova.io', 'sarah@arkova.io'];
+
+const adminNavItems: NavItem[] = [
+  { label: NAV_LABELS.TREASURY, icon: Landmark, to: ROUTES.ADMIN_TREASURY },
 ];
 
 const secondaryNavItems: NavItem[] = [
@@ -53,14 +68,77 @@ const secondaryNavItems: NavItem[] = [
   { label: NAV_LABELS.HELP, icon: HelpCircle, to: ROUTES.HELP },
 ];
 
+// ---------------------------------------------------------------------------
+// Theme Toggle (MVP-12)
+// ---------------------------------------------------------------------------
+
+const THEME_CYCLE: Theme[] = ['light', 'dark', 'system'];
+const THEME_ICONS: Record<Theme, React.ElementType> = {
+  light: Sun,
+  dark: Moon,
+  system: Monitor,
+};
+const THEME_LABEL: Record<Theme, string> = {
+  light: 'Light',
+  dark: 'Dark',
+  system: 'System',
+};
+
+function ThemeToggle({ collapsed }: Readonly<{ collapsed: boolean }>) {
+  const { theme, setTheme } = useTheme();
+
+  const cycleTheme = () => {
+    const idx = THEME_CYCLE.indexOf(theme);
+    const next = THEME_CYCLE[(idx + 1) % THEME_CYCLE.length];
+    setTheme(next);
+  };
+
+  const Icon = THEME_ICONS[theme];
+
+  const button = (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={cycleTheme}
+      className={cn(
+        'w-full justify-center',
+        !collapsed && 'justify-start'
+      )}
+      aria-label={`Theme: ${THEME_LABEL[theme]}. Click to cycle.`}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      {!collapsed && <span className="ml-2">{THEME_LABEL[theme]}</span>}
+    </Button>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right">
+          Theme: {THEME_LABEL[theme]}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return button;
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar
+// ---------------------------------------------------------------------------
+
 interface SidebarProps {
   className?: string;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
   orgName?: string | null;
+  userEmail?: string | null;
 }
 
-export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Readonly<SidebarProps>) {
+export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
+  const isPlatformAdmin = PLATFORM_ADMIN_EMAILS.includes(userEmail ?? '');
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
 
@@ -137,6 +215,25 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Reado
             active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
           />
         ))}
+
+        {/* Admin-only items */}
+        {isPlatformAdmin && (
+          <>
+            {!collapsed && (
+              <p className="px-3 pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Admin
+              </p>
+            )}
+            {adminNavItems.map((item) => (
+              <SidebarNavLink
+                key={item.label}
+                item={item}
+                collapsed={collapsed}
+                active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+              />
+            ))}
+          </>
+        )}
       </nav>
 
       <Separator className="mx-3" />
@@ -153,8 +250,9 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName }: Reado
         ))}
       </nav>
 
-      {/* Collapse Toggle — desktop only */}
-      <div className="hidden border-t p-3 md:block">
+      {/* Theme Toggle + Collapse — desktop only */}
+      <div className="hidden border-t p-3 md:block space-y-1">
+        <ThemeToggle collapsed={collapsed} />
         <Button
           variant="ghost"
           size="sm"

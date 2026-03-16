@@ -5,8 +5,10 @@
  */
 
 import { useState, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
 import { ORG_PAGE_LABELS } from '@/lib/copy';
+import { memberDetailPath } from '@/lib/routes';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -112,7 +114,10 @@ export function MembersTable({
           {members.map((member) => (
             <TableRow key={member.id}>
               <TableCell>
-                <div className="flex items-center gap-3">
+                <Link
+                  to={memberDetailPath(member.id)}
+                  className="flex items-center gap-3 text-left rounded-md -m-1 p-1 hover:bg-muted/50 transition-colors cursor-pointer w-full"
+                >
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={member.avatarUrl || undefined} />
                     <AvatarFallback className="bg-primary/10 text-primary text-xs">
@@ -120,7 +125,7 @@ export function MembersTable({
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-sm">
+                    <p className="font-medium text-sm hover:text-primary transition-colors">
                       {member.fullName || 'No name'}
                       {member.id === currentUserId && (
                         <span className="ml-2 text-xs text-muted-foreground">(You)</span>
@@ -128,7 +133,7 @@ export function MembersTable({
                     </p>
                     <p className="text-xs text-muted-foreground">{member.email}</p>
                   </div>
-                </div>
+                </Link>
               </TableCell>
               <TableCell>
                 <Badge variant={member.role === 'ORG_ADMIN' ? 'default' : 'secondary'}>

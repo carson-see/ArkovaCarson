@@ -112,6 +112,8 @@ export const NAV_LABELS = {
   ORGANIZATION: 'Organization',
   SETTINGS: 'Settings',
   HELP: 'Help',
+  SEARCH: 'Search',
+  TREASURY: 'Treasury',
 } as const;
 
 // =============================================================================
@@ -690,6 +692,34 @@ export const ORG_PAGE_LABELS = {
   PROMOTE_TO_ADMIN: 'Promote to Admin',
   DEMOTE_TO_MEMBER: 'Demote to Member',
   RECIPIENT: 'Recipient',
+} as const;
+
+// =============================================================================
+// MEMBER DETAIL PAGE
+// =============================================================================
+
+export const MEMBER_DETAIL_LABELS = {
+  PAGE_TITLE: 'Member Details',
+  BACK_TO_ORG: 'Back to Organization',
+  PROFILE_SECTION: 'Profile',
+  RECORDS_SECTION: 'Records by This Member',
+  RECORDS_EMPTY: 'This member has not created any records yet.',
+  ROLE: 'Role',
+  EMAIL: 'Email',
+  JOINED: 'Joined',
+  MEMBER_ID: 'Member ID',
+  STATUS: 'Status',
+  MEMBER_NOT_FOUND: 'Member not found or you do not have access.',
+} as const;
+
+// =============================================================================
+// AI EXTRACTION
+// =============================================================================
+
+export const AI_EXTRACTION_LABELS = {
+  EXTRACT_BUTTON: 'Extract with AI',
+  EXTRACTING: 'Analyzing...',
+  EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
 } as const;
 
 // =============================================================================

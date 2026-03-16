@@ -49,6 +49,7 @@ export function AppShell({
         mobileOpen={mobileOpen}
         onMobileClose={handleCloseMobile}
         orgName={orgName}
+        userEmail={user?.email}
       />
 
       {/* Main content area */}

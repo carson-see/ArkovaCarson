@@ -14,7 +14,7 @@
  * @see P5-TS-05, UF-04, UF-05
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Shield,
   Loader2,
@@ -25,6 +25,7 @@ import {
   ExternalLink,
   Plus,
   FileText,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -47,7 +48,10 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
 import { FileUpload } from '@/components/anchor/FileUpload';
+import { AIFieldSuggestions } from '@/components/anchor/AIFieldSuggestions';
 import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
+import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
+import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -62,6 +66,7 @@ import {
   ANCHORING_STATUS_LABELS,
   ISSUE_CREDENTIAL_LABELS,
   METADATA_FIELD_LABELS,
+  AI_EXTRACTION_LABELS,
 } from '@/lib/copy';
 import { toast } from 'sonner';
 import { verifyPath, recordDetailPath } from '@/lib/routes';
@@ -111,6 +116,23 @@ export function IssueCredentialForm({
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
+  // AI extraction state
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [extractionFields, setExtractionFields] = useState<ExtractionField[]>([]);
+  const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | undefined>();
+  const [overallConfidence, setOverallConfidence] = useState(0);
+  const [creditsRemaining, setCreditsRemaining] = useState(0);
+  const [extracting, setExtracting] = useState(false);
+
+  // Check AI extraction feature flag on mount
+  useEffect(() => {
+    let cancelled = false;
+    isAIExtractionEnabled().then((enabled) => {
+      if (!cancelled) setAiEnabled(enabled);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   // Fetch template when credential type is selected (UF-05)
   const { template, loading: templateLoading } = useCredentialTemplate(
     credentialType || null,
@@ -127,9 +149,11 @@ export function IssueCredentialForm({
 
   const handleCredentialTypeChange = useCallback((value: CredentialType) => {
     setCredentialType(value);
-    // Reset metadata when type changes
+    // Reset metadata and extraction state when type changes
     setMetadataValues({});
     setMetadataErrors({});
+    setExtractionFields([]);
+    setExtractionProgress(undefined);
   }, []);
 
   const handleMetadataChange = useCallback((key: string, value: string) => {
@@ -141,6 +165,59 @@ export function IssueCredentialForm({
       return next;
     });
   }, []);
+
+  const handleRunExtraction = useCallback(async () => {
+    if (!file || !fingerprint || !credentialType) return;
+    setExtracting(true);
+    setExtractionFields([]);
+
+    const result = await runExtraction(
+      file,
+      fingerprint,
+      credentialType,
+      (progress) => setExtractionProgress(progress),
+      { recipientNames: recipientEmail ? [recipientEmail] : undefined },
+    );
+
+    if (result) {
+      setExtractionFields(result.fields);
+      setOverallConfidence(result.overallConfidence);
+      setCreditsRemaining(result.creditsRemaining);
+    }
+    setExtracting(false);
+  }, [file, fingerprint, credentialType, recipientEmail]);
+
+  const handleFieldAccept = useCallback((key: string, value: string) => {
+    setExtractionFields((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, status: 'accepted' as const } : f))
+    );
+    handleMetadataChange(key, value);
+  }, [handleMetadataChange]);
+
+  const handleFieldReject = useCallback((key: string) => {
+    setExtractionFields((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, status: 'rejected' as const } : f))
+    );
+  }, []);
+
+  const handleFieldEdit = useCallback((key: string, value: string) => {
+    setExtractionFields((prev) =>
+      prev.map((f) => (f.key === key ? { ...f, value, status: 'edited' as const } : f))
+    );
+    handleMetadataChange(key, value);
+  }, [handleMetadataChange]);
+
+  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
+    setExtractionFields((prev) =>
+      prev.map((f) => {
+        const match = fields.find((sf) => sf.key === f.key);
+        return match ? { ...f, status: 'accepted' as const } : f;
+      })
+    );
+    for (const field of fields) {
+      handleMetadataChange(field.key, field.value);
+    }
+  }, [handleMetadataChange]);
 
   const resetForm = useCallback(() => {
     setStep('form');
@@ -156,6 +233,11 @@ export function IssueCredentialForm({
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
+    setExtractionFields([]);
+    setExtractionProgress(undefined);
+    setOverallConfidence(0);
+    setCreditsRemaining(0);
+    setExtracting(false);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -359,6 +441,35 @@ export function IssueCredentialForm({
                     {fingerprint.slice(0, 16)}...
                   </div>
                 </div>
+              )}
+
+              {/* AI extraction button (gated by feature flag) */}
+              {aiEnabled && file && fingerprint && credentialType && !extracting && extractionFields.length === 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleRunExtraction}
+                  className="w-full gap-2"
+                  disabled={creating}
+                >
+                  <Sparkles className="h-4 w-4" />
+                  {AI_EXTRACTION_LABELS.EXTRACT_BUTTON}
+                </Button>
+              )}
+
+              {/* AI extraction progress + suggestions */}
+              {(extracting || extractionFields.length > 0) && (
+                <AIFieldSuggestions
+                  fields={extractionFields}
+                  overallConfidence={overallConfidence}
+                  creditsRemaining={creditsRemaining}
+                  progress={extractionProgress}
+                  onFieldAccept={handleFieldAccept}
+                  onFieldReject={handleFieldReject}
+                  onFieldEdit={handleFieldEdit}
+                  onAcceptAll={handleAcceptAll}
+                />
               )}
 
               {/* Credential type */}

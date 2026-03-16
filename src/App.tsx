@@ -44,6 +44,7 @@ import { SearchPage } from '@/pages/SearchPage';
 import { IssuerRegistryPage } from '@/pages/IssuerRegistryPage';
 import { MyCredentialsPage } from '@/pages/MyCredentialsPage';
 import { TreasuryAdminPage } from '@/pages/TreasuryAdminPage';
+import { MemberDetailPage } from '@/pages/MemberDetailPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -210,6 +211,16 @@ export function App() {
               <AuthGuard>
                 <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                   <OrganizationPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.MEMBER_DETAIL}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <MemberDetailPage />
                 </RouteGuard>
               </AuthGuard>
             }

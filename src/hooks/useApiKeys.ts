@@ -7,10 +7,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
+import { workerFetch } from '@/lib/workerClient';
 import { useAuth } from './useAuth';
-
-const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? 'http://localhost:3001';
 
 export interface ApiKeyMasked {
   id: string;
@@ -36,25 +34,6 @@ export interface ApiUsageData {
   reset_date: string;
   month: string;
   keys: Array<{ key_prefix: string; name: string; used: number }>;
-}
-
-async function workerFetch(
-  endpoint: string,
-  options: RequestInit = {},
-): Promise<Response> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error('No active session — please sign in again');
-  }
-
-  return fetch(`${WORKER_URL}${endpoint}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-      ...options.headers,
-    },
-  });
 }
 
 export function useApiKeys() {

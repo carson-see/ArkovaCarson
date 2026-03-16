@@ -31,6 +31,7 @@ export const ROUTES = {
   RECORDS: '/records',
   RECORD_DETAIL: '/records/:id',
   ORGANIZATION: '/organization',
+  MEMBER_DETAIL: '/organization/member/:memberId',
   SETTINGS: '/settings',
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',
@@ -78,6 +79,11 @@ export function verifyPath(publicId: string): string {
 /** Build a record detail URL for a given record ID */
 export function recordDetailPath(id: string): string {
   return `/records/${id}`;
+}
+
+/** Build a member detail URL for a given member ID */
+export function memberDetailPath(memberId: string): string {
+  return `/organization/member/${memberId}`;
 }
 
 /** Build an issuer registry URL for a given org ID */
