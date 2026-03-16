@@ -1,5 +1,5 @@
 # P4.5 Verification API — Story Documentation
-_Last updated: 2026-03-15 | 5/13 stories COMPLETE, 8 NOT STARTED_
+_Last updated: 2026-03-15 | 13/13 stories COMPLETE (100%)_
 
 ## Group Overview
 
@@ -27,6 +27,24 @@ Key deliverables:
 **Migration:** 0057 (`verification_api_foundation.sql`) — creates `api_keys` table, `api_key_usage` table, `api_key_rate_limit_tier` enum, `ENABLE_VERIFICATION_API` flag, RLS policies.
 
 **Test coverage:** 62 new tests (10 featureGate + 16 apiKeyAuth + 11 usageTracking + 12 verify + 13 keys). Worker total: 665 tests.
+
+### Phase 2 Full API (COMPLETE)
+
+8 remaining stories implemented:
+- **P4.5-TS-02** — `POST /api/v1/verify/batch` (sync ≤20, async >20 with job creation)
+- **P4.5-TS-06** — `GET /api/v1/jobs/:jobId` (ownership check, 24h cleanup)
+- **P4.5-TS-08** — `GET /api/v1/usage` (per-key breakdown, unlimited tier)
+- **P4.5-TS-04** — OpenAPI 3.0 docs at `/api/docs` (Swagger UI) + `/api/docs/spec.json`
+- **P4.5-TS-09** — API Key Management UI (`ApiKeySettings`, `useApiKeys` hook, two-phase secret display)
+- **P4.5-TS-10** — API Usage Dashboard Widget (`ApiUsageDashboard` with progress bar)
+- **P4.5-TS-11** — API Key Scope Display (`ApiKeyScopeDisplay` with color-coded badges)
+- **P4.5-TS-13** — Rate limit load tests (anon/keyed/batch tiers, concurrent simulation)
+
+**Migration:** 0058 (`batch_verification_jobs.sql`) — creates batch job table with RLS.
+
+**Gap fixes:** Agent discoverability via `/.well-known/openapi.json` redirect + `Link` header (RFC 8631) on all API responses.
+
+**Test coverage:** 54 new tests (11 batch + 4 jobs + 4 usage + 9 docs + 8 page + 8 component + 6 dashboard + 4 scope + 12 load). Worker total: 693. Frontend total: 634.
 
 ## Architecture Context
 

@@ -18,7 +18,10 @@ import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
 import { verifyRouter } from './verify.js';
+import { batchRouter } from './batch.js';
+import { jobsRouter } from './jobs.js';
 import { keysRouter } from './keys.js';
+import { usageRouter } from './usage.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -46,6 +49,12 @@ router.use((req: Request, res: Response, next: NextFunction) => {
     res.status(204).end();
     return;
   }
+  next();
+});
+
+// ─── API spec discoverability (Link header per RFC 8631) ───
+router.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Link', '</api/docs/spec.json>; rel="service-desc"');
   next();
 });
 
@@ -97,9 +106,25 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───
+const batchRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  keyGenerator: (req) => `batch:${req.apiKey?.keyId ?? req.ip ?? 'unknown'}`,
+});
+
 // ─── Mount routes ───
 // Public verification — no auth required (API key optional for tracking)
 router.use('/verify', verifyRouter);
+
+// Batch verification — API key required, stricter rate limit
+router.use('/verify/batch', batchRateLimiter, batchRouter);
+
+// Job status polling — API key required
+router.use('/jobs', jobsRouter);
+
+// Usage stats — API key required
+router.use('/usage', usageRouter);
 
 // Key management — requires Supabase JWT auth
 router.use('/keys', requireAuth, keysRouter);

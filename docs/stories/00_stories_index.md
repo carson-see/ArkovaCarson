@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-15 ~9:00 PM EST_
+_Last updated: 2026-03-15 ~11:00 PM EST_
 
 ## Overview
 
@@ -29,7 +29,7 @@ For a new developer joining the project, read in this order:
 | P5 | Org Admin | 6 | 6 | 0 | 0 | [06_p5_org_admin.md](./06_p5_org_admin.md) |
 | P6 | Verification | 6 | 6 | 0 | 0 | [07_p6_verification.md](./07_p6_verification.md) |
 | P7 | Go-Live | 13 | 11 | 0 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
-| P4.5 | Verification API | 13 | 5 | 0 | 8 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
+| P4.5 | Verification API | 13 | 13 | 0 | 0 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
 | MVP | Launch Gaps | 27 | 21 | 0 | 6 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 4 | 0 | 15 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
@@ -37,7 +37,7 @@ For a new developer joining the project, read in this order:
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
 | GEO | GEO & SEO Optimization | 12 | 3 | 3 | 6 | [15_geo_seo.md](./15_geo_seo.md) |
-| **Total** | | **163** | **120** | **4** | **39** | |
+| **Total** | | **163** | **128** | **4** | **31** | |
 
 ### All Stories by ID
 
@@ -87,18 +87,18 @@ For a new developer joining the project, read in this order:
 | P7-TS-12 | UTXO Provider Pattern + Mempool.space | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P7-TS-13 | Fingerprint Indexing for Verification | COMPLETE | [P7](./08_p7_go_live.md) | — |
 | P4.5-TS-01 | GET /api/v1/verify/:publicId | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-02 | POST /api/v1/verify/batch | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-02 | POST /api/v1/verify/batch | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-03 | API Keys Table + HMAC + Rate Limiting | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-04 | OpenAPI Docs (/api/docs) | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-04 | OpenAPI Docs (/api/docs) | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-05 | Free Tier Enforcement (10K/month) | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-06 | GET /api/v1/jobs/:jobId | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-06 | GET /api/v1/jobs/:jobId | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-07 | Key CRUD Endpoints | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-08 | GET /api/v1/usage | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-09 | API Key Management UI | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-10 | API Usage Dashboard Widget | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-11 | API Key Scope Display | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-08 | GET /api/v1/usage | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-09 | API Key Management UI | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-10 | API Usage Dashboard Widget | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-11 | API Key Scope Display | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
 | P4.5-TS-12 | Feature Flag Middleware | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
-| P4.5-TS-13 | Rate Limit Load Tests | NOT STARTED | [P4.5](./09_p45_verification_api.md) | — |
+| P4.5-TS-13 | Rate Limit Load Tests | COMPLETE | [P4.5](./09_p45_verification_api.md) | — |
 | DH-01 | Feature Flag Kill-Switch Hot-Reload | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-02 | Advisory Lock for bulk_create_anchors Concurrency | COMPLETE | [DH](./10_deferred_hardening.md) | — |
 | DH-03 | KMS Operational Documentation | COMPLETE | [DH](./10_deferred_hardening.md) | — |
@@ -267,3 +267,4 @@ Each story doc follows a consistent template:
 | 2026-03-16 ~1:00 PM EST | UF Sprint A: UF-01 → COMPLETE (CredentialRenderer + useCredentialTemplate + get_public_template RPC, 20 tests). UF-04 → COMPLETE (PENDING status UX — enhanced success screens, pulsing amber badges, public verification includes PENDING). Migration 0054. 10 UF stories added to individual listing. Overall: 101/151 complete (67%). |
 | 2026-03-16 ~6:00 PM EST | UF Sprint B: UF-02, UF-05, UF-06, UF-07 → COMPLETE (PR #61). Migration 0055. MVP-26/27/28 → COMPLETE (ops sprint). Overall: 105/151. |
 | 2026-03-15 ~11:00 PM EST | UF Sprint C: UF-03, UF-08, UF-09, UF-10 → COMPLETE (PR #62). Migration 0056. All 10 UF stories done. Overall: 109/151 complete (72%). |
+| 2026-03-15 ~11:00 PM EST | P4.5 Phase 2: P4.5-TS-02, TS-04, TS-06, TS-08, TS-09, TS-10, TS-11, TS-13 → COMPLETE. All 13 P4.5 stories done. Migration 0058 (batch_verification_jobs). Overall: 128/163 complete (~79%). |

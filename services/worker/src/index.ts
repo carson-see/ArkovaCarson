@@ -23,6 +23,7 @@ import { processMonthlyCredits } from './jobs/credit-expiry.js';
 import { rateLimiters } from './utils/rateLimit.js';
 import { verifyAuthToken } from './auth.js';
 import { apiV1Router } from './api/v1/router.js';
+import { docsRouter } from './api/v1/docs.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -342,6 +343,16 @@ app.post('/jobs/process-anchors', async (_req, res) => {
     logger.error({ error }, 'Manual anchor processing failed');
     res.status(500).json({ error: 'Processing failed' });
   }
+});
+
+// =========================================================================
+// API Documentation — accessible without auth or feature flag (P4.5-TS-04)
+// =========================================================================
+app.use('/api/docs', docsRouter);
+
+// Agent discoverability — .well-known endpoint for OpenAPI spec (no auth, no feature gate)
+app.get('/.well-known/openapi.json', (_req, res) => {
+  res.redirect(301, '/api/docs/spec.json');
 });
 
 // =========================================================================

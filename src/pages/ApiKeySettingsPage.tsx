@@ -1,48 +1,54 @@
 /**
- * API Key Settings Page
+ * API Key Settings Page (P4.5-TS-09)
  *
- * Placeholder page for API key management (P4.5-TS-09 — deferred post-launch).
- * Shows a "coming soon" message until the Verification API is implemented.
+ * Full API key management page with key CRUD and usage dashboard.
+ * Calls worker Verification API endpoints via useApiKeys hook.
  *
- * @see P4.5-TS-09
+ * @see P4.5-TS-09, P4.5-TS-10
  */
 
-import { Key } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useApiKeys, useApiUsage } from '@/hooks/useApiKeys';
 import { AppShell } from '@/components/layout';
-import { Card, CardContent } from '@/components/ui/card';
-import { API_KEY_LABELS } from '@/lib/copy';
+import { ApiKeySettings } from '@/components/api/ApiKeySettings';
+import { ApiUsageDashboard } from '@/components/api/ApiUsageDashboard';
+import { ROUTES } from '@/lib/routes';
 
 export function ApiKeySettingsPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const navigate = useNavigate();
+  const { keys, loading: keysLoading, createKey, revokeKey, deleteKey } = useApiKeys();
+  const { usage, loading: usageLoading, error: usageError } = useApiUsage();
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate(ROUTES.LOGIN);
+  };
 
   return (
     <AppShell
       user={user}
       profile={profile}
       profileLoading={profileLoading}
-      onSignOut={signOut}
+      onSignOut={handleSignOut}
     >
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <Key className="h-6 w-6 text-primary" />
-          {API_KEY_LABELS.PAGE_TITLE}
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          {API_KEY_LABELS.PAGE_DESCRIPTION}
-        </p>
+      <div className="space-y-8 max-w-4xl mx-auto">
+        <ApiKeySettings
+          keys={keys}
+          onCreate={createKey}
+          onRevoke={revokeKey}
+          onDelete={deleteKey}
+          loading={keysLoading}
+        />
+        <ApiUsageDashboard
+          usage={usage}
+          loading={usageLoading}
+          error={usageError}
+        />
       </div>
-
-      <Card className="shadow-card-rest">
-        <CardContent className="py-12 text-center">
-          <Key className="h-12 w-12 text-muted-foreground/40 mx-auto mb-4" />
-          <p className="text-muted-foreground">
-            {API_KEY_LABELS.COMING_SOON}
-          </p>
-        </CardContent>
-      </Card>
     </AppShell>
   );
 }
