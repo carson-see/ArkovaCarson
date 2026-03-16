@@ -124,6 +124,15 @@ describe('handleAccountDelete', () => {
       expect.objectContaining({ userId: 'user-123' }),
       expect.stringContaining('Account deleted'),
     );
+
+    // Negative assertions: ensure no PII leaks into log payload
+    const logPayload = (deps.logger.info as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(logPayload).not.toHaveProperty('actor_email');
+    expect(logPayload).not.toHaveProperty('actor_ip');
+    expect(logPayload).not.toHaveProperty('actor_user_agent');
+    expect(logPayload).not.toHaveProperty('email');
+    expect(logPayload).not.toHaveProperty('ip');
+    expect(logPayload).not.toHaveProperty('user_agent');
   });
 
   it('continues even if auth user deletion fails (non-fatal)', async () => {
