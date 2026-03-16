@@ -39,6 +39,10 @@ export const ROUTES = {
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
+  // AI Intelligence routes (P8 Phase II)
+  REVIEW_QUEUE: '/organization/review-queue',
+  AI_REPORTS: '/organization/ai-reports',
+
   // Admin routes (internal ops)
   ADMIN_TREASURY: '/admin/treasury',
 

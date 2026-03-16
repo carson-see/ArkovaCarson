@@ -96,6 +96,7 @@ describe('switchboard feature flags', () => {
         ENABLE_AI_EXTRACTION: false,
         ENABLE_SEMANTIC_SEARCH: false,
         ENABLE_AI_FRAUD: false,
+        ENABLE_AI_REPORTS: false,
       });
     });
   });

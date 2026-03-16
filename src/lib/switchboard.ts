@@ -24,6 +24,7 @@ export const FLAGS = {
   ENABLE_AI_EXTRACTION: false,
   ENABLE_SEMANTIC_SEARCH: false,
   ENABLE_AI_FRAUD: false,
+  ENABLE_AI_REPORTS: false,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;
@@ -76,6 +77,7 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
       ENABLE_AI_EXTRACTION: FLAGS.ENABLE_AI_EXTRACTION,
       ENABLE_SEMANTIC_SEARCH: FLAGS.ENABLE_SEMANTIC_SEARCH,
       ENABLE_AI_FRAUD: FLAGS.ENABLE_AI_FRAUD,
+      ENABLE_AI_REPORTS: FLAGS.ENABLE_AI_REPORTS,
     };
   }
 
@@ -90,6 +92,7 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
     ENABLE_AI_EXTRACTION: FLAGS.ENABLE_AI_EXTRACTION,
     ENABLE_SEMANTIC_SEARCH: FLAGS.ENABLE_SEMANTIC_SEARCH,
     ENABLE_AI_FRAUD: FLAGS.ENABLE_AI_FRAUD,
+    ENABLE_AI_REPORTS: FLAGS.ENABLE_AI_REPORTS,
   };
 
   for (const row of (data || []) as Array<{ id: string; value: boolean }>) {

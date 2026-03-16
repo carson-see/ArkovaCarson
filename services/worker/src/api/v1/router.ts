@@ -27,7 +27,11 @@ import { aiUsageRouter } from './ai-usage.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiSearchRouter } from './ai-search.js';
 import { aiVerifySearchRouter } from './ai-verify-search.js';
-import { aiExtractionGate, aiSemanticSearchGate } from '../../middleware/aiFeatureGate.js';
+import { aiExtractionGate, aiSemanticSearchGate, aiFraudGate, aiReportsGate } from '../../middleware/aiFeatureGate.js';
+import { aiFeedbackRouter } from './ai-feedback.js';
+import { aiIntegrityRouter } from './ai-integrity.js';
+import { aiReviewRouter } from './ai-review.js';
+import { aiReportsRouter } from './ai-reports.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -166,5 +170,17 @@ router.use('/ai/embed', aiExtractionGate(), requireAuth, aiRateLimiter, aiEmbedR
 
 // AI semantic search — behind ENABLE_SEMANTIC_SEARCH flag + JWT auth (P8-S12)
 router.use('/ai/search', aiSemanticSearchGate(), requireAuth, aiRateLimiter, aiSearchRouter);
+
+// AI extraction feedback — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S6)
+router.use('/ai/feedback', aiExtractionGate(), requireAuth, aiRateLimiter, aiFeedbackRouter);
+
+// AI integrity scores — behind ENABLE_AI_FRAUD flag + JWT auth (P8-S8)
+router.use('/ai/integrity', aiFraudGate(), requireAuth, aiRateLimiter, aiIntegrityRouter);
+
+// AI review queue — behind ENABLE_AI_FRAUD flag + JWT auth (P8-S9)
+router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRouter);
+
+// AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
+router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
 
 export { router as apiV1Router };

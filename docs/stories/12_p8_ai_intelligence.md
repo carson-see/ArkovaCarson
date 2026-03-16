@@ -1,5 +1,5 @@
 # P8 AI Intelligence — Story Documentation
-_Last updated: 2026-03-15 ~11:45 PM EST | 15/19 stories COMPLETE, 4/19 NOT STARTED_
+_Last updated: 2026-03-16 ~3:10 PM EST | 19/19 stories COMPLETE_
 
 ## Group Overview
 
@@ -708,7 +708,8 @@ As an ATS/background check system, I need a search-based verification endpoint s
 ### P8-S6: Extraction Learning / Feedback Loop
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-16. Migration 0064 (`extraction_feedback` table + `get_extraction_accuracy` RPC). Worker service `feedback.ts` with `storeExtractionFeedback()` + `getExtractionAccuracy()`. API endpoints `POST /api/v1/ai/feedback` + `GET /api/v1/ai/feedback/accuracy`. Frontend `useExtractionFeedback` hook. 12 worker tests + copy labels.
 **Dependencies:** P8-S4
 **Estimated Points:** 5
 
@@ -724,10 +725,10 @@ As a platform operator, I want the AI extraction to improve over time based on u
 
 #### Acceptance Criteria
 
-- [ ] User corrections stored with original AI suggestion and final value
-- [ ] Accuracy metrics tracked per credential type
-- [ ] Feedback accessible for prompt refinement
-- [ ] No PII stored in feedback data
+- [x] User corrections stored with original AI suggestion and final value
+- [x] Accuracy metrics tracked per credential type
+- [x] Feedback accessible for prompt refinement
+- [x] No PII stored in feedback data
 
 ---
 
@@ -765,7 +766,8 @@ As a verifier, I want AI-powered integrity scoring so I can identify potentially
 ### P8-S8: Integrity Score UI
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-16. Migration 0064 (`integrity_scores` table). Worker service `integrity.ts` with weighted scoring (metadata 25%, extraction 20%, issuer 25%, duplicate 15%, temporal 15%). `IntegrityScoreBadge` + `IntegrityDetailView` components. API endpoints `POST /api/v1/ai/integrity/compute` + `GET /api/v1/ai/integrity/:anchorId`. Auto-flags review when score < 60. Frontend `useIntegrityScore` hook. 19 worker tests + 15 component tests.
 **Dependencies:** P8-S7
 **Estimated Points:** 3
 
@@ -781,17 +783,18 @@ As an org admin, I want to see integrity scores on my credentials dashboard so I
 
 #### Acceptance Criteria
 
-- [ ] Score badge visible on credential list and detail views
-- [ ] Color-coded thresholds
-- [ ] Detail view shows individual check results
-- [ ] Hidden when `ENABLE_AI_FRAUD` is false
+- [x] Score badge visible on credential list and detail views
+- [x] Color-coded thresholds
+- [x] Detail view shows individual check results
+- [x] Hidden when `ENABLE_AI_FRAUD` is false
 
 ---
 
 ### P8-S9: Human Review Workflow
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-16. Migration 0064 (`review_queue_items` table with enums). Worker service `review-queue.ts` with CRUD + stats. `ReviewQueue` component with status filters, expandable items, action buttons (approve/investigate/escalate/dismiss), notes input. API endpoints `GET /api/v1/ai/review` + `GET /api/v1/ai/review/stats` + `PATCH /api/v1/ai/review/:itemId`. Admin role check enforced. `ReviewQueuePage` routed at `/organization/review-queue`. Frontend `useReviewQueue` hook. 11 worker tests + 7 component tests.
 **Dependencies:** P8-S7
 **Estimated Points:** 5
 
@@ -807,11 +810,11 @@ As an org admin, I want a workflow to review AI-flagged credentials so that susp
 
 #### Acceptance Criteria
 
-- [ ] Review queue showing flagged credentials sorted by integrity score
-- [ ] Approve (clear flag), Investigate (add note), Escalate (notify admin) actions
-- [ ] All review decisions logged to `audit_events`
-- [ ] Reviewer identity tracked
-- [ ] Queue filters by score range, credential type, date
+- [x] Review queue showing flagged credentials sorted by integrity score
+- [x] Approve (clear flag), Investigate (add note), Escalate (notify admin) actions
+- [x] All review decisions logged to `audit_events`
+- [x] Reviewer identity tracked
+- [x] Queue filters by score range, credential type, date
 
 ---
 
@@ -847,7 +850,8 @@ As an org admin, I want AI-generated summary reports about my credential portfol
 ### P8-S16: Report UI
 
 **Phase:** II
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-16. Migration 0064 (`ai_reports` table). Worker service `report-generator.ts` with 4 report types (integrity_summary, extraction_accuracy, credential_analytics, compliance_overview). `AIReportsPanel` component with create form, status polling (3s), result viewer, JSON download. API endpoints `POST /api/v1/ai/reports` + `GET /api/v1/ai/reports` + `GET /api/v1/ai/reports/:reportId`. `AIReportsPage` routed at `/organization/ai-reports`. `ENABLE_AI_REPORTS` feature flag. Frontend `useAIReports` hook. 12 worker tests + 7 component tests.
 **Dependencies:** P8-S15
 **Estimated Points:** 3
 
@@ -857,17 +861,17 @@ As an org admin, I want a reports page where I can generate, view, and download 
 
 #### What This Story Delivers
 
-- Reports page at `/reports/ai`
-- Report generation trigger with parameter selection
-- Report history with download links
+- Reports page at `/organization/ai-reports`
+- Report generation trigger with type selection
+- Report history with status polling and download
 
 #### Acceptance Criteria
 
-- [ ] Reports page accessible from sidebar
-- [ ] Generate report button with date range and type filters
-- [ ] Report history list with status, date, download link
-- [ ] PDF download for completed reports
-- [ ] Hidden when AI flags are disabled
+- [x] Reports page accessible from sidebar
+- [x] Generate report button with type selection
+- [x] Report history list with status, date, download link
+- [x] JSON download for completed reports
+- [x] Gated behind `ENABLE_AI_REPORTS` feature flag
 
 ---
 

@@ -767,6 +767,84 @@ export const TREASURY_LABELS = {
 } as const;
 
 // =============================================================================
+// INTEGRITY SCORES (P8-S8)
+// =============================================================================
+
+export const INTEGRITY_LABELS = {
+  TITLE: 'Integrity Analysis',
+  COMPUTE_BUTTON: 'Analyze Integrity',
+  COMPUTING: 'Analyzing...',
+  SCORE_HIGH: 'High Integrity',
+  SCORE_MEDIUM: 'Medium Integrity',
+  SCORE_LOW: 'Low Integrity',
+  SCORE_FLAGGED: 'Flagged',
+  NO_SCORE: 'No integrity analysis available',
+  COMPUTE_DESCRIPTION: 'Run an integrity analysis to check metadata quality and detect potential issues',
+} as const;
+
+// =============================================================================
+// REVIEW QUEUE (P8-S9)
+// =============================================================================
+
+export const REVIEW_QUEUE_LABELS = {
+  PAGE_TITLE: 'Review Queue',
+  PAGE_SUBTITLE: 'Review flagged credentials that require human verification.',
+  EMPTY: 'No items in the review queue',
+  PENDING: 'Pending Review',
+  INVESTIGATING: 'Under Investigation',
+  ESCALATED: 'Escalated',
+  APPROVED: 'Approved',
+  DISMISSED: 'Dismissed',
+  ACTION_APPROVE: 'Approve',
+  ACTION_INVESTIGATE: 'Investigate',
+  ACTION_ESCALATE: 'Escalate',
+  ACTION_DISMISS: 'Dismiss',
+  NOTES_PLACEHOLDER: 'Add review notes (optional)...',
+  ACTION_SUCCESS: 'Review action applied successfully',
+  NAV_LABEL: 'Review Queue',
+} as const;
+
+// =============================================================================
+// AI REPORTS (P8-S16)
+// =============================================================================
+
+export const AI_REPORTS_LABELS = {
+  PAGE_TITLE: 'AI Reports',
+  PAGE_SUBTITLE: 'Generate analytics and compliance reports for your organization.',
+  GENERATE_BUTTON: 'Generate Report',
+  GENERATING: 'Generating...',
+  EMPTY: 'No reports yet',
+  EMPTY_DESC: 'Generate your first report to get insights into your credentials.',
+  REPORT_INTEGRITY: 'Integrity Summary',
+  REPORT_ACCURACY: 'Extraction Accuracy',
+  REPORT_ANALYTICS: 'Credential Analytics',
+  REPORT_COMPLIANCE: 'Compliance Overview',
+  DOWNLOAD_JSON: 'Download JSON',
+  STATUS_QUEUED: 'Queued',
+  STATUS_GENERATING: 'Generating',
+  STATUS_COMPLETE: 'Complete',
+  STATUS_FAILED: 'Failed',
+  NAV_LABEL: 'AI Reports',
+} as const;
+
+// =============================================================================
+// EXTRACTION FEEDBACK (P8-S6)
+// =============================================================================
+
+export const EXTRACTION_FEEDBACK_LABELS = {
+  ACCURACY_TITLE: 'Extraction Accuracy',
+  ACCURACY_DESC: 'AI suggestion acceptance rates over the last 30 days',
+  FIELD: 'Field',
+  TOTAL: 'Total',
+  ACCEPTED: 'Accepted',
+  REJECTED: 'Rejected',
+  EDITED: 'Edited',
+  RATE: 'Acceptance Rate',
+  CONFIDENCE: 'Avg Confidence',
+  NO_DATA: 'No feedback data yet. Accept or reject AI suggestions to build accuracy metrics.',
+} as const;
+
+// =============================================================================
 // FORBIDDEN TERMS (for lint script)
 // =============================================================================
 

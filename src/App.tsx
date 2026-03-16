@@ -45,6 +45,8 @@ import { IssuerRegistryPage } from '@/pages/IssuerRegistryPage';
 import { MyCredentialsPage } from '@/pages/MyCredentialsPage';
 import { TreasuryAdminPage } from '@/pages/TreasuryAdminPage';
 import { MemberDetailPage } from '@/pages/MemberDetailPage';
+import { ReviewQueuePage } from '@/pages/ReviewQueuePage';
+import { AIReportsPage } from '@/pages/AIReportsPage';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 
 /**
@@ -271,6 +273,28 @@ export function App() {
               <AuthGuard>
                 <RouteGuard allow={MAIN_APP_DESTINATIONS}>
                   <HelpPage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+
+          {/* AI Intelligence routes — auth required, org admin (P8 Phase II) */}
+          <Route
+            path={ROUTES.REVIEW_QUEUE}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <ReviewQueuePage />
+                </RouteGuard>
+              </AuthGuard>
+            }
+          />
+          <Route
+            path={ROUTES.AI_REPORTS}
+            element={
+              <AuthGuard>
+                <RouteGuard allow={MAIN_APP_DESTINATIONS}>
+                  <AIReportsPage />
                 </RouteGuard>
               </AuthGuard>
             }

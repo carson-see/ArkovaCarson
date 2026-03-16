@@ -25,6 +25,7 @@ const aiFlags: Record<string, FlagCache | null> = {
   ENABLE_AI_EXTRACTION: null,
   ENABLE_SEMANTIC_SEARCH: null,
   ENABLE_AI_FRAUD: null,
+  ENABLE_AI_REPORTS: null,
 };
 
 type AIFlagKey = keyof typeof aiFlags;
@@ -89,11 +90,13 @@ function createAIGate(flagKey: AIFlagKey, featureName: string) {
 export const isAIExtractionEnabled = () => readAIFlag('ENABLE_AI_EXTRACTION');
 export const isSemanticSearchEnabled = () => readAIFlag('ENABLE_SEMANTIC_SEARCH');
 export const isAIFraudEnabled = () => readAIFlag('ENABLE_AI_FRAUD');
+export const isAIReportsEnabled = () => readAIFlag('ENABLE_AI_REPORTS');
 
 // Public gate middlewares
 export const aiExtractionGate = createAIGate('ENABLE_AI_EXTRACTION', 'AI extraction');
 export const aiSemanticSearchGate = createAIGate('ENABLE_SEMANTIC_SEARCH', 'Semantic search');
 export const aiFraudGate = createAIGate('ENABLE_AI_FRAUD', 'AI fraud detection');
+export const aiReportsGate = createAIGate('ENABLE_AI_REPORTS', 'AI reports');
 
 /** Reset all AI flag caches — for testing only */
 export function _resetAIFlagCache(): void {
