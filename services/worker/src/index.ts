@@ -22,6 +22,7 @@ import { processWebhookRetries } from './webhooks/delivery.js';
 import { processMonthlyCredits } from './jobs/credit-expiry.js';
 import { rateLimiters } from './utils/rateLimit.js';
 import { verifyAuthToken } from './auth.js';
+import { apiV1Router } from './api/v1/router.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -342,6 +343,11 @@ app.post('/jobs/process-anchors', async (_req, res) => {
     res.status(500).json({ error: 'Processing failed' });
   }
 });
+
+// =========================================================================
+// Verification API v1 (P4.5) — gated behind ENABLE_VERIFICATION_API flag
+// =========================================================================
+app.use('/api/v1', apiV1Router);
 
 // Sentry Express error handler — must be after all routes, before other error handlers
 Sentry.setupExpressErrorHandler(app);

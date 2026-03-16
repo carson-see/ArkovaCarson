@@ -70,6 +70,12 @@ const ConfigSchema = z.object({
   useMocks: z.coerce.boolean().default(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: z.coerce.boolean().default(false),
+
+  // Verification API (P4.5)
+  /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
+  apiKeyHmacSecret: z.string().min(1).optional(),
+  /** CORS origins for /api/v1/* endpoints (comma-separated) */
+  corsAllowedOrigins: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -103,6 +109,8 @@ function loadConfig(): Config {
     sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
+    apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
+    corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
   });
 
   if (!result.success) {

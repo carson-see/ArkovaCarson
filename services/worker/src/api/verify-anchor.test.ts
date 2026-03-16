@@ -8,8 +8,8 @@
  * the document in-browser and sends only the 64-char hex fingerprint.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { verifyAnchorByFingerprint, type VerifyAnchorResult } from './verify-anchor.js';
+import { describe, it, expect, vi } from 'vitest';
+import { verifyAnchorByFingerprint } from './verify-anchor.js';
 import { createHash } from 'crypto';
 
 // Simulate the client-side flow: hash a dummy PDF, then verify server-side

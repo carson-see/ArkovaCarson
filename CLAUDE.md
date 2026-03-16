@@ -605,7 +605,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 56 files, versions 0001–0056 (0033 skipped). Last: `0056_anchor_recipients.sql` (UF-03). Migrations 0001–0055 applied to production. Migration 0056 pending (apply after PR #62 merge).
+**Current migration inventory:** 57 files, versions 0001–0057 (0033 skipped). Last: `0057_verification_api_foundation.sql` (P4.5). Migrations 0001–0057 applied to production. Migration 0056 pending local merge (apply after PR #62 merge).
 
 ---
 
@@ -623,7 +623,7 @@ npx supabase db reset
 | P5 Org Admin | 6/6 | 0 | 0 | 100% |
 | P6 Verification | 6/6 | 0 | 0 | 100% |
 | P7 Go-Live | 11/13 | 0 | 2/13 | 85% | <!-- P7-TS-04 and P7-TS-06 not enumerated (no individual scope) --> |
-| P4.5 Verification API | 0/13 | 0 | 13/13 | 0% |
+| P4.5 Verification API | 5/13 | 0 | 8/13 | 38% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
 | MVP Launch Gaps | 21/27 | 0 | 6/27 | 78% |
 | P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
@@ -631,7 +631,7 @@ npx supabase db reset
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
 | UF User Flow Gaps | 10/10 | 0 | 0 | 100% |
 | GEO SEO Optimization | 3/12 | 3/12 | 6/12 | 25% |
-| **Total** | **115/163** | **4/163** | **44/163** | **~71%** |
+| **Total** | **120/163** | **4/163** | **39/163** | **~74%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -709,9 +709,23 @@ All foundational work done: schema (enums, tables, RLS), validators (Zod), audit
 - P7-TS-12: ✅ COMPLETE — UTXO provider pattern (`utxo-provider.ts`): `UtxoProvider` interface with `RpcUtxoProvider` (Bitcoin Core JSON-RPC) and `MempoolUtxoProvider` (Mempool.space REST API). Factory function `createUtxoProvider()`. Integrated into `BitcoinChainClient` + `initChainClient()`. 35 tests.
 - P7-TS-13: ✅ COMPLETE — `SupabaseChainIndexLookup` for O(1) fingerprint verification. Migration 0050 creates `anchor_chain_index` table. Chain index upsert in `processAnchor()` (non-fatal). Implemented as part of CRIT-2 Steps 5-8.
 
-### P4.5 Verification API — 0/13 NOT STARTED
+### P4.5 Verification API — 5/13 COMPLETE, 8/13 NOT STARTED
 
-All 13 stories behind `ENABLE_VERIFICATION_API=false`. Intentional — scheduled for post-launch.
+Phase 1 foundation complete. All endpoints gated behind `ENABLE_VERIFICATION_API=false`. Migration 0057 applied to production.
+
+- P4.5-TS-12: ✅ COMPLETE — Feature gate middleware. TTL-cached (60s) switchboard flag. 503 when disabled. 10 tests.
+- P4.5-TS-03: ✅ COMPLETE — API key auth middleware. HMAC-SHA256 hashing, `ak_` prefix, scoped keys, header extraction. 16 tests.
+- P4.5-TS-01: ✅ COMPLETE — `GET /api/v1/verify/:publicId`. Frozen response schema. Injectable lookup for testing. 12 tests.
+- P4.5-TS-07: ✅ COMPLETE — Key CRUD endpoints (POST/GET/PATCH/DELETE). Audit logging. Zod validation. 13 tests.
+- P4.5-TS-05: ✅ COMPLETE — Usage tracking + free tier quota enforcement (10K/month). Quota headers. 11 tests.
+- P4.5-TS-02: NOT STARTED — POST `/api/v1/verify/batch`
+- P4.5-TS-06: NOT STARTED — GET `/api/v1/jobs/:jobId`
+- P4.5-TS-08: NOT STARTED — GET `/api/v1/usage`
+- P4.5-TS-04: NOT STARTED — OpenAPI docs (`/api/docs`)
+- P4.5-TS-09: NOT STARTED — API Key Management UI
+- P4.5-TS-10: NOT STARTED — API Usage Dashboard Widget
+- P4.5-TS-11: NOT STARTED — API Key Scope Display
+- P4.5-TS-13: NOT STARTED — Rate limit load tests
 
 ### DH Deferred Hardening — 12/12 COMPLETE
 
@@ -1050,5 +1064,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-16 (UF Sprint C — all 10 UF stories complete) | Repo: ArkovaCarson | 56 migrations | 1,190+ tests | 151 stories (109 complete, 72%)_
+_Directive version: 2026-03-15 (P4.5 Phase 1 — 5 Verification API stories complete) | Repo: ArkovaCarson | 57 migrations | 1,250+ tests | 163 stories (120 complete, 74%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

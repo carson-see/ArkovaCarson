@@ -58,48 +58,6 @@ export type Database = {
           },
         ]
       }
-      anchor_recipients: {
-        Row: {
-          id: string
-          anchor_id: string
-          recipient_email_hash: string
-          recipient_user_id: string | null
-          claimed_at: string | null
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          anchor_id: string
-          recipient_email_hash: string
-          recipient_user_id?: string | null
-          claimed_at?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          anchor_id?: string
-          recipient_email_hash?: string
-          recipient_user_id?: string | null
-          claimed_at?: string | null
-          created_at?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "anchor_recipients_anchor_id_fkey"
-            columns: ["anchor_id"]
-            isOneToOne: false
-            referencedRelation: "anchors"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "anchor_recipients_recipient_user_id_fkey"
-            columns: ["recipient_user_id"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       anchor_proofs: {
         Row: {
           anchor_id: string
@@ -310,6 +268,107 @@ export type Database = {
           },
         ]
       }
+      api_key_usage: {
+        Row: {
+          api_key_id: string
+          id: string
+          last_request_at: string | null
+          month: string
+          org_id: string
+          request_count: number
+        }
+        Insert: {
+          api_key_id: string
+          id?: string
+          last_request_at?: string | null
+          month: string
+          org_id: string
+          request_count?: number
+        }
+        Update: {
+          api_key_id?: string
+          id?: string
+          last_request_at?: string | null
+          month?: string
+          org_id?: string
+          request_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "api_key_usage_api_key_id_fkey"
+            columns: ["api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "api_key_usage_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      api_keys: {
+        Row: {
+          created_at: string
+          created_by: string
+          expires_at: string | null
+          id: string
+          is_active: boolean
+          key_hash: string
+          key_prefix: string
+          last_used_at: string | null
+          name: string
+          org_id: string
+          rate_limit_tier: Database["public"]["Enums"]["api_key_rate_limit_tier"]
+          revocation_reason: string | null
+          revoked_at: string | null
+          scopes: string[]
+        }
+        Insert: {
+          created_at?: string
+          created_by: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          key_hash: string
+          key_prefix: string
+          last_used_at?: string | null
+          name: string
+          org_id: string
+          rate_limit_tier?: Database["public"]["Enums"]["api_key_rate_limit_tier"]
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          scopes?: string[]
+        }
+        Update: {
+          created_at?: string
+          created_by?: string
+          expires_at?: string | null
+          id?: string
+          is_active?: boolean
+          key_hash?: string
+          key_prefix?: string
+          last_used_at?: string | null
+          name?: string
+          org_id?: string
+          rate_limit_tier?: Database["public"]["Enums"]["api_key_rate_limit_tier"]
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          scopes?: string[]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "api_keys_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       audit_events: {
         Row: {
           actor_email: string | null
@@ -475,6 +534,97 @@ export type Database = {
           },
           {
             foreignKeyName: "credential_templates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credit_transactions: {
+        Row: {
+          amount: number
+          balance_after: number
+          created_at: string
+          id: string
+          org_id: string | null
+          reason: string | null
+          reference_id: string | null
+          transaction_type: Database["public"]["Enums"]["credit_transaction_type"]
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          balance_after: number
+          created_at?: string
+          id?: string
+          org_id?: string | null
+          reason?: string | null
+          reference_id?: string | null
+          transaction_type: Database["public"]["Enums"]["credit_transaction_type"]
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          balance_after?: number
+          created_at?: string
+          id?: string
+          org_id?: string | null
+          reason?: string | null
+          reference_id?: string | null
+          transaction_type?: Database["public"]["Enums"]["credit_transaction_type"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_transactions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      credits: {
+        Row: {
+          balance: number
+          created_at: string
+          cycle_end: string | null
+          cycle_start: string | null
+          id: string
+          monthly_allocation: number
+          org_id: string | null
+          purchased: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          balance?: number
+          created_at?: string
+          cycle_end?: string | null
+          cycle_start?: string | null
+          id?: string
+          monthly_allocation?: number
+          org_id?: string | null
+          purchased?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          balance?: number
+          created_at?: string
+          cycle_end?: string | null
+          cycle_start?: string | null
+          id?: string
+          monthly_allocation?: number
+          org_id?: string | null
+          purchased?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credits_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1084,6 +1234,54 @@ export type Database = {
           },
         ]
       }
+      webhook_dead_letter_queue: {
+        Row: {
+          created_at: string
+          endpoint_id: string
+          endpoint_url: string
+          error_message: string
+          event_id: string
+          event_type: string
+          failed_at: string
+          id: string
+          last_attempt: number
+          org_id: string
+          payload: Json
+          resolved: boolean
+          resolved_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          endpoint_id: string
+          endpoint_url: string
+          error_message: string
+          event_id: string
+          event_type: string
+          failed_at?: string
+          id?: string
+          last_attempt?: number
+          org_id: string
+          payload: Json
+          resolved?: boolean
+          resolved_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          endpoint_id?: string
+          endpoint_url?: string
+          error_message?: string
+          event_id?: string
+          event_type?: string
+          failed_at?: string
+          id?: string
+          last_attempt?: number
+          org_id?: string
+          payload?: Json
+          resolved?: boolean
+          resolved_at?: string | null
+        }
+        Relationships: []
+      }
       webhook_delivery_logs: {
         Row: {
           attempt_number: number
@@ -1202,6 +1400,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      allocate_monthly_credits: { Args: never; Returns: number }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
       check_anchor_quota: { Args: never; Returns: number }
       claim_anchoring_job: {
@@ -1216,36 +1415,34 @@ export type Database = {
         Args: { p_events: string[]; p_url: string }
         Returns: Json
       }
+      deduct_credit: {
+        Args: {
+          p_amount?: number
+          p_reason?: string
+          p_reference_id?: string
+          p_user_id: string
+        }
+        Returns: Json
+      }
       delete_webhook_endpoint: {
         Args: { p_endpoint_id: string }
         Returns: undefined
       }
       generate_public_id: { Args: never; Returns: string }
-      get_my_credentials: {
-        Args: Record<PropertyKey, never>
-        Returns: {
-          recipient_id: string
-          anchor_id: string
-          claimed_at: string | null
-          recipient_created_at: string
-          public_id: string
-          filename: string
-          fingerprint: string
-          status: string
-          credential_type: string
-          metadata: Json
-          issued_at: string | null
-          expires_at: string | null
-          created_at: string
-          org_name: string | null
-          org_id: string | null
-        }[]
-      }
       get_flag: {
         Args: { p_default?: boolean; p_flag_key: string }
         Returns: boolean
       }
       get_public_anchor: { Args: { p_public_id: string }; Returns: Json }
+      get_public_issuer_registry: {
+        Args: { p_limit?: number; p_offset?: number; p_org_id: string }
+        Returns: Json
+      }
+      get_public_template: {
+        Args: { p_credential_type: string; p_org_id: string }
+        Returns: Json
+      }
+      get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
       get_user_org_id: { Args: never; Returns: string }
       invite_member: {
         Args: {
@@ -1270,6 +1467,15 @@ export type Database = {
       revoke_anchor:
         | { Args: { anchor_id: string }; Returns: undefined }
         | { Args: { anchor_id: string; reason?: string }; Returns: undefined }
+      search_public_issuers: {
+        Args: { p_query: string }
+        Returns: {
+          credential_count: number
+          org_domain: string
+          org_id: string
+          org_name: string
+        }[]
+      }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
       update_profile_onboarding: {
@@ -1284,6 +1490,7 @@ export type Database = {
     }
     Enums: {
       anchor_status: "PENDING" | "SECURED" | "REVOKED" | "EXPIRED"
+      api_key_rate_limit_tier: "free" | "paid" | "custom"
       credential_type:
         | "DEGREE"
         | "LICENSE"
@@ -1291,6 +1498,12 @@ export type Database = {
         | "TRANSCRIPT"
         | "PROFESSIONAL"
         | "OTHER"
+      credit_transaction_type:
+        | "ALLOCATION"
+        | "PURCHASE"
+        | "DEDUCTION"
+        | "EXPIRY"
+        | "REFUND"
       job_status: "pending" | "processing" | "completed" | "failed"
       report_status: "pending" | "generating" | "completed" | "failed"
       report_type:
@@ -1427,6 +1640,7 @@ export const Constants = {
   public: {
     Enums: {
       anchor_status: ["PENDING", "SECURED", "REVOKED", "EXPIRED"],
+      api_key_rate_limit_tier: ["free", "paid", "custom"],
       credential_type: [
         "DEGREE",
         "LICENSE",
@@ -1434,6 +1648,13 @@ export const Constants = {
         "TRANSCRIPT",
         "PROFESSIONAL",
         "OTHER",
+      ],
+      credit_transaction_type: [
+        "ALLOCATION",
+        "PURCHASE",
+        "DEDUCTION",
+        "EXPIRY",
+        "REFUND",
       ],
       job_status: ["pending", "processing", "completed", "failed"],
       report_status: ["pending", "generating", "completed", "failed"],
@@ -1447,3 +1668,4 @@ export const Constants = {
     },
   },
 } as const
+

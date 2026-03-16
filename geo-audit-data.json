@@ -117,7 +117,7 @@
   "structured_data": {
     "score": 78,
     "schemas_found": [
-      {"type": "Organization", "status": "Valid", "notes": "Arkova Technologies, Inc. with social links"},
+      {"type": "Organization", "status": "Valid", "notes": "Arkova with social links"},
       {"type": "SoftwareApplication", "status": "Valid", "notes": "Product details and features"},
       {"type": "FAQPage", "status": "Valid", "notes": "6 Q&A pairs"}
     ],

@@ -74,13 +74,13 @@ As an AI crawler (GPTBot, ClaudeBot, PerplexityBot), I need the marketing site c
 ### Completion Gaps
 
 - LinkedIn sameAs URL corrected to `/company/arkovatech` and GitHub added to sameAs array
-- LinkedIn company page for "Arkova Technologies, Inc." not yet created (external task — requires LinkedIn admin access)
+- LinkedIn company page for "Arkova" not yet created (external task — requires LinkedIn admin access)
 - Wikidata entry not yet created (external task)
 - Crunchbase profile not yet created (external task)
 
 ### Remaining Work
 
-- Create LinkedIn company page for Arkova Technologies, Inc. (manual, external)
+- Create LinkedIn company page for Arkova (manual, external)
 - Create Wikidata entry with: instance of (business), industry (software), website, founding date
 - Add Crunchbase and Wikidata URLs to sameAs array once created
 - Verify entity resolution on ChatGPT/Perplexity after indexing
@@ -88,24 +88,24 @@ As an AI crawler (GPTBot, ClaudeBot, PerplexityBot), I need the marketing site c
 ### Research
 
 - Verify current LinkedIn sameAs URL points to "Arkova Partners" (financial services) — confirm entity collision
-- Check if an Arkova Technologies LinkedIn company page already exists
+- Check if an Arkova LinkedIn company page already exists
 - Research Wikidata entry creation requirements (instance of, industry, website, founding date)
 - Identify GitHub organization URL for sameAs
 
 ### User Story
 
-As an AI system resolving "Arkova" as an entity, I need consistent sameAs links to correctly identify Arkova Technologies, Inc. (document verification) rather than Arkova Partners (financial services).
+As an AI system resolving "Arkova" as an entity, I need consistent sameAs links to correctly identify Arkova (document verification) rather than Arkova Partners (financial services).
 
 ### What This Story Delivers
 
-- Correct LinkedIn company page created for Arkova Technologies, Inc.
+- Correct LinkedIn company page created for Arkova
 - Organization schema `sameAs` updated with 5+ platforms
-- Wikidata entry created for Arkova Technologies, Inc.
+- Wikidata entry created for Arkova
 - Entity collision resolved across all AI platforms
 
 ### Acceptance Criteria
 
-- [ ] LinkedIn company page exists for Arkova Technologies, Inc. (not Arkova Partners)
+- [ ] LinkedIn company page exists for Arkova (not Arkova Partners)
 - [ ] Organization schema `sameAs` includes: LinkedIn, X/Twitter, GitHub, Crunchbase, and Wikidata
 - [ ] Wikidata entry created with: instance of (business), industry (software), website, founding date
 - [ ] JSON-LD schema validates with no errors

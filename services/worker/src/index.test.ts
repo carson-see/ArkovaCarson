@@ -133,6 +133,7 @@ vi.mock('dotenv/config', () => ({}));
 vi.mock('./utils/rateLimit.js', () => {
   const passthrough = (_req: any, _res: any, next: any) => next();
   return {
+    rateLimit: () => passthrough,
     rateLimiters: {
       stripeWebhook: passthrough,
       checkout: passthrough,

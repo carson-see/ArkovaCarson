@@ -28,9 +28,9 @@
 
 ## Critical Fix: LinkedIn sameAs
 
-The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a financial services firm) — not Arkova Technologies. This entity collision actively harms AI recognition on every platform.
+The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a financial services firm) — not Arkova. This entity collision actively harms AI recognition on every platform.
 
-**Action:** Create the correct LinkedIn company page for Arkova Technologies, Inc. and update the sameAs URL.
+**Action:** Create the correct LinkedIn company page for Arkova and update the sameAs URL.
 
 ---
 
@@ -43,7 +43,7 @@ The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a f
   "@context": "https://schema.org",
   "@type": "Organization",
   "name": "Arkova",
-  "legalName": "Arkova Technologies, Inc.",
+  "legalName": "Arkova",
   "url": "https://arkova.ai",
   "logo": {
     "@type": "ImageObject",
@@ -100,12 +100,12 @@ The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a f
   "@context": "https://schema.org",
   "@type": "WebSite",
   "name": "Arkova",
-  "alternateName": "Arkova Technologies",
+  "alternateName": "Arkova",
   "url": "https://arkova.ai",
   "description": "Privacy-first document verification platform using cryptographic fingerprinting.",
   "publisher": {
     "@type": "Organization",
-    "name": "Arkova Technologies, Inc.",
+    "name": "Arkova",
     "url": "https://arkova.ai"
   }
 }
@@ -123,7 +123,7 @@ The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a f
   "jobTitle": "[TITLE]",
   "worksFor": {
     "@type": "Organization",
-    "name": "Arkova Technologies, Inc.",
+    "name": "Arkova",
     "url": "https://arkova.ai"
   },
   "description": "[1-2 sentence bio highlighting relevant expertise]",
@@ -198,7 +198,7 @@ The Organization schema's `sameAs` currently links to **"Arkova Partners"** (a f
   ],
   "creator": {
     "@type": "Organization",
-    "name": "Arkova Technologies, Inc.",
+    "name": "Arkova",
     "url": "https://arkova.ai"
   },
   "datePublished": "2025-01-01"

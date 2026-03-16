@@ -1,9 +1,9 @@
 # P4.5 Verification API — Story Documentation
-_Last updated: 2026-03-12 | 0/13 stories — ALL NOT STARTED (intentionally deferred to post-launch)_
+_Last updated: 2026-03-15 | 5/13 stories COMPLETE, 8 NOT STARTED_
 
 ## Group Overview
 
-P4.5 Verification API delivers a programmatic API for third-party credential verification. All 13 stories are behind the `ENABLE_VERIFICATION_API` feature flag (default: `false`). This group is intentionally deferred to post-launch — no work should begin until Phase 1 ships.
+P4.5 Verification API delivers a programmatic API for third-party credential verification. All 13 stories are behind the `ENABLE_VERIFICATION_API` feature flag (default: `false`).
 
 Key deliverables:
 - Feature flag middleware gating all `/api/v1/*` endpoints
@@ -15,7 +15,18 @@ Key deliverables:
 - OpenAPI documentation
 - Load testing suite
 
-> **All stories in this group are NOT STARTED. This document serves as a reference for the planned architecture and dependencies.**
+### Phase 1 Foundation (COMPLETE)
+
+5 stories implemented in the initial sprint:
+- **P4.5-TS-12** — Feature gate middleware (TTL-cached switchboard flag)
+- **P4.5-TS-03** — API key auth middleware (HMAC-SHA256 hashing, `ak_` prefix, scoped keys)
+- **P4.5-TS-01** — `GET /api/v1/verify/:publicId` (frozen response schema)
+- **P4.5-TS-07** — Key CRUD endpoints (POST/GET/PATCH/DELETE with audit logging)
+- **P4.5-TS-05** — Usage tracking + free tier quota enforcement (10K/month)
+
+**Migration:** 0057 (`verification_api_foundation.sql`) — creates `api_keys` table, `api_key_usage` table, `api_key_rate_limit_tier` enum, `ENABLE_VERIFICATION_API` flag, RLS policies.
+
+**Test coverage:** 62 new tests (10 featureGate + 16 apiKeyAuth + 11 usageTracking + 12 verify + 13 keys). Worker total: 665 tests.
 
 ## Architecture Context
 
@@ -117,10 +128,10 @@ CORS_ALLOWED_ORIGINS=*           # CORS configuration for API
 
 ### P4.5-TS-12: Feature Flag Middleware
 
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE
 **Points:** 3
 **Dependencies:** None
-**Blocked by:** Phase 1 launch
+**Completed:** 2026-03-15
 
 #### User Story
 
@@ -169,10 +180,10 @@ As the platform operator, I want to gate the entire verification API behind a fe
 
 ### P4.5-TS-03: API Keys Table + HMAC + Rate Limiting
 
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE
 **Points:** 8
 **Dependencies:** P1-TS-03 (audit events), P4.5-TS-12 (feature gate)
-**Blocked by:** P4.5-TS-12
+**Completed:** 2026-03-15
 
 #### User Story
 
@@ -233,10 +244,10 @@ As an API consumer, I want to create API keys that authenticate my requests and 
 
 ### P4.5-TS-01: GET /api/v1/verify/:publicId
 
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE
 **Points:** 5
 **Dependencies:** P6-TS-01 (get_public_anchor RPC), P4.5-TS-03 (API key auth)
-**Blocked by:** P4.5-TS-03
+**Completed:** 2026-03-15
 
 #### User Story
 
@@ -407,10 +418,10 @@ As an API consumer who submitted a batch verification, I want to poll a job stat
 
 ### P4.5-TS-07: Key CRUD Endpoints
 
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE
 **Points:** 5
 **Dependencies:** P4.5-TS-03 (api_keys table)
-**Blocked by:** P4.5-TS-03
+**Completed:** 2026-03-15
 
 #### User Story
 
@@ -470,10 +481,10 @@ As an organization admin, I want REST endpoints to create, list, update, and rev
 
 ### P4.5-TS-05: Free Tier Enforcement
 
-**Status:** NOT STARTED
+**Status:** ✅ COMPLETE
 **Points:** 5
 **Dependencies:** P4.5-TS-03 (api_key_usage table)
-**Blocked by:** P4.5-TS-03
+**Completed:** 2026-03-15
 
 #### User Story
 

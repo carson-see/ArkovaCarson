@@ -4,7 +4,7 @@
 
 ## Description
 
-Arkova Technologies, Inc. builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform is designed for both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
+Arkova builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform is designed for both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
 
 - Website: https://arkova.ai
 - App: https://app.arkova.io

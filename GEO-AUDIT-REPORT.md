@@ -132,12 +132,12 @@ Arkova's AI search visibility has **one exceptional strength and four critical g
 
 | # | Action | Impact | Effort |
 |---|--------|--------|--------|
-| 1 | **Fix LinkedIn sameAs** — create correct Arkova Technologies page, update schema | All platforms | 2 hrs |
+| 1 | **Fix LinkedIn sameAs** — create correct Arkova page, update schema | All platforms | 2 hrs |
 | 2 | **Fix broken og:image** — upload og-image.png or fix the reference | Social + AI previews | 10 min |
 | 3 | **Deploy upgraded llms.txt** — replacement already generated (95/100) | ChatGPT, Perplexity | 10 min |
 | 4 | **Lengthen meta description** to 150-160 chars | All platforms | 5 min |
 | 5 | **Add `twitter:site` and `og:site_name`** tags | Social + AI | 5 min |
-| 6 | **Create Wikidata entry** for Arkova Technologies, Inc. | ChatGPT, Gemini, Perplexity | 1 hr |
+| 6 | **Create Wikidata entry** for Arkova | ChatGPT, Gemini, Perplexity | 1 hr |
 
 ### Medium-Term (1-2 weeks, transformative)
 
