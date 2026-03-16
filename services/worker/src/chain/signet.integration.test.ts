@@ -17,8 +17,6 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import * as bitcoin from 'bitcoinjs-lib';
-import * as ecc from 'tiny-secp256k1';
-import { ECPairFactory } from 'ecpair';
 import { buildOpReturnTransaction, type SelectedUtxo } from './signet.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { generateSignetKeypair } from './wallet.js';
@@ -32,7 +30,6 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
-const ECPair = ECPairFactory(ecc);
 const SIGNET_NETWORK = bitcoin.networks.testnet;
 
 /**

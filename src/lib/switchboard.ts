@@ -20,6 +20,7 @@ export const FLAGS = {
   ENABLE_NEW_CHECKOUTS: true,
   ENABLE_REPORTS: true,
   MAINTENANCE_MODE: false,
+  ENABLE_BATCH_ANCHORING: false,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;
@@ -68,6 +69,7 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
       ENABLE_NEW_CHECKOUTS: FLAGS.ENABLE_NEW_CHECKOUTS,
       ENABLE_REPORTS: FLAGS.ENABLE_REPORTS,
       MAINTENANCE_MODE: FLAGS.MAINTENANCE_MODE,
+      ENABLE_BATCH_ANCHORING: FLAGS.ENABLE_BATCH_ANCHORING,
     };
   }
 
@@ -78,6 +80,7 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
     ENABLE_NEW_CHECKOUTS: FLAGS.ENABLE_NEW_CHECKOUTS,
     ENABLE_REPORTS: FLAGS.ENABLE_REPORTS,
     MAINTENANCE_MODE: FLAGS.MAINTENANCE_MODE,
+    ENABLE_BATCH_ANCHORING: FLAGS.ENABLE_BATCH_ANCHORING,
   };
 
   for (const row of (data || []) as Array<{ id: string; value: boolean }>) {
@@ -126,6 +129,13 @@ export async function isReportsEnabled(): Promise<boolean> {
  */
 export async function isMaintenanceMode(): Promise<boolean> {
   return getFlag('MAINTENANCE_MODE');
+}
+
+/**
+ * Check if batch anchoring is enabled (MVP-23)
+ */
+export async function isBatchAnchoringEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_BATCH_ANCHORING');
 }
 
 // =============================================================================

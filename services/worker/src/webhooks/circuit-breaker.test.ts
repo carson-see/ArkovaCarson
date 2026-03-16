@@ -81,7 +81,6 @@ function setupBasicMocks() {
 
   // Idempotency: not delivered
   const idempSingle = vi.fn().mockResolvedValue({ data: null, error: null });
-  const idempEq = vi.fn(() => ({ single: idempSingle }));
 
   // Insert log
   const insertSingle = vi.fn().mockResolvedValue({ data: { id: 'log-cb' }, error: null });
@@ -248,7 +247,7 @@ describe('DH-12: Dead Letter Queue', () => {
   });
 
   it('moves permanently failed delivery to DLQ after max retries', async () => {
-    const { dlqInsertFn } = setupBasicMocks();
+    setupBasicMocks();
 
     // Simulate final attempt (attempt 5 = last retry)
     mockFetch.mockResolvedValue({

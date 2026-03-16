@@ -25,32 +25,32 @@ let testCounter = 0;
 
 function createMockReqRes(ip?: string, path?: string) {
   const uniqueId = ++testCounter;
-  const req: any = {
+  const req = {
     ip: ip ?? `10.${Math.floor(uniqueId / 256)}.${uniqueId % 256}.1`,
     path: path ?? `/test-${uniqueId}`,
     headers: {},
-  };
-  const res: any = {
+  } as unknown as import('express').Request;
+  const res = {
     statusCode: 200,
     setHeader: vi.fn(),
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
     send: vi.fn().mockReturnThis(),
-  };
+  } as unknown as import('express').Response & Record<string, ReturnType<typeof vi.fn>>;
   const next = vi.fn();
   return { req, res, next };
 }
 
 /** Create req/res with a specific key (ip+path) for multi-request tests */
 function createMockReqResWithKey(ip: string, path: string) {
-  const req: any = { ip, path, headers: {} };
-  const res: any = {
+  const req = { ip, path, headers: {} } as unknown as import('express').Request;
+  const res = {
     statusCode: 200,
     setHeader: vi.fn(),
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
     send: vi.fn().mockReturnThis(),
-  };
+  } as unknown as import('express').Response & Record<string, ReturnType<typeof vi.fn>>;
   const next = vi.fn();
   return { req, res, next };
 }
@@ -313,14 +313,14 @@ describe('rateLimit', () => {
   describe('fallback key generation', () => {
     it('uses "unknown" when req.ip is undefined', () => {
       const limiter = rateLimit({ windowMs: 60000, maxRequests: 5 });
-      const req: any = { ip: undefined, path: '/unknown-ip-test', headers: {} };
-      const res: any = {
+      const req = { ip: undefined, path: '/unknown-ip-test', headers: {} } as unknown as import('express').Request;
+      const res = {
         statusCode: 200,
         setHeader: vi.fn(),
         status: vi.fn().mockReturnThis(),
         json: vi.fn().mockReturnThis(),
         send: vi.fn().mockReturnThis(),
-      };
+      } as unknown as import('express').Response & Record<string, ReturnType<typeof vi.fn>>;
       const next = vi.fn();
 
       limiter(req, res, next);

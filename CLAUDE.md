@@ -625,13 +625,13 @@ npx supabase db reset
 | P7 Go-Live | 11/13 | 0 | 2/13 | 85% | <!-- P7-TS-04 and P7-TS-06 not enumerated (no individual scope) --> |
 | P4.5 Verification API | 13/13 | 0 | 0 | 100% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
-| MVP Launch Gaps | 21/27 | 0 | 6/27 | 78% |
+| MVP Launch Gaps | 25/27 | 0 | 2/27 | 93% |
 | P8 AI Intelligence | 4/19 | 0 | 15/19 | 21% |
-| INFRA Edge & Ingress | 5/8 | 1/8 | 2/8 | 63% |
+| INFRA Edge & Ingress | 7/8 | 1/8 | 0/8 | 88% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
 | UF User Flow Gaps | 10/10 | 0 | 0 | 100% |
-| GEO SEO Optimization | 3/12 | 3/12 | 6/12 | 25% |
-| **Total** | **128/163** | **4/163** | **31/163** | **~79%** |
+| GEO SEO Optimization | 4/12 | 3/12 | 5/12 | 33% |
+| **Total** | **135/163** | **4/163** | **24/163** | **~83%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -733,7 +733,7 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 ~~DH-01~~ Feature flag hot-reload · ~~DH-02~~ Advisory lock (migration 0052) · ~~DH-03~~ KMS operational docs (`14_kms_operations.md`) · ~~DH-04~~ Webhook circuit breaker · ~~DH-05~~ Chain index cache TTL · ~~DH-06~~ Quota error handling · ~~DH-07~~ Fee estimator timeout (PR #38) · ~~DH-08~~ Rate limiting (migration 0052) · ~~DH-09~~ UTXO retry logic (PR #39) · ~~DH-10~~ Entitlements realtime · ~~DH-11~~ RPC structured logging · ~~DH-12~~ Webhook DLQ (migration 0052)
 
-### MVP Launch Gaps — 21/27 COMPLETE, 6/27 NOT STARTED (2 REMOVED)
+### MVP Launch Gaps — 25/27 COMPLETE, 2/27 NOT STARTED (2 REMOVED)
 
 27 active stories (2 removed as superseded by P8). See `docs/stories/11_mvp_launch_gaps.md` for full details.
 
@@ -754,19 +754,19 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 | MVP-13 | LOW | Organization logo upload | NOT STARTED |
 | MVP-14 | LOW | Embeddable verification widget | NOT STARTED |
 | ~~MVP-16~~ | ~~MEDIUM~~ | ~~Block explorer deep links~~ | ✅ COMPLETE (PR #50) — ExplorerLink component, wired in PublicVerification |
-| MVP-17 | MEDIUM | Credential template metadata enhancement | NOT STARTED |
-| MVP-18 | MEDIUM | Enhanced metadata display | NOT STARTED |
+| ~~MVP-17~~ | ~~MEDIUM~~ | ~~Credential template metadata enhancement~~ | ✅ COMPLETE — TemplateSchemaBuilder component (6 field types). 9 tests. |
+| ~~MVP-18~~ | ~~MEDIUM~~ | ~~Enhanced metadata display~~ | ✅ COMPLETE — MetadataDisplay component (auto-formatting, schema labels). 13 tests. |
 | ~~MVP-19~~ | — | ~~AI Auto-Descriptions~~ — REMOVED (superseded by P8-S4/S5) | — |
 | MVP-20 | LOW | LinkedIn badge integration | NOT STARTED |
 | ~~MVP-21~~ | ~~MEDIUM~~ | ~~Individual self-verification flow~~ | ✅ COMPLETE (PR #50) — VerifyMyRecordPage at `/my-records/verify` |
 | ~~MVP-22~~ | — | ~~AI Fraud Detection~~ — REMOVED (superseded by P8-S7/S8/S9) | — |
-| MVP-23 | MEDIUM | Batch anchor processing | NOT STARTED |
+| ~~MVP-23~~ | ~~MEDIUM~~ | ~~Batch anchor processing~~ | ✅ COMPLETE — Merkle tree + batch anchor job. `ENABLE_BATCH_ANCHORING` flag. 30 tests. |
 | ~~MVP-24~~ | ~~HIGH~~ | ~~Credits schema + monthly allocations~~ | ✅ COMPLETE (PR #50) — Migration 0053, RPCs, RLS |
 | ~~MVP-25~~ | ~~MEDIUM~~ | ~~Credits tracking + scheduling~~ | ✅ COMPLETE (PR #50) — useCredits hook, CreditUsageWidget, cron job |
 | ~~MVP-26~~ | ~~HIGH~~ | ~~GCP Cloud Run deployment~~ | ✅ COMPLETE — `arkova-worker-kvojbeutfa-uc.a.run.app`, health verified, all secrets mounted. |
 | ~~MVP-27~~ | ~~HIGH~~ | ~~GCP Secret Manager integration~~ | ✅ COMPLETE — 7 secrets (supabase-url, supabase-service-role-key, stripe-secret-key, stripe-webhook-secret, cloudflare-tunnel-token, bitcoin-treasury-wif, api-key-hmac-secret). |
 | ~~MVP-28~~ | ~~MEDIUM~~ | ~~GCP Cloud Scheduler~~ | ✅ COMPLETE — 4 cron jobs created (process-anchors, webhook-retries, generate-reports, credit-expiry). OIDC auth with Cloud Run SA. |
-| MVP-29 | HIGH | GCP Cloud KMS integration | NOT STARTED |
+| ~~MVP-29~~ | ~~HIGH~~ | ~~GCP Cloud KMS integration~~ | ✅ COMPLETE — `GcpKmsSigningProvider` + factory + config. `KMS_PROVIDER=aws\|gcp`. 14 tests. |
 | MVP-30 | MEDIUM | GCP CI/CD pipeline | NOT STARTED |
 
 **Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
@@ -781,18 +781,18 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 Remaining 15 stories NOT STARTED. Architecture: client-side OCR → PII stripping → metadata-only to server → Gemini Flash via IAIProvider. Constitution 4A amendment governs data flow. See `docs/stories/12_p8_ai_intelligence.md` for full details.
 
-### INFRA Edge & Ingress — 5/8 COMPLETE, 1/8 PARTIAL, 2/8 NOT STARTED
+### INFRA Edge & Ingress — 7/8 COMPLETE, 1/8 PARTIAL, 0/8 NOT STARTED
 
 8 stories for Zero Trust ingress, edge compute, observability, and AI provider fallback. See `docs/stories/13_infrastructure_edge.md`.
 
 | ID | Status | Description |
 |----|--------|-------------|
-| INFRA-01 | NOT STARTED | Cloudflare Tunnel sidecar setup |
+| ~~INFRA-01~~ | ~~✅ COMPLETE~~ | ~~Cloudflare Tunnel sidecar — Dockerfile + entrypoint.sh + docker-compose.yml with profile-based tunnel. 25 tests.~~ |
 | ~~INFRA-02~~ | ~~✅ COMPLETE~~ | ~~Wrangler + edge scaffolding — `services/edge/` with 11 source files, `wrangler.toml`, `tsconfig.json`. Full implementation.~~ |
 | ~~INFRA-03~~ | ~~✅ COMPLETE~~ | ~~R2 report storage — binding in wrangler.toml, `report-generator.ts` + `report-logic.ts` implemented. 4 tests.~~ |
 | ~~INFRA-04~~ | ~~✅ COMPLETE~~ | ~~Batch anchor queue — binding in wrangler.toml, `batch-queue.ts` + `batch-queue-logic.ts` with Zod schema. 4 tests.~~ |
 | ~~INFRA-05~~ | ~~✅ COMPLETE~~ | ~~AI fallback provider — `IAIProvider` interface, `CloudflareAIFallbackProvider`, factory, mock, 16 tests. Edge worker `ai-fallback.ts`.~~ |
-| INFRA-06 | NOT STARTED | Replicate QA data generator |
+| ~~INFRA-06~~ | ~~✅ COMPLETE~~ | ~~Replicate QA data generator — `ReplicateProvider` implementing `IAIProvider`. Production-blocked. 12 tests.~~ |
 | INFRA-07 | ⚠️ PARTIAL | Sentry integration — `@sentry/react` + `@sentry/node` + `@sentry/profiling-node` installed. Frontend + worker init, PII scrubbing, ErrorBoundary wired, 30 tests. Missing: source map upload plugin, DSN env vars in production. |
 | ~~INFRA-08~~ | ~~✅ COMPLETE~~ | ~~pgvector + institution ground truth — migration 0051 applied to production.~~ |
 

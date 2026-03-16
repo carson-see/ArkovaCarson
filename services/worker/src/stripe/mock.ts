@@ -82,7 +82,7 @@ export class MockStripeClient {
     return this.subscriptions.get(subscriptionId) ?? null;
   }
 
-  constructEvent(payload: string, signature: string, secret: string): MockStripeEvent {
+  constructEvent(payload: string, _signature: string, _secret: string): MockStripeEvent {
     // In mock mode, just parse the payload
     logger.info('Mock: Constructing webhook event');
     return JSON.parse(payload) as MockStripeEvent;

@@ -92,6 +92,7 @@ describe('switchboard feature flags', () => {
         ENABLE_NEW_CHECKOUTS: true,
         ENABLE_REPORTS: true,
         MAINTENANCE_MODE: false,
+        ENABLE_BATCH_ANCHORING: false,
       });
     });
   });

@@ -53,14 +53,15 @@ export function useMyCredentials(): UseMyCredentialsReturn {
     setLoading(true);
     setError(null);
 
-    const { data, error: fetchError } = await supabase.rpc('get_my_credentials');
+    const { data, error: fetchError } = await (supabase.rpc as (fn: string, params?: Record<string, unknown>) => ReturnType<typeof supabase.rpc>)('get_my_credentials');
 
     if (fetchError) {
       setError(fetchError.message);
       setCredentials([]);
     } else {
+      const rows = (data ?? []) as unknown as Record<string, unknown>[];
       setCredentials(
-        (data ?? []).map((row: Record<string, unknown>) => ({
+        rows.map((row: Record<string, unknown>) => ({
           recipientId: row.recipient_id as string,
           anchorId: row.anchor_id as string,
           claimedAt: row.claimed_at as string | null,

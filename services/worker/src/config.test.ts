@@ -29,9 +29,9 @@ beforeAll(() => {
 });
 
 // Dynamic import after env setup — use top-level so tests can reference
-let config: any;
-let getNetworkDisplayName: any;
-let NETWORK_DISPLAY_NAMES: any;
+let config: Record<string, unknown>;
+let getNetworkDisplayName: (network: 'signet' | 'testnet' | 'mainnet') => string;
+let NETWORK_DISPLAY_NAMES: Record<string, string>;
 
 beforeAll(async () => {
   const mod = await import('./config.js');

@@ -213,7 +213,14 @@ export async function createChainClient(): Promise<ChainClient> {
   // ── Mainnet ───────────────────────────────────────────────────────
 
   if (config.bitcoinNetwork === 'mainnet') {
-    if (!config.bitcoinKmsKeyId) {
+    const useGcpKms = config.kmsProvider === 'gcp';
+
+    // Validate that the required KMS key config is present
+    if (useGcpKms && !config.gcpKmsKeyResourceName) {
+      logger.error('GCP_KMS_KEY_RESOURCE_NAME required for mainnet chain client (KMS_PROVIDER=gcp) — falling back to mock');
+      return new MockChainClient();
+    }
+    if (!useGcpKms && !config.bitcoinKmsKeyId) {
       logger.error('BITCOIN_KMS_KEY_ID required for mainnet chain client — falling back to mock');
       return new MockChainClient();
     }
@@ -231,24 +238,32 @@ export async function createChainClient(): Promise<ChainClient> {
       mempoolApiUrl: config.mempoolApiUrl,
     });
 
-    const signingProvider = await createSigningProvider({
-      type: 'kms',
-      kmsKeyId: config.bitcoinKmsKeyId,
-      kmsRegion: config.bitcoinKmsRegion,
-    });
+    const signingProvider = useGcpKms
+      ? await createSigningProvider({
+          type: 'gcp-kms',
+          gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
+          gcpKmsProjectId: config.gcpKmsProjectId,
+        })
+      : await createSigningProvider({
+          type: 'kms',
+          kmsKeyId: config.bitcoinKmsKeyId,
+          kmsRegion: config.bitcoinKmsRegion,
+        });
 
     const feeEstimator = createFeeEstimator({
       strategy: config.bitcoinFeeStrategy ?? 'mempool',
       fallbackRate: config.bitcoinFallbackFeeRate,
     });
 
+    const kmsLabel = useGcpKms ? 'GCP KMS' : 'AWS KMS';
     logger.info(
       {
         network: 'mainnet',
+        kmsProvider: kmsLabel,
         utxoProvider: utxoProvider.name,
         feeEstimator: feeEstimator.name,
       },
-      'Using BitcoinChainClient (Mainnet + KMS)',
+      `Using BitcoinChainClient (Mainnet + ${kmsLabel})`,
     );
 
     return new BitcoinChainClient({

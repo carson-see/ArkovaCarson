@@ -18,7 +18,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ─── Hoisted mocks ──────────────────────────────────────────────────
 
-const { mockConfig, mockDbSelect, mockDbFrom } = vi.hoisted(() => {
+const { mockConfig, mockDbFrom } = vi.hoisted(() => {
   const mockConfig = {
     nodeEnv: 'test' as string,
     useMocks: true,
@@ -38,10 +38,9 @@ const { mockConfig, mockDbSelect, mockDbFrom } = vi.hoisted(() => {
     logLevel: 'info',
   };
 
-  const mockDbSelect = vi.fn();
   const mockDbFrom = vi.fn();
 
-  return { mockConfig, mockDbSelect, mockDbFrom };
+  return { mockConfig, mockDbFrom };
 });
 
 vi.mock('../utils/logger.js', () => ({
@@ -70,8 +69,8 @@ vi.mock('../utils/db.js', () => ({
 vi.mock('./signet.js', () => {
   class MockBitcoinChainClient {
     _isBitcoinClient = true; // marker for test assertions
-    config: any;
-    constructor(cfg: any) { this.config = cfg; }
+    config: Record<string, unknown>;
+    constructor(cfg: Record<string, unknown>) { this.config = cfg; }
     submitFingerprint = vi.fn();
     verifyFingerprint = vi.fn();
     getReceipt = vi.fn();
@@ -165,7 +164,7 @@ describe('createChainClient', () => {
     mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
 
     const client = await createChainClient();
-    expect((client as any)._isBitcoinClient).toBe(true);
+    expect((client as unknown as { _isBitcoinClient: boolean })._isBitcoinClient).toBe(true);
   });
 
   it('creates WIF signing provider for signet', async () => {
@@ -241,7 +240,7 @@ describe('createChainClient', () => {
     mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
 
     const client = await createChainClient();
-    expect((client as any)._isBitcoinClient).toBe(true);
+    expect((client as unknown as { _isBitcoinClient: boolean })._isBitcoinClient).toBe(true);
   });
 
   // ── Mainnet path ──────────────────────────────────────────────────
@@ -255,7 +254,7 @@ describe('createChainClient', () => {
     mockConfig.bitcoinKmsRegion = 'us-east-1';
 
     const client = await createChainClient();
-    expect((client as any)._isBitcoinClient).toBe(true);
+    expect((client as unknown as { _isBitcoinClient: boolean })._isBitcoinClient).toBe(true);
   });
 
   it('creates KMS signing provider for mainnet', async () => {
@@ -296,7 +295,7 @@ describe('createChainClient', () => {
 
     const client = await createChainClient();
     // bitcoin.networks.bitcoin is the mainnet network object from bitcoinjs-lib
-    expect((client as any).config.network).toEqual(expect.objectContaining({ bech32: 'bc', pubKeyHash: 0 }));
+    expect((client as unknown as { config: Record<string, unknown> }).config.network).toEqual(expect.objectContaining({ bech32: 'bc', pubKeyHash: 0 }));
   });
 
   it('falls back to MockChainClient when mainnet KMS key is missing', async () => {
@@ -349,7 +348,7 @@ describe('createChainClient', () => {
     mockConfig.useMocks = false;
     mockConfig.nodeEnv = 'production';
     mockConfig.enableProdNetworkAnchoring = true;
-    (mockConfig as any).bitcoinNetwork = 'regtest';
+    (mockConfig as unknown as Record<string, string>).bitcoinNetwork = 'regtest';
 
     const client = await createChainClient();
     expect(client).toBeInstanceOf(MockChainClient);

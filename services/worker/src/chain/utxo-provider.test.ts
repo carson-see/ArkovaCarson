@@ -202,7 +202,7 @@ describe('createUtxoProvider', () => {
   it('throws if RPC URL missing', () => { expect(() => createUtxoProvider({ type: 'rpc' })).toThrow('BITCOIN_RPC_URL is required'); });
   it('creates Mempool provider', () => { expect(createUtxoProvider({ type: 'mempool' }).name).toBe('Mempool.space REST API'); });
   it('creates Mempool with custom URL', () => { expect(createUtxoProvider({ type: 'mempool', mempoolApiUrl: 'https://custom/api' }).name).toBe('Mempool.space REST API'); });
-  it('throws on unknown type', () => { expect(() => createUtxoProvider({ type: 'unknown' as any })).toThrow('Unknown UTXO provider'); });
+  it('throws on unknown type', () => { expect(() => createUtxoProvider({ type: 'unknown' as unknown as 'rpc' })).toThrow('Unknown UTXO provider'); });
 });
 
 describe('HttpError', () => {

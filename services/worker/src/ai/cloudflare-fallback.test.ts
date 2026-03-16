@@ -5,7 +5,7 @@
  * Gated by ENABLE_AI_FALLBACK flag (default: false).
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
 
 describe('CloudflareFallbackProvider', () => {

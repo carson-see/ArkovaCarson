@@ -290,7 +290,7 @@ export function compressPublicKey(uncompressed: Buffer): Buffer {
 
 // ─── Factory ────────────────────────────────────────────────────────────
 
-export type SigningProviderType = 'wif' | 'kms';
+export type SigningProviderType = 'wif' | 'kms' | 'gcp-kms';
 
 export interface SigningProviderFactoryConfig {
   type: SigningProviderType;
@@ -304,6 +304,12 @@ export interface SigningProviderFactoryConfig {
   kmsRegion?: string;
   /** Optional KMS client for testing */
   kmsClient?: KmsClientLike;
+  /** GCP KMS key resource name (required for 'gcp-kms' type) */
+  gcpKmsKeyResourceName?: string;
+  /** GCP project ID (optional for 'gcp-kms' type) */
+  gcpKmsProjectId?: string;
+  /** Optional GCP KMS client for testing */
+  gcpKmsClient?: import('./gcp-kms-signing-provider.js').GcpKmsClientLike;
 }
 
 /**
@@ -334,6 +340,24 @@ export async function createSigningProvider(
     return KmsSigningProvider.create(
       { keyId: factoryConfig.kmsKeyId, region: factoryConfig.kmsRegion },
       factoryConfig.kmsClient,
+    );
+  }
+
+  if (factoryConfig.type === 'gcp-kms') {
+    if (!factoryConfig.gcpKmsKeyResourceName) {
+      throw new Error('GCP KMS key resource name is required for GCP KMS signing provider');
+    }
+    logger.info(
+      { provider: 'gcp-kms', project: factoryConfig.gcpKmsProjectId ?? 'default' },
+      'Creating GCP KMS signing provider',
+    );
+    const { GcpKmsSigningProvider } = await import('./gcp-kms-signing-provider.js');
+    return GcpKmsSigningProvider.create(
+      {
+        keyResourceName: factoryConfig.gcpKmsKeyResourceName,
+        projectId: factoryConfig.gcpKmsProjectId,
+      },
+      factoryConfig.gcpKmsClient,
     );
   }
 

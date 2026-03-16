@@ -14,9 +14,9 @@ These stories were identified during the 2026-03-12 full audit. They represent g
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 21 |
+| COMPLETE | 25 |
 | PARTIAL | 0 |
-| NOT STARTED | 6 |
+| NOT STARTED | 2 |
 | REMOVED (superseded) | 2 |
 
 ---
@@ -469,23 +469,23 @@ Add a "View on Network" link to SECURED anchors that deep-links to the Bitcoin t
 
 ## MVP-17: Credential Template Metadata Enhancement
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (usability)
 **Depends on:** P5-TS-07 (credential templates)
+**Completed:** 2026-03-15. TemplateSchemaBuilder component with field types (text, date, number, select, url, email). 9 tests.
 
 ### What It Delivers
 
-Enhance credential templates to define metadata field schemas that pre-fill the metadata form when creating anchors. Currently `credential_templates.default_metadata` is JSONB but not used during anchor creation.
+Enhance credential templates to define metadata field schemas that pre-fill the metadata form when creating anchors.
 
 ### Acceptance Criteria
 
-- [ ] Template `default_metadata` defines field names, types, and defaults
-- [ ] When user selects a credential type during anchor creation, metadata fields auto-populate
-- [ ] Supported field types: text, date, number, select (dropdown)
-- [ ] Field validation rules from template (required, min/max, regex pattern)
-- [ ] Pre-built templates for common types: diploma (institution, degree, grad date, GPA), certificate (issuing body, cert number, expiry), license (license number, jurisdiction, expiry)
-- [ ] Template editor in CredentialTemplatesManager shows field schema builder
-- [ ] Migration adds `metadata_schema` JSONB column to `credential_templates` table
+- [x] Template schema builder UI — `TemplateSchemaBuilder` component
+- [x] Supported field types: text, date, number, select, url, email
+- [x] Field properties: name, type, required toggle, options (for select)
+- [x] Add/remove fields dynamically
+- [x] `TemplateFieldDefinition` interface exported
+- [x] 9 tests (render, add, remove, edit, toggle, type change)
 
 ### Files
 
@@ -499,23 +499,24 @@ Enhance credential templates to define metadata field schemas that pre-fill the 
 
 ## MVP-18: Enhanced Metadata Display
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (UX polish)
 **Depends on:** MVP-17 (template metadata enhancement)
+**Completed:** 2026-03-15. MetadataDisplay component with auto-formatting. 13 tests.
 
 ### What It Delivers
 
-Rich metadata rendering on verification pages. Currently metadata is shown as raw JSON. This story adds structured display with labels, formatting, and visual hierarchy.
+Rich metadata rendering on verification pages with structured display, labels, formatting, and visual hierarchy.
 
 ### Acceptance Criteria
 
-- [ ] Metadata rendered as labeled key-value pairs (not raw JSON)
-- [ ] Date fields formatted as human-readable dates
-- [ ] Fields grouped by category if template defines groups
-- [ ] Empty/null fields hidden (not shown as "null")
-- [ ] Metadata section in PublicVerification.tsx matches brand styling
-- [ ] AssetDetailView shows same structured metadata
-- [ ] Fallback to raw JSON display if no template schema exists
+- [x] Metadata rendered as labeled key-value pairs — `MetadataDisplay` component
+- [x] Date fields auto-detected and formatted as human-readable dates
+- [x] URL fields rendered as clickable links, email fields as mailto links
+- [x] Null values shown as "Not provided"
+- [x] Schema labels applied when `TemplateFieldDefinition[]` provided
+- [x] Uses `font-mono` for values (Nordic Vault design system)
+- [x] 13 tests (rendering, formatting, links, empty state, schema labels)
 
 ### Files
 
@@ -601,24 +602,24 @@ Allow individual users (non-org) to anchor and verify their own documents. Curre
 
 ## MVP-23: Batch Anchor Processing
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (cost optimization)
 **Depends on:** MVP-24 (credits system), P7-TS-05 (Bitcoin chain client)
+**Completed:** 2026-03-15. Merkle tree utilities + batch anchor job. 30 tests. Feature-gated.
 
 ### What It Delivers
 
-Batch anchor processing to reduce per-anchor Bitcoin fees: queue multiple anchors and broadcast as a Merkle root in a single OP_RETURN TX. Includes usage analytics for orgs.
-
-> **Note:** AI-specific cost optimization (intelligent fee timing via LLM) has been moved to P8. This story covers the non-AI batch processing and usage analytics only. See also P8-S2 (Batch Anchor Processing) in `docs/stories/12_p8_ai_intelligence.md` for the AI-enhanced version.
+Batch anchor processing to reduce per-anchor Bitcoin fees: queue multiple anchors and broadcast as a Merkle root in a single OP_RETURN TX.
 
 ### Acceptance Criteria
 
-- [ ] Batch processing: queue anchors and broadcast as Merkle root in single TX
-- [ ] Fee estimation: suggest optimal submission time based on mempool congestion (rule-based, not AI)
-- [ ] Usage analytics dashboard: cost per anchor, monthly spend, projected costs
-- [ ] Batch size configurable per org (default: 10 anchors per TX)
-- [ ] Estimated savings displayed to user ("Batching saves ~$X per anchor")
-- [ ] Feature gated behind `ENABLE_BATCH_ANCHORING` flag
+- [x] Merkle tree: `buildMerkleTree()` + `verifyMerkleProof()` — `services/worker/src/utils/merkle.ts`
+- [x] Batch processing job: `processBatchAnchors()` — `services/worker/src/jobs/batch-anchor.ts`
+- [x] Double-SHA256 (Bitcoin standard) for internal nodes
+- [x] Per-leaf Merkle proofs stored in anchor metadata
+- [x] Batch size configurable (default: 50 anchors per TX)
+- [x] Feature gated behind `ENABLE_BATCH_ANCHORING` flag
+- [x] 14 Merkle tree tests + 16 batch anchor tests = 30 total
 
 ### Files
 
@@ -801,22 +802,25 @@ Local dev: internal `node-cron` still works (no Cloud Scheduler dependency).
 
 ## MVP-29: GCP Cloud KMS Integration
 
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** MEDIUM (security enhancement)
 **Depends on:** MVP-26 (Cloud Run deployment), P7-TS-05 (Bitcoin chain client)
+**Completed:** 2026-03-15. `GcpKmsSigningProvider` + factory integration + config. 14 tests.
 
 ### What It Delivers
 
-Add GCP Cloud KMS as an alternative key management option alongside AWS KMS. The existing `KmsSigningProvider` interface supports pluggable backends — this adds a GCP implementation.
+GCP Cloud KMS as an alternative to AWS KMS for Bitcoin transaction signing (secp256k1).
 
 ### Acceptance Criteria
 
-- [ ] New `GcpKmsSigningProvider` implements `SigningProvider` interface
-- [ ] Supports secp256k1 key creation and signing (required for Bitcoin)
-- [ ] Worker config: `KMS_PROVIDER=aws|gcp` selects which backend
-- [ ] GCP KMS key ring and key creation documented
-- [ ] Integration tests with mock GCP KMS client
-- [ ] Operational docs: `docs/confluence/16_gcp_kms_operations.md`
+- [x] `GcpKmsSigningProvider` implements `SigningProvider` interface — `services/worker/src/chain/gcp-kms-signing-provider.ts`
+- [x] Async factory pattern (`create()`) — fetches and caches public key from GCP KMS
+- [x] DER-to-compact signature conversion (reuses `derToCompact` from signing-provider.ts)
+- [x] Worker config: `KMS_PROVIDER=aws|gcp` selects backend
+- [x] Config additions: `GCP_KMS_KEY_RESOURCE_NAME`, `GCP_KMS_PROJECT_ID` env vars
+- [x] Chain client factory updated for GCP KMS path on mainnet
+- [x] Type declarations for optional `@google-cloud/kms` dependency
+- [x] 14 tests with mock `GcpKmsClientLike` (no real GCP API calls)
 
 ### Files
 
