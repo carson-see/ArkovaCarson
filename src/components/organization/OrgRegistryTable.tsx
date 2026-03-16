@@ -12,7 +12,7 @@ import {
   CheckCircle,
   Clock,
   XCircle,
-  AlertTriangle,
+  Ban,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -86,12 +86,12 @@ const statusConfig = {
   REVOKED: {
     label: 'Revoked',
     variant: 'secondary' as const,
-    icon: XCircle,
+    icon: Ban,
   },
   EXPIRED: {
     label: 'Expired',
-    variant: 'secondary' as const,
-    icon: AlertTriangle,
+    variant: 'outline' as const,
+    icon: Clock,
   },
 };
 
@@ -323,12 +323,117 @@ export function OrgRegistryTable({
         </div>
       )}
 
-      {/* Table */}
-      <div className="rounded-md border">
+      {/* Mobile Card Layout (<640px) */}
+      <div className="sm:hidden space-y-3">
+        {loading ? (
+          Array.from({ length: 3 }).map((_, idx) => (
+            <div key={`mobile-skeleton-${idx}`} className="rounded-lg border p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-4 w-32" />
+                <Skeleton className="h-6 w-16 rounded-full" />
+              </div>
+              <Skeleton className="h-3 w-24" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+          ))
+        ) : anchors.length === 0 ? (
+          <div className="rounded-lg border p-8 text-center text-muted-foreground">
+            No records found
+          </div>
+        ) : (
+          anchors.map((anchor) => {
+            const status = statusConfig[anchor.status];
+            const StatusIcon = status.icon;
+            return (
+              <div
+                key={anchor.id}
+                className="rounded-lg border bg-card p-4 shadow-card-rest hover:shadow-card-hover transition-all cursor-pointer"
+                onClick={() => onViewAnchor?.(anchor)}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate text-sm">
+                      {anchor.filename}
+                    </p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <Badge
+                        variant={status.variant}
+                        className={`text-xs ${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}`}
+                      >
+                        <StatusIcon className="mr-1 h-3 w-3" />
+                        {status.label}
+                      </Badge>
+                      {anchor.credential_type && (
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                          <GraduationCap className="h-3 w-3" />
+                          {CREDENTIAL_TYPE_LABELS[anchor.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? anchor.credential_type}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                          <MoreHorizontal className="h-4 w-4" />
+                          <span className="sr-only">Actions</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => onViewAnchor?.(anchor)}>
+                          <Eye className="mr-2 h-4 w-4" />
+                          View Details
+                        </DropdownMenuItem>
+                        {anchor.public_id && (
+                          <DropdownMenuItem
+                            onClick={async () => {
+                              const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
+                              const url = `${baseUrl}${verifyPath(anchor.public_id!)}`;
+                              await navigator.clipboard.writeText(url);
+                              toast.success(SHARE_LABELS.COPIED_TOAST);
+                            }}
+                          >
+                            <Copy className="mr-2 h-4 w-4" />
+                            {SHARE_LABELS.COPY_LINK}
+                          </DropdownMenuItem>
+                        )}
+                        {anchor.status === 'SECURED' && (
+                          <DropdownMenuItem onClick={() => onDownloadProof?.(anchor)}>
+                            <Download className="mr-2 h-4 w-4" />
+                            Download Proof
+                          </DropdownMenuItem>
+                        )}
+                        {anchor.status !== 'REVOKED' && (
+                          <>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => onRevokeAnchor?.(anchor)}
+                            >
+                              <XCircle className="mr-2 h-4 w-4" />
+                              Revoke
+                            </DropdownMenuItem>
+                          </>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {formatDate(anchor.created_at)}
+                </p>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Desktop Table Layout (>=640px) */}
+      <div className="hidden sm:block rounded-md border">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[40px] hidden sm:table-cell">
+              <TableHead className="w-[40px]">
                 <Checkbox
                   checked={allOnPageSelected && anchors.length > 0}
                   onCheckedChange={toggleSelectAll}
@@ -337,7 +442,7 @@ export function OrgRegistryTable({
               </TableHead>
               <TableHead>Document</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="hidden sm:table-cell">Created</TableHead>
+              <TableHead>Created</TableHead>
               <TableHead className="hidden md:table-cell">Type</TableHead>
               <TableHead className="hidden md:table-cell">{ORG_PAGE_LABELS.RECIPIENT}</TableHead>
               <TableHead className="hidden lg:table-cell">Fingerprint</TableHead>
@@ -355,9 +460,9 @@ export function OrgRegistryTable({
                       <Skeleton className="h-4 w-32" />
                     </div>
                   </TableCell>
-                  <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
                   <TableCell><Skeleton className="h-6 w-16 rounded-full" /></TableCell>
-                  <TableCell className="hidden sm:table-cell"><Skeleton className="h-4 w-12" /></TableCell>
+                  <TableCell><Skeleton className="h-4 w-24" /></TableCell>
+                  <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-12" /></TableCell>
                   <TableCell className="hidden lg:table-cell"><Skeleton className="h-4 w-20" /></TableCell>
                   <TableCell><Skeleton className="h-8 w-8" /></TableCell>
                 </TableRow>
@@ -380,7 +485,7 @@ export function OrgRegistryTable({
                     className="cursor-pointer"
                     onClick={() => onViewAnchor?.(anchor)}
                   >
-                    <TableCell className="hidden sm:table-cell" onClick={(e) => e.stopPropagation()}>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedIds.has(anchor.id)}
                         onCheckedChange={() => toggleSelect(anchor.id)}
@@ -389,10 +494,10 @@ export function OrgRegistryTable({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-muted shrink-0">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted shrink-0">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                         </div>
-                        <span className="font-medium truncate max-w-[100px] sm:max-w-[200px]">
+                        <span className="font-medium truncate max-w-[200px]">
                           {anchor.filename}
                         </span>
                       </div>
@@ -400,13 +505,13 @@ export function OrgRegistryTable({
                     <TableCell>
                       <Badge
                         variant={status.variant}
-                        className={anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}
+                        className={`${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}`}
                       >
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
                       </Badge>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell text-muted-foreground">
+                    <TableCell className="text-muted-foreground">
                       {formatDate(anchor.created_at)}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">

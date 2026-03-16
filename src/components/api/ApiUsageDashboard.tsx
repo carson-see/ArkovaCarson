@@ -13,7 +13,6 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { API_KEY_LABELS } from '@/lib/copy';
 import type { ApiUsageData } from '@/hooks/useApiKeys';
 
@@ -83,11 +82,20 @@ export function ApiUsageDashboard({
   }
 
   if (error) {
+    const isNetworkError = error.toLowerCase().includes('failed to fetch') || error.toLowerCase().includes('networkerror');
     return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>{error}</AlertDescription>
-      </Alert>
+      <Card className="shadow-card-rest">
+        <CardContent className="py-8">
+          <div className="flex flex-col items-center text-center gap-2">
+            <AlertCircle className="h-6 w-6 text-muted-foreground" />
+            <p className="text-sm font-medium text-muted-foreground">
+              {isNetworkError
+                ? 'Usage data unavailable — worker service not connected'
+                : error}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
     );
   }
 
