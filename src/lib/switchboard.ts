@@ -21,6 +21,9 @@ export const FLAGS = {
   ENABLE_REPORTS: true,
   MAINTENANCE_MODE: false,
   ENABLE_BATCH_ANCHORING: false,
+  ENABLE_AI_EXTRACTION: false,
+  ENABLE_SEMANTIC_SEARCH: false,
+  ENABLE_AI_FRAUD: false,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;
@@ -70,6 +73,9 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
       ENABLE_REPORTS: FLAGS.ENABLE_REPORTS,
       MAINTENANCE_MODE: FLAGS.MAINTENANCE_MODE,
       ENABLE_BATCH_ANCHORING: FLAGS.ENABLE_BATCH_ANCHORING,
+      ENABLE_AI_EXTRACTION: FLAGS.ENABLE_AI_EXTRACTION,
+      ENABLE_SEMANTIC_SEARCH: FLAGS.ENABLE_SEMANTIC_SEARCH,
+      ENABLE_AI_FRAUD: FLAGS.ENABLE_AI_FRAUD,
     };
   }
 
@@ -81,6 +87,9 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
     ENABLE_REPORTS: FLAGS.ENABLE_REPORTS,
     MAINTENANCE_MODE: FLAGS.MAINTENANCE_MODE,
     ENABLE_BATCH_ANCHORING: FLAGS.ENABLE_BATCH_ANCHORING,
+    ENABLE_AI_EXTRACTION: FLAGS.ENABLE_AI_EXTRACTION,
+    ENABLE_SEMANTIC_SEARCH: FLAGS.ENABLE_SEMANTIC_SEARCH,
+    ENABLE_AI_FRAUD: FLAGS.ENABLE_AI_FRAUD,
   };
 
   for (const row of (data || []) as Array<{ id: string; value: boolean }>) {
@@ -136,6 +145,27 @@ export async function isMaintenanceMode(): Promise<boolean> {
  */
 export async function isBatchAnchoringEnabled(): Promise<boolean> {
   return getFlag('ENABLE_BATCH_ANCHORING');
+}
+
+/**
+ * Check if AI extraction is enabled (P8-S3)
+ */
+export async function isAIExtractionEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_AI_EXTRACTION');
+}
+
+/**
+ * Check if semantic search is enabled (P8-S3)
+ */
+export async function isSemanticSearchEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_SEMANTIC_SEARCH');
+}
+
+/**
+ * Check if AI fraud detection is enabled (P8-S3)
+ */
+export async function isAIFraudEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_AI_FRAUD');
 }
 
 // =============================================================================

@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-15 ~11:00 PM EST_
+_Last updated: 2026-03-15 ~11:30 PM EST_
 
 ## Overview
 
@@ -32,12 +32,12 @@ For a new developer joining the project, read in this order:
 | P4.5 | Verification API | 13 | 13 | 0 | 0 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
 | MVP | Launch Gaps | 27 | 21 | 0 | 6 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
-| P8 | AI Intelligence | 19 | 4 | 0 | 15 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
+| P8 | AI Intelligence | 19 | 10 | 0 | 9 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 5 | 1 | 2 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
 | GEO | GEO & SEO Optimization | 12 | 3 | 3 | 6 | [15_geo_seo.md](./15_geo_seo.md) |
-| **Total** | | **163** | **128** | **4** | **31** | |
+| **Total** | | **163** | **141** | **4** | **18** | |
 
 ### All Stories by ID
 
@@ -140,12 +140,12 @@ For a new developer joining the project, read in this order:
 | MVP-28 | GCP Cloud Scheduler | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-29 | GCP Cloud KMS Integration | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-30 | GCP CI/CD Pipeline | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| P8-S1 | IAIProvider Interface + Gemini Adapter | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S2 | Client-Side OCR Pipeline (PDF.js + Tesseract.js) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S3 | PII Stripping Engine (Client-Side) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S4 | Metadata Field Extraction | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S5 | Smart Description Generation | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S6 | AI Credits Metering + Rate Limiting | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S1 | Gemini API Integration + IAIProvider | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S2 | AI Cost Tracking + Credits Schema | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S3 | AI Feature Flags | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S4 | AI Credential Extraction Service | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S5 | AI Extraction UI | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S6 | Extraction Learning / Feedback Loop | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S7 | Cloudflare Crawler (Institution Ingestion) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S8 | Duplicate Detection (Cross-Org) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S9 | Admin Review Queue | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
@@ -157,7 +157,7 @@ For a new developer joining the project, read in this order:
 | P8-S15 | R2 Report Storage (Zero-Egress Signed URLs) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S16 | Multi-Language OCR Support | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S17 | AI Provider Abstraction (IAIProvider + Factory) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S18 | AI Model Performance Monitoring | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S18 | Client-Side PII Stripping Library | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S19 | AI Cost Optimization + Caching | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
 | INFRA-01 | Cloudflare Tunnel Sidecar Setup | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-02 | Wrangler + Edge Worker Scaffolding | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
@@ -268,3 +268,4 @@ Each story doc follows a consistent template:
 | 2026-03-16 ~6:00 PM EST | UF Sprint B: UF-02, UF-05, UF-06, UF-07 → COMPLETE (PR #61). Migration 0055. MVP-26/27/28 → COMPLETE (ops sprint). Overall: 105/151. |
 | 2026-03-15 ~11:00 PM EST | UF Sprint C: UF-03, UF-08, UF-09, UF-10 → COMPLETE (PR #62). Migration 0056. All 10 UF stories done. Overall: 109/151 complete (72%). |
 | 2026-03-15 ~11:00 PM EST | P4.5 Phase 2: P4.5-TS-02, TS-04, TS-06, TS-08, TS-09, TS-10, TS-11, TS-13 → COMPLETE. All 13 P4.5 stories done. Migration 0058 (batch_verification_jobs). Overall: 128/163 complete (~79%). |
+| 2026-03-15 ~11:30 PM EST | P8 Phase I: P8-S1, S2, S3, S4, S5, S18 → COMPLETE (PR #68). Migration 0059 (ai_credits + ai_usage_events). 117+ new tests. Phase 6 lint cleanup merged (PR #67). Overall: 141/163 complete (~86%). |

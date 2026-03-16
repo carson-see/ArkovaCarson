@@ -1,5 +1,5 @@
 # P8 AI Intelligence — Story Documentation
-_Last updated: 2026-03-15 ~6:00 PM EST | 4/19 stories COMPLETE, 15/19 NOT STARTED_
+_Last updated: 2026-03-15 ~11:30 PM EST | 10/19 stories COMPLETE, 9/19 NOT STARTED_
 
 ## Group Overview
 
@@ -150,7 +150,8 @@ AI_COST_PER_FRAUD_CHECK=5            # Credits per fraud analysis
 ### P8-S1: Gemini API Integration + IAIProvider Interface
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). `GeminiProvider` implementing `IAIProvider` with circuit breaker (5 failures → 60s cooldown), exponential backoff retry (3 attempts, 500ms base), structured JSON output via `@google/generative-ai`. Zod schemas in `ai/schemas.ts`, prompt templates in `ai/prompts/extraction.ts`. 13 tests.
 **Dependencies:** None
 **Estimated Points:** 5
 
@@ -201,7 +202,8 @@ As a developer, I need a provider-agnostic AI interface so that the platform can
 ### P8-S2: AI Cost Tracking + Credits Schema
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). Migration 0059 (`ai_credits` + `ai_usage_events` tables with RLS). `cost-tracker.ts` with `checkAICredits`/`deductAICredits`/`logAIUsageEvent`. SECURITY DEFINER RPCs (`check_ai_credits`, `deduct_ai_credits`). `GET /api/v1/ai/usage` endpoint. Credit allocations: Free=50, Pro=500, Enterprise=5000/month. 17 tests (15 cost-tracker + 2 usage endpoint).
 **Dependencies:** P8-S1
 **Estimated Points:** 5
 
@@ -252,7 +254,8 @@ As an org admin, I need to see how many AI credits my organization has used this
 ### P8-S3: AI Feature Flags
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). Three flags added to switchboard + seed SQL. `aiFeatureGate.ts` middleware with TTL-cached flag reads (60s). `aiExtractionGate()`, `semanticSearchGate()`, `aiFraudGate()` factory functions. Client-side guard functions in `switchboard.ts`. 17 tests.
 **Dependencies:** None
 **Estimated Points:** 2
 
@@ -337,7 +340,8 @@ As a platform operator, I need to swap between AI providers (Gemini, OpenAI, Ant
 ### P8-S18: Client-Side PII Stripping Library
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). `src/lib/piiStripper.ts` with `stripPII()` function. Regex patterns for SSN, email, phone, DOB (context-aware — only after keywords), student ID (context-aware). Name matching against recipient fields. Returns `StrippingReport` with category counts. Constitution 4A compliant — client-side only. 27 tests.
 **Dependencies:** None (client-side only)
 **Estimated Points:** 5
 
@@ -385,7 +389,8 @@ As a user, I need confidence that my personal information is removed before any 
 ### P8-S4: AI Credential Extraction Service
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). `POST /api/v1/ai/extract` endpoint. Auth required (JWT), Zod validation (`ExtractionRequestSchema`), credit check (402 if insufficient), AI provider call via `createAIProvider()`, credit deduction, audit logging via `logAIUsageEvent`. Feature-gated behind `ENABLE_AI_EXTRACTION`. Returns `{ fields, confidence, provider, creditsRemaining }`. Mounted in `router.ts` with `aiExtractionGate()` + `requireAuth`. 6 tests.
 **Dependencies:** P8-S1, S2, S3, S17, S18
 **Estimated Points:** 8
 
@@ -436,7 +441,8 @@ As an issuer, I want the system to automatically extract credential fields from 
 ### P8-S5: AI Extraction UI
 
 **Phase:** I (Go-Live Blocker)
-**Status:** NOT STARTED
+**Status:** COMPLETE
+**Completed:** 2026-03-15 (PR #68). `src/lib/ocrWorker.ts` (PDF.js + Tesseract.js, auto-detect by MIME type), `src/lib/aiExtraction.ts` (orchestrator: OCR → stripPII → fetch /api/v1/ai/extract → ExtractionField[]), `src/components/anchor/AIFieldSuggestions.tsx` (Nordic Vault aesthetic, glass-card, confidence badges: green >0.9 / amber 0.7-0.9 / red <0.7, accept/reject/edit per field, credits remaining display). 18 tests (5 aiExtraction + 13 AIFieldSuggestions).
 **Dependencies:** P8-S4, S18
 **Estimated Points:** 5
 
@@ -852,3 +858,4 @@ As an org admin, I want a reports page where I can generate, view, and download 
 |------|--------|
 | 2026-03-12 | Initial P8 story documentation created. 19 stories, Option C hybrid phasing. |
 | 2026-03-12 | ADK architecture decision: Vertex AI ADK for Gemini path (GeminiADKProvider with sub-agents). Updated P8-S1, P8-S17, Architecture Context, Architectural Decisions table. |
+| 2026-03-15 | P8 Phase I complete: P8-S1, S2, S3, S4, S5, S18 all COMPLETE (PR #68). 117+ new tests. Migration 0059 (ai_credits + ai_usage_events). 10/19 stories done (53%). |
