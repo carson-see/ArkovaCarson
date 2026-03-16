@@ -195,6 +195,112 @@ describe('piiStripper', () => {
     });
   });
 
+  // ─── PII-06: International phone patterns ──────────────────────────────
+  describe('international phone patterns (PII-06)', () => {
+    it('strips UK phone numbers (+44)', () => {
+      const result = stripPII('Contact: +447911123456');
+      expect(result.strippedText).toBe('Contact: [PHONE_REDACTED]');
+      expect(result.piiFound).toContain('phone');
+    });
+
+    it('strips German phone numbers (+49)', () => {
+      const result = stripPII('Tel: +4915112345678');
+      expect(result.strippedText).toBe('Tel: [PHONE_REDACTED]');
+      expect(result.piiFound).toContain('phone');
+    });
+
+    it('strips French phone numbers (+33)', () => {
+      const result = stripPII('Mobile: +33612345678');
+      expect(result.strippedText).toBe('Mobile: [PHONE_REDACTED]');
+    });
+
+    it('strips Japanese phone numbers (+81)', () => {
+      const result = stripPII('Phone: +819012345678');
+      expect(result.strippedText).toBe('Phone: [PHONE_REDACTED]');
+    });
+
+    it('strips Australian phone numbers (+61)', () => {
+      const result = stripPII('Call: +61412345678');
+      expect(result.strippedText).toBe('Call: [PHONE_REDACTED]');
+    });
+
+    it('still strips US numbers', () => {
+      const result = stripPII('Phone: (555) 123-4567');
+      expect(result.strippedText).toBe('Phone: [PHONE_REDACTED]');
+    });
+  });
+
+  // ─── PII-07: Address patterns ──────────────────────────────────────────
+  describe('address patterns (PII-07)', () => {
+    it('strips address values after "address:" keyword', () => {
+      const result = stripPII('Address: 123 Main Street, Springfield, IL 62704');
+      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
+      expect(result.strippedText).not.toContain('123 Main Street');
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('strips address after "street:" keyword', () => {
+      const result = stripPII('Street: 456 Elm Avenue, Apt 3B');
+      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
+      expect(result.strippedText).not.toContain('456 Elm Avenue');
+    });
+
+    it('strips postal code values after "postal code:" keyword', () => {
+      const result = stripPII('Postal Code: SW1A 2AA');
+      expect(result.strippedText).toContain('[ADDRESS_REDACTED]');
+      expect(result.piiFound).toContain('address');
+    });
+
+    it('does not strip address-like text without keyword', () => {
+      const result = stripPII('123 Main Street is a nice place');
+      // Without keyword, should not be stripped
+      expect(result.strippedText).toContain('123 Main Street');
+    });
+  });
+
+  // ─── PII-07: National ID patterns ─────────────────────────────────────
+  describe('national ID patterns (PII-07)', () => {
+    it('strips national ID values after keyword', () => {
+      const result = stripPII('National ID: AB123456C');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('AB123456C');
+      expect(result.piiFound).toContain('nationalId');
+    });
+
+    it('strips UK NI number after "NI Number:" keyword', () => {
+      const result = stripPII('NI Number: QQ123456C');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('QQ123456C');
+    });
+
+    it('strips German tax ID after "Steuer-ID:" keyword', () => {
+      const result = stripPII('Steuer-ID: 12345678901');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+    });
+
+    it('strips passport number after keyword', () => {
+      const result = stripPII('Passport Number: C12345678');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.strippedText).not.toContain('C12345678');
+    });
+  });
+
+  // ─── PII-06: EU date format DOB ───────────────────────────────────────
+  describe('EU date format DOB (PII-06)', () => {
+    it('strips DD/MM/YYYY format after DOB keyword', () => {
+      const result = stripPII('Date of Birth: 25/12/1990');
+      expect(result.strippedText).not.toContain('25/12/1990');
+      expect(result.strippedText).toContain('[DOB_REDACTED]');
+      expect(result.piiFound).toContain('dob');
+    });
+
+    it('strips DD.MM.YYYY format after DOB keyword', () => {
+      const result = stripPII('DOB: 15.03.1985');
+      expect(result.strippedText).not.toContain('15.03.1985');
+      expect(result.strippedText).toContain('[DOB_REDACTED]');
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty string', () => {
       const result = stripPII('');

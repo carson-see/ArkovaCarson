@@ -35,8 +35,10 @@ const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g;
 // Email
 const EMAIL_PATTERN = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
 
-// Phone: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXX.XXX.XXXX, +1XXXXXXXXXX
-const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b)/g;
+// Phone: US formats + international prefixes (PII-06: intl phone support)
+// US: (XXX) XXX-XXXX, XXX-XXX-XXXX, XXX.XXX.XXXX, +1XXXXXXXXXX
+// Intl: +CC followed by 7-12 digits (covers UK +44, FR +33, DE +49, JP +81, etc.)
+const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:4[0-9]|3[0-9]|2[0-9]|5[0-9]|6[0-9]|7[0-9]|8[0-9]|9[0-9])\d{7,11})/g;
 
 // DOB: MM/DD/YYYY or MM-DD-YYYY after DOB-like keywords, or YYYY-MM-DD after DOB keywords
 const DOB_KEYWORD_PATTERN = /(?:dob|date\s+of\s+birth|born|birthday|birth\s+date)\s*:?\s*/gi;
@@ -46,6 +48,15 @@ const DATE_YYYYMMDD = /\d{4}-\d{2}-\d{2}/;
 // Student ID: after "Student ID", "ID Number", "Student No." keywords
 const STUDENT_ID_KEYWORD = /(?:student\s+id|id\s+number|student\s+no\.?)\s*:?\s*/gi;
 const ID_VALUE = /[A-Za-z0-9]{5,12}/;
+
+// PII-07: Postal/ZIP codes (context-aware — only after address keywords)
+const ADDRESS_KEYWORD = /(?:address|street|postal\s+code|zip\s*(?:code)?|postcode)\s*:?\s*/gi;
+
+// PII-06: EU-format DOB (DD/MM/YYYY, DD.MM.YYYY) after DOB keywords
+const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
+
+// PII-07: National ID patterns (after relevant keywords)
+const NATIONAL_ID_KEYWORD = /(?:national\s+id|tax\s+id|steuer[-\s]?id|ni\s+number|nino|passport\s+(?:no\.?|number))\s*:?\s*/gi;
 
 /**
  * Strip PII from raw text. Returns the stripped text and a report of what was found.
@@ -103,6 +114,12 @@ export function stripPII(text: string, options: StrippingOptions = {}): Strippin
   // 6. Strip student IDs (context-aware: only after ID-related keywords)
   result = stripStudentIds(result, piiFoundSet, (count) => { redactionCount += count; });
 
+  // 7. PII-07: Strip addresses (context-aware: only after address keywords)
+  result = stripAddressValues(result, piiFoundSet, (count) => { redactionCount += count; });
+
+  // 8. PII-07: Strip national IDs (context-aware: only after national ID keywords)
+  result = stripNationalIds(result, piiFoundSet, (count) => { redactionCount += count; });
+
   return {
     strippedText: result,
     piiFound: Array.from(piiFoundSet),
@@ -124,10 +141,10 @@ function stripDOB(
   let result = text;
   let count = 0;
 
-  // Match DOB keyword followed by a date
+  // Match DOB keyword followed by a date (US, ISO, or EU format)
   result = result.replace(
     new RegExp(
-      `(${DOB_KEYWORD_PATTERN.source})(${DATE_MMDDYYYY.source}|${DATE_YYYYMMDD.source})`,
+      `(${DOB_KEYWORD_PATTERN.source})(${DATE_MMDDYYYY.source}|${DATE_YYYYMMDD.source}|${DATE_DDMMYYYY.source})`,
       'gi',
     ),
     (_match, prefix: string) => {
@@ -158,6 +175,55 @@ function stripStudentIds(
       count++;
       piiFoundSet.add('studentId');
       return `${prefix}[STUDENT_ID_REDACTED]`;
+    },
+  );
+
+  if (count > 0) addCount(count);
+  return result;
+}
+
+/**
+ * PII-07: Strip address values that appear after address keywords.
+ * Captures up to the next line break or end-of-string.
+ */
+function stripAddressValues(
+  text: string,
+  piiFoundSet: Set<string>,
+  addCount: (n: number) => void,
+): string {
+  let result = text;
+  let count = 0;
+
+  result = result.replace(
+    new RegExp(`(${ADDRESS_KEYWORD.source})([^\\n]{5,80})`, 'gi'),
+    (_match, prefix: string) => {
+      count++;
+      piiFoundSet.add('address');
+      return `${prefix}[ADDRESS_REDACTED]`;
+    },
+  );
+
+  if (count > 0) addCount(count);
+  return result;
+}
+
+/**
+ * PII-07: Strip national ID values that appear after national ID keywords.
+ */
+function stripNationalIds(
+  text: string,
+  piiFoundSet: Set<string>,
+  addCount: (n: number) => void,
+): string {
+  let result = text;
+  let count = 0;
+
+  result = result.replace(
+    new RegExp(`(${NATIONAL_ID_KEYWORD.source})([A-Za-z0-9\\s-]{4,20})`, 'gi'),
+    (_match, prefix: string) => {
+      count++;
+      piiFoundSet.add('nationalId');
+      return `${prefix}[NATIONAL_ID_REDACTED]`;
     },
   );
 

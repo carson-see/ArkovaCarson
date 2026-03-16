@@ -411,6 +411,27 @@ function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
+  // PII-03: GDPR data retention cleanup — daily at 2:00 AM UTC
+  // Enforces retention policy defined in cleanup_expired_data() RPC (migration 0062):
+  //   - webhook_delivery_logs: 90 days
+  //   - verification_events: 1 year
+  //   - ai_usage_events: 1 year
+  //   - audit_events: 2 years (except legal hold)
+  cron.schedule('0 2 * * *', async () => {
+    logger.info('Running GDPR data retention cleanup');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error } = await (db.rpc as any)('cleanup_expired_data');
+      if (error) {
+        logger.error({ error }, 'Data retention cleanup RPC failed');
+      } else {
+        logger.info('Data retention cleanup complete');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Data retention cleanup failed');
+    }
+  });
+
   logger.info('Scheduled jobs configured');
 }
 

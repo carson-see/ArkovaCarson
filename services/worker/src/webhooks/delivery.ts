@@ -12,6 +12,58 @@ import { logger } from '../utils/logger.js';
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
 
+// ─── SSRF Protection (INJ-02) ─────────────────────────────────────────
+// Block webhook delivery to private/internal IP ranges to prevent SSRF attacks.
+// Covers RFC 1918, loopback, link-local, AWS metadata, and IPv6 equivalents.
+
+const PRIVATE_IP_PATTERNS = [
+  /^127\./, // 127.0.0.0/8 loopback
+  /^10\./, // 10.0.0.0/8 private
+  /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12 private
+  /^192\.168\./, // 192.168.0.0/16 private
+  /^169\.254\./, // 169.254.0.0/16 link-local
+  /^0\./, // 0.0.0.0/8
+  /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./, // 100.64.0.0/10 CGNAT
+  /^192\.0\.0\./, // 192.0.0.0/24 IETF protocol assignments
+  /^198\.1[89]\./, // 198.18.0.0/15 benchmark testing
+  /^::1$/, // IPv6 loopback
+  /^fe80:/i, // IPv6 link-local
+  /^fc/i, // IPv6 unique local (fc00::/7)
+  /^fd/i, // IPv6 unique local (fc00::/7)
+];
+
+const BLOCKED_HOSTNAMES = new Set([
+  'localhost',
+  'metadata.google.internal', // GCP metadata
+  'metadata.google',
+]);
+
+/**
+ * Check if a webhook URL targets a private/internal network address.
+ * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
+ */
+export function isPrivateUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase();
+
+    // Block known internal hostnames
+    if (BLOCKED_HOSTNAMES.has(hostname)) return true;
+
+    // Block cloud metadata IP (AWS, GCP, Azure)
+    if (hostname === '169.254.169.254') return true;
+
+    // Block non-HTTP(S) schemes
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return true;
+
+    // Check IP patterns
+    return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(hostname));
+  } catch {
+    // Malformed URL — block it
+    return true;
+  }
+}
+
 // ─── Circuit Breaker (DH-04) ──────────────────────────────────────────
 const CIRCUIT_BREAKER_THRESHOLD = 5; // consecutive failures to open
 const CIRCUIT_BREAKER_HALF_OPEN_MS = 60_000; // 60s before half-open
@@ -110,6 +162,15 @@ async function deliverToEndpoint(
   payload: WebhookPayload,
   attempt: number = 1
 ): Promise<boolean> {
+  // INJ-02: SSRF protection — block private/internal URLs
+  if (isPrivateUrl(endpoint.url)) {
+    logger.warn(
+      { endpointId: endpoint.id, url: endpoint.url },
+      'Blocked webhook delivery to private/internal URL (SSRF protection)',
+    );
+    return false;
+  }
+
   // DH-04: Circuit breaker check
   if (isCircuitOpen(endpoint.id)) {
     logger.warn(

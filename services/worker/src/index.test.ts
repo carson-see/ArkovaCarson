@@ -326,8 +326,8 @@ describe('worker server', () => {
   });
 
   describe('cron job setup', () => {
-    it('registers 3 cron jobs', () => {
-      expect(cronCalls).toHaveLength(3);
+    it('registers 4 cron jobs', () => {
+      expect(cronCalls).toHaveLength(4);
     });
 
     it('registers anchor processing at every minute', () => {
@@ -340,6 +340,10 @@ describe('worker server', () => {
 
     it('registers monthly reset on 1st at midnight', () => {
       expect(cronCalls[2][0]).toBe('0 0 1 * *');
+    });
+
+    it('registers GDPR data retention cleanup at 2 AM daily (PII-03)', () => {
+      expect(cronCalls[3][0]).toBe('0 2 * * *');
     });
   });
 

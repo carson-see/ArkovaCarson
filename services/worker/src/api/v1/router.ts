@@ -38,10 +38,18 @@ const router = Router();
 // ─── Feature gate — all /api/v1/* behind ENABLE_VERIFICATION_API ───
 router.use(verificationApiGate());
 
-// ─── CORS for API consumers ───
-const API_CORS_ORIGINS = config.corsAllowedOrigins
+// ─── CORS for API consumers (AUTH-04: no wildcard in production) ───
+// In development, allow all origins for convenience.
+// In production, CORS_ALLOWED_ORIGINS must be explicitly set.
+const API_CORS_ORIGINS: string[] = config.corsAllowedOrigins
   ? config.corsAllowedOrigins.split(',').map((o) => o.trim())
-  : ['*'];
+  : config.nodeEnv === 'production'
+    ? [] // Production: reject all cross-origin requests unless explicitly configured
+    : ['*']; // Development: allow all origins
+
+if (config.nodeEnv === 'production' && API_CORS_ORIGINS.length === 0) {
+  logger.warn('CORS_ALLOWED_ORIGINS not set in production — cross-origin requests will be blocked');
+}
 
 router.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
