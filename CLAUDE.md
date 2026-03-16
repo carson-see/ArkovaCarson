@@ -327,7 +327,7 @@ src/
     verify/                                  ← VerificationForm
     webhooks/                                ← WebhookSettings
     search/                                  ← SearchForm, IssuerCard, CredentialCard
-  hooks/                                     ← useAuth, useAnchors, useProfile, useOnboarding, useMyCredentials, useCredentialTemplate, etc.
+  hooks/                                     ← useAuth, useAnchors, useProfile, useOnboarding, useMyCredentials, useCredentialTemplate, useTheme, etc.
   lib/
     copy.ts                                  ← All UI strings (enforced by CI)
     validators.ts                            ← Zod schemas for all writes
@@ -340,6 +340,7 @@ src/
     csvExport.ts / csvParser.ts              ← CSV utilities
     auditLog.ts                              ← Client-side audit event logging
     logVerificationEvent.ts                  ← Fire-and-forget verification event logging
+    workerClient.ts                          ← Shared fetch wrapper for frontend → worker API calls
   pages/                                     ← Page components (thin wrappers around domain components)
   types/database.types.ts                    ← Auto-generated from Supabase — never edit manually
   tests/rls/                                 ← RLS integration test helpers
@@ -915,10 +916,11 @@ All of the following are done. Details in MEMORY.md completed sprints.
 
 ### Do NOT Start
 
-- P4.5 (Verification API) — defer to post-launch
+- ~~P4.5 (Verification API) — defer to post-launch~~ (COMPLETE 13/13)
 - AI/OCR pipeline — Phase 2
 - OpenTimestamps — decision made, direct OP_RETURN only
-- MVP-12/13/14 (dark mode, org logo, embed widget) — post-launch polish
+- ~~MVP-12 (dark mode)~~ (COMPLETE — useTheme hook + ThemeToggle in Sidebar)
+- MVP-13/14 (org logo, embed widget) — post-launch polish
 
 ---
 
@@ -968,7 +970,7 @@ Build order (dependency-ordered):
 - API routes: `services/worker/src/api/`
 - Middleware: `services/worker/src/middleware/`
 - Zod schemas: `services/worker/src/schemas/`
-- API key UI: `src/components/ApiKeySettings.tsx` + `src/pages/ApiKeySettingsPage.tsx`
+- API key UI: `src/components/api/ApiKeySettings.tsx` + `src/pages/ApiKeySettingsPage.tsx`
 - Load tests: `tests/load/`
 
 ---
@@ -1099,5 +1101,5 @@ AI_PROVIDER=mock                   # gemini | cloudflare | replicate | mock
 
 ---
 
-_Directive version: 2026-03-16 (launch readiness + Sprint 4 polish) | Repo: ArkovaCarson | 62 migrations | 1,621 tests | 163 stories (146 complete, 90%)_
+_Directive version: 2026-03-16 (Sprint 4 polish + testnet4 anchoring merged) | Repo: ArkovaCarson | 62 migrations | 1,631 tests | 163 stories (146 complete, 90%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

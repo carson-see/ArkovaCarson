@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 146/163 stories complete (90%). 1,621 tests (747 frontend + 874 worker). 62 migration files (0001-0063, 0033 skipped). P4.5 COMPLETE (13/13). P8: 15/19 (79%). GEO: 4 complete, 3 partial, 5 not started.
+**Overall progress:** 146/163 stories complete (90%). 1,631 tests (748 frontend + 883 worker). 62 migration files (0001-0063, 0033 skipped). P4.5 COMPLETE (13/13). P8: 15/19 (79%). GEO: 4 complete, 3 partial, 5 not started.
 
 ### Open Blockers
 
@@ -90,7 +90,7 @@ All HIGH+ launch blockers resolved:
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
 - CI/CD pipeline (typecheck, lint, test, copy-lint, build-check, E2E)
-- Worker test coverage (855 tests across 53 files, 80%+ on all critical paths)
+- Worker test coverage (883 tests across 54 files, 80%+ on all critical paths)
 - Webhook delivery engine + settings UI
 - Stripe webhook handlers + billing UI
 - PDF + JSON proof downloads
