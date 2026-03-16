@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 128/163 stories complete (79%). 1,327+ tests. 58 migrations. P4.5 Verification API COMPLETE (13/13). GEO: 3 complete, 3 partial, 6 not started.
+**Overall progress:** 141/163 stories complete (86%). 1,538+ tests. 59 migrations. P4.5 Verification API COMPLETE (13/13). P8 Phase I COMPLETE (10/19). GEO: 4 complete, 3 partial, 5 not started.
 
 ### Open Blockers
 
@@ -38,14 +38,20 @@ All HIGH+ launch blockers resolved:
 | ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404~~ | ~~COMPLETE~~ |
 | ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ~~COMPLETE (PR #43)~~ |
 
-### P8 AI Intelligence (in progress)
+### P8 AI Intelligence — 10/19 COMPLETE (Phase I done)
 
 | Story | Description | Status |
 |-------|-------------|--------|
-| P8-S17 | AI Provider Abstraction (IAIProvider + factory + fallback) | **COMPLETE** — 16 tests |
-| P8-S13 | Batch AI Processing (Cloudflare Queues) | **COMPLETE** — 4 tests |
-| P8-S15 | R2 Report Storage (zero-egress signed URLs) | **COMPLETE** — 4 tests |
-| P8-S7 | Cloudflare Crawler (university ingestion) | **COMPLETE** — 5 tests |
+| P8-S1 | Gemini API Integration (GeminiProvider + circuit breaker) | **COMPLETE** — 13 tests (PR #68) |
+| P8-S2 | AI Cost Tracking (migration 0059 + credits RPCs) | **COMPLETE** — 17 tests (PR #68) |
+| P8-S3 | AI Feature Flags (3 switchboard flags + middleware) | **COMPLETE** — 17 tests (PR #68) |
+| P8-S4 | AI Extraction Service (POST /api/v1/ai/extract) | **COMPLETE** — 6 tests (PR #68) |
+| P8-S5 | AI Extraction UI (OCR + PII strip + suggestions) | **COMPLETE** — 18 tests (PR #68) |
+| P8-S7 | Cloudflare Crawler (university ingestion) | **COMPLETE** — 5 tests (PR #31) |
+| P8-S13 | Batch AI Processing (Cloudflare Queues) | **COMPLETE** — 4 tests (PR #31) |
+| P8-S15 | R2 Report Storage (zero-egress signed URLs) | **COMPLETE** — 4 tests (PR #31) |
+| P8-S17 | AI Provider Abstraction (IAIProvider + factory + fallback) | **COMPLETE** — 16 tests (PR #31) |
+| P8-S18 | Client-Side PII Stripping (Constitution 4A) | **COMPLETE** — 27 tests (PR #68) |
 
 ### Sentry Integration
 
@@ -118,6 +124,18 @@ All HIGH+ launch blockers resolved:
 ---
 
 ## Session Log
+
+### Session: 2026-03-15 — P8 Phase I AI Intelligence (6 stories)
+
+**P8 Phase I Implementation (PR #68):**
+- **P8-S3 + P8-S18 (Wave 1, parallel):** AI feature flags (`aiFeatureGate.ts` middleware, 3 switchboard flags, TTL-cached reads) + PII stripping (`piiStripper.ts` with SSN/email/phone/DOB/studentID/name regex). 44 tests.
+- **P8-S1 + P8-S2 (Wave 2):** Gemini API integration (`GeminiProvider` with circuit breaker 5/60s, retry 3x 500ms, `@google/generative-ai`) + AI cost tracking (migration 0059 `ai_credits` + `ai_usage_events`, SECURITY DEFINER RPCs, `GET /api/v1/ai/usage`). 30 tests.
+- **P8-S4 + P8-S5 (Wave 3):** Extraction service (`POST /api/v1/ai/extract`, auth + credit check + audit) + Extraction UI (`ocrWorker.ts` PDF.js+Tesseract.js, `aiExtraction.ts` orchestrator, `AIFieldSuggestions.tsx` with Nordic Vault aesthetic). 24 tests.
+- **Migration 0059:** `ai_credits` table (org_id, user_id, monthly_allocation, used_this_month, period dates) + `ai_usage_events` table (event_type, provider, tokens_used, credits_consumed). RLS policies. SECURITY DEFINER RPCs.
+- **32 files changed, +4,027 lines.** 117+ new tests. 1,538 total tests.
+- **Phase 6 lint cleanup merged:** PR #67 squash-merged into main (7 stories, 91 ESLint fixes).
+
+**Verification:** 0 TS errors, 0 lint errors, 0 copy violations, all 1,538 tests pass.
 
 ### Session: 2026-03-15 — GEO-01 SSR Prerender for Marketing Site
 

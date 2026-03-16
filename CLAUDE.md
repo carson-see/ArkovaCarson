@@ -1,6 +1,6 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-15 (CLAUDE.md audit — docs synced, GEO stories added)
+> **Version:** 2026-03-15 (P8 Phase I complete — 10/19 AI stories, migration 0059)
 > **Repo:** ArkovaCarson | **Branch:** main | **Deploy:** arkova-carson.vercel.app
 > **Companion files:** `HANDOFF.md` (living state — Phase 3/4 tracking), `ARCHIVE_memory.md` (historical context)
 
