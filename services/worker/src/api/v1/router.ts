@@ -22,6 +22,9 @@ import { batchRouter } from './batch.js';
 import { jobsRouter } from './jobs.js';
 import { keysRouter } from './keys.js';
 import { usageRouter } from './usage.js';
+import { aiExtractRouter } from './ai-extract.js';
+import { aiUsageRouter } from './ai-usage.js';
+import { aiExtractionGate } from '../../middleware/aiFeatureGate.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -128,5 +131,9 @@ router.use('/usage', usageRouter);
 
 // Key management — requires Supabase JWT auth
 router.use('/keys', requireAuth, keysRouter);
+
+// AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
+router.use('/ai/extract', aiExtractionGate(), requireAuth, aiExtractRouter);
+router.use('/ai/usage', requireAuth, aiUsageRouter);
 
 export { router as apiV1Router };

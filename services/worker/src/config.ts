@@ -77,6 +77,16 @@ const ConfigSchema = z.object({
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: z.coerce.boolean().default(false),
 
+  // AI Intelligence (P8)
+  /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
+  geminiApiKey: z.string().optional(),
+  /** Gemini model for extraction (default: gemini-2.0-flash) */
+  geminiModel: z.string().optional(),
+  /** Gemini embedding model (default: text-embedding-004) */
+  geminiEmbeddingModel: z.string().optional(),
+  /** AI provider selection: gemini, cloudflare, replicate, mock */
+  aiProvider: z.string().optional(),
+
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
@@ -119,6 +129,10 @@ function loadConfig(): Config {
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
+    geminiApiKey: process.env.GEMINI_API_KEY,
+    geminiModel: process.env.GEMINI_MODEL,
+    geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
+    aiProvider: process.env.AI_PROVIDER,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
   });
 

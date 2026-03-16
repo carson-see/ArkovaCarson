@@ -913,5 +913,8 @@ INSERT INTO switchboard_flags (id, value, default_value, description, is_dangero
   ('ENABLE_OUTBOUND_WEBHOOKS', false, false, 'Enable outbound webhook delivery', false),
   ('ENABLE_NEW_CHECKOUTS', true, true, 'Allow new checkout sessions', false),
   ('ENABLE_REPORTS', true, true, 'Enable report generation', false),
-  ('MAINTENANCE_MODE', false, false, 'Put the app in maintenance mode', true)
+  ('MAINTENANCE_MODE', false, false, 'Put the app in maintenance mode', true),
+  ('ENABLE_AI_EXTRACTION', false, false, 'Enable AI-powered credential metadata extraction (P8)', false),
+  ('ENABLE_SEMANTIC_SEARCH', false, false, 'Enable semantic search with vector embeddings (P8)', false),
+  ('ENABLE_AI_FRAUD', false, false, 'Enable AI-powered fraud detection (P8)', false)
 ON CONFLICT (id) DO NOTHING;

@@ -17,6 +17,7 @@ import type { IAIProvider } from './types.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
 import { ReplicateProvider } from './replicate.js';
+import { GeminiProvider } from './gemini.js';
 
 /**
  * Get the provider name that will be used based on current env.
@@ -55,11 +56,7 @@ export function createAIProvider(): IAIProvider {
 
     case 'gemini':
     case 'gemini-direct':
-      // Gemini providers (GeminiADKProvider / GeminiProvider) not yet implemented.
-      // Fall through to mock with a warning for now.
-      // Not using structured logger here — factory may be imported before config is loaded in tests
-      console.warn(`[AI Factory] Gemini provider "${providerName}" not yet implemented — using mock`);
-      return new MockAIProvider();
+      return new GeminiProvider();
 
     case 'replicate': {
       // Production check is in ReplicateProvider constructor (Constitution 1.1)

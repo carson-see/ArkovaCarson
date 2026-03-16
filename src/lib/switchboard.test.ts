@@ -93,6 +93,9 @@ describe('switchboard feature flags', () => {
         ENABLE_REPORTS: true,
         MAINTENANCE_MODE: false,
         ENABLE_BATCH_ANCHORING: false,
+        ENABLE_AI_EXTRACTION: false,
+        ENABLE_SEMANTIC_SEARCH: false,
+        ENABLE_AI_FRAUD: false,
       });
     });
   });
