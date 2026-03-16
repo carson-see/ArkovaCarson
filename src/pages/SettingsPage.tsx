@@ -7,11 +7,11 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { Link } from 'react-router-dom';
+import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -273,10 +273,10 @@ export function SettingsPage() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Settings className="h-5 w-5" />
-                Organization Settings
+                {SETTINGS_PAGE_LABELS.ORG_TITLE}
               </CardTitle>
               <CardDescription>
-                Manage templates, integrations, and API access
+                {SETTINGS_PAGE_LABELS.ORG_DESCRIPTION}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-1">
@@ -287,8 +287,8 @@ export function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <FileText className="h-5 w-5 text-muted-foreground" />
                   <div>
-                    <p className="text-sm font-medium">Credential Templates</p>
-                    <p className="text-xs text-muted-foreground">Define schemas for credential types</p>
+                    <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES}</p>
+                    <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.CREDENTIAL_TEMPLATES_DESC}</p>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -300,8 +300,8 @@ export function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <Webhook className="h-5 w-5 text-muted-foreground" />
                   <div>
-                    <p className="text-sm font-medium">Webhooks</p>
-                    <p className="text-xs text-muted-foreground">Configure event notifications</p>
+                    <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.WEBHOOKS}</p>
+                    <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.WEBHOOKS_DESC}</p>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -313,8 +313,8 @@ export function SettingsPage() {
                 <div className="flex items-center gap-3">
                   <Key className="h-5 w-5 text-muted-foreground" />
                   <div>
-                    <p className="text-sm font-medium">API Keys</p>
-                    <p className="text-xs text-muted-foreground">Manage verification API access</p>
+                    <p className="text-sm font-medium">{SETTINGS_PAGE_LABELS.API_KEYS}</p>
+                    <p className="text-xs text-muted-foreground">{SETTINGS_PAGE_LABELS.API_KEYS_DESC}</p>
                   </div>
                 </div>
                 <ChevronRight className="h-4 w-4 text-muted-foreground" />

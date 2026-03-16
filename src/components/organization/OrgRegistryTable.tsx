@@ -27,7 +27,7 @@ import {
   GraduationCap,
   X,
 } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
 import { verifyPath } from '@/lib/routes';
 import { toast } from 'sonner';
 import { useExportAnchors } from '@/hooks/useExportAnchors';
@@ -85,7 +85,7 @@ const statusConfig = {
   },
   REVOKED: {
     label: 'Revoked',
-    variant: 'destructive' as const,
+    variant: 'secondary' as const,
     icon: XCircle,
   },
   EXPIRED: {
@@ -339,7 +339,7 @@ export function OrgRegistryTable({
               <TableHead>Status</TableHead>
               <TableHead className="hidden sm:table-cell">Created</TableHead>
               <TableHead className="hidden md:table-cell">Type</TableHead>
-              <TableHead className="hidden md:table-cell">Recipient</TableHead>
+              <TableHead className="hidden md:table-cell">{ORG_PAGE_LABELS.RECIPIENT}</TableHead>
               <TableHead className="hidden lg:table-cell">Fingerprint</TableHead>
               <TableHead className="w-[60px]"></TableHead>
             </TableRow>

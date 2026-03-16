@@ -8,12 +8,14 @@
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Users, Plus, Settings, Loader2, Check, Upload, UserPlus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrgMembers } from '@/hooks/useOrgMembers';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useInviteMember } from '@/hooks/useInviteMember';
+import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal } from '@/components/organization';
 import { BulkUploadWizard } from '@/components/upload';
@@ -30,6 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
+import { ORG_PAGE_LABELS } from '@/lib/copy';
 import type { Database } from '@/types/database.types';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
@@ -86,6 +89,18 @@ export function OrganizationPage() {
     await inviteMember(email, role, profile.org_id);
   }, [inviteMember, profile?.org_id]);
 
+  const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role: newRole })
+      .eq('id', member.id);
+    if (error) {
+      toast.error('Failed to update member role.');
+    } else {
+      toast.success(`${member.fullName || member.email} is now ${newRole === 'ORG_ADMIN' ? 'an Admin' : 'a Member'}.`);
+    }
+  }, []);
+
   // Individual users without an org see a placeholder
   if (!profileLoading && profile && !profile.org_id) {
     return (
@@ -126,7 +141,7 @@ export function OrganizationPage() {
           </CardTitle>
           <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
             <UserPlus className="mr-2 h-4 w-4" />
-            Invite Member
+            {ORG_PAGE_LABELS.INVITE_MEMBER}
           </Button>
         </CardHeader>
         <Separator />
@@ -135,6 +150,7 @@ export function OrganizationPage() {
             members={members}
             loading={membersLoading}
             currentUserId={user?.id}
+            onChangeRole={handleChangeRole}
           />
         </CardContent>
       </Card>
@@ -210,11 +226,11 @@ export function OrganizationPage() {
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setBulkUploadOpen(true)}>
               <Upload className="mr-2 h-4 w-4" />
-              Bulk Upload
+              {ORG_PAGE_LABELS.BULK_UPLOAD}
             </Button>
             <Button onClick={() => setIssueDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              Issue Credential
+              {ORG_PAGE_LABELS.ISSUE_CREDENTIAL}
             </Button>
           </div>
         </CardHeader>
@@ -244,7 +260,7 @@ export function OrganizationPage() {
       <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Bulk Upload</DialogTitle>
+            <DialogTitle>{ORG_PAGE_LABELS.BULK_UPLOAD_DIALOG_TITLE}</DialogTitle>
           </DialogHeader>
           <BulkUploadWizard
             onComplete={() => {

@@ -679,6 +679,35 @@ export const ONBOARDING_GUIDANCE_LABELS = {
 } as const;
 
 // =============================================================================
+// ORGANIZATION PAGE
+// =============================================================================
+
+export const ORG_PAGE_LABELS = {
+  INVITE_MEMBER: 'Invite Member',
+  BULK_UPLOAD: 'Bulk Upload',
+  ISSUE_CREDENTIAL: 'Issue Credential',
+  BULK_UPLOAD_DIALOG_TITLE: 'Bulk Upload',
+  PROMOTE_TO_ADMIN: 'Promote to Admin',
+  DEMOTE_TO_MEMBER: 'Demote to Member',
+  RECIPIENT: 'Recipient',
+} as const;
+
+// =============================================================================
+// SETTINGS PAGE
+// =============================================================================
+
+export const SETTINGS_PAGE_LABELS = {
+  ORG_TITLE: 'Organization Settings',
+  ORG_DESCRIPTION: 'Manage templates, integrations, and API access',
+  CREDENTIAL_TEMPLATES: 'Credential Templates',
+  CREDENTIAL_TEMPLATES_DESC: 'Define schemas for credential types',
+  WEBHOOKS: 'Webhooks',
+  WEBHOOKS_DESC: 'Configure event notifications',
+  API_KEYS: 'API Keys',
+  API_KEYS_DESC: 'Manage verification API access',
+} as const;
+
+// =============================================================================
 // ADMIN TREASURY DASHBOARD (GAP-01 — internal ops, banned terms exempt)
 // =============================================================================
 
