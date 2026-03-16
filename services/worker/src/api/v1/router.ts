@@ -142,14 +142,21 @@ router.use('/usage', usageRouter);
 // Key management — requires Supabase JWT auth
 router.use('/keys', requireAuth, keysRouter);
 
+// ─── AI rate limiter (30 req/min per user — AI ops are expensive) ───
+const aiRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 30,
+  keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
-router.use('/ai/extract', aiExtractionGate(), requireAuth, aiExtractRouter);
+router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
 router.use('/ai/usage', requireAuth, aiUsageRouter);
 
 // AI embedding — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S11)
-router.use('/ai/embed', aiExtractionGate(), requireAuth, aiEmbedRouter);
+router.use('/ai/embed', aiExtractionGate(), requireAuth, aiRateLimiter, aiEmbedRouter);
 
 // AI semantic search — behind ENABLE_SEMANTIC_SEARCH flag + JWT auth (P8-S12)
-router.use('/ai/search', aiSemanticSearchGate(), requireAuth, aiSearchRouter);
+router.use('/ai/search', aiSemanticSearchGate(), requireAuth, aiRateLimiter, aiSearchRouter);
 
 export { router as apiV1Router };

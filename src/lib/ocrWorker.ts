@@ -96,17 +96,20 @@ export async function extractTextFromImage(
     },
   });
 
-  const { data } = await worker.recognize(file);
-  await worker.terminate();
+  try {
+    const { data } = await worker.recognize(file);
 
-  onProgress?.({ stage: 'complete', progress: 100 });
+    onProgress?.({ stage: 'complete', progress: 100 });
 
-  return {
-    text: data.text,
-    pageCount: 1,
-    method: 'tesseract',
-    durationMs: Date.now() - start,
-  };
+    return {
+      text: data.text,
+      pageCount: 1,
+      method: 'tesseract',
+      durationMs: Date.now() - start,
+    };
+  } finally {
+    await worker.terminate();
+  }
 }
 
 /**

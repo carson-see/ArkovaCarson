@@ -22,7 +22,7 @@ export const ExtractedFieldsSchema = z.object({
   licenseNumber: z.string().optional(),
   accreditingBody: z.string().optional(),
   jurisdiction: z.string().optional(),
-}).passthrough();
+}).strict();
 
 /**
  * Schema for extraction request validation (inbound to the extraction endpoint).
@@ -31,7 +31,7 @@ export const ExtractionRequestSchema = z.object({
   strippedText: z.string().min(1, 'Stripped text is required'),
   credentialType: z.string().min(1, 'Credential type hint is required'),
   fingerprint: z.string().length(64, 'Fingerprint must be a 64-char SHA-256 hex string'),
-  issuerHint: z.string().optional(),
+  issuerHint: z.string().max(200).optional(),
 });
 
 /**

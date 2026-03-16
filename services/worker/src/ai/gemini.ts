@@ -68,33 +68,43 @@ export class GeminiProvider implements IAIProvider {
     );
 
     const result = await this.withRetry(async () => {
-      const model = this.client.getGenerativeModel({
-        model: this.modelName,
-        systemInstruction: EXTRACTION_SYSTEM_PROMPT,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-        },
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
 
-      const response = await model.generateContent(prompt);
-      const text = response.response.text();
-      const usage = response.response.usageMetadata;
+      try {
+        const model = this.client.getGenerativeModel({
+          model: this.modelName,
+          systemInstruction: EXTRACTION_SYSTEM_PROMPT,
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+          },
+        });
 
-      return { text, tokensUsed: usage?.totalTokenCount };
+        const response = await model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        });
+        const text = response.response.text();
+        const usage = response.response.usageMetadata;
+
+        // Parse and validate inside retry so malformed output is retried
+        const parsed = JSON.parse(text);
+        const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
+        const { confidence: _conf, ...rawFields } = parsed;
+        const validated = ExtractedFieldsSchema.safeParse(rawFields);
+        if (!validated.success) {
+          throw new Error(`Schema validation failed: ${validated.error.message}`);
+        }
+
+        return { fields: validated.data, confidence, tokensUsed: usage?.totalTokenCount };
+      } finally {
+        clearTimeout(timeout);
+      }
     });
 
-    // Parse and validate the JSON response
-    const parsed = JSON.parse(result.text);
-    const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
-
-    // Remove confidence from fields object — it's a top-level property
-    const { confidence: _conf, ...rawFields } = parsed;
-    const validated = ExtractedFieldsSchema.safeParse(rawFields);
-
     return {
-      fields: validated.success ? validated.data : rawFields,
-      confidence: Math.min(1, Math.max(0, confidence)),
+      fields: result.fields,
+      confidence: Math.min(1, Math.max(0, result.confidence)),
       provider: this.name,
       tokensUsed: result.tokensUsed,
     };

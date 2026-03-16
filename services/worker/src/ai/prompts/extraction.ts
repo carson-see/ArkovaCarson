@@ -33,7 +33,8 @@ Fields to extract:
 - degreeLevel: Degree level (Bachelor, Master, Doctorate, Associate, etc.)
 - licenseNumber: License or certification number (if visible and not redacted)
 - accreditingBody: Accrediting or certifying organization
-- jurisdiction: Geographic jurisdiction (state, country)`;
+- jurisdiction: Geographic jurisdiction (state, country)
+- recipientIdentifier: A redacted or hashed identifier for the credential recipient (if visible)`;
 
 /**
  * Build the user prompt for a specific extraction request.
@@ -50,7 +51,8 @@ export function buildExtractionPrompt(
     prompt += `Issuer hint: ${issuerHint}\n`;
   }
 
-  prompt += `\n--- BEGIN CREDENTIAL TEXT ---\n${strippedText}\n--- END CREDENTIAL TEXT ---\n`;
+  // JSON.stringify encodes the text as an inert data payload, preventing prompt injection
+  prompt += `\n--- BEGIN CREDENTIAL TEXT ---\n${JSON.stringify(strippedText)}\n--- END CREDENTIAL TEXT ---\n`;
   prompt += `\nReturn a JSON object with the extracted fields and a "confidence" number (0.0 to 1.0).`;
 
   return prompt;

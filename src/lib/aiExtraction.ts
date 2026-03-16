@@ -91,6 +91,12 @@ export async function runExtraction(
       return null;
     }
 
+    // Constitution 4A: Only PII-stripped metadata summary sent to server.
+    // Truncate to reasonable limit to prevent excessive payloads.
+    const truncatedText = strippingReport.strippedText.length > 10_000
+      ? strippingReport.strippedText.slice(0, 10_000) + '\n[TRUNCATED]'
+      : strippingReport.strippedText;
+
     const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'http://localhost:3001';
     const response = await fetch(`${workerUrl}/api/v1/ai/extract`, {
       method: 'POST',
@@ -99,7 +105,7 @@ export async function runExtraction(
         'Authorization': `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
-        strippedText: strippingReport.strippedText,
+        strippedText: truncatedText,
         credentialType,
         fingerprint,
         issuerHint: options?.issuerHint,

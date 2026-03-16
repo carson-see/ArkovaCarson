@@ -63,7 +63,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Check credits
     const credits = await checkAICredits(orgId, userId);
-    if (!credits || !credits.hasCredits) {
+    if (!credits?.hasCredits) {
       res.status(402).json({
         error: 'insufficient_credits',
         message: 'No AI credits remaining for search.',
@@ -103,13 +103,19 @@ router.get('/', async (req: Request, res: Response) => {
     // Fetch anchor details for matched IDs
     let results: Array<Record<string, unknown>> = [];
     if (anchorIds.length > 0) {
-      const { data: anchors } = await db
+      const { data: anchors, error: anchorsError } = await db
         .from('anchors')
         .select(
           'id, public_id, filename, credential_type, metadata, status, created_at',
         )
         .in('id', anchorIds)
         .eq('org_id', orgId);
+
+      if (anchorsError) {
+        logger.error({ error: anchorsError }, 'Failed to fetch anchor details for search results');
+        res.status(500).json({ error: 'search_failed', message: 'Failed to fetch search results' });
+        return;
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       results = ((anchors ?? []) as any[]).map((a) => ({
@@ -132,7 +138,7 @@ router.get('/', async (req: Request, res: Response) => {
     const durationMs = Date.now() - startMs;
 
     // Deduct credit
-    await deductAICredits(orgId, userId, 1);
+    const deducted = await deductAICredits(orgId, userId, 1);
 
     // Log usage (non-blocking)
     logAIUsageEvent({
@@ -150,7 +156,7 @@ router.get('/', async (req: Request, res: Response) => {
       results,
       count: results.length,
       threshold,
-      creditsRemaining: (credits.remaining ?? 1) - 1,
+      creditsRemaining: deducted ? Math.max(0, (credits.remaining ?? 1) - 1) : credits.remaining ?? 0,
     });
   } catch (err) {
     logger.error({ error: err, userId }, 'Semantic search failed');

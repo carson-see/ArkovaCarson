@@ -111,7 +111,7 @@ export async function generateAndStoreEmbedding(
 
   // Check credits
   const credits = await checkAICredits(orgId, userId);
-  if (!credits || !credits.hasCredits) {
+  if (!credits?.hasCredits) {
     return { success: false, error: 'Insufficient AI credits for embedding generation' };
   }
 
@@ -195,6 +195,7 @@ export async function batchReEmbed(
   provider: IAIProvider,
   orgId: string,
   items: Array<{ anchorId: string; metadata: EmbeddingMetadata }>,
+  userId?: string,
 ): Promise<BatchReEmbedResult> {
   const result: BatchReEmbedResult = {
     total: items.length,
@@ -208,6 +209,7 @@ export async function batchReEmbed(
       anchorId: item.anchorId,
       orgId,
       metadata: item.metadata,
+      userId,
     });
 
     if (storeResult.success) {

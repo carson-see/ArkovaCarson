@@ -27,8 +27,7 @@ const EmbedRequestSchema = z.object({
       issuedDate: z.string().optional(),
       expiryDate: z.string().optional(),
       jurisdiction: z.string().optional(),
-    })
-    .passthrough(),
+    }),
 });
 
 const BatchEmbedRequestSchema = z.object({
@@ -148,7 +147,7 @@ router.post('/batch', async (req: Request, res: Response) => {
     }));
 
     const provider = createAIProvider();
-    const result = await batchReEmbed(provider, orgId, items);
+    const result = await batchReEmbed(provider, orgId, items, userId);
 
     res.json(result);
   } catch (err) {

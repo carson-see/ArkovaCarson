@@ -51,13 +51,20 @@ router.post('/', async (req: Request, res: Response) => {
 
     const orgId = profile?.org_id ?? undefined;
 
-    // Check AI credits
+    // Check AI credits — distinguish RPC errors from exhausted balance
     const credits = await checkAICredits(orgId, userId);
-    if (!credits || !credits.hasCredits) {
+    if (!credits) {
+      res.status(503).json({
+        error: 'credits_unavailable',
+        message: 'Unable to verify credit balance. Please try again.',
+      });
+      return;
+    }
+    if (!credits.hasCredits) {
       res.status(402).json({
         error: 'insufficient_credits',
         message: 'No AI credits remaining. Upgrade your plan for more credits.',
-        credits: credits ?? { monthlyAllocation: 0, usedThisMonth: 0, remaining: 0 },
+        credits: { monthlyAllocation: credits.monthlyAllocation, usedThisMonth: credits.usedThisMonth, remaining: 0 },
       });
       return;
     }
@@ -99,7 +106,7 @@ router.post('/', async (req: Request, res: Response) => {
       fields: result.fields,
       confidence: result.confidence,
       provider: result.provider,
-      creditsRemaining: credits.remaining - 1,
+      creditsRemaining: deducted ? Math.max(0, credits.remaining - 1) : credits.remaining,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';
