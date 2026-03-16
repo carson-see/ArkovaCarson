@@ -82,7 +82,7 @@ router.get('/', async (req: Request, res: Response) => {
       'search_credential_embeddings',
       {
         p_org_id: orgId,
-        p_query_embedding: JSON.stringify(queryEmbedding.embedding),
+        p_query_embedding: queryEmbedding.embedding,
         p_match_threshold: threshold,
         p_match_count: limit,
       },

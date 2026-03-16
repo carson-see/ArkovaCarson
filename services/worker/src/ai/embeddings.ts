@@ -139,7 +139,7 @@ export async function generateAndStoreEmbedding(
       {
         anchor_id: anchorId,
         org_id: orgId,
-        embedding: JSON.stringify(result.embedding),
+        embedding: result.embedding,
         model_version: result.model,
         source_text_hash: sourceTextHash,
       },

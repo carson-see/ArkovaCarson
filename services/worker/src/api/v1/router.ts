@@ -120,11 +120,14 @@ const batchRateLimiter = rateLimit({
 });
 
 // ─── Mount routes ───
-// Public verification — no auth required (API key optional for tracking)
-router.use('/verify', verifyRouter);
+// Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
+router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', batchRateLimiter, batchRouter);
+
+// Public verification — no auth required (API key optional for tracking)
+router.use('/verify', verifyRouter);
 
 // Job status polling — API key required
 router.use('/jobs', jobsRouter);
@@ -144,8 +147,5 @@ router.use('/ai/embed', aiExtractionGate(), requireAuth, aiEmbedRouter);
 
 // AI semantic search — behind ENABLE_SEMANTIC_SEARCH flag + JWT auth (P8-S12)
 router.use('/ai/search', aiSemanticSearchGate(), requireAuth, aiSearchRouter);
-
-// Agentic verification search — behind ENABLE_SEMANTIC_SEARCH + API key (P8-S19)
-router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
 export { router as apiV1Router };

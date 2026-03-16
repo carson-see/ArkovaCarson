@@ -19,6 +19,9 @@ import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
 import { ReplicateProvider } from './replicate.js';
 import { GeminiProvider } from './gemini.js';
 
+// Cached singleton so circuit breaker state persists across requests
+let geminiInstance: GeminiProvider | null = null;
+
 /**
  * Get the provider name that will be used based on current env.
  */
@@ -56,7 +59,10 @@ export function createAIProvider(): IAIProvider {
 
     case 'gemini':
     case 'gemini-direct':
-      return new GeminiProvider();
+      if (!geminiInstance) {
+        geminiInstance = new GeminiProvider();
+      }
+      return geminiInstance;
 
     case 'replicate': {
       // Production check is in ReplicateProvider constructor (Constitution 1.1)
@@ -72,4 +78,9 @@ export function createAIProvider(): IAIProvider {
     default:
       throw new Error(`Unknown AI provider: "${providerName}". Valid: gemini, cloudflare, replicate, openai, anthropic, mock`);
   }
+}
+
+/** Reset cached provider instances (for testing only). */
+export function resetProviderCache(): void {
+  geminiInstance = null;
 }
