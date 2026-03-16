@@ -364,9 +364,27 @@ services/worker/
     webhooks/delivery.ts                     ← Outbound webhook delivery engine
     ai/types.ts                              ← IAIProvider interface + shared AI types
     ai/factory.ts                            ← Provider factory (AI_PROVIDER env routing)
+    ai/gemini.ts                             ← GeminiProvider (circuit breaker, retry, @google/generative-ai)
     ai/cloudflare-fallback.ts                ← CF Workers AI fallback (Nemotron)
+    ai/cost-tracker.ts                       ← AI credit tracking + usage events
+    ai/embeddings.ts                         ← Embedding generation pipeline (pgvector)
+    ai/replicate.ts                          ← Replicate provider (QA/synthetic only)
+    ai/schemas.ts                            ← Zod schemas for AI request/response validation
     ai/mock.ts                               ← Mock AI provider for tests
+    ai/prompts/                              ← Prompt templates for extraction, classification
     api/verify-anchor.ts                     ← Public anchor verification by fingerprint
+    api/v1/router.ts                         ← Verification API v1 route dispatcher
+    api/v1/verify.ts                         ← GET /api/v1/verify/:publicId
+    api/v1/batch.ts                          ← POST /api/v1/verify/batch
+    api/v1/keys.ts                           ← API key CRUD (POST/GET/PATCH/DELETE)
+    api/v1/usage.ts                          ← GET /api/v1/usage
+    api/v1/jobs.ts                           ← GET /api/v1/jobs/:jobId
+    api/v1/docs.ts                           ← OpenAPI 3.0 spec + Swagger UI at /api/docs
+    api/v1/ai-extract.ts                     ← POST /api/v1/ai/extract
+    api/v1/ai-search.ts                      ← Semantic search endpoint
+    api/v1/ai-usage.ts                       ← GET /api/v1/ai/usage
+    api/v1/ai-embed.ts                       ← Embedding generation endpoint
+    api/v1/ai-verify-search.ts               ← Agentic verification search
     utils/                                   ← DB client, logger, rate limiter, correlation ID, sentry
 services/edge/                               ← Cloudflare Worker scripts (ADR-002)
   wrangler.toml                              ← Edge worker config (bindings, routes)

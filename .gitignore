@@ -52,6 +52,9 @@ supabase/.temp/
 # Generated docs
 docs/stories/docx/
 
+# Sentry
+.sentryclirc
+
 # Misc
 .cache/
 .parcel-cache/
