@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2 } from 'lucide-react';
+import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -51,6 +51,7 @@ interface MembersTableProps {
   loading?: boolean;
   currentUserId?: string;
   onRemoveMember?: (member: Member) => Promise<void>;
+  onChangeRole?: (member: Member, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => Promise<void>;
 }
 
 export function MembersTable({
@@ -58,6 +59,7 @@ export function MembersTable({
   loading,
   currentUserId,
   onRemoveMember,
+  onChangeRole,
 }: Readonly<MembersTableProps>) {
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
@@ -160,6 +162,17 @@ export function MembersTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      {onChangeRole && (
+                        <DropdownMenuItem
+                          onClick={() => onChangeRole(
+                            member,
+                            member.role === 'ORG_ADMIN' ? 'INDIVIDUAL' : 'ORG_ADMIN'
+                          )}
+                        >
+                          <ArrowUpDown className="mr-2 h-4 w-4" />
+                          {member.role === 'ORG_ADMIN' ? 'Demote to Member' : 'Promote to Admin'}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem>
                         <Mail className="mr-2 h-4 w-4" />
                         Send message

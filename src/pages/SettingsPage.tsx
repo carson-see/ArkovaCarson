@@ -8,9 +8,10 @@
 
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint } from 'lucide-react';
+import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { Link } from 'react-router-dom';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -265,6 +266,62 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Sub-page Navigation */}
+        {profile?.role === 'ORG_ADMIN' && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Settings className="h-5 w-5" />
+                Organization Settings
+              </CardTitle>
+              <CardDescription>
+                Manage templates, integrations, and API access
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <Link
+                to={ROUTES.CREDENTIAL_TEMPLATES}
+                className="flex items-center justify-between rounded-lg px-3 py-3 hover:bg-muted transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <FileText className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">Credential Templates</p>
+                    <p className="text-xs text-muted-foreground">Define schemas for credential types</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              <Link
+                to={ROUTES.SETTINGS_WEBHOOKS}
+                className="flex items-center justify-between rounded-lg px-3 py-3 hover:bg-muted transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Webhook className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">Webhooks</p>
+                    <p className="text-xs text-muted-foreground">Configure event notifications</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+              <Link
+                to={ROUTES.SETTINGS_API_KEYS}
+                className="flex items-center justify-between rounded-lg px-3 py-3 hover:bg-muted transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <Key className="h-5 w-5 text-muted-foreground" />
+                  <div>
+                    <p className="text-sm font-medium">API Keys</p>
+                    <p className="text-xs text-muted-foreground">Manage verification API access</p>
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              </Link>
+            </CardContent>
+          </Card>
+        )}
 
         <Separator />
 
