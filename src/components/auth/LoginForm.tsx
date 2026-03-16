@@ -34,9 +34,9 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
     e.preventDefault();
     clearError();
 
-    await signIn(email, password);
+    const { error: signInError } = await signIn(email, password);
 
-    if (!error && onSuccess) {
+    if (!signInError && onSuccess) {
       onSuccess();
     }
   };

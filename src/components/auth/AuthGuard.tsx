@@ -22,10 +22,19 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
   const { user, loading } = useAuth();
   const location = useLocation();
   const toastShown = useRef(false);
+  const hadUser = useRef(false);
+
+  // Track whether the user was previously authenticated
+  useEffect(() => {
+    if (user) {
+      hadUser.current = true;
+    }
+  }, [user]);
 
   // Show toast when redirecting unauthenticated user (UF-09)
+  // Skip toast if user just signed out (had a session, now doesn't)
   useEffect(() => {
-    if (!loading && !user && !fallback && !toastShown.current) {
+    if (!loading && !user && !fallback && !toastShown.current && !hadUser.current) {
       toastShown.current = true;
       toast.info(NAV_POLISH_LABELS.AUTH_REDIRECT_TOAST);
     }

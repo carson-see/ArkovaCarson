@@ -16,7 +16,7 @@ interface AuthState {
 }
 
 interface AuthActions {
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
   signUp: (email: string, password: string, fullName?: string) => Promise<void>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -85,6 +85,7 @@ export function useAuth(): AuthState & AuthActions {
     }
 
     setLoading(false);
+    return { error };
   }, []);
 
   const signUp = useCallback(
