@@ -87,6 +87,12 @@ const ConfigSchema = z.object({
   /** AI provider selection: gemini, cloudflare, replicate, mock */
   aiProvider: z.string().optional(),
 
+  // Cron job authentication (AUTH-01)
+  /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
+  cronSecret: z.string().min(16).optional(),
+  /** Expected OIDC audience for Cloud Scheduler tokens (typically the Cloud Run service URL) */
+  cronOidcAudience: z.string().url().optional(),
+
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
@@ -133,6 +139,8 @@ function loadConfig(): Config {
     geminiModel: process.env.GEMINI_MODEL,
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
     aiProvider: process.env.AI_PROVIDER,
+    cronSecret: process.env.CRON_SECRET,
+    cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
   });
 

@@ -1079,6 +1079,10 @@ ENABLE_VERIFICATION_API=false
 API_KEY_HMAC_SECRET=
 CORS_ALLOWED_ORIGINS=*
 
+# Cron job authentication (AUTH-01)
+CRON_SECRET=                        # shared secret for X-Cron-Secret header (min 16 chars)
+CRON_OIDC_AUDIENCE=                 # Cloud Run service URL for OIDC audience verification
+
 # Cloudflare (edge workers — never in browser)
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=              # wrangler deploy token
@@ -1105,5 +1109,5 @@ AI_PROVIDER=mock                   # gemini | cloudflare | replicate | mock
 
 ---
 
-_Directive version: 2026-03-16 (Security Tier 1 fixes — PII-01/02, INJ-01, RLS-01/02, PII-03) | Repo: ArkovaCarson | 63 migrations | 1,745 tests | 163 stories (146 complete, 90%)_
+_Directive version: 2026-03-16 (All 12 CISO security findings resolved — AUTH-01, SEC-01 complete) | Repo: ArkovaCarson | 63 migrations | 1,745 tests | 163 stories (146 complete, 90%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_

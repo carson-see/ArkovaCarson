@@ -377,25 +377,46 @@ const cronJobsLimiter = rateLimit({
 });
 
 /**
- * Verify Cloud Scheduler OIDC token.
- * In non-production, all requests are allowed (dev manual trigger).
- * In production, verifies the OIDC JWT signature and claims.
+ * Verify cron job authentication (AUTH-01 hardening).
+ *
+ * Supports two auth methods (checked in order):
+ * 1. CRON_SECRET header — `X-Cron-Secret: <shared-secret>`. Simple, works without Cloud Scheduler.
+ * 2. OIDC Bearer token — Cloud Scheduler sends a Google-signed JWT. Verified via JWKS.
+ *
+ * In non-production (dev/test), requests are allowed without auth for local development.
+ * In production, at least one auth method MUST succeed.
  */
 async function verifyCronAuth(req: express.Request): Promise<boolean> {
   if (config.nodeEnv !== 'production') return true;
+
+  // Method 1: Shared secret header (simplest — works with any HTTP client)
+  const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
+  if (config.cronSecret && cronSecretHeader) {
+    // Constant-time comparison to prevent timing attacks
+    const expected = config.cronSecret;
+    if (cronSecretHeader.length === expected.length) {
+      let mismatch = 0;
+      for (let i = 0; i < expected.length; i++) {
+        mismatch |= cronSecretHeader.charCodeAt(i) ^ expected.charCodeAt(i);
+      }
+      if (mismatch === 0) return true;
+    }
+    logger.warn('Invalid X-Cron-Secret header');
+    return false;
+  }
+
+  // Method 2: OIDC Bearer token from Cloud Scheduler
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return false;
   const token = authHeader.slice(7).trim();
   if (!token) return false;
 
   try {
-    // Verify OIDC token from Google Cloud Scheduler
     const { createRemoteJWKSet, jwtVerify } = await import('jose');
     const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: 'https://accounts.google.com',
-      // audience is the Cloud Run service URL
-      audience: config.frontendUrl ? undefined : undefined, // Accept any audience for now
+      audience: config.cronOidcAudience || undefined,
     });
     return Boolean(payload?.iss && payload?.exp);
   } catch (err) {
