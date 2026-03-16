@@ -48,7 +48,7 @@ Every prompt that involves UI/frontend work (component changes, page updates, st
 UAT is not optional. A task is not complete until UAT screenshots confirm the changes work at both viewport sizes.
 
 ### BACKLOG MANDATE
-All backlog items — stories, bugs, security findings, operational tasks, GEO items — **must exist in a single source of truth**: `docs/BACKLOG.md`. This document is prioritized and re-prioritized each session. No backlog item should exist only in a story doc, bug report, or session log — it must also appear in BACKLOG.md. When work is completed, update BACKLOG.md before closing the session.
+All backlog items — stories, bugs, security findings, operational tasks, GEO items — **must exist in a single source of truth**: `docs/BACKLOG.md`. This document is prioritized and re-prioritized each session. No backlog item should exist only in a story doc, bug report, or session log — it must also appear in BACKLOG.md. When work is completed, update BACKLOG.md before closing the session. Every backlog item must also have corresponding story documentation in `docs/stories/` (grouped by priority level).
 
 ---
 
