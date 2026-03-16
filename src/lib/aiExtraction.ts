@@ -147,7 +147,12 @@ export async function runExtraction(
       strippingReport,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Extraction failed';
+    let message = 'Extraction failed';
+    if (err instanceof TypeError && err.message.includes('fetch')) {
+      message = 'Unable to connect to the server. Please check your connection and try again.';
+    } else if (err instanceof Error) {
+      message = err.message;
+    }
     onProgress?.({ stage: 'error', progress: 0, message });
     return null;
   }

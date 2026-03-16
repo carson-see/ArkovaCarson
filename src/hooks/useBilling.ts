@@ -9,6 +9,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
+import { workerPostForUrl } from '../lib/workerClient';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -30,39 +31,6 @@ interface BillingActions {
   openBillingPortal: () => Promise<string | null>;
   /** Refresh billing data */
   refresh: () => Promise<void>;
-}
-
-const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? 'http://localhost:3001';
-
-/**
- * POST to a worker endpoint with the user's JWT, returning the parsed `url` field.
- * Shared by startCheckout and openBillingPortal to avoid duplicated fetch boilerplate.
- */
-async function workerPost(
-  endpoint: string,
-  body: Record<string, unknown>,
-): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) {
-    throw new Error('No active session — please sign in again');
-  }
-
-  const response = await fetch(`${WORKER_URL}${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const parsed = await response.json().catch(() => ({}));
-    throw new Error(parsed.error ?? `Request failed (${response.status})`);
-  }
-
-  const { url } = await response.json();
-  return url as string;
 }
 
 export function useBilling(): BillingState & BillingActions {
@@ -135,7 +103,7 @@ export function useBilling(): BillingState & BillingActions {
     setError(null);
 
     try {
-      return await workerPost('/api/checkout/session', { planId });
+      return await workerPostForUrl('/api/checkout/session', { planId });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to start checkout';
       setError(message);
@@ -152,7 +120,7 @@ export function useBilling(): BillingState & BillingActions {
     setError(null);
 
     try {
-      return await workerPost('/api/billing/portal', {});
+      return await workerPostForUrl('/api/billing/portal', {});
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to open billing portal';
       setError(message);

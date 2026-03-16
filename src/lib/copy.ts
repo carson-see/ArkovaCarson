@@ -112,6 +112,8 @@ export const NAV_LABELS = {
   ORGANIZATION: 'Organization',
   SETTINGS: 'Settings',
   HELP: 'Help',
+  SEARCH: 'Search',
+  TREASURY: 'Treasury',
 } as const;
 
 // =============================================================================

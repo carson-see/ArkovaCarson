@@ -7,7 +7,7 @@
  * @see P5-TS-07
  */
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Plus,
   Pencil,
@@ -62,6 +62,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { TemplateSchemaBuilder, type TemplateFieldDefinition } from './TemplateSchemaBuilder';
 import type { Database, Json } from '@/types/database.types';
 
 type CredentialType = Database['public']['Enums']['credential_type'];
@@ -97,15 +98,43 @@ interface FormState {
   name: string;
   description: string;
   credential_type: CredentialType;
-  default_metadata: string;
+  fields: TemplateFieldDefinition[];
 }
 
 const emptyForm: FormState = {
   name: '',
   description: '',
   credential_type: 'CERTIFICATE',
-  default_metadata: '',
+  fields: [],
 };
+
+/** Convert TemplateFieldDefinition[] to the DB format: { fields: [...] } */
+function fieldsToMetadata(fields: TemplateFieldDefinition[]): Record<string, Json | undefined> | null {
+  if (fields.length === 0) return null;
+  return {
+    fields: fields.map((f) => ({
+      key: f.name.toLowerCase().replace(/\s+/g, '_'),
+      label: f.name,
+      type: f.type,
+      ...(f.required && { required: true }),
+      ...(f.options && f.options.length > 0 && { options: f.options }),
+    })),
+  };
+}
+
+/** Convert DB metadata { fields: [...] } back to TemplateFieldDefinition[] */
+function metadataToFields(metadata: Record<string, Json | undefined> | null): TemplateFieldDefinition[] {
+  if (!metadata) return [];
+  const fields = (metadata as Record<string, unknown>).fields;
+  if (!Array.isArray(fields)) return [];
+  return fields.map((f: Record<string, unknown>) => ({
+    id: `field_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    name: (f.label as string) ?? (f.key as string) ?? '',
+    type: (f.type as TemplateFieldDefinition['type']) ?? 'text',
+    required: (f.required as boolean) ?? false,
+    ...(Array.isArray(f.options) && { options: f.options as string[] }),
+  }));
+}
 
 export function CredentialTemplatesManager({
   templates,
@@ -136,9 +165,7 @@ export function CredentialTemplatesManager({
       name: template.name,
       description: template.description ?? '',
       credential_type: template.credential_type,
-      default_metadata: template.default_metadata
-        ? JSON.stringify(template.default_metadata, null, 2)
-        : '',
+      fields: metadataToFields(template.default_metadata as Record<string, Json | undefined> | null),
     });
     setFormError(null);
     setDialogOpen(true);
@@ -155,19 +182,14 @@ export function CredentialTemplatesManager({
       return;
     }
 
-    let parsedMetadata: Record<string, Json | undefined> | null = null;
-    if (form.default_metadata.trim()) {
-      try {
-        parsedMetadata = JSON.parse(form.default_metadata);
-        if (typeof parsedMetadata !== 'object' || Array.isArray(parsedMetadata)) {
-          setFormError('Default metadata must be a JSON object');
-          return;
-        }
-      } catch {
-        setFormError('Invalid JSON in default metadata');
-        return;
-      }
+    // Validate that all fields have names
+    const emptyFields = form.fields.filter((f) => !f.name.trim());
+    if (emptyFields.length > 0) {
+      setFormError('All fields must have a name');
+      return;
     }
+
+    const parsedMetadata = fieldsToMetadata(form.fields);
 
     setSubmitting(true);
     setFormError(null);
@@ -285,9 +307,12 @@ export function CredentialTemplatesManager({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant="secondary">
-                        {CREDENTIAL_TYPE_LABELS[template.credential_type] ?? template.credential_type}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="secondary">
+                          {CREDENTIAL_TYPE_LABELS[template.credential_type] ?? template.credential_type}
+                        </Badge>
+                        <FieldCountBadge metadata={template.default_metadata as Record<string, Json | undefined> | null} />
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Switch
@@ -324,7 +349,7 @@ export function CredentialTemplatesManager({
 
       {/* Create / Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
               {editingId ? 'Edit Template' : 'Create Template'}
@@ -382,20 +407,10 @@ export function CredentialTemplatesManager({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="template-metadata">Default Metadata (JSON)</Label>
-              <Textarea
-                id="template-metadata"
-                placeholder='e.g., {"field_of_study": "", "institution": ""}'
-                value={form.default_metadata}
-                onChange={(e) =>
-                  setForm({ ...form, default_metadata: e.target.value })
-                }
-                rows={3}
-                className="font-mono text-xs"
+              <TemplateSchemaBuilder
+                value={form.fields}
+                onChange={(fields) => setForm({ ...form, fields })}
               />
-              <p className="text-xs text-muted-foreground">
-                Optional. JSON object with default metadata fields for credentials using this template.
-              </p>
             </div>
 
             {formError && (
@@ -432,5 +447,15 @@ export function CredentialTemplatesManager({
         </AlertDialogContent>
       </AlertDialog>
     </div>
+  );
+}
+
+function FieldCountBadge({ metadata }: { metadata: Record<string, Json | undefined> | null }) {
+  const count = useMemo(() => metadataToFields(metadata).length, [metadata]);
+  if (count === 0) return null;
+  return (
+    <Badge variant="outline" className="text-xs font-mono">
+      {count} {count === 1 ? 'field' : 'fields'}
+    </Badge>
   );
 }

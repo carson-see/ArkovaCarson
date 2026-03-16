@@ -5,7 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
+import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown, Calendar } from 'lucide-react';
 import { ORG_PAGE_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,7 +35,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Separator } from '@/components/ui/separator';
 
 export interface Member {
   id: string;
@@ -63,6 +70,7 @@ export function MembersTable({
   onChangeRole,
 }: Readonly<MembersTableProps>) {
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [changingRoleMemberId, setChangingRoleMemberId] = useState<string | null>(null);
 
@@ -112,7 +120,11 @@ export function MembersTable({
           {members.map((member) => (
             <TableRow key={member.id}>
               <TableCell>
-                <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  className="flex items-center gap-3 text-left rounded-md -m-1 p-1 hover:bg-muted/50 transition-colors cursor-pointer w-full"
+                  onClick={() => setSelectedMember(member)}
+                >
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={member.avatarUrl || undefined} />
                     <AvatarFallback className="bg-primary/10 text-primary text-xs">
@@ -120,7 +132,7 @@ export function MembersTable({
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-sm">
+                    <p className="font-medium text-sm hover:text-primary transition-colors">
                       {member.fullName || 'No name'}
                       {member.id === currentUserId && (
                         <span className="ml-2 text-xs text-muted-foreground">(You)</span>
@@ -128,7 +140,7 @@ export function MembersTable({
                     </p>
                     <p className="text-xs text-muted-foreground">{member.email}</p>
                   </div>
-                </div>
+                </button>
               </TableCell>
               <TableCell>
                 <Badge variant={member.role === 'ORG_ADMIN' ? 'default' : 'secondary'}>
@@ -204,6 +216,81 @@ export function MembersTable({
           ))}
         </TableBody>
       </Table>
+
+      {/* Member detail dialog */}
+      <Dialog open={!!selectedMember} onOpenChange={() => setSelectedMember(null)}>
+        <DialogContent className="max-w-md">
+          {selectedMember && (
+            <>
+              <DialogHeader>
+                <DialogTitle>Member Details</DialogTitle>
+              </DialogHeader>
+              <div className="flex flex-col items-center gap-3 py-4">
+                <Avatar className="h-16 w-16">
+                  <AvatarImage src={selectedMember.avatarUrl || undefined} />
+                  <AvatarFallback className="bg-primary/10 text-primary text-lg">
+                    {getInitials(selectedMember.fullName || selectedMember.email)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="text-center">
+                  <p className="text-lg font-semibold">
+                    {selectedMember.fullName || 'No name'}
+                    {selectedMember.id === currentUserId && (
+                      <span className="ml-2 text-xs text-muted-foreground font-normal">(You)</span>
+                    )}
+                  </p>
+                  <p className="text-sm text-muted-foreground">{selectedMember.email}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Badge variant={selectedMember.role === 'ORG_ADMIN' ? 'default' : 'secondary'}>
+                    {selectedMember.role === 'ORG_ADMIN' ? (
+                      <><Shield className="mr-1 h-3 w-3" />Admin</>
+                    ) : 'Member'}
+                  </Badge>
+                  <Badge
+                    variant={
+                      ({ active: 'success', pending: 'warning' } as Record<string, 'success' | 'warning'>)[selectedMember.status] ?? 'secondary'
+                    }
+                  >
+                    {selectedMember.status.charAt(0).toUpperCase() + selectedMember.status.slice(1)}
+                  </Badge>
+                </div>
+              </div>
+              <Separator />
+              <div className="space-y-3 py-2">
+                <div className="flex items-center gap-3 text-sm">
+                  <Mail className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Email</p>
+                    <p className="font-mono text-xs">{selectedMember.email}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <Shield className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Role</p>
+                    <p>{selectedMember.role === 'ORG_ADMIN' ? 'Organization Administrator' : 'Member'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Joined</p>
+                    <p>{formatDate(selectedMember.joinedAt)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-sm">
+                  <User className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Member ID</p>
+                    <p className="font-mono text-xs">{selectedMember.id.slice(0, 8)}...</p>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Remove confirmation dialog */}
       <AlertDialog open={!!removingMember} onOpenChange={() => setRemovingMember(null)}>

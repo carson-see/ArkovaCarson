@@ -96,7 +96,11 @@ export function useSemanticSearch(): UseSemanticSearchReturn {
         setResults(data.results);
         setCreditsRemaining(data.creditsRemaining);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Search failed');
+        if (err instanceof TypeError && err.message.includes('fetch')) {
+          setError('Unable to connect to the server. Please check your connection and try again.');
+        } else {
+          setError(err instanceof Error ? err.message : 'Search failed');
+        }
       } finally {
         setIsSearching(false);
       }
