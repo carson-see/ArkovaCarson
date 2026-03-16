@@ -7,20 +7,32 @@
 
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Users, Plus, Settings, Loader2, Check } from 'lucide-react';
+import { Building2, Users, Plus, Settings, Loader2, Check, Upload, UserPlus } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrgMembers } from '@/hooks/useOrgMembers';
 import { useOrganization } from '@/hooks/useOrganization';
+import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
+import { useInviteMember } from '@/hooks/useInviteMember';
+import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
-import { OrgRegistryTable, MembersTable, IssueCredentialForm } from '@/components/organization';
+import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal } from '@/components/organization';
+import { BulkUploadWizard } from '@/components/upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
+import { ORG_PAGE_LABELS } from '@/lib/copy';
 import type { Database } from '@/types/database.types';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
@@ -31,7 +43,13 @@ export function OrganizationPage() {
   const { profile, loading: profileLoading } = useProfile();
   const { members, loading: membersLoading } = useOrgMembers(profile?.org_id);
   const { organization, updating: orgUpdating, updateOrganization } = useOrganization(profile?.org_id);
+  const { revokeAnchor } = useRevokeAnchor();
+  const { inviteMember } = useInviteMember();
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [orgDisplayName, setOrgDisplayName] = useState('');
   const [orgDomain, setOrgDomain] = useState('');
   const [orgSettingsInit, setOrgSettingsInit] = useState(false);
@@ -52,6 +70,36 @@ export function OrganizationPage() {
   const handleViewAnchor = useCallback((anchor: Anchor) => {
     navigate(recordDetailPath(anchor.id));
   }, [navigate]);
+
+  const handleRevokeAnchor = useCallback((anchor: Anchor) => {
+    setRevokeTarget(anchor);
+  }, []);
+
+  const handleConfirmRevoke = useCallback(async (reason: string) => {
+    if (!revokeTarget) return;
+    const success = await revokeAnchor(revokeTarget.id, reason);
+    if (success) {
+      setRevokeTarget(null);
+      setRefreshKey((k) => k + 1);
+    }
+  }, [revokeTarget, revokeAnchor]);
+
+  const handleInvite = useCallback(async (email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
+    if (!profile?.org_id) return;
+    await inviteMember(email, role, profile.org_id);
+  }, [inviteMember, profile?.org_id]);
+
+  const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
+    const { error } = await supabase
+      .from('profiles')
+      .update({ role: newRole })
+      .eq('id', member.id);
+    if (error) {
+      toast.error('Failed to update member role.');
+    } else {
+      toast.success(`${member.fullName || member.email} is now ${newRole === 'ORG_ADMIN' ? 'an Admin' : 'a Member'}.`);
+    }
+  }, []);
 
   // Individual users without an org see a placeholder
   if (!profileLoading && profile && !profile.org_id) {
@@ -91,6 +139,10 @@ export function OrganizationPage() {
               <Badge variant="secondary">{members.length}</Badge>
             )}
           </CardTitle>
+          <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
+            <UserPlus className="mr-2 h-4 w-4" />
+            {ORG_PAGE_LABELS.INVITE_MEMBER}
+          </Button>
         </CardHeader>
         <Separator />
         <CardContent className="pt-4">
@@ -98,6 +150,7 @@ export function OrganizationPage() {
             members={members}
             loading={membersLoading}
             currentUserId={user?.id}
+            onChangeRole={handleChangeRole}
           />
         </CardContent>
       </Card>
@@ -170,17 +223,25 @@ export function OrganizationPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-lg">Organization Records</CardTitle>
-          <Button onClick={() => setIssueDialogOpen(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Issue Credential
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setBulkUploadOpen(true)}>
+              <Upload className="mr-2 h-4 w-4" />
+              {ORG_PAGE_LABELS.BULK_UPLOAD}
+            </Button>
+            <Button onClick={() => setIssueDialogOpen(true)}>
+              <Plus className="mr-2 h-4 w-4" />
+              {ORG_PAGE_LABELS.ISSUE_CREDENTIAL}
+            </Button>
+          </div>
         </CardHeader>
         <Separator />
         <CardContent className="pt-4">
           {profile?.org_id ? (
             <OrgRegistryTable
+              key={refreshKey}
               orgId={profile.org_id}
               onViewAnchor={handleViewAnchor}
+              onRevokeAnchor={handleRevokeAnchor}
             />
           ) : null}
         </CardContent>
@@ -189,7 +250,41 @@ export function OrganizationPage() {
       {/* Issue Credential Dialog */}
       <IssueCredentialForm
         open={issueDialogOpen}
-        onOpenChange={setIssueDialogOpen}
+        onOpenChange={(open) => {
+          setIssueDialogOpen(open);
+          if (!open) setRefreshKey((k) => k + 1);
+        }}
+      />
+
+      {/* Bulk Upload Dialog */}
+      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{ORG_PAGE_LABELS.BULK_UPLOAD_DIALOG_TITLE}</DialogTitle>
+          </DialogHeader>
+          <BulkUploadWizard
+            onComplete={() => {
+              setBulkUploadOpen(false);
+              setRefreshKey((k) => k + 1);
+            }}
+            onCancel={() => setBulkUploadOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Invite Member Modal */}
+      <InviteMemberModal
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onInvite={handleInvite}
+      />
+
+      {/* Revoke Dialog */}
+      <RevokeDialog
+        open={!!revokeTarget}
+        onOpenChange={(open) => { if (!open) setRevokeTarget(null); }}
+        recordName={revokeTarget?.filename ?? ''}
+        onConfirm={handleConfirmRevoke}
       />
     </AppShell>
   );

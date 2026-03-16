@@ -5,13 +5,15 @@
 -- 1. Feature flag: ENABLE_VERIFICATION_API (P4.5-TS-12)
 -- =====================================================================
 
-INSERT INTO switchboard_flags (flag_key, enabled, description)
+INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous)
 VALUES (
   'ENABLE_VERIFICATION_API',
   false,
-  'Gates all /api/v1/* verification endpoints. When false, returns HTTP 503.'
+  false,
+  'Gates all /api/v1/* verification endpoints. When false, returns HTTP 503.',
+  false
 )
-ON CONFLICT (flag_key) DO NOTHING;
+ON CONFLICT (id) DO NOTHING;
 
 -- =====================================================================
 -- 2. API Keys table (P4.5-TS-03)
@@ -108,4 +110,4 @@ CREATE POLICY api_key_usage_service_role_all ON api_key_usage
 -- DROP TABLE IF EXISTS api_key_usage;
 -- DROP TABLE IF EXISTS api_keys;
 -- DROP TYPE IF EXISTS api_key_rate_limit_tier;
--- DELETE FROM switchboard_flags WHERE flag_key = 'ENABLE_VERIFICATION_API';
+-- DELETE FROM switchboard_flags WHERE id = 'ENABLE_VERIFICATION_API';

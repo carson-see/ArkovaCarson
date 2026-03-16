@@ -5,7 +5,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2 } from 'lucide-react';
+import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
+import { ORG_PAGE_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -51,6 +52,7 @@ interface MembersTableProps {
   loading?: boolean;
   currentUserId?: string;
   onRemoveMember?: (member: Member) => Promise<void>;
+  onChangeRole?: (member: Member, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => Promise<void>;
 }
 
 export function MembersTable({
@@ -58,9 +60,11 @@ export function MembersTable({
   loading,
   currentUserId,
   onRemoveMember,
+  onChangeRole,
 }: Readonly<MembersTableProps>) {
   const [removingMember, setRemovingMember] = useState<Member | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
+  const [changingRoleMemberId, setChangingRoleMemberId] = useState<string | null>(null);
 
   const handleRemove = useCallback(async () => {
     if (!removingMember || !onRemoveMember) return;
@@ -160,6 +164,26 @@ export function MembersTable({
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
+                      {onChangeRole && (
+                        <DropdownMenuItem
+                          disabled={changingRoleMemberId === member.id}
+                          onClick={async () => {
+                            if (changingRoleMemberId === member.id) return;
+                            try {
+                              setChangingRoleMemberId(member.id);
+                              await onChangeRole(
+                                member,
+                                member.role === 'ORG_ADMIN' ? 'INDIVIDUAL' : 'ORG_ADMIN'
+                              );
+                            } finally {
+                              setChangingRoleMemberId(null);
+                            }
+                          }}
+                        >
+                          <ArrowUpDown className="mr-2 h-4 w-4" />
+                          {member.role === 'ORG_ADMIN' ? ORG_PAGE_LABELS.DEMOTE_TO_MEMBER : ORG_PAGE_LABELS.PROMOTE_TO_ADMIN}
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuItem>
                         <Mail className="mr-2 h-4 w-4" />
                         Send message

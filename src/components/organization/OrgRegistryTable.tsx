@@ -27,7 +27,7 @@ import {
   GraduationCap,
   X,
 } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
 import { verifyPath } from '@/lib/routes';
 import { toast } from 'sonner';
 import { useExportAnchors } from '@/hooks/useExportAnchors';
@@ -328,7 +328,7 @@ export function OrgRegistryTable({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[40px]">
+              <TableHead className="w-[40px] hidden sm:table-cell">
                 <Checkbox
                   checked={allOnPageSelected && anchors.length > 0}
                   onCheckedChange={toggleSelectAll}
@@ -339,6 +339,7 @@ export function OrgRegistryTable({
               <TableHead>Status</TableHead>
               <TableHead className="hidden sm:table-cell">Created</TableHead>
               <TableHead className="hidden md:table-cell">Type</TableHead>
+              <TableHead className="hidden md:table-cell">{ORG_PAGE_LABELS.RECIPIENT}</TableHead>
               <TableHead className="hidden lg:table-cell">Fingerprint</TableHead>
               <TableHead className="w-[60px]"></TableHead>
             </TableRow>
@@ -363,7 +364,7 @@ export function OrgRegistryTable({
               ))
             ) : (anchors.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                   No records found
                 </TableCell>
               </TableRow>
@@ -373,8 +374,13 @@ export function OrgRegistryTable({
                 const StatusIcon = status.icon;
 
                 return (
-                  <TableRow key={anchor.id} data-state={selectedIds.has(anchor.id) ? 'selected' : undefined}>
-                    <TableCell>
+                  <TableRow
+                    key={anchor.id}
+                    data-state={selectedIds.has(anchor.id) ? 'selected' : undefined}
+                    className="cursor-pointer"
+                    onClick={() => onViewAnchor?.(anchor)}
+                  >
+                    <TableCell className="hidden sm:table-cell" onClick={(e) => e.stopPropagation()}>
                       <Checkbox
                         checked={selectedIds.has(anchor.id)}
                         onCheckedChange={() => toggleSelect(anchor.id)}
@@ -383,10 +389,10 @@ export function OrgRegistryTable({
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-muted shrink-0">
+                        <div className="hidden sm:flex h-8 w-8 items-center justify-center rounded-lg bg-muted shrink-0">
                           <FileText className="h-4 w-4 text-muted-foreground" />
                         </div>
-                        <span className="font-medium truncate max-w-[200px]">
+                        <span className="font-medium truncate max-w-[100px] sm:max-w-[200px]">
                           {anchor.filename}
                         </span>
                       </div>
@@ -413,12 +419,21 @@ export function OrgRegistryTable({
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                     </TableCell>
+                    <TableCell className="hidden md:table-cell">
+                      {(anchor as Record<string, unknown>).recipient_email ? (
+                        <span className="text-xs text-muted-foreground truncate max-w-[140px] block">
+                          {String((anchor as Record<string, unknown>).recipient_email)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       <code className="text-xs text-muted-foreground">
                         {formatFingerprint(anchor.fingerprint, 8, 4)}
                       </code>
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon">
