@@ -279,10 +279,19 @@ export function CredentialTemplatesManager({
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : (templates.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <FileText className="h-10 w-10 mx-auto mb-3 opacity-50" />
-              <p>No templates yet</p>
-              <p className="text-xs mt-1">Create your first template to get started</p>
+            <div className="text-center py-12">
+              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mx-auto mb-4">
+                <FileText className="h-7 w-7 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold mb-1">No templates yet</h3>
+              <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-4">
+                Templates define the fields and layout for issued credentials.
+                Create one for each credential type your organization issues.
+              </p>
+              <Button onClick={openCreate} size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Create Your First Template
+              </Button>
             </div>
           ) : (
             <Table>

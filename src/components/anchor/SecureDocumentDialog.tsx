@@ -38,7 +38,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
 import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
-import { verifyPath, recordDetailPath } from '@/lib/routes';
+import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
 interface SecureDocumentDialogProps {
@@ -154,8 +154,7 @@ export function SecureDocumentDialog({
 
   const handleCopyLink = useCallback(async () => {
     if (!createdAnchor) return;
-    const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-    const url = `${baseUrl}${verifyPath(createdAnchor.publicId)}`;
+    const url = verifyUrl(createdAnchor.publicId);
     await navigator.clipboard.writeText(url);
     setLinkCopied(true);
     toast.success(ANCHORING_STATUS_LABELS.LINK_COPIED);
@@ -250,8 +249,7 @@ export function SecureDocumentDialog({
                   </p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs font-mono truncate">
-                      {import.meta.env.VITE_APP_URL || location.origin}
-                      {verifyPath(createdAnchor.publicId)}
+                      {verifyUrl(createdAnchor.publicId)}
                     </code>
                     <Button
                       variant="ghost"

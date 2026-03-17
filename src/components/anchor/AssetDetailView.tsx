@@ -35,7 +35,7 @@ import { CredentialRenderer } from '@/components/credentials/CredentialRenderer'
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS } from '@/lib/copy';
-import { verifyPath } from '@/lib/routes';
+import { verifyUrl } from '@/lib/routes';
 
 interface AnchorRecord {
   id: string;
@@ -323,13 +323,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           <CardContent className="flex flex-col items-center gap-4">
             <div className="rounded-lg border bg-white p-4">
               <QRCodeSVG
-                value={`${import.meta.env.VITE_APP_URL || location.origin}${verifyPath(anchor.publicId)}`}
+                value={verifyUrl(anchor.publicId)}
                 size={180}
                 level="M"
               />
             </div>
             <p className="text-xs text-muted-foreground text-center">
-              {import.meta.env.VITE_APP_URL || location.origin}{verifyPath(anchor.publicId)}
+              {verifyUrl(anchor.publicId)}
             </p>
           </CardContent>
         </Card>

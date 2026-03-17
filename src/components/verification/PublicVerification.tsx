@@ -17,7 +17,6 @@ import { useState, useEffect } from 'react';
 import {
   CheckCircle,
   XCircle,
-  Loader2,
   Fingerprint,
   Shield,
   Copy,
@@ -148,9 +147,40 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
   if (loading) {
     return (
-      <Card className="max-w-2xl mx-auto">
-        <CardContent className="flex items-center justify-center py-12">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <Card className="max-w-2xl mx-auto overflow-hidden">
+        {/* Skeleton status banner */}
+        <div className="bg-gradient-to-r from-primary/5 to-primary/10 px-6 py-6">
+          <div className="flex flex-col items-center text-center">
+            <div className="h-16 w-16 rounded-full bg-muted/60 shimmer mb-4" />
+            <div className="h-6 w-24 rounded-full bg-muted/60 shimmer mb-2" />
+            <div className="h-6 w-48 rounded bg-muted/60 shimmer mb-1" />
+            <div className="h-4 w-64 rounded bg-muted/40 shimmer" />
+          </div>
+        </div>
+        <CardContent className="p-6 space-y-6">
+          {/* Skeleton credential card */}
+          <div className="rounded-lg border p-4 space-y-3">
+            <div className="h-5 w-32 rounded bg-muted/60 shimmer" />
+            <div className="h-4 w-full rounded bg-muted/40 shimmer" />
+            <div className="h-4 w-3/4 rounded bg-muted/40 shimmer" />
+          </div>
+          <Separator />
+          {/* Skeleton cryptographic proof */}
+          <div className="space-y-3">
+            <div className="h-4 w-40 rounded bg-muted/60 shimmer" />
+            <div className="h-10 w-full rounded bg-muted/40 shimmer" />
+            <div className="h-4 w-48 rounded bg-muted/40 shimmer" />
+          </div>
+          <Separator />
+          {/* Skeleton lifecycle */}
+          <div className="space-y-3">
+            <div className="h-4 w-36 rounded bg-muted/60 shimmer" />
+            <div className="flex gap-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-8 w-20 rounded bg-muted/40 shimmer" />
+              ))}
+            </div>
+          </div>
         </CardContent>
       </Card>
     );

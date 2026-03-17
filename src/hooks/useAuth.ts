@@ -134,6 +134,9 @@ export function useAuth(): AuthState & AuthActions {
     setLoading(true);
     setError(null);
 
+    // Set flag so AuthGuard won't show misleading "sign in required" toast
+    sessionStorage.setItem('arkova_signed_out', '1');
+
     const { error } = await supabase.auth.signOut();
 
     if (error) {
