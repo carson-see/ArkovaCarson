@@ -116,12 +116,17 @@ WHERE org_id IN (
   SELECT org_id FROM public.profiles WHERE id IN (SELECT id FROM demo_users) AND org_id IS NOT NULL
 );
 
--- 3l. Delete audit events for demo users (requires SECURITY DEFINER bypass)
--- Note: audit_events has a reject_modification trigger, but DELETE is allowed
--- if the trigger only blocks UPDATE. If DELETE is also blocked, skip this step
--- and rely on the PII-03 retention policy to clean up after 2 years.
-DELETE FROM public.audit_events
-WHERE actor_id IN (SELECT id FROM demo_users);
+-- 3l. Delete audit events for demo users
+-- audit_events has a reject_modification trigger. If it blocks DELETE,
+-- gracefully skip and let PII-03 retention policy clean up after 2 years.
+DO $$
+BEGIN
+  DELETE FROM public.audit_events
+  WHERE actor_id IN (SELECT id FROM demo_users);
+  RAISE NOTICE 'Demo audit events deleted.';
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'Could not delete audit events (trigger blocked DELETE). PII-03 retention will clean up.';
+END $$;
 
 -- 3m. Delete credits for demo users
 DELETE FROM public.credits

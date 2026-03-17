@@ -98,6 +98,15 @@ const ConfigSchema = z.object({
   apiKeyHmacSecret: z.string().min(1).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
+}).superRefine((cfg, ctx) => {
+  // Fail fast: production must have at least one cron auth method configured
+  if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Production requires CRON_SECRET or CRON_OIDC_AUDIENCE — cron endpoints would be unreachable without auth',
+      path: ['cronSecret'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

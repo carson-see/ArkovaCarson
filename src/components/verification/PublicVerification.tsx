@@ -512,10 +512,13 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
     };
   }
 
+  // Escape </script> sequences to prevent XSS breakout from JSON-LD
+  const safeJson = JSON.stringify(jsonLd).replace(/<\//g, '<\\/');
+
   return (
     <script
       type="application/ld+json"
-      dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      dangerouslySetInnerHTML={{ __html: safeJson }}
     />
   );
 }

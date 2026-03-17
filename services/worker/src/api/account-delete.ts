@@ -81,7 +81,7 @@ export async function handleAccountDelete(
     }
 
     logger.info(
-      { userId, anonymizeResult },
+      { userId, success: true },
       'Account deleted successfully (GDPR Art. 17)',
     );
 

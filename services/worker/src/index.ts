@@ -414,9 +414,16 @@ async function verifyCronAuth(req: express.Request): Promise<boolean> {
   try {
     const { createRemoteJWKSet, jwtVerify } = await import('jose');
     const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+    // If no audience is configured, reject OIDC auth — without audience
+    // validation, any Google-signed JWT would be accepted (jose skips aud check
+    // when audience is undefined).
+    if (!config.cronOidcAudience) {
+      logger.warn('OIDC audience not configured — rejecting Bearer token');
+      return false;
+    }
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: 'https://accounts.google.com',
-      audience: config.cronOidcAudience || undefined,
+      audience: config.cronOidcAudience,
     });
     return Boolean(payload?.iss && payload?.exp);
   } catch (err) {

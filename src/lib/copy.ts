@@ -753,6 +753,9 @@ export const ACCOUNT_DELETE_LABELS = {
   CONSEQUENCE_4: 'Preserved records will be disassociated from your identity',
   CONFIRM_BUTTON: 'Permanently Delete Account',
   DELETING: 'Deleting...',
+  DANGER_ZONE_TITLE: 'Danger Zone',
+  DANGER_ZONE_DESCRIPTION: 'Irreversible account actions',
+  DANGER_ZONE_DETAIL: 'Permanently delete your account and anonymize all personal data. This cannot be undone.',
 } as const;
 
 // =============================================================================

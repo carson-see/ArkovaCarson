@@ -64,8 +64,15 @@ BEGIN
       USING ERRCODE = 'check_violation';
   END IF;
 
+  -- Anonymize PII in audit trail (GDPR Art. 17) before soft-delete
+  SELECT anonymize_user_data(v_user_id) INTO v_anonymize_result;
+
   -- Soft-delete the profile
   UPDATE profiles SET deleted_at = now() WHERE id = v_user_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Profile not found'
+      USING ERRCODE = 'no_data_found';
+  END IF;
 
   -- Log the deletion as an audit event (no PII — actor_id only)
   INSERT INTO audit_events (
@@ -78,7 +85,7 @@ BEGIN
 
   RETURN jsonb_build_object(
     'success', true,
-    'message', 'Account marked for deletion. Personal data will be anonymized.'
+    'message', 'Account deleted. Personal data has been anonymized.'
   );
 END;
 $$;

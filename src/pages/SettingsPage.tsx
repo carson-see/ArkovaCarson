@@ -331,10 +331,10 @@ export function SettingsPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-destructive">
               <Trash2 className="h-5 w-5" />
-              Danger Zone
+              {ACCOUNT_DELETE_LABELS.DANGER_ZONE_TITLE}
             </CardTitle>
             <CardDescription>
-              Irreversible account actions
+              {ACCOUNT_DELETE_LABELS.DANGER_ZONE_DESCRIPTION}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -342,7 +342,7 @@ export function SettingsPage() {
               <div>
                 <p className="text-sm font-medium">{ACCOUNT_DELETE_LABELS.DELETE_BUTTON}</p>
                 <p className="text-xs text-muted-foreground max-w-md">
-                  Permanently delete your account and anonymize all personal data. This cannot be undone.
+                  {ACCOUNT_DELETE_LABELS.DANGER_ZONE_DETAIL}
                 </p>
               </div>
               <DeleteAccountDialog userEmail={user?.email ?? ''} />
