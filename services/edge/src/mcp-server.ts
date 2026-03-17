@@ -133,12 +133,22 @@ export async function handleMcpRequest(
   request: Request,
   env: Env,
 ): Promise<Response> {
+  // Determine allowed CORS origin from request
+  const requestOrigin = request.headers.get('Origin') ?? '';
+  const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://arkova-carson.vercel.app,https://app.arkova.ai')
+    .split(',')
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0);
+  const corsOrigin = allowedOrigins.includes(requestOrigin)
+    ? requestOrigin
+    : (allowedOrigins[0] ?? 'https://app.arkova.ai');
+
   // CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
       headers: {
-        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Origin': corsOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, Mcp-Session-Id, MCP-Protocol-Version',
         'Access-Control-Max-Age': '86400',
@@ -157,7 +167,10 @@ export async function handleMcpRequest(
       }),
       {
         status: 401,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Access-Control-Allow-Origin': corsOrigin,
+        },
       },
     );
   }
@@ -189,7 +202,7 @@ export async function handleMcpRequest(
 
     // Add CORS headers to response
     const headers = new Headers(response.headers);
-    headers.set('Access-Control-Allow-Origin', '*');
+    headers.set('Access-Control-Allow-Origin', corsOrigin);
 
     return new Response(response.body, {
       status: response.status,
@@ -200,7 +213,10 @@ export async function handleMcpRequest(
     console.error('[mcp-server] Request handling failed:', error);
     return new Response(
       JSON.stringify({ error: 'MCP server error', message: 'Internal server error' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
+      { status: 500, headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': corsOrigin,
+      } },
     );
   }
 }

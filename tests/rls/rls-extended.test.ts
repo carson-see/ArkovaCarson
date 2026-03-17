@@ -103,6 +103,8 @@ describe('RLS: Credential Templates', () => {
     });
 
     expect(error).not.toBeNull();
+    // RLS denies cross-org inserts with a policy violation
+    expect(error!.code).toBe('42501');
   });
 
   it('INDIVIDUAL user cannot insert templates', async () => {
@@ -115,6 +117,7 @@ describe('RLS: Credential Templates', () => {
     });
 
     expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
   });
 
   it('anonymous users cannot read templates', async () => {
@@ -195,6 +198,7 @@ describe('RLS: Memberships', () => {
 
     // Should fail — only service role can insert memberships
     expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
   });
 });
 
@@ -270,6 +274,7 @@ describe('RLS: Invitations', () => {
     });
 
     expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
   });
 
   it('INDIVIDUAL user cannot create invitations', async () => {
@@ -281,6 +286,7 @@ describe('RLS: Invitations', () => {
     });
 
     expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
   });
 
   it('INDIVIDUAL user cannot read invitations', async () => {
@@ -345,10 +351,10 @@ describe('RLS: Webhook Endpoints', () => {
     const { data, error } = await adminClient.from('webhook_endpoints').select('*');
 
     expect(error).toBeNull();
+    expect(data).not.toBeNull();
+    expect(data!.length).toBeGreaterThan(0);
     // All endpoints belong to admin's org
-    if (data && data.length > 0) {
-      expect(data.every((e) => e.org_id === ARKOVA_ORG_ID)).toBe(true);
-    }
+    expect(data!.every((e) => e.org_id === ARKOVA_ORG_ID)).toBe(true);
 
     // Cleanup
     if (inserted?.[0]?.id) {
@@ -397,5 +403,6 @@ describe('RLS: Webhook Endpoints', () => {
     });
 
     expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
   });
 });
