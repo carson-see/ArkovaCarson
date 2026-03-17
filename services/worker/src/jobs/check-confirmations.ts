@@ -103,7 +103,7 @@ async function checkAnchorConfirmation(anchor: {
 }): Promise<boolean> {
   const txData = await fetchTxStatus(anchor.chain_tx_id);
 
-  if (!txData || !txData.status.confirmed) {
+  if (!txData?.status.confirmed) {
     logger.debug({ anchorId: anchor.id, txid: anchor.chain_tx_id }, 'Transaction not yet confirmed');
     return false;
   }

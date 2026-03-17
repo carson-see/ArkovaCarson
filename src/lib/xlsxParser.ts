@@ -12,6 +12,13 @@
 import * as XLSX from 'xlsx';
 import type { ParsedCsv, CsvColumn, CsvRow } from './csvParser';
 
+/** Safely coerce a cell value to string (avoids [object Object] for non-primitives). */
+function cellToString(cell: unknown): string {
+  if (cell === null || cell === undefined) return '';
+  if (typeof cell === 'object') return JSON.stringify(cell);
+  return String(cell);
+}
+
 /**
  * Check if a file is an Excel format.
  */
@@ -63,7 +70,7 @@ export async function parseExcelFile(file: File): Promise<ParsedCsv> {
   }
 
   // First row = headers
-  const headers = (rawData[0] as unknown[]).map((cell) => String(cell ?? '').trim());
+  const headers = rawData[0].map((cell) => cellToString(cell).trim());
 
   const columns: CsvColumn[] = headers.map((name, index) => ({
     index,
@@ -74,15 +81,15 @@ export async function parseExcelFile(file: File): Promise<ParsedCsv> {
   // Remaining rows = data
   const rows: CsvRow[] = [];
   for (let i = 1; i < rawData.length; i++) {
-    const rawRow = rawData[i] as unknown[];
+    const rawRow = rawData[i];
 
     // Skip completely empty rows
-    const hasData = rawRow.some((cell) => String(cell ?? '').trim() !== '');
+    const hasData = rawRow.some((cell) => cellToString(cell).trim() !== '');
     if (!hasData) continue;
 
     const data: Record<string, string> = {};
     headers.forEach((header, index) => {
-      data[header] = String(rawRow[index] ?? '').trim();
+      data[header] = cellToString(rawRow[index]).trim();
     });
 
     rows.push({
@@ -93,7 +100,7 @@ export async function parseExcelFile(file: File): Promise<ParsedCsv> {
     // Set sample values from first data row
     if (rows.length === 1) {
       columns.forEach((col, index) => {
-        col.sample = String(rawRow[index] ?? '').trim();
+        col.sample = cellToString(rawRow[index]).trim();
       });
     }
   }

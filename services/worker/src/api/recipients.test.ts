@@ -64,7 +64,11 @@ function mockDbChain(result: { data?: unknown; error?: unknown }) {
   for (const m of methods) {
     chain[m] = vi.fn().mockReturnValue(chain);
   }
-  chain['then'] = (resolve: (v: unknown) => void) => resolve(result);
+  // Make the chain thenable so it can be awaited (SonarQube S7739: use defineProperty)
+  Object.defineProperty(chain, 'then', {
+    value: (resolve: (v: unknown) => void) => resolve(result),
+    enumerable: false,
+  });
   return chain;
 }
 

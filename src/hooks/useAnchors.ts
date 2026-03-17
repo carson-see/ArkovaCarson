@@ -83,6 +83,30 @@ export function useAnchors(): UseAnchorsReturn {
     fetchAnchors();
   }, [fetchAnchors]);
 
+  // Extracted handler to reduce nesting depth (SonarQube S2004)
+  const handleRealtimePayload = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (payload: { eventType: string; new: any; old: any }) => {
+      if (payload.eventType === 'UPDATE') {
+        const updated = payload.new as AnchorRow;
+        setRecords((prev) =>
+          prev.map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
+        );
+      } else if (payload.eventType === 'INSERT') {
+        const inserted = payload.new as AnchorRow;
+        if (!inserted.deleted_at) {
+          setRecords((prev) => [mapAnchorToRecord(inserted), ...prev]);
+        }
+      } else if (payload.eventType === 'DELETE') {
+        const deleted = payload.old as Partial<AnchorRow>;
+        if (deleted.id) {
+          setRecords((prev) => prev.filter((r) => r.id !== deleted.id));
+        }
+      }
+    },
+    [],
+  );
+
   // Realtime subscription for anchor changes (BETA-01)
   useEffect(() => {
     if (!user) return;
@@ -96,24 +120,7 @@ export function useAnchors(): UseAnchorsReturn {
           schema: 'public',
           table: 'anchors',
         },
-        (payload) => {
-          if (payload.eventType === 'UPDATE') {
-            const updated = payload.new as AnchorRow;
-            setRecords((prev) =>
-              prev.map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
-            );
-          } else if (payload.eventType === 'INSERT') {
-            const inserted = payload.new as AnchorRow;
-            if (!inserted.deleted_at) {
-              setRecords((prev) => [mapAnchorToRecord(inserted), ...prev]);
-            }
-          } else if (payload.eventType === 'DELETE') {
-            const deleted = payload.old as Partial<AnchorRow>;
-            if (deleted.id) {
-              setRecords((prev) => prev.filter((r) => r.id !== deleted.id));
-            }
-          }
-        },
+        handleRealtimePayload,
       )
       .subscribe();
 

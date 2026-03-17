@@ -58,7 +58,7 @@ export async function createPendingRecipient(
   }
 
   // Generate activation token
-  const { randomBytes } = await import('crypto');
+  const { randomBytes } = await import('node:crypto');
   const activationToken = randomBytes(32).toString('hex');
   const profileId = crypto.randomUUID();
 

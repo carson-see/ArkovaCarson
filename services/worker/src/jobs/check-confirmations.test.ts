@@ -140,12 +140,12 @@ const MOCK_UNCONFIRMED_TX = {
 // ================================================================
 
 describe('checkSubmittedConfirmations', () => {
-  const originalFetch = global.fetch;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     vi.clearAllMocks();
 
-    global.fetch = mockFetch;
+    globalThis.fetch = mockFetch;
 
     // Defaults
     mockAnchorsSelectResult.data = [];
@@ -157,7 +157,7 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
   });
 
   // ---- No work ----

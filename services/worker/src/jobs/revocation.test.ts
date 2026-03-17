@@ -74,8 +74,11 @@ function makeChainableMock(result: { data?: unknown; error?: unknown }) {
   for (const m of methods) {
     chainable[m] = vi.fn().mockReturnValue(chainable);
   }
-  // Terminal: resolves the promise
-  chainable['then'] = (resolve: (v: unknown) => void) => resolve(result);
+  // Terminal: resolves the promise (SonarQube S7739: use defineProperty)
+  Object.defineProperty(chainable, 'then', {
+    value: (resolve: (v: unknown) => void) => resolve(result),
+    enumerable: false,
+  });
   return chainable;
 }
 
