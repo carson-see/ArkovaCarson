@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 146/163 stories complete (90%). 1,631 tests (748 frontend + 883 worker). 62 migration files (0001-0063, 0033 skipped). P4.5 COMPLETE (13/13). P8: 15/19 (79%). GEO: 4 complete, 3 partial, 5 not started.
+**Overall progress:** 151/163 stories complete (93%). 1,770 tests (823 frontend + 947 worker). 64 migration files (0001-0065, 0033 skipped). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started.
 
 ### Open Blockers
 
@@ -38,7 +38,7 @@ All HIGH+ launch blockers resolved:
 | ~~MVP-05~~ | ~~HIGH~~ | ~~Error boundary + 404~~ | ~~COMPLETE~~ |
 | ~~MVP-11~~ | ~~HIGH~~ | ~~Stripe plan change/downgrade~~ | ~~COMPLETE (PR #43)~~ |
 
-### P8 AI Intelligence — 15/19 COMPLETE (Phase I + 1.5 done)
+### P8 AI Intelligence — 19/19 COMPLETE (All phases done)
 
 | Story | Description | Status |
 |-------|-------------|--------|
@@ -57,6 +57,10 @@ All HIGH+ launch blockers resolved:
 | P8-S17 | AI Provider Abstraction (IAIProvider + factory + fallback) | **COMPLETE** — 16 tests |
 | P8-S18 | Client-Side PII Stripping (Constitution 4A) | **COMPLETE** — 27 tests |
 | P8-S19 | Agentic Verification Endpoint | **COMPLETE** — 5 tests |
+| P8-S6 | Extraction Learning / Feedback Loop (Phase II) | **COMPLETE** — migration 0064, 8 tests |
+| P8-S8 | Duplicate Detection / Integrity Scoring (Phase II) | **COMPLETE** — migration 0064, 10 tests |
+| P8-S9 | Admin Review Queue (Phase II) | **COMPLETE** — migration 0064, 8 tests |
+| P8-S16 | AI Reports Dashboard (Phase II) | **COMPLETE** — 6 tests |
 
 ### Sentry Integration
 
@@ -85,12 +89,12 @@ All HIGH+ launch blockers resolved:
 
 ### What's Production-Ready
 
-- Database layer (62 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
+- Database layer (64 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
 - CI/CD pipeline (typecheck, lint, test, copy-lint, build-check, E2E)
-- Worker test coverage (883 tests across 54 files, 80%+ on all critical paths)
+- Worker test coverage (947 tests across 54+ files, 80%+ on all critical paths)
 - Webhook delivery engine + settings UI
 - Stripe webhook handlers + billing UI
 - PDF + JSON proof downloads
@@ -117,14 +121,14 @@ All HIGH+ launch blockers resolved:
 | GEO-02 | CRITICAL | Fix LinkedIn entity collision + expand sameAs | PARTIAL (sameAs fixed; LinkedIn page + Wikidata external) |
 | GEO-03 | CRITICAL | Publish /privacy and /terms on marketing site | NOT STARTED |
 | GEO-04 | HIGH | About page with team bios + Person schema | NOT STARTED |
-| GEO-05 | HIGH | Enhanced schema (WebSite, speakable, AggregateOffer) | PARTIAL (WebSite deployed; speakable + AggregateOffer pending) |
+| GEO-05 | HIGH | Enhanced schema (WebSite, speakable, AggregateOffer) | **COMPLETE** (speakable + AggregateOffer deployed) |
 | GEO-06 | HIGH | Deploy upgraded llms.txt | **COMPLETE** |
 | GEO-07 | HIGH | Fix broken og:image + complete meta tags | **COMPLETE** |
 | GEO-08 | HIGH | Content expansion — 5 core pages | NOT STARTED |
 | GEO-09 | MEDIUM | Community & brand presence launch | NOT STARTED |
 | GEO-10 | MEDIUM | IndexNow for Bing/Copilot | NOT STARTED |
 | GEO-11 | MEDIUM | YouTube explainers + VideoObject schema | NOT STARTED |
-| GEO-12 | MEDIUM | Security headers + technical SEO hardening | NOT STARTED |
+| GEO-12 | MEDIUM | Security headers + technical SEO hardening | **COMPLETE** (vercel.json headers) |
 
 **GEO Audit Score:** 42→63→~72/100 (re-audited 2026-03-16) | **Target:** 80/100
 **Reports:** `GEO-AUDIT-REPORT.md`, `GEO-CRAWLER-ACCESS.md`, `GEO-LLMSTXT-ANALYSIS.md`, `GEO-SCHEMA-REPORT.md`
@@ -147,7 +151,7 @@ All HIGH+ launch blockers resolved:
 
 **Test coverage:** 820 tests passing (11 new/modified). CI clean (typecheck, lint, test, lint:copy).
 **Files modified:** 7 source files + 4 test files.
-**Remaining open UAT bugs:** 3 (UAT2-12, UAT2-14, UAT3-05 — all LOW).
+**Remaining open UAT bugs:** 0 (UAT2-12, UAT2-14, UAT3-05 all resolved — see doc sync session).
 
 ### Session: 2026-03-16 — GEO Re-Audit + Marketing Site Polish + Doc Sync
 

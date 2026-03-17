@@ -372,6 +372,7 @@ export const API_KEY_LABELS = {
   EXPIRED: 'Expired',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
+  FETCH_ERROR: 'Unable to load API keys. Ensure the worker service is running.',
   SCOPE_VERIFY: 'Verify',
   SCOPE_BATCH: 'Batch',
   SCOPE_USAGE: 'Usage',

@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-15 ~11:45 PM EST_
+_Last updated: 2026-03-16 ~11:00 PM EST_
 
 ## Overview
 
@@ -32,12 +32,12 @@ For a new developer joining the project, read in this order:
 | P4.5 | Verification API | 13 | 13 | 0 | 0 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
 | MVP | Launch Gaps | 27 | 25 | 0 | 2 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
-| P8 | AI Intelligence | 19 | 15 | 0 | 4 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
+| P8 | AI Intelligence | 19 | 19 | 0 | 0 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 7 | 1 | 0 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
-| GEO | GEO & SEO Optimization | 12 | 3 | 3 | 6 | [15_geo_seo.md](./15_geo_seo.md) |
-| **Total** | | **163** | **146** | **4** | **13** | |
+| GEO | GEO & SEO Optimization | 12 | 5 | 2 | 5 | [15_geo_seo.md](./15_geo_seo.md) |
+| **Total** | | **163** | **151** | **3** | **9** | |
 
 ### All Stories by ID
 
@@ -124,47 +124,47 @@ For a new developer joining the project, read in this order:
 | MVP-11 | Stripe Plan Change/Downgrade | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | ~~CRIT-3~~ RESOLVED |
 | MVP-12 | Dark Mode Toggle | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-13 | Organization Logo Upload | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-14 | Embeddable Verification Widget | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-14 | Embeddable Verification Widget | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-16 | Block Explorer Deep Links | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-17 | Credential Template Metadata Enhancement | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-18 | Enhanced Metadata Display | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-17 | Credential Template Metadata Enhancement | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-18 | Enhanced Metadata Display | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | ~~MVP-19~~ | ~~AI Auto-Descriptions~~ | REMOVED | [MVP](./11_mvp_launch_gaps.md) | Superseded by P8-S4/S5 |
 | MVP-20 | LinkedIn Badge Integration (Phase 2) | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-21 | Individual Self-Verification Flow | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | ~~MVP-22~~ | ~~AI Fraud Detection~~ | REMOVED | [MVP](./11_mvp_launch_gaps.md) | Superseded by P8-S7/S8/S9 |
-| MVP-23 | Batch Anchor Processing | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-23 | Batch Anchor Processing | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-24 | Credits Schema + Monthly Allocations | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-25 | Credits Tracking + Scheduling | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-26 | GCP Cloud Run Deployment | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-27 | GCP Secret Manager Integration | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-28 | GCP Cloud Scheduler | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
-| MVP-29 | GCP Cloud KMS Integration | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
+| MVP-29 | GCP Cloud KMS Integration | COMPLETE | [MVP](./11_mvp_launch_gaps.md) | — |
 | MVP-30 | GCP CI/CD Pipeline | NOT STARTED | [MVP](./11_mvp_launch_gaps.md) | — |
 | P8-S1 | Gemini API Integration + IAIProvider | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S2 | AI Cost Tracking + Credits Schema | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S3 | AI Feature Flags | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S4 | AI Credential Extraction Service | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S5 | AI Extraction UI | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S6 | Extraction Learning / Feedback Loop | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S6 | Extraction Learning / Feedback Loop | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S7 | Cloudflare Crawler (Institution Ingestion) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S8 | Duplicate Detection (Cross-Org) | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S9 | Admin Review Queue | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S8 | Integrity Score UI | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S9 | Human Review Workflow | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S10 | pgvector Extension + Embedding Schema | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S11 | Embedding Generation Pipeline | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S12 | Semantic Search UI | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S13 | Batch AI Processing (Cloudflare Queues) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S14 | Batch AI Dashboard | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S15 | R2 Report Storage (Zero-Egress Signed URLs) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
-| P8-S16 | Multi-Language OCR Support | NOT STARTED | [P8](./12_p8_ai_intelligence.md) | — |
+| P8-S16 | Report UI | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S17 | AI Provider Abstraction (IAIProvider + Factory) | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S18 | Client-Side PII Stripping Library | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
 | P8-S19 | Agentic Verification Endpoint | COMPLETE | [P8](./12_p8_ai_intelligence.md) | — |
-| INFRA-01 | Cloudflare Tunnel Sidecar Setup | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-01 | Cloudflare Tunnel Sidecar Setup | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-02 | Wrangler + Edge Worker Scaffolding | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-03 | R2 Report Storage Bucket | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-04 | Batch Anchor Queue (Cloudflare Queues) | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-05 | Cloudflare Workers AI Fallback Provider | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
-| INFRA-06 | Replicate QA Data Generator | NOT STARTED | [INFRA](./13_infrastructure_edge.md) | — |
+| INFRA-06 | Replicate QA Data Generator | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-07 | Sentry Observability Integration | PARTIAL | [INFRA](./13_infrastructure_edge.md) | — |
 | INFRA-08 | pgvector Extension + Institution Ground Truth | COMPLETE | [INFRA](./13_infrastructure_edge.md) | — |
 | UF-01 | Template-Based Credential Rendering | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
@@ -177,18 +177,18 @@ For a new developer joining the project, read in this order:
 | UF-08 | Post-Issuance Actions + Share Flow | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 | UF-09 | Org Context + Navigation Polish | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
 | UF-10 | Onboarding Completion + Empty State Guidance | COMPLETE | [UF](./14_user_flow_gaps.md) | — |
-| GEO-01 | SSR for Marketing Site | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-01 | SSR for Marketing Site | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-02 | Fix LinkedIn Entity Collision + Expand sameAs | PARTIAL | [GEO](./15_geo_seo.md) | — |
 | GEO-03 | Publish Privacy + Terms on Marketing Site | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-04 | About Page + Team Bios + Person Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
-| GEO-05 | Enhanced Schema (WebSite, speakable, AggregateOffer) | PARTIAL | [GEO](./15_geo_seo.md) | — |
+| GEO-05 | Enhanced Schema (WebSite, speakable, AggregateOffer) | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-06 | Deploy Upgraded llms.txt | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-07 | Fix Broken og:image + Complete Meta Tags | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-08 | Content Expansion — 5 Core Pages | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-09 | Community & Brand Presence Launch | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-10 | IndexNow for Bing/Copilot | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-11 | YouTube Explainers + VideoObject Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
-| GEO-12 | Security Headers + Technical SEO Hardening | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-12 | Security Headers + Technical SEO Hardening | COMPLETE | [GEO](./15_geo_seo.md) | — |
 
 ## Bug Cross-Reference
 

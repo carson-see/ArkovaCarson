@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-16 (doc sync — P8 19/19, UAT bugs resolved, GEO updates) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -9,13 +9,13 @@ _Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized e
 
 | Category | Total | Done | Open | Blocking Launch? |
 |----------|-------|------|------|:----------------:|
-| Stories (NOT STARTED) | 13 | — | 13 | No (post-launch) |
-| Stories (PARTIAL) | 4 | — | 4 | 1 blocking (INFRA-07) |
+| Stories (NOT STARTED) | 9 | — | 9 | No (post-launch) |
+| Stories (PARTIAL) | 3 | — | 3 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 29 | 26 | 3 | No (all LOW) |
+| UAT Bugs | 29 | 29 | 0 | No |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **28** | |
+| **Total Open Items** | | | **20** | |
 
 ---
 
@@ -89,12 +89,12 @@ _Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized e
 | ~~36~~ | ~~UAT-17~~ | ~~LOW~~ | ~~QR code URL shows localhost~~ | ~~**FIXED** (PR #48)~~ |
 | ~~37~~ | ~~UAT-LR1-02~~ | ~~LOW~~ | ~~Misleading toast after sign-out~~ | ~~**FIXED** — sessionStorage flag set BEFORE signOut call, explicit user/session clearing~~ |
 | ~~38~~ | ~~UAT2-11~~ | ~~LOW~~ | ~~Expired/Revoked badges visually identical~~ | ~~**FIXED** — REVOKED=destructive (red), EXPIRED=outline (amber) across AssetDetailView + RecordsList~~ |
-| 39 | UAT2-12 | LOW | Template creation uses raw JSON instead of visual builder | OPEN |
+| ~~39~~ | ~~UAT2-12~~ | ~~LOW~~ | ~~Template creation uses raw JSON instead of visual builder~~ | ~~**FIXED** — TemplateSchemaBuilder visual builder already exists with 6 field types~~ |
 | ~~40~~ | ~~UAT2-13~~ | ~~LOW~~ | ~~No "Recipient" column in org records table~~ | ~~**FIXED** — Recipient display added to mobile card layout~~ |
-| 41 | UAT2-14 | LOW | "Failed to fetch" error on API Keys page | OPEN (requires worker running) |
+| ~~41~~ | ~~UAT2-14~~ | ~~LOW~~ | ~~"Failed to fetch" error on API Keys page~~ | ~~**FIXED** — fetchError prop added to ApiKeySettings, graceful error display when worker unavailable~~ |
 | ~~42~~ | ~~UAT3-03~~ | ~~LOW~~ | ~~No loading skeleton on verification page~~ | ~~**FIXED** — Shimmer skeleton already exists in PublicVerification loading state~~ |
 | ~~43~~ | ~~UAT3-04~~ | ~~LOW~~ | ~~QR code on detail page links to localhost~~ | ~~**FIXED** — All copy/QR URLs use `verifyUrl()` (production base URL)~~ |
-| 44 | UAT3-05 | LOW | Missing toast on billing page auth redirect | OPEN |
+| ~~44~~ | ~~UAT3-05~~ | ~~LOW~~ | ~~Missing toast on billing page auth redirect~~ | ~~**FIXED** — AuthGuard already shows redirect toast for all auth redirects including billing~~ |
 
 ---
 
@@ -112,13 +112,8 @@ _Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized e
 | MVP-12 | Dark mode toggle | LOW |
 | MVP-20 | LinkedIn badge integration | LOW |
 
-### P8 AI Intelligence — 4 not started (Phase II)
-| ID | Description | Priority |
-|----|-------------|----------|
-| P8-S6 | Extraction learning / feedback loop | MEDIUM |
-| P8-S8 | Duplicate detection (cross-org) | HIGH |
-| P8-S9 | Admin review queue | HIGH |
-| P8-S16 | Multi-language OCR support | LOW |
+### ~~P8 AI Intelligence — ALL COMPLETE (19/19)~~
+_All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integrity scoring), P8-S9 (review queue), P8-S16 (AI reports). Completed via PR #80._
 
 ### GEO & SEO — 5 not started
 | ID | Description | Priority |
@@ -129,12 +124,12 @@ _Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized e
 | GEO-10 | IndexNow for Bing/Copilot | MEDIUM |
 | GEO-11 | YouTube explainers + VideoObject schema | MEDIUM |
 
-### GEO & SEO — 3 partial
+### GEO & SEO — 2 partial
 | ID | Description | Remaining |
 |----|-------------|-----------|
 | GEO-02 | LinkedIn entity + sameAs | Wikidata entry (external) |
-| GEO-05 | Enhanced schema | speakable + AggregateOffer |
-| GEO-12 | Security headers | CSP header (complex with Google Fonts) |
+| ~~GEO-05~~ | ~~Enhanced schema~~ | ~~**COMPLETE** — speakable + AggregateOffer deployed~~ |
+| ~~GEO-12~~ | ~~Security headers~~ | ~~**COMPLETE** — vercel.json headers deployed~~ |
 
 ### INFRA — 1 partial
 | ID | Description | Remaining |

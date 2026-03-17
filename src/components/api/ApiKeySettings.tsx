@@ -42,6 +42,7 @@ interface ApiKeySettingsProps {
   onRevoke: (keyId: string) => Promise<void>;
   onDelete: (keyId: string) => Promise<void>;
   loading?: boolean;
+  fetchError?: string | null;
 }
 
 const AVAILABLE_SCOPES = [
@@ -74,6 +75,7 @@ export function ApiKeySettings({
   onRevoke,
   onDelete,
   loading = false,
+  fetchError = null,
 }: ApiKeySettingsProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<'form' | 'secret'>('form');
@@ -304,6 +306,16 @@ export function ApiKeySettings({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Fetch error state */}
+      {fetchError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            {API_KEY_LABELS.FETCH_ERROR}: {fetchError}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Key list */}
       {loading ? (

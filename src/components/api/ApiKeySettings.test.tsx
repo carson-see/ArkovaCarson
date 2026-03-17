@@ -83,4 +83,15 @@ describe('ApiKeySettings', () => {
     const revokeButtons = screen.getAllByText('Revoke');
     expect(revokeButtons).toHaveLength(1);
   });
+
+  it('shows fetch error alert when fetchError is provided', () => {
+    render(<ApiKeySettings {...defaultProps} keys={[]} fetchError="Failed to fetch" />);
+    expect(screen.getByText(/Unable to load API keys/)).toBeInTheDocument();
+    expect(screen.getByText(/Failed to fetch/)).toBeInTheDocument();
+  });
+
+  it('does not show error alert when fetchError is null', () => {
+    render(<ApiKeySettings {...defaultProps} fetchError={null} />);
+    expect(screen.queryByText(/Unable to load API keys/)).not.toBeInTheDocument();
+  });
 });

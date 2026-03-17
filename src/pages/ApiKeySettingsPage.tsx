@@ -20,7 +20,7 @@ export function ApiKeySettingsPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
-  const { keys, loading: keysLoading, createKey, revokeKey, deleteKey } = useApiKeys();
+  const { keys, loading: keysLoading, error: keysError, createKey, revokeKey, deleteKey } = useApiKeys();
   const { usage, loading: usageLoading, error: usageError } = useApiUsage();
 
   const handleSignOut = async () => {
@@ -42,6 +42,7 @@ export function ApiKeySettingsPage() {
           onRevoke={revokeKey}
           onDelete={deleteKey}
           loading={keysLoading}
+          fetchError={keysError}
         />
         <ApiUsageDashboard
           usage={usage}
