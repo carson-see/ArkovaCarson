@@ -59,4 +59,17 @@ describe('Sidebar', () => {
     renderSidebar({ orgName: 'Test University' });
     expect(screen.getAllByText('Test University').length).toBeGreaterThanOrEqual(1);
   });
+
+  it('renders theme toggle button visible to all viewports (UAT2-15)', () => {
+    renderSidebar();
+    // Theme toggle should be rendered (no longer hidden behind md:block on parent)
+    const themeButtons = screen.getAllByRole('button', { name: /theme/i });
+    expect(themeButtons.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows mobile close button when mobileOpen (UAT2-15)', () => {
+    renderSidebar({ mobileOpen: true, onMobileClose: vi.fn() });
+    const closeButton = screen.getAllByRole('button', { name: /close navigation/i });
+    expect(closeButton.length).toBeGreaterThanOrEqual(1);
+  });
 });

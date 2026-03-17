@@ -49,12 +49,12 @@ const statusConfig = {
   },
   REVOKED: {
     label: 'Revoked',
-    variant: 'secondary' as const,
+    variant: 'destructive' as const,
     icon: XCircle,
   },
   EXPIRED: {
     label: 'Expired',
-    variant: 'secondary' as const,
+    variant: 'outline' as const,
     icon: AlertTriangle,
   },
 };

@@ -133,6 +133,22 @@ All HIGH+ launch blockers resolved:
 
 ## Session Log
 
+### Session: 2026-03-16 — UAT Batch Fix (8 bugs)
+
+**8 UAT bugs resolved in single batch PR (`fix/uat-bugs-batch-8`):**
+- UAT2-08: Member detail page already exists (verified, no code change)
+- UAT2-09: Starter template suggestions in CredentialTemplatesManager empty state
+- UAT2-15: Mobile sidebar `overflow-y-auto` fix for bottom nav items
+- UAT-LR1-02: Sign-out toast race condition — sessionStorage flag before signOut
+- UAT2-11: Badge variants — REVOKED=destructive (red), EXPIRED=outline (amber)
+- UAT2-13: Recipient display in OrgRegistryTable mobile card layout
+- UAT3-03: Shimmer skeleton already exists in PublicVerification (verified, no code change)
+- UAT3-04: Copy/QR URLs standardized to `verifyUrl()` (production base URL)
+
+**Test coverage:** 820 tests passing (11 new/modified). CI clean (typecheck, lint, test, lint:copy).
+**Files modified:** 7 source files + 4 test files.
+**Remaining open UAT bugs:** 3 (UAT2-12, UAT2-14, UAT3-05 — all LOW).
+
 ### Session: 2026-03-16 — GEO Re-Audit + Marketing Site Polish + Doc Sync
 
 **GEO Re-Audit Results (5 parallel subagents):**

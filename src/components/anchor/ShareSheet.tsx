@@ -20,7 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import { verifyPath } from '@/lib/routes';
+import { verifyUrl } from '@/lib/routes';
 import { SHARE_LABELS } from '@/lib/copy';
 
 interface ShareSheetProps {
@@ -32,8 +32,7 @@ interface ShareSheetProps {
 
 export function ShareSheet({ open, onOpenChange, publicId, filename }: Readonly<ShareSheetProps>) {
   const [linkCopied, setLinkCopied] = useState(false);
-  const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-  const verificationUrl = `${baseUrl}${verifyPath(publicId)}`;
+  const verificationUrl = verifyUrl(publicId);
 
   const handleCopyLink = useCallback(async () => {
     await navigator.clipboard.writeText(verificationUrl);

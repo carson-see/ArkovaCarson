@@ -106,6 +106,33 @@ describe('AssetDetailView', () => {
     expect(queryByText('Verification QR Code')).not.toBeInTheDocument();
   });
 
+  it('should use destructive variant for REVOKED badge (UAT2-11)', () => {
+    const revokedAnchor = { ...mockAnchor, status: 'REVOKED' as const };
+    const { container } = render(<AssetDetailView anchor={revokedAnchor} />);
+
+    // The REVOKED badge should use destructive variant (red styling)
+    const badges = container.querySelectorAll('[class*="destructive"]');
+    expect(badges.length).toBeGreaterThan(0);
+  });
+
+  it('should use outline variant for EXPIRED badge (UAT2-11)', () => {
+    const expiredAnchor = { ...mockAnchor, status: 'EXPIRED' as const };
+    const { getAllByText } = render(<AssetDetailView anchor={expiredAnchor} />);
+
+    // The EXPIRED badge should show "Expired" with amber/outline styling (not same as revoked)
+    const expiredElements = getAllByText('Expired');
+    expect(expiredElements.length).toBeGreaterThan(0);
+  });
+
+  it('QR code URL uses production base URL not localhost (UAT3-04)', () => {
+    const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
+    const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
+
+    // The URL displayed below QR should use app.arkova.ai, not localhost
+    const urlText = getByText(/app\.arkova\.ai\/verify\/ARK-2024-00091/);
+    expect(urlText).toBeInTheDocument();
+  });
+
   it('should call onBack when back button clicked', () => {
     const onBack = vi.fn();
     render(

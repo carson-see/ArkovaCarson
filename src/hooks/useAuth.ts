@@ -131,15 +131,23 @@ export function useAuth(): AuthState & AuthActions {
   }, []);
 
   const signOut = useCallback(async () => {
+    // Set flag BEFORE any state changes so AuthGuard won't show
+    // misleading "sign in required" toast during the sign-out transition
+    sessionStorage.setItem('arkova_signed_out', '1');
+
     setLoading(true);
     setError(null);
 
     const { error } = await supabase.auth.signOut();
 
     if (error) {
+      sessionStorage.removeItem('arkova_signed_out');
       setError(error.message);
     }
 
+    // Explicitly clear user/session to prevent stale state
+    setUser(null);
+    setSession(null);
     setLoading(false);
   }, []);
 

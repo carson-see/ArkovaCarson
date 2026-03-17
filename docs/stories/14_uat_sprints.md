@@ -1,5 +1,5 @@
 # UAT Bug Fix Sprints — Sprint 5, Sprint 6 & Launch Readiness
-_Last updated: 2026-03-16 | Source: UAT Bug Bounty Report + UAT Launch Readiness Reports_
+_Last updated: 2026-03-16 (batch fix — 8 bugs resolved) | Source: UAT Bug Bounty Report + UAT Launch Readiness Reports_
 
 ## Overview
 
@@ -144,3 +144,41 @@ Both sprints must:
 - P8 AI Intelligence (separate track)
 - CRIT-2 operational items (AWS KMS, mainnet funding — infrastructure, not UI)
 - New features — these sprints are bug-fix-only
+
+---
+
+## UAT Batch Fix — 2026-03-16
+_8 bugs resolved in a single batch PR_
+
+### Bugs Fixed
+
+| ID | Severity | Bug | Fix |
+|----|----------|-----|-----|
+| UAT2-08 | MEDIUM | Member names not clickable | Already done — MemberDetailPage exists at `/organization/member/:memberId` |
+| UAT2-09 | MEDIUM | Credential Templates empty state unhelpful | Added starter template suggestions (Diploma, Certificate, License) to empty state |
+| UAT2-15 | MEDIUM | Mobile sidebar bottom items clipped | Added `overflow-y-auto` to mobile sidebar panel |
+| UAT-LR1-02 | LOW | Misleading "sign in required" toast after sign-out | Set sessionStorage flag BEFORE signOut, explicit user/session clearing |
+| UAT2-11 | LOW | Expired/Revoked badges visually identical | REVOKED=destructive (red), EXPIRED=outline (amber) in AssetDetailView + RecordsList |
+| UAT2-13 | LOW | No recipient in mobile org records | Added recipient display to mobile card layout in OrgRegistryTable |
+| UAT3-03 | LOW | No loading skeleton on verification page | Already done — shimmer skeleton exists in PublicVerification loading state |
+| UAT3-04 | LOW | QR/copy URLs use localhost | Standardized all URLs to use `verifyUrl()` (production base URL) |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/components/credentials/CredentialTemplatesManager.tsx` | Starter template suggestions in empty state |
+| `src/components/layout/Sidebar.tsx` | `overflow-y-auto` on mobile sidebar panel |
+| `src/hooks/useAuth.ts` | sessionStorage flag ordering + explicit state clearing |
+| `src/components/anchor/AssetDetailView.tsx` | REVOKED=destructive, EXPIRED=outline badge variants |
+| `src/components/records/RecordsList.tsx` | Same badge variant fixes |
+| `src/components/organization/OrgRegistryTable.tsx` | Recipient in mobile cards + verifyUrl() for copy link |
+
+### Tests Added
+
+| File | Tests |
+|------|-------|
+| `src/components/credentials/CredentialTemplatesManager.test.tsx` | 5 tests (empty state, starter buttons, pre-fill dialog, template list, loading) |
+| `src/components/organization/OrgRegistryTable.test.tsx` | 1 test (render without crash) |
+| `src/components/anchor/AssetDetailView.test.tsx` | 3 new tests (REVOKED destructive, EXPIRED outline, QR URL production) |
+| `src/hooks/useAuth.test.ts` | 2 new tests (sessionStorage order, user/session clearing) |

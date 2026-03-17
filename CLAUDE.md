@@ -485,7 +485,7 @@ When creating ANY new frontend component, follow these rules:
 9. **Sidebar:** `sidebar-gradient` class, `nav-glow` on active items
 10. **Header:** `glass-header` (backdrop blur), slim `h-14`
 11. **Auth pages:** `bg-mesh-gradient` + `bg-dot-pattern` overlay + floating orbs + `gradient-border` card
-12. **Status badges:** SECURED=green, PENDING=amber, REVOKED=gray, EXPIRED=gray
+12. **Status badges:** SECURED=green, PENDING=amber, REVOKED=red (destructive), EXPIRED=amber (outline)
 13. **Fingerprint display:** `font-mono text-xs bg-muted rounded px-2 py-1`
 14. **Logo:** White wordmark + light blue bear on dark backgrounds; full-color on white
 

@@ -69,7 +69,7 @@ import {
   AI_EXTRACTION_LABELS,
 } from '@/lib/copy';
 import { toast } from 'sonner';
-import { verifyPath, recordDetailPath } from '@/lib/routes';
+import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 import type { CredentialType } from '@/lib/validators';
 
@@ -383,8 +383,7 @@ export function IssueCredentialForm({
 
   const handleCopyLink = useCallback(async () => {
     if (!createdAnchor) return;
-    const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-    const url = `${baseUrl}${verifyPath(createdAnchor.publicId)}`;
+    const url = verifyUrl(createdAnchor.publicId);
     await navigator.clipboard.writeText(url);
     setLinkCopied(true);
     toast.success(ANCHORING_STATUS_LABELS.LINK_COPIED);
@@ -624,8 +623,7 @@ export function IssueCredentialForm({
                   </p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-xs font-mono truncate">
-                      {import.meta.env.VITE_APP_URL || location.origin}
-                      {verifyPath(createdAnchor.publicId)}
+                      {verifyUrl(createdAnchor.publicId)}
                     </code>
                     <Button
                       variant="ghost"

@@ -33,8 +33,19 @@ export function AuthGuard({ children, fallback }: Readonly<AuthGuardProps>) {
 
   // Show toast when redirecting unauthenticated user (UF-09)
   // Skip toast if user just signed out (had a session, now doesn't)
+  // Also skip if sessionStorage flag indicates recent sign-out (survives page reload)
   useEffect(() => {
     if (!loading && !user && !fallback && !toastShown.current && !hadUser.current) {
+      let recentlySignedOut = false;
+      try {
+        recentlySignedOut = sessionStorage.getItem('arkova_signed_out') === '1';
+        if (recentlySignedOut) {
+          sessionStorage.removeItem('arkova_signed_out');
+        }
+      } catch {
+        // ignore storage access errors in restricted environments
+      }
+      if (recentlySignedOut) return;
       toastShown.current = true;
       toast.info(NAV_POLISH_LABELS.AUTH_REDIRECT_TOAST);
     }

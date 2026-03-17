@@ -646,6 +646,7 @@ export const NAV_POLISH_LABELS = {
   BREADCRUMB_API_KEYS: 'API Keys',
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
+  COLLAPSE: 'Collapse',
   PUBLIC_PROFILE_DESC_ON: 'When enabled, your organization name appears in public search results and your credential registry is visible. Your email and internal data are never exposed.',
   PUBLIC_PROFILE_DESC_OFF: 'Your organization is not visible in public search results.',
 } as const;
@@ -735,6 +736,10 @@ export const SETTINGS_PAGE_LABELS = {
   WEBHOOKS_DESC: 'Configure event notifications',
   API_KEYS: 'API Keys',
   API_KEYS_DESC: 'Manage verification API access',
+  TEMPLATES_EMPTY_TITLE: 'No templates yet',
+  TEMPLATES_EMPTY_DESC: 'Create your first credential template to start issuing verifiable credentials.',
+  TEMPLATES_EMPTY_CTA: 'Create Template',
+  TEMPLATES_STARTER_HEADING: 'Popular templates to get started',
 } as const;
 
 // =============================================================================

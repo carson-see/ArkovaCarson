@@ -253,27 +253,30 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         </nav>
       </div>
 
-      {/* Theme Toggle + Collapse — desktop only */}
-      <div className="hidden border-t p-3 md:block space-y-1">
+      {/* Theme Toggle + Collapse */}
+      <div className="border-t p-3 space-y-1">
         <ThemeToggle collapsed={collapsed} />
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setCollapsed(!collapsed)}
-          className={cn(
-            'w-full justify-center',
-            !collapsed && 'justify-start'
-          )}
-        >
-          {collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <>
-              <ChevronLeft className="h-4 w-4 mr-2" />
-              <span>Collapse</span>
-            </>
-          )}
-        </Button>
+        {/* Collapse button — desktop only (mobile uses overlay) */}
+        <div className="hidden md:block">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setCollapsed(!collapsed)}
+            className={cn(
+              'w-full justify-center',
+              !collapsed && 'justify-start'
+            )}
+          >
+            {collapsed ? (
+              <ChevronRight className="h-4 w-4" />
+            ) : (
+              <>
+                <ChevronLeft className="h-4 w-4 mr-2" />
+                <span>{NAV_POLISH_LABELS.COLLAPSE}</span>
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </aside>
   );
@@ -294,8 +297,8 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
             onClick={onMobileClose}
             aria-hidden="true"
           />
-          {/* Sidebar panel */}
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden">
+          {/* Sidebar panel — full height with overflow scroll for short screens */}
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden overflow-y-auto">
             {sidebarContent}
           </div>
         </>

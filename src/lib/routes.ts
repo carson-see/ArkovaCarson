@@ -94,3 +94,14 @@ export function memberDetailPath(memberId: string): string {
 export function issuerRegistryPath(orgId: string): string {
   return `/issuer/${orgId}`;
 }
+
+/** Production-safe base URL — prefers VITE_APP_URL, falls back to production domain */
+export function getAppBaseUrl(): string {
+  const rawBaseUrl = import.meta.env.VITE_APP_URL || 'https://app.arkova.ai';
+  return rawBaseUrl.replace(/\/+$/, '');
+}
+
+/** Build a full verification URL for a given public ID */
+export function verifyUrl(publicId: string): string {
+  return `${getAppBaseUrl()}${verifyPath(publicId)}`;
+}

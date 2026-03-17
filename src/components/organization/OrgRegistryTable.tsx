@@ -28,7 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
-import { verifyPath } from '@/lib/routes';
+import { verifyUrl } from '@/lib/routes';
 import { toast } from 'sonner';
 import { useExportAnchors } from '@/hooks/useExportAnchors';
 import { Button } from '@/components/ui/button';
@@ -85,7 +85,7 @@ const statusConfig = {
   },
   REVOKED: {
     label: 'Revoked',
-    variant: 'secondary' as const,
+    variant: 'destructive' as const,
     icon: Ban,
   },
   EXPIRED: {
@@ -96,6 +96,20 @@ const statusConfig = {
 };
 
 const PAGE_SIZE = 10;
+
+/** Extract recipient display name from anchor metadata or label */
+function getRecipientDisplay(anchor: Anchor): string | null {
+  const meta = anchor.metadata as Record<string, unknown> | null;
+  if (!meta) return anchor.label || null;
+  // Common metadata field names for recipient
+  const recipientFields = ['recipient_name', 'recipientName', 'student_name', 'studentName', 'name', 'recipient'];
+  for (const field of recipientFields) {
+    if (meta[field] && typeof meta[field] === 'string') {
+      return meta[field] as string;
+    }
+  }
+  return anchor.label || null;
+}
 
 export function OrgRegistryTable({
   orgId,
@@ -358,7 +372,7 @@ export function OrgRegistryTable({
                     <div className="flex items-center gap-2 mt-1.5">
                       <Badge
                         variant={status.variant}
-                        className={`text-xs ${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}`}
+                        className={`text-xs ${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'REVOKED' ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : ''}`}
                       >
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
@@ -387,8 +401,7 @@ export function OrgRegistryTable({
                         {anchor.public_id && (
                           <DropdownMenuItem
                             onClick={async () => {
-                              const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-                              const url = `${baseUrl}${verifyPath(anchor.public_id!)}`;
+                              const url = verifyUrl(anchor.public_id!);
                               await navigator.clipboard.writeText(url);
                               toast.success(SHARE_LABELS.COPIED_TOAST);
                             }}
@@ -419,9 +432,16 @@ export function OrgRegistryTable({
                     </DropdownMenu>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {formatDate(anchor.created_at)}
-                </p>
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-xs text-muted-foreground">
+                    {formatDate(anchor.created_at)}
+                  </p>
+                  {getRecipientDisplay(anchor) && (
+                    <p className="text-xs text-muted-foreground truncate max-w-[140px]">
+                      {getRecipientDisplay(anchor)}
+                    </p>
+                  )}
+                </div>
               </div>
             );
           })
@@ -505,7 +525,7 @@ export function OrgRegistryTable({
                     <TableCell>
                       <Badge
                         variant={status.variant}
-                        className={`${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''}`}
+                        className={`${anchor.status === 'PENDING' ? 'animate-pulse border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'EXPIRED' ? 'border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400' : ''} ${anchor.status === 'REVOKED' ? 'border-red-400 bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-400' : ''}`}
                       >
                         <StatusIcon className="mr-1 h-3 w-3" />
                         {status.label}
@@ -525,9 +545,9 @@ export function OrgRegistryTable({
                       )}
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {(anchor as Record<string, unknown>).recipient_email ? (
+                      {getRecipientDisplay(anchor) ? (
                         <span className="text-xs text-muted-foreground truncate max-w-[140px] block">
-                          {String((anchor as Record<string, unknown>).recipient_email)}
+                          {getRecipientDisplay(anchor)}
                         </span>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
@@ -554,8 +574,7 @@ export function OrgRegistryTable({
                           {anchor.public_id && (
                             <DropdownMenuItem
                               onClick={async () => {
-                                const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-                                const url = `${baseUrl}${verifyPath(anchor.public_id!)}`;
+                                const url = verifyUrl(anchor.public_id!);
                                 await navigator.clipboard.writeText(url);
                                 toast.success(SHARE_LABELS.COPIED_TOAST);
                               }}
