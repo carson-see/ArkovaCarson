@@ -182,7 +182,7 @@ function seedAnchor(id: string, overrides: Record<string, unknown> = {}) {
 // Full Lifecycle Integration Tests
 // ================================================================
 
-describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
+describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbState.anchors.clear();
@@ -200,16 +200,17 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
     // 1. Returns success
     expect(result).toBe(true);
 
-    // 2. Anchor status updated to SECURED in DB
+    // 2. Anchor status updated to SUBMITTED in DB (BETA-01: confirmed later by cron)
     const anchor = dbState.anchors.get('anc-001');
-    expect(anchor?.status).toBe('SECURED');
+    expect(anchor?.status).toBe('SUBMITTED');
     expect(anchor?.chain_tx_id).toBe(RECEIPT.receiptId);
     expect(anchor?.chain_block_height).toBe(RECEIPT.blockHeight);
+    expect(anchor?.chain_confirmations).toBe(0);
 
     // 3. Audit event logged
     expect(dbState.auditEvents).toHaveLength(1);
     expect(dbState.auditEvents[0]).toMatchObject({
-      event_type: 'anchor.secured',
+      event_type: 'anchor.submitted',
       event_category: 'ANCHOR',
       actor_id: 'user-001',
       target_id: 'anc-001',
@@ -220,16 +221,15 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
     expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
     expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
       'org-001',
-      'anchor.secured',
+      'anchor.submitted',
       'anc-001',
       expect.objectContaining({
         anchor_id: 'anc-001',
         public_id: 'pub-anc-001',
         fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
-        status: 'SECURED',
+        status: 'SUBMITTED',
         chain_tx_id: RECEIPT.receiptId,
-        chain_block_height: RECEIPT.blockHeight,
-        secured_at: RECEIPT.blockTimestamp,
+        submitted_at: RECEIPT.blockTimestamp,
       }),
     );
   });
@@ -243,10 +243,10 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
 
     expect(result).toEqual({ processed: 3, failed: 0 });
 
-    // All three anchors secured
-    expect(dbState.anchors.get('anc-001')?.status).toBe('SECURED');
-    expect(dbState.anchors.get('anc-002')?.status).toBe('SECURED');
-    expect(dbState.anchors.get('anc-003')?.status).toBe('SECURED');
+    // All three anchors submitted (BETA-01: confirmed later by cron)
+    expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
+    expect(dbState.anchors.get('anc-002')?.status).toBe('SUBMITTED');
+    expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
 
     // All three audit events logged
     expect(dbState.auditEvents).toHaveLength(3);
@@ -274,7 +274,7 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
 
     // Only the live anchor should be processed
     expect(result).toEqual({ processed: 1, failed: 0 });
-    expect(dbState.anchors.get('anc-live')?.status).toBe('SECURED');
+    expect(dbState.anchors.get('anc-live')?.status).toBe('SUBMITTED');
     expect(dbState.anchors.get('anc-deleted')?.status).toBe('PENDING');
   });
 
@@ -293,24 +293,24 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
 
     expect(result).toEqual({ processed: 2, failed: 1 });
 
-    // First and third secured, second still PENDING
-    expect(dbState.anchors.get('anc-001')?.status).toBe('SECURED');
+    // First and third submitted, second still PENDING
+    expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
     expect(dbState.anchors.get('anc-fail')?.status).toBe('PENDING');
-    expect(dbState.anchors.get('anc-003')?.status).toBe('SECURED');
+    expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
 
     // Only 2 webhooks dispatched (the failures don't get webhooks)
     expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(2);
   });
 
-  it('webhook failure does not affect anchor SECURED status', async () => {
+  it('webhook failure does not affect anchor SUBMITTED status', async () => {
     seedAnchor('anc-001');
     mockDispatchWebhookEvent.mockRejectedValue(new Error('webhook delivery failed'));
 
     const result = await processAnchor('anc-001');
 
-    // Anchor is still SECURED despite webhook failure
+    // Anchor is still SUBMITTED despite webhook failure
     expect(result).toBe(true);
-    expect(dbState.anchors.get('anc-001')?.status).toBe('SECURED');
+    expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
     expect(dbState.auditEvents).toHaveLength(1);
   });
 
@@ -338,7 +338,7 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
 
     await processAnchor('anc-001');
 
-    // DB update happens between chain_submit and audit_log (verified by SECURED status)
+    // DB update happens between chain_submit and audit_log (verified by SUBMITTED status)
     expect(callOrder[0]).toBe('chain_submit');
     // audit_log comes after chain submit + DB update
     expect(callOrder).toContain('audit_log');
@@ -355,7 +355,7 @@ describe('anchor lifecycle: PENDING → SECURED → webhook', () => {
     const result = await processAnchor('anc-individual');
 
     expect(result).toBe(true);
-    expect(dbState.anchors.get('anc-individual')?.status).toBe('SECURED');
+    expect(dbState.anchors.get('anc-individual')?.status).toBe('SUBMITTED');
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
   });
 });

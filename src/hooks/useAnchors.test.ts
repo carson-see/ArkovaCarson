@@ -15,6 +15,11 @@ const mockGetSession = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: mockFrom,
+    channel: vi.fn(() => ({
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnThis(),
+    })),
+    removeChannel: vi.fn(),
     auth: {
       getSession: mockGetSession,
       onAuthStateChange: vi.fn(() => ({

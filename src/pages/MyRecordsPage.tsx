@@ -19,6 +19,7 @@ import {
   MoreHorizontal,
   Eye,
   Download,
+  Loader2,
   GraduationCap,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -54,12 +55,13 @@ import type { Record } from '@/components/records';
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
+  SUBMITTED: { label: 'Awaiting Confirmation', variant: 'secondary' as const, icon: Loader2 },
   SECURED: { label: 'Secured', variant: 'success' as const, icon: CheckCircle },
   REVOKED: { label: 'Revoked', variant: 'secondary' as const, icon: XCircle },
   EXPIRED: { label: 'Expired', variant: 'secondary' as const, icon: AlertTriangle },
 };
 
-type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+type StatusFilter = 'ALL' | 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
 
 export function MyRecordsPage() {
   const navigate = useNavigate();

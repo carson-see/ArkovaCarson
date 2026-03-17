@@ -7,7 +7,7 @@
  *   - 1.4: Treasury keys never logged
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  *
- * Stories: CRIT-2, P7-TS-05, P7-TS-13
+ * Stories: CRIT-2, P7-TS-05, P7-TS-13, BETA-01
  */
 
 import { db } from '../utils/db.js';
@@ -57,14 +57,16 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       timestamp: new Date().toISOString(),
     });
 
-    // Update anchor with chain data
+    // BETA-01: Set status to SUBMITTED (broadcast but unconfirmed).
+    // The check-confirmations cron job will promote to SECURED once the tx is mined.
     const { error: updateError } = await db
       .from('anchors')
       .update({
-        status: 'SECURED',
+        status: 'SUBMITTED',
         chain_tx_id: receipt.receiptId,
         chain_block_height: receipt.blockHeight,
         chain_timestamp: receipt.blockTimestamp,
+        chain_confirmations: 0,
       })
       .eq('id', anchorId);
 
@@ -73,54 +75,34 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       throw updateError;
     }
 
-    // Upsert chain index entry — non-fatal (anchor is already secured)
-    const { error: indexError } = await db
-      .from('anchor_chain_index')
-      .upsert(
-        {
-          fingerprint_sha256: anchor.fingerprint,
-          chain_tx_id: receipt.receiptId,
-          chain_block_height: receipt.blockHeight,
-          chain_block_timestamp: receipt.blockTimestamp,
-          confirmations: receipt.confirmations,
-          anchor_id: anchorId,
-        },
-        { onConflict: 'fingerprint_sha256,chain_tx_id' },
-      );
-
-    if (indexError) {
-      logger.warn({ anchorId, error: indexError }, 'Failed to upsert chain index entry');
-    }
-
-    // Log audit event — non-fatal if it fails (anchor is already secured)
+    // Log audit event — non-fatal
     const { error: auditError } = await db.from('audit_events').insert({
-      event_type: 'anchor.secured',
+      event_type: 'anchor.submitted',
       event_category: 'ANCHOR',
       actor_id: anchor.user_id,
       target_type: 'anchor',
       target_id: anchorId,
       org_id: anchor.org_id,
-      details: `Secured on ${getNetworkDisplayName(config.bitcoinNetwork)}: ${receipt.receiptId}`,
+      details: `Submitted to ${getNetworkDisplayName(config.bitcoinNetwork)}: ${receipt.receiptId}`,
     });
 
     if (auditError) {
-      logger.warn({ anchorId, error: auditError }, 'Failed to log audit event for secured anchor');
+      logger.warn({ anchorId, error: auditError }, 'Failed to log audit event for submitted anchor');
     }
 
-    // Dispatch webhook — non-fatal if it fails (anchor is already secured)
+    // Dispatch webhook for submission — non-fatal
     if (anchor.org_id) {
       try {
-        await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchorId, {
+        await dispatchWebhookEvent(anchor.org_id, 'anchor.submitted', anchorId, {
           anchor_id: anchorId,
           public_id: anchor.public_id ?? null,
           fingerprint: anchor.fingerprint,
-          status: 'SECURED',
+          status: 'SUBMITTED',
           chain_tx_id: receipt.receiptId,
-          chain_block_height: receipt.blockHeight,
-          secured_at: receipt.blockTimestamp,
+          submitted_at: receipt.blockTimestamp,
         });
       } catch (webhookError) {
-        logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch webhook for secured anchor');
+        logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch webhook for submitted anchor');
       }
     }
 

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-17 (TLA+ verification findings added — 24/24 audit fixed + 2 new TLA findings) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-17 (BETA readiness audit — 13 new stories + 2 activation items from workflow testing) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -7,8 +7,10 @@ _Last updated: 2026-03-17 (TLA+ verification findings added — 24/24 audit fixe
 
 ## Summary
 
-| Category | Total | Done | Open | Blocking Launch? |
-|----------|-------|------|------|:----------------:|
+| Category | Total | Done | Open | Blocking Beta? |
+|----------|-------|------|------|:--------------:|
+| **BETA Readiness Stories** | **13** | **0** | **13** | **YES** |
+| BETA Activation Items | 2 | 0 | 2 | **YES** |
 | Stories (NOT STARTED) | 9 | — | 9 | No (post-launch) |
 | Stories (PARTIAL) | 3 | — | 3 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
@@ -17,7 +19,7 @@ _Last updated: 2026-03-17 (TLA+ verification findings added — 24/24 audit fixe
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | TLA+ Verification Findings | 3 | 1 fixed | 2 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **22** | |
+| **Total Open Items** | | | **37** | |
 
 ---
 
@@ -47,6 +49,54 @@ _Last updated: 2026-03-17 (TLA+ verification findings added — 24/24 audit fixe
 | 13 | OPS-05 | AWS KMS key provisioning (mainnet signing) | PENDING |
 | 14 | OPS-06 | Mainnet treasury funding | PENDING |
 | 15 | OPS-07 | Key rotation (Stripe + Supabase service role) | PENDING |
+
+---
+
+## TIER 1B: BETA READINESS — 13 stories blocking beta testing
+
+_Discovered 2026-03-17 via end-to-end workflow audit. Full story docs: [16_beta_readiness.md](stories/16_beta_readiness.md)_
+
+### Sprint 1 — Core Demo Path (P0/P1)
+
+| # | ID | Priority | Story | Workflows | Effort | Status |
+|---|-----|----------|-------|-----------|--------|--------|
+| 1 | BETA-01 | **P0** | Mempool live transaction tracking (worker cron + realtime UI) | WF1, WF4 | Medium | NOT STARTED |
+| 2 | BETA-02 | **P0** | Revocation Bitcoin transaction (OP_RETURN on revoke) | WF1 | Medium | NOT STARTED |
+| 3 | BETA-03 | **P0** | Email infrastructure (Resend + templates) | WF1, WF3 | Medium | NOT STARTED |
+| 4 | BETA-04 | **P1** | Auto-create user on admin upload + activation email | WF1 | Medium | NOT STARTED |
+| 5 | BETA-05 | **P1** | XLSX batch upload support (SheetJS) | WF2 | Small | NOT STARTED |
+
+### Sprint 2 — Individual User + Batch AI (P1/P2)
+
+| # | ID | Priority | Story | Workflows | Effort | Status |
+|---|-----|----------|-------|-----------|--------|--------|
+| 6 | BETA-06 | **P1** | Per-row AI extraction for batch uploads | WF2 | Medium | NOT STARTED |
+| 7 | BETA-07 | **P1** | Two-factor authentication (Supabase MFA/TOTP) | WF3 | Medium | NOT STARTED |
+| 8 | BETA-08 | **P2** | Template selection before anchoring (individual users) | WF3 | Small | NOT STARTED |
+| 9 | BETA-09 | **P2** | LinkedIn verification badge + share link | WF3 | Small | NOT STARTED |
+| 10 | BETA-10 | **P2** | Public search by person (not just fingerprint) | WF4 | Small | NOT STARTED |
+
+### Sprint 3 — Public Display Polish (P2/P3)
+
+| # | ID | Priority | Story | Workflows | Effort | Status |
+|---|-----|----------|-------|-----------|--------|--------|
+| 11 | BETA-11 | **P2** | Mempool explorer link in verification results | WF4 | Tiny | NOT STARTED |
+| 12 | BETA-12 | **P2** | Immutable description field on anchors | WF4 | Small | NOT STARTED |
+| 13 | BETA-13 | **P3** | Realtime anchor status subscriptions (Supabase channels) | WF1, WF3 | Small | NOT STARTED |
+
+### Activation Items (config only, no new code)
+
+| # | ID | What | Fix |
+|---|-----|------|-----|
+| — | BETA-ACT-01 | AI extraction disabled by default | Set `ENABLE_AI_EXTRACTION=true` + configure `GEMINI_API_KEY` |
+| — | BETA-ACT-02 | Bitcoin anchoring uses mocks | Set `ENABLE_PROD_NETWORK_ANCHORING=true` + fund testnet4 wallet |
+
+### Workflows Fully Implemented (no gaps found)
+
+- **WF5:** Fraud detection — AI integrity scoring + admin review queue + specific flag reasons
+- **WF6:** Verification API — 13+ endpoints, API key mgmt, rate limiting, billing wired
+- **WF7:** Payments — Stripe checkout, 4 webhook handlers, credit system, 3 price tiers
+- **WF8:** Navigation — Header + Sidebar + Breadcrumbs, profile accessible from all screens
 
 ---
 
@@ -147,7 +197,7 @@ _Last updated: 2026-03-17 (TLA+ verification findings added — 24/24 audit fixe
 | ID | Description | Priority |
 |----|-------------|----------|
 | MVP-12 | Dark mode toggle | LOW |
-| MVP-20 | LinkedIn badge integration | LOW |
+| ~~MVP-20~~ | ~~LinkedIn badge integration~~ | ~~Superseded by BETA-09~~ |
 
 ### ~~P8 AI Intelligence — ALL COMPLETE (19/19)~~
 _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integrity scoring), P8-S9 (review queue), P8-S16 (AI reports). Completed via PR #80._

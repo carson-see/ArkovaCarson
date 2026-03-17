@@ -10,9 +10,19 @@ import { renderHook, waitFor } from '@testing-library/react';
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
 
+const mockSubscribe = vi.hoisted(() => vi.fn());
+const mockChannel = vi.hoisted(() =>
+  vi.fn(() => ({
+    on: vi.fn().mockReturnThis(),
+    subscribe: mockSubscribe.mockReturnThis(),
+  })),
+);
+
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: mockFrom,
+    channel: mockChannel,
+    removeChannel: vi.fn(),
     auth: {
       getSession: mockGetSession,
       onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),

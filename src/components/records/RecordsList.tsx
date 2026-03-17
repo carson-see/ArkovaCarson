@@ -4,7 +4,7 @@
  * Displays a list of secured documents with status and actions.
  */
 
-import { FileText, CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, GraduationCap } from 'lucide-react';
+import { FileText, CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, GraduationCap, Loader2 } from 'lucide-react';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,7 +21,7 @@ export interface Record {
   id: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+  status: 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
   createdAt: string;
   securedAt?: string;
   fileSize: number;
@@ -41,6 +41,11 @@ const statusConfig = {
     label: 'Pending',
     variant: 'warning' as const,
     icon: Clock,
+  },
+  SUBMITTED: {
+    label: 'Awaiting Confirmation',
+    variant: 'secondary' as const,
+    icon: Loader2,
   },
   SECURED: {
     label: 'Secured',

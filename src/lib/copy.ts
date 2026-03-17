@@ -16,6 +16,7 @@
 
 export const ANCHOR_STATUS_LABELS = {
   PENDING: 'Pending',
+  SUBMITTED: 'Awaiting Confirmation',
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
@@ -23,6 +24,7 @@ export const ANCHOR_STATUS_LABELS = {
 
 export const ANCHOR_STATUS_DESCRIPTIONS = {
   PENDING: 'Your record is being secured. This typically completes within a few minutes.',
+  SUBMITTED: 'Your record has been submitted to the network and is awaiting confirmation.',
   SECURED: 'Your record has been permanently secured with cryptographic verification.',
   REVOKED: 'This record has been revoked and is no longer active.',
   EXPIRED: 'This record has passed its expiration date.',
@@ -36,6 +38,7 @@ export const LIFECYCLE_LABELS = {
   TITLE: 'Record Lifecycle',
   CREATED: 'Created',
   ISSUED: 'Issued',
+  SUBMITTED: 'Submitted to Network',
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
@@ -280,6 +283,7 @@ export const RECORDS_LIST_LABELS = {
   SEARCH_PLACEHOLDER: 'Search by filename or fingerprint...',
   FILTER_ALL: 'All Statuses',
   FILTER_PENDING: 'Pending',
+  FILTER_SUBMITTED: 'Awaiting Confirmation',
   FILTER_SECURED: 'Secured',
   FILTER_REVOKED: 'Revoked',
   FILTER_EXPIRED: 'Expired',

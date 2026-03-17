@@ -198,24 +198,25 @@ describe('processAnchor', () => {
       });
     });
 
-    it('updates anchor status to SECURED with chain receipt data', async () => {
+    it('updates anchor status to SUBMITTED with chain receipt data (BETA-01)', async () => {
       await processAnchor('anchor-001');
 
       expect(anchorsTable.update).toHaveBeenCalledWith({
-        status: 'SECURED',
+        status: 'SUBMITTED',
         chain_tx_id: MOCK_RECEIPT.receiptId,
         chain_block_height: MOCK_RECEIPT.blockHeight,
         chain_timestamp: MOCK_RECEIPT.blockTimestamp,
+        chain_confirmations: 0,
       });
       expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-001');
     });
 
-    it('logs audit event with correct metadata', async () => {
+    it('logs audit event with anchor.submitted type (BETA-01)', async () => {
       await processAnchor('anchor-001');
 
       expect(mockAuditInsert).toHaveBeenCalledWith(
         expect.objectContaining({
-          event_type: 'anchor.secured',
+          event_type: 'anchor.submitted',
           event_category: 'ANCHOR',
           actor_id: MOCK_ANCHOR.user_id,
           target_type: 'anchor',
@@ -351,10 +352,11 @@ describe('processAnchor', () => {
       // processAnchor does not validate receipt fields — passes them through
       expect(result).toBe(true);
       expect(anchorsTable.update).toHaveBeenCalledWith({
-        status: 'SECURED',
+        status: 'SUBMITTED',
         chain_tx_id: 'receipt_no_block',
         chain_block_height: undefined,
         chain_timestamp: undefined,
+        chain_confirmations: 0,
       });
     });
   });
@@ -466,70 +468,10 @@ describe('processAnchor', () => {
     });
   });
 
-  // ---- Chain index upsert (P7-TS-13) ----
+  // ---- Chain index upsert moved to check-confirmations (BETA-01) ----
 
-  describe('chain index upsert', () => {
-    it('upserts chain index entry after SECURED update', async () => {
-      await processAnchor('anchor-001');
-
-      expect(mockChainIndexUpsert).toHaveBeenCalledOnce();
-      expect(mockChainIndexUpsert).toHaveBeenCalledWith(
-        {
-          fingerprint_sha256: MOCK_ANCHOR.fingerprint,
-          chain_tx_id: MOCK_RECEIPT.receiptId,
-          chain_block_height: MOCK_RECEIPT.blockHeight,
-          chain_block_timestamp: MOCK_RECEIPT.blockTimestamp,
-          confirmations: MOCK_RECEIPT.confirmations,
-          anchor_id: 'anchor-001',
-        },
-        { onConflict: 'fingerprint_sha256,chain_tx_id' },
-      );
-    });
-
-    it('still returns true when chain index upsert fails (non-fatal)', async () => {
-      mockChainIndexUpsert.mockResolvedValue({
-        error: { message: 'index write failed' },
-      });
-
-      const result = await processAnchor('anchor-001');
-
-      expect(result).toBe(true);
-    });
-
-    it('logs a warning when chain index upsert fails', async () => {
-      mockChainIndexUpsert.mockResolvedValue({
-        error: { message: 'index write failed' },
-      });
-
-      await processAnchor('anchor-001');
-
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ anchorId: 'anchor-001' }),
-        expect.stringContaining('chain index'),
-      );
-    });
-
-    it('does not upsert chain index when anchor is not found', async () => {
-      mockSingle.mockResolvedValue({ data: null, error: null });
-
-      await processAnchor('nonexistent');
-
-      expect(mockChainIndexUpsert).not.toHaveBeenCalled();
-    });
-
-    it('does not upsert chain index when chain submission fails', async () => {
-      mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
-
-      await processAnchor('anchor-001');
-
-      expect(mockChainIndexUpsert).not.toHaveBeenCalled();
-    });
-
-    it('does not upsert chain index when DB update fails', async () => {
-      mockUpdateEq.mockResolvedValue({
-        error: { message: 'constraint violation' },
-      });
-
+  describe('chain index upsert (BETA-01: deferred to confirmation checker)', () => {
+    it('does not upsert chain index at submission time (deferred to confirmation)', async () => {
       await processAnchor('anchor-001');
 
       expect(mockChainIndexUpsert).not.toHaveBeenCalled();
@@ -539,21 +481,20 @@ describe('processAnchor', () => {
   // ---- HARDENING-4: Webhook dispatch ----
 
   describe('webhook dispatch', () => {
-    it('dispatches anchor.secured webhook event after successful processing', async () => {
+    it('dispatches anchor.submitted webhook event after successful processing (BETA-01)', async () => {
       await processAnchor('anchor-001');
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         MOCK_ANCHOR.org_id,
-        'anchor.secured',
+        'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
           anchor_id: 'anchor-001',
           fingerprint: MOCK_ANCHOR.fingerprint,
-          status: 'SECURED',
+          status: 'SUBMITTED',
           chain_tx_id: MOCK_RECEIPT.receiptId,
-          chain_block_height: MOCK_RECEIPT.blockHeight,
-          secured_at: MOCK_RECEIPT.blockTimestamp,
+          submitted_at: MOCK_RECEIPT.blockTimestamp,
         }),
       );
     });
@@ -568,7 +509,7 @@ describe('processAnchor', () => {
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         MOCK_ANCHOR.org_id,
-        'anchor.secured',
+        'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
           public_id: 'pub-abc-123',
@@ -586,7 +527,7 @@ describe('processAnchor', () => {
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         MOCK_ANCHOR.org_id,
-        'anchor.secured',
+        'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
           public_id: null,

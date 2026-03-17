@@ -1,7 +1,8 @@
 /**
  * useAnchors Hook
  *
- * Fetches anchors from Supabase for the authenticated user.
+ * Fetches anchors from Supabase for the authenticated user with realtime
+ * subscription for live status updates across all records.
  * RLS policies handle scoping:
  *   - INDIVIDUAL users see only their own anchors
  *   - ORG_ADMIN users see all anchors in their organization
@@ -9,15 +10,17 @@
  * Returns data mapped to the Record interface used by RecordsList.
  *
  * @see P3-TS-01 — Replace useState mock arrays with real Supabase queries
+ * @see BETA-01 — Mempool Live Transaction Tracking (realtime)
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { TOAST } from '@/lib/copy';
 import { useAuth } from './useAuth';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type AnchorRow = Database['public']['Tables']['anchors']['Row'];
 
@@ -47,6 +50,7 @@ export function useAnchors(): UseAnchorsReturn {
   const [records, setRecords] = useState<Record[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   const fetchAnchors = useCallback(async () => {
     if (!user) {
@@ -78,6 +82,50 @@ export function useAnchors(): UseAnchorsReturn {
   useEffect(() => {
     fetchAnchors();
   }, [fetchAnchors]);
+
+  // Realtime subscription for anchor changes (BETA-01)
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase
+      .channel('anchors-list')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'anchors',
+        },
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            const updated = payload.new as AnchorRow;
+            setRecords((prev) =>
+              prev.map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
+            );
+          } else if (payload.eventType === 'INSERT') {
+            const inserted = payload.new as AnchorRow;
+            if (!inserted.deleted_at) {
+              setRecords((prev) => [mapAnchorToRecord(inserted), ...prev]);
+            }
+          } else if (payload.eventType === 'DELETE') {
+            const deleted = payload.old as Partial<AnchorRow>;
+            if (deleted.id) {
+              setRecords((prev) => prev.filter((r) => r.id !== deleted.id));
+            }
+          }
+        },
+      )
+      .subscribe();
+
+    channelRef.current = channel;
+
+    return () => {
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
+    };
+  }, [user]);
 
   const refreshAnchors = useCallback(async () => {
     await fetchAnchors();

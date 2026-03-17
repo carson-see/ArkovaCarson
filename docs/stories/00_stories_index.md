@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-16 ~11:00 PM EST_
+_Last updated: 2026-03-17 (BETA readiness stories added — 13 new stories from workflow audit)_
 
 ## Overview
 
@@ -37,7 +37,8 @@ For a new developer joining the project, read in this order:
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
 | GEO | GEO & SEO Optimization | 12 | 5 | 2 | 5 | [15_geo_seo.md](./15_geo_seo.md) |
-| **Total** | | **163** | **151** | **3** | **9** | |
+| BETA | Beta Readiness | 13 | 0 | 0 | 13 | [16_beta_readiness.md](./16_beta_readiness.md) |
+| **Total** | | **176** | **151** | **3** | **22** | |
 
 ### All Stories by ID
 
@@ -189,6 +190,19 @@ For a new developer joining the project, read in this order:
 | GEO-10 | IndexNow for Bing/Copilot | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-11 | YouTube Explainers + VideoObject Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-12 | Security Headers + Technical SEO Hardening | COMPLETE | [GEO](./15_geo_seo.md) | — |
+| BETA-01 | Mempool Live Transaction Tracking | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-02 | Revocation Bitcoin Transaction | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-03 | Email Infrastructure (Resend) | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-04 | Auto-Create User on Admin Upload | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-05 | XLSX Batch Upload Support | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-06 | Per-Row AI Extraction for Batch Uploads | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-07 | Two-Factor Authentication (2FA/MFA) | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-08 | Template Selection Before Anchoring | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-09 | LinkedIn Verification Badge | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-10 | Public Search by Person | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-11 | Mempool Explorer Link | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-12 | Immutable Description Field | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
+| BETA-13 | Realtime Anchor Status Subscriptions | NOT STARTED | [BETA](./16_beta_readiness.md) | — |
 
 ## Bug Cross-Reference
 

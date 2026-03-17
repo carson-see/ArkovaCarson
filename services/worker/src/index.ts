@@ -16,6 +16,7 @@ import { logger } from './utils/logger.js';
 import { db } from './utils/db.js';
 import { callRpc } from './utils/rpc.js';
 import { processPendingAnchors } from './jobs/anchor.js';
+import { checkSubmittedConfirmations } from './jobs/check-confirmations.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature, createCheckoutSession, createBillingPortalSession } from './stripe/client.js';
@@ -490,6 +491,21 @@ app.post('/jobs/webhook-retries', cronJobsLimiter, async (req, res) => {
   }
 });
 
+// BETA-01: Check SUBMITTED anchors for blockchain confirmation
+app.post('/jobs/check-confirmations', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await checkSubmittedConfirmations();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Confirmation check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 app.post('/jobs/credit-expiry', cronJobsLimiter, async (req, res) => {
   if (!(await verifyCronAuth(req))) {
     res.status(401).json({ error: 'Authentication required' });
@@ -566,6 +582,19 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   } else {
     logger.info('Anchor processing cron DISABLED in production — Cloud Scheduler is authoritative');
   }
+
+  // BETA-01: Check SUBMITTED anchors for blockchain confirmation every 2 minutes
+  cron.schedule('*/2 * * * *', async () => {
+    logger.debug('Running scheduled confirmation check');
+    try {
+      const result = await checkSubmittedConfirmations();
+      if (result.confirmed > 0) {
+        logger.info({ confirmed: result.confirmed, checked: result.checked }, 'Confirmed anchors');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Scheduled confirmation check failed');
+    }
+  });
 
   // Process webhook retries every 2 minutes
   cron.schedule('*/2 * * * *', async () => {
