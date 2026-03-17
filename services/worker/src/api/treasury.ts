@@ -22,8 +22,8 @@ import { db } from '../utils/db.js';
 
 /** Platform admin emails — must match TreasuryAdminPage.tsx whitelist */
 const PLATFORM_ADMIN_EMAILS = [
-  'carson@arkova.io',
-  'sarah@arkova.io',
+  'carson@arkova.ai',
+  'sarah@arkova.ai',
 ];
 
 export interface TreasuryStatusResponse {

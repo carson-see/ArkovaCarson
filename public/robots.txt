@@ -1,0 +1,36 @@
+# Arkova — robots.txt
+# Allow all crawlers including AI (GPTBot, ClaudeBot, PerplexityBot, Google-Extended)
+# Public verification pages are the primary crawl target.
+
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /settings/
+Disallow: /organization/
+Disallow: /my-credentials
+Disallow: /my-records/
+
+# AI crawlers — explicitly allowed for GEO visibility
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Bytespider
+Allow: /
+
+# Sitemap
+Sitemap: https://app.arkova.ai/sitemap.xml
+
+# llms.txt for AI systems
+# https://app.arkova.ai/llms.txt

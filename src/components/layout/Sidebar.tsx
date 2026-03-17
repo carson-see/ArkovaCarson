@@ -56,7 +56,7 @@ const mainNavItems: NavItem[] = [
 
 // UI-only visibility hint — NOT a security control. Actual admin access must be
 // enforced server-side via RLS/roles. TODO: migrate to profiles.is_platform_admin flag.
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.io', 'sarah@arkova.io'];
+const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
 
 const adminNavItems: NavItem[] = [
   { label: NAV_LABELS.TREASURY, icon: Landmark, to: ROUTES.ADMIN_TREASURY },

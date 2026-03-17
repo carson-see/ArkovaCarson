@@ -71,8 +71,8 @@ export function PrivacyPage() {
             <p>
               Verification records are retained for as long as your account is active. You may
               request deletion of your account and associated data by contacting us at{' '}
-              <a href="mailto:support@arkova.io" className="text-primary hover:underline">
-                support@arkova.io
+              <a href="mailto:support@arkova.ai" className="text-primary hover:underline">
+                support@arkova.ai
               </a>.
             </p>
           </section>
@@ -81,8 +81,8 @@ export function PrivacyPage() {
             <h2 className="text-lg font-semibold text-foreground">6. Contact</h2>
             <p>
               For privacy-related inquiries, contact us at{' '}
-              <a href="mailto:privacy@arkova.io" className="text-primary hover:underline">
-                privacy@arkova.io
+              <a href="mailto:privacy@arkova.ai" className="text-primary hover:underline">
+                privacy@arkova.ai
               </a>.
             </p>
           </section>

@@ -38,10 +38,10 @@ export function ContactPage() {
             </CardHeader>
             <CardContent>
               <a
-                href="mailto:support@arkova.io"
+                href="mailto:support@arkova.ai"
                 className="text-sm font-medium text-primary hover:underline"
               >
-                support@arkova.io
+                support@arkova.ai
               </a>
             </CardContent>
           </Card>
@@ -56,10 +56,10 @@ export function ContactPage() {
             </CardHeader>
             <CardContent>
               <a
-                href="mailto:enterprise@arkova.io"
+                href="mailto:enterprise@arkova.ai"
                 className="text-sm font-medium text-primary hover:underline"
               >
-                enterprise@arkova.io
+                enterprise@arkova.ai
               </a>
             </CardContent>
           </Card>

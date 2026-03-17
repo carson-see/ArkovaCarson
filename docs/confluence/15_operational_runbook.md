@@ -134,7 +134,175 @@ curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
 
 **Status as of 2026-03-16:** Health endpoint verified and returning 200 OK. All secrets mounted via GCP Secret Manager.
 
-## 3. Other Pre-Launch Manual Steps
+## 3. OPS-01: Apply Migrations 0059–0065 to Production Supabase
+
+**Priority:** CRITICAL — blocks all P8 AI features, GDPR deletion, and security hardening in production.
+
+**Migrations pending:**
+
+| # | File | Description | Dependencies |
+|---|------|-------------|--------------|
+| 0059 | `0059_ai_credits_usage.sql` | AI credits + usage events tables, RPCs | None |
+| 0060 | `0060_credential_embeddings.sql` | pgvector embeddings table + HNSW index + org-scoped RLS | pgvector extension |
+| 0061 | `0061_gdpr_pii_erasure.sql` | PII erasure RPCs + audit_events null trigger + backfill | None |
+| 0062 | `0062_security_hardening_high.sql` | GRANT on 13 tables, ORG_ADMIN RLS, parameterized search RPC | None |
+| 0063 | `0063_security_sprint2.sql` | CSP headers, rate limit tables, additional hardening | None |
+| 0064 | `0064_p8_phase2_ai_intelligence.sql` | AI feedback, integrity scoring, review queue tables | 0060 |
+| 0065 | `0065_account_deletion.sql` | Account deletion flow + cascade policies | 0061 |
+
+**Steps:**
+
+```bash
+# 1. Verify current migration state
+supabase migration list --project-ref vzwyaatejekddvltxyye
+
+# 2. Back up production database (Supabase dashboard → Database → Backups)
+
+# 3. Apply migrations one at a time (recommended for safety)
+supabase db push --project-ref vzwyaatejekddvltxyye
+
+# 4. If supabase db push applies all at once, verify each:
+#    Check that pgvector extension is enabled (required by 0060)
+#    Verify new tables: credential_embeddings, ai_feedback, ai_integrity_scores, ai_review_queue
+#    Verify new RPCs: erase_user_pii, search_public_credentials, cleanup_expired_data
+
+# 5. Regenerate types after migration
+supabase gen types typescript --project-ref vzwyaatejekddvltxyye > src/types/database.types.ts
+
+# 6. Verify RLS policies are active
+#    Run: SELECT tablename, policyname FROM pg_policies ORDER BY tablename;
+```
+
+**Rollback:** Each migration file contains `-- ROLLBACK:` comments at the bottom with compensating SQL.
+
+**Verification queries:**
+
+```sql
+-- Verify 0060: pgvector + embeddings table
+SELECT * FROM pg_extension WHERE extname = 'vector';
+SELECT count(*) FROM information_schema.tables WHERE table_name = 'credential_embeddings';
+
+-- Verify 0061: PII erasure RPCs exist
+SELECT proname FROM pg_proc WHERE proname IN ('erase_user_pii', 'null_audit_pii_fields');
+
+-- Verify 0062: GRANT on tables
+SELECT grantee, table_name, privilege_type FROM information_schema.table_privileges
+WHERE grantee = 'authenticated' AND table_schema = 'public' ORDER BY table_name;
+
+-- Verify 0065: Account deletion
+SELECT proname FROM pg_proc WHERE proname = 'delete_user_account';
+```
+
+## 4. OPS-02: Strip Demo Seeds from Production
+
+**Priority:** CRITICAL — demo accounts with known passwords (`Demo1234!`) are live in production.
+
+**Script:** `scripts/strip-demo-seeds.sql` (177 lines, reviewed and safe)
+
+**Steps:**
+
+```bash
+# 1. Review the script (already reviewed — targets 7 demo email patterns)
+cat scripts/strip-demo-seeds.sql
+
+# 2. Run against production via Supabase SQL Editor or psql
+#    Option A: Supabase Dashboard → SQL Editor → paste + run
+#    Option B: psql connection string from Supabase dashboard
+psql "postgresql://postgres:[PASSWORD]@db.vzwyaatejekddvltxyye.supabase.co:5432/postgres" \
+  -f scripts/strip-demo-seeds.sql
+
+# 3. Verify no demo accounts remain
+#    The script outputs a completion report via RAISE NOTICE
+#    Additionally verify:
+SELECT email FROM auth.users WHERE email LIKE '%arkova.local' OR email LIKE '%demo.arkova.io';
+# Expected: 0 rows
+```
+
+**Demo accounts targeted:**
+- `admin_demo@arkova.local`
+- `user_demo@arkova.local`
+- `beta_admin@betacorp.local`
+- `admin@umich-demo.arkova.io`
+- `registrar@umich-demo.arkova.io`
+- `admin@midwest-medical.arkova.io`
+- `individual@demo.arkova.io`
+
+**Safety:** Script runs inside a transaction. If any step fails, all changes are rolled back.
+
+## 5. OPS-03: Set Sentry DSN Environment Variables
+
+**Priority:** HIGH — error tracking is configured in code but not connected to Sentry.
+
+**Prerequisites:** Create a Sentry project at https://sentry.io (or self-hosted instance).
+
+| Project | Platform | Suggested Name |
+|---------|----------|----------------|
+| Frontend | React (Browser) | `arkova-frontend` |
+| Worker | Node.js (Express) | `arkova-worker` |
+
+**Steps:**
+
+```bash
+# 1. Get DSN values from Sentry → Project Settings → Client Keys (DSN)
+#    Frontend DSN: https://xxx@o123.ingest.sentry.io/456
+#    Worker DSN: https://yyy@o123.ingest.sentry.io/789
+
+# 2. Set frontend DSN on Vercel
+vercel env add VITE_SENTRY_DSN production
+# Paste the frontend DSN value
+
+# 3. Set worker DSN on Cloud Run via GCP Secret Manager
+echo -n "https://yyy@o123.ingest.sentry.io/789" | \
+  gcloud secrets create sentry-dsn \
+    --project=arkova1 \
+    --data-file=- \
+    --replication-policy=automatic
+
+# 4. Mount the secret to Cloud Run
+gcloud run services update arkova-worker \
+  --project=arkova1 \
+  --region=us-central1 \
+  --update-secrets=SENTRY_DSN=sentry-dsn:latest
+
+# 5. Redeploy Vercel to pick up new env var
+vercel --prod
+
+# 6. Verify — trigger a test error and check Sentry dashboard
+```
+
+## 6. OPS-04: Configure Sentry Source Map Upload
+
+**Priority:** HIGH — stack traces in production are obfuscated without source maps.
+
+**Code status:** COMPLETE — `vite.config.ts` already has `sentryVitePlugin` configured. Only needs auth token.
+
+**Steps:**
+
+```bash
+# 1. Create a Sentry auth token
+#    Sentry → Settings → Auth Tokens → Create New Token
+#    Scopes needed: project:releases, org:read
+
+# 2. Set auth token in Vercel (used during build)
+vercel env add SENTRY_AUTH_TOKEN production
+# Paste the auth token
+
+# 3. Optionally set org/project if different from defaults
+vercel env add SENTRY_ORG production    # default: 'arkova'
+vercel env add SENTRY_PROJECT production # default: 'arkova-frontend'
+
+# 4. Redeploy — source maps will upload automatically during build
+vercel --prod
+
+# 5. Verify — check Sentry → Releases for new release with source maps
+#    The plugin auto-deletes .map files from dist/ after upload (security best practice)
+```
+
+**Worker source maps:** The worker runs on Cloud Run (not Vite). Source maps for the worker are not automatically uploaded. For worker stack traces, either:
+- Upload manually via `sentry-cli releases files <release> upload-sourcemaps ./dist`
+- Add `@sentry/esbuild-plugin` to the worker build if using esbuild
+
+## 7. Other Pre-Launch Manual Steps
 
 | Task | Description | Who | Status |
 |------|-------------|-----|--------|
@@ -180,3 +348,4 @@ Domains are added to Vercel but DNS records need to be set at the registrar (Nam
 | 2026-03-16 | Cloud Scheduler: 4 cron jobs created (process-anchors, webhook-retries, generate-reports, credit-expiry). MVP-28 COMPLETE. |
 | 2026-03-16 | Vercel: VITE_APP_URL set, domains added (app.arkova.ai, arkova.ai, www.arkova.ai). DNS instructions added (Section 3.1). |
 | 2026-03-16 | Bitcoin Testnet 4 migration: added Section 1.3 (Testnet 4 setup), renamed Section 1.3 → 1.4 (Signet legacy). Default network changed from signet to testnet4. |
+| 2026-03-16 | Added OPS-01 through OPS-04 sections with exact commands: migration apply, demo seed strip, Sentry DSN setup, source map upload. |
