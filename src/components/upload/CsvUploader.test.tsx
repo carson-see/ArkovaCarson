@@ -16,8 +16,8 @@ describe('CsvUploader', () => {
   it('should render upload area', () => {
     render(<CsvUploader onParsed={mockOnParsed} />);
 
-    expect(screen.getByText(/drop your csv file here/i)).toBeInTheDocument();
-    expect(screen.getByText(/select csv file/i)).toBeInTheDocument();
+    expect(screen.getByText(/drop your csv or excel file here/i)).toBeInTheDocument();
+    expect(screen.getByText(/select file/i)).toBeInTheDocument();
   });
 
   it('should show required and optional columns info', () => {
@@ -80,7 +80,7 @@ ${fingerprint},test.pdf,invalid-email`;
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() => {
-      expect(screen.getByText(/please upload a csv file/i)).toBeInTheDocument();
+      expect(screen.getByText(/please upload a csv or excel/i)).toBeInTheDocument();
     });
 
     expect(mockOnParsed).not.toHaveBeenCalled();
@@ -96,7 +96,7 @@ ${fingerprint},test.pdf,invalid-email`;
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() => {
-      expect(screen.getByText(/csv file is empty/i)).toBeInTheDocument();
+      expect(screen.getByText(/file is empty/i)).toBeInTheDocument();
     });
 
     expect(mockOnParsed).not.toHaveBeenCalled();

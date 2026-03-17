@@ -93,6 +93,12 @@ const ConfigSchema = z.object({
   /** Expected OIDC audience for Cloud Scheduler tokens (typically the Cloud Run service URL) */
   cronOidcAudience: z.string().url().optional(),
 
+  // Email (BETA-03)
+  /** Resend API key for transactional emails */
+  resendApiKey: z.string().min(1).optional(),
+  /** Verified sender email address */
+  emailFrom: z.string().email().default('noreply@arkova.ai'),
+
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
@@ -151,6 +157,8 @@ function loadConfig(): Config {
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
+    resendApiKey: process.env.RESEND_API_KEY,
+    emailFrom: process.env.EMAIL_FROM,
   });
 
   if (!result.success) {

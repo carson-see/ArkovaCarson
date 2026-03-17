@@ -45,7 +45,7 @@ describe('BulkUploadWizard', () => {
     render(<BulkUploadWizard onComplete={mockOnComplete} onCancel={mockOnCancel} />);
 
     expect(screen.getByText('Bulk Upload Records')).toBeInTheDocument();
-    expect(screen.getByText(/drop your csv file here/i)).toBeInTheDocument();
+    expect(screen.getByText(/drop your csv or excel file here/i)).toBeInTheDocument();
   });
 
   it('should show progress steps', () => {
@@ -259,7 +259,7 @@ ${'a'.repeat(64)},file.pdf`;
 
     // Should be back to upload step
     await waitFor(() => {
-      expect(screen.getByText(/drop your csv file here/i)).toBeInTheDocument();
+      expect(screen.getByText(/drop your csv or excel file here/i)).toBeInTheDocument();
     });
   });
 

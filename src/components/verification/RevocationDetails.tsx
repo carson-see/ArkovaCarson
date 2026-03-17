@@ -7,18 +7,22 @@
  * @see UF-07
  */
 
-import { Ban, Calendar } from 'lucide-react';
+import { Ban, Calendar, ExternalLink } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
+import { getExplorerTxUrl } from '@/lib/explorer';
 
 interface RevocationDetailsProps {
   revocationReason?: string | null;
   revokedAt?: string | null;
+  /** Network receipt ID for the revocation OP_RETURN (BETA-02) */
+  revocationTxId?: string | null;
 }
 
 export function RevocationDetails({
   revocationReason,
   revokedAt,
+  revocationTxId,
 }: Readonly<RevocationDetailsProps>) {
   const formatDate = (dateStr: string) =>
     new Date(dateStr).toLocaleString('en-US', {
@@ -50,6 +54,23 @@ export function RevocationDetails({
                 {VERIFICATION_DISPLAY_LABELS.REVOCATION_DATE}:
               </span>
               <span>{formatDate(revokedAt)}</span>
+            </div>
+          )}
+          {revocationTxId && (
+            <div className="flex items-center gap-2">
+              <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+              <span className="text-muted-foreground">
+                {VERIFICATION_DISPLAY_LABELS.REVOCATION_RECEIPT}:
+              </span>
+              <a
+                href={getExplorerTxUrl(revocationTxId) ?? '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-xs underline underline-offset-2 hover:text-destructive truncate max-w-[200px]"
+                title={revocationTxId}
+              >
+                {revocationTxId.slice(0, 8)}...{revocationTxId.slice(-8)}
+              </a>
             </div>
           )}
         </div>

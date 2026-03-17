@@ -589,6 +589,7 @@ export const VERIFICATION_DISPLAY_LABELS = {
   REVOCATION_SECTION: 'Revocation Details',
   REVOCATION_REASON: 'Reason',
   REVOCATION_DATE: 'Revoked',
+  REVOCATION_RECEIPT: 'Network Receipt',
   DOWNLOAD_PROOF: 'Download Proof',
   DOWNLOAD_JSON: 'JSON Proof Package',
   DOWNLOAD_PDF: 'PDF Summary',

@@ -1,7 +1,10 @@
 /**
- * CSV Uploader Component
+ * Spreadsheet Uploader Component
  *
- * Handles CSV file upload, parsing, and validation with email pre-flight checks.
+ * Handles CSV and Excel (.xlsx/.xls) file upload, parsing, and validation
+ * with email pre-flight checks.
+ *
+ * BETA-05: Added Excel support via SheetJS.
  */
 
 import { useState, useCallback } from 'react';
@@ -10,13 +13,13 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
-  parseCsvFile,
   autoDetectMapping,
   validateCsvRows,
   type ParsedCsv,
   type ColumnMapping,
   type ValidationResult,
 } from '@/lib/csvParser';
+import { parseSpreadsheetFile, isExcelFile } from '@/lib/xlsxParser';
 
 interface CsvUploaderProps {
   onParsed: (
@@ -43,9 +46,11 @@ export function CsvUploader({
       setError(null);
 
       try {
-        // Validate file type
-        if (!file.name.endsWith('.csv') && file.type !== 'text/csv') {
-          throw new Error('Please upload a CSV file.');
+        // Validate file type (CSV or Excel)
+        const isCsv = file.name.endsWith('.csv') || file.type === 'text/csv';
+        const isExcel = isExcelFile(file);
+        if (!isCsv && !isExcel) {
+          throw new Error('Please upload a CSV or Excel (.xlsx, .xls) file.');
         }
 
         // Validate file size (max 10MB)
@@ -53,15 +58,15 @@ export function CsvUploader({
           throw new Error('File size must be less than 10MB.');
         }
 
-        // Parse CSV
-        const parsed = await parseCsvFile(file);
+        // Parse spreadsheet (CSV or Excel)
+        const parsed = await parseSpreadsheetFile(file);
 
         if (parsed.rows.length === 0) {
-          throw new Error('CSV file is empty or has no data rows.');
+          throw new Error('File is empty or has no data rows.');
         }
 
         if (parsed.rows.length > maxRows) {
-          throw new Error(`CSV file has too many rows (max ${maxRows.toLocaleString()}).`);
+          throw new Error(`File has too many rows (max ${maxRows.toLocaleString()}).`);
         }
 
         // Auto-detect column mapping
@@ -86,7 +91,7 @@ export function CsvUploader({
         // Pass results to parent
         onParsed(parsed, mapping, validation);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to parse CSV file.';
+        const message = err instanceof Error ? err.message : 'Failed to parse file.';
         setError(message);
       } finally {
         setLoading(false);
@@ -155,7 +160,7 @@ export function CsvUploader({
         {loading ? (
           <>
             <Loader2 className="h-10 w-10 text-primary mb-4 animate-spin" />
-            <p className="text-sm font-medium mb-1">Processing CSV...</p>
+            <p className="text-sm font-medium mb-1">Processing file...</p>
             <p className="text-xs text-muted-foreground">
               Parsing and validating rows
             </p>
@@ -164,19 +169,19 @@ export function CsvUploader({
           <>
             <FileSpreadsheet className="h-10 w-10 text-muted-foreground mb-4" />
             <p className="text-sm font-medium mb-1">
-              Drop your CSV file here
+              Drop your CSV or Excel file here
             </p>
             <p className="text-xs text-muted-foreground mb-4">or click to browse</p>
             <Button type="button" variant="secondary" size="sm" disabled={loading}>
               <Upload className="mr-2 h-4 w-4" />
-              Select CSV File
+              Select File
             </Button>
           </>
         )}
         <input
           id="csv-file-upload"
           type="file"
-          accept=".csv,text/csv"
+          accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
           className="sr-only"
           onChange={handleFileChange}
           disabled={loading}

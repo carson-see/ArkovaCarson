@@ -17,6 +17,7 @@ import { db } from './utils/db.js';
 import { callRpc } from './utils/rpc.js';
 import { processPendingAnchors } from './jobs/anchor.js';
 import { checkSubmittedConfirmations } from './jobs/check-confirmations.js';
+import { processRevokedAnchors } from './jobs/revocation.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature, createCheckoutSession, createBillingPortalSession } from './stripe/client.js';
@@ -372,6 +373,48 @@ app.post('/api/verify-anchor', rateLimiters.checkout, async (req, res) => {
 app.options('/api/verify-anchor', (req, res) => { setCorsHeaders(req, res); });
 
 // =========================================================================
+// Recipient Management — BETA-04 (Auto-Create User on Admin Upload)
+// =========================================================================
+app.options('/api/recipients', (req, res) => { setCorsHeaders(req, res); });
+
+app.post('/api/recipients', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  const { email, orgId, fullName, credentialLabel } = req.body as {
+    email?: string;
+    orgId?: string;
+    fullName?: string;
+    credentialLabel?: string;
+  };
+
+  if (!email || !orgId) {
+    res.status(400).json({ error: 'email and orgId are required' });
+    return;
+  }
+
+  try {
+    const { createPendingRecipient } = await import('./api/recipients.js');
+    const result = await createPendingRecipient({
+      email,
+      orgId,
+      fullName,
+      credentialLabel,
+      actorId: userId,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Recipient creation failed');
+    res.status(500).json({ error: 'Failed to create recipient' });
+  }
+});
+
+// =========================================================================
 // Account Deletion — GDPR Art. 17 Right to Erasure (PII-02)
 // =========================================================================
 app.options('/api/account', (req, res) => { setCorsHeaders(req, res); });
@@ -506,6 +549,21 @@ app.post('/jobs/check-confirmations', cronJobsLimiter, async (req, res) => {
   }
 });
 
+// BETA-02: Process revoked anchors — broadcast OP_RETURN revocation transactions
+app.post('/jobs/process-revocations', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await processRevokedAnchors();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Revocation processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 app.post('/jobs/credit-expiry', cronJobsLimiter, async (req, res) => {
   if (!(await verifyCronAuth(req))) {
     res.status(401).json({ error: 'Authentication required' });
@@ -593,6 +651,19 @@ function setupScheduledJobs(chainInitialized: boolean): void {
       }
     } catch (error) {
       logger.error({ error }, 'Scheduled confirmation check failed');
+    }
+  });
+
+  // BETA-02: Process revoked anchors — broadcast OP_RETURN revocations every 5 minutes
+  cron.schedule('*/5 * * * *', async () => {
+    logger.debug('Running scheduled revocation processing');
+    try {
+      const result = await processRevokedAnchors();
+      if (result.processed > 0) {
+        logger.info({ processed: result.processed, failed: result.failed }, 'Processed revocations');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Scheduled revocation processing failed');
     }
   });
 
