@@ -17,6 +17,15 @@ vi.mock('@/lib/supabase', () => ({
   },
 }));
 
+// Mock AIExtractionStep to auto-skip (avoids supabase.auth.getSession dependency)
+vi.mock('./AIExtractionStep', () => ({
+  AIExtractionStep: ({ onSkip }: { onSkip: () => void }) => (
+    <div data-testid="ai-extraction-step">
+      <button onClick={onSkip}>Skip Extraction</button>
+    </div>
+  ),
+}));
+
 vi.mock('@/hooks/useEntitlements', () => ({
   useEntitlements: () => ({
     canCreateCount: () => true,
@@ -153,9 +162,11 @@ ${fp2},file2.pdf`;
       expect(screen.getByText('Process 2 Records')).toBeInTheDocument();
     });
 
-    // Click process
+    // Click process -> goes to extraction step
     const processButton = screen.getByText('Process 2 Records');
     fireEvent.click(processButton);
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
 
     // Wait for completion
     await waitFor(() => {
@@ -208,8 +219,10 @@ ${fp3},file3.pdf`;
       expect(screen.getByText('Process 3 Records')).toBeInTheDocument();
     });
 
-    // Click process
+    // Click process -> extraction step
     fireEvent.click(screen.getByText('Process 3 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
 
     // Wait for completion with issues
     await waitFor(() => {
@@ -249,6 +262,8 @@ ${'a'.repeat(64)},file.pdf`;
     });
 
     fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
 
     await waitFor(() => {
       expect(screen.getByText('Upload Complete')).toBeInTheDocument();
@@ -299,6 +314,8 @@ ${'a'.repeat(64)},file.pdf`;
     );
 
     fireEvent.click(screen.getByText('Process 500 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
 
     await waitFor(
       () => {
@@ -338,6 +355,8 @@ ${'a'.repeat(64)},file.pdf`;
     });
 
     fireEvent.click(screen.getByText('Process 1 Records'));
+    await waitFor(() => { expect(screen.getByText('Skip Extraction')).toBeInTheDocument(); });
+    fireEvent.click(screen.getByText('Skip Extraction'));
 
     // Should show processing state
     await waitFor(() => {

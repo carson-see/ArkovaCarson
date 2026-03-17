@@ -58,8 +58,9 @@ interface Violation {
 function globToRegex(pattern: string): RegExp {
   const regexStr = pattern
     .replaceAll('.', '\\.')
-    .replaceAll('**', '.*')
-    .replaceAll('*', '[^/]*');
+    .replaceAll('**', '\0DOUBLESTAR\0')
+    .replaceAll('*', '[^/]*')
+    .replaceAll('\0DOUBLESTAR\0', '.*');
   return new RegExp(`^${regexStr}$`);
 }
 

@@ -23,6 +23,7 @@ import { jobsRouter } from './jobs.js';
 import { keysRouter } from './keys.js';
 import { usageRouter } from './usage.js';
 import { aiExtractRouter } from './ai-extract.js';
+import { aiBatchExtractRouter } from './ai-extract-batch.js';
 import { aiUsageRouter } from './ai-usage.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiSearchRouter } from './ai-search.js';
@@ -162,6 +163,7 @@ const aiRateLimiter = rateLimit({
 });
 
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
+router.use('/ai/extract-batch', aiExtractionGate(), requireAuth, aiRateLimiter, aiBatchExtractRouter);
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
 router.use('/ai/usage', requireAuth, aiUsageRouter);
 

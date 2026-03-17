@@ -10,7 +10,7 @@
 
 import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Loader2, Building2, Shield, FileDigit, CheckCircle, XCircle } from 'lucide-react';
+import { Search, Loader2, Building2, Shield, FileDigit, CheckCircle, XCircle, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -23,11 +23,12 @@ import {
 } from '@/components/ui/select';
 import { IssuerCard } from '@/components/search/IssuerCard';
 import { usePublicSearch } from '@/hooks/usePublicSearch';
-import { SEARCH_LABELS } from '@/lib/copy';
+import { SEARCH_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { Badge } from '@/components/ui/badge';
 import { verifyPath } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
 
-type SearchType = 'issuer' | 'id' | 'fingerprint';
+type SearchType = 'issuer' | 'id' | 'fingerprint' | 'person';
 
 interface FingerprintResult {
   verified: boolean;
@@ -48,6 +49,19 @@ export function SearchPage() {
   const [fpResult, setFpResult] = useState<FingerprintResult | null>(null);
   const [fpSearching, setFpSearching] = useState(false);
   const [fpError, setFpError] = useState<string | null>(null);
+
+  // Person search state
+  interface PersonResult {
+    public_id: string;
+    label: string;
+    credential_type: string | null;
+    status: string;
+    created_at: string;
+    org_id: string | null;
+  }
+  const [personResults, setPersonResults] = useState<PersonResult[]>([]);
+  const [personSearching, setPersonSearching] = useState(false);
+  const [personError, setPersonError] = useState<string | null>(null);
 
   const searchFingerprint = useCallback(async (fp: string) => {
     const isValid = /^[a-f0-9]{64}$/i.test(fp);
@@ -94,6 +108,28 @@ export function SearchPage() {
     }
   }, []);
 
+  const searchPerson = useCallback(async (name: string) => {
+    setPersonSearching(true);
+    setPersonError(null);
+    setPersonResults([]);
+
+    try {
+      const { data, error: rpcError } = await (supabase as unknown as { rpc: (fn: string, params: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> })
+        .rpc('search_public_credentials', { p_query: name, p_limit: 20 });
+
+      if (rpcError) {
+        setPersonError('Search failed. Please try again.');
+        return;
+      }
+
+      setPersonResults((data as PersonResult[]) ?? []);
+    } catch {
+      setPersonError('Search failed. Please try again.');
+    } finally {
+      setPersonSearching(false);
+    }
+  }, []);
+
   const handleSearch = useCallback(async () => {
     const trimmed = query.trim();
     if (!trimmed) return;
@@ -109,10 +145,16 @@ export function SearchPage() {
       return;
     }
 
+    if (searchType === 'person') {
+      setHasSearched(true);
+      await searchPerson(trimmed);
+      return;
+    }
+
     // Issuer search
     setHasSearched(true);
     await searchIssuers(trimmed);
-  }, [query, searchType, navigate, searchIssuers, searchFingerprint]);
+  }, [query, searchType, navigate, searchIssuers, searchFingerprint, searchPerson]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -127,17 +169,21 @@ export function SearchPage() {
       clearResults();
       setFpResult(null);
       setFpError(null);
+      setPersonResults([]);
+      setPersonError(null);
       setHasSearched(false);
     },
     [clearResults],
   );
 
-  const isSearching = searching || fpSearching;
-  const displayError = error || fpError;
+  const isSearching = searching || fpSearching || personSearching;
+  const displayError = error || fpError || personError;
 
   const placeholder = searchType === 'fingerprint'
     ? SEARCH_LABELS.FINGERPRINT_PLACEHOLDER
-    : SEARCH_LABELS.SEARCH_PLACEHOLDER;
+    : searchType === 'person'
+      ? SEARCH_LABELS.PERSON_PLACEHOLDER
+      : SEARCH_LABELS.SEARCH_PLACEHOLDER;
 
   return (
     <div className="min-h-screen bg-mesh-gradient">
@@ -183,6 +229,12 @@ export function SearchPage() {
                       <span className="flex items-center gap-2">
                         <FileDigit className="h-3.5 w-3.5" />
                         {SEARCH_LABELS.SEARCH_BY_FINGERPRINT}
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="person">
+                      <span className="flex items-center gap-2">
+                        <User className="h-3.5 w-3.5" />
+                        {SEARCH_LABELS.SEARCH_BY_PERSON}
                       </span>
                     </SelectItem>
                   </SelectContent>
@@ -250,6 +302,64 @@ export function SearchPage() {
           {/* Fingerprint results */}
           {searchType === 'fingerprint' && hasSearched && !fpSearching && fpResult && (
             <FingerprintResultCard result={fpResult} onViewRecord={(id) => navigate(verifyPath(id))} />
+          )}
+
+          {/* Person results */}
+          {searchType === 'person' && hasSearched && !personSearching && (
+            <div className="space-y-3">
+              {personResults.length > 0 ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    {SEARCH_LABELS.PERSON_CREDENTIALS}
+                  </p>
+                  {personResults.map((result) => (
+                    <Card
+                      key={result.public_id}
+                      className="glass-card cursor-pointer hover:shadow-card-hover transition-shadow"
+                      onClick={() => navigate(verifyPath(result.public_id))}
+                    >
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {result.label || 'Untitled Record'}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1">
+                              {result.credential_type && (
+                                <span className="text-xs text-muted-foreground">
+                                  {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
+                                </span>
+                              )}
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(result.created_at).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          <Badge
+                            variant={result.status === 'SECURED' ? 'default' : 'secondary'}
+                            className={result.status === 'SECURED' ? 'bg-green-600' : ''}
+                          >
+                            {result.status === 'SECURED' ? 'Verified' : result.status}
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </>
+              ) : (
+                <Card className="glass-card">
+                  <CardContent className="py-12 text-center">
+                    <User className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {SEARCH_LABELS.NO_PERSONS}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {SEARCH_LABELS.NO_PERSONS_DESC}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
           )}
 
           {/* Loading state */}
