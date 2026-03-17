@@ -88,8 +88,8 @@ export function TermsPage() {
             <h2 className="text-lg font-semibold text-foreground">7. Contact</h2>
             <p>
               For questions about these terms, contact us at{' '}
-              <a href="mailto:legal@arkova.io" className="text-primary hover:underline">
-                legal@arkova.io
+              <a href="mailto:legal@arkova.ai" className="text-primary hover:underline">
+                legal@arkova.ai
               </a>.
             </p>
           </section>

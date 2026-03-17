@@ -7,7 +7,7 @@
 Arkova builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform is designed for both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
 
 - Website: https://arkova.ai
-- App: https://app.arkova.io
+- App: https://app.arkova.ai
 - Contact: hello@arkova.ai
 - LinkedIn: https://www.linkedin.com/company/arkova
 
@@ -33,7 +33,7 @@ Arkova builds infrastructure for verifiable credentials. Organizations use Arkov
 
 ## Endpoints
 
-Base URL: `https://app.arkova.io/api/v1`
+Base URL: `https://app.arkova.ai/api/v1`
 
 ### Verify a Credential
 
@@ -77,7 +77,7 @@ Semantic search across verified credentials using natural language.
 
 ## Authentication
 
-- **API Key:** Pass via `X-API-Key` header. Obtain at https://app.arkova.io/settings/api-keys
+- **API Key:** Pass via `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
 - **OAuth 2.0:** Bearer token for enterprise integrations
 - **Public verification:** No authentication required for read-only verification lookups
 
@@ -95,7 +95,7 @@ Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-R
 
 Arkova exposes a Model Context Protocol server for AI agent access:
 
-**Endpoint:** `https://arkova-edge.workers.dev/mcp`
+**Endpoint:** `https://app.arkova.ai/mcp`
 **Transport:** Streamable HTTP
 
 ### Available Tools

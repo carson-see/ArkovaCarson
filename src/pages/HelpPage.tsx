@@ -109,9 +109,9 @@ export function HelpPage() {
           </CardHeader>
           <CardContent>
             <Button variant="outline" asChild>
-              <a href="mailto:support@arkova.io">
+              <a href="mailto:support@arkova.ai">
                 <ExternalLink className="mr-2 h-4 w-4" />
-                support@arkova.io
+                support@arkova.ai
               </a>
             </Button>
           </CardContent>
