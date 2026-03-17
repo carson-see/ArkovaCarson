@@ -103,7 +103,7 @@ function setCorsHeaders(req: express.Request, res: express.Response): boolean {
   const origin = req.headers.origin;
   if (origin && CORS_ALLOWED_ORIGINS.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
@@ -341,6 +341,29 @@ app.post('/api/verify-anchor', rateLimiters.checkout, async (req, res) => {
 app.options('/api/verify-anchor', (req, res) => { setCorsHeaders(req, res); });
 
 // =========================================================================
+// Account Deletion — GDPR Art. 17 Right to Erasure (PII-02)
+// =========================================================================
+app.options('/api/account', (req, res) => { setCorsHeaders(req, res); });
+
+app.delete('/api/account', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { handleAccountDelete } = await import('./api/account-delete.js');
+    await handleAccountDelete(userId, { db, logger }, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Account deletion failed');
+    res.status(500).json({ error: 'Account deletion failed' });
+  }
+});
+
+// =========================================================================
 // Cron Job HTTP Endpoints — Cloud Scheduler (MVP-28) + dev manual trigger
 // Authenticated via OIDC Bearer token in production, open in dev/test.
 // Rate-limited to prevent replay/abuse (CodeQL: missing rate limiting).
@@ -354,25 +377,53 @@ const cronJobsLimiter = rateLimit({
 });
 
 /**
- * Verify Cloud Scheduler OIDC token.
- * In non-production, all requests are allowed (dev manual trigger).
- * In production, verifies the OIDC JWT signature and claims.
+ * Verify cron job authentication (AUTH-01 hardening).
+ *
+ * Supports two auth methods (checked in order):
+ * 1. CRON_SECRET header — `X-Cron-Secret: <shared-secret>`. Simple, works without Cloud Scheduler.
+ * 2. OIDC Bearer token — Cloud Scheduler sends a Google-signed JWT. Verified via JWKS.
+ *
+ * In non-production (dev/test), requests are allowed without auth for local development.
+ * In production, at least one auth method MUST succeed.
  */
 async function verifyCronAuth(req: express.Request): Promise<boolean> {
   if (config.nodeEnv !== 'production') return true;
+
+  // Method 1: Shared secret header (simplest — works with any HTTP client)
+  const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
+  if (config.cronSecret && cronSecretHeader) {
+    // Constant-time comparison to prevent timing attacks
+    const expected = config.cronSecret;
+    if (cronSecretHeader.length === expected.length) {
+      let mismatch = 0;
+      for (let i = 0; i < expected.length; i++) {
+        mismatch |= cronSecretHeader.charCodeAt(i) ^ expected.charCodeAt(i);
+      }
+      if (mismatch === 0) return true;
+    }
+    logger.warn('Invalid X-Cron-Secret header');
+    return false;
+  }
+
+  // Method 2: OIDC Bearer token from Cloud Scheduler
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return false;
   const token = authHeader.slice(7).trim();
   if (!token) return false;
 
   try {
-    // Verify OIDC token from Google Cloud Scheduler
     const { createRemoteJWKSet, jwtVerify } = await import('jose');
     const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+    // If no audience is configured, reject OIDC auth — without audience
+    // validation, any Google-signed JWT would be accepted (jose skips aud check
+    // when audience is undefined).
+    if (!config.cronOidcAudience) {
+      logger.warn('OIDC audience not configured — rejecting Bearer token');
+      return false;
+    }
     const { payload } = await jwtVerify(token, JWKS, {
       issuer: 'https://accounts.google.com',
-      // audience is the Cloud Run service URL
-      audience: config.frontendUrl ? undefined : undefined, // Accept any audience for now
+      audience: config.cronOidcAudience,
     });
     return Boolean(payload?.iss && payload?.exp);
   } catch (err) {
@@ -420,6 +471,29 @@ app.post('/jobs/credit-expiry', cronJobsLimiter, async (req, res) => {
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
     res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// =========================================================================
+// Treasury Status — Arkova platform admin only (feedback_treasury_access)
+// =========================================================================
+app.options('/api/treasury/status', (req, res) => { setCorsHeaders(req, res); });
+
+app.get('/api/treasury/status', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    const { handleTreasuryStatus } = await import('./api/treasury.js');
+    await handleTreasuryStatus(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Treasury status request failed');
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

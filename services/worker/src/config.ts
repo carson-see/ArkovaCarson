@@ -87,11 +87,26 @@ const ConfigSchema = z.object({
   /** AI provider selection: gemini, cloudflare, replicate, mock */
   aiProvider: z.string().optional(),
 
+  // Cron job authentication (AUTH-01)
+  /** Shared secret for cron job endpoints — alternative to OIDC when Cloud Scheduler is not used */
+  cronSecret: z.string().min(16).optional(),
+  /** Expected OIDC audience for Cloud Scheduler tokens (typically the Cloud Run service URL) */
+  cronOidcAudience: z.string().url().optional(),
+
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
+}).superRefine((cfg, ctx) => {
+  // Fail fast: production must have at least one cron auth method configured
+  if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Production requires CRON_SECRET or CRON_OIDC_AUDIENCE — cron endpoints would be unreachable without auth',
+      path: ['cronSecret'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -133,6 +148,8 @@ function loadConfig(): Config {
     geminiModel: process.env.GEMINI_MODEL,
     geminiEmbeddingModel: process.env.GEMINI_EMBEDDING_MODEL,
     aiProvider: process.env.AI_PROVIDER,
+    cronSecret: process.env.CRON_SECRET,
+    cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
   });
 

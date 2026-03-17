@@ -28,7 +28,9 @@ vi.mock('../utils/db.js', () => ({
         })),
       })),
       update: vi.fn(() => ({
-        eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        eq: vi.fn(() => ({
+          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+        })),
       })),
     })),
   },
@@ -118,7 +120,7 @@ describe('updateReviewItem', () => {
 
   it('updates a review item', async () => {
     const { updateReviewItem } = await import('./review-queue.js');
-    const result = await updateReviewItem('item-1', 'user-1', 'APPROVE', 'all good');
+    const result = await updateReviewItem('item-1', 'user-1', 'org-1', 'APPROVE', 'all good');
     expect(result).toBe(true);
   });
 });

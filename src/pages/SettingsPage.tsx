@@ -8,7 +8,7 @@
 
 import { useState, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight } from 'lucide-react';
+import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
@@ -22,7 +22,8 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS } from '@/lib/copy';
+import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS } from '@/lib/copy';
+import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -324,6 +325,30 @@ export function SettingsPage() {
         )}
 
         <Separator />
+
+        {/* Danger Zone */}
+        <Card className="border-destructive/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" />
+              {ACCOUNT_DELETE_LABELS.DANGER_ZONE_TITLE}
+            </CardTitle>
+            <CardDescription>
+              {ACCOUNT_DELETE_LABELS.DANGER_ZONE_DESCRIPTION}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-medium">{ACCOUNT_DELETE_LABELS.DELETE_BUTTON}</p>
+                <p className="text-xs text-muted-foreground max-w-md">
+                  {ACCOUNT_DELETE_LABELS.DANGER_ZONE_DETAIL}
+                </p>
+              </div>
+              <DeleteAccountDialog userEmail={user?.email ?? ''} />
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Sign Out */}
         <div className="flex justify-end">

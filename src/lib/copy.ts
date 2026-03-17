@@ -738,6 +738,27 @@ export const SETTINGS_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// ACCOUNT DELETION (PII-02 — GDPR Art. 17)
+// =============================================================================
+
+export const ACCOUNT_DELETE_LABELS = {
+  DELETE_BUTTON: 'Delete Account',
+  DIALOG_TITLE: 'Delete Your Account',
+  DIALOG_DESCRIPTION: 'This action is permanent and cannot be undone.',
+  WARNING: 'All your personal data will be permanently anonymized. This cannot be reversed.',
+  CONSEQUENCES_INTRO: 'Deleting your account will:',
+  CONSEQUENCE_1: 'Anonymize all your audit trail records',
+  CONSEQUENCE_2: 'Remove your profile and sign-in credentials',
+  CONSEQUENCE_3: 'Revoke all active API keys',
+  CONSEQUENCE_4: 'Preserved records will be disassociated from your identity',
+  CONFIRM_BUTTON: 'Permanently Delete Account',
+  DELETING: 'Deleting...',
+  DANGER_ZONE_TITLE: 'Danger Zone',
+  DANGER_ZONE_DESCRIPTION: 'Irreversible account actions',
+  DANGER_ZONE_DETAIL: 'Permanently delete your account and anonymize all personal data. This cannot be undone.',
+} as const;
+
+// =============================================================================
 // ADMIN TREASURY DASHBOARD (GAP-01 — internal ops, banned terms exempt)
 // =============================================================================
 
@@ -764,6 +785,13 @@ export const TREASURY_LABELS = {
   API_UNAVAILABLE: 'Treasury API not available. Ensure the worker is running.',
   UNAUTHORIZED: 'Access denied. Platform administrator privileges required.',
   REFRESH: 'Refresh',
+  FEE_RATE: 'Fee Rate (sat/vB)',
+  FEE_ESTIMATOR: 'Estimator',
+  BLOCK_HEIGHT: 'Network Record Height',
+  CHAIN_NAME: 'Chain',
+  LAST_24H: 'Last 24 Hours',
+  WORKER_STATUS: 'Worker',
+  CHAIN_CLIENT: 'Chain Client',
 } as const;
 
 // =============================================================================
@@ -780,30 +808,6 @@ export const INTEGRITY_LABELS = {
   SCORE_FLAGGED: 'Flagged',
   NO_SCORE: 'No integrity analysis available',
   COMPUTE_DESCRIPTION: 'Run an integrity analysis to check metadata quality and detect potential issues',
-} as const;
-
-// =============================================================================
-// INTEGRITY DETAIL VIEW (P8-S8)
-// =============================================================================
-
-export const INTEGRITY_DETAIL_LABELS = {
-  // Breakdown dimension labels
-  METADATA_COMPLETENESS: 'Metadata Completeness',
-  EXTRACTION_CONFIDENCE: 'Extraction Confidence',
-  ISSUER_VERIFICATION: 'Issuer Verification',
-  DUPLICATE_CHECK: 'Duplicate Check',
-  TEMPORAL_CONSISTENCY: 'Temporal Consistency',
-  // Flag labels
-  FLAG_MISSING_ISSUED_DATE: 'Missing issue date',
-  FLAG_FUTURE_ISSUED_DATE: 'Issue date is in the future',
-  FLAG_VERY_OLD_CREDENTIAL: 'Credential is over 50 years old',
-  FLAG_EXPIRY_BEFORE_ISSUED: 'Expiry date is before issue date',
-  FLAG_DUPLICATE_FINGERPRINT: 'Duplicate document fingerprint found',
-  FLAG_ISSUER_NOT_IN_REGISTRY: 'Issuer not found in registry',
-  FLAG_MISSING_ISSUER: 'Missing issuer information',
-  FLAG_ANCHOR_NOT_FOUND: 'Record not found',
-  // Status messages
-  NO_ISSUES: 'No integrity issues detected',
 } as const;
 
 // =============================================================================
@@ -866,6 +870,30 @@ export const EXTRACTION_FEEDBACK_LABELS = {
   RATE: 'Acceptance Rate',
   CONFIDENCE: 'Avg Confidence',
   NO_DATA: 'No feedback data yet. Accept or reject AI suggestions to build accuracy metrics.',
+} as const;
+
+// =============================================================================
+// INTEGRITY DETAIL VIEW (P8-S8)
+// =============================================================================
+
+export const INTEGRITY_DETAIL_LABELS = {
+  // Breakdown dimension labels
+  METADATA_COMPLETENESS: 'Metadata Completeness',
+  EXTRACTION_CONFIDENCE: 'Extraction Confidence',
+  ISSUER_VERIFICATION: 'Issuer Verification',
+  DUPLICATE_CHECK: 'Duplicate Check',
+  TEMPORAL_CONSISTENCY: 'Temporal Consistency',
+  // Flag labels
+  FLAG_MISSING_ISSUED_DATE: 'Missing issue date',
+  FLAG_FUTURE_ISSUED_DATE: 'Issue date is in the future',
+  FLAG_VERY_OLD_CREDENTIAL: 'Credential is over 50 years old',
+  FLAG_EXPIRY_BEFORE_ISSUED: 'Expiry date is before issue date',
+  FLAG_DUPLICATE_FINGERPRINT: 'Duplicate document fingerprint found',
+  FLAG_ISSUER_NOT_IN_REGISTRY: 'Issuer not found in registry',
+  FLAG_MISSING_ISSUER: 'Missing issuer information',
+  FLAG_ANCHOR_NOT_FOUND: 'Record not found',
+  // Status messages
+  NO_ISSUES: 'No integrity issues detected',
 } as const;
 
 // =============================================================================

@@ -342,7 +342,7 @@ export interface MempoolProviderConfig {
 }
 
 const DEFAULT_MEMPOOL_TESTNET4_URL = 'https://mempool.space/testnet4/api';
-const DEFAULT_MEMPOOL_SIGNET_URL = 'https://mempool.space/signet/api';
+const _DEFAULT_MEMPOOL_SIGNET_URL = 'https://mempool.space/signet/api';
 
 export class MempoolUtxoProvider implements UtxoProvider {
   readonly name = 'Mempool.space REST API';

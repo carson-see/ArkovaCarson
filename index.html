@@ -19,7 +19,7 @@
     <meta property="og:title" content="Arkova — Secure Document Verification" />
     <meta property="og:description" content="Anchor credentials to an immutable record and verify them instantly." />
     <meta property="og:image" content="/og-image.svg" />
-    <meta property="og:url" content="https://arkova-carson.vercel.app" />
+    <meta property="og:url" content="https://app.arkova.ai" />
     <meta property="og:site_name" content="Arkova" />
 
     <!-- Twitter Card -->
@@ -29,6 +29,87 @@
     <meta name="twitter:image" content="/og-image.svg" />
 
     <title>Arkova</title>
+
+    <!-- Structured Data: Organization + WebSite (GEO-05) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": "Arkova",
+      "url": "https://arkova.ai",
+      "logo": "https://app.arkova.ai/arkova-logo.png",
+      "description": "Privacy-first document verification platform. Anchor credentials to an immutable public record and verify them instantly.",
+      "sameAs": [
+        "https://www.linkedin.com/company/arkova",
+        "https://x.com/arkovatech",
+        "https://github.com/ArkovaCarson"
+      ],
+      "foundingDate": "2025",
+      "founder": [
+        {
+          "@type": "Person",
+          "name": "Carson Seeger",
+          "url": "https://www.linkedin.com/in/carsonseeger/"
+        },
+        {
+          "@type": "Person",
+          "name": "Sarah Rushton",
+          "url": "https://www.linkedin.com/in/sarah-rushton-16a65b92/"
+        }
+      ],
+      "contactPoint": {
+        "@type": "ContactPoint",
+        "email": "hello@arkova.ai",
+        "contactType": "customer support"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      "name": "Arkova",
+      "url": "https://app.arkova.ai",
+      "description": "Secure document verification platform — anchor credentials to an immutable record and verify them instantly.",
+      "potentialAction": {
+        "@type": "SearchAction",
+        "target": "https://app.arkova.ai/search?q={search_term_string}",
+        "query-input": "required name=search_term_string"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Arkova",
+      "url": "https://app.arkova.ai",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "description": "Privacy-first document verification platform. Anchor credentials to an immutable public record and verify them instantly. Documents never leave the user's device.",
+      "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "0",
+        "highPrice": "99",
+        "priceCurrency": "USD",
+        "offerCount": "3"
+      },
+      "featureList": [
+        "Client-side SHA-256 cryptographic fingerprinting",
+        "Public verification via shareable links and QR codes",
+        "AI-powered credential metadata extraction",
+        "REST API with batch verification",
+        "PDF proof certificates",
+        "Bulk CSV credential anchoring",
+        "Webhook notifications",
+        "MCP server for AI agent access"
+      ],
+      "speakable": {
+        "@type": "SpeakableSpecification",
+        "cssSelector": ["meta[name='description']", "title"]
+      }
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

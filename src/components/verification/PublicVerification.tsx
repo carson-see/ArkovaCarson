@@ -430,6 +430,9 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           <p className="mt-1">{PUBLIC_VERIFICATION_LABELS.SECURED_BY}</p>
         </div>
       </CardContent>
+
+      {/* JSON-LD: EducationalOccupationalCredential (GEO schema markup) */}
+      <CredentialJsonLd data={data} />
     </Card>
   );
 }
@@ -470,6 +473,54 @@ function formatTimeSince(isoTimestamp: string): string {
   const diffHr = Math.floor(diffMin / 60);
   if (diffHr === 1) return '1 hour';
   return `${diffHr} hours`;
+}
+
+/** Inject EducationalOccupationalCredential JSON-LD for AI search discoverability */
+function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
+  const credentialType = data.credential_type ?? 'Document';
+  const isEducational = ['DIPLOMA', 'CERTIFICATE', 'TRANSCRIPT', 'DEGREE'].includes(credentialType);
+
+  const jsonLd: Record<string, unknown> = {
+    '@context': 'https://schema.org',
+    '@type': isEducational ? 'EducationalOccupationalCredential' : 'CreativeWork',
+    'name': data.filename,
+    'credentialCategory': credentialType.toLowerCase().replace(/_/g, ' '),
+    'url': `https://app.arkova.ai/verify/${data.public_id}`,
+    'identifier': data.public_id,
+  };
+
+  if (data.issuer_name) {
+    jsonLd.recognizedBy = {
+      '@type': 'Organization',
+      'name': data.issuer_name,
+    };
+  }
+
+  if (data.issued_at ?? data.issued_date) {
+    jsonLd.dateCreated = data.issued_at ?? data.issued_date;
+  }
+
+  if (data.expires_at ?? data.expiry_date) {
+    jsonLd.expires = data.expires_at ?? data.expiry_date;
+  }
+
+  if (data.status === 'SECURED' || data.status === 'ACTIVE') {
+    jsonLd.additionalProperty = {
+      '@type': 'PropertyValue',
+      'name': 'verificationStatus',
+      'value': 'verified',
+    };
+  }
+
+  // Escape </script> sequences to prevent XSS breakout from JSON-LD
+  const safeJson = JSON.stringify(jsonLd).replace(/<\//g, '<\\/');
+
+  return (
+    <script
+      type="application/ld+json"
+      dangerouslySetInnerHTML={{ __html: safeJson }}
+    />
+  );
 }
 
 /** Reusable info row */

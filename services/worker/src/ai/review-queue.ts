@@ -207,6 +207,7 @@ export async function listReviewItems(
 export async function updateReviewItem(
   itemId: string,
   userId: string,
+  orgId: string,
   action: ReviewAction,
   notes?: string,
 ): Promise<boolean> {
@@ -218,6 +219,7 @@ export async function updateReviewItem(
       DISMISS: 'DISMISSED',
     };
 
+    // Org-scoped update: ensures item belongs to caller's org (prevents cross-tenant access)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any)
       .from('review_queue_items')
@@ -228,7 +230,8 @@ export async function updateReviewItem(
         review_action: action,
         review_notes: notes ?? null,
       })
-      .eq('id', itemId);
+      .eq('id', itemId)
+      .eq('org_id', orgId);
 
     if (error) {
       logger.error({ error, itemId }, 'Failed to update review item');

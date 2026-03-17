@@ -2,11 +2,13 @@
  * Treasury Admin Dashboard
  *
  * Internal-only ops page for Arkova platform administrators.
- * Shows anchor processing stats (real Supabase data) and
- * treasury vault overview (requires worker API — placeholder until wired).
+ * Shows real wallet balance, UTXO count, fee estimates, network info,
+ * and anchor processing stats via the worker API.
  *
- * Banned terminology rules are RELAXED for this internal page (per MVP-15 decision).
+ * CRITICAL: This page is ONLY accessible to select Arkova organization members.
+ * Third-party org admins and external users must NEVER see treasury data.
  *
+ * @see feedback_treasury_access
  * @see GAP-01
  */
 
@@ -16,15 +18,16 @@ import {
   RefreshCw,
   Clock,
   CheckCircle,
-  XCircle,
   Lock,
   Activity,
   Server,
   AlertTriangle,
   FileText,
+  Zap,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useTreasuryStatus } from '@/hooks/useTreasuryStatus';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,16 +39,9 @@ import { supabase } from '@/lib/supabase';
 
 /** Hardcoded admin emails — will be replaced with PLATFORM_ADMIN role in future */
 const PLATFORM_ADMIN_EMAILS = [
-  'carson@arkova.io',
-  'sarah@arkova.io',
+  'carson@arkova.ai',
+  'sarah@arkova.ai',
 ];
-
-interface AnchorStats {
-  total: number;
-  pending: number;
-  secured: number;
-  revoked: number;
-}
 
 interface RecentAnchor {
   id: string;
@@ -60,37 +56,16 @@ export function TreasuryAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
+  const { status: treasuryStatus, loading: treasuryLoading, error: treasuryError, fetchStatus } = useTreasuryStatus();
 
-  const [stats, setStats] = useState<AnchorStats | null>(null);
   const [recentAnchors, setRecentAnchors] = useState<RecentAnchor[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [anchorsLoading, setAnchorsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
 
-  const fetchStats = useCallback(async () => {
+  const fetchRecentAnchors = useCallback(async () => {
     try {
-      // Fetch anchor counts by status
-      const [
-        { count: totalCount },
-        { count: pendingCount },
-        { count: securedCount },
-        { count: revokedCount },
-      ] = await Promise.all([
-        supabase.from('anchors').select('*', { count: 'exact', head: true }).is('deleted_at', null),
-        supabase.from('anchors').select('*', { count: 'exact', head: true }).eq('status', 'PENDING').is('deleted_at', null),
-        supabase.from('anchors').select('*', { count: 'exact', head: true }).eq('status', 'SECURED').is('deleted_at', null),
-        supabase.from('anchors').select('*', { count: 'exact', head: true }).eq('status', 'REVOKED').is('deleted_at', null),
-      ]);
-
-      setStats({
-        total: totalCount ?? 0,
-        pending: pendingCount ?? 0,
-        secured: securedCount ?? 0,
-        revoked: revokedCount ?? 0,
-      });
-
-      // Fetch recent anchors
       const { data: recent } = await supabase
         .from('anchors')
         .select('id, public_id, filename, status, created_at, credential_type')
@@ -100,25 +75,27 @@ export function TreasuryAdminPage() {
 
       setRecentAnchors(recent ?? []);
     } catch {
-      // Stats fetch failed — leave null
+      // Anchor fetch failed — leave empty
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      setAnchorsLoading(false);
     }
   }, []);
 
   useEffect(() => {
     if (isAdmin) {
-      fetchStats();
+      fetchStatus();
+      fetchRecentAnchors();
     } else {
-      setLoading(false);
+      setAnchorsLoading(false);
     }
-  }, [isAdmin, fetchStats]);
+  }, [isAdmin, fetchStatus, fetchRecentAnchors]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    fetchStats();
-  }, [fetchStats]);
+    Promise.all([fetchStatus(), fetchRecentAnchors()]).finally(() => {
+      setRefreshing(false);
+    });
+  }, [fetchStatus, fetchRecentAnchors]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -141,6 +118,12 @@ export function TreasuryAdminPage() {
       </AppShell>
     );
   }
+
+  const loading = treasuryLoading || anchorsLoading;
+  const wallet = treasuryStatus?.wallet;
+  const network = treasuryStatus?.network;
+  const fees = treasuryStatus?.fees;
+  const anchorStats = treasuryStatus?.recentAnchors;
 
   return (
     <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
@@ -165,40 +148,49 @@ export function TreasuryAdminPage() {
         </Button>
       </div>
 
+      {/* Error banner */}
+      {treasuryError && (
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700">
+          <AlertTriangle className="inline h-4 w-4 mr-2" />
+          {treasuryError}
+        </div>
+      )}
+
       {/* Anchor Processing Stats */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-8">
         <TreasuryStatCard
           label={TREASURY_LABELS.TOTAL_ANCHORS}
-          value={stats?.total}
+          value={anchorStats ? anchorStats.totalSecured + anchorStats.totalPending : undefined}
           icon={FileText}
           loading={loading}
           variant="primary"
         />
         <TreasuryStatCard
           label={TREASURY_LABELS.PENDING_ANCHORS}
-          value={stats?.pending}
+          value={anchorStats?.totalPending}
           icon={Clock}
           loading={loading}
           variant="warning"
         />
         <TreasuryStatCard
           label={TREASURY_LABELS.SECURED_ANCHORS}
-          value={stats?.secured}
+          value={anchorStats?.totalSecured}
           icon={CheckCircle}
           loading={loading}
           variant="success"
         />
         <TreasuryStatCard
-          label={TREASURY_LABELS.REVOKED_ANCHORS}
-          value={stats?.revoked}
-          icon={XCircle}
+          label={TREASURY_LABELS.LAST_24H}
+          value={anchorStats?.last24hCount}
+          icon={Activity}
           loading={loading}
-          variant="muted"
+          variant="primary"
         />
       </div>
 
-      {/* Treasury Vault (placeholder — requires worker API) */}
+      {/* Treasury Vault + Network Status */}
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
+        {/* Vault Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
@@ -211,26 +203,55 @@ export function TreasuryAdminPage() {
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_NETWORK}</span>
                 <Badge variant="secondary" className="font-mono text-xs">
-                  {import.meta.env.VITE_CHAIN_NETWORK ?? 'signet'}
+                  {network?.name ?? (import.meta.env.VITE_CHAIN_NETWORK ?? 'testnet4')}
                 </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_ADDRESS}</span>
+                {loading ? (
+                  <Skeleton className="h-4 w-40" />
+                ) : wallet ? (
+                  <span className="font-mono text-xs truncate max-w-[200px]" title={wallet.address}>
+                    {wallet.address}
+                  </span>
+                ) : (
+                  <span className="font-mono text-sm text-muted-foreground italic">—</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_BALANCE}</span>
-                <span className="font-mono text-sm text-muted-foreground italic">
-                  {TREASURY_LABELS.API_UNAVAILABLE}
-                </span>
+                {loading ? (
+                  <Skeleton className="h-4 w-20" />
+                ) : wallet ? (
+                  <span className="font-mono text-sm font-semibold">
+                    {wallet.balanceSats.toLocaleString()} sats
+                  </span>
+                ) : (
+                  <span className="font-mono text-sm text-muted-foreground italic">
+                    {TREASURY_LABELS.API_UNAVAILABLE}
+                  </span>
+                )}
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{TREASURY_LABELS.UTXO_COUNT}</span>
-                <span className="font-mono text-sm text-muted-foreground italic">—</span>
+                {loading ? (
+                  <Skeleton className="h-4 w-12" />
+                ) : wallet ? (
+                  <span className="font-mono text-sm">{wallet.utxoCount}</span>
+                ) : (
+                  <span className="font-mono text-sm text-muted-foreground italic">—</span>
+                )}
               </div>
-              <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
-                {TREASURY_LABELS.VAULT_NOT_CONFIGURED}
-              </p>
+              {!wallet && !loading && (
+                <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
+                  {treasuryStatus?.error ?? TREASURY_LABELS.VAULT_NOT_CONFIGURED}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
 
+        {/* Network + Fee Card */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
@@ -241,29 +262,56 @@ export function TreasuryAdminPage() {
           <CardContent>
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Worker</span>
-                <Badge variant="outline" className="text-xs">
-                  <Activity className="mr-1 h-3 w-3" />
-                  {TREASURY_LABELS.UNKNOWN}
-                </Badge>
+                <span className="text-muted-foreground">{TREASURY_LABELS.WORKER_STATUS}</span>
+                {loading ? (
+                  <Skeleton className="h-5 w-20" />
+                ) : treasuryStatus ? (
+                  <Badge variant="outline" className="text-xs bg-green-500/10 text-green-700 border-green-500/30">
+                    <Activity className="mr-1 h-3 w-3" />
+                    {TREASURY_LABELS.CONNECTED}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs">
+                    {TREASURY_LABELS.UNKNOWN}
+                  </Badge>
+                )}
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Chain Client</span>
-                <Badge variant="outline" className="text-xs">
-                  {TREASURY_LABELS.UNKNOWN}
-                </Badge>
+                <span className="text-muted-foreground">{TREASURY_LABELS.BLOCK_HEIGHT}</span>
+                {loading ? (
+                  <Skeleton className="h-4 w-20" />
+                ) : network ? (
+                  <span className="font-mono text-xs">{network.blockHeight.toLocaleString()}</span>
+                ) : (
+                  <span className="font-mono text-xs text-muted-foreground">—</span>
+                )}
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Last Anchor</span>
+                <span className="text-muted-foreground">{TREASURY_LABELS.FEE_RATE}</span>
+                {loading ? (
+                  <Skeleton className="h-4 w-16" />
+                ) : fees ? (
+                  <span className="font-mono text-xs flex items-center gap-1">
+                    <Zap className="h-3 w-3 text-amber-500" />
+                    {fees.currentRateSatPerVbyte} sat/vB
+                  </span>
+                ) : (
+                  <span className="font-mono text-xs text-muted-foreground">—</span>
+                )}
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Last Secured Anchor</span>
                 <span className="font-mono text-xs">
-                  {recentAnchors.length > 0 && recentAnchors[0].status === 'SECURED'
-                    ? new Date(recentAnchors[0].created_at).toLocaleString()
+                  {anchorStats?.lastSecuredAt
+                    ? new Date(anchorStats.lastSecuredAt).toLocaleString()
                     : '—'}
                 </span>
               </div>
-              <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
-                Worker health and chain status require a running worker with /api/health endpoint.
-              </p>
+              {fees && (
+                <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
+                  Fee estimated via {fees.estimatorName}. Network: {network?.name ?? 'unknown'}.
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -277,7 +325,7 @@ export function TreasuryAdminPage() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {loading ? (
+          {anchorsLoading ? (
             <div className="space-y-3">
               {Array.from({ length: 5 }).map((_, i) => (
                 <div key={`skeleton-${i}`} className="flex items-center justify-between">

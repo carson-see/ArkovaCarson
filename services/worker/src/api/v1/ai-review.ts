@@ -110,28 +110,29 @@ router.patch('/:itemId', async (req: Request, res: Response) => {
     return;
   }
 
-  // Verify admin role
-  const { data: profile } = await db
-    .from('profiles')
-    .select('org_id, role')
-    .eq('id', userId)
-    .single();
-
-  if (!profile?.org_id || profile.role !== 'ORG_ADMIN') {
-    res.status(403).json({ error: 'Admin access required to review items' });
-    return;
-  }
-
-  const parsed = ReviewActionSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'validation_error', details: parsed.error.issues });
-    return;
-  }
-
   try {
+    // Verify admin role
+    const { data: profile } = await db
+      .from('profiles')
+      .select('org_id, role')
+      .eq('id', userId)
+      .single();
+
+    if (!profile?.org_id || profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Admin access required to review items' });
+      return;
+    }
+
+    const parsed = ReviewActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'validation_error', details: parsed.error.issues });
+      return;
+    }
+
     const success = await updateReviewItem(
       itemId,
       userId,
+      profile.org_id,
       parsed.data.action,
       parsed.data.notes,
     );

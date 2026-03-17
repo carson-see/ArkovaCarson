@@ -47,6 +47,9 @@ Every prompt that involves UI/frontend work (component changes, page updates, st
 
 UAT is not optional. A task is not complete until UAT screenshots confirm the changes work at both viewport sizes.
 
+### BACKLOG MANDATE
+All backlog items — stories, bugs, security findings, operational tasks, GEO items — **must exist in a single source of truth**: `docs/BACKLOG.md`. This document is prioritized and re-prioritized each session. No backlog item should exist only in a story doc, bug report, or session log — it must also appear in BACKLOG.md. When work is completed, update BACKLOG.md before closing the session. Every backlog item must also have corresponding story documentation in `docs/stories/` (grouped by priority level).
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
@@ -54,10 +57,11 @@ UAT is not optional. A task is not complete until UAT screenshots confirm the ch
 ```
 1. CLAUDE.md          ← You are here. Rules, Mandates, Constitution, story status.
 2. HANDOFF.md         ← Living state. Phase 3/4 tracking, blockers, decisions.
-3. ARCHIVE_memory.md  ← Historical context from prior phases.
-4. docs/confluence/01_architecture_overview.md  ← If it exists.
-5. The relevant agents.md in any folder you are about to edit.
-6. The story card from the Technical Backlog for the story you are implementing.
+3. docs/BACKLOG.md    ← **SINGLE SOURCE OF TRUTH** for all open work (stories, bugs, security, ops).
+4. ARCHIVE_memory.md  ← Historical context from prior phases.
+5. docs/confluence/01_architecture_overview.md  ← If it exists.
+6. The relevant agents.md in any folder you are about to edit.
+7. The story card from the Technical Backlog for the story you are implementing.
 ```
 
 If a folder contains an `agents.md`, read it before touching anything. If you learn something important during your work, update that folder's `agents.md` AND the "Current State" section of HANDOFF.md.
@@ -624,7 +628,7 @@ npx supabase db reset
 
 **Never modify an existing migration file.** Write a new compensating migration instead.
 
-**Current migration inventory:** 63 files, versions 0001–0064 (0033 skipped). Last: `0064_p8_phase2_ai_intelligence.sql`. Migrations 0001–0058 applied to production. Migrations 0059–0064 pending production apply.
+**Current migration inventory:** 63 files, versions 0001–0065 (0033 skipped). Last: `0065_account_deletion.sql`. Migrations 0001–0058 applied to production. Migrations 0059–0065 pending production apply.
 
 ---
 
@@ -645,12 +649,12 @@ npx supabase db reset
 | P4.5 Verification API | 13/13 | 0 | 0 | 100% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
 | MVP Launch Gaps | 25/27 | 0 | 2/27 | 93% |
-| P8 AI Intelligence | 19/19 | 0 | 0/19 | 100% |
+| P8 AI Intelligence | 15/19 | 0 | 4/19 | 79% |
 | INFRA Edge & Ingress | 7/8 | 1/8 | 0/8 | 88% |
 | UAT Bug Fix Sprints | 17/17 | 0 | 0 | 100% |
 | UF User Flow Gaps | 10/10 | 0 | 0 | 100% |
 | GEO & SEO | 4/12 | 3/12 | 5/12 | 33% |
-| **Total** | **150/163** | **4/163** | **9/163** | **~92%** |
+| **Total** | **146/163** | **4/163** | **13/163** | **~90%** |
 
 ### Critical Blockers (resolve before production)
 
@@ -790,28 +794,26 @@ All 12 stories complete. DH-03 (PR #26), DH-07 (PR #38), DH-09 (PR #39) complete
 
 **Bugs linked:** ~~BUG-AUDIT-01~~ (→MVP-02 RESOLVED), ~~BUG-AUDIT-02~~ (→MVP-03 RESOLVED), ~~BUG-AUDIT-03~~ (→MVP-04 RESOLVED).
 
-### P8 AI Intelligence — 19/19 COMPLETE
+### P8 AI Intelligence — 15/19 COMPLETE, 4/19 NOT STARTED
 
-19 stories for AI-powered document intelligence. All phases complete (Phase I + Phase 1.5 + Phase II):
+19 stories for AI-powered document intelligence. Phase I (6 stories) + Phase 1.5 (5 stories) + 4 infrastructure stories complete:
 - ~~P8-S1~~ ✅ Gemini API Integration — `GeminiProvider` implementing `IAIProvider`, structured JSON output, retry + circuit breaker, Zod schemas, prompt templates. 13 tests.
 - ~~P8-S2~~ ✅ AI Cost Tracking — Migration 0059 (`ai_credits` + `ai_usage_events`), `cost-tracker.ts`, `check_ai_credits`/`deduct_ai_credits` RPCs, `GET /api/v1/ai/usage`. 17 tests.
-- ~~P8-S3~~ ✅ AI Feature Flags — `ENABLE_AI_EXTRACTION`, `ENABLE_SEMANTIC_SEARCH`, `ENABLE_AI_FRAUD`, `ENABLE_AI_REPORTS` in switchboard + seed SQL. `aiFeatureGate.ts` middleware. 17 tests.
+- ~~P8-S3~~ ✅ AI Feature Flags — `ENABLE_AI_EXTRACTION`, `ENABLE_SEMANTIC_SEARCH`, `ENABLE_AI_FRAUD` in switchboard + seed SQL. `aiFeatureGate.ts` middleware. 17 tests.
 - ~~P8-S4~~ ✅ AI Extraction Service — `POST /api/v1/ai/extract` endpoint. PII-stripped metadata in → structured fields out. Credit check + deduction. Feature flag gate. Audit logging. 6 tests.
 - ~~P8-S5~~ ✅ AI Extraction UI — `ocrWorker.ts` (PDF.js + Tesseract.js), `aiExtraction.ts` (orchestrator: OCR → stripPII → API → render), `AIFieldSuggestions.tsx` (confidence badges, accept/reject/edit). 18 tests.
-- ~~P8-S6~~ ✅ Extraction Learning / Feedback — Migration 0064 (`extraction_feedback` + `get_extraction_accuracy` RPC). `feedback.ts` service, API endpoints, `useExtractionFeedback` hook. 12 worker tests.
 - ~~P8-S7~~ ✅ Cloudflare Crawler (institution ingestion) — `services/edge/src/institution-crawler.ts`, 5 tests
-- ~~P8-S8~~ ✅ Integrity Score UI — Migration 0064 (`integrity_scores` table). `integrity.ts` weighted scoring (metadata/extraction/issuer/duplicate/temporal). `IntegrityScoreBadge` + `IntegrityDetailView` components. Auto-flags review when <60. 19 worker + 15 component tests.
-- ~~P8-S9~~ ✅ Human Review Workflow — Migration 0064 (`review_queue_items` table). `review-queue.ts` CRUD + stats. `ReviewQueue` component with filters, actions, notes. `ReviewQueuePage` at `/organization/review-queue`. Admin role enforced. 11 worker + 7 component tests.
 - ~~P8-S10~~ ✅ pgvector Embedding Schema — Migration 0060 (`credential_embeddings` table, HNSW index, org-scoped RLS, 2 SECURITY DEFINER RPCs).
 - ~~P8-S11~~ ✅ Embedding Generation Pipeline — `embeddings.ts` service + `POST /api/v1/ai/embed` + batch endpoint. Credit check/deduction, source text hashing. 18 tests.
 - ~~P8-S12~~ ✅ Semantic Search UI — `GET /api/v1/ai/search` endpoint + `SemanticSearch` component + `useSemanticSearch` hook. Nordic Vault aesthetic. 20 tests.
 - ~~P8-S13~~ ✅ Batch AI Processing (Cloudflare Queues) — `services/edge/src/batch-queue.ts`, 4 tests
 - ~~P8-S14~~ ✅ Batch AI Dashboard — `BatchAIDashboard` component with glass-card, shimmer, auto-refresh. 5 tests.
 - ~~P8-S15~~ ✅ R2 Report Storage (zero-egress signed URLs) — `services/edge/src/report-generator.ts`, 4 tests
-- ~~P8-S16~~ ✅ Report UI — Migration 0064 (`ai_reports` table). `report-generator.ts` (4 report types). `AIReportsPanel` with create form, polling, result viewer, JSON download. `AIReportsPage` at `/organization/ai-reports`. `ENABLE_AI_REPORTS` flag. 12 worker + 7 component tests.
 - ~~P8-S17~~ ✅ AI Provider Abstraction (IAIProvider + factory) — `services/worker/src/ai/`, 16 tests
 - ~~P8-S18~~ ✅ Client-Side PII Stripping — `piiStripper.ts` with `stripPII()`. Regex for SSN, phone, email, DOB, student ID, name matching. Returns `StrippingReport`. 27 tests.
 - ~~P8-S19~~ ✅ Agentic Verification Endpoint — `GET /api/v1/verify/search` with frozen schema results, API key auth, similarity scores. 5 tests.
+
+Remaining 4 stories NOT STARTED (Phase II). See `docs/stories/12_p8_ai_intelligence.md` for full details.
 
 ### INFRA Edge & Ingress — 7/8 COMPLETE, 1/8 PARTIAL, 0/8 NOT STARTED
 
@@ -1077,6 +1079,10 @@ ENABLE_VERIFICATION_API=false
 API_KEY_HMAC_SECRET=
 CORS_ALLOWED_ORIGINS=*
 
+# Cron job authentication (AUTH-01)
+CRON_SECRET=                        # shared secret for X-Cron-Secret header (min 16 chars)
+CRON_OIDC_AUDIENCE=                 # Cloud Run service URL for OIDC audience verification
+
 # Cloudflare (edge workers — never in browser)
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=              # wrangler deploy token
@@ -1103,5 +1109,5 @@ AI_PROVIDER=mock                   # gemini | cloudflare | replicate | mock
 
 ---
 
-_Directive version: 2026-03-16 (P8 Phase II complete) | Repo: ArkovaCarson | 63 migrations | 1,714 tests | 163 stories (150 complete, 92%)_
+_Directive version: 2026-03-16 (All 12 CISO security findings resolved — AUTH-01, SEC-01 complete) | Repo: ArkovaCarson | 63 migrations | 1,745 tests | 163 stories (146 complete, 90%)_
 _Companion: MEMORY.md (living state) | Technical Backlog P1-P7 | Phase 1.5 Backlog | Business Backlog P1-P7_
