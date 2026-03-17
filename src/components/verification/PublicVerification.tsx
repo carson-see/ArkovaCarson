@@ -490,7 +490,7 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
   };
 
   if (data.issuer_name) {
-    jsonLd.issuedBy = {
+    jsonLd.recognizedBy = {
       '@type': 'Organization',
       'name': data.issuer_name,
     };

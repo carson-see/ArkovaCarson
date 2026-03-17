@@ -1,5 +1,5 @@
 # GEO & SEO Optimization Stories
-_Last updated: 2026-03-16 | 6/12 COMPLETE, 1/12 PARTIAL, 5/12 NOT STARTED_
+_Last updated: 2026-03-16 | 5/12 COMPLETE, 2/12 PARTIAL, 5/12 NOT STARTED_
 
 ## Group Overview
 
@@ -15,8 +15,8 @@ The GEO audit report lives at `GEO-AUDIT-REPORT.md` in the repo root. Detailed s
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 6 |
-| PARTIAL | 1 |
+| COMPLETE | 5 |
+| PARTIAL | 2 |
 | NOT STARTED | 5 |
 
 ---
@@ -219,11 +219,11 @@ As a search engine or AI assistant, I need comprehensive structured data to unde
 
 ### Acceptance Criteria
 
-- [ ] 6+ JSON-LD schema blocks on homepage (Organization, SoftwareApplication, FAQPage, WebSite, WebPage+speakable, Person)
-- [ ] All schemas validate with zero errors on Google Rich Results Test
-- [ ] SoftwareApplication shows AggregateOffer with all pricing tiers
-- [ ] speakable property targets hero headline and FAQ sections
-- [ ] Schema score improves from 52/100 to 75+/100
+- [x] 6+ JSON-LD schema blocks on homepage (Organization, SoftwareApplication, FAQPage, WebSite, WebPage+speakable, Person) — 4 blocks on app (Organization, WebSite, SoftwareApplication w/speakable); FAQPage + Person on marketing site
+- [ ] All schemas validate with zero errors on Google Rich Results Test (pending validation)
+- [x] SoftwareApplication shows AggregateOffer with all pricing tiers ($0-$99, 3 tiers)
+- [x] speakable property targets meta description and title via cssSelector
+- [ ] Schema score improves from 52/100 to 75+/100 (pending measurement)
 
 ---
 
@@ -484,7 +484,7 @@ As Google Gemini, I need YouTube video content about Arkova to reference when us
 
 ## GEO-12: Security Headers + Technical SEO Hardening
 
-**Status:** PARTIAL (vercel.json headers complete; CSP on app.arkova.ai needs Google Fonts tuning)
+**Status:** COMPLETE
 **Priority:** MEDIUM
 **Dependencies:** None
 **Completed:** 2026-03-15. `vercel.json` with 7 security headers + CSP + SPA rewrite. 10 tests.

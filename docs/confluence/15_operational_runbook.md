@@ -142,6 +142,7 @@ curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
 
 | # | File | Description | Dependencies |
 |---|------|-------------|--------------|
+| 0059 | `0059_ai_credits_usage.sql` | AI credits + usage events tables, RPCs | None |
 | 0060 | `0060_credential_embeddings.sql` | pgvector embeddings table + HNSW index + org-scoped RLS | pgvector extension |
 | 0061 | `0061_gdpr_pii_erasure.sql` | PII erasure RPCs + audit_events null trigger + backfill | None |
 | 0062 | `0062_security_hardening_high.sql` | GRANT on 13 tables, ORG_ADMIN RLS, parameterized search RPC | None |

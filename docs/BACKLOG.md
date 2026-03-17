@@ -12,10 +12,10 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | Stories (NOT STARTED) | 9 | — | 9 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | No (GEO-12 cosmetic, INFRA-07 ops-only) |
 | Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 38 | 33 | 5 | No (all MEDIUM/LOW) |
+| UAT Bugs | 38 | 27 | 11 | No (all MEDIUM/LOW) |
 | Operational Tasks | 7 | 0 | 7 | **YES** (OPS-01/02 CRITICAL) |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **24** | |
+| **Total Open Items** | | | **30** | |
 
 ---
 
@@ -129,13 +129,20 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | GEO-10 | IndexNow for Bing/Copilot | MEDIUM |
 | GEO-11 | YouTube explainers + VideoObject schema | MEDIUM |
 
-### GEO & SEO — 3 partial → 1 partial, 2 upgraded
-| ID | Description | Status |
-|----|-------------|--------|
-| ~~GEO-01~~ | ~~Schema markup (Organization, Person, SoftwareApplication, WebSite JSON-LD)~~ | ✅ COMPLETE — Organization + WebSite + SoftwareApplication + speakable in index.html |
-| ~~GEO-02~~ | ~~llms.txt + AI crawler access rules~~ | ✅ COMPLETE — robots.txt (explicit AI crawler Allow), llms.txt (128 lines, MCP endpoint), canonical URLs updated to app.arkova.ai |
-| ~~GEO-05~~ | ~~Enhanced schema (speakable + AggregateOffer)~~ | ✅ COMPLETE — SoftwareApplication schema with AggregateOffer ($0-$99, 3 tiers) + speakable cssSelector |
-| GEO-12 | Security headers | ⚠️ PARTIAL — CSP header (complex with Google Fonts) |
+### GEO & SEO — 2 partial (see `docs/stories/15_geo_seo.md` for all 12 stories)
+| ID | Story Doc Name | Status |
+|----|----------------|--------|
+| GEO-02 | LinkedIn entity collision + sameAs | ⚠️ PARTIAL — sameAs updated; LinkedIn company page + Wikidata entry are external tasks |
+| GEO-08 | Content expansion — 5 core pages | ⚠️ PARTIAL — Research section + first article done; 5 core pages remaining |
+
+### GEO & SEO — 5 complete
+| ID | Story Doc Name | Status |
+|----|----------------|--------|
+| ~~GEO-01~~ | ~~Server-Side Rendering for marketing site~~ | ✅ COMPLETE (PR #2 arkova-marketing) |
+| ~~GEO-05~~ | ~~Enhanced schema (speakable + AggregateOffer)~~ | ✅ COMPLETE — SoftwareApplication + AggregateOffer + speakable in app index.html |
+| ~~GEO-06~~ | ~~llms.txt deployment~~ | ✅ COMPLETE — llms.txt + robots.txt with AI crawler rules, canonical URLs |
+| ~~GEO-07~~ | ~~Fix og:image + meta tags~~ | ✅ COMPLETE — og:image, twitter:site, og:site_name |
+| ~~GEO-12~~ | ~~Security headers~~ | ✅ COMPLETE — vercel.json with 7 headers + CSP + SPA rewrite, 10 tests |
 
 ### INFRA — 1 partial
 | ID | Description | Remaining |
