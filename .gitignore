@@ -55,6 +55,10 @@ docs/stories/docx/
 # Sentry
 .sentryclirc
 
+# Generated artifacts
+.generated-machines/
+.playwright-mcp/
+
 # Misc
 .cache/
 .parcel-cache/

@@ -40,13 +40,13 @@ Single source of truth: `docs/BACKLOG.md`. Every backlog item must exist there +
 ## 0.1. READ FIRST — EVERY SESSION
 
 ```
-1. CLAUDE.md          <- You are here.
-2. HANDOFF.md         <- Living state. Phase 3/4 tracking, blockers, decisions.
-3. docs/BACKLOG.md    <- Single source of truth for all open work.
-4. ARCHIVE_memory.md  <- Historical context from prior phases.
-5. The relevant agents.md in any folder you are about to edit.
+1. CLAUDE.md          <- You are here. Rules + Constitution (frozen).
+2. docs/BACKLOG.md    <- Single source of truth for ALL open work.
+3. HANDOFF.md         <- Current state, open blockers, decisions.
+4. The relevant agents.md in any folder you are about to edit.
 ```
 
+**Do NOT read** `docs/archive/MEMORY_deprecated.md` or `ARCHIVE_memory.md` — these are historical only.
 If a folder contains an `agents.md`, read it before touching anything.
 
 ---
