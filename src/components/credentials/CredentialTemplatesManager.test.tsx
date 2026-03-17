@@ -7,6 +7,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { CredentialTemplatesManager } from './CredentialTemplatesManager';
+import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
 
 // Mock TemplateSchemaBuilder
 vi.mock('./TemplateSchemaBuilder', () => ({
@@ -30,12 +31,12 @@ const defaultProps = {
 describe('CredentialTemplatesManager', () => {
   it('shows empty state when no templates', () => {
     render(<CredentialTemplatesManager {...defaultProps} />);
-    expect(screen.getByText('No templates yet')).toBeDefined();
+    expect(screen.getByText(SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_TITLE)).toBeDefined();
   });
 
   it('shows starter template buttons in empty state (UAT2-09)', () => {
     render(<CredentialTemplatesManager {...defaultProps} />);
-    expect(screen.getByText('Popular templates to get started')).toBeDefined();
+    expect(screen.getByText(SETTINGS_PAGE_LABELS.TEMPLATES_STARTER_HEADING)).toBeDefined();
     expect(screen.getByRole('button', { name: /Diploma/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Professional Certificate/i })).toBeDefined();
     expect(screen.getByRole('button', { name: /Professional License/i })).toBeDefined();
@@ -64,12 +65,12 @@ describe('CredentialTemplatesManager', () => {
     render(<CredentialTemplatesManager {...defaultProps} templates={templates} />);
     expect(screen.getByText('Test Template')).toBeDefined();
     // Should NOT show starter templates when templates exist
-    expect(screen.queryByText('Popular templates to get started')).toBeNull();
+    expect(screen.queryByText(SETTINGS_PAGE_LABELS.TEMPLATES_STARTER_HEADING)).toBeNull();
   });
 
   it('shows loading state', () => {
     render(<CredentialTemplatesManager {...defaultProps} loading={true} />);
     // Should show loading spinner (Loader2 has animate-spin)
-    expect(screen.queryByText('No templates yet')).toBeNull();
+    expect(screen.queryByText(SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_TITLE)).toBeNull();
   });
 });

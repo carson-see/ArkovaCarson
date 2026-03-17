@@ -12,10 +12,10 @@ _Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized e
 | Stories (NOT STARTED) | 13 | — | 13 | No (post-launch) |
 | Stories (PARTIAL) | 4 | — | 4 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 38 | 35 | 3 | No (all LOW) |
+| UAT Bugs | 29 | 26 | 3 | No (all LOW) |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **22** | |
+| **Total Open Items** | | | **28** | |
 
 ---
 

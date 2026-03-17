@@ -141,6 +141,7 @@ export function useAuth(): AuthState & AuthActions {
     const { error } = await supabase.auth.signOut();
 
     if (error) {
+      sessionStorage.removeItem('arkova_signed_out');
       setError(error.message);
     }
 

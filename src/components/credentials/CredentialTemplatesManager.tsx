@@ -61,7 +61,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, SETTINGS_PAGE_LABELS } from '@/lib/copy';
 import { TemplateSchemaBuilder, type TemplateFieldDefinition } from './TemplateSchemaBuilder';
 import type { Database, Json } from '@/types/database.types';
 
@@ -319,18 +319,17 @@ export function CredentialTemplatesManager({
               <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mx-auto mb-4">
                 <FileText className="h-7 w-7 text-muted-foreground" />
               </div>
-              <h3 className="text-lg font-semibold mb-1">No templates yet</h3>
+              <h3 className="text-lg font-semibold mb-1">{SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_TITLE}</h3>
               <p className="text-sm text-muted-foreground max-w-sm mx-auto mb-4">
-                Templates define the fields and layout for issued credentials.
-                Create one for each credential type your organization issues.
+                {SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_DESC}
               </p>
               <Button onClick={openCreate} size="sm">
                 <Plus className="mr-2 h-4 w-4" />
-                Create Your First Template
+                {SETTINGS_PAGE_LABELS.TEMPLATES_EMPTY_CTA}
               </Button>
               <div className="mt-6 pt-6 border-t max-w-md mx-auto">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
-                  Popular templates to get started
+                  {SETTINGS_PAGE_LABELS.TEMPLATES_STARTER_HEADING}
                 </p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {STARTER_TEMPLATES.map((starter) => (

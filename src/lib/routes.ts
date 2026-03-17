@@ -97,7 +97,8 @@ export function issuerRegistryPath(orgId: string): string {
 
 /** Production-safe base URL — prefers VITE_APP_URL, falls back to production domain */
 export function getAppBaseUrl(): string {
-  return import.meta.env.VITE_APP_URL || 'https://app.arkova.ai';
+  const rawBaseUrl = import.meta.env.VITE_APP_URL || 'https://app.arkova.ai';
+  return rawBaseUrl.replace(/\/+$/, '');
 }
 
 /** Build a full verification URL for a given public ID */

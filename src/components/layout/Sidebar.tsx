@@ -272,7 +272,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
             ) : (
               <>
                 <ChevronLeft className="h-4 w-4 mr-2" />
-                <span>Collapse</span>
+                <span>{NAV_POLISH_LABELS.COLLAPSE}</span>
               </>
             )}
           </Button>

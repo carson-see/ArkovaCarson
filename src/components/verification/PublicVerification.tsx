@@ -181,6 +181,17 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               ))}
             </div>
           </div>
+          <Separator />
+          {/* Skeleton proof download */}
+          <div className="space-y-3">
+            <div className="h-4 w-32 rounded bg-muted/60 shimmer" />
+            <div className="h-10 w-full rounded bg-muted/40 shimmer" />
+          </div>
+          {/* Skeleton footer */}
+          <div className="border-t pt-4 space-y-2">
+            <div className="mx-auto h-3 w-32 rounded bg-muted/40 shimmer" />
+            <div className="mx-auto h-3 w-24 rounded bg-muted/40 shimmer" />
+          </div>
         </CardContent>
       </Card>
     );
