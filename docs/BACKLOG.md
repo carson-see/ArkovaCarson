@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-16 (doc sync — P8 19/19, UAT bugs resolved, GEO updates) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-17 (audit findings tracked — 16/24 fixed across PRs #88-91) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -13,9 +13,10 @@ _Last updated: 2026-03-16 (doc sync — P8 19/19, UAT bugs resolved, GEO updates
 | Stories (PARTIAL) | 3 | — | 3 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs | 29 | 29 | 0 | No |
+| Audit Findings | 24 | 16 fixed | 8 | No |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **20** | |
+| **Total Open Items** | | | **28** | |
 
 ---
 
@@ -95,6 +96,41 @@ _Last updated: 2026-03-16 (doc sync — P8 19/19, UAT bugs resolved, GEO updates
 | ~~42~~ | ~~UAT3-03~~ | ~~LOW~~ | ~~No loading skeleton on verification page~~ | ~~**FIXED** — Shimmer skeleton already exists in PublicVerification loading state~~ |
 | ~~43~~ | ~~UAT3-04~~ | ~~LOW~~ | ~~QR code on detail page links to localhost~~ | ~~**FIXED** — All copy/QR URLs use `verifyUrl()` (production base URL)~~ |
 | ~~44~~ | ~~UAT3-05~~ | ~~LOW~~ | ~~Missing toast on billing page auth redirect~~ | ~~**FIXED** — AuthGuard already shows redirect toast for all auth redirects including billing~~ |
+
+---
+
+## TIER 4B: CODEBASE AUDIT FINDINGS (2026-03-17)
+
+128 findings across 24 AUDIT stories from comprehensive codebase audit. Tracked across PRs #88-91.
+
+| # | ID | Category | Issue | Status | PR |
+|---|-----|----------|-------|--------|-----|
+| 1 | AUDIT-01 | SQL Bugs | 6 migration bugs (CHECK constraint, operator precedence, column names) | ✅ FIXED | #88 |
+| 2 | AUDIT-02 | Code Bugs | 4 runtime bugs (infinite re-render, shutdown race, metadata overwrite) | ✅ FIXED | #88 |
+| 3 | AUDIT-03 | Security | Edge worker auth (cron secret, constant-time compare) | ✅ FIXED | #88 |
+| 4 | AUDIT-04 | Security | SSRF blocklist, prompt injection, MCP CORS | ✅ FIXED | #88 |
+| 5 | AUDIT-05 | Config | Missing env vars, dead code in config, hardcoded defaults | ✅ FIXED | #89 |
+| 6 | AUDIT-06 | CI Gaps | Edge worker tsc not in CI, no npm audit step | ✅ FIXED | #90 |
+| 7 | AUDIT-07 | Resilience | No sub-route error boundaries (one crash takes down app) | ✅ FIXED | #91 |
+| 8 | AUDIT-08 | Worker | Inconsistent error handling in worker jobs | ✅ FIXED | #89 |
+| 9 | AUDIT-09 | Accessibility | Skip-to-content link missing, form label gaps | ✅ FIXED (skip link) | #91 |
+| 10 | AUDIT-10 | Edge | Error handling gaps in edge workers (DLQ, MCP, AI fallback) | ✅ FIXED | #90 |
+| 11 | AUDIT-11 | Config | Unused dependencies, mismatched versions | ✅ FIXED | #89 |
+| 12 | AUDIT-12 | Testing | Missing test coverage for critical paths | OPEN | — |
+| 13 | AUDIT-13 | Performance | No route-level code splitting (large initial bundle) | ✅ FIXED | #91 |
+| 14 | AUDIT-14 | API Docs | AI endpoints missing from OpenAPI spec | ✅ FIXED | #91 |
+| 15 | AUDIT-15 | Dead Code | Duplicate backup files (" 2" suffix) | ✅ FIXED | #91 |
+| 16 | AUDIT-16 | Compliance | SOC 2 docs missing (incident response, data classification) | ✅ FIXED | #91 |
+| 17 | AUDIT-17 | Schema | Missing DB indexes on frequently queried columns | OPEN | — |
+| 18 | AUDIT-18 | Monitoring | No structured health check endpoint aggregation | OPEN | — |
+| 19 | AUDIT-19 | API | Rate limit headers inconsistent across endpoints | OPEN | — |
+| 20 | AUDIT-20 | Testing | RLS tests missing for newer tables | ✅ FIXED | #90 |
+| 21 | AUDIT-21 | Types | `as any` casts for Supabase RPCs (systemic — 19 occurrences) | OPEN (systemic) | — |
+| 22 | AUDIT-22 | Logging | Inconsistent log levels across worker modules | OPEN | — |
+| 23 | AUDIT-23 | Edge | Edge worker type bindings incomplete | OPEN | — |
+| 24 | AUDIT-24 | Docs | Architecture docs outdated for P8 AI features | OPEN | — |
+
+**Summary:** 16/24 FIXED across PRs #88-91. 8 remaining (lower priority, non-blocking).
 
 ---
 

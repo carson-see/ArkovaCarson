@@ -309,6 +309,159 @@ export const openApiSpec = {
         },
       },
     },
+    // ── AI Intelligence Endpoints (P8) ──────────────────────────────────
+    '/ai/extract': {
+      post: {
+        summary: 'Extract credential metadata',
+        description:
+          'Extract structured metadata from PII-stripped text using AI. Costs 1 AI credit per request. Gated by ENABLE_AI_EXTRACTION flag.',
+        operationId: 'aiExtractMetadata',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ExtractionRequest' },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Extracted metadata fields',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/ExtractionResponse' } } },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Insufficient AI credits', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/search': {
+      get: {
+        summary: 'Semantic credential search',
+        description:
+          'Search credentials using natural language via pgvector similarity. Costs 1 AI credit. Gated by ENABLE_SEMANTIC_SEARCH flag.',
+        operationId: 'aiSearchCredentials',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        parameters: [
+          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Natural language search query' },
+          { name: 'threshold', in: 'query', schema: { type: 'number', minimum: 0, maximum: 1, default: 0.7 }, description: 'Similarity threshold (0-1)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 50, default: 10 }, description: 'Max results to return' },
+        ],
+        responses: {
+          '200': { description: 'Search results with similarity scores', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Insufficient AI credits' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/usage': {
+      get: {
+        summary: 'Get AI credit usage',
+        description: 'Returns AI credit balance and recent usage events for the authenticated user.',
+        operationId: 'aiGetUsage',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        responses: {
+          '200': { description: 'AI credit balance and usage history', content: { 'application/json': { schema: { $ref: '#/components/schemas/AIUsageResponse' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/ai/embed': {
+      post: {
+        summary: 'Generate credential embedding',
+        description: 'Generate a 768-dim embedding for a credential and store in pgvector. Costs 1 AI credit.',
+        operationId: 'aiGenerateEmbedding',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { $ref: '#/components/schemas/EmbedRequest' } } },
+        },
+        responses: {
+          '201': { description: 'Embedding generated and stored' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Insufficient AI credits' },
+        },
+      },
+    },
+    '/ai/feedback': {
+      post: {
+        summary: 'Submit extraction feedback',
+        description: 'Submit corrections for AI extraction results. Improves future extraction accuracy. Costs 1 AI credit.',
+        operationId: 'aiSubmitFeedback',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['corrections'], properties: { corrections: { type: 'array', items: { type: 'object', properties: { fieldKey: { type: 'string' }, originalValue: { type: 'string' }, correctedValue: { type: 'string' } } } } } } } },
+        },
+        responses: {
+          '200': { description: 'Feedback recorded' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/ai/integrity': {
+      post: {
+        summary: 'Compute integrity score',
+        description: 'Compute a fraud/integrity score for a credential. Scores below 60 are auto-flagged for review. Gated by ENABLE_AI_FRAUD flag.',
+        operationId: 'aiComputeIntegrity',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['anchorId'], properties: { anchorId: { type: 'string', format: 'uuid' } } } } },
+        },
+        responses: {
+          '200': { description: 'Integrity score with breakdown', content: { 'application/json': { schema: { $ref: '#/components/schemas/IntegrityResponse' } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
+    '/ai/review': {
+      get: {
+        summary: 'List review queue items',
+        description: 'Get flagged credentials awaiting admin review. Org-admin only.',
+        operationId: 'aiListReviewQueue',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        responses: {
+          '200': { description: 'Review queue items' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+        },
+      },
+    },
+    '/verify/search': {
+      get: {
+        summary: 'Agentic verification search',
+        description:
+          'Semantic search returning frozen verification schema results. Designed for AI agents, ATS systems, and background check integrations. Requires API key (not JWT).',
+        operationId: 'agenticVerifySearch',
+        tags: ['AI Intelligence', 'Verification'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 } },
+          { name: 'threshold', in: 'query', schema: { type: 'number', default: 0.75 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 5, maximum: 20 } },
+        ],
+        responses: {
+          '200': { description: 'Verification results with similarity scores', content: { 'application/json': { schema: { type: 'object', properties: { results: { type: 'array', items: { $ref: '#/components/schemas/VerificationResult' } }, total: { type: 'integer' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -433,6 +586,95 @@ export const openApiSpec = {
           message: { type: 'string' },
         },
       },
+      // ── AI Intelligence Schemas (P8) ────────────────────────────────────
+      ExtractionRequest: {
+        type: 'object',
+        required: ['strippedText', 'credentialType', 'fingerprint'],
+        properties: {
+          strippedText: { type: 'string', description: 'PII-stripped text from client-side OCR (never raw document text)' },
+          credentialType: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+          fingerprint: { type: 'string', description: 'SHA-256 document fingerprint' },
+        },
+      },
+      ExtractionResponse: {
+        type: 'object',
+        properties: {
+          fields: {
+            type: 'object',
+            description: 'Extracted metadata fields (keys vary by credential type)',
+            additionalProperties: { type: 'string' },
+          },
+          confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Extraction confidence score (0-1)' },
+          provider: { type: 'string', description: 'AI provider used (e.g., gemini, cloudflare-workers-ai)' },
+          model: { type: 'string', description: 'Model identifier' },
+          creditsUsed: { type: 'integer', description: 'AI credits consumed' },
+        },
+      },
+      SearchResponse: {
+        type: 'object',
+        properties: {
+          results: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                anchor_id: { type: 'string', format: 'uuid' },
+                public_id: { type: 'string' },
+                label: { type: 'string' },
+                credential_type: { type: 'string' },
+                issuer_name: { type: 'string' },
+                similarity: { type: 'number', minimum: 0, maximum: 1 },
+              },
+            },
+          },
+          total: { type: 'integer' },
+          query: { type: 'string' },
+          threshold: { type: 'number' },
+        },
+      },
+      AIUsageResponse: {
+        type: 'object',
+        properties: {
+          balance: { type: 'integer', description: 'Remaining AI credits' },
+          used: { type: 'integer', description: 'Credits used this month' },
+          limit: { oneOf: [{ type: 'integer' }, { type: 'string', enum: ['unlimited'] }] },
+          recentEvents: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                event_type: { type: 'string' },
+                credits_used: { type: 'integer' },
+                created_at: { type: 'string', format: 'date-time' },
+              },
+            },
+          },
+        },
+      },
+      EmbedRequest: {
+        type: 'object',
+        required: ['anchorId'],
+        properties: {
+          anchorId: { type: 'string', format: 'uuid', description: 'Anchor ID to generate embedding for' },
+          sourceText: { type: 'string', description: 'Optional PII-stripped text to embed (auto-generated from metadata if omitted)' },
+        },
+      },
+      IntegrityResponse: {
+        type: 'object',
+        properties: {
+          anchorId: { type: 'string', format: 'uuid' },
+          overallScore: { type: 'number', minimum: 0, maximum: 100, description: 'Overall integrity score (0-100)' },
+          flagged: { type: 'boolean', description: 'True if score < 60 (auto-flagged for review)' },
+          breakdown: {
+            type: 'object',
+            properties: {
+              duplicateScore: { type: 'number', description: 'Similarity to existing credentials (lower = more unique)' },
+              metadataScore: { type: 'number', description: 'Metadata completeness and consistency' },
+              issuerScore: { type: 'number', description: 'Issuer verification confidence' },
+            },
+          },
+        },
+      },
     },
     responses: {
       BadRequest: {
@@ -469,6 +711,7 @@ export const openApiSpec = {
     { name: 'Jobs', description: 'Async batch job polling' },
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },
+    { name: 'AI Intelligence', description: 'AI-powered extraction, search, and fraud detection (requires Supabase JWT)' },
   ],
 };
 

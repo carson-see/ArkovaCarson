@@ -1,9 +1,9 @@
 # Arkova Documentation Index
-_Last updated: 2026-03-16_
+_Last updated: 2026-03-17_
 
 ## Reading Guide
 
-This directory contains 18 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
+This directory contains 20 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
 
 ### Suggested Reading Order
 
@@ -42,6 +42,8 @@ This directory contains 18 architecture and design documents for the Arkova plat
 | 13 | `13_switchboard.md` | Feature flags (switchboard_flags), flag history, get_flag() function |
 | 14 | `14_kms_operations.md` | AWS KMS key provisioning, IAM policy, key rotation, disaster recovery for mainnet treasury signing |
 | 15 | `15_zero_trust_edge_architecture.md` | ADR-002: Zero Trust ingress (Cloudflare Tunnel), edge compute (Workers), AI fallback, Sentry observability, MCP (future) |
+| 16 | `16_incident_response.md` | SOC 2 incident response plan — detection, classification, escalation, containment, post-incident review |
+| 17 | `17_data_classification.md` | Data classification policy — L1-L4 levels, handling requirements, retention schedule, PII scrubbing rules |
 
 ### Audit Documents
 
