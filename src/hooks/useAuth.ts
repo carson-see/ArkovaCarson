@@ -30,25 +30,26 @@ export function useAuth(): AuthState & AuthActions {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Get initial session — suppress known GoTrue oauth_client_id errors
+    // Get initial session — clear any corrupt/stale session on error so the
+    // user always lands on a working login page instead of "Failed to fetch".
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error) {
-        // Known Supabase GoTrue issue: stale session contains fields the server
-        // doesn't recognize (e.g. oauth_client_id). Clear the corrupt session
-        // so subsequent requests don't re-trigger the error.
-        if (error.message?.includes('oauth_client_id')) {
-          supabase.auth.signOut({ scope: 'local' }).catch(() => {});
-          setSession(null);
-          setUser(null);
-          setLoading(false);
-          return;
-        }
+        // Any getSession error (oauth_client_id, expired refresh token,
+        // network issue, corrupt localStorage) → clear local session and
+        // let the user sign in fresh. Never surface init errors in the UI.
+        supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
       }
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
     }).catch(() => {
-      // Auth unavailable (e.g. missing credentials) — fall through to login
+      // Network-level failure (TypeError: Failed to fetch) — clear any
+      // stale session so the login page renders cleanly.
+      supabase.auth.signOut({ scope: 'local' }).catch(() => {});
       setLoading(false);
     });
 
@@ -75,17 +76,30 @@ export function useAuth(): AuthState & AuthActions {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        // Translate raw network errors into a user-friendly message
+        const msg = error.message?.toLowerCase() ?? '';
+        if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+          setError('Unable to reach the server. Please check your connection and try again.');
+        } else {
+          setError(error.message);
+        }
+      }
+
+      setLoading(false);
+      return { error };
+    } catch (err) {
+      // Catch unexpected throws (e.g. TypeError from fetch)
+      setError('Unable to reach the server. Please check your connection and try again.');
+      setLoading(false);
+      return { error: err as import('@supabase/supabase-js').AuthError };
     }
-
-    setLoading(false);
-    return { error };
   }, []);
 
   const signUp = useCallback(
@@ -93,18 +107,27 @@ export function useAuth(): AuthState & AuthActions {
       setLoading(true);
       setError(null);
 
-      const { error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName,
+      try {
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+            },
           },
-        },
-      });
+        });
 
-      if (error) {
-        setError(error.message);
+        if (error) {
+          const msg = error.message?.toLowerCase() ?? '';
+          if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+            setError('Unable to reach the server. Please check your connection and try again.');
+          } else {
+            setError(error.message);
+          }
+        }
+      } catch {
+        setError('Unable to reach the server. Please check your connection and try again.');
       }
 
       setLoading(false);
@@ -116,15 +139,25 @@ export function useAuth(): AuthState & AuthActions {
     setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: `${location.origin}/auth/callback`,
-      },
-    });
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${location.origin}/auth/callback`,
+        },
+      });
 
-    if (error) {
-      setError(error.message);
+      if (error) {
+        const msg = error.message?.toLowerCase() ?? '';
+        if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('load failed')) {
+          setError('Unable to reach the server. Please check your connection and try again.');
+        } else {
+          setError(error.message);
+        }
+        setLoading(false);
+      }
+    } catch {
+      setError('Unable to reach the server. Please check your connection and try again.');
       setLoading(false);
     }
     // Note: Loading stays true as we're redirecting to Google
