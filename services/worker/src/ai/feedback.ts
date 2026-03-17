@@ -11,6 +11,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { callRpc } from '../utils/rpc.js';
 import { z } from 'zod';
 
 // =============================================================================
@@ -108,8 +109,7 @@ export async function getExtractionAccuracy(
   days: number = 30,
 ): Promise<AccuracyStats[]> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('get_extraction_accuracy', {
+    const { data, error } = await callRpc(db, 'get_extraction_accuracy', {
       p_credential_type: credentialType ?? null,
       p_org_id: orgId ?? null,
       p_days: days,

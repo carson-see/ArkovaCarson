@@ -36,7 +36,7 @@ describe('processMonthlyCredits', () => {
     const result = await processMonthlyCredits();
 
     expect(result).toBe(5);
-    expect(mockRpc).toHaveBeenCalledWith('allocate_monthly_credits');
+    expect(mockRpc).toHaveBeenCalledWith('allocate_monthly_credits', undefined);
   });
 
   it('returns 0 on RPC error', async () => {

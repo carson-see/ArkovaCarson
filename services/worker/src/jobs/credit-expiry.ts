@@ -12,11 +12,11 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { callRpc } from '../utils/rpc.js';
 
 export async function processMonthlyCredits(): Promise<number> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('allocate_monthly_credits');
+    const { data, error } = await callRpc<number>(db, 'allocate_monthly_credits');
 
     if (error) {
       logger.error({ error }, 'Failed to process monthly credit allocations');

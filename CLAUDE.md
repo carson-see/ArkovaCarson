@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-17 | **Repo:** ArkovaCarson | **Deploy:** arkova-carson.vercel.app
-> **Stats:** 65 migrations | 1,772 tests | 163 stories (151 complete, 93%)
+> **Stats:** 67 migrations | 1,814 tests | 163 stories (151 complete, 93%) | 24/24 audit findings resolved
 
 Read this file before every task. Rules here override all other documents.
 
@@ -222,7 +222,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 65 files (0001-0066, 0033 skipped). Last: `0066_audit_compensating_fixes.sql`. 0001-0058 applied to production. 0059-0066 pending.
+**Current:** 67 files (0001-0067, 0033 skipped). Last: `0067_add_performance_indexes.sql`. 0001-0058 applied to production. 0059-0067 pending.
 
 ---
 
@@ -361,5 +361,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-17 | 65 migrations | 1,772 tests | 163 stories (151 complete, 93%)_
+_Directive version: 2026-03-17 | 67 migrations | 1,814 tests | 163 stories (151 complete, 93%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

@@ -19,6 +19,7 @@ import { createAIProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { callRpc } from '../../utils/rpc.js';
 
 const router = Router();
 
@@ -71,9 +72,8 @@ router.get('/', async (req: Request, res: Response) => {
     const queryEmbedding = await provider.generateEmbedding(q);
 
     // Search across ALL public embeddings (not org-scoped — this is a public verification search)
-    // New RPC not yet in generated types — use any bypass
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: matches, error: searchError } = await (db.rpc as any)(
+    const { data: matches, error: searchError } = await callRpc(
+      db,
       'search_public_credential_embeddings',
       {
         p_query_embedding: queryEmbedding.embedding,

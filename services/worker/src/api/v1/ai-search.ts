@@ -16,6 +16,7 @@ import { createAIProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { callRpc } from '../../utils/rpc.js';
 
 const router = Router();
 
@@ -76,9 +77,9 @@ router.get('/', async (req: Request, res: Response) => {
     const provider = createAIProvider();
     const queryEmbedding = await provider.generateEmbedding(q);
 
-    // Search via RPC (new RPC not yet in generated types — use any bypass)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: matches, error: searchError } = await (db.rpc as any)(
+    // Search via RPC (new RPC not yet in generated types — uses callRpc helper)
+    const { data: matches, error: searchError } = await callRpc<Array<{ anchor_id: string; similarity: number }>>(
+      db,
       'search_credential_embeddings',
       {
         p_org_id: orgId,

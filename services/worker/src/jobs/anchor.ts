@@ -12,6 +12,7 @@
 
 import { db } from '../utils/db.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
+import { callRpc } from '../utils/rpc.js';
 import { getInitializedChainClient } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -138,8 +139,7 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
  */
 async function isAnchoringEnabled(): Promise<boolean> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('get_flag', {
+    const { data, error } = await callRpc<boolean>(db, 'get_flag', {
       p_flag_key: 'ENABLE_PROD_NETWORK_ANCHORING',
     });
 

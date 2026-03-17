@@ -14,6 +14,7 @@
 import type { Request, Response } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
+import { callRpc } from '../utils/rpc.js';
 
 export interface AccountDeleteDeps {
   db: SupabaseClient;
@@ -48,8 +49,8 @@ export async function handleAccountDelete(
     }
 
     // 2. Anonymize PII in audit trail (GDPR Art. 17)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: anonymizeResult, error: anonymizeError } = await (db.rpc as any)(
+    const { error: anonymizeError } = await callRpc(
+      db,
       'anonymize_user_data',
       { p_user_id: userId },
     );

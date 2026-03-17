@@ -154,8 +154,9 @@ export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrum
 
 export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) {
-    // Bootstrap message — runs before structured logger is guaranteed available
-    console.log('[Sentry] No DSN configured — skipping initialization');
+    // AUDIT-22: console.log intentional here — logger imports config, which
+    // creates a circular dependency. These bootstrap messages fire once at startup.
+    console.log('[Sentry] No DSN configured — skipping initialization'); // eslint-disable-line no-console
     return;
   }
 
@@ -181,8 +182,7 @@ export function initSentry(dsn: string | undefined, environment: string): void {
     sendDefaultPii: false,
   });
 
-  // Bootstrap message — runs once at startup
-  console.log(`[Sentry] Initialized for ${environment}`);
+  console.log(`[Sentry] Initialized for ${environment}`); // eslint-disable-line no-console
 }
 
 export { Sentry };

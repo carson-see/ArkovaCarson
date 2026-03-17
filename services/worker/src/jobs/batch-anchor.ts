@@ -91,7 +91,7 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
         chain_block_height: receipt.blockHeight,
         chain_timestamp: receipt.blockTimestamp,
         metadata: JSON.parse(JSON.stringify({
-          ...(anchor.metadata ?? {}),
+          ...(typeof anchor.metadata === 'object' && anchor.metadata !== null ? anchor.metadata : {}),
           merkle_proof: proof.map((p) => ({ hash: p.hash, position: p.position })),
           merkle_root: tree.root,
           batch_id: batchId,

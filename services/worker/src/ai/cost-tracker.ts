@@ -13,6 +13,7 @@
  */
 
 import { db } from '../utils/db.js';
+import { callRpc } from '../utils/rpc.js';
 import { logger } from '../utils/logger.js';
 
 export interface CreditBalance {
@@ -53,9 +54,7 @@ export async function checkAICredits(
   userId?: string,
 ): Promise<CreditBalance | null> {
   try {
-    // New RPCs not yet in generated types — use any bypass
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('check_ai_credits', {
+    const { data, error } = await callRpc(db, 'check_ai_credits', {
       p_org_id: orgId ?? null,
       p_user_id: userId ?? null,
     });
@@ -88,8 +87,7 @@ export async function deductAICredits(
   amount: number = 1,
 ): Promise<boolean> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('deduct_ai_credits', {
+    const { data, error } = await callRpc<boolean>(db, 'deduct_ai_credits', {
       p_org_id: orgId ?? null,
       p_user_id: userId ?? null,
       p_amount: amount,

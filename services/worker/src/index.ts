@@ -14,6 +14,7 @@ import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
 import { db } from './utils/db.js';
+import { callRpc } from './utils/rpc.js';
 import { processPendingAnchors } from './jobs/anchor.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
@@ -39,26 +40,55 @@ if (config.nodeEnv === 'production') {
   app.set('trust proxy', 2);
 }
 
-// Health check endpoint — enhanced for production monitoring (H3-08)
-app.get('/health', async (_req, res) => {
-  const checks: Record<string, 'ok' | 'error'> = {};
+// Health check endpoint — structured aggregation (AUDIT-18)
+app.get('/health', async (req, res) => {
+  const detailed = req.query.detailed === 'true';
+  const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
 
-  // Shallow Supabase connectivity check
+  // Critical check: Supabase connectivity (determines HTTP status code)
+  const dbStart = Date.now();
   try {
     const { error } = await db.from('plans').select('id').limit(1);
-    checks.supabase = error ? 'error' : 'ok';
-  } catch {
-    checks.supabase = 'error';
+    checks.supabase = {
+      status: error ? 'error' : 'ok',
+      latencyMs: Date.now() - dbStart,
+      ...(error ? { message: error.message } : {}),
+    };
+  } catch (err) {
+    checks.supabase = {
+      status: 'error',
+      latencyMs: Date.now() - dbStart,
+      message: err instanceof Error ? err.message : 'Connection failed',
+    };
   }
 
-  const allHealthy = Object.values(checks).every((v) => v === 'ok');
+  // Informational checks — config presence, don't affect HTTP status
+  const info: Record<string, { configured: boolean; message?: string }> = {};
+  info.stripe = { configured: Boolean(config.stripeSecretKey) };
+  info.sentry = {
+    configured: Boolean(config.sentryDsn),
+    ...(!config.sentryDsn ? { message: 'SENTRY_DSN not configured' } : {}),
+  };
+  info.ai = {
+    configured: Boolean(config.geminiApiKey) || config.aiProvider === 'mock',
+  };
+
+  // Only critical checks determine healthy/degraded
+  const allHealthy = Object.values(checks).every((c) => c.status === 'ok');
+
+  // Compact format unless ?detailed=true
+  const compactChecks: Record<string, 'ok' | 'error'> = {};
+  for (const [key, val] of Object.entries(checks)) {
+    compactChecks[key] = val.status;
+  }
 
   res.status(allHealthy ? 200 : 503).json({
     status: allHealthy ? 'healthy' : 'degraded',
     version: process.env.npm_package_version ?? '0.1.0',
     uptime: Math.floor(process.uptime()),
     network: config.bitcoinNetwork,
-    checks,
+    checks: detailed ? checks : compactChecks,
+    ...(detailed ? { info } : {}),
   });
 });
 
@@ -570,8 +600,7 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   cron.schedule('0 2 * * *', async () => {
     logger.info('Running GDPR data retention cleanup');
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: result, error } = await (db.rpc as any)('cleanup_expired_data');
+      const { data: result, error } = await callRpc(db, 'cleanup_expired_data');
       if (error) {
         logger.error({ error }, 'Data retention cleanup RPC failed');
       } else {

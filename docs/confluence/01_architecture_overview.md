@@ -1,6 +1,6 @@
 # Architecture Overview
 
-_Last updated: 2026-03-10_
+_Last updated: 2026-03-17_
 
 ## Purpose
 
@@ -18,7 +18,11 @@ Arkova is a document anchoring system that creates cryptographic fingerprints of
 | Routing | react-router-dom v6 | Named routes in `src/lib/routes.ts` |
 | Worker | Node.js + Express | `services/worker/` — webhooks, anchoring jobs, cron |
 | Payments | Stripe (SDK + webhooks) | Worker-only — never in browser |
-| Chain | bitcoinjs-lib + AWS KMS (target) | MockChainClient until real implementation |
+| Chain | bitcoinjs-lib + AWS KMS (target) | SignetChainClient + MockChainClient |
+| Edge Compute | Cloudflare Workers + wrangler | Batch queue, R2 reports, AI fallback, crawler |
+| AI | Gemini (primary), @cloudflare/ai (fallback) | IAIProvider abstraction, mock for tests |
+| Observability | Sentry (@sentry/node + @sentry/react) | PII scrubbing mandatory |
+| Ingress | Cloudflare Tunnel (cloudflared) | Zero Trust, no public ports |
 | Testing | Vitest + Playwright | `npm test`, `npm run test:rls`, `npm run test:e2e` |
 
 ## Core Principles
@@ -51,18 +55,21 @@ Arkova does NOT hold user cryptocurrency, process deposits/withdrawals, or manag
 │   React App     │────▶│  Supabase       │────▶│  Worker Service │
 │   (Vite)        │     │  (Auth + DB)    │     │  (Express)      │
 └─────────────────┘     └─────────────────┘     └─────────────────┘
-        │                                               │
-        │ SHA-256 in browser                            ▼
-        │ (Web Crypto API)                     ┌─────────────────┐
-        ▼                                     │  Chain API      │
-   fingerprint only                           │  (Bitcoin)      │
-   sent to server                             └─────────────────┘
-                                                       │
-                                                       ▼
-                                              ┌─────────────────┐
-                                              │  Stripe API     │
-                                              │  (Payments)     │
-                                              └─────────────────┘
+        │                       │                       │
+        │ SHA-256 in browser    │ pgvector              ├──▶ Bitcoin Chain
+        │ OCR + PII strip       │ embeddings            ├──▶ Stripe API
+        │ (Constitution 1.6)    │                       ├──▶ Gemini AI
+        ▼                       ▼                       │
+   fingerprint +         ┌─────────────────┐           ▼
+   PII-stripped          │  Edge Workers   │   ┌─────────────────┐
+   metadata only         │  (Cloudflare)   │   │  Sentry         │
+                         ├─────────────────┤   └─────────────────┘
+                         │  Batch Queue    │
+                         │  R2 Reports     │
+                         │  AI Fallback    │
+                         │  MCP Server     │
+                         │  Crawler        │
+                         └─────────────────┘
 ```
 
 ## Directory Structure
@@ -105,14 +112,27 @@ arkova/
 │       └── src/
 │           ├── index.ts           # Express server + cron + graceful shutdown
 │           ├── config.ts          # Environment config
-│           ├── chain/             # ChainClient interface + MockChainClient
-│           ├── jobs/              # Anchor processing, webhook dispatch, reports
+│           ├── ai/                # IAIProvider, GeminiProvider, cost-tracker, feedback
+│           ├── api/v1/            # Verification API, AI endpoints, OpenAPI docs
+│           ├── chain/             # ChainClient, SignetChainClient, MockChainClient
+│           ├── jobs/              # Anchor processing, webhook dispatch, credit expiry
 │           ├── stripe/            # Stripe SDK + webhook handlers
 │           ├── webhooks/          # Outbound webhook delivery engine
-│           └── utils/             # DB client, logger, rate limiter
+│           └── utils/             # DB client, logger, rate limiter, rpc helpers
+├── services/
+│   └── edge/
+│       └── src/
+│           ├── index.ts           # Cloudflare Worker entry point
+│           ├── env.ts             # Typed CF environment bindings
+│           ├── batch-queue.ts     # Batch processing queue consumer
+│           ├── report-generator.ts # R2 report storage + signed URLs
+│           ├── cloudflare-crawler.ts # University directory ingestion
+│           ├── ai-fallback.ts     # Workers AI fallback provider
+│           ├── mcp-server.ts      # MCP server (Streamable HTTP + OAuth)
+│           └── mcp-tools.ts       # verify_credential + search_credentials tools
 ├── supabase/
 │   ├── config.toml                # Supabase local config
-│   ├── migrations/                # 45 SQL migrations (0001–0045, 0033 skipped)
+│   ├── migrations/                # 67 SQL migrations (0001–0067, 0033 skipped)
 │   └── seed.sql                   # Demo data (admin_demo, user_demo, beta_admin)
 ├── tests/
 │   └── rls/                       # RLS integration test helpers
@@ -140,14 +160,14 @@ Key principles:
 
 See [02_data_model.md](./02_data_model.md) for the complete data model.
 
-### Table Inventory (20 tables across 48 migrations)
+### Table Inventory (32+ tables across 67 migrations)
 
 | Table | Migration | Purpose |
 |-------|-----------|---------|
 | `organizations` | 0002 | Tenant organizations |
 | `profiles` | 0003 | User profiles (linked to `auth.users`) |
 | `anchors` | 0004 | Document fingerprint records |
-| `audit_events` | 0006 | Immutable audit log |
+| `audit_events` | 0006 | Immutable audit log (PII-scrubbed via trigger) |
 | `plans` | 0016 | Subscription plan definitions |
 | `subscriptions` | 0016 | User subscription state |
 | `entitlements` | 0016 | Feature entitlements per subscription |
@@ -164,6 +184,76 @@ See [02_data_model.md](./02_data_model.md) for the complete data model.
 | `memberships` | 0022 | Org membership records |
 | `credential_templates` | 0040 | Reusable credential templates |
 | `verification_events` | 0042 | Public verification analytics |
+| `anchor_chain_index` | 0050 | On-chain transaction index |
+| `institution_ground_truth` | 0051 | Crawler-ingested institution records |
+| `credits` | 0053 | Anchor quota credits |
+| `anchor_recipients` | 0056 | Credential recipient associations |
+| `api_keys` | 0057 | Verification API key management |
+| `batch_verification_jobs` | 0058 | Batch verification job queue |
+| `ai_credits` | 0059 | AI credit allocations per org/user |
+| `ai_usage_events` | 0059 | AI credit consumption log |
+| `credentials_embeddings` | 0060 | pgvector embeddings for semantic search |
+| `extraction_feedback` | 0064 | AI extraction feedback loop |
+| `ai_review_queue` | 0064 | Admin review queue for flagged credentials |
+| `ai_reports` | 0064 | AI-generated report tracking |
+
+## P8 AI Intelligence Architecture
+
+_Added 2026-03-17 (AUDIT-24)_
+
+### AI Processing Pipeline
+
+```
+Document (browser)                    Worker (server-side)
+───────────────────────         ─────────────────────────────────
+1. Client-side OCR              5. Gemini extraction (PII-stripped)
+   (PDF.js + Tesseract.js)      6. Embedding generation (text-embedding-004)
+2. PII stripping                7. Integrity scoring (5 dimensions)
+   (SSN, email, phone, DOB)     8. Duplicate detection (cosine similarity)
+3. Fingerprint (SHA-256)        9. Review queue (flagged items)
+4. Upload metadata only        10. Report generation (R2 storage)
+```
+
+### Credit System
+
+| Tier | Monthly Credits | AI Features |
+|------|----------------|-------------|
+| Free | 50 | Extraction, search |
+| Individual (Pro) | 500 | + Batch processing |
+| Professional | 5,000 | + Reports, priority |
+| Enterprise | Custom | + Dedicated support |
+
+Credits tracked in `ai_credits` table. Each extraction = 1 credit, each embedding = 1 credit.
+Monthly allocation via `allocate_monthly_credits()` RPC (cron: 1st of month).
+
+### AI Provider Abstraction
+
+`IAIProvider` interface (`services/worker/src/ai/types.ts`) with:
+- `GeminiProvider` — primary (circuit breaker: 5 failures / 60s, retry 3x)
+- `CloudflareFallbackProvider` — edge compute fallback
+- `MockAIProvider` — tests (AI_PROVIDER=mock)
+
+Factory: `createAIProvider()` selects based on `AI_PROVIDER` env var.
+
+### Review Queue States
+
+```
+PENDING → INVESTIGATING → ESCALATED → APPROVED
+    ↓                          ↓
+  APPROVED                  DISMISSED
+    ↓
+  DISMISSED
+```
+
+### Edge Worker Architecture (Cloudflare Workers)
+
+| Route | Handler | Purpose |
+|-------|---------|---------|
+| `/batch` | batch-queue.ts | Process queued batch AI jobs |
+| `/reports` | report-generator.ts | Generate + store reports in R2 |
+| `/crawl` | cloudflare-crawler.ts | Ingest institution directories |
+| `/ai` | ai-fallback.ts | Workers AI fallback extraction |
+| `/mcp` | mcp-server.ts | MCP server (Streamable HTTP) |
 
 ## Local Development
 
