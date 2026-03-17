@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-16 (UAT batch fix — 8 bugs resolved) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -12,10 +12,10 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | Stories (NOT STARTED) | 13 | — | 13 | No (post-launch) |
 | Stories (PARTIAL) | 4 | — | 4 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 38 | 33 | 5 | No (all MEDIUM/LOW) |
+| UAT Bugs | 38 | 35 | 3 | No (all LOW) |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **30** | |
+| **Total Open Items** | | | **22** | |
 
 ---
 
@@ -74,9 +74,9 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | ~~28~~ | ~~UAT2-06~~ | ~~MEDIUM~~ | ~~No "Invite Member" button~~ | ~~**FIXED** — Invite Member button + InviteMemberModal wired in OrganizationPage~~ |
 | ~~29~~ | ~~UAT2-07~~ | ~~MEDIUM~~ | ~~No "Change Role" action in member dropdown~~ | ~~**FIXED** — onChangeRole prop wired in MembersTable with toggle Admin/Member~~ |
 | ~~30~~ | ~~UAT2-10~~ | ~~MEDIUM~~ | ~~Mobile records table shows only Document column~~ | ~~**FIXED** — Mobile card layout (`sm:hidden`) with status badges + actions~~ |
-| 31 | UAT2-08 | MEDIUM | Member names not clickable — no member detail view | OPEN (enhancement) |
-| 32 | UAT2-09 | MEDIUM | Credential Templates page shows empty state | OPEN (seed data — production templates needed) |
-| 33 | UAT2-15 | MEDIUM | Mobile sidebar missing bottom nav items | OPEN |
+| ~~31~~ | ~~UAT2-08~~ | ~~MEDIUM~~ | ~~Member names not clickable — no member detail view~~ | ~~**FIXED** — MemberDetailPage exists and is routed at `/organization/member/:memberId`~~ |
+| ~~32~~ | ~~UAT2-09~~ | ~~MEDIUM~~ | ~~Credential Templates page shows empty state~~ | ~~**FIXED** — Starter template suggestions (Diploma, Certificate, License) shown in empty state~~ |
+| ~~33~~ | ~~UAT2-15~~ | ~~MEDIUM~~ | ~~Mobile sidebar missing bottom nav items~~ | ~~**FIXED** — Added `overflow-y-auto` to mobile sidebar panel~~ |
 
 ---
 
@@ -87,13 +87,13 @@ _Last updated: 2026-03-16 | Re-prioritized each session per CLAUDE.md rules_
 | ~~34~~ | ~~UAT-15~~ | ~~LOW~~ | ~~No "Forgot Password" link~~ | ~~**FIXED** (PR #48)~~ |
 | ~~35~~ | ~~UAT-16~~ | ~~LOW~~ | ~~No loading states during data fetch~~ | ~~**FIXED** (PR #48)~~ |
 | ~~36~~ | ~~UAT-17~~ | ~~LOW~~ | ~~QR code URL shows localhost~~ | ~~**FIXED** (PR #48)~~ |
-| 37 | UAT-LR1-02 | LOW | Misleading toast after sign-out | OPEN |
-| 38 | UAT2-11 | LOW | Expired/Revoked badges visually identical | OPEN (cosmetic) |
+| ~~37~~ | ~~UAT-LR1-02~~ | ~~LOW~~ | ~~Misleading toast after sign-out~~ | ~~**FIXED** — sessionStorage flag set BEFORE signOut call, explicit user/session clearing~~ |
+| ~~38~~ | ~~UAT2-11~~ | ~~LOW~~ | ~~Expired/Revoked badges visually identical~~ | ~~**FIXED** — REVOKED=destructive (red), EXPIRED=outline (amber) across AssetDetailView + RecordsList~~ |
 | 39 | UAT2-12 | LOW | Template creation uses raw JSON instead of visual builder | OPEN |
-| 40 | UAT2-13 | LOW | No "Recipient" column in org records table | OPEN — column exists (`hidden md:table-cell`) but may not show recipient |
+| ~~40~~ | ~~UAT2-13~~ | ~~LOW~~ | ~~No "Recipient" column in org records table~~ | ~~**FIXED** — Recipient display added to mobile card layout~~ |
 | 41 | UAT2-14 | LOW | "Failed to fetch" error on API Keys page | OPEN (requires worker running) |
-| 42 | UAT3-03 | LOW | No loading skeleton on verification page | OPEN (cosmetic) |
-| 43 | UAT3-04 | LOW | QR code on detail page links to localhost | OPEN (same as UAT-17 for authenticated views) |
+| ~~42~~ | ~~UAT3-03~~ | ~~LOW~~ | ~~No loading skeleton on verification page~~ | ~~**FIXED** — Shimmer skeleton already exists in PublicVerification loading state~~ |
+| ~~43~~ | ~~UAT3-04~~ | ~~LOW~~ | ~~QR code on detail page links to localhost~~ | ~~**FIXED** — All copy/QR URLs use `verifyUrl()` (production base URL)~~ |
 | 44 | UAT3-05 | LOW | Missing toast on billing page auth redirect | OPEN |
 
 ---

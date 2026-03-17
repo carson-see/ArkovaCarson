@@ -174,6 +174,67 @@ describe('useAuth', () => {
     expect(result.current.error).toBe('Sign out failed');
   });
 
+  it('signOut sets sessionStorage flag before calling supabase (UAT-LR1-02)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+
+    // Track order of operations
+    const callOrder: string[] = [];
+    const mockSessionStorage = {
+      getItem: vi.fn(),
+      setItem: vi.fn(() => callOrder.push('sessionStorage.setItem')),
+      removeItem: vi.fn(),
+    };
+    Object.defineProperty(window, 'sessionStorage', { value: mockSessionStorage, writable: true });
+
+    mockSignOut.mockImplementation(() => {
+      callOrder.push('supabase.signOut');
+      return Promise.resolve({ error: null });
+    });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+
+    // sessionStorage flag should be set BEFORE supabase.signOut
+    expect(callOrder[0]).toBe('sessionStorage.setItem');
+    expect(callOrder[1]).toBe('supabase.signOut');
+    expect(mockSessionStorage.setItem).toHaveBeenCalledWith('arkova_signed_out', '1');
+  });
+
+  it('signOut clears user and session state (UAT-LR1-02)', async () => {
+    const mockUser = { id: 'user-1', email: 'test@test.com' };
+    mockGetSession.mockResolvedValue({
+      data: { session: { user: mockUser } },
+      error: null,
+    });
+    mockSignOut.mockResolvedValue({ error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.user).toEqual(mockUser);
+    });
+
+    await act(async () => {
+      await result.current.signOut();
+    });
+
+    expect(result.current.user).toBeNull();
+    expect(result.current.session).toBeNull();
+  });
+
   it('clearError resets error to null', async () => {
     mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
     mockSignInWithPassword.mockResolvedValue({

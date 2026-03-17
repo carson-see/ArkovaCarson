@@ -94,6 +94,42 @@ interface CredentialTemplatesManagerProps {
 
 const CREDENTIAL_TYPES = Object.keys(CREDENTIAL_TYPE_LABELS) as CredentialType[];
 
+/** Pre-built starter templates for common credential types */
+const STARTER_TEMPLATES: { name: string; description: string; type: CredentialType; fields: TemplateFieldDefinition[] }[] = [
+  {
+    name: 'Diploma',
+    description: 'Academic degree credential',
+    type: 'DEGREE',
+    fields: [
+      { id: 'f_degree', name: 'Degree Title', type: 'text', required: true },
+      { id: 'f_major', name: 'Major', type: 'text', required: true },
+      { id: 'f_grad_date', name: 'Graduation Date', type: 'date', required: true },
+      { id: 'f_honors', name: 'Honors', type: 'select', required: false, options: ['Summa Cum Laude', 'Magna Cum Laude', 'Cum Laude', 'None'] },
+    ],
+  },
+  {
+    name: 'Professional Certificate',
+    description: 'Certificate of completion or achievement',
+    type: 'CERTIFICATE',
+    fields: [
+      { id: 'f_program', name: 'Program Name', type: 'text', required: true },
+      { id: 'f_hours', name: 'Credit Hours', type: 'number', required: false },
+      { id: 'f_completion', name: 'Completion Date', type: 'date', required: true },
+    ],
+  },
+  {
+    name: 'Professional License',
+    description: 'Professional or occupational license',
+    type: 'LICENSE',
+    fields: [
+      { id: 'f_license_type', name: 'License Type', type: 'text', required: true },
+      { id: 'f_license_num', name: 'License Number', type: 'text', required: true },
+      { id: 'f_issued', name: 'Issue Date', type: 'date', required: true },
+      { id: 'f_expiry', name: 'Expiration Date', type: 'date', required: false },
+    ],
+  },
+];
+
 interface FormState {
   name: string;
   description: string;
@@ -292,6 +328,35 @@ export function CredentialTemplatesManager({
                 <Plus className="mr-2 h-4 w-4" />
                 Create Your First Template
               </Button>
+              <div className="mt-6 pt-6 border-t max-w-md mx-auto">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-3">
+                  Popular templates to get started
+                </p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {STARTER_TEMPLATES.map((starter) => (
+                    <Button
+                      key={starter.type}
+                      variant="outline"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => {
+                        setEditingId(null);
+                        setForm({
+                          name: starter.name,
+                          description: starter.description,
+                          credential_type: starter.type,
+                          fields: starter.fields,
+                        });
+                        setFormError(null);
+                        setDialogOpen(true);
+                      }}
+                    >
+                      <Plus className="mr-1 h-3 w-3" />
+                      {starter.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
             </div>
           ) : (
             <Table>

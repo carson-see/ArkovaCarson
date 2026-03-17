@@ -81,15 +81,15 @@ const statusConfig = {
   },
   REVOKED: {
     label: 'Revoked',
-    variant: 'secondary' as const,
+    variant: 'destructive' as const,
     icon: XCircle,
-    color: 'text-gray-500',
+    color: 'text-red-600',
   },
   EXPIRED: {
     label: 'Expired',
-    variant: 'secondary' as const,
+    variant: 'outline' as const,
     icon: AlertTriangle,
-    color: 'text-gray-500',
+    color: 'text-amber-600',
   },
 };
 

@@ -28,7 +28,7 @@ import {
   X,
 } from 'lucide-react';
 import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
-import { verifyPath, verifyUrl } from '@/lib/routes';
+import { verifyUrl } from '@/lib/routes';
 import { toast } from 'sonner';
 import { useExportAnchors } from '@/hooks/useExportAnchors';
 import { Button } from '@/components/ui/button';
@@ -432,9 +432,16 @@ export function OrgRegistryTable({
                     </DropdownMenu>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  {formatDate(anchor.created_at)}
-                </p>
+                <div className="flex items-center justify-between mt-2">
+                  <p className="text-xs text-muted-foreground">
+                    {formatDate(anchor.created_at)}
+                  </p>
+                  {getRecipientDisplay(anchor) && (
+                    <p className="text-xs text-muted-foreground truncate max-w-[140px]">
+                      {getRecipientDisplay(anchor)}
+                    </p>
+                  )}
+                </div>
               </div>
             );
           })
@@ -567,8 +574,7 @@ export function OrgRegistryTable({
                           {anchor.public_id && (
                             <DropdownMenuItem
                               onClick={async () => {
-                                const baseUrl = import.meta.env.VITE_APP_URL || location.origin;
-                                const url = `${baseUrl}${verifyPath(anchor.public_id!)}`;
+                                const url = verifyUrl(anchor.public_id!);
                                 await navigator.clipboard.writeText(url);
                                 toast.success(SHARE_LABELS.COPIED_TOAST);
                               }}

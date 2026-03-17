@@ -297,8 +297,8 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
             onClick={onMobileClose}
             aria-hidden="true"
           />
-          {/* Sidebar panel */}
-          <div className="fixed inset-y-0 left-0 z-50 md:hidden">
+          {/* Sidebar panel — full height with overflow scroll for short screens */}
+          <div className="fixed inset-y-0 left-0 z-50 md:hidden overflow-y-auto">
             {sidebarContent}
           </div>
         </>
