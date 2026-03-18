@@ -40,7 +40,11 @@ interface RouteGuardProps {
 export function RouteGuard({ children, allow }: Readonly<RouteGuardProps>) {
   const { loading, destination } = useProfile();
 
-  if (loading) {
+  // Show spinner while auth or profile is still loading.
+  // Also treat destination='/auth' as loading — it means the profile
+  // hasn't resolved yet (e.g., during full page reload). Redirecting
+  // on '/auth' would bounce authenticated users to login briefly.
+  if (loading || destination === '/auth') {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

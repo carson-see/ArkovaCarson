@@ -43,10 +43,10 @@ export function UsageWidget({ compact = false }: Readonly<UsageWidgetProps>) {
   useEffect(() => {
     if (loading || percentUsed === null) return;
     if (percentUsed >= 100 && !warning100Shown.current) {
-      toast.warning(USAGE_LABELS.WARNING_100);
+      toast.warning(USAGE_LABELS.WARNING_100, { id: 'usage-warning-100' });
       warning100Shown.current = true;
     } else if (percentUsed >= 80 && !warning80Shown.current) {
-      toast.warning(USAGE_LABELS.WARNING_80);
+      toast.warning(USAGE_LABELS.WARNING_80, { id: 'usage-warning-80' });
       warning80Shown.current = true;
     }
   }, [percentUsed, loading]);
