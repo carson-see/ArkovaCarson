@@ -13,6 +13,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from './useAuth';
+import { useAnchorStatusToast } from './useAnchorStatusToast';
 import type { Database } from '@/types/database.types';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 
@@ -92,6 +93,9 @@ export function useAnchor(id: string | undefined): UseAnchorReturn {
       }
     };
   }, [user, id]);
+
+  // BETA-13: Toast notification on status changes via realtime
+  useAnchorStatusToast(anchor?.status ?? undefined);
 
   const refreshAnchor = useCallback(async () => {
     await fetchAnchor();

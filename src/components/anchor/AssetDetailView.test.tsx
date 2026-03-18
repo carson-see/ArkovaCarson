@@ -143,4 +143,42 @@ describe('AssetDetailView', () => {
     backButtons[0].click(); // First button is back
     expect(onBack).toHaveBeenCalled();
   });
+
+  // BETA-11: Explorer link in authenticated detail view
+  it('should show network receipt section with explorer link for SECURED anchors with txid', () => {
+    const anchorWithTx = {
+      ...mockAnchor,
+      chainTxId: 'abc123def456',
+      chainBlockHeight: 200100,
+    };
+    const { container } = render(<AssetDetailView anchor={anchorWithTx} />);
+
+    // Check that the explorer link appears with the txid
+    expect(container.innerHTML).toContain('abc123def456');
+    expect(container.innerHTML).toContain('mempool.space');
+  });
+
+  it('should not show network receipt section for PENDING anchors without txid', () => {
+    const pendingAnchor = { ...mockAnchor, status: 'PENDING' as const };
+    const { queryByText } = render(<AssetDetailView anchor={pendingAnchor} />);
+
+    expect(queryByText('Network Receipt')).not.toBeInTheDocument();
+  });
+
+  // BETA-12: Description display
+  it('should display description when present', () => {
+    const anchorWithDesc = {
+      ...mockAnchor,
+      description: 'Bachelor of Science in Computer Engineering from University of Michigan.',
+    };
+    const { getByText } = render(<AssetDetailView anchor={anchorWithDesc} />);
+
+    expect(getByText('Bachelor of Science in Computer Engineering from University of Michigan.')).toBeInTheDocument();
+  });
+
+  it('should not show description section when absent', () => {
+    const { queryByText } = render(<AssetDetailView anchor={mockAnchor} />);
+
+    expect(queryByText('Description')).not.toBeInTheDocument();
+  });
 });

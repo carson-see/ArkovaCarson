@@ -35,7 +35,8 @@ import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS } from '@/lib/copy';
+import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { verifyUrl } from '@/lib/routes';
 
 interface AnchorRecord {
@@ -56,6 +57,12 @@ interface AnchorRecord {
   orgId?: string;
   metadata?: Record<string, unknown> | null;
   issuerName?: string;
+  /** Chain transaction ID for explorer link (BETA-11) */
+  chainTxId?: string | null;
+  /** Chain block height (BETA-11) */
+  chainBlockHeight?: number | null;
+  /** Immutable description set at creation (BETA-12) */
+  description?: string | null;
 }
 
 interface AssetDetailViewProps {
@@ -279,6 +286,33 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               </div>
             )}
           </div>
+
+          {/* Description (BETA-12) */}
+          {anchor.description && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Description</p>
+                <p className="text-sm text-muted-foreground break-words">{anchor.description}</p>
+              </div>
+            </>
+          )}
+
+          {/* Network Receipt (BETA-11) */}
+          {anchor.chainTxId && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
+                <ExplorerLink receiptId={anchor.chainTxId} showFull />
+                {anchor.chainBlockHeight && (
+                  <p className="text-xs text-muted-foreground">
+                    Confirmed at height {anchor.chainBlockHeight.toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </>
+          )}
         </CardContent>
       </Card>
 

@@ -2,7 +2,7 @@
  * Explorer Link Component
  *
  * Renders a deep link to a network explorer for viewing anchor receipts.
- * Supports signet, testnet, and mainnet via environment variable.
+ * Supports testnet4, signet, testnet, and mainnet via environment variable.
  *
  * @see MVP-16
  */
@@ -10,14 +10,15 @@
 import { ExternalLink } from 'lucide-react';
 
 const EXPLORER_URLS: Record<string, string> = {
+  testnet4: 'https://mempool.space/testnet4',
   signet: 'https://mempool.space/signet',
   testnet: 'https://mempool.space/testnet',
   mainnet: 'https://mempool.space',
 };
 
 function getExplorerBaseUrl(): string {
-  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'signet';
-  return EXPLORER_URLS[network] ?? EXPLORER_URLS.signet;
+  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'testnet4';
+  return EXPLORER_URLS[network] ?? EXPLORER_URLS.testnet4;
 }
 
 /** Truncate a receipt ID for display: first 8 + last 8 chars */
@@ -37,6 +38,11 @@ interface ExplorerLinkProps {
   className?: string;
 }
 
+/** Validate that a receipt ID looks like a hex transaction hash */
+function isValidHexId(id: string): boolean {
+  return /^[a-fA-F0-9]+$/.test(id);
+}
+
 export function ExplorerLink({
   receiptId,
   showFull = false,
@@ -44,7 +50,8 @@ export function ExplorerLink({
   className = '',
 }: Readonly<ExplorerLinkProps>) {
   const baseUrl = getExplorerBaseUrl();
-  const href = `${baseUrl}/tx/${receiptId}`;
+  const safeId = isValidHexId(receiptId) ? receiptId : encodeURIComponent(receiptId);
+  const href = `${baseUrl}/tx/${safeId}`;
   const displayText = label ?? (showFull ? receiptId : truncateReceiptId(receiptId));
 
   return (
