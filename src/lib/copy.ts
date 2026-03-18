@@ -657,6 +657,38 @@ export const LINKEDIN_LABELS = {
 } as const;
 
 // =============================================================================
+// EXPLORER / NETWORK RECEIPT (BETA-11)
+// =============================================================================
+
+export const EXPLORER_LABELS = {
+  VIEW_ON_NETWORK: 'View on Network',
+  NETWORK_RECEIPT: 'Network Receipt',
+  CONFIRMED_AT_HEIGHT: 'Confirmed at height',
+  REVOCATION_RECEIPT: 'Revocation Receipt',
+} as const;
+
+// =============================================================================
+// DESCRIPTION (BETA-12)
+// =============================================================================
+
+export const DESCRIPTION_LABELS = {
+  FIELD_LABEL: 'Description',
+  FIELD_PLACEHOLDER: 'Brief description of what this credential represents (max 500 characters)',
+  FIELD_HELP: 'This description will be permanently associated with your credential.',
+} as const;
+
+// =============================================================================
+// REALTIME STATUS TOASTS (BETA-13)
+// =============================================================================
+
+export const REALTIME_TOAST_LABELS = {
+  SECURED: 'Your credential has been secured on the network.',
+  REVOKED: 'This credential has been revoked.',
+  EXPIRED: 'This credential has expired.',
+  SUBMITTED: 'Your credential has been submitted and is awaiting confirmation.',
+} as const;
+
+// =============================================================================
 // NAVIGATION POLISH (UF-09)
 // =============================================================================
 

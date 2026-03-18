@@ -39,7 +39,7 @@ import { logAuditEvent } from '@/lib/auditLog';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS } from '@/lib/copy';
 import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -76,6 +76,7 @@ export function SecureDocumentDialog({
   const [selectedTemplate, setSelectedTemplate] = useState<TemplateOption | null>(null);
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [description, setDescription] = useState('');
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
@@ -102,6 +103,7 @@ export function SecureDocumentDialog({
           ...validated,
           user_id: user.id,
           ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type as 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT' | 'PROFESSIONAL' | 'OTHER' } : {}),
+          ...(description.trim() ? { description: description.trim() } : {}),
         })
         .select('id, public_id')
         .single();
@@ -138,12 +140,13 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, onSuccess]);
+  }, [fileData, user, profile, selectedTemplate, description, onSuccess]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
     setFileData(null);
     setSelectedTemplate(null);
+    setDescription('');
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
@@ -154,6 +157,7 @@ export function SecureDocumentDialog({
     setStep('upload');
     setFileData(null);
     setSelectedTemplate(null);
+    setDescription('');
     setError(null);
     setCreatedAnchor(null);
   }, []);
@@ -231,6 +235,25 @@ export function SecureDocumentDialog({
                     </div>
                   )}
                 </dl>
+              </div>
+
+              {/* Description field (BETA-12) */}
+              <div className="space-y-2">
+                <label htmlFor="anchor-description" className="text-sm font-medium">
+                  {DESCRIPTION_LABELS.FIELD_LABEL}
+                </label>
+                <textarea
+                  id="anchor-description"
+                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  placeholder={DESCRIPTION_LABELS.FIELD_PLACEHOLDER}
+                  maxLength={500}
+                  rows={3}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {DESCRIPTION_LABELS.FIELD_HELP}
+                </p>
               </div>
               <Alert>
                 <Shield className="h-4 w-4" />

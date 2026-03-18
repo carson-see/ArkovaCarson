@@ -33,6 +33,7 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     expires_at: null,
     jurisdiction: null,
     merkle_root: null,
+    description: null,
     ...overrides,
   };
 }
@@ -151,5 +152,35 @@ describe('buildVerificationResult', () => {
     const result = buildVerificationResult(anchor);
 
     expect(result.merkle_proof_hash).toBe('deadbeef' + 'a'.repeat(56));
+  });
+
+  // BETA-11: explorer_url field (additive, nullable — Constitution 1.8)
+  it('includes explorer_url when chain_tx_id is present', () => {
+    const anchor = createAnchor({ chain_tx_id: 'abc123' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.explorer_url).toMatch(/mempool\.space.*\/tx\/abc123/);
+  });
+
+  it('omits explorer_url when chain_tx_id is null', () => {
+    const anchor = createAnchor({ chain_tx_id: null });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.explorer_url).toBeUndefined();
+  });
+
+  // BETA-12: description field (additive, nullable — Constitution 1.8)
+  it('includes description when present', () => {
+    const anchor = createAnchor({ description: 'A diploma from UMich' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.description).toBe('A diploma from UMich');
+  });
+
+  it('omits description when null', () => {
+    const anchor = createAnchor({ description: null });
+    const result = buildVerificationResult(anchor);
+
+    expect(result).not.toHaveProperty('description');
   });
 });

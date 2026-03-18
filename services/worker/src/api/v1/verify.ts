@@ -29,6 +29,10 @@ export interface VerificationResult {
   merkle_proof_hash?: string | null;
   record_uri?: string;
   jurisdiction?: string;
+  /** BETA-11: Deep link to network explorer (additive, nullable — Constitution 1.8) */
+  explorer_url?: string;
+  /** BETA-12: Immutable description (additive, nullable — Constitution 1.8) */
+  description?: string;
   error?: string;
 }
 
@@ -73,6 +77,8 @@ export interface AnchorByPublicId {
   expires_at: string | null;
   jurisdiction: string | null;
   merkle_root: string | null;
+  /** BETA-12: Immutable description */
+  description: string | null;
 }
 
 /**
@@ -111,6 +117,22 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   if (anchor.jurisdiction) {
     result.jurisdiction = anchor.jurisdiction;
   }
+  // BETA-11: explorer URL (additive, nullable — Constitution 1.8)
+  if (anchor.chain_tx_id) {
+    const network = process.env.BITCOIN_NETWORK ?? 'testnet4';
+    const baseMap: Record<string, string> = {
+      testnet4: 'https://mempool.space/testnet4',
+      testnet: 'https://mempool.space/testnet',
+      signet: 'https://mempool.space/signet',
+      mainnet: 'https://mempool.space',
+    };
+    const base = baseMap[network] ?? baseMap.testnet4;
+    result.explorer_url = `${base}/tx/${anchor.chain_tx_id}`;
+  }
+  // BETA-12: description (additive, nullable — Constitution 1.8)
+  if (anchor.description) {
+    result.description = anchor.description;
+  }
 
   return result;
 }
@@ -131,7 +153,8 @@ const defaultLookup: PublicIdLookup = {
         credential_type,
         issued_at,
         expires_at,
-        org_id
+        org_id,
+        description
       `)
       .eq('public_id', publicId)
       .is('deleted_at', null)
@@ -165,6 +188,7 @@ const defaultLookup: PublicIdLookup = {
       expires_at: data.expires_at,
       jurisdiction: null,
       merkle_root: null,
+      description: data.description ?? null,
     } as AnchorByPublicId;
   },
 };

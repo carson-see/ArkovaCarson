@@ -68,6 +68,10 @@ interface PublicAnchorData {
   expiry_date?: string;
   network_receipt_id?: string;
   bitcoin_block?: number;
+  /** BETA-11: Explorer URL */
+  explorer_url?: string;
+  /** BETA-12: Immutable description */
+  description?: string;
   error?: string;
 }
 
@@ -320,6 +324,17 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           expiryDate={data.expires_at ?? data.expiry_date}
           showFingerprint
         />
+
+        {/* SECTION 2A: Description (BETA-12) */}
+        {data.description && (
+          <>
+            <Separator />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Description</p>
+              <p className="text-sm text-muted-foreground">{data.description}</p>
+            </div>
+          </>
+        )}
 
         {/* ============================================================
             SECTION 2B: Issuer Info (UF-07) — links to issuer registry
