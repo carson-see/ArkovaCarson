@@ -24,6 +24,7 @@ import { toast } from 'sonner';
 import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS } from '@/lib/copy';
 import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
+import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -267,6 +268,9 @@ export function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Two-Factor Authentication */}
+        <TwoFactorSetup />
 
         {/* Sub-page Navigation */}
         {profile?.role === 'ORG_ADMIN' && (

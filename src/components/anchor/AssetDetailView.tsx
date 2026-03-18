@@ -30,6 +30,7 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from './FileUpload';
 import { ShareSheet } from './ShareSheet';
+import { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
@@ -162,10 +163,20 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           </p>
         </div>
         {anchor.publicId && (
-          <Button variant="outline" onClick={() => setShareOpen(true)}>
-            <Share2 className="mr-2 h-4 w-4" />
-            {SHARE_LABELS.SHARE_BUTTON}
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShareOpen(true)}>
+              <Share2 className="mr-2 h-4 w-4" />
+              {SHARE_LABELS.SHARE_BUTTON}
+            </Button>
+            <LinkedInShareButton
+              publicId={anchor.publicId}
+              credentialType={anchor.credentialType ? CREDENTIAL_TYPE_LABELS[anchor.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] : undefined}
+            />
+            <LinkedInBadgeSnippet
+              publicId={anchor.publicId}
+              status={anchor.status}
+            />
+          </div>
         )}
       </div>
 

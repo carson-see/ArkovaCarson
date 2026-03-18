@@ -34,6 +34,7 @@ vi.mock('@/lib/supabase', () => ({
         }),
       }),
     }),
+    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   },
 }));
 
@@ -69,7 +70,7 @@ describe('SearchPage', () => {
     expect(screen.getByText('Search Credentials')).toBeInTheDocument();
   });
 
-  it('renders search type selector with three options', () => {
+  it('renders search type selector with four options', () => {
     renderSearchPage();
     // The select trigger should be visible
     const trigger = screen.getByRole('combobox');

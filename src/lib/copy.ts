@@ -561,6 +561,11 @@ export const SEARCH_LABELS = {
   FINGERPRINT_NOT_FOUND_DESC: 'No secured record matches this fingerprint.',
   FINGERPRINT_INVALID: 'Invalid fingerprint format. Enter a valid 64-character fingerprint.',
   VIEW_FULL_RECORD: 'View Full Record',
+  SEARCH_BY_PERSON: 'Person',
+  PERSON_PLACEHOLDER: 'Search by name...',
+  NO_PERSONS: 'No matching records found',
+  NO_PERSONS_DESC: 'No public credentials match this name.',
+  PERSON_CREDENTIALS: 'Verified Credentials',
 } as const;
 
 // =============================================================================
@@ -633,6 +638,22 @@ export const SHARE_LABELS = {
   EMAIL_SHARE: 'Share via Email',
   EMAIL_SUBJECT: 'Verify my credential on Arkova',
   CLOSE: 'Close',
+} as const;
+
+// =============================================================================
+// LINKEDIN SHARE (BETA-09)
+// =============================================================================
+
+export const LINKEDIN_LABELS = {
+  SHARE_BUTTON: 'Share on LinkedIn',
+  SHARE_TEXT_WITH_TYPE: 'My {type} has been independently verified on Arkova. Verify it here:',
+  SHARE_TEXT_DEFAULT: 'My credential has been independently verified on Arkova. Verify it here:',
+  GET_BADGE: 'Get Badge',
+  BADGE_TITLE: 'Verification Badge',
+  BADGE_DESCRIPTION: 'Embed this badge in your LinkedIn profile or website to showcase your verified credential.',
+  EMBED_CODE: 'Embed Code',
+  COPY_SNIPPET: 'Copy Snippet',
+  SNIPPET_COPIED: 'Badge snippet copied to clipboard',
 } as const;
 
 // =============================================================================

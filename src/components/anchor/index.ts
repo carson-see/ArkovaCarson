@@ -5,3 +5,6 @@ export { AssetDetailView } from './AssetDetailView';
 export { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 export type { AnchorLifecycleData } from './AnchorLifecycleTimeline';
 export { ShareSheet } from './ShareSheet';
+export { TemplateSelector } from './TemplateSelector';
+export type { TemplateOption } from './TemplateSelector';
+export { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';

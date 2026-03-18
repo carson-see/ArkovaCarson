@@ -38,6 +38,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { CsvUploader } from './CsvUploader';
+import { AIExtractionStep, type BatchExtractionResult } from './AIExtractionStep';
 import { toast } from 'sonner';
 import { TOAST } from '@/lib/copy';
 import { useBulkAnchors } from '@/hooks/useBulkAnchors';
@@ -50,7 +51,7 @@ import {
   validateCsvRows,
 } from '@/lib/csvParser';
 
-type Step = 'upload' | 'review' | 'processing' | 'complete';
+type Step = 'upload' | 'review' | 'extraction' | 'processing' | 'complete';
 
 interface ProcessingResult {
   total: number;
@@ -62,6 +63,7 @@ interface ProcessingResult {
 const STEPS: { key: Step; label: string }[] = [
   { key: 'upload', label: 'Upload' },
   { key: 'review', label: 'Review' },
+  { key: 'extraction', label: 'AI Extract' },
   { key: 'processing', label: 'Process' },
   { key: 'complete', label: 'Complete' },
 ];
@@ -78,6 +80,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
   const [result, setResult] = useState<ProcessingResult | null>(null);
+  const [_extractionResults, setExtractionResults] = useState<BatchExtractionResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const {
@@ -102,13 +105,18 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     []
   );
 
+  const handleGoToExtraction = useCallback(() => {
+    setStep('extraction');
+    setError(null);
+  }, []);
+
   const handleProcess = useCallback(async () => {
     if (!parsedCsv || !mapping || !validation) return;
 
     setStep('processing');
     setError(null);
 
-    // Extract valid records
+    // Enrich valid records with extraction results if available
     const records = extractAnchorRecords(validation.valid, columns, mapping);
 
     const bulkResult = await createBulkAnchors(records);
@@ -130,6 +138,39 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     }
   }, [parsedCsv, mapping, validation, columns, createBulkAnchors, bulkError, onComplete]);
 
+  const handleExtractionComplete = useCallback((results: BatchExtractionResult[]) => {
+    setExtractionResults(results);
+    // Auto-advance to processing
+    setStep('processing');
+    setError(null);
+    // Trigger processing via the already-defined handler
+    if (parsedCsv && mapping && validation) {
+      const records = extractAnchorRecords(validation.valid, columns, mapping);
+      createBulkAnchors(records).then((bulkResult) => {
+        if (bulkResult) {
+          const processingResult: ProcessingResult = {
+            total: bulkResult.total,
+            created: bulkResult.created,
+            skipped: bulkResult.skipped,
+            failed: bulkResult.failed,
+          };
+          setResult(processingResult);
+          setStep('complete');
+          onComplete?.(processingResult);
+        } else {
+          toast.error(TOAST.BULK_FAILED);
+          setError(bulkError || 'Failed to process records');
+          setStep('review');
+        }
+      });
+    }
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, bulkError, onComplete]);
+
+  const handleSkipExtraction = useCallback(() => {
+    setExtractionResults(null);
+    handleProcess();
+  }, [handleProcess]);
+
   const handleReset = useCallback(() => {
     setStep('upload');
     setParsedCsv(null);
@@ -137,6 +178,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setMapping(null);
     setValidation(null);
     setResult(null);
+    setExtractionResults(null);
     setError(null);
   }, []);
 
@@ -238,7 +280,19 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
             mapping={mapping}
             onMappingChange={handleUpdateMapping}
             onBack={handleReset}
-            onProcess={handleProcess}
+            onProcess={handleGoToExtraction}
+          />
+        )}
+
+        {/* Step: AI Extraction */}
+        {step === 'extraction' && parsedCsv && validation && mapping && (
+          <AIExtractionStep
+            rows={validation.valid}
+            columns={columns}
+            mapping={mapping}
+            onComplete={handleExtractionComplete}
+            onBack={() => setStep('review')}
+            onSkip={handleSkipExtraction}
           />
         )}
 

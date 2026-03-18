@@ -31,6 +31,8 @@ import {
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from './FileUpload';
+import { TemplateSelector } from './TemplateSelector';
+import type { TemplateOption } from './TemplateSelector';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -47,7 +49,7 @@ interface SecureDocumentDialogProps {
   onSuccess?: () => void;
 }
 
-type Step = 'upload' | 'confirm' | 'processing' | 'success' | 'error';
+type Step = 'upload' | 'template' | 'confirm' | 'processing' | 'success' | 'error';
 
 interface FileData {
   file: File;
@@ -71,6 +73,7 @@ export function SecureDocumentDialog({
   const [step, setStep] = useState<Step>('upload');
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateOption | null>(null);
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
@@ -98,6 +101,7 @@ export function SecureDocumentDialog({
         .insert({
           ...validated,
           user_id: user.id,
+          ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type as 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT' | 'PROFESSIONAL' | 'OTHER' } : {}),
         })
         .select('id, public_id')
         .single();
@@ -134,11 +138,12 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, onSuccess]);
+  }, [fileData, user, profile, selectedTemplate, onSuccess]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
     setFileData(null);
+    setSelectedTemplate(null);
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
@@ -148,6 +153,7 @@ export function SecureDocumentDialog({
   const handleRetry = useCallback(() => {
     setStep('upload');
     setFileData(null);
+    setSelectedTemplate(null);
     setError(null);
     setCreatedAnchor(null);
   }, []);
@@ -188,6 +194,19 @@ export function SecureDocumentDialog({
             />
           )}
 
+          {step === 'template' && (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Choose a template for this credential
+              </p>
+              <TemplateSelector
+                orgId={profile?.org_id}
+                onSelect={setSelectedTemplate}
+                selectedId={selectedTemplate?.id}
+              />
+            </div>
+          )}
+
           {step === 'confirm' && fileData && (
             <div className="space-y-4">
               <div className="rounded-lg border p-4">
@@ -205,6 +224,12 @@ export function SecureDocumentDialog({
                       {(fileData.file.size / 1024).toFixed(1)} KB
                     </dd>
                   </div>
+                  {selectedTemplate && (
+                    <div className="flex justify-between">
+                      <dt className="text-muted-foreground">Template</dt>
+                      <dd className="font-medium">{selectedTemplate.name}</dd>
+                    </div>
+                  )}
                 </dl>
               </div>
               <Alert>
@@ -297,7 +322,7 @@ export function SecureDocumentDialog({
                 {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button
-                onClick={() => setStep('confirm')}
+                onClick={() => setStep('template')}
                 disabled={!fileData}
               >
                 {SECURE_DIALOG_LABELS.CONTINUE}
@@ -305,9 +330,34 @@ export function SecureDocumentDialog({
             </>
           )}
 
-          {step === 'confirm' && (
+          {step === 'template' && (
             <>
               <Button variant="outline" onClick={() => setStep('upload')}>
+                {SECURE_DIALOG_LABELS.BACK}
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setSelectedTemplate(null);
+                    setStep('confirm');
+                  }}
+                >
+                  Skip
+                </Button>
+                <Button
+                  onClick={() => setStep('confirm')}
+                  disabled={!selectedTemplate}
+                >
+                  {SECURE_DIALOG_LABELS.CONTINUE}
+                </Button>
+              </div>
+            </>
+          )}
+
+          {step === 'confirm' && (
+            <>
+              <Button variant="outline" onClick={() => setStep('template')}>
                 {SECURE_DIALOG_LABELS.BACK}
               </Button>
               <Button onClick={handleConfirm}>
