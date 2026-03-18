@@ -33,6 +33,9 @@ export type FlagId = keyof typeof FLAGS;
 // FLAG CHECKING
 // =============================================================================
 
+// Track which flags have already logged an error to avoid console spam
+const _flagErrorLogged = new Set<string>();
+
 /**
  * Get a flag value from the server
  */
@@ -44,10 +47,16 @@ export async function getFlag(flagId: FlagId): Promise<boolean> {
     });
 
     if (error) {
-      console.error(`Failed to fetch flag ${flagId}:`, error);
+      // Log each flag error only once to avoid console spam when DB lacks the RPC
+      if (!_flagErrorLogged.has(flagId)) {
+        _flagErrorLogged.add(flagId);
+        console.warn(`Switchboard: flag ${flagId} unavailable, using default (${FLAGS[flagId]})`);
+      }
       return FLAGS[flagId]; // Return default on error
     }
 
+    // Clear error state on success (flag became available)
+    _flagErrorLogged.delete(flagId);
     return data as boolean;
   } catch {
     return FLAGS[flagId]; // Return default on error

@@ -147,7 +147,7 @@ describe('UsageWidget', () => {
     mockEntitlements.percentUsed = 80;
     mockEntitlements.isNearLimit = true;
     renderWidget();
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('80%'));
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('80%'), expect.objectContaining({ id: 'usage-warning-80' }));
   });
 
   it('fires toast warning at 100% usage', async () => {
@@ -155,6 +155,6 @@ describe('UsageWidget', () => {
     mockEntitlements.percentUsed = 100;
     mockEntitlements.isNearLimit = true;
     renderWidget();
-    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('limit reached'));
+    expect(toast.warning).toHaveBeenCalledWith(expect.stringContaining('limit reached'), expect.objectContaining({ id: 'usage-warning-100' }));
   });
 });

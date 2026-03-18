@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 151/163 stories complete (93%) + 13 Beta stories complete (BETA-01 through BETA-13). 1,875 tests (874 frontend + 1,001 worker). 71 migration files (0001-0071, 0033 skipped). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.**
+**Overall progress:** 164/176 stories complete (93%) incl. 13 Beta stories (BETA-01–13). 1,930 tests (929 frontend + 1,001 worker). 71 migration files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.**
 
 ### Open Blockers
 
@@ -161,6 +161,32 @@ All HIGH+ launch blockers resolved:
 **Treasury funding:** testnet4 address `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r` — txs dropped from mempool, re-sent. E2E anchoring test pending confirmation.
 
 **Test counts:** 874 frontend + 1,001 worker = 1,875 total. Migration count: 71 (0001-0071, 0033 skipped).
+
+### Session: 2026-03-18 — UAT Report #4 + Migration Fixes + Bug Fixes (PR #105)
+
+**5 migration bugs fixed** that blocked `supabase start` / `supabase db reset`:
+- 0061: `invite_member()` param rename needed `DROP FUNCTION` first (PG restriction)
+- 0064: Duplicate `report_status` enum + wrong `switchboard_flags` column names
+- 0067: Wrong column name (`webhook_id` → `endpoint_id`) + wrong table (`ai_review_queue` → `review_queue_items`)
+- 0068: `ALTER TYPE ADD VALUE` can't run inside transaction — split into 0068a (enum) + 0068b (DDL)
+- seed.sql: Invalid template UUIDs (`tttttttt` not valid hex)
+
+**UAT Report #4:** 37 tests across 9 sections, 92% pass rate:
+- 17/19 prior bugs from UAT Reports #2 and #3 confirmed **FIXED**
+- Key fixes verified: Revoke action, template metadata in Issue Credential form, Settings sub-page navigation, Bulk Upload button, mobile card layout, DM Sans + JetBrains Mono fonts, PENDING verification display
+- 2 remaining: UAT2-05 (record names not `<Link>`, partial), UAT2-12/14 (untested, low priority)
+
+**2 new bugs found and fixed:**
+- BUG-UAT4-01: Switchboard `getFlag()` console spam — now warns once per flag, toast IDs prevent stacking
+- BUG-UAT4-02: RouteGuard redirect during full page reload — treats `/auth` destination as loading state
+
+**PR review findings addressed:**
+- H1: AnchorLifecycleTimeline now handles `SUBMITTED` status (shows "Secured" as in-progress)
+- M1: RouteGuard comment clarifies `/auth` is a RouteDestination value, not a route path
+- M2: Migration 0068a ROLLBACK comment moved to bottom per convention
+
+**Test counts:** 929 frontend + 1,001 worker = 1,930 total. Migration count: 71 files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b).
+**PR #105:** `fix/migration-bugs-uat4` — open, ready for merge.
 
 ### Session: 2026-03-18 — Beta Sprints 1-3 Merged (BETA-01 through BETA-13)
 

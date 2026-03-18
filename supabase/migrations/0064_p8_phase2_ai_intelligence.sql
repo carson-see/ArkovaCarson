@@ -19,6 +19,10 @@
 CREATE TYPE integrity_level AS ENUM ('HIGH', 'MEDIUM', 'LOW', 'FLAGGED');
 CREATE TYPE review_status AS ENUM ('PENDING', 'APPROVED', 'INVESTIGATING', 'ESCALATED', 'DISMISSED');
 CREATE TYPE review_action AS ENUM ('APPROVE', 'INVESTIGATE', 'ESCALATE', 'DISMISS');
+
+-- Drop old report_status enum (from migration 0019, lowercase values) to recreate
+-- with uppercase values. CASCADE drops the column dependency in the old reports table.
+DROP TYPE IF EXISTS report_status CASCADE;
 CREATE TYPE report_status AS ENUM ('QUEUED', 'GENERATING', 'COMPLETE', 'FAILED');
 
 -- =============================================================================
@@ -247,6 +251,6 @@ CREATE INDEX idx_ai_reports_org_status
 -- SEED: Add ENABLE_AI_REPORTS flag to switchboard
 -- =============================================================================
 
-INSERT INTO switchboard_flags (flag_key, enabled, description)
-VALUES ('ENABLE_AI_REPORTS', false, 'Enable AI report generation (P8-S16)')
-ON CONFLICT (flag_key) DO NOTHING;
+INSERT INTO switchboard_flags (id, value, description, default_value)
+VALUES ('ENABLE_AI_REPORTS', false, 'Enable AI report generation (P8-S16)', false)
+ON CONFLICT (id) DO NOTHING;

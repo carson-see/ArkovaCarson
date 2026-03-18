@@ -17,7 +17,7 @@ interface AuthState {
 
 interface AuthActions {
   signIn: (email: string, password: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
-  signUp: (email: string, password: string, fullName?: string) => Promise<void>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
@@ -125,12 +125,17 @@ export function useAuth(): AuthState & AuthActions {
           } else {
             setError(error.message);
           }
+          setLoading(false);
+          return { error };
         }
-      } catch {
-        setError('Unable to reach the server. Please check your connection and try again.');
-      }
 
-      setLoading(false);
+        setLoading(false);
+        return { error: null };
+      } catch (err) {
+        setError('Unable to reach the server. Please check your connection and try again.');
+        setLoading(false);
+        return { error: err as import('@supabase/supabase-js').AuthError };
+      }
     },
     []
   );
