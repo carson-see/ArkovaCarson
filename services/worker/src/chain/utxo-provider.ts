@@ -209,7 +209,7 @@ export interface Utxo {
   vout: number;
   /** Value in satoshis */
   valueSats: number;
-  /** Full raw transaction hex (needed for non-witness PSBT input) */
+  /** Full raw transaction hex (legacy P2PKH only — unused by P2WPKH signing) */
   rawTxHex: string;
 }
 
@@ -360,12 +360,9 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const mempoolUtxos = (await response.json()) as Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } }>;
       const confirmed = mempoolUtxos.filter((u) => u.status.confirmed);
       if (confirmed.length === 0) return [];
-      const utxos: Utxo[] = [];
-      for (const u of confirmed) {
-        const rawTxHex = await this.fetchRawTxHex(u.txid);
-        utxos.push({ txid: u.txid, vout: u.vout, valueSats: u.value, rawTxHex });
-      }
-      return utxos;
+      // P2WPKH signing uses witnessUtxo (script + value), not rawTxHex.
+      // Skip the extra HTTP call per UTXO — rawTxHex is only needed for legacy P2PKH (nonWitnessUtxo).
+      return confirmed.map((u) => ({ txid: u.txid, vout: u.vout, valueSats: u.value, rawTxHex: '' }));
     }, { name: 'MempoolUtxoProvider.listUnspent' });
   }
 

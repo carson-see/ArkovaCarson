@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 151/163 stories complete (93%). 1,814 tests (867 frontend + 947 worker). 67 migration files (0001-0067, 0033 skipped). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.**
+**Overall progress:** 151/163 stories complete (93%) + 13 Beta stories complete (BETA-01 through BETA-13). 1,875 tests (874 frontend + 1,001 worker). 71 migration files (0001-0071, 0033 skipped). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.**
 
 ### Open Blockers
 
@@ -139,6 +139,47 @@ All HIGH+ launch blockers resolved:
 
 > **Full session history (25+ entries, 2026-03-14 through 2026-03-17) archived to `docs/archive/session-log.md`.**
 > Only the most recent session is kept here. Older entries are in the archive.
+
+### Session: 2026-03-17 — P2WPKH SegWit Upgrade + Boolean Env Fix (PR #102)
+
+**Chain client upgraded from legacy P2PKH to native SegWit (P2WPKH):**
+- All `bitcoin.payments.p2pkh` → `bitcoin.payments.p2wpkh` across signet.ts, wallet.ts, scripts
+- PSBT construction: `nonWitnessUtxo` (full raw tx) → `witnessUtxo` (script + value) — eliminates 1 HTTP call per UTXO
+- Transaction vsize estimates updated: ~157 vbytes with change (was ~239), ~126 without (was ~205)
+- Treasury address format: `tb1...` (bech32) instead of `m/n...` (base58)
+- All 68 chain tests updated for witness-based signatures (empty scriptSig, witness[sig, pubkey])
+
+**Critical boolean env parsing bug fixed:**
+- `z.coerce.boolean()` treats any non-empty string as truthy — `USE_MOCKS=false` was parsed as `true`
+- Fixed with `z.preprocess((v) => v === 'true' || v === true, z.boolean())` for both `useMocks` and `enableProdNetworkAnchoring`
+
+**PR #102 review findings fixed:**
+- H1: Removed unused `rawTxHex` fetching in `MempoolUtxoProvider.listUnspent()` (saves 1 HTTP call per UTXO)
+- M1-M3: Updated stale P2PKH comments in wallet.ts, signet.ts, integration test
+- Follow-up: File rename `signet.ts` → `bitcoin.ts` deferred (too many import changes for this PR)
+
+**Treasury funding:** testnet4 address `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r` — txs dropped from mempool, re-sent. E2E anchoring test pending confirmation.
+
+**Test counts:** 874 frontend + 1,001 worker = 1,875 total. Migration count: 71 (0001-0071, 0033 skipped).
+
+### Session: 2026-03-18 — Beta Sprints 1-3 Merged (BETA-01 through BETA-13)
+
+**Three Beta Sprint PRs reviewed, fixed, and merged to main:**
+- **PR #98 (Sprint 1):** BETA-01 through BETA-05 — mempool tracking, revocation tx, email, auto-user, xlsx upload
+- **PR #100 (Sprint 2):** BETA-06 through BETA-10 — AI batch extraction, 2FA/MFA, template selection, LinkedIn badge, semantic search
+- **PR #101 (Sprint 3):** BETA-11 through BETA-13 — explorer links, description field, realtime toasts
+
+**PR review findings fixed before merge:**
+- H1: Description + credential_type now pass through Zod validateAnchorCreate() (Constitution 1.2)
+- H2: chain_tx_id validated as hex before URL interpolation (XSS prevention)
+- M1: ExplorerLink.tsx default changed from signet to testnet4 (matches worker)
+- M2: Migration 0071 rollback comments completed with full trigger restore
+- M3: break-words CSS on description display (overflow prevention)
+- M4: Added EXPIRED + SUBMITTED toast transition tests
+
+**Test counts:** 874 frontend + 1,001 worker = 1,875 total. Migration count: 71 (0001-0071, 0033 skipped).
+**Vercel:** Production deployment READY at arkova-carson.vercel.app.
+**Branches cleaned:** feat/beta-sprint1, feat/beta-sprint2, feat/beta-sprint3 deleted.
 
 ### Session: 2026-03-17 — Close Out All 8 Remaining Audit Findings
 

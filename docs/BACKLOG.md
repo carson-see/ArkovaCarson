@@ -52,37 +52,38 @@ _Last updated: 2026-03-17 (BETA readiness audit — 13 new stories + 2 activatio
 
 ---
 
-## TIER 1B: BETA READINESS — 13 stories blocking beta testing
+## TIER 1B: BETA READINESS — 13/13 COMPLETE
 
 _Discovered 2026-03-17 via end-to-end workflow audit. Full story docs: [16_beta_readiness.md](stories/16_beta_readiness.md)_
+_All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071._
 
 ### Sprint 1 — Core Demo Path (P0/P1)
 
 | # | ID | Priority | Story | Workflows | Effort | Status |
 |---|-----|----------|-------|-----------|--------|--------|
-| 1 | BETA-01 | **P0** | Mempool live transaction tracking (worker cron + realtime UI) | WF1, WF4 | Medium | NOT STARTED |
-| 2 | BETA-02 | **P0** | Revocation Bitcoin transaction (OP_RETURN on revoke) | WF1 | Medium | NOT STARTED |
-| 3 | BETA-03 | **P0** | Email infrastructure (Resend + templates) | WF1, WF3 | Medium | NOT STARTED |
-| 4 | BETA-04 | **P1** | Auto-create user on admin upload + activation email | WF1 | Medium | NOT STARTED |
-| 5 | BETA-05 | **P1** | XLSX batch upload support (SheetJS) | WF2 | Small | NOT STARTED |
+| 1 | BETA-01 | **P0** | Mempool live transaction tracking (worker cron + realtime UI) | WF1, WF4 | Medium | **COMPLETE** |
+| 2 | BETA-02 | **P0** | Revocation Bitcoin transaction (OP_RETURN on revoke) | WF1 | Medium | **COMPLETE** |
+| 3 | BETA-03 | **P0** | Email infrastructure (Resend + templates) | WF1, WF3 | Medium | **COMPLETE** |
+| 4 | BETA-04 | **P1** | Auto-create user on admin upload + activation email | WF1 | Medium | **COMPLETE** |
+| 5 | BETA-05 | **P1** | XLSX batch upload support (SheetJS) | WF2 | Small | **COMPLETE** |
 
 ### Sprint 2 — Individual User + Batch AI (P1/P2)
 
 | # | ID | Priority | Story | Workflows | Effort | Status |
 |---|-----|----------|-------|-----------|--------|--------|
-| 6 | BETA-06 | **P1** | Per-row AI extraction for batch uploads | WF2 | Medium | NOT STARTED |
-| 7 | BETA-07 | **P1** | Two-factor authentication (Supabase MFA/TOTP) | WF3 | Medium | NOT STARTED |
-| 8 | BETA-08 | **P2** | Template selection before anchoring (individual users) | WF3 | Small | NOT STARTED |
-| 9 | BETA-09 | **P2** | LinkedIn verification badge + share link | WF3 | Small | NOT STARTED |
-| 10 | BETA-10 | **P2** | Public search by person (not just fingerprint) | WF4 | Small | NOT STARTED |
+| 6 | BETA-06 | **P1** | Per-row AI extraction for batch uploads | WF2 | Medium | **COMPLETE** |
+| 7 | BETA-07 | **P1** | Two-factor authentication (Supabase MFA/TOTP) | WF3 | Medium | **COMPLETE** |
+| 8 | BETA-08 | **P2** | Template selection before anchoring (individual users) | WF3 | Small | **COMPLETE** |
+| 9 | BETA-09 | **P2** | LinkedIn verification badge + share link | WF3 | Small | **COMPLETE** |
+| 10 | BETA-10 | **P2** | Public search by person (not just fingerprint) | WF4 | Small | **COMPLETE** |
 
 ### Sprint 3 — Public Display Polish (P2/P3)
 
 | # | ID | Priority | Story | Workflows | Effort | Status |
 |---|-----|----------|-------|-----------|--------|--------|
-| 11 | BETA-11 | **P2** | Mempool explorer link in verification results | WF4 | Tiny | NOT STARTED |
-| 12 | BETA-12 | **P2** | Immutable description field on anchors | WF4 | Small | NOT STARTED |
-| 13 | BETA-13 | **P3** | Realtime anchor status subscriptions (Supabase channels) | WF1, WF3 | Small | NOT STARTED |
+| 11 | BETA-11 | **P2** | Mempool explorer link in verification results | WF4 | Tiny | **COMPLETE** |
+| 12 | BETA-12 | **P2** | Immutable description field on anchors | WF4 | Small | **COMPLETE** |
+| 13 | BETA-13 | **P3** | Realtime anchor status subscriptions (Supabase channels) | WF1, WF3 | Small | **COMPLETE** |
 
 ### Activation Items (config only, no new code)
 

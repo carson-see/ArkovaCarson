@@ -72,10 +72,10 @@ const ConfigSchema = z.object({
   /** Sentry DSN for error tracking (INFRA-01) */
   sentryDsn: z.string().url().optional(),
 
-  // Feature flags
-  useMocks: z.coerce.boolean().default(false),
+  // Feature flags (z.coerce.boolean treats "false" as true — use preprocess)
+  useMocks: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
-  enableProdNetworkAnchoring: z.coerce.boolean().default(false),
+  enableProdNetworkAnchoring: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */

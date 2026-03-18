@@ -71,7 +71,7 @@ async function main(): Promise<void> {
 
   // Derive address for display (address is logged by constructor)
   const bitcoin = await import('bitcoinjs-lib');
-  const { address } = bitcoin.payments.p2pkh({
+  const { address } = bitcoin.payments.p2wpkh({
     pubkey: signingProvider.getPublicKey(),
     network: bitcoin.networks.testnet,
   });

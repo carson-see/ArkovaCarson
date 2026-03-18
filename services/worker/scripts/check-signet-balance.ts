@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   let address: string;
   try {
     const keyPair = ECPair.fromWIF(wif, SIGNET_NETWORK);
-    const payment = bitcoin.payments.p2pkh({
+    const payment = bitcoin.payments.p2wpkh({
       pubkey: Buffer.from(keyPair.publicKey),
       network: SIGNET_NETWORK,
     });

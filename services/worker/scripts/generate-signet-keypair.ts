@@ -27,7 +27,7 @@ const SIGNET_NETWORK = bitcoin.networks.testnet; // Signet uses testnet params
 function generateSignetKeypair(): { wif: string; address: string } {
   const keyPair = ECPair.makeRandom({ network: SIGNET_NETWORK });
 
-  const { address } = bitcoin.payments.p2pkh({
+  const { address } = bitcoin.payments.p2wpkh({
     pubkey: Buffer.from(keyPair.publicKey),
     network: SIGNET_NETWORK,
   });

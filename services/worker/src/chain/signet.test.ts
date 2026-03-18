@@ -48,13 +48,12 @@ import type { ChainIndexLookup, IndexEntry } from './types.js';
 const TEST_WIF = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
 const TEST_FINGERPRINT = 'a'.repeat(64); // Valid 64-char hex
 
-// Build a dummy funding tx that pays to the TEST_WIF key's P2PKH address.
-// This is required because bitcoinjs-lib PSBT validation checks that:
-// 1. The nonWitnessUtxo txid matches the input hash
-// 2. The output's scriptPubKey matches the signing key
+// Build a dummy funding tx that pays to the TEST_WIF key's P2WPKH address.
+// This is required because bitcoinjs-lib PSBT validation checks that
+// the witnessUtxo script matches the signing key.
 function buildDummyFundingTx(valueSats: number): { txHex: string; txid: string } {
   const testKey = ECPair.fromWIF(TEST_WIF, bitcoin.networks.testnet);
-  const { output } = bitcoin.payments.p2pkh({
+  const { output } = bitcoin.payments.p2wpkh({
     pubkey: Buffer.from(testKey.publicKey),
     network: bitcoin.networks.testnet,
   });
@@ -141,14 +140,14 @@ describe('selectUtxo', () => {
 describe('estimateTxVsize', () => {
   it('calculates size with change output', () => {
     const size = estimateTxVsize(true);
-    // 148 + 47 + 34 + 10 = 239
-    expect(size).toBe(239);
+    // P2WPKH: 68 + 47 + 31 + 11 = 157
+    expect(size).toBe(157);
   });
 
   it('calculates size without change output', () => {
     const size = estimateTxVsize(false);
-    // 148 + 47 + 10 = 205
-    expect(size).toBe(205);
+    // P2WPKH: 68 + 47 + 11 = 126
+    expect(size).toBe(126);
   });
 });
 
@@ -214,7 +213,7 @@ describe('buildOpReturnTransaction', () => {
 
   it('omits change output when below dust threshold', async () => {
     // Set value just above the fee but below fee + dust (546)
-    const feeEstimate = estimateTxVsize(true); // ~239 at 1 sat/vbyte
+    const feeEstimate = estimateTxVsize(true); // ~157 at 1 sat/vbyte
     const barelyEnough = feeEstimate + 100; // change would be ~100 sats, below dust
 
     const result = await buildOpReturnTransaction(TEST_FINGERPRINT, makeUtxo(barelyEnough), testSigner);

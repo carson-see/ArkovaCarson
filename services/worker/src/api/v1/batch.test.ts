@@ -30,6 +30,7 @@ function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
     expires_at: null,
     jurisdiction: null,
     merkle_root: null,
+    description: null,
   };
 }
 

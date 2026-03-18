@@ -33,14 +33,14 @@ vi.mock('../utils/logger.js', () => ({
 const SIGNET_NETWORK = bitcoin.networks.testnet;
 
 /**
- * Build a simulated funding transaction that pays to a given P2PKH address.
- * This stands in for the real treasury UTXO on Signet.
+ * Build a simulated funding transaction that pays to a given P2WPKH address.
+ * This stands in for the real treasury UTXO on Signet/testnet4.
  */
 function buildFundingTx(
   pubkey: Buffer,
   valueSats: number,
 ): { txHex: string; txid: string; vout: number } {
-  const { output } = bitcoin.payments.p2pkh({
+  const { output } = bitcoin.payments.p2wpkh({
     pubkey,
     network: SIGNET_NETWORK,
   });
@@ -116,16 +116,16 @@ describe('Signet Integration — Real TX Construction', () => {
     expect(payload.subarray(0, 4).toString()).toBe('ARKV');
     expect(payload.subarray(4).toString('hex')).toBe(TEST_FINGERPRINT);
 
-    // If there's a change output, it should go back to the same P2PKH address
+    // If there's a change output, it should go back to the same P2WPKH address
     if (tx.outs.length === 2) {
       const changeOut = tx.outs[1];
       expect(changeOut.value).toBeGreaterThan(0);
       expect(changeOut.value).toBe(100_000 - result.fee);
     }
 
-    // Input must have a valid signature (scriptSig populated)
-    const scriptSig = tx.ins[0].script;
-    expect(scriptSig.length).toBeGreaterThan(0);
+    // P2WPKH: scriptSig is empty, witness contains signature + pubkey
+    expect(tx.ins[0].script.length).toBe(0);
+    expect(tx.ins[0].witness).toHaveLength(2);
   });
 
   it('constructs valid tx with the known test WIF', async () => {
@@ -201,10 +201,10 @@ describe('Signet Integration — Real TX Construction', () => {
     const publicKey = signer.getPublicKey();
 
     // Value just barely above fee — change will be below dust threshold (546 sats)
-    // P2PKH tx with change: ~239 vbytes at 1 sat/vbyte = 239 sats fee
-    // Without change: ~205 vbytes at 1 sat/vbyte = 205 sats fee
-    // So a UTXO of 600 sats: 600 - 239 = 361 change (below 546 dust)
-    // Without change: fee = 205, 600 - 205 = 395 sats donated to miners
+    // P2WPKH tx with change: ~157 vbytes at 1 sat/vbyte = 157 sats fee
+    // Without change: ~126 vbytes at 1 sat/vbyte = 126 sats fee
+    // So a UTXO of 600 sats: 600 - 157 = 443 change (below 546 dust)
+    // Without change: fee = 126, 600 - 126 = 474 sats donated to miners
     const funding = buildFundingTx(publicKey, 600);
     const utxo: SelectedUtxo = {
       txid: funding.txid,
@@ -282,7 +282,7 @@ describe('Signet Integration — Real TX Construction', () => {
     expect(result1.txId).not.toBe(result2.txId);
   });
 
-  it('signed transaction scriptSig contains valid DER signature + pubkey', async () => {
+  it('signed P2WPKH transaction witness contains valid DER signature + pubkey', async () => {
     const { wif } = generateSignetKeypair();
     const signer = new WifSigningProvider(wif, SIGNET_NETWORK);
     const publicKey = signer.getPublicKey();
@@ -304,15 +304,15 @@ describe('Signet Integration — Real TX Construction', () => {
     );
 
     const tx = bitcoin.Transaction.fromHex(result.txHex);
-    const scriptSig = tx.ins[0].script;
 
-    // Decompile the scriptSig: should be [<signature> <pubkey>]
-    const chunks = bitcoin.script.decompile(scriptSig);
-    expect(chunks).not.toBeNull();
-    expect(chunks).toHaveLength(2);
+    // P2WPKH: scriptSig is empty, signature + pubkey are in witness
+    expect(tx.ins[0].script.length).toBe(0);
 
-    const sigBuf = chunks![0] as Buffer;
-    const pubBuf = chunks![1] as Buffer;
+    const witness = tx.ins[0].witness;
+    expect(witness).toHaveLength(2);
+
+    const sigBuf = witness[0];
+    const pubBuf = witness[1];
 
     // DER signature: starts with 0x30, ends with SIGHASH_ALL (0x01)
     expect(sigBuf[0]).toBe(0x30);
@@ -322,7 +322,7 @@ describe('Signet Integration — Real TX Construction', () => {
     expect(pubBuf.length).toBe(33);
     expect([0x02, 0x03]).toContain(pubBuf[0]);
 
-    // The pubkey in scriptSig must match the signer's public key
+    // The pubkey in witness must match the signer's public key
     expect(Buffer.compare(pubBuf, publicKey)).toBe(0);
   });
 });

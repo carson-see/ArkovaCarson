@@ -84,7 +84,7 @@ export interface SelectedUtxo {
   vout: number;
   /** Value in satoshis */
   valueSats: number;
-  /** Full raw transaction hex (for nonWitnessUtxo in PSBT) */
+  /** Full raw transaction hex (legacy — kept for RPC provider compat, unused by P2WPKH signing) */
   rawTxHex: string;
 }
 
@@ -125,16 +125,16 @@ export function selectUtxo(
 /**
  * Estimate the virtual size of an OP_RETURN anchor transaction.
  *
- * P2PKH input: ~148 vbytes
+ * P2WPKH input: ~68 vbytes (SegWit discount on witness data)
  * OP_RETURN output (36-byte payload): ~47 vbytes
- * P2PKH change output: ~34 vbytes
- * Overhead: ~10 vbytes
+ * P2WPKH change output: ~31 vbytes
+ * Overhead: ~11 vbytes (version + locktime + witness flag)
  */
 export function estimateTxVsize(hasChange: boolean): number {
-  const INPUT_SIZE = 148;
+  const INPUT_SIZE = 68;
   const OP_RETURN_OUTPUT_SIZE = 47;
-  const CHANGE_OUTPUT_SIZE = 34;
-  const OVERHEAD = 10;
+  const CHANGE_OUTPUT_SIZE = 31;
+  const OVERHEAD = 11;
 
   return (
     INPUT_SIZE +
@@ -209,11 +209,20 @@ export async function buildOpReturnTransaction(
 
   const psbt = new bitcoin.Psbt({ network });
 
-  // Add input with full raw transaction (nonWitnessUtxo for P2PKH)
+  // Derive the P2WPKH script for witnessUtxo
+  const p2wpkh = bitcoin.payments.p2wpkh({
+    pubkey: signer.getPublicKey(),
+    network,
+  });
+
+  // Add input with witnessUtxo (SegWit P2WPKH)
   psbt.addInput({
     hash: utxo.txid,
     index: utxo.vout,
-    nonWitnessUtxo: Buffer.from(utxo.rawTxHex, 'hex'),
+    witnessUtxo: {
+      script: p2wpkh.output!,
+      value: utxo.valueSats,
+    },
   });
 
   // Add OP_RETURN output (value = 0)
@@ -222,10 +231,10 @@ export async function buildOpReturnTransaction(
     value: 0,
   });
 
-  // Add change output if above dust
+  // Add change output if above dust (P2WPKH SegWit)
   const publicKey = signer.getPublicKey();
   if (hasChange) {
-    const { address } = bitcoin.payments.p2pkh({
+    const { address } = bitcoin.payments.p2wpkh({
       pubkey: publicKey,
       network,
     });
@@ -311,8 +320,8 @@ export class BitcoinChainClient implements ChainClient {
       this.network = SIGNET_NETWORK;
     }
 
-    // Derive address from signing provider's public key
-    const { address } = bitcoin.payments.p2pkh({
+    // Derive SegWit address from signing provider's public key
+    const { address } = bitcoin.payments.p2wpkh({
       pubkey: this.signingProvider.getPublicKey(),
       network: this.network,
     });

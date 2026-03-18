@@ -26,9 +26,9 @@ describe('wallet utilities (P7-TS-11)', () => {
       expect(keyPair.publicKey.length).toBe(33); // compressed
     });
 
-    it('generates address starting with m or n (testnet P2PKH)', () => {
+    it('generates address starting with tb1 (testnet P2WPKH)', () => {
       const { address } = generateSignetKeypair();
-      expect(address[0]).toMatch(/[mn]/);
+      expect(address).toMatch(/^tb1/);
     });
 
     it('generates unique keypairs on each call', () => {
@@ -49,7 +49,7 @@ describe('wallet utilities (P7-TS-11)', () => {
     it('derives correct address from known test WIF', () => {
       // Generate a keypair and verify round-trip
       const keyPair = ECPair.makeRandom({ network: SIGNET_NETWORK });
-      const { address: expected } = bitcoin.payments.p2pkh({
+      const { address: expected } = bitcoin.payments.p2wpkh({
         pubkey: Buffer.from(keyPair.publicKey),
         network: SIGNET_NETWORK,
       });

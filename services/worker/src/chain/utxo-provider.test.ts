@@ -104,10 +104,10 @@ describe('MempoolUtxoProvider', () => {
       { txid: 'aaa', vout: 0, value: 50000, status: { confirmed: true, block_height: 100 } },
       { txid: 'bbb', vout: 1, value: 30000, status: { confirmed: false } },
     ]) });
-    mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('0200000001...') });
+    // No rawTxHex fetch — P2WPKH uses witnessUtxo, not nonWitnessUtxo
     const utxos = await provider.listUnspent('tb1qtest');
     expect(utxos).toHaveLength(1);
-    expect(utxos[0]).toEqual({ txid: 'aaa', vout: 0, valueSats: 50000, rawTxHex: '0200000001...' });
+    expect(utxos[0]).toEqual({ txid: 'aaa', vout: 0, valueSats: 50000, rawTxHex: '' });
   });
   it('returns empty when all UTXOs are unconfirmed', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([{ txid: 'aaa', vout: 0, value: 50000, status: { confirmed: false } }]) });
