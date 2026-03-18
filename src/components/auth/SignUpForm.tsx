@@ -45,16 +45,13 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
       return;
     }
 
-    await signUp(email, password, fullName || undefined);
+    const result = await signUp(email, password, fullName || undefined);
 
-    // Check if signup was successful (no error)
-    // Note: We check after await since error state updates asynchronously
-    setTimeout(() => {
-      if (!error) {
-        setSignupComplete(true);
-        onSuccess?.();
-      }
-    }, 100);
+    // BUG-003 fix: Check return value directly instead of stale error closure
+    if (!result.error) {
+      setSignupComplete(true);
+      onSuccess?.();
+    }
   };
 
   const handleResend = async () => {

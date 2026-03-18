@@ -93,6 +93,11 @@ const statusConfig = {
     variant: 'outline' as const,
     icon: Clock,
   },
+  SUBMITTED: {
+    label: 'Submitted',
+    variant: 'secondary' as const,
+    icon: Loader2,
+  },
 };
 
 const PAGE_SIZE = 10;

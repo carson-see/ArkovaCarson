@@ -44,7 +44,7 @@ interface AnchorRecord {
   publicId?: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+  status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
   createdAt: string;
   securedAt?: string;
   issuedAt?: string;
@@ -98,6 +98,12 @@ const statusConfig = {
     variant: 'outline' as const,
     icon: AlertTriangle,
     color: 'text-amber-600',
+  },
+  SUBMITTED: {
+    label: 'Submitted',
+    variant: 'secondary' as const,
+    icon: Clock,
+    color: 'text-blue-600',
   },
 };
 

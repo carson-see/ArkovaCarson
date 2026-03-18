@@ -57,6 +57,7 @@ describe('CredentialTemplatesManager', () => {
       credential_type: 'CERTIFICATE' as const,
       default_metadata: null,
       is_active: true,
+      is_system: false,
       org_id: 'org-1',
       created_by: null,
       created_at: '2026-01-01T00:00:00Z',

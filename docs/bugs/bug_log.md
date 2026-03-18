@@ -1,5 +1,35 @@
 # Arkova Bug Log
-_Last updated: 2026-03-16 ~6:00 PM EST | Active bugs: 21 (UAT launch readiness) + 1 (CRIT-2 operational) | Resolved: 38 (15 prior + 17 UAT S5/S6 + 4 audit + 2 UAT-LR1)_
+_Last updated: 2026-03-18 ~12:00 PM EST | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 40 (38 prior + 2 UAT-PROD)_
+
+## UAT Production Testing — 2026-03-18
+
+Carson performed UAT Section 1 (Auth & Login) on production (`arkova-carson.vercel.app`). 4 bugs found:
+
+| ID | Severity | Summary | Fix Type | Status |
+|----|----------|---------|----------|--------|
+| BUG-PROD-001 | MEDIUM | Login screen dark/light mode mix after logout | Code fix | **RESOLVED** — AuthLayout forces light mode |
+| BUG-PROD-002 | CRITICAL | Google OAuth: "Unsupported provider: provider is not enabled" | Supabase config | **OPEN** — Enable Google provider in Supabase dashboard |
+| BUG-PROD-003 | CRITICAL | Signup race condition: setTimeout checks stale error closure, skips email confirmation | Code fix + Supabase config | **PARTIAL** — Code race condition fixed. Verify email confirmation is enabled in Supabase Auth settings. |
+| BUG-PROD-004 | CRITICAL | Password reset "email rate limit exceeded" | Supabase config | **OPEN** — Configure custom SMTP in Supabase (free tier limits: 3 emails/hour) |
+
+### Code Fixes Applied (BUG-PROD-001, BUG-PROD-003):
+- `src/components/layout/AuthLayout.tsx` — Force `document.documentElement.classList.remove('dark')` on mount, restore on unmount
+- `src/hooks/useAuth.ts` — `signUp()` now returns `{ error }` so callers can check success synchronously
+- `src/components/auth/SignUpForm.tsx` — Replaced stale-closure `setTimeout` with direct `result.error` check
+- `src/components/auth/LoginForm.tsx` — Friendlier error message for rate-limited password reset
+
+### Supabase Config Required (BUG-PROD-002, BUG-PROD-003, BUG-PROD-004):
+1. **Enable Google OAuth**: Supabase Dashboard → Authentication → Providers → Google → Enable, add Google Cloud OAuth Client ID + Secret
+2. **Verify email confirmation enabled**: Authentication → Settings → "Enable email confirmations" must be ON
+3. **Configure custom SMTP**: Authentication → SMTP Settings → Add SendGrid/Resend/Mailgun credentials (free tier SMTP has 3 emails/hour limit)
+
+### Also Fixed (pre-existing TS build errors blocking Vercel preview deploys):
+- `OrgRegistryTable.tsx` — Added SUBMITTED to statusConfig
+- `AssetDetailView.tsx` — Added SUBMITTED to status type union + statusConfig
+- `AnchorLifecycleTimeline.tsx` — Added SUBMITTED to AnchorLifecycleData status type
+- `CredentialTemplatesManager.test.tsx` — Added missing `is_system` property to test fixture
+
+---
 
 ## UAT Launch Readiness Reports — 2026-03-16
 

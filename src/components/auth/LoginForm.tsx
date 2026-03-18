@@ -58,7 +58,15 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
     setResetSending(false);
 
     if (resetErr) {
-      setResetError(resetErr.message);
+      // BUG-004 fix: Translate rate limit errors to a user-friendly message
+      const msg = resetErr.message?.toLowerCase() ?? '';
+      if (msg.includes('rate limit') || msg.includes('too many requests')) {
+        setResetError('Too many reset requests. Please wait a few minutes before trying again.');
+      } else if (msg.includes('failed to fetch') || msg.includes('networkerror')) {
+        setResetError('Unable to reach the server. Please check your connection and try again.');
+      } else {
+        setResetError(resetErr.message);
+      }
     } else {
       setResetSent(true);
     }
