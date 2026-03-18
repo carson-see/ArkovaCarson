@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_actor_created
 -- =========================================================================
 
 CREATE INDEX IF NOT EXISTS idx_webhook_delivery_logs_webhook_created
-  ON webhook_delivery_logs (webhook_id, created_at DESC);
+  ON webhook_delivery_logs (endpoint_id, created_at DESC);
 
 -- =========================================================================
 -- Verification events — queried by anchor for verification history
@@ -79,7 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_ai_usage_events_org_created
 
 -- Review queue: admin dashboard filtering by org + status + priority
 CREATE INDEX IF NOT EXISTS idx_review_queue_org_status_priority
-  ON ai_review_queue (org_id, status, priority DESC);
+  ON review_queue_items (org_id, status, priority DESC);
 
 -- AI reports: dashboard listing by org + status
 CREATE INDEX IF NOT EXISTS idx_ai_reports_org_status_created

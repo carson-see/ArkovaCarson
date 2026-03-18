@@ -202,9 +202,14 @@ $$;
 
 -- ---------------------------------------------------------------------------
 -- 5. Rewrite invite_member() — stop inserting actor_email
+--    Must DROP first because parameter names changed (invite_email→invitee_email,
+--    invite_role→invitee_role, org_id→target_org_id). PG does not allow
+--    renaming params via CREATE OR REPLACE.
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION invite_member(
+DROP FUNCTION IF EXISTS invite_member(text, user_role, uuid);
+
+CREATE FUNCTION invite_member(
   invitee_email text,
   invitee_role user_role,
   target_org_id uuid

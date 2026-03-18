@@ -368,7 +368,7 @@ INSERT INTO credential_templates (
 ) VALUES
   -- UMich Registrar — Degree template
   (
-    'tttttttt-0000-0000-0000-000000000001',
+    '00000000-0000-4000-a000-000000000101',
     'aaaaaaaa-0000-0000-0000-000000000001',
     'University Degree',
     'Academic degree credential (Bachelor, Master, Doctorate)',
@@ -380,7 +380,7 @@ INSERT INTO credential_templates (
   ),
   -- UMich Registrar — Transcript template
   (
-    'tttttttt-0000-0000-0000-000000000002',
+    '00000000-0000-4000-a000-000000000102',
     'aaaaaaaa-0000-0000-0000-000000000001',
     'Academic Transcript',
     'Official transcript of academic courses and grades',
@@ -392,7 +392,7 @@ INSERT INTO credential_templates (
   ),
   -- Midwest Medical Board — License template
   (
-    'tttttttt-0000-0000-0000-000000000003',
+    '00000000-0000-4000-a000-000000000103',
     'bbbbbbbb-0000-0000-0000-000000000001',
     'Medical License',
     'Professional medical license credential',
@@ -404,7 +404,7 @@ INSERT INTO credential_templates (
   ),
   -- Midwest Medical Board — Certificate template
   (
-    'tttttttt-0000-0000-0000-000000000004',
+    '00000000-0000-4000-a000-000000000104',
     'bbbbbbbb-0000-0000-0000-000000000001',
     'Professional Certificate',
     'Certificate of completion or continuing education',

@@ -22,8 +22,8 @@
 -- 5. Update protect_anchor_status_transition() to allow new transitions
 -- =============================================================================
 
--- 1. Add SUBMITTED to anchor_status enum
-ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';
+-- 1. SUBMITTED enum value is added in 0068a_add_submitted_enum.sql
+--    (ALTER TYPE ... ADD VALUE cannot run inside a migration transaction)
 
 -- 2. Add chain_confirmations column
 ALTER TABLE anchors
