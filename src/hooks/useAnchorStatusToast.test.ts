@@ -90,4 +90,30 @@ describe('useAnchorStatusToast', () => {
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
+
+  it('fires warning toast on SECURED → EXPIRED transition', () => {
+    const { rerender } = renderHook(
+      ({ status }) => useAnchorStatusToast(status),
+      { initialProps: { status: 'SECURED' as string } },
+    );
+
+    rerender({ status: 'EXPIRED' });
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringMatching(/expired/i),
+    );
+  });
+
+  it('fires info toast on PENDING → SUBMITTED transition', () => {
+    const { rerender } = renderHook(
+      ({ status }) => useAnchorStatusToast(status),
+      { initialProps: { status: 'PENDING' as string } },
+    );
+
+    rerender({ status: 'SUBMITTED' });
+
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringMatching(/submitted|awaiting/i),
+    );
+  });
 });

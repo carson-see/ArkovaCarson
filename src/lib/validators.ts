@@ -144,6 +144,12 @@ export const AnchorCreateSchema = z.object({
     .uuid('Parent anchor ID must be a valid UUID')
     .optional()
     .nullable(),
+
+  description: z
+    .string()
+    .max(500, 'Description must be 500 characters or less')
+    .optional()
+    .nullable(),
 });
 
 export type AnchorCreate = z.infer<typeof AnchorCreateSchema>;

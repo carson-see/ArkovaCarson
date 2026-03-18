@@ -10,7 +10,7 @@ import { ExplorerLink, truncateReceiptId, getExplorerBaseUrl } from './ExplorerL
 
 describe('ExplorerLink', () => {
   beforeEach(() => {
-    vi.stubEnv('VITE_BITCOIN_NETWORK', 'signet');
+    vi.stubEnv('VITE_BITCOIN_NETWORK', 'testnet4');
   });
 
   it('renders a link to mempool.space with receipt ID', () => {
@@ -18,7 +18,7 @@ describe('ExplorerLink', () => {
     const { getByRole } = render(<ExplorerLink receiptId={txId} />);
     const link = getByRole('link');
 
-    expect(link).toHaveAttribute('href', `https://mempool.space/signet/tx/${txId}`);
+    expect(link).toHaveAttribute('href', `https://mempool.space/testnet4/tx/${txId}`);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
   });
@@ -70,9 +70,9 @@ describe('truncateReceiptId', () => {
 });
 
 describe('getExplorerBaseUrl', () => {
-  it('defaults to signet', () => {
+  it('defaults to testnet4', () => {
     vi.stubEnv('VITE_BITCOIN_NETWORK', '');
-    expect(getExplorerBaseUrl()).toBe('https://mempool.space/signet');
+    expect(getExplorerBaseUrl()).toBe('https://mempool.space/testnet4');
   });
 
   it('returns mainnet URL for mainnet', () => {

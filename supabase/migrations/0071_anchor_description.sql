@@ -55,8 +55,24 @@ $$;
 COMMENT ON FUNCTION prevent_metadata_edit_after_secured IS 'Prevents metadata and description edits once an anchor leaves PENDING status (BETA-12)';
 
 -- ---------------------------------------------------------------------------
--- ROLLBACK
+-- ROLLBACK (run each line manually in order)
 -- ---------------------------------------------------------------------------
 -- ALTER TABLE anchors DROP CONSTRAINT IF EXISTS anchors_description_max_length;
 -- ALTER TABLE anchors DROP COLUMN IF EXISTS description;
--- -- Restore original trigger from 0030_metadata_jsonb.sql (metadata only)
+-- -- Restore original metadata-only trigger from 0030_metadata_jsonb.sql:
+-- CREATE OR REPLACE FUNCTION prevent_metadata_edit_after_secured()
+-- RETURNS TRIGGER
+-- LANGUAGE plpgsql
+-- SET search_path = public
+-- AS $$
+-- BEGIN
+--   IF (OLD.metadata IS NOT DISTINCT FROM NEW.metadata) THEN
+--     RETURN NEW;
+--   END IF;
+--   IF OLD.status != 'PENDING' THEN
+--     RAISE EXCEPTION 'Cannot modify metadata after anchor has been secured, revoked, or expired. Current status: %', OLD.status
+--       USING ERRCODE = 'check_violation';
+--   END IF;
+--   RETURN NEW;
+-- END;
+-- $$;

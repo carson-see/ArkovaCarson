@@ -331,7 +331,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <div className="space-y-1">
               <p className="text-sm font-medium">Description</p>
-              <p className="text-sm text-muted-foreground">{data.description}</p>
+              <p className="text-sm text-muted-foreground break-words">{data.description}</p>
             </div>
           </>
         )}

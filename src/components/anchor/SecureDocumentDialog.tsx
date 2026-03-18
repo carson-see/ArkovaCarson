@@ -95,6 +95,8 @@ export function SecureDocumentDialog({
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
         org_id: profile?.org_id || null,
+        ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type } : {}),
+        ...(description.trim() ? { description: description.trim() } : {}),
       });
 
       const { data: inserted, error: insertError } = await supabase
@@ -102,8 +104,6 @@ export function SecureDocumentDialog({
         .insert({
           ...validated,
           user_id: user.id,
-          ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type as 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT' | 'PROFESSIONAL' | 'OTHER' } : {}),
-          ...(description.trim() ? { description: description.trim() } : {}),
         })
         .select('id, public_id')
         .single();

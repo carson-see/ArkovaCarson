@@ -293,7 +293,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               <Separator />
               <div className="space-y-2">
                 <p className="text-sm font-medium">Description</p>
-                <p className="text-sm text-muted-foreground">{anchor.description}</p>
+                <p className="text-sm text-muted-foreground break-words">{anchor.description}</p>
               </div>
             </>
           )}

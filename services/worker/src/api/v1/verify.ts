@@ -118,7 +118,7 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     result.jurisdiction = anchor.jurisdiction;
   }
   // BETA-11: explorer URL (additive, nullable — Constitution 1.8)
-  if (anchor.chain_tx_id) {
+  if (anchor.chain_tx_id && /^[a-fA-F0-9]+$/.test(anchor.chain_tx_id)) {
     const network = process.env.BITCOIN_NETWORK ?? 'testnet4';
     const baseMap: Record<string, string> = {
       testnet4: 'https://mempool.space/testnet4',
