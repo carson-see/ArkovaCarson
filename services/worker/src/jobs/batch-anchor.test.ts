@@ -218,7 +218,7 @@ describe('processBatchAnchors', () => {
     // Each update includes chain info
     expect(mockAnchorsUpdate).toHaveBeenCalledWith(
       expect.objectContaining({
-        status: 'SECURED',
+        status: 'SUBMITTED',
         chain_tx_id: MOCK_RECEIPT.receiptId,
         chain_block_height: MOCK_RECEIPT.blockHeight,
         chain_timestamp: MOCK_RECEIPT.blockTimestamp,
@@ -244,7 +244,7 @@ describe('processBatchAnchors', () => {
     }
   });
 
-  it('marks all anchors as SECURED after successful publish', async () => {
+  it('marks all anchors as SUBMITTED after successful publish', async () => {
     limitMock.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B, ANCHOR_C],
       error: null,
@@ -253,7 +253,7 @@ describe('processBatchAnchors', () => {
     await processBatchAnchors();
 
     for (const call of mockAnchorsUpdate.mock.calls as unknown[][]) {
-      expect((call[0] as Record<string, unknown>).status).toBe('SECURED');
+      expect((call[0] as Record<string, unknown>).status).toBe('SUBMITTED');
     }
 
     expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-a');

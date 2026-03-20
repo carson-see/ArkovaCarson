@@ -12,7 +12,7 @@ _Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Sig
 | **BETA Readiness Stories** | **13** | **13** | **0** | No (all complete) |
 | BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
 | E2E Validation Bugs | 7 | 7 fixed | 0 | No |
-| Demo Readiness (DEMO) | 4 | 0 | 4 | No (enhancement) |
+| Demo Readiness (DEMO) | 4 | 2 | 2 | No (enhancement) |
 | Stories (NOT STARTED) | 8 | — | 8 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
@@ -21,7 +21,7 @@ _Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Sig
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | TLA+ Verification Findings | 3 | 1 fixed | 2 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **24** | |
+| **Total Open Items** | | | **22** | |
 
 ---
 
@@ -261,8 +261,8 @@ _Discovered during E2E demo readiness session. Enhancement items for demo polish
 
 | # | ID | Priority | Description | Status |
 |---|-----|----------|-------------|--------|
-| 1 | DEMO-01 | **HIGH** | OP_RETURN metadata hash — include truncated SHA-256 of metadata JSON alongside document fingerprint in OP_RETURN. Format: `ARKV` + 32 bytes doc fingerprint + 8 bytes metadata hash. Enables fully independent verification of both document and metadata without Arkova. | NOT STARTED |
-| 2 | DEMO-02 | **HIGH** | Verification walkthrough UI — "How Verification Works" explainer on record detail page + new user onboarding flow for admin and individual users. Must explain: (1) SHA-256 fingerprint = the document's unique identity, (2) OP_RETURN on Bitcoin = permanent timestamped proof, (3) anyone can verify by hashing the document and searching the blockchain, (4) no dependency on Arkova being online. | NOT STARTED |
+| 1 | DEMO-01 | **HIGH** | OP_RETURN metadata hash — include truncated SHA-256 of metadata JSON alongside document fingerprint in OP_RETURN. Format: `ARKV` + 32 bytes doc fingerprint + 8 bytes metadata hash. Enables fully independent verification of both document and metadata without Arkova. | **COMPLETE** |
+| 2 | DEMO-02 | **HIGH** | Verification walkthrough UI — "How Verification Works" explainer on record detail page. Explains: (1) SHA-256 fingerprint = the document's unique identity, (2) OP_RETURN on network = permanent timestamped proof, (3) anyone can verify by hashing the document and searching the network, (4) no dependency on Arkova being online. | **COMPLETE** |
 | 3 | DEMO-03 | **MEDIUM** | Search page dark mode — public routes (/search, /verify) don't inherit dark theme class because they're outside AuthGuard/ProfileProvider. Need to apply theme at app root level. | NOT STARTED |
 | 4 | DEMO-04 | **LOW** | Credential template visual rendering — upgrade CredentialRenderer to show diploma-style visual cards for different credential types (degree, license, certificate). | NOT STARTED |
 

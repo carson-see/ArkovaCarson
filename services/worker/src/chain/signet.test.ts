@@ -35,6 +35,9 @@ import {
   buildOpReturnTransaction,
   selectUtxo,
   estimateTxVsize,
+  canonicalMetadataJson,
+  hashMetadata,
+  truncateMetadataHash,
   type SelectedUtxo,
   type BitcoinClientConfig,
 } from './signet.js';
@@ -138,16 +141,86 @@ describe('selectUtxo', () => {
 // ─── estimateTxVsize ─────────────────────────────────────────────────────
 
 describe('estimateTxVsize', () => {
-  it('calculates size with change output', () => {
+  it('calculates size with change output (default payload)', () => {
     const size = estimateTxVsize(true);
-    // P2WPKH: 68 + 47 + 31 + 11 = 157
+    // P2WPKH: 68 + (11+36) + 31 + 11 = 157
     expect(size).toBe(157);
   });
 
-  it('calculates size without change output', () => {
+  it('calculates size without change output (default payload)', () => {
     const size = estimateTxVsize(false);
-    // P2WPKH: 68 + 47 + 11 = 126
+    // P2WPKH: 68 + (11+36) + 11 = 126
     expect(size).toBe(126);
+  });
+
+  it('calculates size with metadata hash payload (44 bytes)', () => {
+    const size = estimateTxVsize(true, 44);
+    // P2WPKH: 68 + (11+44) + 31 + 11 = 165
+    expect(size).toBe(165);
+  });
+
+  it('calculates size without change with metadata hash payload', () => {
+    const size = estimateTxVsize(false, 44);
+    // P2WPKH: 68 + (11+44) + 11 = 134
+    expect(size).toBe(134);
+  });
+});
+
+// ─── canonicalMetadataJson ────────────────────────────────────────────
+
+describe('canonicalMetadataJson', () => {
+  it('sorts keys alphabetically', () => {
+    const result = canonicalMetadataJson({ z: 'last', a: 'first', m: 'middle' });
+    expect(result).toBe('{"a":"first","m":"middle","z":"last"}');
+  });
+
+  it('produces consistent output regardless of input order', () => {
+    const a = canonicalMetadataJson({ name: 'Alice', degree: 'BS' });
+    const b = canonicalMetadataJson({ degree: 'BS', name: 'Alice' });
+    expect(a).toBe(b);
+  });
+
+  it('handles empty object', () => {
+    expect(canonicalMetadataJson({})).toBe('{}');
+  });
+});
+
+// ─── hashMetadata ─────────────────────────────────────────────────────
+
+describe('hashMetadata', () => {
+  it('returns 64-char hex hash', () => {
+    const hash = hashMetadata({ name: 'Alice' });
+    expect(hash).toHaveLength(64);
+    expect(hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('produces same hash for same data regardless of key order', () => {
+    const h1 = hashMetadata({ name: 'Alice', degree: 'BS' });
+    const h2 = hashMetadata({ degree: 'BS', name: 'Alice' });
+    expect(h1).toBe(h2);
+  });
+
+  it('produces different hash for different data', () => {
+    const h1 = hashMetadata({ name: 'Alice' });
+    const h2 = hashMetadata({ name: 'Bob' });
+    expect(h1).not.toBe(h2);
+  });
+});
+
+// ─── truncateMetadataHash ─────────────────────────────────────────────
+
+describe('truncateMetadataHash', () => {
+  it('returns exactly 8 bytes', () => {
+    const fullHash = hashMetadata({ name: 'Alice' });
+    const truncated = truncateMetadataHash(fullHash);
+    expect(truncated.length).toBe(8);
+  });
+
+  it('matches first 8 bytes of full hash', () => {
+    const fullHash = hashMetadata({ name: 'Alice' });
+    const truncated = truncateMetadataHash(fullHash);
+    const expected = Buffer.from(fullHash, 'hex').subarray(0, 8);
+    expect(truncated).toEqual(expected);
   });
 });
 
@@ -238,6 +311,44 @@ describe('buildOpReturnTransaction', () => {
       bitcoin.networks.testnet,
     );
     expect(result.txHex).toBeTruthy();
+  });
+
+  it('includes metadata hash in OP_RETURN when provided', async () => {
+    const metadataHashBytes = truncateMetadataHash(hashMetadata({ degree: 'BS', name: 'Alice' }));
+    const result = await buildOpReturnTransaction(
+      TEST_FINGERPRINT,
+      makeUtxo(100000),
+      testSigner,
+      1,
+      bitcoin.networks.testnet,
+      metadataHashBytes,
+    );
+    const tx = bitcoin.Transaction.fromHex(result.txHex);
+    const opReturnOutput = tx.outs[0];
+    const decompiled = bitcoin.script.decompile(opReturnOutput.script);
+    expect(decompiled).not.toBeNull();
+
+    const data = decompiled![1] as Buffer;
+    // Total: ARKV (4) + fingerprint (32) + metadata hash (8) = 44 bytes
+    expect(data.length).toBe(44);
+    expect(data.subarray(0, 4).toString()).toBe('ARKV');
+    // Last 8 bytes should be the metadata hash
+    expect(data.subarray(36, 44)).toEqual(metadataHashBytes);
+  });
+
+  it('rejects metadata hash of wrong length', async () => {
+    const wrongSize = Buffer.from('abcd', 'hex'); // 2 bytes, not 8
+    await expect(
+      buildOpReturnTransaction(TEST_FINGERPRINT, makeUtxo(100000), testSigner, 1, bitcoin.networks.testnet, wrongSize),
+    ).rejects.toThrow('Metadata hash must be exactly 8 bytes');
+  });
+
+  it('OP_RETURN without metadata is 36 bytes', async () => {
+    const result = await buildOpReturnTransaction(TEST_FINGERPRINT, makeUtxo(100000), testSigner);
+    const tx = bitcoin.Transaction.fromHex(result.txHex);
+    const decompiled = bitcoin.script.decompile(tx.outs[0].script);
+    const data = decompiled![1] as Buffer;
+    expect(data.length).toBe(36);
   });
 });
 
@@ -490,6 +601,74 @@ describe('BitcoinChainClient.submitFingerprint', () => {
 
     // broadcastTx should receive a valid hex string
     expect(broadcastTx).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]+$/));
+  });
+
+  it('returns metadataHash when metadata is provided', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_meta' });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150010 }),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+      metadata: { degree: 'BS Computer Science', institution: 'University of Michigan' },
+    });
+
+    expect(receipt.metadataHash).toBeDefined();
+    expect(receipt.metadataHash).toHaveLength(64);
+    expect(receipt.metadataHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('does not include metadataHash when no metadata', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_nometa' });
+    const provider = createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150011 }),
+    });
+    const client = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: provider });
+
+    const receipt = await client.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+    });
+
+    expect(receipt.metadataHash).toBeUndefined();
+  });
+
+  it('metadata hash is deterministic regardless of key order', async () => {
+    const broadcastTx = vi.fn().mockResolvedValue({ txid: 'broadcast_det' });
+    const makeProvider = () => createMockProvider({
+      listUnspent: vi.fn().mockResolvedValue([
+        { txid: DUMMY_TXID, vout: 0, valueSats: 100000, rawTxHex: DUMMY_RAW_TX_HEX },
+      ]),
+      broadcastTx,
+      getBlockchainInfo: vi.fn().mockResolvedValue({ chain: 'signet', blocks: 150012 }),
+    });
+
+    const client1 = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: makeProvider() });
+    const client2 = new BitcoinChainClient({ treasuryWif: TEST_WIF, utxoProvider: makeProvider() });
+
+    const r1 = await client1.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+      metadata: { z: 'last', a: 'first' },
+    });
+    const r2 = await client2.submitFingerprint({
+      fingerprint: TEST_FINGERPRINT,
+      timestamp: new Date().toISOString(),
+      metadata: { a: 'first', z: 'last' },
+    });
+
+    expect(r1.metadataHash).toBe(r2.metadataHash);
   });
 
   it('uses fee estimator rate for transaction', async () => {

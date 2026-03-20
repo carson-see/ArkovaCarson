@@ -7,7 +7,7 @@
  * Feature-gated by ENABLE_BATCH_ANCHORING switchboard flag.
  *
  * Constitution refs:
- *   - 1.4: Setting anchor.status = 'SECURED' is worker-only via service_role
+ *   - 1.4: Setting anchor.status = 'SUBMITTED'/'SECURED' is worker-only via service_role
  *   - 1.9: ENABLE_BATCH_ANCHORING gates batch processing
  */
 
@@ -83,10 +83,13 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
   for (const anchor of pendingAnchors) {
     const proof: MerkleProofEntry[] = tree.proofs.get(anchor.fingerprint) ?? [];
 
+    // Set to SUBMITTED (not SECURED) — the check-confirmations cron will
+    // promote to SECURED once the batch tx is confirmed on chain.
+    // This matches the standard anchor.ts lifecycle (TLA review finding #5).
     const { error: updateError } = await db
       .from('anchors')
       .update({
-        status: 'SECURED' as const,
+        status: 'SUBMITTED' as const,
         chain_tx_id: receipt.receiptId,
         chain_block_height: receipt.blockHeight,
         chain_timestamp: receipt.blockTimestamp,

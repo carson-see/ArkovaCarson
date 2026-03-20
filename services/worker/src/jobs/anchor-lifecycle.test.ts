@@ -205,7 +205,6 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
     expect(anchor?.status).toBe('SUBMITTED');
     expect(anchor?.chain_tx_id).toBe(RECEIPT.receiptId);
     expect(anchor?.chain_block_height).toBe(RECEIPT.blockHeight);
-    expect(anchor?.chain_confirmations).toBe(0);
 
     // 3. Audit event logged
     expect(dbState.auditEvents).toHaveLength(1);

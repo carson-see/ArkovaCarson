@@ -182,24 +182,23 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
   };
 
   for (const col of columns) {
-    const name = col.name.toLowerCase();
+    const name = col.name.toLowerCase().trim();
 
     if (name.includes('fingerprint') || name.includes('hash') || name === 'sha256') {
       mapping.fingerprint = col.index;
-    } else if (name.includes('filename') || name.includes('name') || name === 'file') {
+    } else if (name === 'filename' || name === 'file_name' || name === 'file name' || name === 'file') {
+      // Exact match only — avoids false positives like "First Name", "Last Name"
       mapping.filename = col.index;
     } else if (name.includes('size') || name === 'bytes') {
       mapping.fileSize = col.index;
-    } else if (name.includes('email') || name.includes('mail')) {
+    } else if (name.includes('email') || name.includes('e-mail')) {
       mapping.email = col.index;
     } else if (
-      name.includes('credential_type') ||
-      name.includes('credentialtype') ||
-      name === 'type' ||
-      name === 'credential'
+      name === 'credential_type' || name === 'credential type' ||
+      name === 'credentialtype' || name === 'type' || name === 'credential'
     ) {
       mapping.credentialType = col.index;
-    } else if (name.includes('metadata') || name === 'meta' || name === 'extra') {
+    } else if (name === 'metadata' || name === 'meta' || name === 'extra') {
       mapping.metadata = col.index;
     }
   }

@@ -20,6 +20,7 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
+import { createHash } from 'crypto';
 import { logger } from '../utils/logger.js';
 import type {
   ChainClient,
@@ -40,8 +41,43 @@ const SIGNET_NETWORK = bitcoin.networks.testnet;
 // OP_RETURN prefix for Arkova anchors (4 bytes: 'ARKV')
 const OP_RETURN_PREFIX = Buffer.from('ARKV');
 
-// Maximum OP_RETURN payload is 80 bytes. Prefix (4) + SHA-256 hash (32) = 36 bytes.
+// Maximum OP_RETURN payload is 80 bytes.
+// Without metadata: Prefix (4) + SHA-256 fingerprint (32) = 36 bytes.
+// With metadata:    Prefix (4) + SHA-256 fingerprint (32) + truncated metadata hash (8) = 44 bytes.
 const MAX_OP_RETURN_DATA = 80;
+
+/** Truncated metadata hash length in bytes (appended after fingerprint in OP_RETURN) */
+const METADATA_HASH_TRUNCATED_BYTES = 8;
+
+/**
+ * Compute a canonical JSON representation of metadata for deterministic hashing.
+ * Keys are sorted alphabetically, values are stringified deterministically.
+ */
+export function canonicalMetadataJson(metadata: Record<string, unknown>): string {
+  const sortedKeys = Object.keys(metadata).sort();
+  const sorted: Record<string, unknown> = {};
+  for (const key of sortedKeys) {
+    sorted[key] = metadata[key];
+  }
+  return JSON.stringify(sorted);
+}
+
+/**
+ * SHA-256 hash of canonical metadata JSON.
+ * Returns the full 64-char hex hash.
+ */
+export function hashMetadata(metadata: Record<string, unknown>): string {
+  const canonical = canonicalMetadataJson(metadata);
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+/**
+ * Truncate a full SHA-256 hex hash to METADATA_HASH_TRUNCATED_BYTES bytes.
+ * Returns a Buffer of the truncated hash for inclusion in OP_RETURN.
+ */
+export function truncateMetadataHash(fullHash: string): Buffer {
+  return Buffer.from(fullHash, 'hex').subarray(0, METADATA_HASH_TRUNCATED_BYTES);
+}
 
 // ─── Legacy Config (backward compat) ────────────────────────────────────
 
@@ -126,13 +162,17 @@ export function selectUtxo(
  * Estimate the virtual size of an OP_RETURN anchor transaction.
  *
  * P2WPKH input: ~68 vbytes (SegWit discount on witness data)
- * OP_RETURN output (36-byte payload): ~47 vbytes
+ * OP_RETURN output: ~(11 + payloadSize) vbytes (8 value + 1 scriptLen + 1 OP_RETURN + 1 push + payload)
  * P2WPKH change output: ~31 vbytes
  * Overhead: ~11 vbytes (version + locktime + witness flag)
+ *
+ * @param hasChange - Whether to include a change output
+ * @param opReturnPayloadSize - Size of the OP_RETURN data payload in bytes (default 36: ARKV + fingerprint)
  */
-export function estimateTxVsize(hasChange: boolean): number {
+export function estimateTxVsize(hasChange: boolean, opReturnPayloadSize: number = 36): number {
   const INPUT_SIZE = 68;
-  const OP_RETURN_OUTPUT_SIZE = 47;
+  const OP_RETURN_OVERHEAD = 11; // 8 (value) + 1 (scriptLen) + 1 (OP_RETURN) + 1 (push opcode)
+  const OP_RETURN_OUTPUT_SIZE = OP_RETURN_OVERHEAD + opReturnPayloadSize;
   const CHANGE_OUTPUT_SIZE = 31;
   const OVERHEAD = 11;
 
@@ -148,13 +188,14 @@ export function estimateTxVsize(hasChange: boolean): number {
 const DUST_THRESHOLD = 546;
 
 /**
- * Build an OP_RETURN transaction embedding a document fingerprint.
+ * Build an OP_RETURN transaction embedding a document fingerprint
+ * and optional truncated metadata hash.
  *
  * Now async to support KMS signing (via SigningProvider).
  *
  * Transaction structure:
  *   Input:  Selected UTXO from treasury address
- *   Output 0: OP_RETURN <ARKV><sha256_hex_as_bytes>
+ *   Output 0: OP_RETURN <ARKV><sha256_fingerprint>[<metadata_hash_8bytes>]
  *   Output 1: Change back to treasury (input - fee), if above dust
  *
  * @param fingerprint - 64-char hex SHA-256 hash
@@ -162,6 +203,7 @@ const DUST_THRESHOLD = 546;
  * @param signer - SigningProvider (WIF or KMS)
  * @param feeRate - Fee rate in sat/vbyte (default 1)
  * @param network - Bitcoin network (default testnet/Signet)
+ * @param metadataHashBytes - Optional truncated metadata hash (8 bytes) to append after fingerprint
  */
 export async function buildOpReturnTransaction(
   fingerprint: string,
@@ -169,14 +211,22 @@ export async function buildOpReturnTransaction(
   signer: SigningProvider,
   feeRate: number = 1, // sat/vbyte — Signet minimum
   network: bitcoin.Network = SIGNET_NETWORK,
+  metadataHashBytes?: Buffer,
 ): Promise<{ txHex: string; txId: string; fee: number }> {
   // Validate fingerprint is a 64-char hex string (SHA-256)
   if (!/^[a-f0-9]{64}$/i.test(fingerprint)) {
     throw new Error('Fingerprint must be a 64-character hex string (SHA-256)');
   }
 
+  // Validate metadata hash bytes if provided
+  if (metadataHashBytes && metadataHashBytes.length !== METADATA_HASH_TRUNCATED_BYTES) {
+    throw new Error(`Metadata hash must be exactly ${METADATA_HASH_TRUNCATED_BYTES} bytes`);
+  }
+
   const fingerprintBytes = Buffer.from(fingerprint, 'hex');
-  const opReturnData = Buffer.concat([OP_RETURN_PREFIX, fingerprintBytes]);
+  const opReturnData = metadataHashBytes
+    ? Buffer.concat([OP_RETURN_PREFIX, fingerprintBytes, metadataHashBytes])
+    : Buffer.concat([OP_RETURN_PREFIX, fingerprintBytes]);
 
   if (opReturnData.length > MAX_OP_RETURN_DATA) {
     throw new Error(`OP_RETURN data exceeds ${MAX_OP_RETURN_DATA} bytes`);
@@ -189,7 +239,8 @@ export async function buildOpReturnTransaction(
   ]);
 
   // Estimate fee with change output first
-  const estimatedSizeWithChange = estimateTxVsize(true);
+  const payloadSize = opReturnData.length;
+  const estimatedSizeWithChange = estimateTxVsize(true, payloadSize);
   const feeWithChange = Math.ceil(estimatedSizeWithChange * feeRate);
   const changeAmount = utxo.valueSats - feeWithChange;
 
@@ -197,7 +248,7 @@ export async function buildOpReturnTransaction(
   const hasChange = changeAmount >= DUST_THRESHOLD;
 
   // Recalculate fee if no change output (smaller tx)
-  const finalSize = estimateTxVsize(hasChange);
+  const finalSize = estimateTxVsize(hasChange, payloadSize);
   const fee = Math.ceil(finalSize * feeRate);
   const finalChange = utxo.valueSats - fee;
 
@@ -348,15 +399,27 @@ export class BitcoinChainClient implements ChainClient {
     data: SubmitFingerprintRequest,
   ): Promise<ChainReceipt> {
     logger.info(
-      { fingerprint: data.fingerprint },
+      { fingerprint: data.fingerprint, hasMetadata: !!data.metadata },
       'Submitting fingerprint to chain',
     );
 
-    // 1. Estimate fee rate
+    // 1. Compute metadata hash if metadata provided (DEMO-01)
+    let metadataHashBytes: Buffer | undefined;
+    let fullMetadataHash: string | undefined;
+    if (data.metadata && Object.keys(data.metadata).length > 0) {
+      fullMetadataHash = hashMetadata(data.metadata);
+      metadataHashBytes = truncateMetadataHash(fullMetadataHash);
+      logger.info(
+        { metadataHash: fullMetadataHash, truncatedHex: metadataHashBytes.toString('hex') },
+        'Metadata hash computed for OP_RETURN',
+      );
+    }
+
+    // 2. Estimate fee rate
     const feeRate = await this.feeEstimator.estimateFee();
     logger.debug({ feeRate, estimator: this.feeEstimator.name }, 'Fee rate estimated');
 
-    // 2. Fetch UTXOs for treasury address
+    // 3. Fetch UTXOs for treasury address
     const utxos = await this.provider.listUnspent(this.address);
 
     if (utxos.length === 0) {
@@ -370,8 +433,9 @@ export class BitcoinChainClient implements ChainClient {
       'Fetched UTXOs for treasury',
     );
 
-    // 3. Select the best UTXO
-    const estimatedFee = Math.ceil(estimateTxVsize(true) * feeRate);
+    // 4. Select the best UTXO
+    const payloadSize = metadataHashBytes ? 44 : 36; // ARKV(4) + fingerprint(32) [+ metadataHash(8)]
+    const estimatedFee = Math.ceil(estimateTxVsize(true, payloadSize) * feeRate);
     const selected = selectUtxo(utxos, estimatedFee);
 
     if (!selected) {
@@ -386,13 +450,14 @@ export class BitcoinChainClient implements ChainClient {
       'Selected UTXO for anchor',
     );
 
-    // 4. Build and sign the OP_RETURN transaction (async for KMS)
+    // 5. Build and sign the OP_RETURN transaction (async for KMS)
     const { txHex, txId, fee } = await buildOpReturnTransaction(
       data.fingerprint,
       selected,
       this.signingProvider,
       feeRate,
       this.network,
+      metadataHashBytes,
     );
 
     logger.info(
@@ -400,7 +465,7 @@ export class BitcoinChainClient implements ChainClient {
       'Transaction built, broadcasting',
     );
 
-    // 5. Broadcast
+    // 6. Broadcast
     const { txid: broadcastTxid } = await this.provider.broadcastTx(txHex);
 
     // Sanity check: broadcast returned txid should match our computed txId
@@ -414,11 +479,11 @@ export class BitcoinChainClient implements ChainClient {
     const finalTxId = broadcastTxid || txId;
 
     logger.info(
-      { txId: finalTxId, fingerprint: data.fingerprint, fee },
+      { txId: finalTxId, fingerprint: data.fingerprint, fee, metadataHash: fullMetadataHash },
       'Fingerprint anchored on chain',
     );
 
-    // 6. Get the current block height for the receipt
+    // 7. Get the current block height for the receipt
     const blockchainInfo = await this.provider.getBlockchainInfo();
 
     return {
@@ -426,6 +491,7 @@ export class BitcoinChainClient implements ChainClient {
       blockHeight: blockchainInfo.blocks,
       blockTimestamp: new Date().toISOString(),
       confirmations: 0, // Just broadcast, not yet confirmed
+      metadataHash: fullMetadataHash,
     };
   }
 

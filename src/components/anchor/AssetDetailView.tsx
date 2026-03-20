@@ -32,6 +32,7 @@ import { FileUpload } from './FileUpload';
 import { ShareSheet } from './ShareSheet';
 import { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
+import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
@@ -321,6 +322,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           )}
         </CardContent>
       </Card>
+
+      {/* Verification Walkthrough (DEMO-02) */}
+      <VerificationWalkthrough hasMetadata={!!anchor.metadata && Object.keys(anchor.metadata).length > 0} />
 
       {/* Credential Details (UF-01) — template-driven rendering */}
       {(anchor.credentialType || anchor.metadata) && (

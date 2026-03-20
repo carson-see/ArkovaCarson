@@ -19,6 +19,8 @@ export interface ChainReceipt {
   blockTimestamp: string;
   /** Number of confirmations */
   confirmations: number;
+  /** Full SHA-256 hash of canonical metadata JSON (64-char hex), if metadata was anchored */
+  metadataHash?: string;
 }
 
 export interface VerificationResult {

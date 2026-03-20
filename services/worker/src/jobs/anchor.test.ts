@@ -201,14 +201,54 @@ describe('processAnchor', () => {
     it('updates anchor status to SUBMITTED with chain receipt data (BETA-01)', async () => {
       await processAnchor('anchor-001');
 
-      expect(anchorsTable.update).toHaveBeenCalledWith({
-        status: 'SUBMITTED',
-        chain_tx_id: MOCK_RECEIPT.receiptId,
-        chain_block_height: MOCK_RECEIPT.blockHeight,
-        chain_timestamp: MOCK_RECEIPT.blockTimestamp,
-        chain_confirmations: 0,
-      });
+      expect(anchorsTable.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'SUBMITTED',
+          chain_tx_id: MOCK_RECEIPT.receiptId,
+          chain_block_height: MOCK_RECEIPT.blockHeight,
+          chain_timestamp: MOCK_RECEIPT.blockTimestamp,
+        }),
+      );
       expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-001');
+    });
+
+    it('stores _metadata_hash in metadata JSON when receipt includes metadataHash (DEMO-01)', async () => {
+      // Anchor with metadata
+      const anchorWithMetadata = {
+        ...MOCK_ANCHOR,
+        metadata: { degree: 'BS Computer Science', institution: 'University of Michigan' },
+      };
+      mockSingle.mockResolvedValue({ data: anchorWithMetadata, error: null });
+
+      const receiptWithHash: ChainReceipt = {
+        ...MOCK_RECEIPT,
+        metadataHash: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789',
+      };
+      mockSubmitFingerprint.mockResolvedValue(receiptWithHash);
+
+      await processAnchor('anchor-001');
+
+      expect(anchorsTable.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'SUBMITTED',
+          metadata: expect.objectContaining({
+            degree: 'BS Computer Science',
+            institution: 'University of Michigan',
+            _metadata_hash: receiptWithHash.metadataHash,
+          }),
+        }),
+      );
+    });
+
+    it('does not add _metadata_hash when receipt has no metadataHash (DEMO-01)', async () => {
+      // Reset to anchor without metadata
+      mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
+      mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
+
+      await processAnchor('anchor-001');
+
+      const updateArg = (anchorsTable.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateArg.metadata).toBeUndefined();
     });
 
     it('logs audit event with anchor.submitted type (BETA-01)', async () => {
@@ -351,13 +391,14 @@ describe('processAnchor', () => {
 
       // processAnchor does not validate receipt fields — passes them through
       expect(result).toBe(true);
-      expect(anchorsTable.update).toHaveBeenCalledWith({
-        status: 'SUBMITTED',
-        chain_tx_id: 'receipt_no_block',
-        chain_block_height: undefined,
-        chain_timestamp: undefined,
-        chain_confirmations: 0,
-      });
+      expect(anchorsTable.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'SUBMITTED',
+          chain_tx_id: 'receipt_no_block',
+          chain_block_height: undefined,
+          chain_timestamp: undefined,
+        }),
+      );
     });
   });
 

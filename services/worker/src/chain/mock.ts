@@ -5,6 +5,7 @@
  * enforced for Stripe and chain APIs in test environments.
  */
 
+import { createHash } from 'crypto';
 import type {
   ChainClient,
   ChainReceipt,
@@ -28,11 +29,23 @@ export class MockChainClient implements ChainClient {
 
     mockBlockHeight += 1;
 
+    // DEMO-01: Compute metadata hash if metadata provided
+    let metadataHash: string | undefined;
+    if (data.metadata && Object.keys(data.metadata).length > 0) {
+      const sortedKeys = Object.keys(data.metadata).sort();
+      const sorted: Record<string, unknown> = {};
+      for (const key of sortedKeys) {
+        sorted[key] = data.metadata[key];
+      }
+      metadataHash = createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+    }
+
     const receipt: ChainReceipt = {
       receiptId: `mock_receipt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       blockHeight: mockBlockHeight,
       blockTimestamp: new Date().toISOString(),
       confirmations: 6,
+      metadataHash,
     };
 
     // Store for later verification

@@ -204,6 +204,26 @@ def456,other.doc`;
 
       expect(mapping.credentialType).toBe(2);
     });
+
+    it('should NOT map "Last Name" or "First Name" to filename', () => {
+      const columns = [
+        { index: 0, name: 'First Name', sample: 'Alice' },
+        { index: 1, name: 'Last Name', sample: 'Smith' },
+        { index: 2, name: 'Degree', sample: 'BS' },
+        { index: 3, name: 'Major', sample: 'Computer Science' },
+        { index: 4, name: 'GPA', sample: '3.8' },
+      ];
+
+      const mapping = autoDetectMapping(columns);
+
+      // None of these columns should be auto-mapped
+      expect(mapping.fingerprint).toBeNull();
+      expect(mapping.filename).toBeNull();
+      expect(mapping.fileSize).toBeNull();
+      expect(mapping.email).toBeNull();
+      expect(mapping.credentialType).toBeNull();
+      expect(mapping.metadata).toBeNull();
+    });
   });
 
   describe('validateCsvRows', () => {

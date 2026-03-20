@@ -350,6 +350,7 @@ describe('createChainClient', () => {
       rpcUrl: undefined,
       rpcAuth: undefined,
       mempoolApiUrl: 'https://mempool.space/signet/api',
+      network: 'signet',
     });
   });
 

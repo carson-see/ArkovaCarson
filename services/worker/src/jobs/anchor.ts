@@ -50,23 +50,37 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       return false;
     }
 
-    // Submit fingerprint to chain
+    // Submit fingerprint to chain, with metadata for OP_RETURN embedding (DEMO-01)
     const chainClient = getInitializedChainClient();
+    const metadata = anchor.metadata as Record<string, string> | null;
     const receipt = await chainClient.submitFingerprint({
       fingerprint: anchor.fingerprint,
       timestamp: new Date().toISOString(),
+      metadata: metadata && Object.keys(metadata).length > 0 ? metadata : undefined,
     });
 
     // BETA-01: Set status to SUBMITTED (broadcast but unconfirmed).
     // The check-confirmations cron job will promote to SECURED once the tx is mined.
+    // DEMO-01: Store metadata_hash in metadata JSON for independent verification.
+    const updatePayload: Record<string, unknown> = {
+      status: 'SUBMITTED',
+      chain_tx_id: receipt.receiptId,
+      chain_block_height: receipt.blockHeight,
+      chain_timestamp: receipt.blockTimestamp,
+    };
+
+    // If metadata hash was computed, store it in the metadata JSON
+    if (receipt.metadataHash) {
+      const existingMetadata = (anchor.metadata as Record<string, unknown>) ?? {};
+      updatePayload.metadata = {
+        ...existingMetadata,
+        _metadata_hash: receipt.metadataHash,
+      };
+    }
+
     const { error: updateError } = await db
       .from('anchors')
-      .update({
-        status: 'SUBMITTED',
-        chain_tx_id: receipt.receiptId,
-        chain_block_height: receipt.blockHeight,
-        chain_timestamp: receipt.blockTimestamp,
-      })
+      .update(updatePayload)
       .eq('id', anchorId);
 
     if (updateError) {
