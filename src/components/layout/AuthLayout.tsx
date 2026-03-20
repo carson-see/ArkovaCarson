@@ -33,7 +33,7 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
   return (
     <div className="min-h-screen flex flex-col">
       {/* Background with subtle gradient */}
-      <div className="fixed inset-0 -z-10 bg-gradient-to-br from-slate-50 via-white to-blue-50" />
+      <div className="fixed inset-0 -z-10 bg-mesh-gradient" />
 
       {/* Main content */}
       <main className="flex-1 flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
@@ -52,7 +52,7 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
           </div>
 
           {/* Auth card */}
-          <Card className="border-0 shadow-lg shadow-slate-200/50">
+          <Card className="glass-card shadow-card-rest">
             <CardHeader className="space-y-1 pb-4">
               <CardTitle className="text-xl font-semibold text-center">
                 {title}
