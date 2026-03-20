@@ -9,6 +9,15 @@
  *   - 1.6: No document content in emails (privacy boundary)
  */
 
+/** Escape HTML special characters to prevent injection in email templates. */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 /** Shared email styles — inline CSS for email client compatibility */
 const STYLES = {
   container: 'font-family: "Helvetica Neue", Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px; background-color: #ffffff;',
@@ -71,18 +80,18 @@ export interface RevocationEmailData {
  * The recipient gets an activation link to set up their account and view credentials.
  */
 export function buildActivationEmail(data: ActivationEmailData): { subject: string; html: string } {
-  const subject = `${data.organizationName} has issued you a credential on Arkova`;
+  const subject = `${esc(data.organizationName)} has issued you a credential on Arkova`;
 
   const html = wrapTemplate(`
     <h2 style="color: #0f172a; margin-bottom: 16px;">You've been issued a credential</h2>
-    <p><strong>${data.organizationName}</strong> has issued ${data.credentialLabel ? `a credential (<em>${data.credentialLabel}</em>)` : 'a credential'} to you on Arkova.</p>
+    <p><strong>${esc(data.organizationName)}</strong> has issued ${data.credentialLabel ? `a credential (<em>${esc(data.credentialLabel)}</em>)` : 'a credential'} to you on Arkova.</p>
     <p>To view and manage your credentials, activate your account:</p>
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${data.activationUrl}" style="${STYLES.button}">Activate Your Account</a>
+      <a href="${esc(data.activationUrl)}" style="${STYLES.button}">Activate Your Account</a>
     </div>
     <p style="${STYLES.muted}">This link expires in 7 days. If you didn't expect this email, you can safely ignore it.</p>
     <p style="${STYLES.muted}">Link not working? Copy and paste this URL into your browser:<br/>
-    <span style="word-break: break-all; font-size: 12px;">${data.activationUrl}</span></p>
+    <span style="word-break: break-all; font-size: 12px;">${esc(data.activationUrl)}</span></p>
   `);
 
   return { subject, html };
@@ -92,14 +101,14 @@ export function buildActivationEmail(data: ActivationEmailData): { subject: stri
  * Anchor secured email — sent when a credential is confirmed on the network.
  */
 export function buildAnchorSecuredEmail(data: AnchorSecuredEmailData): { subject: string; html: string } {
-  const subject = `Your credential "${data.credentialLabel}" has been secured`;
+  const subject = `Your credential "${esc(data.credentialLabel)}" has been secured`;
 
   const html = wrapTemplate(`
     <h2 style="color: #0f172a; margin-bottom: 16px;">Credential Secured</h2>
-    <p>Your credential <strong>${data.credentialLabel}</strong>${data.organizationName ? ` from ${data.organizationName}` : ''} has been permanently secured on the network.</p>
+    <p>Your credential <strong>${esc(data.credentialLabel)}</strong>${data.organizationName ? ` from ${esc(data.organizationName)}` : ''} has been permanently secured on the network.</p>
     <p>You can verify this credential at any time:</p>
     <div style="text-align: center; margin: 32px 0;">
-      <a href="${data.verificationUrl}" style="${STYLES.button}">View Credential</a>
+      <a href="${esc(data.verificationUrl)}" style="${STYLES.button}">View Credential</a>
     </div>
     <p style="${STYLES.muted}">This credential's integrity is independently verifiable by anyone with the original document.</p>
   `);
@@ -111,12 +120,12 @@ export function buildAnchorSecuredEmail(data: AnchorSecuredEmailData): { subject
  * Revocation email — sent when a credential has been revoked.
  */
 export function buildRevocationEmail(data: RevocationEmailData): { subject: string; html: string } {
-  const subject = `Credential "${data.credentialLabel}" has been revoked`;
+  const subject = `Credential "${esc(data.credentialLabel)}" has been revoked`;
 
   const html = wrapTemplate(`
     <h2 style="color: #dc2626; margin-bottom: 16px;">Credential Revoked</h2>
-    <p>The credential <strong>${data.credentialLabel}</strong>${data.organizationName ? ` from ${data.organizationName}` : ''} has been revoked.</p>
-    ${data.revocationReason ? `<p><strong>Reason:</strong> ${data.revocationReason}</p>` : ''}
+    <p>The credential <strong>${esc(data.credentialLabel)}</strong>${data.organizationName ? ` from ${esc(data.organizationName)}` : ''} has been revoked.</p>
+    ${data.revocationReason ? `<p><strong>Reason:</strong> ${esc(data.revocationReason)}</p>` : ''}
     <p style="${STYLES.muted}">This credential will no longer pass verification checks. If you believe this was done in error, please contact the issuing organization.</p>
   `);
 

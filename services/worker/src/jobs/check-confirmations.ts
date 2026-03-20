@@ -16,6 +16,10 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { isSemanticSearchEnabled } from '../middleware/aiFeatureGate.js';
+import { generateAndStoreEmbedding } from '../ai/embeddings.js';
+import { createAIProvider } from '../ai/factory.js';
+import { sendEmail, buildAnchorSecuredEmail } from '../email/index.js';
 
 /** Maximum anchors to check per cron run (rate limit mempool.space) */
 const MAX_CHECKS_PER_RUN = 10;
@@ -182,6 +186,17 @@ async function checkAnchorConfirmation(anchor: {
     'Anchor promoted SUBMITTED → SECURED (tx confirmed)',
   );
 
+  // Send "credential secured" email notification (non-blocking, best-effort)
+  trySendSecuredEmail(anchor.id, anchor.user_id, anchor.org_id, anchor.public_id).catch((emailErr) => {
+    logger.debug({ anchorId: anchor.id, error: emailErr }, 'Secured email skipped or failed (non-fatal)');
+  });
+
+  // Auto-generate embedding for semantic search (non-blocking, best-effort)
+  // Only runs if ENABLE_SEMANTIC_SEARCH is true and an AI provider is available
+  tryAutoEmbed(anchor.id, anchor.org_id, anchor.user_id).catch((embedErr) => {
+    logger.debug({ anchorId: anchor.id, error: embedErr }, 'Auto-embed skipped or failed (non-fatal)');
+  });
+
   return true;
 }
 
@@ -275,4 +290,109 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
 
   logger.info({ count: anchors.length }, 'Auto-confirmed SUBMITTED anchors (mock mode)');
   return { checked: anchors.length, confirmed: anchors.length };
+}
+
+/**
+ * Attempt to auto-generate an embedding for a newly SECURED anchor.
+ * Non-fatal — if semantic search is disabled, no AI provider, or no metadata,
+ * this silently skips without affecting the confirmation flow.
+ */
+async function tryAutoEmbed(anchorId: string, orgId: string | null, userId: string): Promise<void> {
+  // Skip if semantic search is not enabled
+  const searchEnabled = await isSemanticSearchEnabled();
+  if (!searchEnabled || !orgId) return;
+
+  // Fetch anchor metadata for embedding
+  const { data: anchor } = await db
+    .from('anchors')
+    .select('metadata, credential_type')
+    .eq('id', anchorId)
+    .single();
+
+  if (!anchor?.metadata) return;
+
+  const metadata = anchor.metadata as Record<string, string | undefined>;
+  metadata.credentialType = (anchor.credential_type as string) ?? metadata.credentialType;
+
+  // Only embed if there's meaningful metadata
+  const nonEmpty = Object.values(metadata).filter((v) => v && v.length > 0);
+  if (nonEmpty.length < 2) return;
+
+  const provider = createAIProvider();
+  const result = await generateAndStoreEmbedding(provider, {
+    anchorId,
+    orgId,
+    metadata,
+    userId,
+  });
+
+  if (result.success) {
+    logger.info({ anchorId, model: result.model }, 'Auto-embedded SECURED anchor for semantic search');
+  }
+}
+
+/**
+ * Send "credential secured" email notification to the anchor owner.
+ * Non-fatal — if user has no email, or email sending fails, the
+ * confirmation flow is not affected.
+ */
+async function trySendSecuredEmail(
+  anchorId: string,
+  userId: string,
+  orgId: string | null,
+  publicId: string | null,
+): Promise<void> {
+  // Fetch user email
+  const { data: profile } = await db
+    .from('profiles')
+    .select('email')
+    .eq('id', userId)
+    .single();
+
+  if (!profile?.email) return;
+
+  // Fetch credential label + org name
+  const { data: anchor } = await db
+    .from('anchors')
+    .select('credential_type, metadata')
+    .eq('id', anchorId)
+    .single();
+
+  const metadata = (anchor?.metadata as Record<string, string | undefined>) ?? {};
+  const credentialLabel = metadata.issuerName
+    ? `${metadata.issuerName} — ${(anchor?.credential_type as string) ?? 'Credential'}`
+    : (anchor?.credential_type as string) ?? 'Credential';
+
+  let organizationName: string | undefined;
+  if (orgId) {
+    const { data: org } = await db
+      .from('organizations')
+      .select('display_name')
+      .eq('id', orgId)
+      .single();
+    organizationName = org?.display_name ?? undefined;
+  }
+
+  // Build verification URL
+  const verificationUrl = publicId
+    ? `${config.frontendUrl}/verify/${publicId}`
+    : `${config.frontendUrl}/records/${anchorId}`;
+
+  const emailData = buildAnchorSecuredEmail({
+    recipientEmail: profile.email,
+    credentialLabel,
+    verificationUrl,
+    organizationName,
+  });
+
+  await sendEmail({
+    to: profile.email,
+    ...emailData,
+    emailType: 'anchor_secured',
+    anchorId,
+    actorId: userId,
+    orgId: orgId ?? undefined,
+  });
+
+  logger.info({ anchorId, userId }, 'Sent anchor_secured email notification');
 }

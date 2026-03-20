@@ -1,7 +1,7 @@
 /**
  * Tests for SearchPage
  *
- * @see UF-02, GAP-03 — Fingerprint search
+ * @see UF-02, GAP-03 — Unified search with auto-detection
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -70,11 +70,9 @@ describe('SearchPage', () => {
     expect(screen.getByText('Search Credentials')).toBeInTheDocument();
   });
 
-  it('renders search type selector with four options', () => {
+  it('renders unified search input with auto-detect placeholder', () => {
     renderSearchPage();
-    // The select trigger should be visible
-    const trigger = screen.getByRole('combobox');
-    expect(trigger).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/issuer name.*verification ID.*fingerprint/i)).toBeInTheDocument();
   });
 
   it('renders search button', () => {
@@ -82,13 +80,13 @@ describe('SearchPage', () => {
     expect(screen.getByRole('button', { name: /search/i })).toBeInTheDocument();
   });
 
-  it('renders default placeholder for issuer search', () => {
-    renderSearchPage();
-    expect(screen.getByPlaceholderText(/issuer name or verification ID/i)).toBeInTheDocument();
-  });
-
-  it('shows updated subtitle mentioning fingerprint', () => {
+  it('shows subtitle mentioning fingerprint', () => {
     renderSearchPage();
     expect(screen.getByText(/fingerprint/i)).toBeInTheDocument();
+  });
+
+  it('renders back to dashboard link', () => {
+    renderSearchPage();
+    expect(screen.getByText('Back to Dashboard')).toBeInTheDocument();
   });
 });

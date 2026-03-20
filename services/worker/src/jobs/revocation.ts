@@ -23,6 +23,7 @@ import { callRpc } from '../utils/rpc.js';
 import { getInitializedChainClient } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { sendEmail, buildRevocationEmail } from '../email/index.js';
 
 /**
  * Process a single revocation — broadcast OP_RETURN to chain.
@@ -126,6 +127,11 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
       }
     }
 
+    // Send revocation email notification (non-blocking, best-effort)
+    trySendRevocationEmail(anchorId, anchorRecord).catch((emailErr) => {
+      logger.debug({ anchorId, error: emailErr }, 'Revocation email skipped or failed (non-fatal)');
+    });
+
     rpcLog.success({ receiptId: receipt.receiptId });
     return true;
   } catch (error) {
@@ -214,4 +220,54 @@ export async function processRevokedAnchors(): Promise<{ processed: number; fail
 
   logger.info({ processed, failed }, 'Finished processing revocations');
   return { processed, failed };
+}
+
+/**
+ * Send revocation email notification to the anchor owner.
+ * Non-fatal — email failure does not affect the revocation flow.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function trySendRevocationEmail(anchorId: string, anchorRecord: any): Promise<void> {
+  // Fetch user email
+  const { data: profile } = await db
+    .from('profiles')
+    .select('email')
+    .eq('id', anchorRecord.user_id)
+    .single();
+
+  if (!profile?.email) return;
+
+  // Build credential label from metadata
+  const metadata = (anchorRecord.metadata as Record<string, string | undefined>) ?? {};
+  const credentialLabel = metadata.issuerName
+    ? `${metadata.issuerName} — ${anchorRecord.credential_type ?? 'Credential'}`
+    : anchorRecord.credential_type ?? 'Credential';
+
+  let organizationName: string | undefined;
+  if (anchorRecord.org_id) {
+    const { data: org } = await db
+      .from('organizations')
+      .select('display_name')
+      .eq('id', anchorRecord.org_id)
+      .single();
+    organizationName = org?.display_name ?? undefined;
+  }
+
+  const emailData = buildRevocationEmail({
+    recipientEmail: profile.email,
+    credentialLabel,
+    revocationReason: anchorRecord.revocation_reason ?? null,
+    organizationName,
+  });
+
+  await sendEmail({
+    to: profile.email,
+    ...emailData,
+    emailType: 'revocation',
+    anchorId,
+    actorId: anchorRecord.user_id,
+    orgId: anchorRecord.org_id ?? undefined,
+  });
+
+  logger.info({ anchorId, userId: anchorRecord.user_id }, 'Sent revocation email notification');
 }

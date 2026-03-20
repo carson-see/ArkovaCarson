@@ -28,8 +28,8 @@ export const ExtractedFieldsSchema = z.object({
  * Schema for extraction request validation (inbound to the extraction endpoint).
  */
 export const ExtractionRequestSchema = z.object({
-  strippedText: z.string().min(1, 'Stripped text is required'),
-  credentialType: z.string().min(1, 'Credential type hint is required'),
+  strippedText: z.string().min(1, 'Stripped text is required').max(50_000, 'Stripped text exceeds 50,000 character limit'),
+  credentialType: z.string().min(1, 'Credential type hint is required').max(50, 'Credential type hint too long'),
   fingerprint: z.string().length(64, 'Fingerprint must be a 64-char SHA-256 hex string'),
   issuerHint: z.string().max(200).optional(),
 });
