@@ -20,7 +20,7 @@
  */
 
 import * as bitcoin from 'bitcoinjs-lib';
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import type {
   ChainClient,

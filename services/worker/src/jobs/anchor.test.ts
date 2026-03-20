@@ -247,7 +247,7 @@ describe('processAnchor', () => {
 
       await processAnchor('anchor-001');
 
-      const updateArg = (anchorsTable.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      const updateArg = anchorsTable.update.mock.calls[0][0] as Record<string, unknown>;
       expect(updateArg.metadata).toBeUndefined();
     });
 

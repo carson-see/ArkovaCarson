@@ -191,7 +191,7 @@ export function autoDetectMapping(columns: CsvColumn[]): ColumnMapping {
       mapping.filename = col.index;
     } else if (name.includes('size') || name === 'bytes') {
       mapping.fileSize = col.index;
-    } else if (name.includes('email') || name.includes('e-mail')) {
+    } else if (name.includes('email') || name.includes('e-mail') || name.includes('mail')) {
       mapping.email = col.index;
     } else if (
       name === 'credential_type' || name === 'credential type' ||

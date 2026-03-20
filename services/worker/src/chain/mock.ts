@@ -5,7 +5,7 @@
  * enforced for Stripe and chain APIs in test environments.
  */
 
-import { createHash } from 'crypto';
+import { createHash } from 'node:crypto';
 import type {
   ChainClient,
   ChainReceipt,
