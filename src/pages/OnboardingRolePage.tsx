@@ -11,13 +11,15 @@
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { RoleSelector } from '@/components/onboarding/RoleSelector';
 import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
 import { useProfile } from '@/hooks/useProfile';
 import { useOnboarding } from '@/hooks/useOnboarding';
 import { ONBOARDING_STEPS } from '@/lib/copy';
 
 export function OnboardingRolePage() {
   const { refreshProfile } = useProfile();
-  const { loading, setRole } = useOnboarding();
+  const { loading, error, setRole } = useOnboarding();
 
   const handleRoleSelect = async (role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
     const result = await setRole(role);
@@ -32,6 +34,12 @@ export function OnboardingRolePage() {
       <div className="mb-8">
         <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
       </div>
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
       <RoleSelector onSelect={handleRoleSelect} loading={loading} />
     </AuthLayout>
   );
