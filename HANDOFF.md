@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 164/176 stories complete (93%) incl. 13 Beta stories (BETA-01–13). 1,930 tests (929 frontend + 1,001 worker). 71 migration files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.**
+**Overall progress:** 165/176 stories complete (94%) incl. 13 Beta stories (BETA-01–13). 1,939 tests (929 frontend + 1,010 worker). 71 migration files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 5 complete, 2 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **6+ real Signet transactions confirmed end-to-end.**
 
 ### Open Blockers
 
@@ -89,12 +89,12 @@ All HIGH+ launch blockers resolved:
 
 ### What's Production-Ready
 
-- Database layer (67 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
+- Database layer (71 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
 - CI/CD pipeline (typecheck, lint, test, copy-lint, build-check, E2E)
-- Worker test coverage (947 tests across 54+ files, 80%+ on all critical paths)
+- Worker test coverage (1,010 tests across 66 files, 80%+ on all critical paths)
 - Webhook delivery engine + settings UI
 - Stripe webhook handlers + billing UI
 - PDF + JSON proof downloads
@@ -112,6 +112,8 @@ All HIGH+ launch blockers resolved:
 - **"Nordic Vault" UI design system** (PR #42) — DM Sans + JetBrains Mono fonts, mesh gradients, glassmorphism, glow shadows, staggered animations. Full rules in CLAUDE.md Section 5 + `feedback_frontend_aesthetics.md`.
 - **User Flow Gaps (UF-01 through UF-10) ALL COMPLETE** — CredentialRenderer, public search, recipient inbox, PENDING status UX, metadata entry, usage tracking, enhanced verification, share flow, breadcrumbs/nav polish, onboarding checklist
 - **GCP Infrastructure** — Cloud Run (worker deployed), Secret Manager (7 secrets), Cloud Scheduler (4 cron jobs)
+- **Bitcoin anchoring pipeline (Signet)** — 6+ real transactions confirmed end-to-end. PENDING -> SUBMITTED -> SECURED lifecycle working. Realtime toasts with mempool.space explorer links.
+- **Unified search page** — auto-detects fingerprint vs text input, public route with back navigation
 
 ### GEO & SEO Optimization (NEW — 12 stories)
 
@@ -139,6 +141,56 @@ All HIGH+ launch blockers resolved:
 
 > **Full session history (25+ entries, 2026-03-14 through 2026-03-17) archived to `docs/archive/session-log.md`.**
 > Only the most recent session is kept here. Older entries are in the archive.
+
+### Session: 2026-03-20 — E2E Demo Readiness + Anchoring Pipeline Fix
+
+**PR #106 merged + multiple fixes pushed to main.** Full anchoring pipeline proven working on Signet.
+
+**Key changes:**
+- AI extraction wired into SecureDocumentDialog (feature-gated)
+- Feature gate column fixes (flag_key/enabled -> id/value) — ALL /api/v1/* endpoints were returning 503
+- Explorer links + bulk upload on dashboard + seed plans/subscriptions for demo org
+- Allow spending unconfirmed UTXOs on signet/testnet (treasury had only unconfirmed change)
+- Removed chain_confirmations from anchor updates (migration 0068b can't run inside transaction)
+- Bulk upload UX: removed required markers from auto-generated fields
+- Record rows clickable to navigate to detail page
+- Unified search page: auto-detect input type, back nav, dark mode fix
+
+**Critical bugs found and fixed:**
+- featureGate.ts + aiFeatureGate.ts queried wrong column names — ALL /api/v1/* endpoints returned 503
+- chain_confirmations column doesn't exist yet (migration 0068b transaction issue) — anchor processing failed after Signet broadcast
+- SUBMITTED enum value not added by migration 0068a (same ALTER TYPE ADD VALUE transaction issue) — must be added manually after db reset
+- UTXO provider only returned confirmed UTXOs — blocked anchoring with unconfirmed change
+- RecordDetailPage didn't pass chainTxId/chainBlockHeight to AssetDetailView
+- Demo org had no subscription (free tier 3-record cap blocked demo)
+
+**Proven working:** 6+ real Signet transactions broadcast and confirmed (txids: 393675c6..., cf424af1..., 177cdb97..., c69d3671..., 4d646924..., etc.). Full pipeline: PENDING -> broadcast -> SUBMITTED -> check-confirmations -> SECURED. Realtime toasts with mempool.space links.
+
+**IMPORTANT post-db-reset step:** After `supabase db reset`, must manually run:
+```bash
+docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';"
+docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "NOTIFY pgrst, 'reload schema';"
+```
+
+**Test counts:** 929 frontend + 1,010 worker = 1,939 total.
+
+### Session: 2026-03-20 — E2E Journey Validation + 7 Bug Fixes
+
+**Full E2E validation of 7 user journeys** using Playwright MCP + real Supabase + Signet:
+
+**7 bugs found and fixed:**
+- **BUG-E2E-01 (CRITICAL):** UTXO provider defaulted to testnet4 URL even when `BITCOIN_NETWORK=signet`. Fixed with network-aware `MEMPOOL_URLS` lookup map in `utxo-provider.ts`. Updated `client.ts`, `treasury.ts` callers.
+- **BUG-E2E-02 (MEDIUM):** `ExplorerLink.tsx` fallback defaulted to testnet4 instead of signet.
+- **BUG-E2E-03 (MEDIUM):** `TreasuryAdminPage.tsx` had banned term "BITCOIN" in UI (Constitution 1.3 violation) and wrong env var `VITE_CHAIN_NETWORK`.
+- **BUG-E2E-04 (HIGH):** `recipients.ts:71` used invalid role `'MEMBER'` (not in enum). Fixed to `'ORG_MEMBER'`.
+- **BUG-E2E-05 (MEDIUM):** `featureGate.ts` and `aiFeatureGate.ts` failed typecheck — `switchboard_flags.value` column missing from generated types. Added type assertion workaround.
+- **BUG-E2E-06 (LOW):** `sender.test.ts` type error — `resendApiKey` typed as `string` but set to `undefined`.
+- **BUG-E2E-07 (LOW):** Missing `supertest` dev dependency in worker.
+
+**Journey results:** J1 (7/9), J2 (4/6), J3 (6/8), J4 (PASS), J5 (4/5), J6 (3/5), J7 (PASS). Main blocker: Signet treasury UTXO unconfirmed (faucet tx pending).
+
+**Test counts:** 929 frontend + 1,009 worker = 1,938 total. Typecheck: clean. Copy lint: clean.
+**Report:** `docs/bugs/e2e_journey_validation.md`
 
 ### Session: 2026-03-17 — P2WPKH SegWit Upgrade + Boolean Env Fix (PR #102)
 

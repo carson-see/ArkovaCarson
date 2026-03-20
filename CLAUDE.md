@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-18 | **Repo:** ArkovaCarson | **Deploy:** arkova-carson.vercel.app
-> **Stats:** 71 migrations | 1,930 tests | 176 stories (164 complete, 93%) | 24/24 audit findings resolved
+> **Version:** 2026-03-20 | **Repo:** ArkovaCarson | **Deploy:** arkova-carson.vercel.app
+> **Stats:** 71 migrations | 1,939 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved
 
 Read this file before every task. Rules here override all other documents.
 
@@ -226,6 +226,12 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Current:** 71 files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b). Last: `0071_anchor_description.sql`. 0001-0058 applied to production. 0059-0071 pending.
 
+**IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
+```bash
+docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';"
+docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "NOTIFY pgrst, 'reload schema';"
+```
+
 ---
 
 ## 5. STORY STATUS — INCOMPLETE WORK ONLY
@@ -238,25 +244,25 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 | P7 Go-Live | 11/13 | 0 | 2 | 85% |
 | P4.5 Verification API | 13/13 | 0 | 0 | 100% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
-| MVP Launch Gaps | 25/27 | 0 | 2 | 93% |
+| MVP Launch Gaps | 26/27 | 0 | 1 | 96% |
 | P8 AI Intelligence | 19/19 | 0 | 0 | 100% |
 | INFRA Edge & Ingress | 7/8 | 1 | 0 | 88% |
 | UAT + UF | 27/27 | 0 | 0 | 100% |
 | GEO & SEO | 5/12 | 2 | 5 | 42% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
-| **Total** | **164/176** | **3/176** | **9/176** | **~93%** |
+| **Total** | **165/176** | **2/176** | **9/176** | **~94%** |
 
 ### Incomplete Stories
 
 **P7 Go-Live (2 not started):**
 - P7-TS-04, P7-TS-06: No individual scope defined
 
-**MVP Launch Gaps (5 not started):**
+**MVP Launch Gaps (1 not started, 3 post-launch):**
 - MVP-12 (LOW): Dark mode toggle
-- MVP-13 (LOW): Organization logo upload
-- MVP-14 (LOW): Embeddable verification widget
-- MVP-20 (LOW): LinkedIn badge integration
-- MVP-30 (MEDIUM): GCP CI/CD pipeline
+- MVP-13 (LOW): Organization logo upload — post-launch
+- MVP-14 (LOW): Embeddable verification widget — post-launch
+- MVP-30 (MEDIUM): GCP CI/CD pipeline — post-launch
+> ~~MVP-20 (LinkedIn badge integration)~~ — Superseded by BETA-09
 
 **INFRA (1 partial):**
 - INFRA-07: Sentry integration -- code done (30 tests), missing source map upload plugin + DSN env vars in production
@@ -327,7 +333,7 @@ STRIPE_WEBHOOK_SECRET=
 
 # Bitcoin (worker only)
 BITCOIN_TREASURY_WIF=               # never logged (Constitution 1.4)
-BITCOIN_NETWORK=                    # "testnet4" | "signet" | "testnet" | "mainnet"
+BITCOIN_NETWORK=                    # "signet" | "testnet4" | "testnet" | "mainnet" (currently signet)
 BITCOIN_RPC_URL=                    # optional
 BITCOIN_RPC_AUTH=                   # optional
 
@@ -369,5 +375,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-18 | 71 migrations | 1,930 tests | 176 stories (164 complete, 93%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-20 | 71 migrations | 1,939 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-17 (BETA readiness audit — 13 new stories + 2 activation items from workflow testing) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Signet txs confirmed, DEMO backlog added) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -9,17 +9,19 @@ _Last updated: 2026-03-17 (BETA readiness audit — 13 new stories + 2 activatio
 
 | Category | Total | Done | Open | Blocking Beta? |
 |----------|-------|------|------|:--------------:|
-| **BETA Readiness Stories** | **13** | **0** | **13** | **YES** |
-| BETA Activation Items | 2 | 0 | 2 | **YES** |
-| Stories (NOT STARTED) | 9 | — | 9 | No (post-launch) |
-| Stories (PARTIAL) | 3 | — | 3 | 1 blocking (INFRA-07) |
+| **BETA Readiness Stories** | **13** | **13** | **0** | No (all complete) |
+| BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
+| E2E Validation Bugs | 7 | 7 fixed | 0 | No |
+| Demo Readiness (DEMO) | 4 | 0 | 4 | No (enhancement) |
+| Stories (NOT STARTED) | 8 | — | 8 | No (post-launch) |
+| Stories (PARTIAL) | 2 | — | 2 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs | 29 | 29 | 0 | No |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
 | TLA+ Verification Findings | 3 | 1 fixed | 2 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **37** | |
+| **Total Open Items** | | | **24** | |
 
 ---
 
@@ -42,7 +44,7 @@ _Last updated: 2026-03-17 (BETA readiness audit — 13 new stories + 2 activatio
 
 | # | ID | Issue | Status |
 |---|-----|-------|--------|
-| 9 | OPS-01 | Apply migrations 0059-0065 to production Supabase | PENDING |
+| 9 | OPS-01 | Apply migrations 0059-0071 to production Supabase + regenerate types | PENDING |
 | 10 | OPS-02 | Run `scripts/strip-demo-seeds.sql` on production | PENDING |
 | 11 | OPS-03 | Set Sentry DSN env vars (Vercel + Cloud Run) | PENDING |
 | 12 | OPS-04 | Sentry source map upload plugin | PENDING |
@@ -90,7 +92,7 @@ _All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071
 | # | ID | What | Fix |
 |---|-----|------|-----|
 | — | BETA-ACT-01 | AI extraction disabled by default | Set `ENABLE_AI_EXTRACTION=true` + configure `GEMINI_API_KEY` |
-| — | BETA-ACT-02 | Bitcoin anchoring uses mocks | Set `ENABLE_PROD_NETWORK_ANCHORING=true` + fund testnet4 wallet |
+| — | ~~BETA-ACT-02~~ | ~~Bitcoin anchoring uses mocks~~ | ~~**DONE** — `ENABLE_PROD_NETWORK_ANCHORING=true` + signet treasury funded. 6+ real Signet txs confirmed end-to-end.~~ |
 
 ### Workflows Fully Implemented (no gaps found)
 
@@ -194,11 +196,12 @@ _All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071
 | P7-TS-04 | (No individual scope) | Placeholder |
 | P7-TS-06 | (No individual scope) | Placeholder |
 
-### MVP Launch Gaps — 2 not started
+### MVP Launch Gaps — 1 not started
 | ID | Description | Priority |
 |----|-------------|----------|
 | MVP-12 | Dark mode toggle | LOW |
-| ~~MVP-20~~ | ~~LinkedIn badge integration~~ | ~~Superseded by BETA-09~~ |
+
+> ~~MVP-20 (LinkedIn badge integration)~~ — Superseded by BETA-09 (LinkedInShare.tsx)
 
 ### ~~P8 AI Intelligence — ALL COMPLETE (19/19)~~
 _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integrity scoring), P8-S9 (review queue), P8-S16 (AI reports). Completed via PR #80._
@@ -249,6 +252,37 @@ _From TLA+ model checking of Bitcoin anchor state machine (`machines/bitcoinAnch
 **Problem:** The TLA+ spec and proof certificate exist but aren't checked in CI. Changes to the anchor lifecycle could invalidate the proof without anyone noticing.
 
 **Fix:** Add a CI step that runs `cd machines && npx tla-precheck check bitcoinAnchor` on PRs that touch `machines/` or `services/worker/src/jobs/anchor.ts` or `services/worker/src/chain/`.
+
+---
+
+## TIER 5C: DEMO READINESS (2026-03-20)
+
+_Discovered during E2E demo readiness session. Enhancement items for demo polish and verification UX._
+
+| # | ID | Priority | Description | Status |
+|---|-----|----------|-------------|--------|
+| 1 | DEMO-01 | **HIGH** | OP_RETURN metadata hash — include truncated SHA-256 of metadata JSON alongside document fingerprint in OP_RETURN. Format: `ARKV` + 32 bytes doc fingerprint + 8 bytes metadata hash. Enables fully independent verification of both document and metadata without Arkova. | NOT STARTED |
+| 2 | DEMO-02 | **HIGH** | Verification walkthrough UI — "How Verification Works" explainer on record detail page + new user onboarding flow for admin and individual users. Must explain: (1) SHA-256 fingerprint = the document's unique identity, (2) OP_RETURN on Bitcoin = permanent timestamped proof, (3) anyone can verify by hashing the document and searching the blockchain, (4) no dependency on Arkova being online. | NOT STARTED |
+| 3 | DEMO-03 | **MEDIUM** | Search page dark mode — public routes (/search, /verify) don't inherit dark theme class because they're outside AuthGuard/ProfileProvider. Need to apply theme at app root level. | NOT STARTED |
+| 4 | DEMO-04 | **LOW** | Credential template visual rendering — upgrade CredentialRenderer to show diploma-style visual cards for different credential types (degree, license, certificate). | NOT STARTED |
+
+---
+
+## TIER 5D: E2E VALIDATION BUGS (2026-03-20)
+
+_From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey_validation.md`._
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 1 | BUG-E2E-01 | **CRITICAL** | UTXO provider defaults to testnet4 URL when network is signet | **FIXED** — Network-aware `MEMPOOL_URLS` map in `utxo-provider.ts` |
+| 2 | BUG-E2E-02 | MEDIUM | ExplorerLink fallback defaults to testnet4 | **FIXED** — Changed to signet |
+| 3 | BUG-E2E-03 | MEDIUM | TreasuryAdminPage banned term + wrong env var | **FIXED** — Simplified to `{network?.name ?? 'signet'}` |
+| 4 | BUG-E2E-04 | **HIGH** | recipients.ts uses invalid role 'MEMBER' | **FIXED** — Changed to 'ORG_MEMBER' |
+| 5 | BUG-E2E-05 | MEDIUM | switchboard_flags 'value' column not in generated types | **FIXED** — Type assertion workaround (full fix: OPS-01 type regen) |
+| 6 | BUG-E2E-06 | LOW | Email sender test type error | **FIXED** — Explicit type annotation |
+| 7 | BUG-E2E-07 | LOW | Missing supertest dev dependency | **FIXED** — Installed as dev dep |
+
+**Summary:** 7/7 FIXED. Test counts after all sessions: 929 frontend + 1,010 worker = 1,939 total. Typecheck clean. Copy lint clean.
 
 ---
 
