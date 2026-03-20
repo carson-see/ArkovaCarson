@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS } from '@/lib/copy';
+import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, ORG_PAGE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
@@ -49,7 +49,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { ORG_PAGE_LABELS } from '@/lib/copy';
 
 const PAGE_SIZES = [10, 25, 50] as const;
 type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -290,12 +289,12 @@ export function DashboardPage() {
             {profile?.role === 'ORG_ADMIN' && (
               <Button variant="outline" onClick={() => setBulkUploadOpen(true)}>
                 <Upload className="mr-2 h-4 w-4" />
-                Bulk Upload
+                {ORG_PAGE_LABELS.BULK_UPLOAD}
               </Button>
             )}
             <Button onClick={() => setSecureDialogOpen(true)}>
               <Plus className="mr-2 h-4 w-4" />
-              Secure Document
+              {SECURE_DIALOG_LABELS.TITLE}
             </Button>
           </div>
         </CardHeader>

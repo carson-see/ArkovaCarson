@@ -15,6 +15,10 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../../config.js', () => ({
+  config: { bitcoinNetwork: 'signet' },
+}));
+
 import { buildVerificationResult, type AnchorByPublicId } from './verify.js';
 
 function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublicId {

@@ -362,9 +362,9 @@ export function SecureDocumentDialog({
                       <dd className="font-medium">{selectedTemplate.name}</dd>
                     </div>
                   )}
-                  {extractedFields.filter(f => f.status === 'accepted' || f.status === 'edited').length > 0 && (
+                  {extractedFields.some(f => f.status === 'accepted' || f.status === 'edited') && (
                     <div className="flex justify-between">
-                      <dt className="text-muted-foreground">AI Fields</dt>
+                      <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.AI_FIELDS}</dt>
                       <dd className="font-medium text-primary">
                         {extractedFields.filter(f => f.status === 'accepted' || f.status === 'edited').length} accepted
                       </dd>
@@ -494,18 +494,7 @@ export function SecureDocumentDialog({
 
           {step === 'extracting' && (
             <>
-              {extractionProgress?.stage !== 'complete' ? (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setExtractionProgress(null);
-                    setStep('template');
-                  }}
-                >
-                  <SkipForward className="mr-2 h-4 w-4" />
-                  Skip AI Analysis
-                </Button>
-              ) : (
+              {extractionProgress?.stage === 'complete' ? (
                 <>
                   <Button variant="outline" onClick={() => setStep('upload')}>
                     {SECURE_DIALOG_LABELS.BACK}
@@ -514,6 +503,17 @@ export function SecureDocumentDialog({
                     {SECURE_DIALOG_LABELS.CONTINUE}
                   </Button>
                 </>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setExtractionProgress(null);
+                    setStep('template');
+                  }}
+                >
+                  <SkipForward className="mr-2 h-4 w-4" />
+                  {SECURE_DIALOG_LABELS.SKIP_AI_ANALYSIS}
+                </Button>
               )}
             </>
           )}

@@ -19,7 +19,7 @@ const MEMPOOL_BASE: Record<BitcoinNetwork, string> = {
 
 /**
  * Get the current Bitcoin network from environment.
- * Falls back to testnet4 for development.
+ * Falls back to signet for development.
  */
 function getNetwork(): BitcoinNetwork {
   const net = import.meta.env.VITE_BITCOIN_NETWORK;

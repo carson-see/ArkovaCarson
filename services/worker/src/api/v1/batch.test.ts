@@ -14,6 +14,10 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../../config.js', () => ({
+  config: { bitcoinNetwork: 'signet' },
+}));
+
 function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
   return {
     public_id: publicId,

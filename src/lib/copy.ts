@@ -445,6 +445,8 @@ export const SECURE_DIALOG_LABELS = {
   SECURE_BUTTON: 'Secure Document',
   TRY_AGAIN: 'Try Again',
   COPY_LINK_ARIA: 'Copy verification link',
+  AI_FIELDS: 'AI Fields',
+  SKIP_AI_ANALYSIS: 'Skip AI Analysis',
 } as const;
 
 // =============================================================================
