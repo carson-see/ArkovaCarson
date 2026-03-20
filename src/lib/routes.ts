@@ -21,6 +21,9 @@ export const ROUTES = {
   SEARCH: '/search',
   ISSUER_REGISTRY: '/issuer/:orgId',
 
+  // OAuth callback (Supabase redirects here after Google OAuth)
+  AUTH_CALLBACK: '/auth/callback',
+
   // Onboarding routes (auth required, pre-setup)
   ONBOARDING_ROLE: '/onboarding/role',
   ONBOARDING_ORG: '/onboarding/org',

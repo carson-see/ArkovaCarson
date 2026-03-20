@@ -120,6 +120,9 @@ export function App() {
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
 
+          {/* OAuth callback — Supabase redirects here after Google sign-in */}
+          <Route path={ROUTES.AUTH_CALLBACK} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+
           {/* Onboarding routes */}
           <Route path={ROUTES.ONBOARDING_ROLE} element={<AuthGuard><RouteGuard allow={['/onboarding/role']}><OnboardingRolePage /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ONBOARDING_ORG} element={<AuthGuard><RouteGuard allow={['/onboarding/org']}><OnboardingOrgPage /></RouteGuard></AuthGuard>} />

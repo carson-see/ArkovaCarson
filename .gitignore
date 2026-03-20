@@ -59,6 +59,23 @@ docs/stories/docx/
 .generated-machines/
 .playwright-mcp/
 
+# Design mockups and screenshots (root level)
+/arkova-*.png
+/redesign-*.png
+/journey*.png
+
+# Test files at root
+/test_*.pdf
+
+# Claude agent skills
+.agents/
+.claude/skills/
+skills-lock.json
+
+# Bug report artifacts (screenshots)
+docs/bugs/*.png
+docs/bugs/*.pdf
+
 # Misc
 .cache/
 .parcel-cache/
