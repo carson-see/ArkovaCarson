@@ -99,6 +99,19 @@ router.post('/', async (req: Request, res: Response) => {
     }
     const durationMs = Date.now() - startMs;
 
+    // Structured observability log — AI extraction latency + quality metrics
+    logger.info({
+      event: 'ai.extraction.complete',
+      provider: result.provider,
+      credentialType,
+      confidence: result.confidence,
+      fieldsExtracted: Object.keys(result.fields).length,
+      tokensUsed: result.tokensUsed ?? 0,
+      durationMs,
+      userId,
+      orgId,
+    }, `AI extraction: ${result.provider} ${durationMs}ms conf=${result.confidence} fields=${Object.keys(result.fields).length}`);
+
     // Log usage event (non-blocking)
     logAIUsageEvent({
       orgId,

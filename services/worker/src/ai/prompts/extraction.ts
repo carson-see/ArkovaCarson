@@ -5,6 +5,7 @@
  * These prompts receive PII-stripped text only (Constitution 4A).
  *
  * The prompts instruct the model to return JSON matching ExtractedFieldsSchema.
+ * Includes few-shot examples per credential type for calibrated extraction.
  */
 
 /**
@@ -15,26 +16,55 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are a credential metadata extractio
 
 Your task is to extract structured metadata fields from PII-stripped credential text.
 
-IMPORTANT:
+IMPORTANT RULES:
 - The input text has already been PII-stripped. Personal names, SSNs, emails, and phone numbers have been replaced with redaction tokens like [NAME_REDACTED], [SSN_REDACTED], etc.
-- Do NOT attempt to reconstruct any redacted PII.
+- Do NOT attempt to reconstruct any redacted PII. Never guess at names or identifiers.
 - Extract only the metadata fields listed below.
 - Return a valid JSON object with only the fields you can confidently extract.
-- If you cannot determine a field, omit it entirely (do not return null or empty strings).
-- Dates should be in ISO 8601 format (YYYY-MM-DD) when possible.
-- Confidence should reflect how certain you are about the overall extraction (0.0 to 1.0).
+- If you cannot determine a field, OMIT it entirely (do not return null or empty strings).
+- Dates MUST be in ISO 8601 format (YYYY-MM-DD). Convert any date format you find.
+- The "confidence" field MUST be a number from 0.0 to 1.0 reflecting extraction certainty.
 
-Fields to extract:
-- credentialType: The type of credential (DEGREE, CERTIFICATE, LICENSE, TRANSCRIPT, BADGE, etc.)
-- issuerName: The institution or organization that issued the credential
-- issuedDate: When the credential was issued (YYYY-MM-DD)
-- expiryDate: When the credential expires, if applicable (YYYY-MM-DD)
-- fieldOfStudy: Field of study or specialization
-- degreeLevel: Degree level (Bachelor, Master, Doctorate, Associate, etc.)
-- licenseNumber: License or certification number (if visible and not redacted)
-- accreditingBody: Accrediting or certifying organization
-- jurisdiction: Geographic jurisdiction (state, country)
-- recipientIdentifier: A redacted or hashed identifier for the credential recipient (if visible)`;
+CONFIDENCE CALIBRATION:
+- 0.9-1.0: All key fields clearly present and unambiguous in the text
+- 0.7-0.89: Most fields present, minor ambiguity in 1-2 fields
+- 0.5-0.69: Several fields missing or ambiguous, credential type unclear
+- 0.3-0.49: Sparse text, many fields inferred rather than directly stated
+- 0.0-0.29: Very little extractable content, mostly guesswork
+
+FIELDS TO EXTRACT:
+- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | BADGE | OTHER
+- issuerName: Full official name of the issuing institution/organization
+- issuedDate: When issued (YYYY-MM-DD)
+- expiryDate: When it expires, if applicable (YYYY-MM-DD)
+- fieldOfStudy: Field of study, specialization, or subject area
+- degreeLevel: Bachelor | Master | Doctorate | Associate | Certificate | Diploma
+- licenseNumber: License or certification number (only if visible and not redacted)
+- accreditingBody: Accrediting or certifying organization (distinct from issuer)
+- jurisdiction: Geographic jurisdiction (e.g., "California, USA" or "United Kingdom")
+- recipientIdentifier: A redacted or hashed identifier for the recipient (if visible)
+
+FEW-SHOT EXAMPLES:
+
+Example 1 — University Diploma:
+Input: "University of Michigan ... Bachelor of Science ... Computer Science ... Conferred May 15, 2024 ... [NAME_REDACTED] ... Ann Arbor, Michigan"
+Output: {"credentialType":"DEGREE","issuerName":"University of Michigan","issuedDate":"2024-05-15","fieldOfStudy":"Computer Science","degreeLevel":"Bachelor","jurisdiction":"Michigan, USA","confidence":0.95}
+
+Example 2 — Professional License:
+Input: "State of California ... Board of Registered Nursing ... License No. RN-[REDACTED] ... Issued: 01/10/2023 ... Expires: 01/10/2025 ... [NAME_REDACTED]"
+Output: {"credentialType":"LICENSE","issuerName":"California Board of Registered Nursing","issuedDate":"2023-01-10","expiryDate":"2025-01-10","accreditingBody":"State of California","jurisdiction":"California, USA","confidence":0.92}
+
+Example 3 — Certificate of Completion:
+Input: "Google Cloud ... Professional Cloud Architect ... Certification Date: March 2024 ... Valid through March 2026 ... Credential ID: [REDACTED]"
+Output: {"credentialType":"CERTIFICATE","issuerName":"Google Cloud","issuedDate":"2024-03-01","expiryDate":"2026-03-01","fieldOfStudy":"Cloud Architecture","accreditingBody":"Google","confidence":0.88}
+
+Example 4 — Transcript:
+Input: "Official Transcript ... Harvard University ... [NAME_REDACTED] ... Date Issued: 2024-06-01 ... Cumulative GPA: 3.8 ... Master of Business Administration"
+Output: {"credentialType":"TRANSCRIPT","issuerName":"Harvard University","issuedDate":"2024-06-01","fieldOfStudy":"Business Administration","degreeLevel":"Master","confidence":0.90}
+
+Example 5 — Medical Credential:
+Input: "American Board of Internal Medicine ... [NAME_REDACTED] ... certified in Internal Medicine ... Initial Certification: 2020-07-15 ... Valid through: 2030-12-31"
+Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","accreditingBody":"American Board of Internal Medicine","confidence":0.93}`;
 
 /**
  * Build the user prompt for a specific extraction request.
@@ -53,7 +83,7 @@ export function buildExtractionPrompt(
 
   // JSON.stringify encodes the text as an inert data payload, preventing prompt injection
   prompt += `\n--- BEGIN CREDENTIAL TEXT ---\n${JSON.stringify(strippedText)}\n--- END CREDENTIAL TEXT ---\n`;
-  prompt += `\nReturn a JSON object with the extracted fields and a "confidence" number (0.0 to 1.0).`;
+  prompt += `\nReturn a JSON object with the extracted fields and a "confidence" number (0.0 to 1.0). Follow the confidence calibration guide strictly.`;
 
   return prompt;
 }

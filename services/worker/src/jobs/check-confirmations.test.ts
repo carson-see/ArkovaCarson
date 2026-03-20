@@ -17,6 +17,8 @@ const {
   mockFetch,
   mockAnchorsSelectResult,
   mockAnchorsUpdateResult,
+  mockSendEmail,
+  mockBuildAnchorSecuredEmail,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -29,6 +31,8 @@ const {
   const mockChainIndexUpsert = vi.fn();
   const mockDispatchWebhookEvent = vi.fn();
   const mockFetch = vi.fn();
+  const mockSendEmail = vi.fn();
+  const mockBuildAnchorSecuredEmail = vi.fn();
 
   // Configurable results per test
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
@@ -42,6 +46,8 @@ const {
     mockFetch,
     mockAnchorsSelectResult,
     mockAnchorsUpdateResult,
+    mockSendEmail,
+    mockBuildAnchorSecuredEmail,
   };
 });
 
@@ -64,6 +70,23 @@ vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
+vi.mock('../email/index.js', () => ({
+  sendEmail: mockSendEmail,
+  buildAnchorSecuredEmail: mockBuildAnchorSecuredEmail,
+}));
+
+vi.mock('../middleware/aiFeatureGate.js', () => ({
+  isSemanticSearchEnabled: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../ai/embeddings.js', () => ({
+  generateAndStoreEmbedding: vi.fn(),
+}));
+
+vi.mock('../ai/factory.js', () => ({
+  createAIProvider: vi.fn(),
+}));
+
 vi.mock('../utils/db.js', () => {
   // Build chainable mock objects
   const makeSelectChain = () => {
@@ -72,6 +95,10 @@ vi.mock('../utils/db.js', () => {
     chain.not = vi.fn(() => chain);
     chain.is = vi.fn(() => chain);
     chain.limit = vi.fn(() => mockAnchorsSelectResult);
+    chain.single = vi.fn(() => ({
+      data: { credential_type: 'DEGREE', metadata: { issuerName: 'Test Uni' } },
+      error: null,
+    }));
     return chain;
   };
 
@@ -81,6 +108,16 @@ vi.mock('../utils/db.js', () => {
       // Return a new chain-like with another .eq
       return { eq: vi.fn(() => mockAnchorsUpdateResult) };
     });
+    return chain;
+  };
+
+  // Chainable mock for profile/org lookups (single result)
+  const makeProfileChain = (result: unknown) => {
+    const chain: Record<string, unknown> = {};
+    chain.select = vi.fn(() => chain);
+    chain.eq = vi.fn(() => chain);
+    chain.single = vi.fn(() => result);
+    chain.maybeSingle = vi.fn(() => result);
     return chain;
   };
 
@@ -97,6 +134,10 @@ vi.mock('../utils/db.js', () => {
             return { insert: mockAuditInsert };
           case 'anchor_chain_index':
             return { upsert: mockChainIndexUpsert };
+          case 'profiles':
+            return makeProfileChain({ data: { email: 'user@example.com' }, error: null });
+          case 'organizations':
+            return makeProfileChain({ data: { display_name: 'Test Org' }, error: null });
           default:
             return {};
         }
@@ -154,6 +195,8 @@ describe('checkSubmittedConfirmations', () => {
     mockAuditInsert.mockResolvedValue({ error: null });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
+    mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-001' });
+    mockBuildAnchorSecuredEmail.mockReturnValue({ subject: 'Test Subject', html: '<p>test</p>' });
   });
 
   afterEach(() => {
@@ -336,5 +379,50 @@ describe('checkSubmittedConfirmations', () => {
 
     const result = await checkSubmittedConfirmations();
     expect(result).toEqual({ checked: 2, confirmed: 1 });
+  });
+
+  // ---- Email notifications ----
+
+  it('sends anchor_secured email after confirmation', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+    });
+
+    await checkSubmittedConfirmations();
+
+    // Allow async fire-and-forget to settle
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockBuildAnchorSecuredEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientEmail: 'user@example.com',
+        verificationUrl: expect.stringContaining('pub-001'),
+      }),
+    );
+
+    expect(mockSendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'user@example.com',
+        emailType: 'anchor_secured',
+        anchorId: MOCK_SUBMITTED_ANCHOR.id,
+      }),
+    );
+  });
+
+  it('does not fail confirmation when email send fails', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    mockSendEmail.mockRejectedValue(new Error('Resend API down'));
+
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+    });
+
+    const result = await checkSubmittedConfirmations();
+    // Confirmation should still succeed even if email fails
+    expect(result).toEqual({ checked: 1, confirmed: 1 });
   });
 });

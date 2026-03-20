@@ -915,10 +915,10 @@ INSERT INTO switchboard_flags (id, value, default_value, description, is_dangero
   ('ENABLE_REPORTS', true, true, 'Enable report generation', false),
   ('MAINTENANCE_MODE', false, false, 'Put the app in maintenance mode', true),
   ('ENABLE_AI_EXTRACTION', true, false, 'Enable AI-powered credential metadata extraction (P8)', false),
-  ('ENABLE_SEMANTIC_SEARCH', false, false, 'Enable semantic search with vector embeddings (P8)', false),
-  ('ENABLE_AI_FRAUD', false, false, 'Enable AI-powered fraud detection (P8)', false),
+  ('ENABLE_SEMANTIC_SEARCH', true, false, 'Enable semantic search with vector embeddings (P8)', false),
+  ('ENABLE_AI_FRAUD', true, false, 'Enable AI-powered fraud detection (P8)', false),
   ('ENABLE_VERIFICATION_API', true, false, 'Enable Verification API v1 endpoints (P4.5)', false),
-  ('ENABLE_AI_REPORTS', false, false, 'Enable AI-powered report generation (P8)', false)
+  ('ENABLE_AI_REPORTS', true, false, 'Enable AI-powered report generation (P8)', false)
 ON CONFLICT (id) DO NOTHING;
 
 

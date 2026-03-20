@@ -18,6 +18,8 @@ const {
   mockAnchorsSelectResult,
   mockAnchorsUpdateResult,
   mockIsAnchoringEnabled,
+  mockSendEmail,
+  mockBuildRevocationEmail,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -34,6 +36,8 @@ const {
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
   const mockAnchorsUpdateResult: { error: unknown } = { error: null };
   const mockIsAnchoringEnabled = vi.fn();
+  const mockSendEmail = vi.fn();
+  const mockBuildRevocationEmail = vi.fn();
 
   return {
     mockLogger,
@@ -44,6 +48,8 @@ const {
     mockAnchorsSelectResult,
     mockAnchorsUpdateResult,
     mockIsAnchoringEnabled,
+    mockSendEmail,
+    mockBuildRevocationEmail,
   };
 });
 
@@ -70,7 +76,7 @@ vi.mock('../config.js', () => ({
 // Build a chainable Supabase mock
 function makeChainableMock(result: { data?: unknown; error?: unknown }) {
   const chainable: Record<string, unknown> = {};
-  const methods = ['select', 'eq', 'is', 'order', 'limit', 'update', 'upsert', 'insert'];
+  const methods = ['select', 'eq', 'is', 'order', 'limit', 'update', 'upsert', 'insert', 'single', 'maybeSingle'];
   for (const m of methods) {
     chainable[m] = vi.fn().mockReturnValue(chainable);
   }
@@ -91,6 +97,12 @@ vi.mock('../utils/db.js', () => ({
         mockAuditInsert.mockImplementation(() => mock);
         return { insert: mockAuditInsert };
       }
+      if (table === 'profiles') {
+        return makeChainableMock({ data: { email: 'user@example.com' }, error: null });
+      }
+      if (table === 'organizations') {
+        return makeChainableMock({ data: { display_name: 'Test Org' }, error: null });
+      }
       return makeChainableMock({ data: null, error: null });
     }),
   },
@@ -106,6 +118,11 @@ vi.mock('../chain/client.js', () => ({
 
 vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
+}));
+
+vi.mock('../email/index.js', () => ({
+  sendEmail: mockSendEmail,
+  buildRevocationEmail: mockBuildRevocationEmail,
 }));
 
 // ---- Import after mocks ----
@@ -144,6 +161,8 @@ describe('processRevocation', () => {
     });
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
     mockAuditInsert.mockReturnValue({ error: null });
+    mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-001' });
+    mockBuildRevocationEmail.mockReturnValue({ subject: 'Revoked', html: '<p>revoked</p>' });
   });
 
   it('returns false when anchor is not found', async () => {
@@ -246,6 +265,45 @@ describe('processRevocation', () => {
     await processRevocation('anchor-uuid-1');
 
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('sends revocation email after successful chain revocation', async () => {
+    mockAnchorsSelectResult.data = {
+      ...MOCK_ANCHOR,
+      metadata: { issuerName: 'MIT' },
+      credential_type: 'DEGREE',
+    };
+    mockAnchorsSelectResult.error = null;
+
+    await processRevocation('anchor-uuid-1');
+
+    // Allow async fire-and-forget to settle
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(mockBuildRevocationEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientEmail: 'user@example.com',
+        credentialLabel: expect.stringContaining('MIT'),
+      }),
+    );
+
+    expect(mockSendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        to: 'user@example.com',
+        emailType: 'revocation',
+        anchorId: 'anchor-uuid-1',
+      }),
+    );
+  });
+
+  it('does not fail revocation when email send fails', async () => {
+    mockAnchorsSelectResult.data = MOCK_ANCHOR;
+    mockAnchorsSelectResult.error = null;
+    mockSendEmail.mockRejectedValue(new Error('Resend down'));
+
+    const result = await processRevocation('anchor-uuid-1');
+    // Revocation should still succeed even if email fails
+    expect(result).toBe(true);
   });
 });
 
