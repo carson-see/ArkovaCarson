@@ -18,9 +18,9 @@ export function PublicVerifyPage() {
   const { publicId } = useParams<{ publicId: string }>();
 
   return (
-    <div className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50">
+    <div className="min-h-screen flex flex-col bg-mesh-gradient">
       {/* Header */}
-      <header className="border-b bg-background/80 backdrop-blur-sm">
+      <header className="border-b glass-header">
         <div className="container flex h-16 items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
@@ -64,7 +64,7 @@ export function PublicVerifyPage() {
                 </p>
               </div>
 
-              <Card className="shadow-lg">
+              <Card className="glass-card shadow-card-rest">
                 <CardHeader>
                   <CardTitle className="text-lg">{VERIFICATION_LABELS.FORM_TITLE}</CardTitle>
                   <CardDescription>
@@ -114,7 +114,7 @@ export function PublicVerifyPage() {
 
 function InfoCard({ title, description }: Readonly<{ title: string; description: string }>) {
   return (
-    <div className="rounded-lg border bg-card p-4 text-center">
+    <div className="rounded-lg border bg-card/70 p-4 text-center glass-card">
       <h3 className="font-medium mb-1">{title}</h3>
       <p className="text-xs text-muted-foreground">{description}</p>
     </div>

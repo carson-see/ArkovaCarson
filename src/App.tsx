@@ -15,6 +15,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Toaster } from 'sonner';
+import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile, ProfileProvider } from '@/hooks/useProfile';
 import { AuthGuard } from '@/components/auth/AuthGuard';
@@ -101,6 +102,9 @@ function RouteFallback() {
 }
 
 export function App() {
+  // Apply theme at app root so all routes (including public/auth) get dark mode
+  useTheme();
+
   return (
     <ErrorBoundary>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>

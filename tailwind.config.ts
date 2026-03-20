@@ -84,6 +84,13 @@ const config: Config = {
           ring: 'hsl(var(--sidebar-ring))',
         },
       },
+      boxShadow: {
+        'glow-sm': '0 0 8px hsl(197 42% 66% / 0.3)',
+        'glow-md': '0 0 16px hsl(197 42% 66% / 0.4)',
+        'glow-lg': '0 0 24px hsl(197 42% 66% / 0.5)',
+        'card-rest': '0 1px 3px hsl(0 0% 0% / 0.1), 0 1px 2px hsl(0 0% 0% / 0.06)',
+        'card-hover': '0 10px 15px -3px hsl(0 0% 0% / 0.15), 0 4px 6px -2px hsl(0 0% 0% / 0.1)',
+      },
       borderRadius: {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',

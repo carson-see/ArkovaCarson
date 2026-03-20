@@ -7,10 +7,30 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.1"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -71,7 +91,7 @@ export type Database = {
           requested_by: string
           result: Json | null
           started_at: string | null
-          status: Database["public"]["Enums"]["ai_report_status"]
+          status: Database["public"]["Enums"]["report_status"]
           title: string
         }
         Insert: {
@@ -86,7 +106,7 @@ export type Database = {
           requested_by: string
           result?: Json | null
           started_at?: string | null
-          status?: Database["public"]["Enums"]["ai_report_status"]
+          status?: Database["public"]["Enums"]["report_status"]
           title: string
         }
         Update: {
@@ -101,7 +121,7 @@ export type Database = {
           requested_by?: string
           result?: Json | null
           started_at?: string | null
-          status?: Database["public"]["Enums"]["ai_report_status"]
+          status?: Database["public"]["Enums"]["report_status"]
           title?: string
         }
         Relationships: [
@@ -356,7 +376,6 @@ export type Database = {
       anchors: {
         Row: {
           chain_block_height: number | null
-          chain_confirmations: number | null
           chain_timestamp: string | null
           chain_tx_id: string | null
           created_at: string
@@ -378,9 +397,7 @@ export type Database = {
           public_id: string | null
           recipient_email: string | null
           retention_until: string | null
-          revocation_block_height: number | null
           revocation_reason: string | null
-          revocation_tx_id: string | null
           revoked_at: string | null
           status: Database["public"]["Enums"]["anchor_status"]
           updated_at: string
@@ -389,7 +406,6 @@ export type Database = {
         }
         Insert: {
           chain_block_height?: number | null
-          chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
           created_at?: string
@@ -413,9 +429,7 @@ export type Database = {
           public_id?: string | null
           recipient_email?: string | null
           retention_until?: string | null
-          revocation_block_height?: number | null
           revocation_reason?: string | null
-          revocation_tx_id?: string | null
           revoked_at?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
           updated_at?: string
@@ -424,7 +438,6 @@ export type Database = {
         }
         Update: {
           chain_block_height?: number | null
-          chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
           created_at?: string
@@ -448,9 +461,7 @@ export type Database = {
           public_id?: string | null
           recipient_email?: string | null
           retention_until?: string | null
-          revocation_block_height?: number | null
           revocation_reason?: string | null
-          revocation_tx_id?: string | null
           revoked_at?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
           updated_at?: string
@@ -1451,7 +1462,6 @@ export type Database = {
           parameters: Json
           report_type: Database["public"]["Enums"]["report_type"]
           started_at: string | null
-          status: Database["public"]["Enums"]["report_status"]
           user_id: string
         }
         Insert: {
@@ -1465,7 +1475,6 @@ export type Database = {
           parameters?: Json
           report_type: Database["public"]["Enums"]["report_type"]
           started_at?: string | null
-          status?: Database["public"]["Enums"]["report_status"]
           user_id: string
         }
         Update: {
@@ -1479,7 +1488,6 @@ export type Database = {
           parameters?: Json
           report_type?: Database["public"]["Enums"]["report_type"]
           started_at?: string | null
-          status?: Database["public"]["Enums"]["report_status"]
           user_id?: string
         }
         Relationships: [
@@ -1646,55 +1654,84 @@ export type Database = {
         Row: {
           changed_at: string
           changed_by: string | null
-          flag_key: string
+          flag_id: string
           id: string
           new_value: boolean
           old_value: boolean | null
+          reason: string | null
         }
         Insert: {
           changed_at?: string
           changed_by?: string | null
-          flag_key: string
+          flag_id: string
           id?: string
           new_value: boolean
           old_value?: boolean | null
+          reason?: string | null
         }
         Update: {
           changed_at?: string
           changed_by?: string | null
-          flag_key?: string
+          flag_id?: string
           id?: string
           new_value?: boolean
           old_value?: boolean | null
+          reason?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "switchboard_flag_history_changed_by_fkey"
+            columns: ["changed_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "switchboard_flag_history_flag_id_fkey"
+            columns: ["flag_id"]
+            isOneToOne: false
+            referencedRelation: "switchboard_flags"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       switchboard_flags: {
         Row: {
-          created_at: string
+          default_value: boolean
           description: string | null
-          enabled: boolean
-          flag_key: string
           id: string
+          is_dangerous: boolean
           updated_at: string
+          updated_by: string | null
+          value: boolean
         }
         Insert: {
-          created_at?: string
+          default_value: boolean
           description?: string | null
-          enabled?: boolean
-          flag_key: string
-          id?: string
+          id: string
+          is_dangerous?: boolean
           updated_at?: string
+          updated_by?: string | null
+          value: boolean
         }
         Update: {
-          created_at?: string
+          default_value?: boolean
           description?: string | null
-          enabled?: boolean
-          flag_key?: string
           id?: string
+          is_dangerous?: boolean
           updated_at?: string
+          updated_by?: string | null
+          value?: boolean
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "switchboard_flags_updated_by_fkey"
+            columns: ["updated_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       verification_events: {
         Row: {
@@ -1988,10 +2025,7 @@ export type Database = {
           total_suggestions: number
         }[]
       }
-      get_flag: {
-        Args: { p_default?: boolean; p_flag_id: string }
-        Returns: boolean
-      }
+      get_flag: { Args: { p_flag_id: string }; Returns: boolean }
       get_my_credentials: {
         Args: never
         Returns: {
@@ -2109,7 +2143,6 @@ export type Database = {
       }
     }
     Enums: {
-      ai_report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
       anchor_status: "PENDING" | "SECURED" | "REVOKED" | "EXPIRED" | "SUBMITTED"
       api_key_rate_limit_tier: "free" | "paid" | "custom"
       credential_type:
@@ -2128,7 +2161,7 @@ export type Database = {
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
       job_status: "pending" | "processing" | "completed" | "failed"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
-      report_status: "pending" | "generating" | "completed" | "failed"
+      report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
       report_type:
         | "anchor_summary"
         | "compliance_audit"
@@ -2267,9 +2300,11 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
-      ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
       anchor_status: ["PENDING", "SECURED", "REVOKED", "EXPIRED", "SUBMITTED"],
       api_key_rate_limit_tier: ["free", "paid", "custom"],
       credential_type: [
@@ -2290,7 +2325,7 @@ export const Constants = {
       integrity_level: ["HIGH", "MEDIUM", "LOW", "FLAGGED"],
       job_status: ["pending", "processing", "completed", "failed"],
       profile_status: ["ACTIVE", "PENDING_ACTIVATION", "DEACTIVATED"],
-      report_status: ["pending", "generating", "completed", "failed"],
+      report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
       report_type: [
         "anchor_summary",
         "compliance_audit",
