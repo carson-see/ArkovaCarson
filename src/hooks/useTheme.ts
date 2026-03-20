@@ -25,14 +25,15 @@ function getSystemTheme(): 'light' | 'dark' {
 }
 
 function getStoredTheme(): Theme {
-  if (typeof window === 'undefined') return 'system';
+  if (typeof window === 'undefined') return 'dark';
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored === 'light' || stored === 'dark' || stored === 'system') return stored;
   } catch {
     // localStorage unavailable in test environments
   }
-  return 'system';
+  // Default to dark to match marketing site aesthetic
+  return 'dark';
 }
 
 function applyTheme(theme: Theme): void {

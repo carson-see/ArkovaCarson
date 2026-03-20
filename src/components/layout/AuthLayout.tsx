@@ -5,7 +5,6 @@
  * Clean, professional design inspired by modern SaaS patterns.
  */
 
-import { useEffect } from 'react';
 import { Shield } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -18,17 +17,9 @@ interface AuthLayoutProps {
 }
 
 export function AuthLayout({ children, title, description }: Readonly<AuthLayoutProps>) {
-  // BUG-001 fix: Force light mode on auth pages to prevent dark/light mix
-  // after logout when user had dark mode enabled. Restores previous theme
-  // on unmount (when user navigates away from auth pages).
-  useEffect(() => {
-    const root = document.documentElement;
-    const wasDark = root.classList.contains('dark');
-    root.classList.remove('dark');
-    return () => {
-      if (wasDark) root.classList.add('dark');
-    };
-  }, []);
+  // Auth pages now respect the user's theme preference (dark mode default).
+  // BUG-001 force-light workaround removed — no longer needed since the app
+  // defaults to dark and public/auth routes all support dark mode.
 
   return (
     <div className="min-h-screen flex flex-col">
