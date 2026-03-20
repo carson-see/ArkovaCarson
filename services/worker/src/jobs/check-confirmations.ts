@@ -120,7 +120,7 @@ async function checkAnchorConfirmation(anchor: {
       status: 'SECURED',
       chain_block_height: blockHeight,
       chain_timestamp: blockTimestamp,
-      chain_confirmations: MIN_CONFIRMATIONS,
+      // chain_confirmations: MIN_CONFIRMATIONS, — column pending migration 0068b
     })
     .eq('id', anchor.id)
     .eq('status', 'SUBMITTED'); // Guard: only update if still SUBMITTED
@@ -261,7 +261,7 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     .from('anchors')
     .update({
       status: 'SECURED',
-      chain_confirmations: 1,
+      // chain_confirmations: 1, — column pending migration 0068b
       chain_block_height: 100000,
       chain_timestamp: new Date().toISOString(),
     })

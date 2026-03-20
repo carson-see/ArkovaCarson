@@ -66,7 +66,6 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
         chain_tx_id: receipt.receiptId,
         chain_block_height: receipt.blockHeight,
         chain_timestamp: receipt.blockTimestamp,
-        chain_confirmations: 0,
       })
       .eq('id', anchorId);
 
