@@ -53,7 +53,7 @@ function getMempoolBaseUrl(): string {
     mainnet: 'https://mempool.space',
   };
 
-  return networkPaths[config.bitcoinNetwork] ?? 'https://mempool.space/testnet4';
+  return networkPaths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
 }
 
 /**

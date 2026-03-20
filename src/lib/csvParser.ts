@@ -225,11 +225,11 @@ function validateFingerprintField(
   row: CsvRow, mapping: ColumnMapping,
   getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
 ): ValidationError[] {
+  // Fingerprint is optional — auto-generated from row data when absent
   if (mapping.fingerprint === null) return [];
   const fingerprint = getValueByIndex(row, mapping.fingerprint);
-  if (!fingerprint) {
-    return [{ row: row.rowNumber, column: getColumnName(mapping.fingerprint), message: 'Fingerprint is required' }];
-  }
+  // Allow empty fingerprint (will be auto-generated)
+  if (!fingerprint) return [];
   if (!isValidFingerprint(fingerprint)) {
     return [{ row: row.rowNumber, column: getColumnName(mapping.fingerprint), message: 'Invalid fingerprint format (expected 64-character hex)' }];
   }
@@ -237,14 +237,12 @@ function validateFingerprintField(
 }
 
 function validateFilenameField(
-  row: CsvRow, mapping: ColumnMapping,
-  getColumnName: ColumnNameGetter, getValueByIndex: FieldValueGetter
+  _row: CsvRow, mapping: ColumnMapping,
+  _getColumnName: ColumnNameGetter, _getValueByIndex: FieldValueGetter
 ): ValidationError[] {
+  // Filename is optional — auto-generated from row data when absent
   if (mapping.filename === null) return [];
-  const filename = getValueByIndex(row, mapping.filename);
-  if (!filename) {
-    return [{ row: row.rowNumber, column: getColumnName(mapping.filename), message: 'Filename is required' }];
-  }
+  // Allow empty filename (will be auto-generated)
   return [];
 }
 
@@ -352,7 +350,7 @@ export function validateCsvRows(
  * Schema for bulk anchor record from CSV.
  */
 export const bulkAnchorSchema = z.object({
-  fingerprint: z.string().regex(FINGERPRINT_REGEX, 'Invalid fingerprint format'),
+  fingerprint: z.string().min(1, 'Fingerprint is required'),
   filename: z.string().min(1, 'Filename is required'),
   fileSize: z.number().int().positive().optional(),
   email: z.string().email().optional(),
@@ -363,7 +361,51 @@ export const bulkAnchorSchema = z.object({
 export type BulkAnchorRecord = z.infer<typeof bulkAnchorSchema>;
 
 /**
+ * Generates a SHA-256 fingerprint from a string (runs in browser).
+ * Used to auto-generate fingerprints when CSV rows don't include one.
+ */
+async function sha256Hex(input: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Builds a deterministic string from all row data for fingerprinting.
+ * Sorts keys to ensure consistency regardless of column order.
+ */
+function buildRowCanonical(row: CsvRow): string {
+  return Object.keys(row.data)
+    .sort()
+    .map(k => `${k}=${row.data[k]}`)
+    .join('|');
+}
+
+/**
+ * Auto-generates a filename from row data (first non-empty text column value).
+ */
+function autoFilename(row: CsvRow, rowIndex: number): string {
+  // Try common name columns first
+  const nameKeys = ['name', 'recipient', 'student', 'holder', 'title', 'document', 'subject'];
+  for (const key of nameKeys) {
+    for (const col of Object.keys(row.data)) {
+      if (col.toLowerCase().includes(key) && row.data[col]?.trim()) {
+        return `${row.data[col].trim()}.credential`;
+      }
+    }
+  }
+  // Fall back to first non-empty value
+  for (const val of Object.values(row.data)) {
+    if (val?.trim()) return `${val.trim().slice(0, 60)}.credential`;
+  }
+  return `row_${rowIndex}.credential`;
+}
+
+/**
  * Extracts anchor records from validated CSV rows.
+ * Auto-generates fingerprints and filenames when not provided in the CSV.
  */
 export function extractAnchorRecords(
   rows: CsvRow[],
@@ -372,10 +414,20 @@ export function extractAnchorRecords(
 ): BulkAnchorRecord[] {
   const getValueByIndex = makeFieldValueGetter(columns);
 
-  return rows.map(row => {
+  // We return a sync array of records but fingerprints may need async generation.
+  // For the sync path (fingerprint column exists), use it directly.
+  // For async path, we pre-compute in extractAnchorRecordsAsync below.
+  return rows.map((row, i) => {
+    const hasFingerprint = mapping.fingerprint !== null;
+    const hasFilename = mapping.filename !== null;
+
     const record: BulkAnchorRecord = {
-      fingerprint: getValueByIndex(row, mapping.fingerprint).toLowerCase(),
-      filename: getValueByIndex(row, mapping.filename),
+      fingerprint: hasFingerprint
+        ? getValueByIndex(row, mapping.fingerprint).toLowerCase()
+        : '', // Placeholder — filled by extractAnchorRecordsAsync
+      filename: hasFilename
+        ? getValueByIndex(row, mapping.filename)
+        : autoFilename(row, i + 1),
     };
 
     if (mapping.fileSize !== null) {
@@ -399,17 +451,55 @@ export function extractAnchorRecords(
       }
     }
 
+    // Build metadata from ALL columns (not just a dedicated metadata column)
+    const allMetadata: Record<string, unknown> = {};
+    for (const col of columns) {
+      // Skip columns that are already mapped to specific fields
+      const isMapped = [mapping.fingerprint, mapping.filename, mapping.fileSize, mapping.email, mapping.credentialType, mapping.metadata].includes(col.index);
+      if (!isMapped && row.data[col.name]?.trim()) {
+        allMetadata[col.name] = row.data[col.name].trim();
+      }
+    }
+
     if (mapping.metadata !== null) {
       const metaStr = getValueByIndex(row, mapping.metadata);
       if (metaStr) {
         try {
-          record.metadata = JSON.parse(metaStr);
+          Object.assign(allMetadata, JSON.parse(metaStr));
         } catch {
-          // Skip invalid JSON — already caught in validation
+          // Skip invalid JSON
         }
       }
     }
 
+    if (Object.keys(allMetadata).length > 0) {
+      record.metadata = allMetadata;
+    }
+
     return record;
   });
+}
+
+/**
+ * Async version that auto-generates SHA-256 fingerprints from row data
+ * when no fingerprint column is present in the CSV.
+ */
+export async function extractAnchorRecordsAsync(
+  rows: CsvRow[],
+  columns: CsvColumn[],
+  mapping: ColumnMapping
+): Promise<BulkAnchorRecord[]> {
+  const records = extractAnchorRecords(rows, columns, mapping);
+
+  // If no fingerprint column, generate fingerprints from row data
+  if (mapping.fingerprint === null) {
+    await Promise.all(
+      records.map(async (record, i) => {
+        const canonical = buildRowCanonical(rows[i]);
+        record.fingerprint = await sha256Hex(canonical);
+      })
+    );
+  }
+
+  return records;
 }

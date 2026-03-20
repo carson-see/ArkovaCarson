@@ -122,7 +122,7 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
 async function isAnchoringEnabled(): Promise<boolean> {
   try {
     const { data, error } = await callRpc<boolean>(db, 'get_flag', {
-      p_flag_key: 'ENABLE_PROD_NETWORK_ANCHORING',
+      p_flag_id: 'ENABLE_PROD_NETWORK_ANCHORING',
     });
 
     if (error || typeof data !== 'boolean') {

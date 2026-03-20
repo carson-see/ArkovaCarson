@@ -126,8 +126,8 @@ describe('config singleton', () => {
     expect(config.enableProdNetworkAnchoring).toBe(false);
   });
 
-  it('defaults bitcoinNetwork to testnet4', () => {
-    expect(config.bitcoinNetwork).toBe('testnet4');
+  it('defaults bitcoinNetwork to signet', () => {
+    expect(config.bitcoinNetwork).toBe('signet');
   });
 
   it('bitcoin config fields are optional when useMocks is true', () => {

@@ -41,7 +41,7 @@ function mockFlagQuery(enabled: string | boolean | null, error: unknown = null) 
   const selectMock = vi.fn().mockReturnValue({
     eq: vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({
-        data: enabled !== null ? { enabled } : null,
+        data: enabled !== null ? { value: enabled } : null,
         error,
       }),
     }),

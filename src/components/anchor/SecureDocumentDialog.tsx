@@ -4,13 +4,14 @@
  * Modal for securing a new document with step-by-step flow.
  * Uses real Supabase insert (following IssueCredentialForm pattern).
  *
+ * Enhanced with AI extraction (P8-S5): upload → AI extraction → template → confirm → anchor.
  * Enhanced success screen (UF-04): shows verification URL, copy link,
  * and "anchoring in progress" messaging.
  *
- * @see CRIT-1, UF-04
+ * @see CRIT-1, UF-04, P8-S5
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Shield,
   CheckCircle,
@@ -19,6 +20,8 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Sparkles,
+  SkipForward,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -33,9 +36,12 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { FileUpload } from './FileUpload';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
+import { AIFieldSuggestions } from './AIFieldSuggestions';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
+import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
+import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
@@ -49,7 +55,7 @@ interface SecureDocumentDialogProps {
   onSuccess?: () => void;
 }
 
-type Step = 'upload' | 'template' | 'confirm' | 'processing' | 'success' | 'error';
+type Step = 'upload' | 'extracting' | 'template' | 'confirm' | 'processing' | 'success' | 'error';
 
 interface FileData {
   file: File;
@@ -78,8 +84,88 @@ export function SecureDocumentDialog({
   const [linkCopied, setLinkCopied] = useState(false);
   const [description, setDescription] = useState('');
 
+  // AI extraction state
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
+  const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
+  const [overallConfidence, setOverallConfidence] = useState(0);
+  const [creditsRemaining, setCreditsRemaining] = useState(0);
+
+  // Check AI extraction flag on mount
+  useEffect(() => {
+    if (open) {
+      isAIExtractionEnabled().then(setAiEnabled).catch(() => setAiEnabled(false));
+    }
+  }, [open]);
+
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
+  }, []);
+
+  // Run AI extraction after file upload
+  const handleStartExtraction = useCallback(async () => {
+    if (!fileData) return;
+
+    setStep('extracting');
+    setExtractedFields([]);
+    setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
+
+    const result = await runExtraction(
+      fileData.file,
+      fileData.fingerprint,
+      selectedTemplate?.credential_type ?? 'OTHER',
+      (progress) => setExtractionProgress(progress),
+    );
+
+    if (result) {
+      setExtractedFields(result.fields);
+      setOverallConfidence(result.overallConfidence);
+      setCreditsRemaining(result.creditsRemaining);
+      setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
+    } else {
+      // Extraction failed — still allow user to proceed without AI
+      setExtractionProgress(null);
+      setStep('template');
+    }
+  }, [fileData, selectedTemplate]);
+
+  // Handle proceeding from upload step
+  const handleUploadContinue = useCallback(async () => {
+    if (!fileData) return;
+
+    if (aiEnabled && fileData.file.type === 'application/pdf') {
+      await handleStartExtraction();
+    } else {
+      setStep('template');
+    }
+  }, [fileData, aiEnabled, handleStartExtraction]);
+
+  // AI field callbacks
+  const handleFieldAccept = useCallback((key: string, value: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
+    );
+  }, []);
+
+  const handleFieldReject = useCallback((key: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
+    );
+  }, []);
+
+  const handleFieldEdit = useCallback((key: string, value: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
+    );
+  }, []);
+
+  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
+    setExtractedFields(prev =>
+      prev.map(f => {
+        const matched = fields.find(sf => sf.key === f.key);
+        return matched ? { ...f, status: 'accepted' as const } : f;
+      })
+    );
   }, []);
 
   const handleConfirm = useCallback(async () => {
@@ -89,6 +175,14 @@ export function SecureDocumentDialog({
     setError(null);
 
     try {
+      // Build metadata from AI-extracted fields (accepted + edited only)
+      const acceptedFields = extractedFields
+        .filter(f => f.status === 'accepted' || f.status === 'edited')
+        .reduce<Record<string, string>>((acc, f) => {
+          acc[f.key] = f.value;
+          return acc;
+        }, {});
+
       const validated = validateAnchorCreate({
         fingerprint: fileData.fingerprint,
         filename: fileData.file.name,
@@ -104,6 +198,7 @@ export function SecureDocumentDialog({
         .insert({
           ...validated,
           user_id: user.id,
+          ...(Object.keys(acceptedFields).length > 0 ? { metadata: acceptedFields } : {}),
         })
         .select('id, public_id')
         .single();
@@ -140,7 +235,7 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, onSuccess]);
+  }, [fileData, user, profile, selectedTemplate, description, extractedFields, onSuccess]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
@@ -150,6 +245,8 @@ export function SecureDocumentDialog({
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
+    setExtractedFields([]);
+    setExtractionProgress(null);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -160,6 +257,8 @@ export function SecureDocumentDialog({
     setDescription('');
     setError(null);
     setCreatedAnchor(null);
+    setExtractedFields([]);
+    setExtractionProgress(null);
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -179,7 +278,7 @@ export function SecureDocumentDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5 text-primary" />
@@ -196,6 +295,35 @@ export function SecureDocumentDialog({
               onFileSelect={handleFileSelect}
               disabled={false}
             />
+          )}
+
+          {step === 'extracting' && (
+            <div className="space-y-4">
+              {extractionProgress && extractionProgress.stage !== 'complete' && (
+                <AIFieldSuggestions
+                  fields={[]}
+                  overallConfidence={0}
+                  creditsRemaining={0}
+                  progress={extractionProgress}
+                  onFieldAccept={handleFieldAccept}
+                  onFieldReject={handleFieldReject}
+                  onFieldEdit={handleFieldEdit}
+                  onAcceptAll={handleAcceptAll}
+                />
+              )}
+
+              {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
+                <AIFieldSuggestions
+                  fields={extractedFields}
+                  overallConfidence={overallConfidence}
+                  creditsRemaining={creditsRemaining}
+                  onFieldAccept={handleFieldAccept}
+                  onFieldReject={handleFieldReject}
+                  onFieldEdit={handleFieldEdit}
+                  onAcceptAll={handleAcceptAll}
+                />
+              )}
+            </div>
           )}
 
           {step === 'template' && (
@@ -232,6 +360,14 @@ export function SecureDocumentDialog({
                     <div className="flex justify-between">
                       <dt className="text-muted-foreground">Template</dt>
                       <dd className="font-medium">{selectedTemplate.name}</dd>
+                    </div>
+                  )}
+                  {extractedFields.filter(f => f.status === 'accepted' || f.status === 'edited').length > 0 && (
+                    <div className="flex justify-between">
+                      <dt className="text-muted-foreground">AI Fields</dt>
+                      <dd className="font-medium text-primary">
+                        {extractedFields.filter(f => f.status === 'accepted' || f.status === 'edited').length} accepted
+                      </dd>
                     </div>
                   )}
                 </dl>
@@ -345,17 +481,46 @@ export function SecureDocumentDialog({
                 {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button
-                onClick={() => setStep('template')}
+                onClick={handleUploadContinue}
                 disabled={!fileData}
               >
+                {aiEnabled && fileData?.file.type === 'application/pdf' && (
+                  <Sparkles className="mr-2 h-4 w-4" />
+                )}
                 {SECURE_DIALOG_LABELS.CONTINUE}
               </Button>
             </>
           )}
 
+          {step === 'extracting' && (
+            <>
+              {extractionProgress?.stage !== 'complete' ? (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setExtractionProgress(null);
+                    setStep('template');
+                  }}
+                >
+                  <SkipForward className="mr-2 h-4 w-4" />
+                  Skip AI Analysis
+                </Button>
+              ) : (
+                <>
+                  <Button variant="outline" onClick={() => setStep('upload')}>
+                    {SECURE_DIALOG_LABELS.BACK}
+                  </Button>
+                  <Button onClick={() => setStep('template')}>
+                    {SECURE_DIALOG_LABELS.CONTINUE}
+                  </Button>
+                </>
+              )}
+            </>
+          )}
+
           {step === 'template' && (
             <>
-              <Button variant="outline" onClick={() => setStep('upload')}>
+              <Button variant="outline" onClick={() => setStep(extractedFields.length > 0 ? 'extracting' : 'upload')}>
                 {SECURE_DIALOG_LABELS.BACK}
               </Button>
               <div className="flex gap-2">

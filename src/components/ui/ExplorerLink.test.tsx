@@ -70,9 +70,9 @@ describe('truncateReceiptId', () => {
 });
 
 describe('getExplorerBaseUrl', () => {
-  it('defaults to testnet4', () => {
+  it('defaults to signet', () => {
     vi.stubEnv('VITE_BITCOIN_NETWORK', '');
-    expect(getExplorerBaseUrl()).toBe('https://mempool.space/testnet4');
+    expect(getExplorerBaseUrl()).toBe('https://mempool.space/signet');
   });
 
   it('returns mainnet URL for mainnet', () => {

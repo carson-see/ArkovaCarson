@@ -72,20 +72,13 @@ export function CsvUploader({
         // Auto-detect column mapping
         const mapping = autoDetectMapping(parsed.columns);
 
-        // Validate required columns are mapped
-        if (mapping.fingerprint === null) {
-          throw new Error(
-            'Could not detect fingerprint column. Please ensure your CSV has a column named "fingerprint" or "sha256".'
-          );
+        // Fingerprint and filename columns are optional — auto-generated if missing.
+        // Any spreadsheet with at least one data column can be bulk-uploaded.
+        if (parsed.columns.length === 0) {
+          throw new Error('File has no columns. Please upload a file with at least one data column.');
         }
 
-        if (mapping.filename === null) {
-          throw new Error(
-            'Could not detect filename column. Please ensure your CSV has a column named "filename", "name", or "file".'
-          );
-        }
-
-        // Validate all rows
+        // Validate rows (fingerprint/filename validation skipped when columns not present)
         const validation = validateCsvRows(parsed.rows, parsed.columns, mapping);
 
         // Pass results to parent
@@ -190,13 +183,13 @@ export function CsvUploader({
 
       <div className="text-xs text-muted-foreground space-y-1">
         <p>
-          <strong>Required columns:</strong> fingerprint (or sha256), filename
+          Upload any spreadsheet — each row becomes a verifiable credential.
         </p>
         <p>
-          <strong>Optional columns:</strong> file_size, email, credential_type, metadata
+          <strong>Auto-detected columns:</strong> name, email, credential_type, fingerprint
         </p>
         <p className="text-muted-foreground/70">
-          Maximum {maxRows.toLocaleString()} rows. File must be under 10MB.
+          Fingerprints are auto-generated if not provided. Maximum {maxRows.toLocaleString()} rows, 10MB limit.
         </p>
       </div>
     </div>

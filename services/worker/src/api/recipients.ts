@@ -68,7 +68,7 @@ export async function createPendingRecipient(
     email,
     full_name: request.fullName ?? null,
     org_id: request.orgId,
-    role: 'MEMBER',
+    role: 'ORG_MEMBER',
     status: 'PENDING_ACTIVATION',
     activation_token: activationToken,
     activation_token_expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),

@@ -204,6 +204,7 @@ export async function createChainClient(): Promise<ChainClient> {
       rpcUrl: config.bitcoinRpcUrl,
       rpcAuth: config.bitcoinRpcAuth,
       mempoolApiUrl: config.mempoolApiUrl,
+      network: config.bitcoinNetwork,
     });
 
     const signingProvider = await createSigningProvider({
@@ -260,6 +261,7 @@ export async function createChainClient(): Promise<ChainClient> {
       rpcUrl: config.bitcoinRpcUrl,
       rpcAuth: config.bitcoinRpcAuth,
       mempoolApiUrl: config.mempoolApiUrl,
+      network: config.bitcoinNetwork,
     });
 
     const signingProvider = useGcpKms

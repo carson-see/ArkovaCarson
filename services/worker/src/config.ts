@@ -28,7 +28,7 @@ const ConfigSchema = z.object({
   stripeWebhookSecret: z.string().min(1),
 
   // Bitcoin chain
-  bitcoinNetwork: z.enum(['signet', 'testnet', 'testnet4', 'mainnet']).default('testnet4'),
+  bitcoinNetwork: z.enum(['signet', 'testnet', 'testnet4', 'mainnet']).default('signet'),
   bitcoinRpcUrl: z.string().url().optional(),
   bitcoinRpcAuth: z.string().optional(),
   /** Treasury WIF — loaded from env, NEVER logged (Constitution 1.4) */

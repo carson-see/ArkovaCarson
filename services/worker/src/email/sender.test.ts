@@ -15,7 +15,7 @@ const { mockLogger, mockAuditInsert, mockResendSend, mockConfig } = vi.hoisted((
   };
   const mockAuditInsert = vi.fn().mockResolvedValue({ error: null });
   const mockResendSend = vi.fn();
-  const mockConfig = {
+  const mockConfig: { resendApiKey: string | undefined; emailFrom: string } = {
     resendApiKey: 'test-api-key',
     emailFrom: 'noreply@arkova.ai',
   };

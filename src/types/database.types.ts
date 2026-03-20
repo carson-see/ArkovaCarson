@@ -1989,7 +1989,7 @@ export type Database = {
         }[]
       }
       get_flag: {
-        Args: { p_default?: boolean; p_flag_key: string }
+        Args: { p_default?: boolean; p_flag_id: string }
         Returns: boolean
       }
       get_my_credentials: {

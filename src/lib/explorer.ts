@@ -24,7 +24,7 @@ const MEMPOOL_BASE: Record<BitcoinNetwork, string> = {
 function getNetwork(): BitcoinNetwork {
   const net = import.meta.env.VITE_BITCOIN_NETWORK;
   if (net && net in MEMPOOL_BASE) return net as BitcoinNetwork;
-  return 'testnet4';
+  return 'signet';
 }
 
 /**

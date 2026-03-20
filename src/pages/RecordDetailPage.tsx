@@ -99,6 +99,12 @@ export function RecordDetailPage() {
           fileSize: anchor.file_size ?? 0,
           fileMime: anchor.file_mime ?? undefined,
           credentialType: anchor.credential_type ?? undefined,
+          chainTxId: anchor.chain_tx_id ?? undefined,
+          chainBlockHeight: anchor.chain_block_height ?? undefined,
+          metadata: anchor.metadata as Record<string, unknown> | null ?? undefined,
+          description: anchor.description ?? undefined,
+          orgId: anchor.org_id ?? undefined,
+          issuerName: (anchor.metadata as Record<string, unknown> | null)?.issuer as string | undefined,
         }}
         onBack={handleBack}
         onDownloadProof={() => {

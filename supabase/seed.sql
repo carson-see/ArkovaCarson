@@ -570,7 +570,7 @@ INSERT INTO anchors (
     'ARK-2024-00312',
     'Master of Science in Data Science — Sarah Kim',
     'UMich_MSc_DataScience_Kim_Sarah_Aug2024.pdf',
-    '9bf31c7ff062936a96d3c8bd1f8f2ff3a5f4c0e3b1d2a4c6e8f0b2d4f6a8c000',
+    '9bf31c7ff062936a96d3c8bd1f8f2ff3a5f4c0e3b1d2a4c6e8f0b2d4f6a8c0a0',
     'PENDING',
     false,
     'DEGREE',
@@ -623,7 +623,7 @@ INSERT INTO anchors (
     NULL,
     'Personal Certification — Casey Morgan',
     'CaseyMorgan_PersonalCert_2025.pdf',
-    'e5f6a890123456789012345678901234567890123456789012345678ef012abc',
+    'e5f6a890123456789012345678901234567890123456789012345678ef01abcd',
     'PENDING',
     false,
     'CERTIFICATE',
@@ -648,7 +648,7 @@ INSERT INTO anchors (
     NULL,
     'Professional Development Certificate — Casey Morgan',
     'CaseyMorgan_ProfDev_2025.pdf',
-    'f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f600',
+    'f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6',
     'PENDING',
     false,
     'CERTIFICATE',
@@ -909,12 +909,43 @@ DELETE FROM anchoring_jobs WHERE anchor_id IN (
 -- =============================================================================
 
 INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
-  ('ENABLE_PROD_NETWORK_ANCHORING', false, false, 'Enable production network anchoring (real network fees)', true),
+  ('ENABLE_PROD_NETWORK_ANCHORING', true, false, 'Enable production network anchoring (real network fees)', true),
   ('ENABLE_OUTBOUND_WEBHOOKS', false, false, 'Enable outbound webhook delivery', false),
   ('ENABLE_NEW_CHECKOUTS', true, true, 'Allow new checkout sessions', false),
   ('ENABLE_REPORTS', true, true, 'Enable report generation', false),
   ('MAINTENANCE_MODE', false, false, 'Put the app in maintenance mode', true),
-  ('ENABLE_AI_EXTRACTION', false, false, 'Enable AI-powered credential metadata extraction (P8)', false),
+  ('ENABLE_AI_EXTRACTION', true, false, 'Enable AI-powered credential metadata extraction (P8)', false),
   ('ENABLE_SEMANTIC_SEARCH', false, false, 'Enable semantic search with vector embeddings (P8)', false),
-  ('ENABLE_AI_FRAUD', false, false, 'Enable AI-powered fraud detection (P8)', false)
+  ('ENABLE_AI_FRAUD', false, false, 'Enable AI-powered fraud detection (P8)', false),
+  ('ENABLE_VERIFICATION_API', true, false, 'Enable Verification API v1 endpoints (P4.5)', false),
+  ('ENABLE_AI_REPORTS', false, false, 'Enable AI-powered report generation (P8)', false)
+ON CONFLICT (id) DO NOTHING;
+
+
+-- =============================================================================
+-- 10. PLANS + SUBSCRIPTIONS — ensure demo accounts bypass free-tier limits
+-- Plans are created by migration 0016 but may be truncated by CASCADE.
+-- Re-insert here to ensure they exist for demo.
+-- =============================================================================
+
+INSERT INTO plans (id, name, description, price_cents, billing_period, records_per_month, features)
+VALUES
+  ('free', 'Free', 'Get started with Arkova', 0, 'month', 3, '["3 records per month", "Basic verification", "7-day proof access"]'),
+  ('individual', 'Individual', 'For personal document security', 1000, 'month', 10, '["10 records per month", "Document verification", "Basic support", "Proof downloads"]'),
+  ('professional', 'Professional', 'For growing businesses', 10000, 'month', 100, '["100 records per month", "Priority support", "Bulk CSV upload", "API access"]'),
+  ('organization', 'Organization', 'For enterprise teams', 0, 'custom', 999999, '["Unlimited records", "Dedicated support", "Custom integrations", "SLA guarantee"]')
+ON CONFLICT (id) DO NOTHING;
+
+-- Give demo org admin a Professional subscription (100 records/month) so demo isn't blocked
+INSERT INTO subscriptions (id, user_id, org_id, plan_id, status, current_period_start, current_period_end)
+VALUES
+  (
+    'dddddddd-0000-0000-0000-000000000001',
+    '11111111-0000-0000-0000-000000000001',
+    'aaaaaaaa-0000-0000-0000-000000000001',
+    'professional',
+    'active',
+    NOW() - INTERVAL '15 days',
+    NOW() + INTERVAL '15 days'
+  )
 ON CONFLICT (id) DO NOTHING;

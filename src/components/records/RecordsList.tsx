@@ -26,6 +26,8 @@ export interface Record {
   securedAt?: string;
   fileSize: number;
   credentialType?: string | null;
+  /** Network receipt ID for explorer links (populated after SUBMITTED) */
+  chainTxId?: string | null;
 }
 
 interface RecordsListProps {

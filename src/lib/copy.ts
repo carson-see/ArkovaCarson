@@ -500,7 +500,7 @@ export const ANCHORING_STATUS_LABELS = {
   SHARE_LINK_NOTE: 'You can share this verification link now \u2014 verifiers will see the current anchoring status.',
   SUCCESS_TITLE: 'Document Submitted',
   SUCCESS_SUBTITLE: 'Your document has been submitted for anchoring.',
-  SUCCESS_PROCESSING: 'Anchoring typically takes 5\u201315 minutes. You\u2019ll see the status update on your dashboard.',
+  SUCCESS_PROCESSING: 'Anchoring in progress \u2014 you\u2019ll see the network receipt shortly. Status updates appear on your dashboard in real time.',
   COPY_LINK: 'Copy Verification Link',
   LINK_COPIED: 'Verification link copied to clipboard',
   VIEW_RECORD: 'View Record',

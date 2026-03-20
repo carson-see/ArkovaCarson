@@ -341,15 +341,19 @@ export interface MempoolProviderConfig {
   baseUrl?: string;
 }
 
-const DEFAULT_MEMPOOL_TESTNET4_URL = 'https://mempool.space/testnet4/api';
-const _DEFAULT_MEMPOOL_SIGNET_URL = 'https://mempool.space/signet/api';
+const MEMPOOL_URLS: Record<string, string> = {
+  signet: 'https://mempool.space/signet/api',
+  testnet4: 'https://mempool.space/testnet4/api',
+  testnet: 'https://mempool.space/testnet/api',
+  mainnet: 'https://mempool.space/api',
+};
 
 export class MempoolUtxoProvider implements UtxoProvider {
   readonly name = 'Mempool.space REST API';
   private readonly baseUrl: string;
 
   constructor(config: MempoolProviderConfig = {}) {
-    this.baseUrl = (config.baseUrl ?? DEFAULT_MEMPOOL_TESTNET4_URL).replace(/\/$/, '');
+    this.baseUrl = (config.baseUrl ?? MEMPOOL_URLS.testnet4).replace(/\/$/, '');
   }
 
   async listUnspent(address: string): Promise<Utxo[]> {
@@ -439,6 +443,7 @@ export interface UtxoProviderFactoryConfig {
   rpcUrl?: string;
   rpcAuth?: string;
   mempoolApiUrl?: string;
+  network?: string;
 }
 
 export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): UtxoProvider {
@@ -448,7 +453,7 @@ export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): Ut
     return new RpcUtxoProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth });
   }
   if (factoryConfig.type === 'mempool') {
-    const baseUrl = factoryConfig.mempoolApiUrl ?? DEFAULT_MEMPOOL_TESTNET4_URL;
+    const baseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'testnet4'] ?? MEMPOOL_URLS.testnet4;
     logger.info({ provider: 'mempool', baseUrl }, 'Creating Mempool.space UTXO provider');
     return new MempoolUtxoProvider({ baseUrl });
   }

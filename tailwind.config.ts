@@ -137,9 +137,9 @@ const config: Config = {
       animation: {
         'accordion-down': 'accordion-down 0.2s ease-out',
         'accordion-up': 'accordion-up 0.2s ease-out',
-        'fade-in': 'fade-in 0.3s ease-out',
-        'fade-up': 'fade-up 0.4s ease-out',
-        'slide-in-right': 'slide-in-right 0.3s ease-out',
+        'fade-in': 'fade-in 0.3s ease-out forwards',
+        'fade-up': 'fade-up 0.4s ease-out forwards',
+        'slide-in-right': 'slide-in-right 0.3s ease-out forwards',
       },
       spacing: {
         // Additional spacing values for layout consistency

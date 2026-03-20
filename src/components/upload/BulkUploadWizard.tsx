@@ -47,7 +47,7 @@ import {
   type ColumnMapping,
   type ValidationResult,
   type CsvColumn,
-  extractAnchorRecords,
+  extractAnchorRecordsAsync,
   validateCsvRows,
 } from '@/lib/csvParser';
 
@@ -117,7 +117,8 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setError(null);
 
     // Enrich valid records with extraction results if available
-    const records = extractAnchorRecords(validation.valid, columns, mapping);
+    // Uses async version to auto-generate fingerprints when not in CSV
+    const records = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
 
     const bulkResult = await createBulkAnchors(records);
 
@@ -145,8 +146,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setError(null);
     // Trigger processing via the already-defined handler
     if (parsedCsv && mapping && validation) {
-      const records = extractAnchorRecords(validation.valid, columns, mapping);
-      createBulkAnchors(records).then((bulkResult) => {
+      extractAnchorRecordsAsync(validation.valid, columns, mapping).then((records) => createBulkAnchors(records)).then((bulkResult) => {
         if (bulkResult) {
           const processingResult: ProcessingResult = {
             total: bulkResult.total,

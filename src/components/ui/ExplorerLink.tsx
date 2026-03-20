@@ -17,8 +17,8 @@ const EXPLORER_URLS: Record<string, string> = {
 };
 
 function getExplorerBaseUrl(): string {
-  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'testnet4';
-  return EXPLORER_URLS[network] ?? EXPLORER_URLS.testnet4;
+  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'signet';
+  return EXPLORER_URLS[network] ?? EXPLORER_URLS.signet;
 }
 
 /** Truncate a receipt ID for display: first 8 + last 8 chars */

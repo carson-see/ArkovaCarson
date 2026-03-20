@@ -261,7 +261,7 @@ def456,other.doc`;
       expect(result.errors[0].message).toContain('Invalid email');
     });
 
-    it('should identify missing fingerprints', () => {
+    it('should allow empty fingerprints (auto-generated later)', () => {
       const rows = [
         {
           rowNumber: 2,
@@ -275,8 +275,8 @@ def456,other.doc`;
 
       const result = validateCsvRows(rows, columns, mapping);
 
-      expect(result.invalid).toHaveLength(1);
-      expect(result.errors[0].message).toContain('Fingerprint is required');
+      expect(result.valid).toHaveLength(1);
+      expect(result.errors).toHaveLength(0);
     });
 
     it('should identify invalid fingerprint format', () => {

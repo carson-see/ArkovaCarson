@@ -37,9 +37,9 @@ export interface GetExtractionAccuracyArgs {
   p_days?: number;
 }
 
-/** get_flag(p_flag_key) → flag value */
+/** get_flag(p_flag_id) → flag value */
 export interface GetFlagArgs {
-  p_flag_key: string;
+  p_flag_id: string;
 }
 
 /** search_public_credential_embeddings / search_credential_embeddings */

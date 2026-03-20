@@ -203,7 +203,7 @@ export function TreasuryAdminPage() {
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_NETWORK}</span>
                 <Badge variant="secondary" className="font-mono text-xs">
-                  {network?.name ?? (import.meta.env.VITE_CHAIN_NETWORK ?? 'testnet4')}
+                  {network?.name ?? 'signet'}
                 </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">

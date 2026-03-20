@@ -16,7 +16,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
-import { TOAST } from '@/lib/copy';
+import { TOAST, REALTIME_TOAST_LABELS } from '@/lib/copy';
+import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
@@ -35,6 +36,7 @@ function mapAnchorToRecord(anchor: AnchorRow): Record {
     securedAt: anchor.chain_timestamp ?? undefined,
     fileSize: anchor.file_size ?? 0,
     credentialType: anchor.credential_type ?? undefined,
+    chainTxId: anchor.chain_tx_id ?? undefined,
   };
 }
 
@@ -83,12 +85,51 @@ export function useAnchors(): UseAnchorsReturn {
     fetchAnchors();
   }, [fetchAnchors]);
 
+  // Fire status-transition toast with optional mempool link
+  const fireStatusToast = useCallback((oldRow: Partial<AnchorRow> | null, newRow: AnchorRow) => {
+    const prev = oldRow?.status;
+    const next = newRow.status;
+    if (!prev || prev === next) return;
+
+    if (next === 'SUBMITTED' && newRow.chain_tx_id) {
+      const explorerUrl = `${getExplorerBaseUrl()}/tx/${newRow.chain_tx_id}`;
+      toast.info(REALTIME_TOAST_LABELS.SUBMITTED, {
+        description: `${newRow.filename} — track on explorer`,
+        action: {
+          label: 'View on Explorer',
+          onClick: () => window.open(explorerUrl, '_blank', 'noopener,noreferrer'),
+        },
+        duration: 15000,
+      });
+    } else if (next === 'SECURED') {
+      const explorerUrl = newRow.chain_tx_id
+        ? `${getExplorerBaseUrl()}/tx/${newRow.chain_tx_id}`
+        : undefined;
+      toast.success(REALTIME_TOAST_LABELS.SECURED, {
+        description: newRow.filename,
+        ...(explorerUrl && {
+          action: {
+            label: 'View Receipt',
+            onClick: () => window.open(explorerUrl, '_blank', 'noopener,noreferrer'),
+          },
+        }),
+        duration: 10000,
+      });
+    } else if (next === 'REVOKED') {
+      toast.error(REALTIME_TOAST_LABELS.REVOKED, { description: newRow.filename });
+    } else if (next === 'EXPIRED') {
+      toast.warning(REALTIME_TOAST_LABELS.EXPIRED, { description: newRow.filename });
+    }
+  }, []);
+
   // Extracted handler to reduce nesting depth (SonarQube S2004)
   const handleRealtimePayload = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (payload: { eventType: string; new: any; old: any }) => {
       if (payload.eventType === 'UPDATE') {
         const updated = payload.new as AnchorRow;
+        const old = payload.old as Partial<AnchorRow> | null;
+        fireStatusToast(old, updated);
         setRecords((prev) =>
           prev.map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
         );
@@ -104,7 +145,7 @@ export function useAnchors(): UseAnchorsReturn {
         }
       }
     },
-    [],
+    [fireStatusToast],
   );
 
   // Realtime subscription for anchor changes (BETA-01)
@@ -132,7 +173,7 @@ export function useAnchors(): UseAnchorsReturn {
         channelRef.current = null;
       }
     };
-  }, [user]);
+  }, [user, handleRealtimePayload]);
 
   const refreshAnchors = useCallback(async () => {
     await fetchAnchors();

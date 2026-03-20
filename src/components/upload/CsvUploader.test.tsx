@@ -20,11 +20,11 @@ describe('CsvUploader', () => {
     expect(screen.getByText(/select file/i)).toBeInTheDocument();
   });
 
-  it('should show required and optional columns info', () => {
+  it('should show upload instructions', () => {
     render(<CsvUploader onParsed={mockOnParsed} />);
 
-    expect(screen.getByText(/required columns/i)).toBeInTheDocument();
-    expect(screen.getByText(/optional columns/i)).toBeInTheDocument();
+    expect(screen.getByText(/upload any spreadsheet/i)).toBeInTheDocument();
+    expect(screen.getByText(/auto-detected columns/i)).toBeInTheDocument();
   });
 
   it('should accept valid CSV file', async () => {
@@ -102,7 +102,7 @@ ${fingerprint},test.pdf,invalid-email`;
     expect(mockOnParsed).not.toHaveBeenCalled();
   });
 
-  it('should show error when fingerprint column is missing', async () => {
+  it('should accept CSV without fingerprint column (auto-generated)', async () => {
     render(<CsvUploader onParsed={mockOnParsed} />);
 
     const csvContent = `name,value
@@ -114,10 +114,11 @@ test.pdf,100`;
     fireEvent.change(input, { target: { files: [file] } });
 
     await waitFor(() => {
-      expect(screen.getByText(/could not detect fingerprint column/i)).toBeInTheDocument();
+      expect(mockOnParsed).toHaveBeenCalled();
     });
 
-    expect(mockOnParsed).not.toHaveBeenCalled();
+    const [parsedCsv] = mockOnParsed.mock.calls[0];
+    expect(parsedCsv.rows).toHaveLength(1);
   });
 
   it('should handle 500 rows', async () => {

@@ -97,6 +97,7 @@ export async function handleTreasuryStatus(
         rpcUrl: config.bitcoinRpcUrl,
         rpcAuth: config.bitcoinRpcAuth,
         mempoolApiUrl: config.mempoolApiUrl,
+        network: config.bitcoinNetwork,
       });
 
       const utxos = await utxoProvider.listUnspent(address);
