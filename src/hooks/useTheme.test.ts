@@ -28,9 +28,9 @@ describe('useTheme', () => {
     window.matchMedia = originalMatchMedia;
   });
 
-  it('defaults to system theme', () => {
+  it('defaults to dark theme', () => {
     const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('system');
+    expect(result.current.theme).toBe('dark');
   });
 
   it('setTheme changes to dark', () => {
@@ -57,13 +57,16 @@ describe('useTheme', () => {
 
   it('resolvedTheme returns light or dark, never system', () => {
     const { result } = renderHook(() => useTheme());
-    // When theme is 'system', resolvedTheme should be the actual resolved value
     expect(['light', 'dark']).toContain(result.current.resolvedTheme);
   });
 
   it('system theme resolves based on matchMedia', () => {
-    // matchMedia returns false for dark → system resolves to light
+    // Set theme to system, then check it resolves via matchMedia
     const { result } = renderHook(() => useTheme());
+    act(() => {
+      result.current.setTheme('system');
+    });
+    // matchMedia returns false for dark → system resolves to light
     expect(result.current.resolvedTheme).toBe('light');
   });
 });

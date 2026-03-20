@@ -91,7 +91,7 @@ async function handleExtract(request: Request, env: Env): Promise<Response> {
       .slice(0, maxTextLength)
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ''); // strip control chars
 
-    const model = env.CF_AI_MODEL || '@cf/nvidia/nemotron';
+    const model = (env.CF_AI_MODEL || '@cf/nvidia/nemotron') as Parameters<Ai['run']>[0];
 
     // Call Workers AI with structured system/user separation to mitigate prompt injection
     const aiResult = await env.ARKOVA_AI.run(model, {
