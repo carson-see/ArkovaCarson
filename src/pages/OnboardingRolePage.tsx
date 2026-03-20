@@ -21,6 +21,9 @@ export function OnboardingRolePage() {
   const { refreshProfile } = useProfile();
   const { loading, error, setRole } = useOnboarding();
 
+  // Log raw error for debugging, show sanitized message to user
+  if (error) console.error('[OnboardingRolePage] Onboarding error:', error);
+
   const handleRoleSelect = async (role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
     const result = await setRole(role);
     if (result) {
@@ -37,7 +40,7 @@ export function OnboardingRolePage() {
       {error && (
         <Alert variant="destructive" className="mb-4">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+          <AlertDescription>Something went wrong during onboarding. Please try again.</AlertDescription>
         </Alert>
       )}
       <RoleSelector onSelect={handleRoleSelect} loading={loading} />
