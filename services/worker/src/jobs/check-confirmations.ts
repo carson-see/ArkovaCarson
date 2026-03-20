@@ -394,5 +394,5 @@ async function trySendSecuredEmail(
     orgId: orgId ?? undefined,
   });
 
-  logger.info({ anchorId, to: profile.email }, 'Sent anchor_secured email notification');
+  logger.info({ anchorId, userId }, 'Sent anchor_secured email notification');
 }

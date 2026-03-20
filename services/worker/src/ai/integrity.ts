@@ -222,8 +222,8 @@ export async function computeIntegrityScore(
           .replace(/^(The|A)\s+/i, '')
           .trim()
           // Sanitize for PostgREST filter interpolation — strip characters that could
-          // manipulate the .or() filter string (commas, dots, parentheses)
-          .replace(/[,.()"'\\]/g, '');
+          // manipulate the .or() filter string (commas, dots, parentheses, LIKE wildcards)
+          .replace(/[,.()"'\\%_]/g, '');
         if (!normalizedIssuer || normalizedIssuer.length < 2) {
           issuerVerification = 30;
           flags.push('issuer_not_in_registry');

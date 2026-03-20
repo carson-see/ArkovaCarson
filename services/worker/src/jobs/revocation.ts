@@ -269,5 +269,5 @@ async function trySendRevocationEmail(anchorId: string, anchorRecord: any): Prom
     orgId: anchorRecord.org_id ?? undefined,
   });
 
-  logger.info({ anchorId, to: profile.email }, 'Sent revocation email notification');
+  logger.info({ anchorId, userId: anchorRecord.user_id }, 'Sent revocation email notification');
 }
