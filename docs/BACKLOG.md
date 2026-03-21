@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed, AuthCallbackPage race condition fix, anchor processing confirmed on signet) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-21 (PRs #117-120: Synthetic Sentinel design system, MCP deploy to edge.arkova.ai, DEMO-04 complete, migration 0074) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -12,7 +12,7 @@ _Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed, AuthCallbackPage race co
 | **BETA Readiness Stories** | **13** | **13** | **0** | No (all complete) |
 | BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
 | E2E Validation Bugs | 7 | 7 fixed | 0 | No |
-| Demo Readiness (DEMO) | 4 | 2 | 2 | No (enhancement) |
+| Demo Readiness (DEMO) | 4 | 3 | 1 | No (enhancement) |
 | Stories (NOT STARTED) | 8 | — | 8 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | 1 blocking (INFRA-07) |
 | Security Findings | 12 | 12 fixed | 0 | No |
@@ -21,7 +21,7 @@ _Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed, AuthCallbackPage race co
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **18** | |
+| **Total Open Items** | | | **17** | |
 
 ---
 
@@ -259,7 +259,7 @@ _Discovered during E2E demo readiness session. Enhancement items for demo polish
 | 1 | DEMO-01 | **HIGH** | OP_RETURN metadata hash — include truncated SHA-256 of metadata JSON alongside document fingerprint in OP_RETURN. Format: `ARKV` + 32 bytes doc fingerprint + 8 bytes metadata hash. Enables fully independent verification of both document and metadata without Arkova. | **COMPLETE** |
 | 2 | DEMO-02 | **HIGH** | Verification walkthrough UI — "How Verification Works" explainer on record detail page. Explains: (1) SHA-256 fingerprint = the document's unique identity, (2) OP_RETURN on network = permanent timestamped proof, (3) anyone can verify by hashing the document and searching the network, (4) no dependency on Arkova being online. | **COMPLETE** |
 | 3 | ~~DEMO-03~~ | ~~**MEDIUM**~~ | ~~Search page dark mode~~ | **RESOLVED** — `useTheme()` already called at App root (line 106 of App.tsx). Public routes inherit dark class via `document.documentElement`. No code change needed. |
-| 4 | DEMO-04 | **LOW** | Credential template visual rendering — upgrade CredentialRenderer to show diploma-style visual cards for different credential types (degree, license, certificate). | NOT STARTED |
+| 4 | ~~DEMO-04~~ | ~~**LOW**~~ | ~~Credential template visual rendering — upgrade CredentialRenderer to show diploma-style visual cards for different credential types (degree, license, certificate).~~ | **COMPLETE** (PRs #117-120, 16 templates in production, type-specific visual cards) |
 
 ---
 

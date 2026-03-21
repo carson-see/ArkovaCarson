@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 165/176 stories complete (94%) incl. 13 Beta stories (BETA-01–13). 2,009 tests (966 frontend + 1,043 worker). 73 migration files (0001-0073, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **7+ real Signet transactions confirmed end-to-end.** All feature gates fixed (p_flag_key + column names). Worker rev 00025 deployed. Frontend on arkova-26.vercel.app.
+**Overall progress:** 166/176 stories complete (94%) incl. 13 Beta stories (BETA-01–13). 2,009 tests (966 frontend + 1,043 worker). 74 migration files (0001-0074, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **7+ real Signet transactions confirmed end-to-end.** All feature gates fixed (p_flag_key + column names). Worker rev 00030 deployed. Frontend on arkova-26.vercel.app. **Design system: "Synthetic Sentinel"** (Inter + Space Grotesk, #00d4ff cyan, tonal layering). MCP server live at edge.arkova.ai.
 
 ### Open Blockers
 
@@ -89,7 +89,7 @@ All HIGH+ launch blockers resolved:
 
 ### What's Production-Ready
 
-- Database layer (73 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
+- Database layer (74 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
@@ -104,12 +104,15 @@ All HIGH+ launch blockers resolved:
 - Sentry error tracking with PII scrubbing (frontend + worker)
 - AI provider abstraction (IAIProvider interface, factory, mock, CF fallback)
 - AI extraction pipeline (Gemini, OCR, PII stripping, credit tracking)
-- Semantic search (pgvector embeddings, cosine similarity, Nordic Vault UI)
+- Semantic search (pgvector embeddings, cosine similarity)
 - Edge worker infrastructure (batch queue, report storage, crawler, AI fallback)
 - AI documentation (llms.txt + AGENTS.md for agent discovery)
-- Remote MCP server (Cloudflare Worker, Streamable HTTP, OAuth + API key auth)
+- Remote MCP server deployed at edge.arkova.ai (Cloudflare Worker, Streamable HTTP, OAuth + API key auth)
 - GDPR compliance (PII erasure RPCs, audit log anonymization, data retention policies)
-- **"Nordic Vault" UI design system** (PR #42) — DM Sans + JetBrains Mono fonts, mesh gradients, glassmorphism, glow shadows, staggered animations. Full rules in CLAUDE.md Section 5 + `feedback_frontend_aesthetics.md`.
+- **"Synthetic Sentinel" UI design system** (PRs #117-120, replacing Nordic Vault) — Inter + Space Grotesk fonts, #0d141b bg, #00d4ff primary cyan, tonal layering. Updated: tailwind.config.ts, index.css, Sidebar, AppShell, AuthLayout, StatCard, DashboardPage, SearchPage.
+- **DevelopersPage** at /developers (public, Stitch wireframe design)
+- **Credential template library** — 16 production templates + type-specific visual cards in CredentialRenderer (DEMO-04)
+- **AI extraction on all file types** — ocrWorker supports .txt, .csv, .md, etc. (not just PDFs)
 - **User Flow Gaps (UF-01 through UF-10) ALL COMPLETE** — CredentialRenderer, public search, recipient inbox, PENDING status UX, metadata entry, usage tracking, enhanced verification, share flow, breadcrumbs/nav polish, onboarding checklist
 - **GCP Infrastructure** — Cloud Run (worker deployed), Secret Manager (7 secrets), Cloud Scheduler (4 cron jobs)
 - **Bitcoin anchoring pipeline (Signet)** — 6+ real transactions confirmed end-to-end. PENDING -> SUBMITTED -> SECURED lifecycle working. Realtime toasts with mempool.space explorer links.
@@ -142,6 +145,41 @@ All HIGH+ launch blockers resolved:
 
 > **Full session history (25+ entries, 2026-03-14 through 2026-03-17) archived to `docs/archive/session-log.md`.**
 > Only the most recent session is kept here. Older entries are in the archive.
+
+### Session: 2026-03-21 — Synthetic Sentinel Design System + MCP Deploy + Credential Templates
+
+**PRs #117-120 merged to main.** Major design system migration, MCP server deployment, credential template library.
+
+**Design system migration (Synthetic Sentinel):**
+- Replaced Nordic Vault aesthetic app-wide
+- New fonts: Inter + Space Grotesk (was DM Sans + JetBrains Mono)
+- New colors: #0d141b bg, #00d4ff primary cyan, tonal layering
+- Updated: tailwind.config.ts, index.css, Sidebar, AppShell, AuthLayout, StatCard, DashboardPage, SearchPage
+- New DevelopersPage at /developers (public, Stitch wireframe design)
+
+**Credential templates & rendering:**
+- CredentialRenderer upgraded with type-specific visual cards (DEMO-04 COMPLETE)
+- 16 credential templates created in production Supabase
+
+**AI extraction improvements:**
+- AI extraction now runs on ALL file types (not just PDFs) — ocrWorker supports .txt, .csv, .md, etc.
+- AI-extracted metadata now saves by default (suggested fields included, not just accepted)
+
+**Bug fixes:**
+- Bulk upload: stale closure error display, target_id uuid type error in RPC
+- search_public_credentials RPC fixed (referenced non-existent 'title' column) — migration 0074
+- Auto-create recipient profiles on bulk upload wired (BETA-04)
+
+**Infrastructure:**
+- MCP server deployed to Cloudflare Workers at edge.arkova.ai (secrets set, health check verified)
+- GEMINI_API_KEY set on Cloud Run (rev 00029 -> 00030)
+- Worker deployed rev 00030 (Swagger dark theme)
+- Professional subscription created for UMich demo org
+- AI credit allocation (500/month) for demo org
+- 14 test documents created in demo-assets/test-docs/
+- Vercel frontend auto-deploying from all pushes to main
+
+**Stats:** 2,009 tests (unchanged). 74 migration files. Worker rev 00030. DEMO-04 COMPLETE.
 
 ### Session: 2026-03-20 — E2E Demo Readiness + Anchoring Pipeline Fix
 
@@ -369,18 +407,19 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 
 ## Verification Pending
 
-**MCP Server verification:** After `wrangler deploy`, test with MCP Inspector:
+**MCP Server verification:** Deployed at edge.arkova.ai. Test with MCP Inspector:
 ```bash
-npx @modelcontextprotocol/inspector https://arkova-edge.<account>.workers.dev/mcp
+npx @modelcontextprotocol/inspector https://edge.arkova.ai/mcp
 ```
 Then call `verify_credential` with `{ "public_id": "ARK-2026-001" }` and `search_credentials` with `{ "query": "University of Michigan" }`.
 
-**llms.txt validation:** Verify at `https://arkova-edge.<account>.workers.dev/llms.txt` — should return valid markdown under 5KB with all required sections.
+**Health check:** `curl https://edge.arkova.ai/health` — returns `{"status":"ok","service":"arkova-edge"}`.
 
-**Crawl test on live university domain:** Requires deployed edge worker with Workers AI binding. Run:
+**llms.txt validation:** Verify at `https://edge.arkova.ai/llms.txt` — should return valid markdown under 5KB with all required sections.
+
+**Crawl test on live university domain:** Run:
 ```bash
-# After wrangler deploy:
-curl -X POST https://arkova-edge.<account>.workers.dev/crawl \
+curl -X POST https://edge.arkova.ai/crawl \
   -H 'Content-Type: application/json' \
   -d '{"domains":["umich.edu"]}'
 ```

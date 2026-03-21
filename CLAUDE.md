@@ -1,13 +1,13 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-21 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 73 migrations | 2,009 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved
+> **Stats:** 74 migrations | 2,009 tests | 176 stories (166 complete, 94%) | 24/24 audit findings resolved
 
 Read this file before every task. Rules here override all other documents.
 
 **Reference docs** (read on demand, not every session):
 - `docs/reference/FILE_MAP.md` — Full file placement map
-- `docs/reference/BRAND.md` — Nordic Vault design system (colors, typography, CSS classes, component rules)
+- `docs/reference/BRAND.md` — Synthetic Sentinel design system (colors, typography, CSS classes, component rules)
 - `docs/reference/TESTING.md` — Test patterns, demo users, frozen API schema
 - `docs/reference/STORY_ARCHIVE.md` — Completed story details (P1-P8, DH, UF, P4.5, UAT)
 
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 73 files (0001-0073, 0033 skipped, 0068 split into 0068a/0068b). Last: `0073_credential_type_immutability.sql`. All migrations applied to production (0059-0073 applied 2026-03-20/21).
+**Current:** 74 files (0001-0074, 0033 skipped, 0068 split into 0068a/0068b). Last: `0074_fix_search_public_credentials.sql`. All migrations applied to production (0059-0074 applied 2026-03-20/21).
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -250,7 +250,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | UAT + UF | 27/27 | 0 | 0 | 100% |
 | GEO & SEO | 6/12 | 2 | 4 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
-| **Total** | **165/176** | **2/176** | **9/176** | **~94%** |
+| **Total** | **166/176** | **2/176** | **8/176** | **~94%** |
 
 ### Incomplete Stories
 
@@ -375,5 +375,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-21 | 73 migrations | 2,009 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-21 | 74 migrations | 2,009 tests | 176 stories (166 complete, 94%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
