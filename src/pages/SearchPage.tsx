@@ -184,36 +184,36 @@ export function SearchPage() {
         {/* Header */}
         <div className="text-center mb-10 animate-in-view">
           <div className="flex justify-center mb-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary/15 to-primary/5">
-              <Shield className="h-8 w-8 text-primary" />
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#192028]">
+              <Shield className="h-8 w-8 text-[#00d4ff]" />
             </div>
           </div>
-          <h1 className="text-3xl font-semibold tracking-tight">
+          <h1 className="text-4xl font-black tracking-tighter">
             {SEARCH_LABELS.PAGE_TITLE}
           </h1>
-          <p className="text-muted-foreground mt-2 max-w-md mx-auto">
+          <p className="text-[#bbc9cf] mt-2 max-w-md mx-auto font-mono text-xs uppercase tracking-widest">
             Search by issuer name, verification ID, or document fingerprint
           </p>
         </div>
 
         {/* Unified search form */}
-        <Card className="glass-card shadow-card-rest mb-8 animate-in-view stagger-1">
+        <Card className="bg-[#151c24] border-white/5 mb-8 animate-in-view stagger-1">
           <CardContent className="p-6">
             <div className="flex flex-col gap-3 sm:flex-row">
               <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
                 <Input
                   placeholder="Search by issuer name, verification ID, or fingerprint..."
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   onKeyDown={handleKeyDown}
-                  className="pl-9"
+                  className="pl-9 bg-[#192028] border-[#3c494e]/30 focus:ring-[#00d4ff]/30 rounded-full"
                 />
               </div>
               <Button
                 onClick={handleSearch}
                 disabled={isSearching || !query.trim()}
-                className="shadow-glow-sm hover:shadow-glow-md"
+                className="bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md font-semibold"
               >
                 {isSearching ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

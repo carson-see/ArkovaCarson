@@ -4,26 +4,26 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 156 4% 19%;
+    --background: 210 20% 96%;
+    --foreground: 210 22% 13%;
 
     --card: 0 0% 100%;
-    --card-foreground: 156 4% 19%;
+    --card-foreground: 210 22% 13%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 156 4% 19%;
+    --popover-foreground: 210 22% 13%;
 
-    --primary: 197 42% 66%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 191 100% 50%;
+    --primary-foreground: 210 37% 8%;
 
-    --secondary: 199 44% 90%;
-    --secondary-foreground: 156 4% 19%;
+    --secondary: 210 15% 92%;
+    --secondary-foreground: 210 22% 13%;
 
-    --muted: 199 30% 95%;
-    --muted-foreground: 160 4% 35%;
+    --muted: 210 15% 92%;
+    --muted-foreground: 195 9% 46%;
 
-    --accent: 200 40% 53%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 210 15% 92%;
+    --accent-foreground: 210 22% 13%;
 
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
@@ -34,43 +34,43 @@
     --warning: 38 92% 50%;
     --warning-foreground: 30 80% 15%;
 
-    --border: 199 20% 88%;
-    --input: 199 20% 88%;
-    --ring: 197 42% 66%;
+    --border: 210 15% 88%;
+    --input: 210 15% 88%;
+    --ring: 191 100% 50%;
 
     --radius: 0.5rem;
 
-    --sidebar-background: 156 4% 19%;
-    --sidebar-foreground: 199 30% 85%;
-    --sidebar-primary: 197 42% 66%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 156 4% 25%;
-    --sidebar-accent-foreground: 199 30% 90%;
-    --sidebar-border: 156 4% 25%;
-    --sidebar-ring: 197 42% 66%;
+    --sidebar-background: 210 37% 8%;
+    --sidebar-foreground: 220 33% 89%;
+    --sidebar-primary: 191 100% 50%;
+    --sidebar-primary-foreground: 210 37% 8%;
+    --sidebar-accent: 210 22% 13%;
+    --sidebar-accent-foreground: 220 33% 89%;
+    --sidebar-border: 195 13% 27%;
+    --sidebar-ring: 191 100% 50%;
   }
 
   .dark {
-    --background: 156 4% 10%;
-    --foreground: 199 30% 90%;
+    --background: 210 37% 8%;
+    --foreground: 220 33% 89%;
 
-    --card: 156 4% 12%;
-    --card-foreground: 199 30% 90%;
+    --card: 210 22% 13%;
+    --card-foreground: 220 33% 89%;
 
-    --popover: 156 4% 12%;
-    --popover-foreground: 199 30% 90%;
+    --popover: 210 22% 13%;
+    --popover-foreground: 220 33% 89%;
 
-    --primary: 197 42% 66%;
-    --primary-foreground: 156 4% 10%;
+    --primary: 191 100% 50%;
+    --primary-foreground: 210 37% 8%;
 
-    --secondary: 156 4% 18%;
-    --secondary-foreground: 199 30% 90%;
+    --secondary: 210 15% 17%;
+    --secondary-foreground: 220 33% 89%;
 
-    --muted: 156 4% 18%;
-    --muted-foreground: 199 20% 55%;
+    --muted: 210 15% 17%;
+    --muted-foreground: 195 9% 56%;
 
-    --accent: 200 40% 53%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 210 22% 13%;
+    --accent-foreground: 220 33% 89%;
 
     --destructive: 0 63% 31%;
     --destructive-foreground: 0 0% 100%;
@@ -81,18 +81,18 @@
     --warning: 48 97% 53%;
     --warning-foreground: 30 80% 15%;
 
-    --border: 156 4% 20%;
-    --input: 156 4% 20%;
-    --ring: 197 42% 55%;
+    --border: 195 13% 27%;
+    --input: 213 24% 11%;
+    --ring: 191 100% 50%;
 
-    --sidebar-background: 156 4% 8%;
-    --sidebar-foreground: 199 30% 85%;
-    --sidebar-primary: 197 42% 66%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 156 4% 15%;
-    --sidebar-accent-foreground: 199 30% 90%;
-    --sidebar-border: 156 4% 15%;
-    --sidebar-ring: 197 42% 66%;
+    --sidebar-background: 210 40% 6%;
+    --sidebar-foreground: 220 33% 89%;
+    --sidebar-primary: 191 100% 50%;
+    --sidebar-primary-foreground: 210 37% 8%;
+    --sidebar-accent: 210 22% 13%;
+    --sidebar-accent-foreground: 196 100% 83%;
+    --sidebar-border: 195 13% 27%;
+    --sidebar-ring: 191 100% 50%;
   }
 }
 
@@ -104,7 +104,7 @@
   body {
     @apply bg-background text-foreground;
 
-    font-family: 'DM Sans';
+    font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
     font-feature-settings: "rlig" 1, "calt" 1;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -132,59 +132,59 @@
     display: none;
   }
 
-  /* ── Nordic Vault Atmospheric Effects ────────────────────────────── */
+  /* -- Synthetic Sentinel Atmospheric Effects ------------------------------ */
 
   /* Layered radial gradients for atmospheric content backgrounds */
   .bg-mesh-gradient {
     background:
-      radial-gradient(circle at 20% 50%, hsl(197 42% 66% / 0.12) 0%, transparent 50%),
-      radial-gradient(circle at 80% 80%, hsl(200 40% 53% / 0.08) 0%, transparent 50%),
+      radial-gradient(ellipse at 20% 50%, rgba(0, 212, 255, 0.06) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 80%, rgba(95, 214, 235, 0.04) 0%, transparent 50%),
       hsl(var(--background));
   }
 
   /* Subtle dot grid pattern overlay */
   .bg-dot-pattern {
-    background-image: radial-gradient(circle, hsl(var(--foreground) / 0.05) 1px, transparent 1px);
+    background-image: radial-gradient(circle, hsl(var(--foreground) / 0.03) 1px, transparent 1px);
     background-size: 24px 24px;
   }
 
-  /* ── Glass Morphism ─────────────────────────────────────────────── */
+  /* -- Glass Morphism ------------------------------------------------------- */
 
   /* Frosted glass card */
   .glass-card {
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid hsl(var(--border) / 0.5);
-    background: hsl(var(--card) / 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid hsl(var(--border) / 0.15);
+    background: hsl(var(--card) / 0.6);
   }
 
   /* Glassmorphism header */
   .glass-header {
-    backdrop-filter: blur(12px) saturate(1.5);
-    -webkit-backdrop-filter: blur(12px) saturate(1.5);
+    backdrop-filter: blur(20px) saturate(1.2);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
     background: hsl(var(--background) / 0.8);
   }
 
-  /* ── Gradient & Glow Effects ────────────────────────────────────── */
+  /* -- Gradient & Glow Effects ---------------------------------------------- */
 
   /* Gradient border via background-clip technique */
   .gradient-border {
     position: relative;
     background:
       linear-gradient(hsl(var(--background)), hsl(var(--background))) padding-box,
-      linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent))) border-box;
+      linear-gradient(135deg, rgba(0, 212, 255, 0.4), rgba(95, 214, 235, 0.2)) border-box;
     border: 1px solid transparent;
   }
 
   /* Colored glow box-shadows */
   .glow-primary {
-    box-shadow: 0 0 20px hsl(197 42% 66% / 0.35);
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.25);
   }
   .glow-success {
     box-shadow: 0 0 20px hsl(160 84% 39% / 0.35);
   }
 
-  /* ── Navigation & Sidebar ───────────────────────────────────────── */
+  /* -- Navigation & Sidebar ------------------------------------------------- */
 
   /* Active sidebar nav item glow bar */
   .nav-glow {
@@ -199,7 +199,7 @@
     width: 3px;
     height: 1.5rem;
     border-radius: 0 9999px 9999px 0;
-    background: hsl(var(--primary));
+    background: #00d4ff;
   }
 
   /* Dark gradient for sidebar */
@@ -212,7 +212,7 @@
     );
   }
 
-  /* ── Loading & Animation ────────────────────────────────────────── */
+  /* -- Loading & Animation -------------------------------------------------- */
 
   /* Animated shimmer loading state */
   .shimmer {
@@ -226,8 +226,7 @@
     animation: shimmer 2s infinite;
   }
 
-  /* Staggered reveal-up animation — initial opacity set via keyframe 'from',
-     not as a property, to avoid @layer specificity blocking animation-fill-mode */
+  /* Staggered reveal-up animation */
   .animate-in-view {
     animation: fade-up 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) both;
   }
@@ -256,41 +255,41 @@
   .stagger-8 { animation-delay: 480ms; }
 }
 
-/* ── Dark Mode Intensification (matches marketing site aesthetic) ── */
+/* -- Dark Mode Intensification (Synthetic Sentinel) ---------------------- */
 /* Outside @layer so .dark scoping works reliably */
 
 .dark .glass-card {
-  border-color: hsl(197 42% 66% / 0.15);
-  box-shadow: 0 0 1px hsl(197 42% 66% / 0.25), inset 0 0 1px hsl(197 42% 66% / 0.05);
+  border-color: rgba(0, 212, 255, 0.08);
+  box-shadow: 0 0 1px rgba(0, 212, 255, 0.15), inset 0 0 1px rgba(0, 212, 255, 0.03);
 }
 
 .dark .glass-header {
-  border-bottom-color: hsl(197 42% 66% / 0.1);
+  border-bottom-color: rgba(255, 255, 255, 0.05);
 }
 
 .dark .bg-mesh-gradient {
   background:
-    radial-gradient(circle at 20% 50%, hsl(197 42% 66% / 0.08) 0%, transparent 50%),
-    radial-gradient(circle at 80% 80%, hsl(200 40% 53% / 0.06) 0%, transparent 50%),
-    radial-gradient(circle at 50% 0%, hsl(197 60% 40% / 0.04) 0%, transparent 60%),
+    radial-gradient(ellipse at 20% 50%, rgba(0, 212, 255, 0.05) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(95, 214, 235, 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 0%, rgba(0, 212, 255, 0.02) 0%, transparent 60%),
     hsl(var(--background));
 }
 
 .dark .gradient-border {
   background:
     linear-gradient(hsl(var(--background)), hsl(var(--background))) padding-box,
-    linear-gradient(135deg, hsl(197 42% 66% / 0.5), hsl(200 40% 53% / 0.3)) border-box;
+    linear-gradient(135deg, rgba(0, 212, 255, 0.3), rgba(95, 214, 235, 0.15)) border-box;
 }
 
 .dark .glow-primary {
-  box-shadow: 0 0 24px hsl(197 42% 66% / 0.5);
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.35);
 }
 
 .dark .glow-success {
   box-shadow: 0 0 24px hsl(160 84% 39% / 0.5);
 }
 
-/* ── Keyframes (outside @layer for broad compatibility) ──────────── */
+/* -- Keyframes (outside @layer for broad compatibility) -------------------- */
 
 @keyframes shimmer {
   0% { background-position: 200% 0; }

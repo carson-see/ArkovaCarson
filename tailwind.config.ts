@@ -72,6 +72,22 @@ const config: Config = {
           slate:         '#4a4f4e',
           mist:          '#f4f8fa',
         },
+        // Synthetic Sentinel surface system
+        sentinel: {
+          bg: '#0d141b',
+          'surface-lowest': '#080f16',
+          'surface-low': '#151c24',
+          'surface': '#192028',
+          'surface-high': '#242b32',
+          'surface-highest': '#2e353d',
+          'on-surface': '#dce3ed',
+          'on-surface-variant': '#bbc9cf',
+          'outline': '#859398',
+          'outline-variant': '#3c494e',
+          'primary': '#a8e8ff',
+          'primary-container': '#00d4ff',
+          'secondary': '#5fd6eb',
+        },
         // Sidebar specific
         sidebar: {
           DEFAULT: 'hsl(var(--sidebar-background))',
@@ -85,9 +101,9 @@ const config: Config = {
         },
       },
       boxShadow: {
-        'glow-sm': '0 0 8px hsl(197 42% 66% / 0.3)',
-        'glow-md': '0 0 16px hsl(197 42% 66% / 0.4)',
-        'glow-lg': '0 0 24px hsl(197 42% 66% / 0.5)',
+        'glow-sm': '0 0 12px -3px rgba(0, 212, 255, 0.25)',
+        'glow-md': '0 0 20px -5px rgba(0, 212, 255, 0.3)',
+        'glow-lg': '0 0 30px -5px rgba(0, 212, 255, 0.4)',
         'card-rest': '0 1px 3px hsl(0 0% 0% / 0.1), 0 1px 2px hsl(0 0% 0% / 0.06)',
         'card-hover': '0 10px 15px -3px hsl(0 0% 0% / 0.15), 0 4px 6px -2px hsl(0 0% 0% / 0.1)',
       },
@@ -98,10 +114,13 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'DM Sans',
+          'Inter',
+          'ui-sans-serif',
+          'system-ui',
+          'sans-serif',
         ],
         mono: [
-          'JetBrains Mono',
+          'Space Grotesk',
           'ui-monospace',
           'SFMono-Regular',
           'monospace',

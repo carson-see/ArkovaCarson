@@ -156,14 +156,14 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
   const sidebarContent = (
     <aside
       className={cn(
-        'flex h-full flex-col border-r bg-sidebar transition-all duration-300',
+        'flex h-full flex-col bg-[#0d141b] border-r border-white/5 transition-all duration-300',
         collapsed ? 'w-16' : 'w-64',
         className
       )}
     >
       {/* Logo + close button (mobile) */}
       <div className={cn(
-        'flex h-16 items-center border-b px-4',
+        'flex h-16 items-center border-b border-white/5 px-4',
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         <Link
@@ -176,7 +176,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         >
           <ArkovaLogo size={36} />
           {!collapsed && (
-            <span className="text-lg font-semibold text-sidebar-foreground">
+            <span className="text-lg font-semibold text-[#dce3ed]">
               Arkova
             </span>
           )}
@@ -197,11 +197,11 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
 
       {/* Org context (UF-09) */}
       {orgName && !collapsed && (
-        <div className="px-4 py-2 border-b">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        <div className="px-4 py-2 border-b border-white/5">
+          <p className="font-mono text-[10px] font-medium uppercase tracking-widest text-[#859398]">
             {NAV_POLISH_LABELS.MANAGING_ORG}
           </p>
-          <p className="text-sm font-medium text-sidebar-foreground truncate">
+          <p className="text-sm font-medium text-[#dce3ed] truncate">
             {orgName}
           </p>
         </div>
@@ -224,7 +224,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
           {isPlatformAdmin && (
             <>
               {!collapsed && (
-                <p className="px-3 pt-4 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <p className="px-3 pt-4 pb-1 font-mono text-[10px] font-medium uppercase tracking-widest text-[#859398]">
                   Admin
                 </p>
               )}
@@ -256,7 +256,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
       </div>
 
       {/* Theme Toggle + Collapse */}
-      <div className="border-t p-3 space-y-1">
+      <div className="border-t border-white/5 p-3 space-y-1">
         <ThemeToggle collapsed={collapsed} />
         {/* Collapse button — desktop only (mobile uses overlay) */}
         <div className="hidden md:block">
@@ -322,11 +322,11 @@ function SidebarNavLink({ item, collapsed, active }: Readonly<SidebarNavLinkProp
     <Link
       to={item.to}
       className={cn(
-        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+        'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all',
         active
-          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-          : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-        collapsed && 'justify-center px-2'
+          ? 'border-l-4 border-[#00d4ff] bg-[#192028] text-[#00d4ff] rounded-l-none'
+          : 'border-l-4 border-transparent text-[#bbc9cf] hover:bg-[#192028]/50 hover:text-[#dce3ed]',
+        collapsed && 'justify-center px-2 border-l-0'
       )}
     >
       <Icon className="h-4 w-4 shrink-0" />

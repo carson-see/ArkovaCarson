@@ -64,22 +64,22 @@ export function StatCard({
   }
 
   return (
-    <Card className="transition-shadow hover:shadow-md">
+    <Card className="transition-all hover:bg-[#2e353d] border-white/5">
       <CardContent className="p-6">
         <div className="flex items-center gap-4">
           <div
             className={cn(
-              'flex h-12 w-12 items-center justify-center rounded-lg',
+              'flex h-12 w-12 items-center justify-center rounded-xl',
               styles.iconBg
             )}
           >
             <Icon className={cn('h-6 w-6', styles.iconColor)} />
           </div>
           <div>
-            <p className="text-sm font-medium text-muted-foreground">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               {label}
             </p>
-            <p className="text-2xl font-semibold tracking-tight">
+            <p className="text-4xl font-black tracking-tighter">
               {value}
             </p>
             {description && (

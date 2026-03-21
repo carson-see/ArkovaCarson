@@ -64,7 +64,7 @@ export function AppShell({
       {/* Main content area */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header with mobile hamburger */}
-        <div className="flex h-16 items-center border-b bg-background px-4 md:px-6">
+        <div className="flex h-16 items-center border-b border-white/5 bg-[#0d141b]/80 backdrop-blur-xl px-4 md:px-6">
           {/* Mobile hamburger */}
           <Button
             variant="ghost"

@@ -1,19 +1,23 @@
 /**
- * Credential Renderer
+ * Credential Renderer — Synthetic Sentinel Visual Cards
  *
- * Renders a credential card using template field schema + anchor metadata.
- * Templates define the display structure; metadata provides the values.
- * This is how Arkova shows records without storing documents (Constitution 1.6).
+ * Renders credential cards with type-specific visual treatments:
+ * - DEGREE: Diploma-style with institutional seal, recipient name prominent
+ * - CERTIFICATE: Certificate border with issuer branding
+ * - LICENSE: Professional license card with ID number
+ * - TRANSCRIPT: Academic record with data grid
+ * - PROFESSIONAL: Professional credential with certification badge
+ * - OTHER/fallback: Clean document card
  *
  * Three rendering modes:
  * 1. Template + metadata: structured card with labeled fields
  * 2. No template, has metadata: key-value pairs from metadata
  * 3. No metadata: filename + fingerprint + status only
  *
- * @see UF-01
+ * @see UF-01, DEMO-04
  */
 
-import { Award, Building2, Calendar, Copy, Check } from 'lucide-react';
+import { Award, Building2, Calendar, Copy, Check, GraduationCap, Shield, ScrollText, BadgeCheck, FileText } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,35 +36,77 @@ import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
 
 /** Status badge color mapping */
 const STATUS_COLORS: Record<string, string> = {
-  SECURED: 'bg-green-600 hover:bg-green-700 text-white',
-  ACTIVE: 'bg-green-600 hover:bg-green-700 text-white',
-  PENDING: 'bg-amber-500 hover:bg-amber-600 text-white',
-  REVOKED: 'bg-gray-500 hover:bg-gray-600 text-white',
-  EXPIRED: 'bg-gray-500 hover:bg-gray-600 text-white',
+  SECURED: 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30',
+  ACTIVE: 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30',
+  SUBMITTED: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+  PENDING: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
+  REVOKED: 'bg-red-500/15 text-red-400 border border-red-500/30',
+  EXPIRED: 'bg-[#859398]/15 text-[#859398] border border-[#859398]/30',
+};
+
+/** Type-specific visual config */
+const TYPE_CONFIG: Record<string, {
+  icon: React.ElementType;
+  accentColor: string;
+  borderAccent: string;
+  bgGradient: string;
+  label: string;
+}> = {
+  DEGREE: {
+    icon: GraduationCap,
+    accentColor: 'text-[#a8e8ff]',
+    borderAccent: 'border-l-[#00d4ff]',
+    bgGradient: 'from-[#00d4ff]/8 to-transparent',
+    label: 'Academic Credential',
+  },
+  CERTIFICATE: {
+    icon: BadgeCheck,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Certified Achievement',
+  },
+  LICENSE: {
+    icon: Shield,
+    accentColor: 'text-[#a8e8ff]',
+    borderAccent: 'border-l-[#a8e8ff]',
+    bgGradient: 'from-[#a8e8ff]/8 to-transparent',
+    label: 'Professional License',
+  },
+  TRANSCRIPT: {
+    icon: ScrollText,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Academic Record',
+  },
+  PROFESSIONAL: {
+    icon: Award,
+    accentColor: 'text-[#00d4ff]',
+    borderAccent: 'border-l-[#00d4ff]',
+    bgGradient: 'from-[#00d4ff]/8 to-transparent',
+    label: 'Professional Credential',
+  },
+  OTHER: {
+    icon: FileText,
+    accentColor: 'text-[#bbc9cf]',
+    borderAccent: 'border-l-[#3c494e]',
+    bgGradient: 'from-[#bbc9cf]/5 to-transparent',
+    label: 'Document Record',
+  },
 };
 
 export interface CredentialRendererProps {
-  /** Anchor's credential_type enum value */
   credentialType?: string | null;
-  /** Anchor's metadata JSONB values */
   metadata?: Record<string, unknown> | null;
-  /** Parsed template display data (from useCredentialTemplate) */
   template?: TemplateDisplayData | null;
-  /** Issuer organization name */
   issuerName?: string | null;
-  /** Anchor status */
   status?: string;
-  /** Anchor filename */
   filename?: string;
-  /** Anchor fingerprint (SHA-256) */
   fingerprint?: string;
-  /** Issued date (ISO string) */
   issuedDate?: string | null;
-  /** Expiry date (ISO string) */
   expiryDate?: string | null;
-  /** Whether to show the fingerprint section */
   showFingerprint?: boolean;
-  /** Whether to show compact mode (for table rows) */
   compact?: boolean;
 }
 
@@ -78,6 +124,10 @@ export function CredentialRenderer({
   compact = false,
 }: Readonly<CredentialRendererProps>) {
   const [copied, setCopied] = useState(false);
+
+  const typeKey = credentialType ?? 'OTHER';
+  const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
+  const TypeIcon = config.icon;
 
   const credentialLabel = credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
@@ -121,7 +171,6 @@ export function CredentialRenderer({
   const displayFields: { label: string; value: string }[] = [];
 
   if (hasTemplate && hasMetadata) {
-    // Mode 1: Template + metadata — structured fields
     for (const field of template.fields) {
       const raw = metadata[field.key];
       const formatted = formatFieldValue(raw, field.type);
@@ -130,13 +179,10 @@ export function CredentialRenderer({
       }
     }
   } else if (hasMetadata) {
-    // Mode 2: No template, has metadata — key-value pairs
     for (const [key, value] of Object.entries(metadata)) {
-      // Skip internal fields
       if (key.startsWith('_') || key === 'recipient' || key === 'jurisdiction') continue;
       const formatted = formatFieldValue(value);
       if (formatted) {
-        // Convert snake_case key to Title Case label
         const label = key
           .replace(/_/g, ' ')
           .replace(/\b\w/g, (c) => c.toUpperCase());
@@ -145,19 +191,25 @@ export function CredentialRenderer({
     }
   }
 
+  // Extract recipient name from metadata
+  const recipientName = metadata?.recipient as string
+    ?? metadata?.recipient_name as string
+    ?? metadata?.name as string
+    ?? null;
+
   // Compact mode for table row previews
   if (compact) {
     return (
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/5 shrink-0">
-          <Award className="h-4 w-4 text-primary" />
+        <div className={`flex h-8 w-8 items-center justify-center rounded-lg bg-[#242b32] shrink-0`}>
+          <TypeIcon className={`h-4 w-4 ${config.accentColor}`} />
         </div>
         <div className="min-w-0">
-          <p className="text-sm font-medium truncate">
+          <p className="text-sm font-medium truncate text-[#dce3ed]">
             {template?.name ?? credentialLabel ?? filename ?? LABELS.DOCUMENT_RECORD}
           </p>
           {issuerName && (
-            <p className="text-xs text-muted-foreground truncate">{issuerName}</p>
+            <p className="text-xs text-[#bbc9cf] truncate">{issuerName}</p>
           )}
         </div>
         {statusLabel && (
@@ -170,20 +222,23 @@ export function CredentialRenderer({
   }
 
   return (
-    <div className="glass-card rounded-xl overflow-hidden shadow-card-rest hover:shadow-card-hover transition-all duration-300 animate-in-view">
-      {/* Header: credential type + status */}
-      <div className="bg-gradient-to-r from-primary/10 to-primary/5 px-6 py-4">
+    <div className={`rounded-xl overflow-hidden border-l-4 ${config.borderAccent} bg-[#192028] transition-all duration-300`}>
+      {/* Header with type-specific gradient */}
+      <div className={`bg-gradient-to-r ${config.bgGradient} px-6 py-5`}>
         <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 shrink-0">
-              <Award className="h-5 w-5 text-primary" />
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#242b32] border border-[#3c494e]/20 shrink-0">
+              <TypeIcon className={`h-6 w-6 ${config.accentColor}`} />
             </div>
             <div className="min-w-0">
-              <h3 className="font-semibold truncate">
+              <p className="text-[10px] uppercase tracking-widest text-[#859398] mb-1">
+                {config.label}
+              </p>
+              <h3 className="font-bold text-lg text-[#dce3ed] truncate">
                 {template?.name ?? credentialLabel ?? LABELS.DOCUMENT_RECORD}
               </h3>
               {credentialLabel && template?.name && (
-                <p className="text-xs text-muted-foreground">{credentialLabel}</p>
+                <p className="text-xs text-[#bbc9cf]">{credentialLabel}</p>
               )}
             </div>
           </div>
@@ -195,45 +250,57 @@ export function CredentialRenderer({
         </div>
       </div>
 
-      <div className="px-6 py-4 space-y-4">
-        {/* Issuer */}
-        {issuerName && (
-          <div className="flex items-center gap-2 text-sm">
-            <Building2 className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground">{LABELS.ISSUED_BY}</span>
-            <span className="font-medium">{issuerName}</span>
+      <div className="px-6 py-5 space-y-5">
+        {/* Recipient name — prominent for degrees/certificates */}
+        {recipientName && (typeKey === 'DEGREE' || typeKey === 'CERTIFICATE' || typeKey === 'PROFESSIONAL') && (
+          <div className="py-2">
+            <p className="text-[10px] uppercase tracking-widest text-[#859398] mb-1">Recipient</p>
+            <p className="text-2xl font-black tracking-tight text-[#dce3ed]">{recipientName}</p>
           </div>
         )}
 
-        {/* Dates row */}
+        {/* Issuer */}
+        {issuerName && (
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-[#242b32] border border-[#3c494e]/20 flex items-center justify-center">
+              <Building2 className="h-4 w-4 text-[#bbc9cf]" />
+            </div>
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-[#859398]">{LABELS.ISSUED_BY}</p>
+              <p className="text-sm font-semibold text-[#dce3ed]">{issuerName}</p>
+            </div>
+          </div>
+        )}
+
+        {/* Dates */}
         {(issuedDate || expiryDate) && (
-          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+          <div className="flex flex-wrap gap-6">
             {issuedDate && (
-              <div className="flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">{LABELS.ISSUED_ON}:</span>
-                <span>{formatDate(issuedDate)}</span>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-3.5 w-3.5 text-[#859398]" />
+                <span className="text-[10px] uppercase tracking-widest text-[#859398]">{LABELS.ISSUED_ON}:</span>
+                <span className="text-sm text-[#dce3ed]">{formatDate(issuedDate)}</span>
               </div>
             )}
             {expiryDate && (
-              <div className="flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">{LABELS.EXPIRES_ON}:</span>
-                <span>{formatDate(expiryDate)}</span>
+              <div className="flex items-center gap-2">
+                <Calendar className="h-3.5 w-3.5 text-[#859398]" />
+                <span className="text-[10px] uppercase tracking-widest text-[#859398]">{LABELS.EXPIRES_ON}:</span>
+                <span className="text-sm text-[#dce3ed]">{formatDate(expiryDate)}</span>
               </div>
             )}
           </div>
         )}
 
-        {/* Metadata fields grid */}
+        {/* Metadata fields — tonal layered grid */}
         {displayFields.length > 0 && (
           <div className="grid gap-3 sm:grid-cols-2">
             {displayFields.map((field) => (
-              <div key={field.label} className="space-y-0.5">
-                <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <div key={field.label} className="bg-[#242b32] rounded-lg px-4 py-3">
+                <dt className="text-[10px] font-semibold uppercase tracking-widest text-[#859398] mb-1">
                   {field.label}
                 </dt>
-                <dd className="text-sm">{field.value}</dd>
+                <dd className="text-sm text-[#dce3ed]">{field.value}</dd>
               </div>
             ))}
           </div>
@@ -241,20 +308,20 @@ export function CredentialRenderer({
 
         {/* No metadata fallback */}
         {displayFields.length === 0 && filename && (
-          <div className="text-sm text-muted-foreground">
-            <p>{filename}</p>
-            <p className="text-xs mt-1">{LABELS.NO_METADATA}</p>
+          <div className="bg-[#242b32] rounded-lg px-4 py-3">
+            <p className="text-sm text-[#dce3ed]">{filename}</p>
+            <p className="text-xs mt-1 text-[#859398]">{LABELS.NO_METADATA}</p>
           </div>
         )}
 
         {/* Fingerprint */}
         {showFingerprint && fingerprint && (
-          <div className="space-y-1.5 pt-2 border-t">
+          <div className="space-y-2 pt-3 border-t border-[#3c494e]/15">
             <div className="flex items-center justify-between">
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground cursor-help">
+                    <span className="text-[10px] font-semibold uppercase tracking-widest text-[#859398] cursor-help">
                       {LABELS.FINGERPRINT_LABEL}
                     </span>
                   </TooltipTrigger>
@@ -266,7 +333,7 @@ export function CredentialRenderer({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-6 px-2 text-xs"
+                className="h-6 px-2 text-xs text-[#bbc9cf] hover:text-[#00d4ff]"
                 onClick={handleCopyFingerprint}
                 aria-label={LABELS.COPY_FINGERPRINT}
               >
@@ -277,7 +344,7 @@ export function CredentialRenderer({
                 )}
               </Button>
             </div>
-            <div className="font-mono text-xs bg-muted rounded px-3 py-2 break-all">
+            <div className="font-mono text-xs bg-[#080f16] text-[#5fd6eb] rounded-lg px-4 py-3 break-all border border-[#3c494e]/10">
               {fingerprint}
             </div>
           </div>

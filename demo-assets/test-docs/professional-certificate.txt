@@ -1,0 +1,26 @@
+CERTIFICATE OF PROFESSIONAL ACHIEVEMENT
+
+Amazon Web Services
+AWS Certified Solutions Architect - Professional
+
+This is to certify that
+
+JENNIFER L. NAKAMURA
+
+has successfully demonstrated the skills and knowledge required to earn the
+AWS Certified Solutions Architect - Professional certification.
+
+Certification ID: AWS-SAP-2025-78234
+Validation Number: 4F2K9M8B
+
+Certification Date: January 22, 2025
+Expiration Date: January 22, 2028
+
+This certification validates advanced technical skills and experience in
+designing distributed applications and systems on the AWS platform,
+including complex architectural decisions involving multiple applications,
+automation, and governance.
+
+Credential Type: CERTIFICATE
+Issuer: Amazon Web Services (AWS)
+Program: Solutions Architect Professional

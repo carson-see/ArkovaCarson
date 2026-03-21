@@ -175,10 +175,10 @@ export function DashboardPage() {
     >
       {/* Welcome section */}
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">
+        <h1 className="text-3xl font-black tracking-tighter">
           Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}
         </h1>
-        <p className="text-muted-foreground mt-1">
+        <p className="text-muted-foreground mt-1 font-mono text-[10px] uppercase tracking-widest">
           Manage and verify your secured documents
         </p>
       </div>
