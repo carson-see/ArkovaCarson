@@ -1,0 +1,27 @@
+CISCO SYSTEMS, INC.
+
+CISCO CERTIFIED NETWORK PROFESSIONAL (CCNP)
+ENTERPRISE CERTIFICATION
+
+Awarded to:
+SARAH J. KIM
+
+Certification ID: CSCO-14829374
+Cisco ID: CSCO14829374
+
+Track: Enterprise
+Specialization: Advanced Routing and Switching
+
+Exams Passed:
+  ENCOR (350-401): Score 892/1000 — Passed February 2025
+  ENARSI (300-410): Score 841/1000 — Passed January 2025
+
+Certification Date: February 20, 2025
+Expiration Date: February 20, 2028
+
+This certification validates the skills required to plan, implement,
+verify, and troubleshoot local and wide-area enterprise networks
+and work collaboratively with specialists on advanced security,
+voice, wireless, and video solutions.
+
+Verify at: cisco.com/go/verifycertificate

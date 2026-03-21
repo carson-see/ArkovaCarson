@@ -1,0 +1,7 @@
+recipient_name,recipient_email,license_type,issuing_body,license_number,issue_date,expiration_date,status,credential_type
+"Dr. Robert Hartfield",r.hartfield@michiganmed.org,"Medical Doctor (M.D.)","Michigan Board of Medicine","ML-2025-004892","2015-08-01","2027-08-01","ACTIVE",LICENSE
+"Amanda Williams",a.williams@umich.edu,"Registered Nurse (RN)","Michigan Board of Nursing","RN-2023-047821","2018-08-15","2026-08-15","ACTIVE",LICENSE
+"David Park",d.park@parklaw.com,"Attorney at Law","State Bar of Michigan","P-89234","2023-11-01","","ACTIVE",LICENSE
+"James Okafor",j.okafor@deloitte.com,"Certified Public Accountant","Michigan LARA","CPA-MI-2022-38471","2017-01-15","2026-06-30","ACTIVE",LICENSE
+"Elena Vasquez",e.vasquez@vasquezrealty.com,"Real Estate Broker","Michigan LARA","REB-MI-2021-29184","2021-03-01","2027-10-31","ACTIVE",LICENSE
+"Maria Gonzalez-Torres",m.gonzalez@k12.mi.us,"Standard Teaching Certificate","Michigan Dept of Education","TC-2024-089234","2020-09-01","2030-09-01","ACTIVE",LICENSE

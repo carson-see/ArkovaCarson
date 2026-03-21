@@ -1,0 +1,27 @@
+THE REGENTS OF THE UNIVERSITY OF MICHIGAN
+
+On the recommendation of the faculty of the
+COLLEGE OF ENGINEERING
+
+have conferred upon
+
+AISHA PATEL
+
+the degree of
+
+DOCTOR OF PHILOSOPHY IN ELECTRICAL ENGINEERING
+
+Dissertation: "Quantum-Resistant Cryptographic Protocols for
+Distributed Ledger Systems"
+Advisor: Dr. Michael Zhang
+
+Given at Ann Arbor, Michigan, this eighteenth day of December,
+in the year two thousand twenty-four.
+
+Cumulative Grade Point Average: 3.95 / 4.00
+Honors: With Distinction
+
+Registrar: Dr. Paul Robinson
+Dean: Dr. Alec D. Gallimore
+
+Diploma Number: UM-2024-PhD-EE-00392
