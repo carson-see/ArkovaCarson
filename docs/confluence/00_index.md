@@ -1,5 +1,5 @@
 # Arkova Documentation Index
-_Last updated: 2026-03-17_
+_Last updated: 2026-03-20_
 
 ## Reading Guide
 
@@ -28,7 +28,7 @@ This directory contains 19 architecture and design documents for the Arkova plat
 |---|------|-------------|
 | 00 | `00_index.md` | This file — reading guide, test accounts, document catalog |
 | 01 | `01_architecture_overview.md` | System architecture, tech stack, deployment topology, Constitution summary |
-| 02 | `02_data_model.md` | Complete database schema — 22 tables, 6 enums, all columns, constraints, triggers, ER diagram |
+| 02 | `02_data_model.md` | Database schema — 32+ tables, 6+ enums, columns, constraints, triggers (note: column-level docs current through migration ~0051; later tables documented at summary level in 01_architecture) |
 | 03 | `03_security_rls.md` | Row Level Security policies, FORCE RLS, privileged field protection |
 | 04 | `04_audit_events.md` | Append-only audit trail design, immutability triggers, event categories |
 | 05 | `05_retention_legal_hold.md` | Legal hold mechanics, retention policies, soft delete behavior |
@@ -50,9 +50,10 @@ This directory contains 19 architecture and design documents for the Arkova plat
 
 | File | Description |
 |------|-------------|
-| `docs/audit/2026-03-12_full_audit.md` | Full 7-deliverable MVP audit: backlog vs codebase, UI/UX review, gap analysis, 14 launch gap stories |
-| `docs/stories/11_mvp_launch_gaps.md` | 14 MVP launch gap stories (MVP-01 through MVP-14) identified during audit |
-| `docs/NEXT_STEPS.md` | 3-phase execution plan: production launch, polish, growth |
+| `docs/archive/audit/2026-03-12_full_audit.md` | Full 7-deliverable MVP audit: backlog vs codebase, UI/UX review, gap analysis, 14 launch gap stories |
+| `docs/stories/11_mvp_launch_gaps.md` | 27 MVP launch gap stories (MVP-01 through MVP-30, 2 removed) identified during audit |
+| `docs/archive/NEXT_STEPS.md` | 3-phase execution plan: production launch, polish, growth |
+| `DRAFT_constitution_amendment_1_1b.md` | Draft amendment for edge compute architecture policy |
 
 ---
 
@@ -84,7 +85,7 @@ npm run dev
 
 ### Production
 
-The production site is deployed at `https://arkova-carson.vercel.app` connected to production Supabase (`vzwyaatejekddvltxyye`). All 51 migrations applied, seed data loaded, Stripe Price IDs configured.
+The production site is deployed at `https://arkova-carson.vercel.app` connected to production Supabase (`vzwyaatejekddvltxyye`). Migrations 0001-0058 applied to production. 0059-0072 pending. Seed data loaded, Stripe Price IDs configured.
 
 ---
 
@@ -93,7 +94,7 @@ The production site is deployed at `https://arkova-carson.vercel.app` connected 
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | Engineering directive — rules, file placement, story status, execution order |
-| `MEMORY.md` | Living state — decisions, blockers, sprint context, handoff notes |
+| `HANDOFF.md` | Living state — decisions, blockers, sprint context, handoff notes |
 | `agents.md` (per folder) | Folder-specific context, do/don't rules, recent changes |
 
 ---

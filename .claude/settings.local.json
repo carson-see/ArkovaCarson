@@ -147,7 +147,19 @@
       "WebFetch(domain:arkova-26-diin7f2dc-carsons-projects-1179ca27.vercel.app)",
       "WebFetch(domain:mempool.space)",
       "WebFetch(domain:www.simpleproof.com)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "Bash(npx skills:*)",
+      "WebSearch",
+      "Read(//Users/carson/Desktop/arkova-marketing/**)",
+      "Read(//Users/carson/Desktop/**)",
+      "WebFetch(domain:arkova.ai)",
+      "Bash(git remote:*)",
+      "Bash(mkdir -p /tmp/stitch-review)",
+      "Read(//tmp/**)",
+      "Bash(unzip -o /Users/carson/Downloads/stitch_arkova_ai_redesign_landing_page_variant_2.zip)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_evaluate"
     ]
   },
   "enableAllProjectMcpServers": true,

@@ -1,5 +1,5 @@
 # File Placement Map
-_Extracted from CLAUDE.md Section 4 — 2026-03-17_
+_Extracted from CLAUDE.md Section 4 — 2026-03-20_
 
 ```
 CLAUDE.md                                    <- Rules + status (optimized)
@@ -27,7 +27,7 @@ src/
     verification/                            <- PublicVerification (5-section result display), RevocationDetails, VerifierProofDownload
     verify/                                  <- VerificationForm
     webhooks/                                <- WebhookSettings
-    search/                                  <- SearchForm, IssuerCard, CredentialCard
+    search/                                  <- SemanticSearch, IssuerCard, CredentialCard
   hooks/                                     <- useAuth, useAnchors, useProfile, useOnboarding, useMyCredentials, useCredentialTemplate, useTheme, etc.
   lib/
     copy.ts                                  <- All UI strings (enforced by CI)
@@ -105,7 +105,7 @@ services/edge/                               <- Cloudflare Worker scripts (ADR-0
     mcp-tools.ts                             <- MCP tool definitions (verify + search)
 wrangler.toml                                <- Root config (R2 bucket, queue, AI bindings)
 supabase/
-  migrations/                                <- 65 files (0001-0066, 0033 skipped)
+  migrations/                                <- 72 files (0001-0072, 0033 skipped, 0068 split into 0068a/0068b)
   seed.sql                                   <- Demo data
   config.toml                                <- Local Supabase config
 docs/confluence/                             <- Architecture, data model, security, audit, etc.

@@ -9,14 +9,14 @@ Arkova builds infrastructure for verifiable credentials. Organizations use Arkov
 - Website: https://arkova.ai
 - App: https://app.arkova.ai
 - Contact: hello@arkova.ai
-- LinkedIn: https://www.linkedin.com/company/arkova
+- LinkedIn: https://www.linkedin.com/company/arkovatech
 
 ## How It Works
 
 1. **Upload:** User selects a document in their browser.
-2. **Fingerprint:** SHA-256 hash is computed client-side (document bytes never leave the device).
+2. **Fingerprint:** A SHA-256 fingerprint is computed client-side (document bytes never leave the device).
 3. **Anchor:** The fingerprint is anchored to a permanent public network with an immutable timestamp.
-4. **Verify:** Anyone can verify the document by re-hashing it and checking the fingerprint against the public record. No account required.
+4. **Verify:** Anyone can verify the document by re-fingerprinting it and checking the result against the public record. No account required.
 
 ## Capabilities
 
@@ -62,10 +62,10 @@ Returns verification status and metadata for a credential by its public identifi
 POST /verify-anchor
 Content-Type: application/json
 
-{ "fingerprint": "<64-char hex SHA-256 hash>" }
+{ "fingerprint": "<64-char hex SHA-256 fingerprint>" }
 ```
 
-Accepts a document's SHA-256 hash and returns whether it matches an anchored record.
+Accepts a document's SHA-256 fingerprint and returns whether it matches an anchored record.
 
 ### Search Credentials
 
@@ -91,14 +91,14 @@ Semantic search across verified credentials using natural language.
 
 Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) included on every response. HTTP 429 with `Retry-After` on excess.
 
-## Tools
+## Tools (Coming Soon)
 
-Arkova exposes a Model Context Protocol server for AI agent access:
+Arkova is building a Model Context Protocol server for AI agent access:
 
-**Endpoint:** `https://app.arkova.ai/mcp`
+**Endpoint:** TBD (Cloudflare Workers deployment pending)
 **Transport:** Streamable HTTP
 
-### Available Tools
+### Planned Tools
 
 - `verify_credential` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
 - `search_credentials` — Search credentials by natural language query. Input: `{ "query": "string", "max_results": number }`
@@ -114,8 +114,8 @@ Arkova exposes a Model Context Protocol server for AI agent access:
 ## Privacy Model
 
 - Documents are fingerprinted entirely in the user's browser using SHA-256
-- Document bytes never leave the user's device — only the cryptographic hash is transmitted
-- Recipient identifiers are always hashed — raw PII is never stored or returned
+- Document bytes never leave the user's device — only the cryptographic fingerprint is transmitted
+- Recipient identifiers are always anonymized — raw PII is never stored or returned
 - The platform cannot access, read, or reconstruct original documents from fingerprints
 
 ## Pricing
@@ -124,4 +124,4 @@ Free tier available. Request early access at https://arkova.ai.
 
 ## Structured Data
 
-Arkova provides Organization, SoftwareApplication, and FAQPage schema markup at https://arkova.ai for search engine and AI system consumption.
+Arkova provides Organization, SoftwareApplication, FAQPage, and Article schema markup at https://arkova.ai for search engine and AI system consumption.

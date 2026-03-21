@@ -32,7 +32,7 @@ npm install -g supabase
 
 ```bash
 git clone <repository-url>
-cd ralph
+cd <project-directory>
 ```
 
 ---
@@ -227,9 +227,10 @@ The seed data includes these test users:
 
 | Email | Password | Role | Organization |
 |-------|----------|------|--------------|
-| admin_demo@arkova.local | demo_password_123 | ORG_ADMIN | Arkova |
-| user_demo@arkova.local | demo_password_123 | INDIVIDUAL | None |
-| beta_admin@betacorp.local | demo_password_123 | ORG_ADMIN | Beta Corp |
+| admin@umich-demo.arkova.io | Demo1234! | ORG_ADMIN | University of Michigan Registrar |
+| registrar@umich-demo.arkova.io | Demo1234! | ORG_MEMBER | University of Michigan Registrar |
+| admin@midwest-medical.arkova.io | Demo1234! | ORG_ADMIN | Midwest Medical Board |
+| individual@demo.arkova.io | Demo1234! | INDIVIDUAL | None |
 
 ---
 
@@ -250,6 +251,7 @@ The seed data includes these test users:
 
 | Document | Location |
 |----------|----------|
+| Document Index | `docs/confluence/00_index.md` |
 | Development Guidelines | `CLAUDE.md` |
 | Architecture Overview | `docs/confluence/01_architecture_overview.md` |
 | Data Model | `docs/confluence/02_data_model.md` |
@@ -262,6 +264,13 @@ The seed data includes these test users:
 | Webhooks | `docs/confluence/09_webhooks.md` |
 | Worker Service | `docs/confluence/10_anchoring_worker.md` |
 | Proof Packages | `docs/confluence/11_proof_packages.md` |
+| Identity & Access | `docs/confluence/12_identity_access.md` |
+| Feature Flags | `docs/confluence/13_switchboard.md` |
+| KMS Operations | `docs/confluence/14_kms_operations.md` |
+| Operational Runbook | `docs/confluence/15_operational_runbook.md` |
+| Zero Trust Architecture | `docs/confluence/15_zero_trust_edge_architecture.md` |
+| Incident Response | `docs/confluence/16_incident_response.md` |
+| Data Classification | `docs/confluence/17_data_classification.md` |
 
 ---
 

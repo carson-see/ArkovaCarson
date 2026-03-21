@@ -1,8 +1,8 @@
 # Completed Story Archive
-_Extracted from CLAUDE.md Section 8 — 2026-03-17_
+_Extracted from CLAUDE.md Section 5 — 2026-03-20_
 
 This file contains detailed completion notes for all 100% complete story groups.
-For current incomplete work, see CLAUDE.md Section 8.
+For current incomplete work, see CLAUDE.md Section 5.
 
 ---
 
@@ -105,9 +105,14 @@ See `docs/stories/14_uat_sprints.md`.
 
 10 stories completed across Sprints A, B, and C. See `docs/stories/14_user_flow_gaps.md`.
 
-## MVP Launch Gaps — 25/27 COMPLETE (2 REMOVED, see incomplete in CLAUDE.md)
+## MVP Launch Gaps — 22/27 COMPLETE (2 REMOVED, 3 NOT STARTED — see incomplete in CLAUDE.md)
 
-25 of 27 active stories complete. See `docs/stories/11_mvp_launch_gaps.md`.
+22 of 25 active stories complete (MVP-19 and MVP-22 removed/superseded). MVP-12, MVP-13, MVP-30 not started (post-launch). See `docs/stories/11_mvp_launch_gaps.md`.
+
+## Beta Readiness — 13/13 COMPLETE
+
+All 13 stories completed across Beta Sprints 1-3 (PRs #98, #100, #101, merged 2026-03-18).
+See `docs/stories/16_beta_readiness.md`.
 
 ## Critical Blockers (all resolved)
 

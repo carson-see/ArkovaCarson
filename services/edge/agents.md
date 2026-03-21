@@ -1,17 +1,20 @@
 # agents.md — services/edge
-_Last updated: 2026-03-12_
+_Last updated: 2026-03-20_
 
 ## What This Folder Contains
 
 Cloudflare Worker scripts for peripheral edge tasks. These are **separate from** the Express worker in `services/worker/` and handle only:
 
-- **Report generation** (`report-generator.ts`) — PDF reports stored in R2 (INFRA-03)
-- **Batch queue consumer** (`batch-queue.ts`) — Dequeues batch anchor jobs (INFRA-04)
-- **AI fallback** (`ai-fallback.ts`) — Workers AI fallback when Gemini is unavailable (INFRA-05)
+- **Report generation** (`src/report-generator.ts`) — PDF reports stored in R2 (INFRA-03)
+- **Batch queue consumer** (`src/batch-queue.ts`) — Dequeues batch anchor jobs (INFRA-04)
+- **AI fallback** (`src/ai-fallback.ts`) — Workers AI fallback when Gemini is unavailable (INFRA-05)
+- **Cloudflare Crawler** (`src/cloudflare-crawler.ts`) — University directory ingestion (P8-S7)
+- **MCP Server** (`src/mcp-server.ts`) — Remote MCP server for agentic verification (P8-S19)
+- **MCP Tools** (`src/mcp-tools.ts`) — Tool definitions for verify + search
 
 ## Current State
 
-**All files are STUBS.** No application logic until their INFRA stories are started. ADR-002 must be approved before any story moves to IN PROGRESS.
+**All INFRA stories COMPLETE.** Edge workers have real application logic (batch queue, R2 storage, AI fallback, MCP server, crawler). ADR-002 approved.
 
 ## Do / Don't Rules
 

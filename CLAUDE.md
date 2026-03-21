@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-20 | **Repo:** ArkovaCarson | **Deploy:** arkova-carson.vercel.app
-> **Stats:** 71 migrations | 1,939 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved
+> **Version:** 2026-03-21 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
+> **Stats:** 73 migrations | 2,009 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved
 
 Read this file before every task. Rules here override all other documents.
 
@@ -206,7 +206,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 | Bitcoin/chain | `docs/confluence/06_on_chain_policy.md` |
 | Billing | `docs/confluence/08_payments_entitlements.md` |
 | Webhooks | `docs/confluence/09_webhooks.md` |
-| Verification API | `docs/confluence/12_verification_api.md` |
+| Verification API | `docs/confluence/12_identity_access.md` |
 | Feature flags | `docs/confluence/13_switchboard.md` |
 | Anchor lifecycle | `machines/bitcoinAnchor.machine.ts` (re-verify with `check`) |
 | Story status | `docs/stories/` (group doc) + `00_stories_index.md` |
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 71 files (0001-0071, 0033 skipped, 0068 split into 0068a/0068b). Last: `0071_anchor_description.sql`. 0001-0058 applied to production. 0059-0071 pending.
+**Current:** 73 files (0001-0073, 0033 skipped, 0068 split into 0068a/0068b). Last: `0073_credential_type_immutability.sql`. All migrations applied to production (0059-0073 applied 2026-03-20/21).
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -248,7 +248,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | P8 AI Intelligence | 19/19 | 0 | 0 | 100% |
 | INFRA Edge & Ingress | 7/8 | 1 | 0 | 88% |
 | UAT + UF | 27/27 | 0 | 0 | 100% |
-| GEO & SEO | 5/12 | 2 | 5 | 42% |
+| GEO & SEO | 6/12 | 2 | 4 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | **Total** | **165/176** | **2/176** | **9/176** | **~94%** |
 
@@ -375,5 +375,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-20 | 71 migrations | 1,939 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-21 | 73 migrations | 2,009 tests | 176 stories (165 complete, 94%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

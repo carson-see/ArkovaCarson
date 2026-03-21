@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed rev 00024, AuthCallbackPage OAuth race fix, TLA-01/02 fixed, error serialization improved) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed, AuthCallbackPage race condition fix, anchor processing confirmed on signet) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -18,10 +18,10 @@ _Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed rev 00024, AuthCallbackPa
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs | 29 | 29 | 0 | No |
 | Audit Findings | 24 | 24 resolved | 0 | No |
-| Operational Tasks | 7 | 0 | 7 | **YES** |
+| Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **19** | |
+| **Total Open Items** | | | **18** | |
 
 ---
 
@@ -44,14 +44,14 @@ _Last updated: 2026-03-21 (OPS-08 WIF fixed + deployed rev 00024, AuthCallbackPa
 
 | # | ID | Issue | Status |
 |---|-----|-------|--------|
-| 9 | ~~OPS-01~~ | ~~Apply migrations 0059-0073 to production Supabase + regenerate types~~ | **DONE** — All migrations applied (0059-0073) |
+| 9 | ~~OPS-01~~ | ~~Apply migrations 0059-0071 to production Supabase + regenerate types~~ | **DONE** — All migrations applied (0059-0073) |
 | 10 | OPS-02 | Run `scripts/strip-demo-seeds.sql` on production | PENDING |
 | 11 | OPS-03 | Set Sentry DSN env vars (Vercel + Cloud Run) | PENDING |
 | 12 | OPS-04 | Sentry source map upload plugin | PENDING |
 | 13 | OPS-05 | AWS KMS key provisioning (mainnet signing) | PENDING |
 | 14 | OPS-06 | Mainnet treasury funding | PENDING |
 | 15 | OPS-07 | Key rotation (Stripe + Supabase service role) | PENDING |
-| 16 | ~~OPS-08~~ | ~~Fix BITCOIN_TREASURY_WIF in Secret Manager~~ | **FIXED** — Secret Manager v3, rev `arkova-worker-00024-f9p`, treasury `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r` confirmed. TX `a5f6d9d9...` broadcast. |
+| 16 | ~~OPS-08~~ | ~~Fix BITCOIN_TREASURY_WIF in Secret Manager~~ | **FIXED** — Secret Manager version 3 set to correct WIF. Revision `arkova-worker-00024-f9p` deployed, treasury address confirmed `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. PENDING anchor processed to SUBMITTED (TX `a5f6d9d9...`). |
 
 ---
 
