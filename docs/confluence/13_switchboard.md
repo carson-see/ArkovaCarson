@@ -1,5 +1,5 @@
 # Production Switchboard
-_Last updated: 2026-03-10 | Story: P7-TS-01 (migration 0021)_
+_Last updated: 2026-03-21 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20)_
 
 ## Overview
 

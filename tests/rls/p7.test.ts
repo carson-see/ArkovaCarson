@@ -398,6 +398,120 @@ describe('P7-S6: Anchor Status Protection', () => {
 });
 
 // =============================================================================
+// TLA-01: CREDENTIAL_TYPE IMMUTABILITY TESTS
+// =============================================================================
+
+describe('TLA-01: credential_type Immutability After PENDING', () => {
+  let userClient: TypedClient;
+  let serviceClient: TypedClient;
+  let pendingAnchorId: string;
+  let securedAnchorId: string;
+
+  beforeAll(async () => {
+    userClient = await createAuthenticatedClient(
+      DEMO_CREDENTIALS.userEmail,
+      DEMO_CREDENTIALS.userPassword
+    );
+    serviceClient = createServiceClient();
+
+    // Create a PENDING anchor (credential_type should still be mutable)
+    const ts1 = Date.now().toString(16).padStart(16, '0');
+    const fp1 = `tla01aaa${ts1}`.padEnd(64, '0').slice(0, 64);
+    const { data: pending, error: e1 } = await userClient
+      .from('anchors')
+      .insert({
+        user_id: DEMO_CREDENTIALS.userId,
+        fingerprint: fp1,
+        filename: 'tla01_pending.pdf',
+        status: 'PENDING',
+        credential_type: 'DEGREE',
+      })
+      .select()
+      .single();
+
+    if (e1) throw e1;
+    pendingAnchorId = pending!.id;
+
+    // Create a SECURED anchor (credential_type should be immutable)
+    const ts2 = (Date.now() + 1).toString(16).padStart(16, '0');
+    const fp2 = `tla01bbb${ts2}`.padEnd(64, '0').slice(0, 64);
+    const { data: secured, error: e2 } = await serviceClient
+      .from('anchors')
+      .insert({
+        user_id: DEMO_CREDENTIALS.userId,
+        fingerprint: fp2,
+        filename: 'tla01_secured.pdf',
+        status: 'PENDING',
+        credential_type: 'CERTIFICATE',
+      })
+      .select()
+      .single();
+
+    if (e2) throw e2;
+
+    // Promote to SECURED via service role
+    await serviceClient
+      .from('anchors')
+      .update({
+        status: 'SECURED',
+        chain_tx_id: 'tla01_test_tx',
+        chain_block_height: 99999,
+        chain_timestamp: new Date().toISOString(),
+      })
+      .eq('id', secured!.id);
+
+    securedAnchorId = secured!.id;
+  });
+
+  afterAll(async () => {
+    if (pendingAnchorId) {
+      await serviceClient.from('anchors').delete().eq('id', pendingAnchorId);
+    }
+    if (securedAnchorId) {
+      await serviceClient.from('anchors').delete().eq('id', securedAnchorId);
+    }
+    await userClient.auth.signOut();
+  });
+
+  it('PENDING anchor allows credential_type change', async () => {
+    const { error } = await userClient
+      .from('anchors')
+      .update({ credential_type: 'LICENSE' })
+      .eq('id', pendingAnchorId);
+
+    expect(error).toBeNull();
+
+    // Verify update
+    const { data } = await userClient
+      .from('anchors')
+      .select('credential_type')
+      .eq('id', pendingAnchorId)
+      .single();
+
+    expect(data!.credential_type).toBe('LICENSE');
+  });
+
+  it('SECURED anchor blocks credential_type change (non-service-role)', async () => {
+    const { error } = await userClient
+      .from('anchors')
+      .update({ credential_type: 'DEGREE' })
+      .eq('id', securedAnchorId);
+
+    expect(error).not.toBeNull();
+    expect(error!.message).toContain('Cannot modify credential_type after anchor leaves PENDING');
+  });
+
+  it('service role CAN still modify credential_type on SECURED anchor', async () => {
+    const { error } = await serviceClient
+      .from('anchors')
+      .update({ credential_type: 'TRANSCRIPT' })
+      .eq('id', securedAnchorId);
+
+    expect(error).toBeNull();
+  });
+});
+
+// =============================================================================
 // P7-S14: SWITCHBOARD FLAGS TESTS
 // =============================================================================
 

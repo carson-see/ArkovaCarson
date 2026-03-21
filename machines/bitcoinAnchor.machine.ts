@@ -25,6 +25,7 @@ const chainTxId = variable("chainTxId");
 const fingerprintLocked = variable("fingerprintLocked");
 const metadataLocked = variable("metadataLocked");
 const legalHold = variable("legalHold");
+const credentialTypeLocked = variable("credentialTypeLocked");
 const actor = variable("actor");
 
 export const bitcoinAnchorMachine = defineMachine({
@@ -57,6 +58,9 @@ export const bitcoinAnchorMachine = defineMachine({
     // Once SECURED, metadata becomes immutable
     metadataLocked: mapVar("Anchors", boolType(), lit(false)),
 
+    // TLA-01: credential_type is immutable once anchor leaves PENDING
+    credentialTypeLocked: mapVar("Anchors", boolType(), lit(false)),
+
     // Legal hold flag — blocks revocation
     legalHold: mapVar("Anchors", boolType(), lit(false)),
 
@@ -80,7 +84,8 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("status", param("a"), lit("SUBMITTED")),
         setMap("actor", param("a"), lit("worker")),
         setMap("chainTxId", param("a"), lit("has_tx")),
-        setMap("fingerprintLocked", param("a"), lit(true))
+        setMap("fingerprintLocked", param("a"), lit(true)),
+        setMap("credentialTypeLocked", param("a"), lit(true))
       ]
     },
 
@@ -112,7 +117,8 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("status", param("a"), lit("PENDING")),
         setMap("chainTxId", param("a"), lit(null)),
         setMap("actor", param("a"), lit("client")),
-        setMap("fingerprintLocked", param("a"), lit(false))
+        setMap("fingerprintLocked", param("a"), lit(false)),
+        setMap("credentialTypeLocked", param("a"), lit(false))
       ]
     },
 
@@ -220,6 +226,17 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
+    // INV-7: credential_type is locked once anchor leaves PENDING (TLA-01)
+    credentialTypeImmutableAfterPending: {
+      description: "credential_type is immutable once status leaves initial PENDING",
+      formula: forall("Anchors", "a",
+        or(
+          eq(index(status, param("a")), lit("PENDING")),
+          index(credentialTypeLocked, param("a"))
+        )
+      )
+    },
+
     // INV-6: Legal hold blocks revocation transition
     legalHoldPreventsSecuredToRevoked: {
       description: "SECURED anchors under legal hold remain SECURED (guard blocks revoke)",
@@ -259,7 +276,7 @@ export const bitcoinAnchorMachine = defineMachine({
   metadata: {
     ownedTables: ["anchors"],
     ownedColumns: {
-      anchors: ["status", "chain_tx_id", "legal_hold"]
+      anchors: ["status", "chain_tx_id", "legal_hold", "credential_type"]
     },
     runtimeAdapter: {
       schema: "public",
