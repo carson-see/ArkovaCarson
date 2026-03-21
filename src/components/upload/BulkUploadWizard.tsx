@@ -5,7 +5,7 @@
  * Uses real CSV parsing and backend batch execution with progress tracking.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   FileSpreadsheet,
   ArrowRight,
@@ -91,6 +91,11 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     error: bulkError,
   } = useBulkAnchors();
 
+  // Sync hook error into component error state so it renders in the UI
+  useEffect(() => {
+    if (bulkError) setError(bulkError);
+  }, [bulkError]);
+
   const currentStepIndex = STEPS.findIndex((s) => s.key === step);
 
   const handleCsvParsed = useCallback(
@@ -116,28 +121,36 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setStep('processing');
     setError(null);
 
-    // Enrich valid records with extraction results if available
-    // Uses async version to auto-generate fingerprints when not in CSV
-    const records = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
+    try {
+      // Enrich valid records with extraction results if available
+      // Uses async version to auto-generate fingerprints when not in CSV
+      const records = await extractAnchorRecordsAsync(validation.valid, columns, mapping);
 
-    const bulkResult = await createBulkAnchors(records);
+      const bulkResult = await createBulkAnchors(records);
 
-    if (bulkResult) {
-      const processingResult: ProcessingResult = {
-        total: bulkResult.total,
-        created: bulkResult.created,
-        skipped: bulkResult.skipped,
-        failed: bulkResult.failed,
-      };
-      setResult(processingResult);
-      setStep('complete');
-      onComplete?.(processingResult);
-    } else {
-      toast.error(TOAST.BULK_FAILED);
-      setError(bulkError || 'Failed to process records');
+      if (bulkResult) {
+        const processingResult: ProcessingResult = {
+          total: bulkResult.total,
+          created: bulkResult.created,
+          skipped: bulkResult.skipped,
+          failed: bulkResult.failed,
+        };
+        setResult(processingResult);
+        setStep('complete');
+        onComplete?.(processingResult);
+      } else {
+        // Note: bulkError from useBulkAnchors is set asynchronously,
+        // so read it via the hook state rather than the closure value
+        toast.error(TOAST.BULK_FAILED);
+        setStep('review');
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to process records';
+      toast.error(message);
+      setError(message);
       setStep('review');
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, bulkError, onComplete]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete]);
 
   const handleExtractionComplete = useCallback((results: BatchExtractionResult[]) => {
     setExtractionResults(results);
@@ -146,25 +159,32 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setError(null);
     // Trigger processing via the already-defined handler
     if (parsedCsv && mapping && validation) {
-      extractAnchorRecordsAsync(validation.valid, columns, mapping).then((records) => createBulkAnchors(records)).then((bulkResult) => {
-        if (bulkResult) {
-          const processingResult: ProcessingResult = {
-            total: bulkResult.total,
-            created: bulkResult.created,
-            skipped: bulkResult.skipped,
-            failed: bulkResult.failed,
-          };
-          setResult(processingResult);
-          setStep('complete');
-          onComplete?.(processingResult);
-        } else {
-          toast.error(TOAST.BULK_FAILED);
-          setError(bulkError || 'Failed to process records');
+      extractAnchorRecordsAsync(validation.valid, columns, mapping)
+        .then((records) => createBulkAnchors(records))
+        .then((bulkResult) => {
+          if (bulkResult) {
+            const processingResult: ProcessingResult = {
+              total: bulkResult.total,
+              created: bulkResult.created,
+              skipped: bulkResult.skipped,
+              failed: bulkResult.failed,
+            };
+            setResult(processingResult);
+            setStep('complete');
+            onComplete?.(processingResult);
+          } else {
+            toast.error(TOAST.BULK_FAILED);
+            setStep('review');
+          }
+        })
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : 'Failed to process records';
+          toast.error(message);
+          setError(message);
           setStep('review');
-        }
-      });
+        });
     }
-  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, bulkError, onComplete]);
+  }, [parsedCsv, mapping, validation, columns, createBulkAnchors, onComplete]);
 
   const handleSkipExtraction = useCallback(() => {
     setExtractionResults(null);
