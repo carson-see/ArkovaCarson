@@ -175,9 +175,9 @@ export function SecureDocumentDialog({
     setError(null);
 
     try {
-      // Build metadata from AI-extracted fields (accepted + edited only)
+      // Build metadata from AI-extracted fields (all non-rejected fields)
       const acceptedFields = extractedFields
-        .filter(f => f.status === 'accepted' || f.status === 'edited')
+        .filter(f => f.status !== 'rejected')
         .reduce<Record<string, string>>((acc, f) => {
           acc[f.key] = f.value;
           return acc;

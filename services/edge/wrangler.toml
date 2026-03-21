@@ -8,6 +8,12 @@
 name = "arkova-edge"
 main = "src/index.ts"
 compatibility_date = "2024-12-01"
+workers_dev = false
+
+# ── Route: edge.arkova.ai/* ────────────────────────────────────────────
+[[routes]]
+pattern = "edge.arkova.ai/*"
+zone_name = "arkova.ai"
 
 # ── R2 Storage (INFRA-03 / P8-S15) — requires R2 enabled in dashboard ──
 # [[r2_buckets]]
