@@ -1,312 +1,294 @@
 /**
- * Developers Page
+ * Developers Page — Synthetic Sentinel Design
  *
- * Public-facing page for API documentation and developer resources.
+ * Public-facing developer platform page built from Stitch wireframe.
  * Showcases the Verification API, AI Intelligence endpoints, and MCP server.
  * No authentication required.
  */
 
-import { Link } from 'react-router-dom';
-import {
-  Shield,
-  Code2,
-  ExternalLink,
-  FileJson,
-  BookOpen,
-  Bot,
-  CheckCircle2,
-  Layers,
-  Sparkles,
-  Search,
-  ArrowRight,
-  Terminal,
-  Copy,
-} from 'lucide-react';
 import { useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { Link } from 'react-router-dom';
+import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot } from 'lucide-react';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
-import { DEVELOPER_PAGE_LABELS as L } from '@/lib/copy';
 import { WORKER_URL } from '@/lib/workerClient';
 
 const API_DOCS_URL = `${WORKER_URL}/api/docs`;
 const OPENAPI_SPEC_URL = `${WORKER_URL}/api/docs/spec.json`;
 
-const CURL_EXAMPLE = `curl -H "Authorization: Bearer YOUR_API_KEY" \\
-  ${WORKER_URL}/api/v1/verify/abc123-def456`;
+const CURL_LINES = [
+  { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X POST', cls: 'text-[#dce3ed]' }] },
+  { num: '2', parts: [{ text: `  ${WORKER_URL}/api/v1/verify`, cls: 'text-[#bbc9cf]' }] },
+  { num: '3', parts: [{ text: '  -H "Authorization: Bearer ', cls: 'text-[#bbc9cf]' }, { text: 'YOUR_API_KEY', cls: 'text-[#00d4ff]' }, { text: '"', cls: 'text-[#bbc9cf]' }] },
+  { num: '4', parts: [{ text: '  -H "Content-Type: application/json"', cls: 'text-[#bbc9cf]' }] },
+  { num: '5', parts: [{ text: "  -d '{", cls: 'text-[#bbc9cf]' }] },
+  { num: '6', parts: [{ text: '    ', cls: '' }, { text: '"public_id"', cls: 'text-[#5fd6eb]' }, { text: ': ', cls: 'text-[#bbc9cf]' }, { text: '"abc123-def456"', cls: 'text-[#00d4ff]' }, { text: ',', cls: 'text-[#bbc9cf]' }] },
+  { num: '7', parts: [{ text: '    ', cls: '' }, { text: '"ai_metadata"', cls: 'text-[#5fd6eb]' }, { text: ': ', cls: 'text-[#bbc9cf]' }, { text: 'true', cls: 'text-[#00d4ff]' }] },
+  { num: '8', parts: [{ text: "  }'", cls: 'text-[#bbc9cf]' }] },
+];
+
+const CURL_RAW = `curl -X POST \\
+  ${WORKER_URL}/api/v1/verify \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "public_id": "abc123-def456",
+    "ai_metadata": true
+  }'`;
 
 export function DevelopersPage() {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    await navigator.clipboard.writeText(CURL_EXAMPLE);
+    await navigator.clipboard.writeText(CURL_RAW);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-mesh-gradient">
-      {/* Header */}
-      <header className="border-b glass-header">
-        <div className="container flex h-16 items-center justify-between">
-          <Link to={ROUTES.SEARCH} className="flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-              <Shield className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="text-lg font-semibold">Arkova</span>
+    <div className="min-h-screen bg-[#0d141b] text-[#dce3ed] selection:bg-[#00d4ff] selection:text-[#003642]">
+      {/* Fixed Header */}
+      <header className="fixed top-0 z-50 w-full bg-[#0d141b] px-6 py-4 flex justify-between items-center">
+        <Link to={ROUTES.SEARCH} className="flex items-center gap-2">
+          <ArkovaLogo size={32} />
+          <span className="text-xl font-black text-[#00d4ff] tracking-tighter">Arkova</span>
+        </Link>
+        <nav className="hidden md:flex items-center gap-8">
+          <span className="text-[#00d4ff] border-b-2 border-[#00d4ff] pb-1 font-bold tracking-tight text-sm">
+            Docs
+          </span>
+          <a
+            href={API_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[#bbc9cf] font-bold tracking-tight text-sm hover:text-[#a8e8ff] transition-colors"
+          >
+            API Reference
+          </a>
+          <Link
+            to={ROUTES.HELP}
+            className="text-[#bbc9cf] font-bold tracking-tight text-sm hover:text-[#a8e8ff] transition-colors"
+          >
+            Support
           </Link>
-          <nav className="flex items-center gap-4">
-            <Link
-              to={ROUTES.SEARCH}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Search
-            </Link>
-            <Link
-              to={ROUTES.LOGIN}
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Sign in
-            </Link>
-          </nav>
+        </nav>
+        <div className="flex items-center gap-4">
+          <Link
+            to={ROUTES.LOGIN}
+            className="text-xs uppercase tracking-wider text-[#bbc9cf] hover:text-[#00d4ff] transition-all font-semibold"
+          >
+            Sign In
+          </Link>
+          <Link
+            to={ROUTES.SIGNUP}
+            className="bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all"
+          >
+            Get Started
+          </Link>
         </div>
       </header>
 
-      {/* Main content */}
-      <main className="flex-1">
+      <main className="pt-24 pb-20">
         {/* Hero */}
-        <section className="container py-16 md:py-24 text-center">
-          <div className="flex justify-center mb-6">
-            <Badge variant="secondary" className="gap-1.5 px-3 py-1 text-xs">
-              <Code2 className="h-3.5 w-3.5" />
-              Verification API
-            </Badge>
-          </div>
-          <h1 className="text-4xl md:text-5xl font-bold tracking-tight mb-4">
-            {L.HERO_TITLE}
-          </h1>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
-            {L.HERO_SUBTITLE}
-          </p>
-          <div className="flex flex-wrap justify-center gap-3">
-            <Button size="lg" asChild>
-              <a href={API_DOCS_URL} target="_blank" rel="noopener noreferrer">
-                <BookOpen className="mr-2 h-4 w-4" />
-                {L.LINK_API_DOCS}
-              </a>
-            </Button>
-            <Button size="lg" variant="outline" asChild>
-              <Link to={ROUTES.SIGNUP}>
+        <section className="relative px-6 py-20 md:py-32 overflow-hidden">
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#00d4ff]/10 rounded-full blur-[120px] -z-10 translate-x-1/2 -translate-y-1/2" />
+          <div className="max-w-7xl mx-auto flex flex-col items-center text-center">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#242b32] border border-[#3c494e]/20 mb-8">
+              <span className="w-2 h-2 rounded-full bg-[#00d4ff] animate-pulse" />
+              <span className="text-[10px] uppercase tracking-[0.2em] text-[#a8e8ff] font-semibold">
+                Verification API Active
+              </span>
+            </div>
+            <h1 className="text-5xl md:text-8xl font-black tracking-tighter mb-6 leading-[0.9]">
+              Developer{' '}
+              <span className="text-transparent bg-clip-text bg-gradient-to-br from-[#a8e8ff] to-[#00d4ff]">
+                Platform
+              </span>
+            </h1>
+            <p className="max-w-2xl text-[#bbc9cf] text-lg md:text-xl leading-relaxed mb-10">
+              Engineered for high-trust environments. Implement programmatic verification and AI-powered metadata extraction with cryptographic certainty.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Link
+                to={ROUTES.SIGNUP}
+                className="px-8 py-4 bg-[#00d4ff] text-[#003642] rounded-full font-bold uppercase tracking-widest text-sm hover:shadow-[0_0_30px_rgba(0,212,255,0.4)] transition-all"
+              >
                 Get Started
-                <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
-            </Button>
+              <a
+                href={API_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-8 py-4 bg-[#333a42]/10 border border-[#3c494e]/20 text-[#dce3ed] rounded-full font-bold uppercase tracking-widest text-sm hover:bg-[#333a42]/20 transition-all"
+              >
+                API Documentation
+              </a>
+            </div>
           </div>
         </section>
 
-        {/* API Overview Cards */}
-        <section className="container pb-16">
-          <div className="grid gap-6 md:grid-cols-3 max-w-5xl mx-auto">
-            <Card className="glass-card shadow-card-rest">
-              <CardHeader>
-                <div className="flex items-center gap-2 mb-2">
-                  <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                  <Badge variant="outline" className="font-mono text-xs">{L.CARD_VERIFY_ENDPOINT}</Badge>
-                </div>
-                <CardTitle className="text-lg">{L.CARD_VERIFY_TITLE}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">{L.CARD_VERIFY_DESC}</p>
-              </CardContent>
-            </Card>
-
-            <Card className="glass-card shadow-card-rest">
-              <CardHeader>
-                <div className="flex items-center gap-2 mb-2">
-                  <Layers className="h-5 w-5 text-blue-500" />
-                  <Badge variant="outline" className="font-mono text-xs">{L.CARD_BATCH_ENDPOINT}</Badge>
-                </div>
-                <CardTitle className="text-lg">{L.CARD_BATCH_TITLE}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">{L.CARD_BATCH_DESC}</p>
-              </CardContent>
-            </Card>
-
-            <Card className="glass-card shadow-card-rest">
-              <CardHeader>
-                <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="h-5 w-5 text-amber-500" />
-                  <Badge variant="outline" className="font-mono text-xs">{L.CARD_AI_ENDPOINT}</Badge>
-                </div>
-                <CardTitle className="text-lg">{L.CARD_AI_TITLE}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">{L.CARD_AI_DESC}</p>
-              </CardContent>
-            </Card>
+        {/* Feature Grid */}
+        <section className="px-6 py-20 max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
+              <div className="text-[#a8e8ff] mb-6">
+                <ShieldCheck className="h-10 w-10" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-xl font-bold mb-4">Verify Credentials</h3>
+              <p className="text-[#bbc9cf] text-sm leading-relaxed">
+                Instant, high-fidelity verification of credentials against permanent cryptographic records. One API call returns full proof details.
+              </p>
+            </div>
+            <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
+              <div className="text-[#a8e8ff] mb-6">
+                <Layers className="h-10 w-10" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-xl font-bold mb-4">Batch Verification</h3>
+              <p className="text-[#bbc9cf] text-sm leading-relaxed">
+                Scalable architecture for high-throughput environments. Verify up to 100 credentials per request with async job polling.
+              </p>
+            </div>
+            <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
+              <div className="text-[#a8e8ff] mb-6">
+                <Brain className="h-10 w-10" strokeWidth={1.5} />
+              </div>
+              <h3 className="text-xl font-bold mb-4">AI Intelligence</h3>
+              <p className="text-[#bbc9cf] text-sm leading-relaxed">
+                Context-aware metadata extraction that transforms documents into structured credential data. Semantic search and integrity scoring.
+              </p>
+            </div>
           </div>
         </section>
 
-        {/* Getting Started */}
-        <section className="container pb-16">
-          <div className="max-w-3xl mx-auto">
-            <h2 className="text-2xl font-bold tracking-tight mb-8 text-center">
-              {L.GETTING_STARTED_TITLE}
-            </h2>
-
-            <div className="space-y-4 mb-8">
-              {[L.STEP_1, L.STEP_2, L.STEP_3].map((step, i) => (
-                <div key={step} className="flex items-start gap-4">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm font-bold">
-                    {i + 1}
+        {/* Getting Started + Code */}
+        <section className="px-6 py-20 bg-[#151c24]">
+          <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+            <div>
+              <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-12">Fast Integration</h2>
+              <div className="space-y-12">
+                {[
+                  { step: '1', title: 'Create an Account', desc: 'Access the Dashboard to generate your unique API keys.' },
+                  { step: '2', title: 'Configure Headers', desc: 'Secure your requests using Bearer token authentication.' },
+                  { step: '3', title: 'Execute Verification', desc: 'Send your first verification request and receive real-time cryptographic proof.' },
+                ].map((s) => (
+                  <div key={s.step} className="flex gap-6">
+                    <div className="flex-none w-10 h-10 rounded-full bg-[#2e353d] border border-[#00d4ff]/30 flex items-center justify-center text-[#a8e8ff] font-bold">
+                      {s.step}
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-lg mb-2">{s.title}</h4>
+                      <p className="text-[#bbc9cf] text-sm">{s.desc}</p>
+                    </div>
                   </div>
-                  <p className="text-sm text-muted-foreground pt-1.5">{step}</p>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
 
-            {/* Curl example */}
-            <Card className="glass-card shadow-card-rest overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-2 bg-muted/50 border-b">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <Terminal className="h-3.5 w-3.5" />
-                  <span>{L.CURL_COMMENT}</span>
+            {/* Code Block */}
+            <div className="bg-[#080f16] rounded-xl border border-[#3c494e]/15 p-1 overflow-hidden shadow-2xl">
+              <div className="flex items-center justify-between px-4 py-3 bg-[#2e353d]/50 border-b border-[#3c494e]/10">
+                <div className="flex gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500/20" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/20" />
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500/20" />
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 px-2 text-xs"
+                <button
                   onClick={handleCopy}
+                  className="flex items-center gap-1 text-[10px] uppercase tracking-widest text-[#bbc9cf] hover:text-[#00d4ff] transition-colors"
                 >
-                  <Copy className="h-3 w-3 mr-1" />
+                  {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                   {copied ? 'Copied' : 'Copy'}
-                </Button>
+                </button>
               </div>
-              <pre className="p-4 text-sm font-mono text-foreground overflow-x-auto">
-                <code>{CURL_EXAMPLE}</code>
-              </pre>
-            </Card>
+              <div className="p-6 font-mono text-sm leading-relaxed overflow-x-auto">
+                {CURL_LINES.map((line) => (
+                  <div key={line.num} className="flex gap-4">
+                    <span className="text-[#3c494e] select-none w-4 text-right">{line.num}</span>
+                    <span>
+                      {line.parts.map((p, i) => (
+                        <span key={i} className={p.cls}>{p.text}</span>
+                      ))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         </section>
 
         {/* Resources */}
-        <section className="container pb-16">
-          <div className="max-w-3xl mx-auto">
-            <h2 className="text-2xl font-bold tracking-tight mb-8 text-center">
-              {L.LINKS_TITLE}
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <ResourceLink
-                href={API_DOCS_URL}
-                icon={BookOpen}
-                title={L.LINK_API_DOCS}
-                desc={L.LINK_API_DOCS_DESC}
-                external
-              />
-              <ResourceLink
-                href={OPENAPI_SPEC_URL}
-                icon={FileJson}
-                title={L.LINK_OPENAPI_SPEC}
-                desc={L.LINK_OPENAPI_SPEC_DESC}
-                external
-              />
-              <ResourceLink
-                href="/AGENTS.md"
-                icon={Bot}
-                title={L.LINK_AGENT_GUIDE}
-                desc={L.LINK_AGENT_GUIDE_DESC}
-                external
-              />
-              <ResourceLink
-                href="/llms.txt"
-                icon={Search}
-                title={L.LINK_LLM_DISCOVERY}
-                desc={L.LINK_LLM_DISCOVERY_DESC}
-                external
-              />
-            </div>
+        <section className="px-6 py-20 max-w-7xl mx-auto">
+          <h2 className="text-2xl font-black tracking-tight mb-12 flex items-center gap-3">
+            <span className="w-1.5 h-6 bg-[#00d4ff]" />
+            Developer Resources
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            {[
+              { title: 'API Documentation', desc: 'Complete endpoint references and authentication guides.', href: API_DOCS_URL, external: true },
+              { title: 'OpenAPI Spec', desc: 'Download the JSON schema for local testing and generation.', href: OPENAPI_SPEC_URL, external: true },
+              { title: 'Agent Integration', desc: 'Connect Arkova verification to your AI agent workflows.', href: '/AGENTS.md', external: true },
+              { title: 'LLM Discovery', desc: 'Structured capability manifest for AI assistants.', href: '/llms.txt', external: true },
+            ].map((r) => (
+              <a
+                key={r.title}
+                href={r.href}
+                target={r.external ? '_blank' : undefined}
+                rel={r.external ? 'noopener noreferrer' : undefined}
+                className="group p-6 bg-[#192028] rounded-lg border border-transparent hover:border-[#00d4ff]/20 transition-all"
+              >
+                <h4 className="font-bold mb-2 group-hover:text-[#a8e8ff] transition-colors">{r.title}</h4>
+                <p className="text-[#bbc9cf] text-xs mb-4">{r.desc}</p>
+                <ArrowRight className="h-5 w-5 text-[#a8e8ff]" />
+              </a>
+            ))}
           </div>
         </section>
 
         {/* MCP Server */}
-        <section className="container pb-16">
-          <div className="max-w-3xl mx-auto">
-            <Card className="glass-card shadow-card-rest">
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Bot className="h-5 w-5 text-primary" />
-                  <CardTitle>{L.MCP_TITLE}</CardTitle>
+        <section className="px-6 py-20 max-w-5xl mx-auto">
+          <div className="relative p-8 md:p-12 rounded-xl border border-[#3c494e]/15 overflow-hidden" style={{ background: 'rgba(46, 53, 61, 0.4)', backdropFilter: 'blur(20px)' }}>
+            <div className="absolute top-0 right-0 p-8 opacity-10">
+              <Bot className="h-32 w-32" strokeWidth={1} />
+            </div>
+            <div className="relative z-10">
+              <div className="inline-block px-3 py-1 bg-[#00d4ff]/10 border border-[#00d4ff]/30 rounded-lg mb-6">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#a8e8ff]">
+                  Beta Feature
+                </span>
+              </div>
+              <h2 className="text-3xl font-black tracking-tight mb-4">MCP Server for AI Agents</h2>
+              <p className="text-[#bbc9cf] mb-10 max-w-xl">
+                Empower your AI agents with direct access to Arkova&apos;s verification suite through the Model Context Protocol.
+              </p>
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
+                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">verify_credential</code>
+                  <p className="text-xs text-[#bbc9cf]">Verify any credential by its public ID and receive full cryptographic proof.</p>
                 </div>
-                <CardDescription>{L.MCP_DESC}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3 rounded-lg border p-3">
-                    <code className="rounded bg-muted px-2 py-0.5 font-mono text-sm text-primary">
-                      {L.MCP_TOOL_VERIFY}
-                    </code>
-                    <span className="text-sm text-muted-foreground">{L.MCP_TOOL_VERIFY_DESC}</span>
-                  </div>
-                  <div className="flex items-start gap-3 rounded-lg border p-3">
-                    <code className="rounded bg-muted px-2 py-0.5 font-mono text-sm text-primary">
-                      {L.MCP_TOOL_SEARCH}
-                    </code>
-                    <span className="text-sm text-muted-foreground">{L.MCP_TOOL_SEARCH_DESC}</span>
-                  </div>
+                <div className="p-6 bg-[#2e353d] rounded-lg border-l-4 border-[#00d4ff]">
+                  <code className="font-mono text-[#a8e8ff] font-bold block mb-2">search_credentials</code>
+                  <p className="text-xs text-[#bbc9cf]">Search the public credential registry by issuer, type, or metadata attributes.</p>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </div>
         </section>
       </main>
 
       {/* Footer */}
-      <footer className="border-t py-6">
-        <div className="container flex flex-col items-center justify-between gap-4 sm:flex-row">
-          <p className="text-xs text-muted-foreground">
-            Arkova - Secure Document Verification
-          </p>
-          <nav className="flex gap-4 text-xs text-muted-foreground">
-            <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
-            <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
-            <Link to="/contact" className="hover:text-foreground transition-colors">Contact</Link>
-          </nav>
+      <footer className="border-t border-[#bbc9cf]/15">
+        <div className="max-w-7xl mx-auto py-12 px-6 flex flex-col md:flex-row justify-between items-center gap-8">
+          <div className="flex flex-col gap-2">
+            <div className="text-sm font-bold text-[#bbc9cf]">Arkova</div>
+            <div className="font-mono text-xs text-[#bbc9cf]">Secure document verification platform.</div>
+          </div>
+          <div className="flex flex-wrap justify-center gap-6">
+            <Link to="/privacy" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Privacy Policy</Link>
+            <Link to="/terms" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Terms of Service</Link>
+            <Link to="/contact" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Contact</Link>
+          </div>
         </div>
       </footer>
     </div>
-  );
-}
-
-function ResourceLink({
-  href,
-  icon: Icon,
-  title,
-  desc,
-  external,
-}: Readonly<{
-  href: string;
-  icon: React.ElementType;
-  title: string;
-  desc: string;
-  external?: boolean;
-}>) {
-  return (
-    <a
-      href={href}
-      target={external ? '_blank' : undefined}
-      rel={external ? 'noopener noreferrer' : undefined}
-      className="group flex items-start gap-3 rounded-lg border bg-card/70 p-4 transition-colors hover:bg-accent glass-card"
-    >
-      <Icon className="h-5 w-5 shrink-0 text-primary mt-0.5" />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5">
-          <span className="text-sm font-medium group-hover:text-primary transition-colors">{title}</span>
-          {external && <ExternalLink className="h-3 w-3 text-muted-foreground" />}
-        </div>
-        <p className="text-xs text-muted-foreground mt-0.5">{desc}</p>
-      </div>
-    </a>
   );
 }
