@@ -27,7 +27,7 @@ import { ONBOARDING_STEPS } from '@/lib/copy';
 export function OnboardingRolePage() {
   const { user } = useAuth();
   const { refreshProfile } = useProfile();
-  const { loading, error, setRole, lookupOrgByEmail, joinOrgByDomain } = useOnboarding();
+  const { loading, error, setRole, lookupOrgByEmail, joinOrgByDomain, clearError } = useOnboarding();
 
   const [orgMatch, setOrgMatch] = useState<{
     found: boolean;
@@ -53,6 +53,8 @@ export function OnboardingRolePage() {
   if (error) console.error('[OnboardingRolePage] Onboarding error:', error);
 
   const handleRoleSelect = async (role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
+    clearError();
+
     // If org match exists and user hasn't declined yet, show the prompt
     if (orgMatch?.found && orgMatch.org_id) {
       setPendingRole(role);
