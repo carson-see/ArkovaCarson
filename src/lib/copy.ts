@@ -991,6 +991,59 @@ export const WALKTHROUGH_LABELS = {
 } as const;
 
 // =============================================================================
+// DEVELOPER PAGE
+// =============================================================================
+
+export const DEVELOPER_PAGE_LABELS = {
+  // Hero
+  HERO_TITLE: 'Developer Platform',
+  HERO_SUBTITLE: 'Programmatic credential verification, AI-powered metadata extraction, and seamless integration for your applications.',
+
+  // API Overview cards
+  CARD_VERIFY_TITLE: 'Verify Credentials',
+  CARD_VERIFY_ENDPOINT: 'GET /verify/{id}',
+  CARD_VERIFY_DESC: 'Verify any credential\'s status, proof details, and issuer information with a single API call.',
+  CARD_BATCH_TITLE: 'Batch Verification',
+  CARD_BATCH_ENDPOINT: 'POST /verify/batch',
+  CARD_BATCH_DESC: 'Verify up to 100 credentials per request for high-throughput integrations.',
+  CARD_AI_TITLE: 'AI Intelligence',
+  CARD_AI_ENDPOINT: 'POST /ai/extract',
+  CARD_AI_DESC: 'AI-powered metadata extraction, semantic search, and integrity scoring for credential data.',
+
+  // Getting Started
+  GETTING_STARTED_TITLE: 'Getting Started',
+  STEP_1: 'Create an account and navigate to Settings',
+  STEP_2: 'Go to API Keys and generate a new key',
+  STEP_3: 'Make your first API call using the example below',
+  CURL_COMMENT: '# Verify a credential by its public ID',
+
+  // Links
+  LINKS_TITLE: 'Resources',
+  LINK_API_DOCS: 'API Documentation',
+  LINK_API_DOCS_DESC: 'Interactive Swagger UI with full endpoint reference',
+  LINK_OPENAPI_SPEC: 'OpenAPI Spec',
+  LINK_OPENAPI_SPEC_DESC: 'Machine-readable API specification (JSON)',
+  LINK_AGENT_GUIDE: 'Agent Integration Guide',
+  LINK_AGENT_GUIDE_DESC: 'Instructions for AI agent and LLM integration',
+  LINK_LLM_DISCOVERY: 'LLM Discovery',
+  LINK_LLM_DISCOVERY_DESC: 'Structured capability manifest for AI assistants',
+
+  // MCP Server
+  MCP_TITLE: 'MCP Server for AI Agents',
+  MCP_DESC: 'Arkova provides a Model Context Protocol (MCP) server for AI agents. Connect your agent to verify credentials and search the registry programmatically.',
+  MCP_TOOL_VERIFY: 'verify_credential',
+  MCP_TOOL_VERIFY_DESC: 'Verify a credential by its public ID',
+  MCP_TOOL_SEARCH: 'search_credentials',
+  MCP_TOOL_SEARCH_DESC: 'Search the public credential registry',
+
+  // API docs card on ApiKeySettingsPage
+  API_DOCS_CARD_TITLE: 'API Documentation',
+  API_DOCS_CARD_DESC: 'Explore the full API reference with interactive examples.',
+  API_DOCS_CARD_BUTTON: 'Open API Docs',
+  API_DOCS_CARD_LINK: 'View full developer overview',
+} as const;
+
+// =============================================================================
 // FORBIDDEN TERMS (for lint script)
 // =============================================================================
 

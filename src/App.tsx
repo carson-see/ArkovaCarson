@@ -57,6 +57,7 @@ const MemberDetailPage = React.lazy(() => import('@/pages/MemberDetailPage').the
 const AuthCallbackPage = React.lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
 const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(m => ({ default: m.ReviewQueuePage })));
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
+const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -124,6 +125,7 @@ export function App() {
           <Route path={ROUTES.EMBED_VERIFY} element={<RouteErrorBoundary section="EmbedVerify"><EmbedVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.DEVELOPERS} element={<RouteErrorBoundary section="Developers"><DevelopersPage /></RouteErrorBoundary>} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />

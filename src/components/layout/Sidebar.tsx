@@ -25,6 +25,7 @@ import {
   Moon,
   Sun,
   Monitor,
+  Code2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -66,6 +67,7 @@ const secondaryNavItems: NavItem[] = [
   { label: BILLING_LABELS.PAGE_TITLE, icon: CreditCard, to: ROUTES.BILLING },
   { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },
   { label: NAV_LABELS.HELP, icon: HelpCircle, to: ROUTES.HELP },
+  { label: 'Developers', icon: Code2, to: ROUTES.DEVELOPERS },
 ];
 
 // ---------------------------------------------------------------------------

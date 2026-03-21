@@ -20,6 +20,7 @@ export const ROUTES = {
   EMBED_VERIFY: '/embed/verify/:publicId',
   SEARCH: '/search',
   ISSUER_REGISTRY: '/issuer/:orgId',
+  DEVELOPERS: '/developers',
 
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',

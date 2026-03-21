@@ -6,7 +6,7 @@
  * @see P3-TS-03
  */
 
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   HelpCircle,
   Shield,
@@ -15,6 +15,7 @@ import {
   Lock,
   ExternalLink,
   Mail,
+  Code2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -22,7 +23,7 @@ import { AppShell } from '@/components/layout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS } from '@/lib/copy';
+import { NAV_LABELS, DEVELOPER_PAGE_LABELS } from '@/lib/copy';
 
 const FAQ_ITEMS = [
   {
@@ -95,6 +96,27 @@ export function HelpPage() {
             </Card>
           ))}
         </div>
+
+        {/* Developers */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Code2 className="h-5 w-5" />
+              {DEVELOPER_PAGE_LABELS.HERO_TITLE}
+            </CardTitle>
+            <CardDescription>
+              {DEVELOPER_PAGE_LABELS.HERO_SUBTITLE}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" asChild>
+              <Link to={ROUTES.DEVELOPERS}>
+                <ExternalLink className="mr-2 h-4 w-4" />
+                View Developer Resources
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         {/* Contact */}
         <Card>

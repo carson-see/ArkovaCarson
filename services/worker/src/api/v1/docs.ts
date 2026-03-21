@@ -755,10 +755,63 @@ export const openApiSpec = {
   ],
 };
 
-// Mount Swagger UI
+// Mount Swagger UI — Nordic Vault dark theme
+const nordicVaultCss = `
+  html { box-sizing: border-box; overflow: -moz-scrollbars-vertical; overflow-y: scroll; }
+  body { margin: 0; background: #0a0f1a; }
+  .swagger-ui .topbar { display: none; }
+  .swagger-ui .download-url-wrapper { display: none; }
+  .swagger-ui { color: #c8d6e5; font-family: 'DM Sans', system-ui, sans-serif; }
+  .swagger-ui .info .title { color: #e2e8f0; }
+  .swagger-ui .info p, .swagger-ui .info li { color: #94a3b8; }
+  .swagger-ui .info a { color: #5eead4; }
+  .swagger-ui .scheme-container { background: #111827; border-bottom: 1px solid #1e293b; box-shadow: none; }
+  .swagger-ui .opblock-tag { color: #e2e8f0; border-bottom: 1px solid #1e293b; }
+  .swagger-ui .opblock-tag:hover { color: #5eead4; }
+  .swagger-ui .opblock { background: #111827; border: 1px solid #1e293b; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
+  .swagger-ui .opblock .opblock-summary { border-bottom: 1px solid #1e293b; }
+  .swagger-ui .opblock .opblock-summary-description { color: #94a3b8; }
+  .swagger-ui .opblock .opblock-section-header { background: #0f172a; }
+  .swagger-ui .opblock .opblock-section-header h4 { color: #e2e8f0; }
+  .swagger-ui .opblock.opblock-get { background: rgba(16,185,129,.08); border-color: rgba(16,185,129,.25); }
+  .swagger-ui .opblock.opblock-get .opblock-summary { border-color: rgba(16,185,129,.2); }
+  .swagger-ui .opblock.opblock-post { background: rgba(59,130,246,.08); border-color: rgba(59,130,246,.25); }
+  .swagger-ui .opblock.opblock-post .opblock-summary { border-color: rgba(59,130,246,.2); }
+  .swagger-ui .opblock.opblock-delete { background: rgba(239,68,68,.08); border-color: rgba(239,68,68,.25); }
+  .swagger-ui .opblock.opblock-delete .opblock-summary { border-color: rgba(239,68,68,.2); }
+  .swagger-ui .opblock.opblock-patch { background: rgba(168,85,247,.08); border-color: rgba(168,85,247,.25); }
+  .swagger-ui .opblock.opblock-patch .opblock-summary { border-color: rgba(168,85,247,.2); }
+  .swagger-ui .opblock-body pre { background: #0f172a; color: #5eead4; border: 1px solid #1e293b; border-radius: 6px; }
+  .swagger-ui .opblock-description-wrapper p { color: #94a3b8; }
+  .swagger-ui table thead tr th { color: #94a3b8; border-bottom: 1px solid #1e293b; }
+  .swagger-ui table tbody tr td { color: #c8d6e5; border-bottom: 1px solid #1e293b; }
+  .swagger-ui .parameter__name { color: #e2e8f0; }
+  .swagger-ui .parameter__type { color: #5eead4; font-family: 'JetBrains Mono', monospace; }
+  .swagger-ui .parameter__in { color: #64748b; }
+  .swagger-ui input[type=text], .swagger-ui textarea, .swagger-ui select {
+    background: #0f172a; color: #e2e8f0; border: 1px solid #334155; border-radius: 6px;
+  }
+  .swagger-ui .btn { border-radius: 6px; }
+  .swagger-ui .btn.authorize { color: #5eead4; border-color: #5eead4; }
+  .swagger-ui .btn.execute { background: #0d9488; color: #fff; border: none; }
+  .swagger-ui .responses-inner { background: transparent; }
+  .swagger-ui .response-col_status { color: #5eead4; font-family: 'JetBrains Mono', monospace; }
+  .swagger-ui .response-col_description { color: #94a3b8; }
+  .swagger-ui .model-box { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; }
+  .swagger-ui .model { color: #c8d6e5; }
+  .swagger-ui .model-title { color: #e2e8f0; }
+  .swagger-ui section.models { border: 1px solid #1e293b; border-radius: 8px; }
+  .swagger-ui section.models h4 { color: #e2e8f0; }
+  .swagger-ui .servers > label select { background: #0f172a; color: #e2e8f0; border: 1px solid #334155; }
+  .swagger-ui .copy-to-clipboard { background: #1e293b; }
+  .swagger-ui .microlight { background: #0f172a !important; color: #5eead4 !important; font-family: 'JetBrains Mono', monospace !important; }
+  .swagger-ui .highlight-code .microlight code { color: #5eead4 !important; }
+`;
+
 router.use('/', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
-  customCss: '.swagger-ui .topbar { display: none }',
+  customCss: nordicVaultCss,
   customSiteTitle: 'Arkova Verification API Docs',
+  customfavIcon: 'https://arkova-26.vercel.app/favicon.ico',
 }));
 
 // JSON spec endpoint
