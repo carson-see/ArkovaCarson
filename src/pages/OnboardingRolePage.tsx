@@ -36,6 +36,7 @@ export function OnboardingRolePage() {
     domain?: string;
   } | null>(null);
   const [showOrgMatch, setShowOrgMatch] = useState(false);
+  const [pendingRole, setPendingRole] = useState<'INDIVIDUAL' | 'ORG_ADMIN' | null>(null);
 
   // Check for domain-matched org on mount
   useEffect(() => {
@@ -52,9 +53,9 @@ export function OnboardingRolePage() {
   if (error) console.error('[OnboardingRolePage] Onboarding error:', error);
 
   const handleRoleSelect = async (role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
-    // If user selected ORG_ADMIN (or even INDIVIDUAL) and we found a domain match,
-    // show the org association prompt
+    // If org match exists and user hasn't declined yet, show the prompt
     if (orgMatch?.found && orgMatch.org_id) {
+      setPendingRole(role);
       setShowOrgMatch(true);
       return;
     }
@@ -62,7 +63,6 @@ export function OnboardingRolePage() {
     const result = await setRole(role);
     if (result) {
       await refreshProfile();
-      // RouteGuard will redirect based on new destination
     }
   };
 
@@ -75,8 +75,17 @@ export function OnboardingRolePage() {
   };
 
   const handleDeclineOrg = async () => {
+    // Clear the match so user won't be prompted again
+    setOrgMatch(null);
     setShowOrgMatch(false);
-    // Proceed with normal role selection — user chose not to join the matched org
+
+    // Proceed with the role they originally selected
+    if (pendingRole) {
+      const result = await setRole(pendingRole);
+      if (result) {
+        await refreshProfile();
+      }
+    }
   };
 
   // Show org match prompt

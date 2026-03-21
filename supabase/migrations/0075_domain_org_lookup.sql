@@ -17,12 +17,25 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_caller_email text;
   v_domain text;
   v_org_id uuid;
   v_org_name text;
   v_org_display_name text;
 BEGIN
-  -- Extract domain from email
+  -- Security: verify p_email matches the authenticated caller's email
+  -- Prevents org enumeration by probing arbitrary domains
+  SELECT email INTO v_caller_email FROM auth.users WHERE id = auth.uid();
+
+  IF v_caller_email IS NULL THEN
+    RETURN jsonb_build_object('found', false);
+  END IF;
+
+  IF lower(p_email) != lower(v_caller_email) THEN
+    RETURN jsonb_build_object('found', false);
+  END IF;
+
+  -- Extract domain from the verified email
   v_domain := lower(split_part(p_email, '@', 2));
 
   IF v_domain = '' OR v_domain IS NULL THEN
