@@ -13,8 +13,19 @@ import { getCorrelationId } from './correlationId.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const pinoFn = ((pino as any).default ?? pino) as (opts: pino.LoggerOptions) => pino.Logger;
 
+// stdSerializers also needs CJS/ESM bridge
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pinoSerializers = ((pino as any).stdSerializers ?? (pino as any).default?.stdSerializers) as typeof pino.stdSerializers | undefined;
+
 export const logger = pinoFn({
   level: config.logLevel,
+  // Ensure Error objects are properly serialized (pino only auto-serializes `err` key)
+  ...(pinoSerializers ? {
+    serializers: {
+      error: pinoSerializers.err,
+      err: pinoSerializers.err,
+    },
+  } : {}),
   transport:
     config.nodeEnv === 'development'
       ? {
@@ -46,10 +57,15 @@ export function createRpcLogger(rpcName: string, context?: Record<string, unknow
     start: () => child.info('RPC call started'),
     success: (result?: Record<string, unknown>) =>
       child.info({ durationMs: Date.now() - startTime, ...result }, 'RPC call succeeded'),
-    error: (error: unknown) =>
+    error: (error: unknown) => {
+      // Extract error details for proper serialization (pino serializes Error as {})
+      const errorInfo = error instanceof Error
+        ? { err: error, errorMessage: error.message, errorStack: error.stack }
+        : { error };
       child.error(
-        { durationMs: Date.now() - startTime, error },
+        { durationMs: Date.now() - startTime, ...errorInfo },
         'RPC call failed',
-      ),
+      );
+    },
   };
 }

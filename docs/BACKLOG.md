@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Signet txs confirmed, DEMO backlog added) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-21 (Backlog sweep — TLA-01/02 fixed, DEMO-03 resolved, p_flag_key fix deployed, treasury WIF mismatch found, error serialization improved) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -19,9 +19,9 @@ _Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Sig
 | UAT Bugs | 29 | 29 | 0 | No |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | Operational Tasks | 7 | 0 | 7 | **YES** |
-| TLA+ Verification Findings | 3 | 1 fixed | 2 | No |
+| TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **22** | |
+| **Total Open Items** | | | **19** | |
 
 ---
 
@@ -44,13 +44,14 @@ _Last updated: 2026-03-20 (E2E demo readiness — anchoring pipeline fix, 6+ Sig
 
 | # | ID | Issue | Status |
 |---|-----|-------|--------|
-| 9 | OPS-01 | Apply migrations 0059-0071 to production Supabase + regenerate types | PENDING |
+| 9 | ~~OPS-01~~ | ~~Apply migrations 0059-0071 to production Supabase + regenerate types~~ | **DONE** — All migrations applied (0059-0073) |
 | 10 | OPS-02 | Run `scripts/strip-demo-seeds.sql` on production | PENDING |
 | 11 | OPS-03 | Set Sentry DSN env vars (Vercel + Cloud Run) | PENDING |
 | 12 | OPS-04 | Sentry source map upload plugin | PENDING |
 | 13 | OPS-05 | AWS KMS key provisioning (mainnet signing) | PENDING |
 | 14 | OPS-06 | Mainnet treasury funding | PENDING |
 | 15 | OPS-07 | Key rotation (Stripe + Supabase service role) | PENDING |
+| 16 | **OPS-08** | **Fix BITCOIN_TREASURY_WIF in Secret Manager** — current WIF derives `tb1qwejl9rjuuv2w04mrj2ggcc9qkmt3lxfn3rdcr9` (0 UTXOs), funded address is `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r` (293k sats). See `docs/bugs/treasury_wif_mismatch.md`. | **BLOCKING** |
 
 ---
 
@@ -235,23 +236,17 @@ _From TLA+ model checking of Bitcoin anchor state machine (`machines/bitcoinAnch
 
 | # | ID | Category | Finding | Status | Action |
 |---|-----|----------|---------|--------|--------|
-| 1 | TLA-01 | Schema Gap | `credential_type` column is NOT immutable after SECURED — `protect_anchor_status_transition()` trigger does not guard it, unlike `metadata` | OPEN | Add guard to trigger (new migration) |
-| 2 | TLA-02 | CI Gate | TLA+ verification not in CI pipeline — model can drift from code | OPEN | Add `npx tla-precheck check` step to CI |
+| 1 | ~~TLA-01~~ | ~~Schema Gap~~ | ~~`credential_type` column is NOT immutable after SECURED~~ | **FIXED** | Migration 0073 + TLA+ model INV-7 |
+| 2 | ~~TLA-02~~ | ~~CI Gate~~ | ~~TLA+ verification not in CI pipeline~~ | **FIXED** | Added `tla-verify` job to `.github/workflows/ci.yml` |
 | 3 | TLA-03 | Design Fix | Legal hold invariant was overly strict — disallowed valid legal hold on revoked anchors | **FIXED** | Invariant refined in model (PR #94) |
 
-### TLA-01: credential_type Immutability (OPEN)
+### ~~TLA-01: credential_type Immutability~~ — FIXED
 
-**Problem:** The `metadata` column is protected by `prevent_metadata_edit_after_secured()` trigger (migration 0030), but `credential_type` has no equivalent guard. A user could change the credential type of a SECURED anchor via UPDATE.
+Migration `0073_credential_type_immutability.sql` adds `credential_type` guard to `protect_anchor_status_transition()` trigger. Blocks changes when status is SUBMITTED, SECURED, or REVOKED. TLA+ model updated with `credentialTypeLocked` variable and INV-7 invariant. Applied to production Supabase.
 
-**Impact:** LOW — RLS policies and frontend validation make this unlikely in practice, but it violates the immutability principle.
+### ~~TLA-02: CI Gate for State Machine Verification~~ — FIXED
 
-**Fix:** New migration adding `credential_type` to `protect_anchor_status_transition()` trigger, blocking changes when status != 'PENDING'.
-
-### TLA-02: CI Gate for State Machine Verification (OPEN)
-
-**Problem:** The TLA+ spec and proof certificate exist but aren't checked in CI. Changes to the anchor lifecycle could invalidate the proof without anyone noticing.
-
-**Fix:** Add a CI step that runs `cd machines && npx tla-precheck check bitcoinAnchor` on PRs that touch `machines/` or `services/worker/src/jobs/anchor.ts` or `services/worker/src/chain/`.
+Added `tla-verify` job to CI pipeline (`.github/workflows/ci.yml`). Runs `npx tla-precheck check machines/bitcoinAnchor.machine.ts` on PRs that modify `machines/`, `services/worker/src/jobs/anchor.ts`, or `services/worker/src/chain/`. Skips automatically if no relevant files changed.
 
 ---
 
@@ -263,7 +258,7 @@ _Discovered during E2E demo readiness session. Enhancement items for demo polish
 |---|-----|----------|-------------|--------|
 | 1 | DEMO-01 | **HIGH** | OP_RETURN metadata hash — include truncated SHA-256 of metadata JSON alongside document fingerprint in OP_RETURN. Format: `ARKV` + 32 bytes doc fingerprint + 8 bytes metadata hash. Enables fully independent verification of both document and metadata without Arkova. | **COMPLETE** |
 | 2 | DEMO-02 | **HIGH** | Verification walkthrough UI — "How Verification Works" explainer on record detail page. Explains: (1) SHA-256 fingerprint = the document's unique identity, (2) OP_RETURN on network = permanent timestamped proof, (3) anyone can verify by hashing the document and searching the network, (4) no dependency on Arkova being online. | **COMPLETE** |
-| 3 | DEMO-03 | **MEDIUM** | Search page dark mode — public routes (/search, /verify) don't inherit dark theme class because they're outside AuthGuard/ProfileProvider. Need to apply theme at app root level. | NOT STARTED |
+| 3 | ~~DEMO-03~~ | ~~**MEDIUM**~~ | ~~Search page dark mode~~ | **RESOLVED** — `useTheme()` already called at App root (line 106 of App.tsx). Public routes inherit dark class via `document.documentElement`. No code change needed. |
 | 4 | DEMO-04 | **LOW** | Credential template visual rendering — upgrade CredentialRenderer to show diploma-style visual cards for different credential types (degree, license, certificate). | NOT STARTED |
 
 ---

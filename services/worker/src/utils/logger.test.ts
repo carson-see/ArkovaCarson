@@ -88,7 +88,7 @@ describe('DH-11: createRpcLogger', () => {
 
     const child = (logger.child as ReturnType<typeof vi.fn>).mock.results[0].value;
     expect(child.error).toHaveBeenCalledWith(
-      expect.objectContaining({ durationMs: 75, error: err }),
+      expect.objectContaining({ durationMs: 75, err, errorMessage: 'boom' }),
       'RPC call failed',
     );
   });
