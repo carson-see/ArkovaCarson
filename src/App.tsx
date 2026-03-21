@@ -54,6 +54,7 @@ const IssuerRegistryPage = React.lazy(() => import('@/pages/IssuerRegistryPage')
 const MyCredentialsPage = React.lazy(() => import('@/pages/MyCredentialsPage').then(m => ({ default: m.MyCredentialsPage })));
 const TreasuryAdminPage = React.lazy(() => import('@/pages/TreasuryAdminPage').then(m => ({ default: m.TreasuryAdminPage })));
 const MemberDetailPage = React.lazy(() => import('@/pages/MemberDetailPage').then(m => ({ default: m.MemberDetailPage })));
+const AuthCallbackPage = React.lazy(() => import('@/pages/AuthCallbackPage').then(m => ({ default: m.AuthCallbackPage })));
 const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(m => ({ default: m.ReviewQueuePage })));
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
 
@@ -125,7 +126,7 @@ export function App() {
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
-          <Route path={ROUTES.AUTH_CALLBACK} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
+          <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
 
           {/* Onboarding routes */}
           <Route path={ROUTES.ONBOARDING_ROLE} element={<AuthGuard><RouteGuard allow={['/onboarding/role']}><OnboardingRolePage /></RouteGuard></AuthGuard>} />

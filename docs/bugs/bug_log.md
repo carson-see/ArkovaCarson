@@ -8,7 +8,7 @@ Carson performed UAT Section 1 (Auth & Login) on production (`arkova-carson.verc
 | ID | Severity | Summary | Fix Type | Status |
 |----|----------|---------|----------|--------|
 | BUG-PROD-001 | MEDIUM | Login screen dark/light mode mix after logout | Code fix | **RESOLVED** — AuthLayout forces light mode |
-| BUG-PROD-002 | CRITICAL | Google OAuth: "Unsupported provider: provider is not enabled" | Supabase config | **OPEN** — Enable Google provider in Supabase dashboard |
+| BUG-PROD-002 | CRITICAL | Google OAuth: "Unsupported provider: provider is not enabled" | Supabase config + code | **PARTIAL** — AuthCallbackPage.tsx fixes OAuth callback race condition. Still needs: enable Google provider in Supabase Dashboard + add OAuth Client ID/Secret |
 | BUG-PROD-003 | CRITICAL | Signup race condition: setTimeout checks stale error closure, skips email confirmation | Code fix + Supabase config | **PARTIAL** — Code race condition fixed. Verify email confirmation is enabled in Supabase Auth settings. |
 | BUG-PROD-004 | CRITICAL | Password reset "email rate limit exceeded" | Supabase config | **OPEN** — Configure custom SMTP in Supabase (free tier limits: 3 emails/hour) |
 
