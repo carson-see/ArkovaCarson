@@ -1047,6 +1047,15 @@ export const DEVELOPER_PAGE_LABELS = {
 // BETA GATE
 // =============================================================================
 
+export const AUTH_FORM_LABELS = {
+  SIGNUP_TITLE: 'Create your account',
+  SIGNUP_DESCRIPTION: 'Join the closed beta and start securing your documents',
+  ALREADY_HAVE_ACCOUNT: 'Already have an account?',
+  SIGN_IN: 'Sign in',
+  CREATE_ACCOUNT: 'Create account',
+  CREATING_ACCOUNT: 'Creating account...',
+} as const;
+
 export const BETA_GATE_LABELS = {
   DESCRIPTION: 'Arkova is in closed beta. Enter your invite code to create an account.',
   CODE_LABEL: 'Invite code',

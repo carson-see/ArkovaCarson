@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { EmailConfirmation } from '@/components/onboarding/EmailConfirmation';
-import { BETA_GATE_LABELS } from '@/lib/copy';
+import { AUTH_FORM_LABELS, BETA_GATE_LABELS } from '@/lib/copy';
 
 const BETA_INVITE_CODE = import.meta.env.VITE_BETA_INVITE_CODE as string | undefined;
 
@@ -134,13 +134,13 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
 
         {onLoginClick && (
           <p className="text-center text-sm text-muted-foreground">
-            Already have an account?{' '}
+            {AUTH_FORM_LABELS.ALREADY_HAVE_ACCOUNT}{' '}
             <button
               type="button"
               onClick={onLoginClick}
               className="font-medium text-primary hover:text-primary/80 transition-colors"
             >
-              Sign in
+              {AUTH_FORM_LABELS.SIGN_IN}
             </button>
           </p>
         )}
@@ -229,10 +229,10 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
         {loading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Creating account...
+            {AUTH_FORM_LABELS.CREATING_ACCOUNT}
           </>
         ) : (
-          'Create account'
+          AUTH_FORM_LABELS.CREATE_ACCOUNT
         )}
       </Button>
 
