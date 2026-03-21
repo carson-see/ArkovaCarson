@@ -129,11 +129,11 @@ export function SecureDocumentDialog({
     }
   }, [fileData, selectedTemplate]);
 
-  // Handle proceeding from upload step
+  // Handle proceeding from upload step — always run AI extraction
   const handleUploadContinue = useCallback(async () => {
     if (!fileData) return;
 
-    if (aiEnabled && fileData.file.type === 'application/pdf') {
+    if (aiEnabled) {
       await handleStartExtraction();
     } else {
       setStep('template');

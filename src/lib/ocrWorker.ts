@@ -113,7 +113,40 @@ export async function extractTextFromImage(
 }
 
 /**
- * Auto-detect file type and run appropriate OCR.
+ * Extract text from a plain text file by reading it directly.
+ * No OCR needed — just read the file contents.
+ */
+async function extractTextFromTextFile(
+  file: File,
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'processing', progress: 50, currentPage: 1, totalPages: 1 });
+
+  const text = await file.text();
+
+  onProgress?.({ stage: 'complete', progress: 100, currentPage: 1, totalPages: 1 });
+
+  return {
+    text,
+    pageCount: 1,
+    method: 'pdfjs', // Label doesn't matter for text files
+    durationMs: Date.now() - start,
+  };
+}
+
+/** File types that can be read as plain text */
+const TEXT_TYPES = new Set([
+  'text/plain', 'text/csv', 'text/html', 'text/xml', 'text/markdown',
+  'application/json', 'application/xml',
+]);
+const TEXT_EXTENSIONS = new Set([
+  '.txt', '.csv', '.md', '.json', '.xml', '.html', '.htm', '.log', '.rtf',
+]);
+
+/**
+ * Auto-detect file type and run appropriate text extraction.
+ * Supports PDFs (PDF.js), images (Tesseract OCR), and text files (direct read).
  */
 export async function extractText(
   file: File,
@@ -127,5 +160,16 @@ export async function extractText(
     return extractTextFromImage(file, onProgress);
   }
 
-  throw new Error(`Unsupported file type: ${file.type}. Supported: PDF, images (PNG, JPG, TIFF).`);
+  // Text-based files — read directly, no OCR needed
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+  if (TEXT_TYPES.has(file.type) || TEXT_EXTENSIONS.has(ext)) {
+    return extractTextFromTextFile(file, onProgress);
+  }
+
+  // Fallback: try to read as text (covers .docx plain text content, etc.)
+  try {
+    return await extractTextFromTextFile(file, onProgress);
+  } catch {
+    throw new Error(`Unsupported file type: ${file.type}. Supported: PDF, images, text files.`);
+  }
 }
