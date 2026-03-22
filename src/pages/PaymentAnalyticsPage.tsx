@@ -27,7 +27,7 @@ import { ROUTES } from '@/lib/routes';
 import { PAYMENT_LABELS } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
+import { isPlatformAdmin } from '@/lib/platform';
 
 interface PaymentStats {
   totalRevenue: number;
@@ -49,7 +49,7 @@ export function PaymentAnalyticsPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   const [stats, setStats] = useState<PaymentStats | null>(null);
   const [loading, setLoading] = useState(true);

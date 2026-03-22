@@ -9,6 +9,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
@@ -47,7 +48,20 @@ import {
   Check,
   Trash2,
   X,
+  Ban,
+  Link2,
 } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/lib/supabase';
 
 const ATTESTATION_TYPES = [
@@ -134,6 +148,13 @@ export function AttestationsPage() {
   const [selectedAttestation, setSelectedAttestation] = useState<Attestation | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // Revoke state
+  const [revokeTarget, setRevokeTarget] = useState<Attestation | null>(null);
+  const [revokeReason, setRevokeReason] = useState('');
+  const [revokeConfirm, setRevokeConfirm] = useState('');
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
   const fetchAttestations = useCallback(async () => {
     setLoading(true);
     try {
@@ -162,6 +183,43 @@ export function AttestationsPage() {
     setCopiedField(field);
     setTimeout(() => setCopiedField(null), 2000);
   }, []);
+
+  const handleRevoke = useCallback(async () => {
+    if (!revokeTarget || revokeConfirm.toLowerCase() !== 'revoke') return;
+    setRevoking(true);
+    setRevokeError(null);
+    try {
+      const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'https://arkova-worker-270018525501.us-central1.run.app';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setRevokeError('Authentication required'); setRevoking(false); return; }
+
+      const response = await fetch(`${workerUrl}/api/v1/attestations/${encodeURIComponent(revokeTarget.public_id)}/revoke`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ reason: revokeReason.trim() }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Revocation failed' }));
+        setRevokeError(err.error || 'Revocation failed');
+        setRevoking(false);
+        return;
+      }
+
+      setRevokeTarget(null);
+      setRevokeReason('');
+      setRevokeConfirm('');
+      setSelectedAttestation(null);
+      await fetchAttestations();
+    } catch {
+      setRevokeError('Network error — please try again');
+    } finally {
+      setRevoking(false);
+    }
+  }, [revokeTarget, revokeConfirm, revokeReason, fetchAttestations]);
 
   const addClaim = () => {
     setClaims((prev) => [...prev, { claim: '', evidence: '' }]);
@@ -229,7 +287,7 @@ export function AttestationsPage() {
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        const err = await response.json().catch(() => ({ error: 'Failed to create attestation' }));
         setFormError(err.error || 'Failed to create attestation');
         setSubmitting(false);
         return;
@@ -562,6 +620,27 @@ export function AttestationsPage() {
                 </div>
               )}
 
+              {/* Action buttons */}
+              <div className="flex items-center gap-2 border-t border-border/50 pt-3">
+                <Link to={`/verify/attestation/${selectedAttestation.public_id}`} target="_blank">
+                  <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-xs">
+                    <Link2 className="h-3.5 w-3.5 mr-1.5" />
+                    Public Verification Link
+                  </Button>
+                </Link>
+                {selectedAttestation.status !== 'REVOKED' && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs"
+                    onClick={() => { setRevokeTarget(selectedAttestation); setRevokeError(null); }}
+                  >
+                    <Ban className="h-3.5 w-3.5 mr-1.5" />
+                    Revoke
+                  </Button>
+                )}
+              </div>
+
               <div className="text-xs text-muted-foreground pt-2">
                 Issued: {new Date(selectedAttestation.issued_at).toLocaleString()}
                 {selectedAttestation.expires_at && ` · Expires: ${new Date(selectedAttestation.expires_at).toLocaleString()}`}
@@ -569,6 +648,75 @@ export function AttestationsPage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Revoke Dialog */}
+        <AlertDialog open={!!revokeTarget} onOpenChange={(open) => { if (!open && !revoking) { setRevokeTarget(null); setRevokeReason(''); setRevokeConfirm(''); setRevokeError(null); } }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
+                  <AlertTriangle className="h-5 w-5 text-destructive" />
+                </div>
+                <AlertDialogTitle>Revoke Attestation</AlertDialogTitle>
+              </div>
+              <AlertDialogDescription className="space-y-3">
+                <p>
+                  You are about to revoke attestation{' '}
+                  <span className="font-medium text-foreground font-mono">{revokeTarget?.public_id}</span>.
+                </p>
+                <p>
+                  This action is permanent. The attestation will be marked as revoked and its verification status will reflect this change.
+                </p>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <div className="space-y-4 py-2">
+              {revokeError && (
+                <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+                  {revokeError}
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label>Reason for Revocation *</Label>
+                <p className="text-xs text-muted-foreground">Minimum 3 characters required</p>
+                <Textarea
+                  value={revokeReason}
+                  onChange={(e) => setRevokeReason(e.target.value)}
+                  placeholder="Describe why this attestation is being revoked"
+                  disabled={revoking}
+                  maxLength={2000}
+                  rows={3}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>
+                  Type <span className="font-mono font-semibold">revoke</span> to confirm
+                </Label>
+                <Input
+                  value={revokeConfirm}
+                  onChange={(e) => setRevokeConfirm(e.target.value)}
+                  placeholder="revoke"
+                  disabled={revoking}
+                />
+              </div>
+            </div>
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={revoking}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleRevoke}
+                disabled={revokeConfirm.toLowerCase() !== 'revoke' || revokeReason.trim().length < 3 || revoking}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                {revoking ? (
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Revoking...</>
+                ) : (
+                  'Revoke Attestation'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Attestations List */}
         <Card className="border-[#00d4ff]/10 bg-transparent">

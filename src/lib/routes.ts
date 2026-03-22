@@ -60,6 +60,7 @@ export const ROUTES = {
   ADMIN_USERS: '/admin/users',
   ADMIN_RECORDS: '/admin/records',
   ADMIN_SUBSCRIPTIONS: '/admin/subscriptions',
+  ADMIN_USER_DETAIL: '/admin/users/:id',
 
   // Billing routes
   BILLING: '/billing',

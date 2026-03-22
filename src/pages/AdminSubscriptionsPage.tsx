@@ -22,9 +22,15 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
-
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
+import { isPlatformAdmin } from '@/lib/platform';
 
 interface AdminSubscription {
   id: string;
@@ -48,12 +54,12 @@ export function AdminSubscriptionsPage() {
   const { profile, loading: profileLoading } = useProfile();
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminSubscription>('/api/admin/subscriptions');
 
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'ALL');
 
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   const doFetch = useCallback((p = 1) => {
-    fetchList({ page: p, filters: { status: statusFilter } });
+    fetchList({ page: p, filters: { status: statusFilter === 'ALL' ? '' : statusFilter } });
   }, [fetchList, statusFilter]);
 
   useEffect(() => {
@@ -62,13 +68,13 @@ export function AdminSubscriptionsPage() {
 
   const handleFilterChange = (newStatus: string) => {
     setStatusFilter(newStatus);
-    setSearchParams({ status: newStatus, page: '1' });
-    // Need to refetch with new filter
-    fetchList({ page: 1, filters: { status: newStatus } });
+    const filterValue = newStatus === 'ALL' ? '' : newStatus;
+    setSearchParams({ status: filterValue, page: '1' });
+    fetchList({ page: 1, filters: { status: filterValue } });
   };
 
   const handlePageChange = (newPage: number) => {
-    setSearchParams({ status: statusFilter, page: String(newPage) });
+    setSearchParams({ status: statusFilter === 'ALL' ? '' : statusFilter, page: String(newPage) });
     doFetch(newPage);
   };
 
@@ -105,17 +111,18 @@ export function AdminSubscriptionsPage() {
 
       {/* Filter */}
       <div className="flex gap-3 mb-6">
-        <select
-          value={statusFilter}
-          onChange={(e) => handleFilterChange(e.target.value)}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">All Statuses</option>
-          <option value="active">Active</option>
-          <option value="trialing">Trialing</option>
-          <option value="past_due">Past Due</option>
-          <option value="canceled">Canceled</option>
-        </select>
+        <Select value={statusFilter} onValueChange={handleFilterChange}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Statuses</SelectItem>
+            <SelectItem value="active">Active</SelectItem>
+            <SelectItem value="trialing">Trialing</SelectItem>
+            <SelectItem value="past_due">Past Due</SelectItem>
+            <SelectItem value="canceled">Canceled</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {error && (
@@ -142,45 +149,71 @@ export function AdminSubscriptionsPage() {
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No subscriptions found.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">User</th>
-                    <th className="pb-2 pr-4 hidden sm:table-cell">Plan</th>
-                    <th className="pb-2 pr-4">Status</th>
-                    <th className="pb-2 pr-4 hidden md:table-cell">Period End</th>
-                    <th className="pb-2 hidden lg:table-cell">Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((s) => (
-                    <tr key={s.id} className="border-b last:border-0 hover:bg-muted/50">
-                      <td className="py-3 pr-4">
-                        <div className="font-medium text-xs">{s.user_name ?? '—'}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{s.user_email ?? '—'}</div>
-                      </td>
-                      <td className="py-3 pr-4 hidden sm:table-cell">
-                        <Badge variant="secondary" className="capitalize">
-                          {s.plans?.name ?? 'Unknown'}
-                        </Badge>
-                      </td>
-                      <td className="py-3 pr-4">
-                        <SubscriptionStatusBadge status={s.status} />
-                      </td>
-                      <td className="py-3 pr-4 hidden md:table-cell text-muted-foreground text-xs">
+            <>
+              {/* Mobile card layout */}
+              <div className="space-y-3 md:hidden">
+                {items.map((s) => (
+                  <div key={s.id} className="rounded-lg border p-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium">{s.user_name ?? '—'}</span>
+                      <SubscriptionStatusBadge status={s.status} />
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono mb-2">{s.user_email ?? '—'}</div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <Badge variant="secondary" className="capitalize text-[10px]">
+                        {s.plans?.name ?? 'Unknown'}
+                      </Badge>
+                      <span>
                         {s.current_period_end
-                          ? new Date(s.current_period_end).toLocaleDateString()
-                          : '—'}
-                      </td>
-                      <td className="py-3 hidden lg:table-cell text-muted-foreground text-xs">
-                        {new Date(s.created_at).toLocaleDateString()}
-                      </td>
+                          ? `Ends ${new Date(s.current_period_end).toLocaleDateString()}`
+                          : new Date(s.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="overflow-x-auto hidden md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-4">User</th>
+                      <th className="pb-2 pr-4">Plan</th>
+                      <th className="pb-2 pr-4">Status</th>
+                      <th className="pb-2 pr-4">Period End</th>
+                      <th className="pb-2">Created</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {items.map((s) => (
+                      <tr key={s.id} className="border-b last:border-0 hover:bg-muted/50">
+                        <td className="py-3 pr-4">
+                          <div className="font-medium text-xs">{s.user_name ?? '—'}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{s.user_email ?? '—'}</div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Badge variant="secondary" className="capitalize">
+                            {s.plans?.name ?? 'Unknown'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <SubscriptionStatusBadge status={s.status} />
+                        </td>
+                        <td className="py-3 pr-4 text-muted-foreground text-xs">
+                          {s.current_period_end
+                            ? new Date(s.current_period_end).toLocaleDateString()
+                            : '—'}
+                        </td>
+                        <td className="py-3 text-muted-foreground text-xs">
+                          {new Date(s.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {totalPages > 1 && (

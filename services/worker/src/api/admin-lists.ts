@@ -100,6 +100,82 @@ export async function handleAdminUsers(
   }
 }
 
+// ─── GET /api/admin/users/:id ─────────────────────────────────
+
+export async function handleAdminUserDetail(
+  userId: string,
+  targetUserId: string,
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  try {
+    // Fetch user profile
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('id, email, full_name, role, org_id, created_at, updated_at')
+      .eq('id', targetUserId)
+      .is('deleted_at', null)
+      .single();
+
+    if (profileError || !profile) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    // Fetch org name if applicable
+    let orgName: string | null = null;
+    if (profile.org_id) {
+      const { data: org } = await db
+        .from('organizations')
+        .select('display_name')
+        .eq('id', profile.org_id)
+        .single();
+      orgName = org?.display_name ?? null;
+    }
+
+    // Fetch user's records (most recent 25)
+    const { data: records } = await db
+      .from('anchors')
+      .select('id, public_id, filename, credential_type, status, chain_tx_id, created_at')
+      .eq('user_id', targetUserId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(25);
+
+    // Fetch user's subscription
+    const { data: subscription } = await db
+      .from('subscriptions')
+      .select('id, status, current_period_end, plans(name)')
+      .eq('user_id', targetUserId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    res.json({
+      user: {
+        ...profile,
+        org_name: orgName,
+      },
+      records: records ?? [],
+      subscription: subscription ? {
+        id: subscription.id,
+        status: subscription.status,
+        plan_name: (subscription.plans as { name: string } | null)?.name ?? null,
+        current_period_end: subscription.current_period_end,
+      } : null,
+    });
+  } catch (error) {
+    logger.error({ error, targetUserId }, 'Admin user detail request failed');
+    res.status(500).json({ error: 'Failed to fetch user detail' });
+  }
+}
+
 // ─── GET /api/admin/records ──────────────────────────────────
 
 export async function handleAdminRecords(

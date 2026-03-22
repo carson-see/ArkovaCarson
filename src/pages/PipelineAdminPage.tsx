@@ -56,7 +56,7 @@ import { ROUTES } from '@/lib/routes';
 import { PIPELINE_LABELS } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
+import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform';
 
 interface PipelineStats {
   totalRecords: number;
@@ -106,7 +106,7 @@ export function PipelineAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   // Tables from migrations 0077-0080 not yet in generated types
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -817,28 +817,42 @@ export function PipelineAdminPage() {
                               </div>
                             </div>
 
-                            {anchorDetails.chain_tx_id && (
-                              <div>
-                                <span className="text-[10px] text-muted-foreground">Network Receipt (Mempool)</span>
-                                <div className="flex items-center gap-2 mt-0.5">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground">
+                                {anchorDetails.chain_tx_id ? 'Network Receipt (Mempool)' : 'Mempool'}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {anchorDetails.chain_tx_id ? (
+                                  <>
+                                    <a
+                                      href={mempoolTxUrl(anchorDetails.chain_tx_id)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 truncate max-w-[200px] flex items-center gap-1"
+                                    >
+                                      <Link2 className="h-3 w-3 shrink-0" />
+                                      {anchorDetails.chain_tx_id.slice(0, 16)}…
+                                    </a>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.chain_tx_id!, 'txId'); }}
+                                      className="text-muted-foreground hover:text-foreground shrink-0"
+                                    >
+                                      {copiedField === 'txId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                                    </button>
+                                  </>
+                                ) : (
                                   <a
-                                    href={`https://mempool.space/signet/tx/${anchorDetails.chain_tx_id}`}
+                                    href={mempoolAddressUrl()}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 truncate max-w-[200px] flex items-center gap-1"
+                                    className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
                                   >
                                     <Link2 className="h-3 w-3 shrink-0" />
-                                    {anchorDetails.chain_tx_id.slice(0, 16)}…
+                                    Awaiting anchor — view treasury
                                   </a>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.chain_tx_id!, 'txId'); }}
-                                    className="text-muted-foreground hover:text-foreground shrink-0"
-                                  >
-                                    {copiedField === 'txId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                                  </button>
-                                </div>
+                                )}
                               </div>
-                            )}
+                            </div>
 
                             {anchorDetails.chain_block_height && (
                               <div>

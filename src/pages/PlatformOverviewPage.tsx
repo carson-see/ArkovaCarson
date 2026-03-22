@@ -32,11 +32,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 
-/** Hardcoded admin emails — will be replaced with PLATFORM_ADMIN role in future */
-const PLATFORM_ADMIN_EMAILS = [
-  'carson@arkova.ai',
-  'sarah@arkova.ai',
-];
+import { isPlatformAdmin } from '@/lib/platform';
 
 export function PlatformOverviewPage() {
   const navigate = useNavigate();
@@ -46,7 +42,7 @@ export function PlatformOverviewPage() {
 
   const [refreshing, setRefreshing] = useState(false);
 
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   useEffect(() => {
     if (isAdmin) {

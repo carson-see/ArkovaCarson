@@ -37,11 +37,7 @@ import { ROUTES } from '@/lib/routes';
 import { TREASURY_LABELS } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
-/** Hardcoded admin emails — will be replaced with PLATFORM_ADMIN role in future */
-const PLATFORM_ADMIN_EMAILS = [
-  'carson@arkova.ai',
-  'sarah@arkova.ai',
-];
+import { isPlatformAdmin } from '@/lib/platform';
 
 interface RecentAnchor {
   id: string;
@@ -62,7 +58,7 @@ export function TreasuryAdminPage() {
   const [anchorsLoading, setAnchorsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   const fetchRecentAnchors = useCallback(async () => {
     try {

@@ -158,11 +158,12 @@ describe('AssetDetailView', () => {
     expect(container.innerHTML).toContain('mempool.space');
   });
 
-  it('should not show network receipt section for PENDING anchors without txid', () => {
+  it('should show treasury fallback link for PENDING anchors without txid', () => {
     const pendingAnchor = { ...mockAnchor, status: 'PENDING' as const };
-    const { queryByText } = render(<AssetDetailView anchor={pendingAnchor} />);
+    const { container } = render(<AssetDetailView anchor={pendingAnchor} />);
 
-    expect(queryByText('Network Receipt')).not.toBeInTheDocument();
+    expect(container.innerHTML).toContain('Awaiting network confirmation');
+    expect(container.innerHTML).toContain('view treasury');
   });
 
   // BETA-12: Description display

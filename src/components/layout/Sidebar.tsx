@@ -61,9 +61,7 @@ const mainNavItems: NavItem[] = [
   { label: 'Attestations', icon: FileCheck, to: ROUTES.ATTESTATIONS },
 ];
 
-// UI-only visibility hint — NOT a security control. Actual admin access must be
-// enforced server-side via RLS/roles. TODO: migrate to profiles.is_platform_admin flag.
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
+import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
 
 const adminNavItems: NavItem[] = [
   { label: 'Overview', icon: BarChart3, to: ROUTES.ADMIN_OVERVIEW },
@@ -150,7 +148,7 @@ interface SidebarProps {
 }
 
 export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
-  const isPlatformAdmin = PLATFORM_ADMIN_EMAILS.includes(userEmail ?? '');
+  const isPlatformAdmin = checkPlatformAdmin(userEmail);
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
 

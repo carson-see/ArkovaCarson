@@ -24,9 +24,15 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
-
-const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
+import { isPlatformAdmin } from '@/lib/platform';
 
 interface AdminRecord {
   id: string;
@@ -51,13 +57,13 @@ export function AdminRecordsPage() {
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminRecord>('/api/admin/records');
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
-  const [typeFilter, setTypeFilter] = useState(searchParams.get('type') ?? '');
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'ALL');
+  const [typeFilter, setTypeFilter] = useState(searchParams.get('type') || 'ALL');
 
-  const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
+  const isAdmin = isPlatformAdmin(user?.email);
 
   const doFetch = useCallback((p = 1) => {
-    fetchList({ page: p, search: searchInput, filters: { status: statusFilter, type: typeFilter } });
+    fetchList({ page: p, search: searchInput, filters: { status: statusFilter === 'ALL' ? '' : statusFilter, type: typeFilter === 'ALL' ? '' : typeFilter } });
   }, [fetchList, searchInput, statusFilter, typeFilter]);
 
   useEffect(() => {
@@ -65,12 +71,12 @@ export function AdminRecordsPage() {
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = () => {
-    setSearchParams({ search: searchInput, status: statusFilter, type: typeFilter, page: '1' });
+    setSearchParams({ search: searchInput, status: statusFilter === 'ALL' ? '' : statusFilter, type: typeFilter === 'ALL' ? '' : typeFilter, page: '1' });
     doFetch(1);
   };
 
   const handlePageChange = (newPage: number) => {
-    setSearchParams({ search: searchInput, status: statusFilter, type: typeFilter, page: String(newPage) });
+    setSearchParams({ search: searchInput, status: statusFilter === 'ALL' ? '' : statusFilter, type: typeFilter === 'ALL' ? '' : typeFilter, page: String(newPage) });
     doFetch(newPage);
   };
 
@@ -117,29 +123,31 @@ export function AdminRecordsPage() {
             className="pl-9"
           />
         </div>
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">All Statuses</option>
-          <option value="PENDING">Pending</option>
-          <option value="SUBMITTED">Submitted</option>
-          <option value="SECURED">Secured</option>
-          <option value="REVOKED">Revoked</option>
-        </select>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">All Types</option>
-          <option value="PROFESSIONAL">Professional</option>
-          <option value="ACADEMIC">Academic</option>
-          <option value="LICENSE">License</option>
-          <option value="CERTIFICATE">Certificate</option>
-          <option value="OTHER">Other</option>
-        </select>
+        <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); const sf = v === 'ALL' ? '' : v; const tf = typeFilter === 'ALL' ? '' : typeFilter; setSearchParams({ search: searchInput, status: sf, type: tf, page: '1' }); fetchList({ page: 1, search: searchInput, filters: { status: sf, type: tf } }); }}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Statuses" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Statuses</SelectItem>
+            <SelectItem value="PENDING">Pending</SelectItem>
+            <SelectItem value="SUBMITTED">Submitted</SelectItem>
+            <SelectItem value="SECURED">Secured</SelectItem>
+            <SelectItem value="REVOKED">Revoked</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); const sf = statusFilter === 'ALL' ? '' : statusFilter; const tf = v === 'ALL' ? '' : v; setSearchParams({ search: searchInput, status: sf, type: tf, page: '1' }); fetchList({ page: 1, search: searchInput, filters: { status: sf, type: tf } }); }}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Types</SelectItem>
+            <SelectItem value="PROFESSIONAL">Professional</SelectItem>
+            <SelectItem value="ACADEMIC">Academic</SelectItem>
+            <SelectItem value="LICENSE">License</SelectItem>
+            <SelectItem value="CERTIFICATE">Certificate</SelectItem>
+            <SelectItem value="OTHER">Other</SelectItem>
+          </SelectContent>
+        </Select>
         <Button onClick={handleSearch} variant="outline" size="sm" className="h-10">
           Search
         </Button>
@@ -170,47 +178,76 @@ export function AdminRecordsPage() {
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No records found.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">Document</th>
-                    <th className="pb-2 pr-4 hidden sm:table-cell">Status</th>
-                    <th className="pb-2 pr-4 hidden md:table-cell">Type</th>
-                    <th className="pb-2 pr-4 hidden lg:table-cell">Owner</th>
-                    <th className="pb-2">Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((r) => (
-                    <tr
-                      key={r.id}
-                      className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
-                      onClick={() => navigate(`/records/${r.id}`)}
-                    >
-                      <td className="py-3 pr-4">
-                        <div className="font-medium truncate max-w-[300px]">{r.filename}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{r.public_id}</div>
-                      </td>
-                      <td className="py-3 pr-4 hidden sm:table-cell">
-                        <RecordStatusBadge status={r.status} />
-                      </td>
-                      <td className="py-3 pr-4 hidden md:table-cell">
-                        <Badge variant="outline" className="capitalize text-xs">
+            <>
+              {/* Mobile card layout */}
+              <div className="space-y-3 md:hidden">
+                {items.map((r) => (
+                  <div
+                    key={r.id}
+                    className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => navigate(`/records/${r.id}`)}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm font-medium truncate max-w-[200px]">{r.filename}</span>
+                      <RecordStatusBadge status={r.status} />
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono mb-1">{r.public_id}</div>
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="capitalize text-[10px]">
                           {r.credential_type?.toLowerCase() ?? '—'}
                         </Badge>
-                      </td>
-                      <td className="py-3 pr-4 hidden lg:table-cell text-muted-foreground text-xs font-mono">
-                        {r.user_email ?? '—'}
-                      </td>
-                      <td className="py-3 text-muted-foreground text-xs">
-                        {new Date(r.created_at).toLocaleDateString()}
-                      </td>
+                        <span className="font-mono truncate max-w-[120px]">{r.user_email ?? '—'}</span>
+                      </div>
+                      <span>{new Date(r.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="overflow-x-auto hidden md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-4">Document</th>
+                      <th className="pb-2 pr-4">Status</th>
+                      <th className="pb-2 pr-4">Type</th>
+                      <th className="pb-2 pr-4">Owner</th>
+                      <th className="pb-2">Created</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {items.map((r) => (
+                      <tr
+                        key={r.id}
+                        className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
+                        onClick={() => navigate(`/records/${r.id}`)}
+                      >
+                        <td className="py-3 pr-4">
+                          <div className="font-medium truncate max-w-[300px]">{r.filename}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{r.public_id}</div>
+                        </td>
+                        <td className="py-3 pr-4">
+                          <RecordStatusBadge status={r.status} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          <Badge variant="outline" className="capitalize text-xs">
+                            {r.credential_type?.toLowerCase() ?? '—'}
+                          </Badge>
+                        </td>
+                        <td className="py-3 pr-4 text-muted-foreground text-xs font-mono">
+                          {r.user_email ?? '—'}
+                        </td>
+                        <td className="py-3 text-muted-foreground text-xs">
+                          {new Date(r.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {totalPages > 1 && (
