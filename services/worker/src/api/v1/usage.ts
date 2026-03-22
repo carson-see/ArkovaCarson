@@ -51,7 +51,7 @@ router.get('/', async (req, res) => {
       .eq('is_active', true);
 
     if (keysError) {
-      logger.error({ error: keysError, orgId }, 'Failed to fetch org keys for usage');
+      logger.error({ error: keysError, orgIdPrefix: orgId?.slice(0, 8) }, 'Failed to fetch org keys for usage');
       res.status(500).json({ error: 'internal_error', message: 'Failed to retrieve usage' });
       return;
     }
@@ -97,7 +97,7 @@ router.get('/', async (req, res) => {
 
     res.json(response);
   } catch (err) {
-    logger.error({ error: err, orgId }, 'Usage lookup failed');
+    logger.error({ error: err, orgIdPrefix: orgId?.slice(0, 8) }, 'Usage lookup failed');
     res.status(500).json({ error: 'internal_error', message: 'Failed to retrieve usage' });
   }
 });

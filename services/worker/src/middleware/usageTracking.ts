@@ -103,7 +103,7 @@ export async function incrementUsage(
 
     return data ? { count: data.request_count, month } : null;
   } catch (err) {
-    logger.error({ error: err, apiKeyId }, 'Failed to increment usage');
+    logger.error({ error: err, apiKeyIdPrefix: apiKeyId?.slice(0, 8) }, 'Failed to increment usage');
     return null;
   }
 }

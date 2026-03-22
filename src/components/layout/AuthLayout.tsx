@@ -46,7 +46,7 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
           </div>
 
           {/* Auth card */}
-          <Card className="bg-[#2e353d]/40 backdrop-blur-xl border border-white/5 shadow-lg">
+          <Card className="bg-[#151c24]/60 backdrop-blur-xl border border-[#00d4ff]/15 shadow-[0_0_30px_rgba(0,212,255,0.04)]">
             <CardHeader className="space-y-1 pb-4">
               <CardTitle className="text-xl font-semibold text-center text-[#dce3ed]">
                 {title}

@@ -15,4 +15,6 @@ export { CredentialTemplatesPage } from './CredentialTemplatesPage';
 export { OnboardingRolePage } from './OnboardingRolePage';
 export { OnboardingOrgPage } from './OnboardingOrgPage';
 export { ReviewPendingPage } from './ReviewPendingPage';
+export { PipelineAdminPage } from './PipelineAdminPage';
+export { PaymentAnalyticsPage } from './PaymentAnalyticsPage';
 export { VaultDashboard } from '../components/vault';

@@ -104,6 +104,20 @@ const ConfigSchema = z.object({
   apiKeyHmacSecret: z.string().min(1).optional(),
   /** CORS origins for /api/v1/* endpoints (comma-separated) */
   corsAllowedOrigins: z.string().optional(),
+
+  // x402 Payment Protocol (PH1-PAY-01)
+  /** x402 facilitator URL for payment verification */
+  x402FacilitatorUrl: z.string().url().optional(),
+  /** USDC receiving address on Base */
+  arkovaUsdcAddress: z.string().optional(),
+  /** x402 network identifier (default: Base Sepolia testnet) */
+  x402Network: z.string().default('eip155:84532'),
+
+  // Nessie Training Pipeline (PH1-DATA)
+  /** SEC EDGAR User-Agent (required by SEC) */
+  edgarUserAgent: z.string().optional(),
+  /** Output path for training data JSONL exports */
+  trainingDataOutputPath: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -157,6 +171,11 @@ function loadConfig(): Config {
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
+    x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
+    arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
+    x402Network: process.env.X402_NETWORK,
+    edgarUserAgent: process.env.EDGAR_USER_AGENT,
+    trainingDataOutputPath: process.env.TRAINING_DATA_OUTPUT_PATH,
     resendApiKey: process.env.RESEND_API_KEY,
     emailFrom: process.env.EMAIL_FROM,
   });

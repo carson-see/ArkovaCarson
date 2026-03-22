@@ -197,7 +197,7 @@ export function SearchPage() {
         </div>
 
         {/* Unified search form */}
-        <Card className="bg-[#151c24] border-white/5 mb-8 animate-in-view stagger-1">
+        <Card className="bg-transparent border-[#00d4ff]/15 mb-8 animate-in-view stagger-1">
           <CardContent className="p-6">
             <div className="flex flex-col gap-3 sm:flex-row">
               <div className="relative flex-1">

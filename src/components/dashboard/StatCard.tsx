@@ -64,7 +64,7 @@ export function StatCard({
   }
 
   return (
-    <Card className="transition-all hover:bg-[#2e353d] border-white/5">
+    <Card className="transition-all border-[#00d4ff]/15 hover:border-[#00d4ff]/30 bg-transparent hover:shadow-[0_0_20px_rgba(0,212,255,0.06)]">
       <CardContent className="p-6">
         <div className="flex items-center gap-4">
           <div
@@ -79,7 +79,7 @@ export function StatCard({
             <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               {label}
             </p>
-            <p className="text-4xl font-black tracking-tighter">
+            <p className="text-4xl font-black tracking-tighter font-display">
               {value}
             </p>
             {description && (

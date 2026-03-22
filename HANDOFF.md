@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 164/176 stories complete (93%) incl. 13 Beta stories (BETA-01–13). 2,018 tests (975 frontend + 1,043 worker). 75 migration files (0001-0075, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **7+ real Signet transactions confirmed end-to-end.** All feature gates fixed (p_flag_key + column names). Worker rev 00030 deployed. Frontend on arkova-26.vercel.app. **Design system: "Synthetic Sentinel"** (Inter + Space Grotesk, #00d4ff cyan, tonal layering). MCP server live at edge.arkova.ai.
+**Overall progress:** 164/176 stories complete (93%) incl. 13 Beta stories (BETA-01–13). 2,018 tests (975 frontend + 1,043 worker). 75 migration files (0001-0075, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **7+ real Signet transactions confirmed end-to-end.** All feature gates fixed (p_flag_key + column names). Worker rev 00030 deployed. Frontend on arkova-26.vercel.app. **Design system: "Precision Engine"** (DM Sans + JetBrains Mono, #00d4ff cyan, sharp corners, tonal layering). See `docs/reference/BRAND.md`. MCP server live at edge.arkova.ai.
 
 ### Open Blockers
 
@@ -109,7 +109,7 @@ All HIGH+ launch blockers resolved:
 - AI documentation (llms.txt + AGENTS.md for agent discovery)
 - Remote MCP server deployed at edge.arkova.ai (Cloudflare Worker, Streamable HTTP, OAuth + API key auth)
 - GDPR compliance (PII erasure RPCs, audit log anonymization, data retention policies)
-- **"Synthetic Sentinel" UI design system** (PRs #117-120, replacing Nordic Vault) — Inter + Space Grotesk fonts, #0d141b bg, #00d4ff primary cyan, tonal layering. Updated: tailwind.config.ts, index.css, Sidebar, AppShell, AuthLayout, StatCard, DashboardPage, SearchPage.
+- **"Precision Engine" UI design system** (PRs #117-120, replacing Nordic Vault) — Inter + Space Grotesk fonts, #0d141b bg, #00d4ff primary cyan, tonal layering. Updated: tailwind.config.ts, index.css, Sidebar, AppShell, AuthLayout, StatCard, DashboardPage, SearchPage.
 - **DevelopersPage** at /developers (public, Stitch wireframe design)
 - **Credential template library** — 16 production templates + type-specific visual cards in CredentialRenderer (DEMO-04)
 - **AI extraction on all file types** — ocrWorker supports .txt, .csv, .md, etc. (not just PDFs)
@@ -146,11 +146,11 @@ All HIGH+ launch blockers resolved:
 > **Full session history (25+ entries, 2026-03-14 through 2026-03-17) archived to `docs/archive/session-log.md`.**
 > Only the most recent session is kept here. Older entries are in the archive.
 
-### Session: 2026-03-21 — Synthetic Sentinel Design System + MCP Deploy + Credential Templates
+### Session: 2026-03-21 — Precision Engine Design System + MCP Deploy + Credential Templates
 
 **PRs #117-120 merged to main.** Major design system migration, MCP server deployment, credential template library.
 
-**Design system migration (Synthetic Sentinel):**
+**Design system migration (Precision Engine):**
 - Replaced Nordic Vault aesthetic app-wide
 - New fonts: Inter + Space Grotesk (was DM Sans + JetBrains Mono)
 - New colors: #0d141b bg, #00d4ff primary cyan, tonal layering

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-21 (PRs #117-120: Synthetic Sentinel design system, MCP deploy to edge.arkova.ai, DEMO-04 complete, migration 0074) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-22 (PRs #117-120: Precision Engine design system, MCP deploy to edge.arkova.ai, DEMO-04 complete, migration 0075) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -286,6 +286,37 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | File | Line | Comment |
 |------|------|---------|
 | Sidebar.tsx | 58 | `// TODO: migrate to profiles.is_platform_admin flag` |
+
+---
+
+## TIER 0: PHASE 1.5 — FOUNDATION (Active Sprint, 2026-03-22)
+
+> Source: Arkova-Master-Strategy-Complete, Verification-Bootstrap-Deep-Dive, Verified-Intelligence-SLM-Analysis
+> Story doc: [17_phase1_5_foundation.md](./stories/17_phase1_5_foundation.md)
+
+**Priority order — all items are immediate needs:**
+
+| ID | Story | Priority | Status | Sprint | Depends On |
+|----|-------|----------|--------|--------|------------|
+| PH1-UI-01 | Design system refresh (match arkova.ai) | P0 | NOT STARTED | S1 | — |
+| PH1-DATA-01 | EDGAR full-text fetcher enhancement | P0 | NOT STARTED | S1 | Migration 0077 |
+| PH1-DATA-02 | USPTO patent fetcher | P0 | NOT STARTED | S1 | Migration 0077 |
+| PH1-DATA-04 | Merkle batch anchoring for public records | P0 | NOT STARTED | S2 | PH1-DATA-01 |
+| PH1-PAY-01 | x402 Express middleware integration | P0 | NOT STARTED | S2 | Migration 0078 |
+| PH1-DATA-03 | Federal Register fetcher | P1 | NOT STARTED | S2 | Migration 0077 |
+| PH1-INT-01 | Vector DB enhancement for public records | P0 | NOT STARTED | S3 | Migration 0077 |
+| PH1-INT-02 | RAG retrieval endpoint (Nessie query) | P0 | NOT STARTED | S3 | PH1-INT-01 |
+| PH1-PAY-02 | Self-hosted x402 facilitator | P0 | NOT STARTED | S3 | PH1-PAY-01 |
+| PH1-INT-03 | Gemini RAG integration | P1 | NOT STARTED | S4 | PH1-INT-02 |
+| PH1-SDK-01 | TypeScript SDK (@arkova/sdk) | P1 | NOT STARTED | S4 | PH1-PAY-01 |
+| PH1-SDK-03 | MCP server enhancement (nessie tools) | P1 | NOT STARTED | S4 | PH1-INT-02 |
+| PH1-DATA-05 | Pipeline monitoring dashboard | P1 | NOT STARTED | S4 | PH1-DATA-01 |
+| PH1-PAY-03 | Payment analytics & revenue tracking | P1 | NOT STARTED | S4 | PH1-PAY-01 |
+| PH1-SDK-02 | Python SDK (arkova-python) | P2 | NOT STARTED | S5 | PH1-PAY-01 |
+
+**PRs already created (infrastructure):**
+- PR #126: `feature/nessie-dataset-pipeline` — Migration 0077 (public_records), EDGAR fetcher, training exporter
+- PR #125: `feature/x402-payment-infrastructure` — Migration 0078 (x402_payments), x402 packages, config
 
 ---
 

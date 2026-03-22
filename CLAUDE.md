@@ -7,7 +7,7 @@ Read this file before every task. Rules here override all other documents.
 
 **Reference docs** (read on demand, not every session):
 - `docs/reference/FILE_MAP.md` — Full file placement map
-- `docs/reference/BRAND.md` — Synthetic Sentinel design system (colors, typography, CSS classes, component rules)
+- `docs/reference/BRAND.md` — "Precision Engine" design system (colors, typography, CSS classes, component rules, migration guide)
 - `docs/reference/TESTING.md` — Test patterns, demo users, frozen API schema
 - `docs/reference/STORY_ARCHIVE.md` — Completed story details (P1-P8, DH, UF, P4.5, UAT)
 

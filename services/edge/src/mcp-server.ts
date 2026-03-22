@@ -18,6 +18,9 @@ import { z } from 'zod';
 import {
   handleVerifyCredential,
   handleSearchCredentials,
+  handleNessieQuery,
+  handleAnchorDocument,
+  handleVerifyDocument,
   type SupabaseConfig,
 } from './mcp-tools';
 import type { Env } from './env';
@@ -56,6 +59,52 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     },
     async ({ query, max_results }) => {
       return handleSearchCredentials({ query, max_results }, config);
+    },
+  );
+
+  // ── Tool: nessie_query (PH1-SDK-03) ──────────────────────────────────
+  server.tool(
+    'nessie_query',
+    'Query Arkova\'s verified intelligence engine (Nessie). Searches anchored public records ' +
+    '(SEC filings, patents, regulatory documents) using semantic similarity. ' +
+    'In "context" mode, returns a synthesized answer with citations linking to anchored documents.',
+    {
+      query: z.string().describe('Natural language query'),
+      mode: z.enum(['retrieval', 'context']).optional().describe('Query mode (default: retrieval)'),
+      limit: z.number().optional().describe('Max results (default: 10, max: 50)'),
+    },
+    async ({ query, mode, limit }) => {
+      return handleNessieQuery({ query, mode, limit }, config);
+    },
+  );
+
+  // ── Tool: anchor_document (PH1-SDK-03) ─────────────────────────────
+  server.tool(
+    'anchor_document',
+    'Submit a document fingerprint for anchoring to the public ledger. ' +
+    'Only the SHA-256 fingerprint is sent — the document itself never leaves your device.',
+    {
+      content_hash: z.string().describe('SHA-256 fingerprint of the document'),
+      record_type: z.string().optional().describe('Record type (e.g., patent_grant, 10-K)'),
+      source: z.string().optional().describe('Source (e.g., edgar, uspto)'),
+      title: z.string().optional().describe('Document title'),
+      source_url: z.string().optional().describe('Original document URL'),
+    },
+    async ({ content_hash, record_type, source, title, source_url }) => {
+      return handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config);
+    },
+  );
+
+  // ── Tool: verify_document (PH1-SDK-03) ─────────────────────────────
+  server.tool(
+    'verify_document',
+    'Verify a document by its SHA-256 fingerprint. Checks if it has been anchored ' +
+    'and returns the anchor proof including network receipt and timestamp.',
+    {
+      content_hash: z.string().describe('SHA-256 fingerprint of the document to verify'),
+    },
+    async ({ content_hash }) => {
+      return handleVerifyDocument({ content_hash }, config);
     },
   );
 

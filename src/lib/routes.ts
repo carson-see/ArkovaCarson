@@ -51,6 +51,8 @@ export const ROUTES = {
   ADMIN_OVERVIEW: '/admin/overview',
   ADMIN_HEALTH: '/admin/health',
   ADMIN_TREASURY: '/admin/treasury',
+  ADMIN_PIPELINE: '/admin/pipeline',
+  ADMIN_PAYMENTS: '/admin/payments',
 
   // Billing routes
   BILLING: '/billing',

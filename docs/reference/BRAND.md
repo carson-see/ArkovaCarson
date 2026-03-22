@@ -1,76 +1,188 @@
-# Nordic Vault Design System
-_Extracted from CLAUDE.md Section 5 — 2026-03-17 | Established PR #42_
+# Arkova Design System — "The Precision Engine"
+_Last updated: 2026-03-22 | Applies to: arkova.ai (marketing) + app.arkova.ai (product)_
 
-## Brand Colors
+## Creative North Star
 
-| Name | Hex | HSL | Usage |
-|------|-----|-----|-------|
-| Steel Blue | `#82b8d0` | 197 42% 66% | Primary / buttons / links |
-| Charcoal | `#303433` | 156 4% 19% | Sidebar background / foreground |
-| Ice Blue | `#dbeaf1` | 199 44% 90% | Secondary / light backgrounds |
+**"The Precision Engine."** The visual identity should feel engineered, not designed. High-contrast typography, sharp edges, tonal depth, and light as a structural element. Every element should feel machined with purpose. We do not use containers to trap content — we use light play, subtle gradients, and depth to guide the eye.
 
-## Typography (Locked)
+**Anti-template mandate:** Avoid rounded-2xl card grids, pill badges, floating shield icons, and any pattern that screams "AI-generated landing page." If it looks like a Tailwind template, it's wrong.
 
-| Token | Family | Source | Usage |
+---
+
+## Colors
+
+### Primary Palette (Dark Mode — Default)
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `cyber-bg` | `#0a0f14` | Base background |
+| `cyber-bg-light` | `#0f1a22` | Footer, elevated sections |
+| `cyber-bg-card` | `#0d1820` | Card/panel backgrounds |
+| `cyber-cyan` | `#00d4ff` | Primary accent, buttons, links, highlights |
+| `cyber-cyan-dim` | `#00a3cc` | Secondary cyan for gradients |
+| `cyber-teal` | `#00e5c8` | Gradient endpoint, success states |
+
+### Opacity Tokens
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `cyber-cyan-border` | `rgba(0, 212, 255, 0.25)` | Card borders, dividers |
+| `cyber-cyan-glow` | `rgba(0, 212, 255, 0.15)` | Ambient glows |
+| `cyber-cyan-muted` | `rgba(0, 212, 255, 0.08)` | Subtle backgrounds |
+
+### Legacy Palette (App — being migrated)
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| `arkova-steel` | `#82b8d0` | Former primary (being replaced by `cyber-cyan`) |
+| `arkova-charcoal` | `#303433` | Sidebar background |
+| `arkova-ice` | `#dbeaf1` | Light backgrounds (light mode only) |
+
+---
+
+## Typography
+
+| Token | Family | Weight | Usage |
 |-------|--------|--------|-------|
-| `font-sans` | **DM Sans** (300-700) | Google Fonts, `index.html` | Headings, body text, UI labels |
-| `font-mono` | **JetBrains Mono** (400, 500) | Google Fonts, `index.html` | Fingerprints, IDs, code blocks |
+| `font-sans` | **DM Sans** | 300-700 | Body text, UI labels, descriptions |
+| `font-mono` | **JetBrains Mono** | 400, 500 | Fingerprints, IDs, code, data labels, section tags |
 
-**Banned fonts:** Inter, Roboto, Arial, Space Grotesk, system-ui default stack. Never revert to these.
+**Section tags** (e.g., "THE PROTOCOL", "CORE INFRASTRUCTURE") use `font-mono` or `font-sans` at `text-xs font-semibold uppercase tracking-[0.2em] text-cyber-cyan`.
 
-## CSS Custom Properties
+**Data values** (stat numbers, hex strings, timestamps) always use `font-mono`.
 
-The `:root` and `.dark` blocks in `src/index.css` define all theme tokens. The Arkova palette is already applied (Steel Blue as primary, Charcoal as sidebar). See `tailwind.config.ts` for the `arkova.*` color scale. Extended vars: `--glow-primary`, `--glow-success`, `--surface-elevated`.
+---
 
-## Atmospheric CSS Classes (defined in `src/index.css`)
+## Corners & Shapes
+
+**Maximum border radius: 2px (`rounded-sm`).** This is the defining visual rule of the Precision Engine system.
+
+| Element | Radius | Class |
+|---------|--------|-------|
+| Cards, panels | 2px | `rounded-sm` |
+| Buttons | 2px | `rounded-sm` (via `.cyber-btn`) |
+| Inputs | 2px | `rounded-sm` (via `.cyber-input`) |
+| Icon containers | 2px | `rounded-sm` |
+| FAQ items | 2px | `rounded-sm` |
+| Team photos | Full circle | `rounded-full` (exception for headshots) |
+| Floating dots | Full circle | `rounded-full` (decorative only) |
+
+**Banned:** `rounded-lg`, `rounded-xl`, `rounded-2xl`, `rounded-3xl` on any structural element. These create the "AI cookie-cutter" look.
+
+---
+
+## Elevation & Depth
+
+Depth via **tonal layering** and **ambient glows**, not drop shadows.
+
+### Tonal Layers
+1. **Base:** `cyber-bg` (`#0a0f14`)
+2. **Section:** `cyber-bg-light` (`#0f1a22`)
+3. **Card:** `cyber-bg-card` (`#0d1820`)
+
+### Ambient Glows (replace shadows)
+| Token | CSS | Usage |
+|-------|-----|-------|
+| `shadow-glow-sm` | `0 0 15px rgba(0,212,255,0.3)` | Buttons at rest |
+| `shadow-glow-md` | `0 0 25px rgba(0,212,255,0.4)` | Hover states |
+| `shadow-neon` | `0 0 10px rgba(0,212,255,0.3), 0 0 30px rgba(0,212,255,0.1)` | Active/focused elements |
+
+### Ghost Borders
+When a container needs a visible edge: `border border-cyber-cyan-border` (25% opacity cyan). On hover: `border-cyber-cyan/40`.
+
+---
+
+## CSS Classes (defined in marketing `src/index.css`)
 
 | Class | Effect |
 |-------|--------|
-| `.bg-mesh-gradient` | Layered radial gradients for atmospheric content backgrounds |
-| `.bg-dot-pattern` | Subtle dot grid pattern overlay (24px spacing) |
-| `.glass-card` | Frosted glass (backdrop-filter blur 16px + transparency) |
-| `.glass-header` | Glassmorphism header (blur 12px + saturate 1.5) |
-| `.gradient-border` | Gradient border via CSS mask technique |
-| `.glow-primary` / `.glow-success` | Colored glow box-shadows |
-| `.nav-glow` | Active sidebar nav item glow bar (3px left) |
-| `.sidebar-gradient` | Dark gradient for sidebar background |
-| `.shimmer` | Animated loading state shimmer gradient |
-| `.animate-in-view` | Staggered reveal-up animation (0.5s cubic-bezier) |
-| `.animate-float` / `.animate-float-delayed` / `.animate-float-slow` | Floating decoration keyframes (6-8s) |
-| `.stagger-1` through `.stagger-8` | Animation-delay utilities (60ms intervals) |
+| `.bg-circuit` | Subtle grid pattern (40px squares, 3% opacity cyan lines) |
+| `.bg-mesh-gradient` / `.bg-mesh-dark` | Layered radial gradients for atmospheric depth |
+| `.bg-dot-pattern` | Dot grid (24px spacing, 8% opacity) |
+| `.bg-subtle-dots` | Lighter dot grid (32px, 3% opacity) |
+| `.cyber-btn` | Primary button — cyan gradient, sharp edges, outer glow |
+| `.cyber-input` | Input field — dark bg, cyan focus border + glow |
+| `.cyber-card` | Card — sharp edges, cyan border, neon hover glow |
+| `.glass-card` / `.glass-dark` | Backdrop-blur containers |
+| `.gradient-border` | Gradient border via CSS mask |
+| `.section-divider` | Gradient horizontal rule (transparent → cyan → transparent) |
+| `.animate-in-view` | Scroll-triggered fade-up (0.6s cubic-bezier) |
+| `.animate-glow-pulse` | Pulsing glow animation (3s cycle) |
+| `.timeline-glow-bar` | Vertical cyan bar for roadmap timeline |
+| `.stagger-1` through `.stagger-6` | Animation delay utilities (60ms intervals) |
 
-## Tailwind Shadows (defined in `tailwind.config.ts`)
+---
 
-| Token | Usage |
-|-------|-------|
-| `shadow-glow-sm/md/lg` | Primary-colored glow shadows (increasing intensity) |
-| `shadow-card-hover` | Elevated hover state for cards |
-| `shadow-card-rest` | Subtle rest state for cards |
+## Component Rules
 
-## Brand Rules for New Components
+### Cards (No-Box Approach)
+- Border: `border-cyber-cyan-border` (25% opacity)
+- Background: `bg-cyber-bg-card/60` with `backdrop-blur-sm`
+- Radius: `rounded-sm` (2px) — **never rounded-2xl**
+- Hover: `border-cyber-cyan/40` + `shadow-neon`
+- No drop shadows at rest — ambient glow only on hover
 
-When creating ANY new frontend component, follow these rules:
+### Buttons
+- **Primary (`.cyber-btn`):** Cyan gradient (`from-cyber-cyan to-cyber-cyan-dim`), dark text (`text-cyber-bg`), outer glow, sharp edges
+- **Ghost:** `border border-cyber-cyan-border`, transparent bg, cyan text, fills on hover
 
-1. **Cards:** Use `shadow-card-rest` at rest, `shadow-card-hover` on hover with `hover:-translate-y-0.5`
-2. **Page entry:** Use `animate-in-view` with `stagger-N` for staggered reveal animations
-3. **Loading:** Use `shimmer` class for loading skeletons (NOT `Skeleton` component)
-4. **Icon containers:** `rounded-xl` with gradient backgrounds (`bg-gradient-to-br from-primary/15 to-primary/5`)
-5. **Labels:** Uppercase with tracking: `text-xs font-medium uppercase tracking-wide`
-6. **Emphasis buttons:** `shadow-glow-sm hover:shadow-glow-md`
-7. **Code/IDs:** `font-mono` (JetBrains Mono) for fingerprints, IDs, code
-8. **Never revert** to Inter, Roboto, or system fonts
-9. **Sidebar:** `sidebar-gradient` class, `nav-glow` on active items
-10. **Header:** `glass-header` (backdrop blur), slim `h-14`
-11. **Auth pages:** `bg-mesh-gradient` + `bg-dot-pattern` overlay + floating orbs + `gradient-border` card
-12. **Status badges:** SECURED=green, PENDING=amber, REVOKED=red (destructive), EXPIRED=amber (outline)
-13. **Fingerprint display:** `font-mono text-xs bg-muted rounded px-2 py-1`
-14. **Logo:** White wordmark + light blue bear on dark backgrounds; full-color on white
+### Inputs
+- Background: `bg-cyber-bg/80`
+- Border: `border-cyber-cyan-border`
+- Focus: cyan border + `box-shadow: 0 0 15px rgba(0,212,255,0.15)`
 
-## Frontend Aesthetics Anti-Patterns (AVOID)
+### Section Headers
+- Tag: `font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-cyber-cyan` (e.g., "THE PROTOCOL")
+- Title: `text-3xl font-bold text-white md:text-4xl`
+- Subtitle: `text-white/35` or `text-white/40`
 
-- Overused font families (Inter, Roboto, Arial, system fonts, Space Grotesk)
-- Cliche color schemes (purple gradients on white backgrounds)
-- Predictable layouts and cookie-cutter component patterns
-- Flat solid-color backgrounds (use mesh gradients, dot patterns, atmospheric depth)
-- Generic loading states (use shimmer, not basic skeleton rectangles)
-- Missing motion (every page should have orchestrated entry animations)
+### Icons
+- Container: `h-12 w-12 rounded-sm bg-cyber-cyan/10 border border-cyber-cyan/20`
+- Icon color: `text-cyber-cyan`
+- Size: `h-6 w-6` standard, `h-7 w-7` for featured
+
+### Team Photos
+- Container: `h-28 w-28 rounded-full border border-cyber-cyan/20` (exception to sharp-edge rule)
+- Image: `object-cover`
+
+### Status Badges
+- SECURED / ACTIVE: Green
+- PENDING / SUBMITTED: Amber
+- REVOKED: Red
+- EXPIRED: Amber outline
+
+### Data Display
+- Fingerprints: `font-mono text-xs` in a dark code block
+- IDs/hashes: `font-mono` always
+- Timestamps: Regular font, formatted for locale
+
+---
+
+## Anti-Patterns (AVOID)
+
+| Don't | Do Instead |
+|-------|-----------|
+| `rounded-2xl` on cards/buttons | `rounded-sm` (2px) everywhere |
+| Pill badges ("Provable Verification") | Section tags in monospace |
+| Floating shield/icon hero graphics | Full-width text hero, or asymmetric layout |
+| Uniform card grids (3x equal boxes) | Varied layouts — numbered lists, data strips, asymmetric grids |
+| `rounded-full` on icon containers | `rounded-sm` — square icons |
+| Light mode toggle (dark-only design) | Commit to dark mode |
+| 1px solid grey dividers | `.section-divider` (gradient fade) or background tonal shifts |
+| Drop shadows | Ambient glows (`shadow-neon`, `shadow-glow-*`) |
+| Inter, Roboto, Space Grotesk fonts | DM Sans + JetBrains Mono only |
+
+---
+
+## Migration Guide: App → Precision Engine
+
+When updating `app.arkova.ai` to match:
+
+1. **Tailwind config:** Add `cyber.*` color tokens alongside existing `arkova.*`
+2. **CSS:** Port `.cyber-btn`, `.cyber-input`, `.cyber-card` classes to app's `index.css`
+3. **Corners:** Global find/replace `rounded-2xl` → `rounded-sm`, `rounded-xl` → `rounded-sm`
+4. **Buttons:** Replace `bg-arkova-steel` with `bg-cyber-cyan` gradient
+5. **Backgrounds:** Dark sections use `bg-cyber-bg` / `bg-cyber-bg-light` instead of `bg-arkova-charcoal`
+6. **Fonts:** Keep DM Sans + JetBrains Mono (already in use)
+7. **Glows:** Replace `shadow-card-hover` with `shadow-neon`
+8. **Test:** Verify all pages at 1280px + 375px (desktop + mobile)

@@ -38,7 +38,8 @@ For a new developer joining the project, read in this order:
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
 | GEO | GEO & SEO Optimization | 12 | 6 | 2 | 4 | [15_geo_seo.md](./15_geo_seo.md) |
 | BETA | Beta Readiness | 13 | 13 | 0 | 0 | [16_beta_readiness.md](./16_beta_readiness.md) |
-| **Total** | | **176** | **164** | **3** | **9** | |
+| PH1.5 | Phase 1.5 Foundation | 16 | 0 | 0 | 16 | [17_phase1_5_foundation.md](./17_phase1_5_foundation.md) |
+| **Total** | | **192** | **164** | **3** | **25** | |
 
 ### All Stories by ID
 

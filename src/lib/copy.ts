@@ -1089,6 +1089,42 @@ export const FORBIDDEN_TERMS = [
 /**
  * Approved replacement terms.
  */
+// =============================================================================
+// PIPELINE MONITORING (PH1-DATA-05)
+// =============================================================================
+
+export const PIPELINE_LABELS = {
+  PAGE_TITLE: 'Pipeline Monitoring',
+  PAGE_DESCRIPTION: 'Data ingestion and anchoring pipeline status',
+  RECORDS_INGESTED: 'Records Ingested',
+  RECORDS_ANCHORED: 'Records Anchored',
+  RECORDS_PENDING: 'Pending Anchoring',
+  RECORDS_EMBEDDED: 'Records Embedded',
+  ANCHORING_COST: 'Anchoring Cost',
+  LAST_RUN: 'Last Successful Run',
+  ERROR_COUNT: 'Errors',
+  SOURCE_EDGAR: 'SEC EDGAR',
+  SOURCE_USPTO: 'USPTO Patents',
+  SOURCE_FEDERAL_REGISTER: 'Federal Register',
+  SOURCE_MCP: 'MCP Submissions',
+} as const;
+
+// =============================================================================
+// PAYMENT ANALYTICS (PH1-PAY-03)
+// =============================================================================
+
+export const PAYMENT_LABELS = {
+  PAGE_TITLE: 'Payment Analytics',
+  PAGE_DESCRIPTION: 'x402 payment revenue and settlement tracking',
+  TOTAL_REVENUE: 'Total Revenue',
+  PAYMENTS_TODAY: 'Payments Today',
+  PAYMENTS_WEEK: 'This Week',
+  PAYMENTS_MONTH: 'This Month',
+  TOP_ENDPOINTS: 'Revenue by Endpoint',
+  SETTLEMENT_STATUS: 'Settlement Status',
+  AVERAGE_PAYMENT: 'Avg Payment',
+} as const;
+
 export const TERM_REPLACEMENTS: Record<string, string> = {
   wallet: 'vault',
   gas: '(remove or rephrase)',

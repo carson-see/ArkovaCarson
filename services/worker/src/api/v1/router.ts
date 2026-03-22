@@ -37,6 +37,8 @@ import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
+import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
+import { nessieQueryRouter } from './nessie-query.js';
 
 const router = Router();
 
@@ -144,7 +146,8 @@ router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 router.use('/verify/batch', batchRateLimiter, batchRouter);
 
 // Public verification — no auth required (API key optional for tracking)
-router.use('/verify', verifyRouter);
+// x402 payment gate: returns 402 if no API key and no payment header
+router.use('/verify', x402PaymentGate('/api/v1/verify'), verifyRouter);
 
 // Job status polling — API key required
 router.use('/jobs', jobsRouter);
@@ -184,5 +187,9 @@ router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRout
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
+
+// ─── Nessie RAG query (PH1-INT-02) ───
+// x402 payment gate + AI rate limiting
+router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
 
 export { router as apiV1Router };

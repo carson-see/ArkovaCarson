@@ -9,7 +9,8 @@
  *   - 1.6: Document processing is client-side only (runs in browser)
  */
 
-// @ts-expect-error — subpath export, types resolve at runtime
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — subpath export, types resolve at runtime
 import readXlsxFile from 'read-excel-file/browser';
 import type { ParsedCsv, CsvColumn, CsvRow } from './csvParser';
 

@@ -52,7 +52,11 @@ export function parseInstitutionPage(html: string, domain: string): CrawlResult 
 
   // Extract h1 heading
   const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/is);
-  const h1 = h1Match?.[1]?.replace(/<[^>]+>/g, '').trim() ?? '';
+  // Strip HTML tags iteratively to handle nested/malformed markup (CodeQL js/incomplete-multi-character-sanitization)
+  let h1Raw = h1Match?.[1] ?? '';
+  let prev = '';
+  while (prev !== h1Raw) { prev = h1Raw; h1Raw = h1Raw.replace(/<[^>]+>/g, ''); }
+  const h1 = h1Raw.trim();
 
   // Determine institution name (prefer h1, fall back to title)
   const institutionName = h1 || title.split('|')[0]?.trim() || '';
