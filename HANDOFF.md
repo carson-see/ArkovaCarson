@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 164/192 stories complete (~85%) incl. 13 Beta stories (BETA-01–13). 2,050+ tests. 83 migration files (0001-0084, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00044 deploying. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 2,540 public records (2,340 EDGAR + 200 OpenAlex), 100 embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury.
+**Overall progress:** 165/192 stories complete (~86%) incl. 13 Beta stories (BETA-01–13). 2,076+ tests. 85 migration files (0001-0085, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00052 deployed. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 11,547+ public records, 1,000+ embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury. **Attestation IDs** now use structured format: ARK-{org_prefix}-{type_code}-{unique}.
 
 ### Open Blockers
 
@@ -21,6 +21,17 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-22, Session 4)
+
+**PR #130 merged:** `feat/sn3-attestation-ids-edgar-source-url` — Structured attestation IDs + EDGAR source URL display
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| SN3: Structured attestation IDs | `0085_org_prefix_attestation_ids.sql`, `attestations.ts`, `AttestationsPage.tsx` | Format: ARK-{org_prefix}-{type_code}-{unique_6}. Org prefix auto-generated from display_name. Type codes: VER/END/AUD/APR/WIT/COM/SUP/IDN/CUS. IND default for individual users. |
+| EDGAR source_url display | `AssetDetailView.tsx` | Pipeline records show "Source Document" link to SEC EDGAR/OpenAlex/USPTO/Federal Register on record detail page |
+| Collision retry | `attestations.ts` | Max 3 retries on UNIQUE_VIOLATION (23505) for public_id collision |
+| Attestation tests | `attestations.test.ts` | 26 unit tests: type codes, ID format, validation, collision handling |
 
 ### Recent Changes (2026-03-22, Session 2)
 
