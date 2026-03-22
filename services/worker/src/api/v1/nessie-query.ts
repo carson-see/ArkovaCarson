@@ -42,10 +42,12 @@ export interface NessieResult {
   relevance_score: number;
   anchor_proof: {
     chain_tx_id: string | null;
-    merkle_root: string | null;
-    merkle_proof: unknown[];
+    block_height: number | null;
     content_hash: string;
     anchored_at: string | null;
+    status: string;
+    explorer_url: string | null;
+    verify_url: string | null;
   } | null;
   metadata: Record<string, unknown>;
 }
@@ -60,6 +62,8 @@ export interface NessieCitation {
   anchor_proof: {
     chain_tx_id: string | null;
     content_hash: string;
+    explorer_url: string | null;
+    verify_url: string | null;
   } | null;
   excerpt: string;
 }
@@ -98,7 +102,7 @@ Respond in valid JSON with this schema:
       "source_url": "original URL",
       "title": "document title",
       "relevance_score": 0.0-1.0,
-      "anchor_proof": { "chain_tx_id": "tx hash or null", "content_hash": "sha256" },
+      "anchor_proof": { "chain_tx_id": "tx hash or null", "content_hash": "sha256", "explorer_url": "mempool link or null", "verify_url": "arkova verify link or null" },
       "excerpt": "relevant excerpt from the document"
     }
   ],
@@ -223,10 +227,39 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Build results with anchor proofs
+    // Fetch anchor details for records that have anchor_id
+    const anchorIds = (records ?? [])
+      .map((r) => r.anchor_id)
+      .filter((id): id is string => id !== null);
+
+    let anchorMap = new Map<string, {
+      chain_tx_id: string | null;
+      chain_block_height: number | null;
+      chain_timestamp: string | null;
+      status: string;
+      public_id: string | null;
+    }>();
+
+    if (anchorIds.length > 0) {
+      const { data: anchors } = await db
+        .from('anchors')
+        .select('id, chain_tx_id, chain_block_height, chain_timestamp, status, public_id')
+        .in('id', anchorIds);
+      if (anchors) {
+        anchorMap = new Map(anchors.map((a) => [a.id, a]));
+      }
+    }
+
+    const bitcoinNetwork = process.env.BITCOIN_NETWORK ?? 'signet';
+    const explorerBase = bitcoinNetwork === 'mainnet'
+      ? 'https://mempool.space'
+      : `https://mempool.space/${bitcoinNetwork}`;
+
+    // Build results with anchor proofs from actual anchors table
     const results: NessieResult[] = (records ?? []).map((record) => {
       const match = matches.find((m: { public_record_id: string }) => m.public_record_id === record.id);
       const meta = (record.metadata as Record<string, unknown>) ?? {};
+      const anchor = record.anchor_id ? anchorMap.get(record.anchor_id) : null;
 
       return {
         record_id: record.id,
@@ -235,13 +268,19 @@ router.get('/', async (req: Request, res: Response) => {
         record_type: record.record_type,
         title: record.title,
         relevance_score: match?.similarity ?? 0,
-        anchor_proof: record.anchor_id
+        anchor_proof: anchor
           ? {
-              chain_tx_id: (meta.chain_tx_id as string) ?? null,
-              merkle_root: (meta.merkle_root as string) ?? null,
-              merkle_proof: (meta.merkle_proof as unknown[]) ?? [],
+              chain_tx_id: anchor.chain_tx_id,
+              block_height: anchor.chain_block_height,
               content_hash: record.content_hash,
-              anchored_at: (meta.anchored_at as string) ?? null,
+              anchored_at: anchor.chain_timestamp,
+              status: anchor.status,
+              explorer_url: anchor.chain_tx_id
+                ? `${explorerBase}/tx/${anchor.chain_tx_id}`
+                : null,
+              verify_url: anchor.public_id
+                ? `https://app.arkova.io/verify/${anchor.public_id}`
+                : null,
             }
           : null,
         metadata: {
@@ -341,6 +380,8 @@ async function generateVerifiedContext(
         ? {
             chain_tx_id: doc.anchor_proof.chain_tx_id,
             content_hash: doc.anchor_proof.content_hash,
+            explorer_url: doc.anchor_proof.explorer_url,
+            verify_url: doc.anchor_proof.verify_url,
           }
         : null,
     };

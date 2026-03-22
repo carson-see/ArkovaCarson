@@ -83,9 +83,9 @@ export function LoginForm({ onSuccess, onSignUpClick }: Readonly<LoginFormProps>
         </div>
 
         {resetSent ? (
-          <Alert className="border-green-200 bg-green-50">
-            <CheckCircle className="h-4 w-4 text-green-600" />
-            <AlertDescription className="text-green-800">
+          <Alert className="border-emerald-500/20 bg-emerald-500/10">
+            <CheckCircle className="h-4 w-4 text-emerald-400" />
+            <AlertDescription className="text-emerald-300">
               Check your email for a password reset link. It may take a few minutes to arrive.
             </AlertDescription>
           </Alert>

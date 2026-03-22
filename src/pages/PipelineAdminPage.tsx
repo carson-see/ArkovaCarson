@@ -24,6 +24,10 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
+  X,
+  Copy,
+  Check,
+  Link2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -75,6 +79,18 @@ interface PublicRecord {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+}
+
+interface AnchorDetails {
+  id: string;
+  fingerprint: string;
+  status: string;
+  chain_tx_id: string | null;
+  chain_block_height: number | null;
+  chain_timestamp: string | null;
+  public_id: string;
+  credential_type: string | null;
+  created_at: string;
 }
 
 interface RecordFilters {
@@ -206,6 +222,36 @@ export function PipelineAdminPage() {
   });
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [searchInput, setSearchInput] = useState('');
+  const [selectedRecord, setSelectedRecord] = useState<PublicRecord | null>(null);
+  const [anchorDetails, setAnchorDetails] = useState<AnchorDetails | null>(null);
+  const [anchorLoading, setAnchorLoading] = useState(false);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const handleRecordClick = useCallback(async (record: PublicRecord) => {
+    setSelectedRecord(record);
+    setAnchorDetails(null);
+    if (record.anchor_id) {
+      setAnchorLoading(true);
+      try {
+        const { data } = await dbAny
+          .from('anchors')
+          .select('id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, public_id, credential_type, created_at')
+          .eq('id', record.anchor_id)
+          .single();
+        if (data) setAnchorDetails(data as AnchorDetails);
+      } catch {
+        // Anchor fetch failed
+      } finally {
+        setAnchorLoading(false);
+      }
+    }
+  }, [dbAny]);
+
+  const handleCopy = useCallback((text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  }, []);
 
   // Fetch distinct record_types for filter dropdown
   useEffect(() => {
@@ -587,7 +633,11 @@ export function PipelineAdminPage() {
                     </TableHeader>
                     <TableBody>
                       {records.map((record) => (
-                        <TableRow key={record.id} className="border-border/50">
+                        <TableRow
+                          key={record.id}
+                          className={`border-border/50 cursor-pointer transition-colors ${selectedRecord?.id === record.id ? 'bg-[#00d4ff]/5' : 'hover:bg-[#00d4ff]/5'}`}
+                          onClick={() => handleRecordClick(record)}
+                        >
                           <TableCell className="py-2">
                             <div className="flex items-center gap-2">
                               {sourceIcon(record.source)}
@@ -653,6 +703,196 @@ export function PipelineAdminPage() {
                     </TableBody>
                   </Table>
                 </div>
+
+                {/* Record Detail Panel */}
+                {selectedRecord && (
+                  <div className="mt-4 rounded-lg border border-[#00d4ff]/20 bg-[#0d141b]/80 p-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-semibold truncate pr-4">
+                          {selectedRecord.title || '(untitled)'}
+                        </h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge variant="secondary" className="text-[10px] font-mono">
+                            {selectedRecord.record_type.replace(/_/g, ' ')}
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            {sourceLabel(selectedRecord.source)}
+                          </span>
+                          {selectedRecord.source_url && (
+                            <a
+                              href={selectedRecord.source_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#00d4ff] hover:text-[#00d4ff]/80 text-xs flex items-center gap-1"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              Source
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                        onClick={(e) => { e.stopPropagation(); setSelectedRecord(null); }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+
+                    {/* Description / Abstract from metadata */}
+                    {(() => {
+                      const desc = selectedRecord.metadata?.abstract ?? selectedRecord.metadata?.description ?? selectedRecord.metadata?.summary;
+                      return desc ? (
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Description</span>
+                          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+                            {String(desc)}
+                          </p>
+                        </div>
+                      ) : null;
+                    })()}
+
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {/* Fingerprint */}
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Unique Fingerprint</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <code className="text-xs font-mono text-[#00d4ff] break-all">{selectedRecord.content_hash}</code>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleCopy(selectedRecord.content_hash, 'fingerprint'); }}
+                            className="text-muted-foreground hover:text-foreground shrink-0"
+                          >
+                            {copiedField === 'fingerprint' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Source ID */}
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Source ID</span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <code className="text-xs font-mono text-muted-foreground break-all">{selectedRecord.source_id}</code>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleCopy(selectedRecord.source_id, 'sourceId'); }}
+                            className="text-muted-foreground hover:text-foreground shrink-0"
+                          >
+                            {copiedField === 'sourceId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Anchor Details */}
+                    {selectedRecord.anchor_id && (
+                      <div className="border-t border-border/50 pt-3">
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Anchor Record</span>
+                        {anchorLoading ? (
+                          <div className="flex items-center gap-2 mt-2">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">Loading anchor details…</span>
+                          </div>
+                        ) : anchorDetails ? (
+                          <div className="grid gap-3 sm:grid-cols-2 mt-2">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground">Status</span>
+                              <div className="mt-0.5">
+                                <Badge className={
+                                  anchorDetails.status === 'SECURED'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                    : anchorDetails.status === 'SUBMITTED'
+                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+                                    : 'bg-muted text-muted-foreground'
+                                }>
+                                  {anchorDetails.status}
+                                </Badge>
+                              </div>
+                            </div>
+
+                            {anchorDetails.chain_tx_id && (
+                              <div>
+                                <span className="text-[10px] text-muted-foreground">Network Receipt (Mempool)</span>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                  <a
+                                    href={`https://mempool.space/signet/tx/${anchorDetails.chain_tx_id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 truncate max-w-[200px] flex items-center gap-1"
+                                  >
+                                    <Link2 className="h-3 w-3 shrink-0" />
+                                    {anchorDetails.chain_tx_id.slice(0, 16)}…
+                                  </a>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.chain_tx_id!, 'txId'); }}
+                                    className="text-muted-foreground hover:text-foreground shrink-0"
+                                  >
+                                    {copiedField === 'txId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {anchorDetails.chain_block_height && (
+                              <div>
+                                <span className="text-[10px] text-muted-foreground">Block Height</span>
+                                <p className="text-xs font-mono mt-0.5">{anchorDetails.chain_block_height.toLocaleString()}</p>
+                              </div>
+                            )}
+
+                            {anchorDetails.chain_timestamp && (
+                              <div>
+                                <span className="text-[10px] text-muted-foreground">Network Observed Time</span>
+                                <p className="text-xs font-mono mt-0.5">
+                                  {new Date(anchorDetails.chain_timestamp).toLocaleString('en-US', {
+                                    dateStyle: 'medium',
+                                    timeStyle: 'short',
+                                  })}
+                                </p>
+                              </div>
+                            )}
+
+                            <div>
+                              <span className="text-[10px] text-muted-foreground">Public ID</span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <code className="text-xs font-mono text-muted-foreground">{anchorDetails.public_id}</code>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.public_id, 'publicId'); }}
+                                  className="text-muted-foreground hover:text-foreground shrink-0"
+                                >
+                                  {copiedField === 'publicId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-xs text-muted-foreground mt-1">Anchor record not found</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Metadata (additional fields) */}
+                    {selectedRecord.metadata && Object.keys(selectedRecord.metadata).length > 0 && (
+                      <div className="border-t border-border/50 pt-3">
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
+                        <div className="grid gap-1.5 mt-2">
+                          {Object.entries(selectedRecord.metadata)
+                            .filter(([key]) => !['abstract', 'description', 'summary'].includes(key))
+                            .slice(0, 10)
+                            .map(([key, value]) => (
+                              <div key={key} className="flex gap-2 text-xs">
+                                <span className="text-muted-foreground shrink-0 min-w-[100px]">{key.replace(/_/g, ' ')}:</span>
+                                <span className="font-mono text-muted-foreground truncate">
+                                  {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                </span>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Pagination */}
                 <div className="flex items-center justify-between mt-4">

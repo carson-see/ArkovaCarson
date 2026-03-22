@@ -1,0 +1,26 @@
+{
+  "name": "@arkova/sdk",
+  "version": "0.1.0",
+  "description": "Arkova SDK — Anchor and verify data integrity on Bitcoin",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "keywords": ["arkova", "bitcoin", "anchoring", "verification", "integrity"],
+  "license": "MIT",
+  "homepage": "https://arkova.ai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/carson-see/arkova-sdk-typescript"
+  }
+}

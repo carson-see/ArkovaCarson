@@ -39,6 +39,8 @@ import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { nessieQueryRouter } from './nessie-query.js';
+import { anchorSubmitRouter } from './anchor-submit.js';
+import { attestationsRouter } from './attestations.js';
 
 const router = Router();
 
@@ -187,6 +189,14 @@ router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRout
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
+
+// ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
+// API key required, standard rate limit
+router.use('/anchor', anchorSubmitRouter);
+
+// ─── Attestations — Phase II ───
+// Create, verify, list, revoke attestations
+router.use('/attestations', attestationsRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

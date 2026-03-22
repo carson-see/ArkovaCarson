@@ -75,7 +75,13 @@ export function useAnchors(): UseAnchorsReturn {
       setRecords([]);
       toast.error(TOAST.RECORDS_FETCH_FAILED);
     } else {
-      setRecords((data ?? []).map(mapAnchorToRecord));
+      // Exclude pipeline-generated anchors from personal dashboard
+      // Pipeline anchors have metadata.pipeline_source set (e.g., 'edgar', 'federal_register')
+      const userAnchors = (data ?? []).filter((a) => {
+        const meta = a.metadata as { pipeline_source?: string } | null;
+        return !meta?.pipeline_source;
+      });
+      setRecords(userAnchors.map(mapAnchorToRecord));
     }
 
     setLoading(false);

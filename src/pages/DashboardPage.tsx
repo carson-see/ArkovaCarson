@@ -9,7 +9,7 @@
  * @see MVP-09 — Search, filter, and pagination
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, ORG_PAGE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
+import { supabase } from '@/lib/supabase';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
@@ -69,6 +70,32 @@ export function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(10);
+
+  // BUG-2.5 fix: Query actual checklist context for org admin steps
+  const [hasTemplates, setHasTemplates] = useState(false);
+  const [hasBillingPlan, setHasBillingPlan] = useState(false);
+
+  useEffect(() => {
+    if (!profile?.org_id || profile.role !== 'ORG_ADMIN') return;
+    // Check if org has any credential templates
+    supabase
+      .from('credential_templates')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', profile.org_id)
+      .then(({ count }) => setHasTemplates((count ?? 0) > 0));
+  }, [profile?.org_id, profile?.role]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    // Check if user has an active subscription (any non-free plan)
+    supabase
+      .from('subscriptions')
+      .select('id')
+      .eq('user_id', user.id)
+      .in('status', ['active', 'trialing'])
+      .maybeSingle()
+      .then(({ data }) => setHasBillingPlan(!!data));
+  }, [user?.id]);
 
   const handleCopyId = useCallback(async () => {
     if (profile?.public_id) {
@@ -221,8 +248,8 @@ export function DashboardPage() {
             role={profile.role as 'ORG_ADMIN' | 'INDIVIDUAL'}
             context={{
               hasRecords: records.length > 0,
-              hasTemplates: false, // Will be checked by checklist internally in future
-              hasBillingPlan: false, // Will be checked by checklist internally in future
+              hasTemplates,
+              hasBillingPlan,
             }}
           />
         </div>
