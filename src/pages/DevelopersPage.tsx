@@ -8,7 +8,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot } from 'lucide-react';
+import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
@@ -167,8 +167,8 @@ export function DevelopersPage() {
               <h2 className="text-3xl md:text-4xl font-black tracking-tight mb-12">Fast Integration</h2>
               <div className="space-y-12">
                 {[
-                  { step: '1', title: 'Create an Account', desc: 'Access the Dashboard to generate your unique API keys.' },
-                  { step: '2', title: 'Configure Headers', desc: 'Secure your requests using Bearer token authentication.' },
+                  { step: '1', title: 'Create an Organization Account', desc: 'Sign up and select the Organization role during onboarding. API keys require an Organization account — Individual accounts cannot create API keys.' },
+                  { step: '2', title: 'Generate API Keys', desc: 'Navigate to Settings → API Keys in the dashboard. Keys use Bearer token authentication with HMAC-SHA256 security.' },
                   { step: '3', title: 'Execute Verification', desc: 'Send your first verification request and receive real-time cryptographic proof.' },
                 ].map((s) => (
                   <div key={s.step} className="flex gap-6">
@@ -274,6 +274,80 @@ export function DevelopersPage() {
           </div>
         </section>
       </main>
+
+        {/* API Requirements + Rate Limits */}
+        <section className="px-6 py-20 bg-[#151c24]">
+          <div className="max-w-7xl mx-auto">
+            <h2 className="text-2xl font-black tracking-tight mb-12 flex items-center gap-3">
+              <span className="w-1.5 h-6 bg-[#00d4ff]" />
+              API Reference
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {/* Requirements */}
+              <div className="bg-[#192028] p-8 rounded-lg border border-[#3c494e]/15">
+                <div className="flex items-center gap-3 mb-6">
+                  <Building2 className="h-6 w-6 text-[#a8e8ff]" />
+                  <h3 className="text-lg font-bold">Requirements</h3>
+                </div>
+                <div className="space-y-4 text-sm text-[#bbc9cf]">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="h-4 w-4 text-amber-400 mt-0.5 shrink-0" />
+                    <p>
+                      <strong className="text-[#dce3ed]">Organization account required.</strong> API keys can only be
+                      created by users with the Organization role. Individual accounts do not have API access.
+                    </p>
+                  </div>
+                  <p>To get started: Sign up → Select &quot;Organization&quot; during onboarding → Navigate to Settings → API Keys.</p>
+                </div>
+              </div>
+
+              {/* Rate Limits */}
+              <div className="bg-[#192028] p-8 rounded-lg border border-[#3c494e]/15">
+                <div className="flex items-center gap-3 mb-6">
+                  <Gauge className="h-6 w-6 text-[#a8e8ff]" />
+                  <h3 className="text-lg font-bold">Rate Limits</h3>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#bbc9cf]">Anonymous</span>
+                    <code className="text-[#00d4ff] font-mono">100 req/min/IP</code>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#bbc9cf]">API Key</span>
+                    <code className="text-[#00d4ff] font-mono">1,000 req/min</code>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-[#bbc9cf]">Batch Verification</span>
+                    <code className="text-[#00d4ff] font-mono">10 req/min</code>
+                  </div>
+                  <p className="text-xs text-[#bbc9cf] pt-2">
+                    Rate limit headers (<code className="text-[#a8e8ff]">X-RateLimit-*</code>) included on every response. Exceeding limits returns <code className="text-[#a8e8ff]">429</code> with <code className="text-[#a8e8ff]">Retry-After</code>.
+                  </p>
+                </div>
+              </div>
+
+              {/* Error Handling */}
+              <div className="bg-[#192028] p-8 rounded-lg border border-[#3c494e]/15">
+                <div className="flex items-center gap-3 mb-6">
+                  <Key className="h-6 w-6 text-[#a8e8ff]" />
+                  <h3 className="text-lg font-bold">Authentication & Errors</h3>
+                </div>
+                <div className="space-y-3 text-sm text-[#bbc9cf]">
+                  <p>All requests use <code className="text-[#a8e8ff]">Authorization: Bearer &lt;api_key&gt;</code></p>
+                  <div className="space-y-1.5 font-mono text-xs">
+                    <div className="flex gap-3"><span className="text-emerald-400">200</span> <span>Success</span></div>
+                    <div className="flex gap-3"><span className="text-amber-400">400</span> <span>Validation error (see <code>details</code> array)</span></div>
+                    <div className="flex gap-3"><span className="text-red-400">401</span> <span>Invalid or missing API key</span></div>
+                    <div className="flex gap-3"><span className="text-red-400">403</span> <span>Insufficient permissions</span></div>
+                    <div className="flex gap-3"><span className="text-red-400">404</span> <span>Resource not found</span></div>
+                    <div className="flex gap-3"><span className="text-orange-400">429</span> <span>Rate limit exceeded</span></div>
+                    <div className="flex gap-3"><span className="text-red-400">500</span> <span>Internal server error</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
 
       {/* Footer */}
       <footer className="border-t border-[#bbc9cf]/15">

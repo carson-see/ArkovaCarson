@@ -66,6 +66,8 @@ const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').the
 const AdminUsersPage = React.lazy(() => import('@/pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
 const AdminRecordsPage = React.lazy(() => import('@/pages/AdminRecordsPage').then(m => ({ default: m.AdminRecordsPage })));
 const AdminSubscriptionsPage = React.lazy(() => import('@/pages/AdminSubscriptionsPage').then(m => ({ default: m.AdminSubscriptionsPage })));
+const AdminUserDetailPage = React.lazy(() => import('@/pages/AdminUserDetailPage').then(m => ({ default: m.AdminUserDetailPage })));
+const PublicAttestationVerifyPage = React.lazy(() => import('@/pages/PublicAttestationVerifyPage').then(m => ({ default: m.PublicAttestationVerifyPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -133,6 +135,7 @@ export function App() {
           <Route path={ROUTES.EMBED_VERIFY} element={<RouteErrorBoundary section="EmbedVerify"><EmbedVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.VERIFY_ATTESTATION} element={<RouteErrorBoundary section="AttestationVerify"><PublicAttestationVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.DEVELOPERS} element={<RouteErrorBoundary section="Developers"><DevelopersPage /></RouteErrorBoundary>} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
@@ -173,6 +176,7 @@ export function App() {
           <Route path={ROUTES.ADMIN_USERS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Users"><AdminUsersPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Records"><AdminRecordsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_SUBSCRIPTIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Subscriptions"><AdminSubscriptionsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Billing routes */}
           <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><PricingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

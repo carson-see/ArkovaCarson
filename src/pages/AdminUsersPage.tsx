@@ -24,6 +24,13 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
 
 const PLATFORM_ADMIN_EMAILS = ['carson@arkova.ai', 'sarah@arkova.ai'];
@@ -46,12 +53,12 @@ export function AdminUsersPage() {
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminUser>('/api/admin/users');
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
-  const [roleFilter, setRoleFilter] = useState(searchParams.get('role') ?? '');
+  const [roleFilter, setRoleFilter] = useState(searchParams.get('role') || 'ALL');
 
   const isAdmin = PLATFORM_ADMIN_EMAILS.includes(user?.email ?? '');
 
   const doFetch = useCallback((p = 1) => {
-    fetchList({ page: p, search: searchInput, filters: { role: roleFilter } });
+    fetchList({ page: p, search: searchInput, filters: { role: roleFilter === 'ALL' ? '' : roleFilter } });
   }, [fetchList, searchInput, roleFilter]);
 
   useEffect(() => {
@@ -59,12 +66,12 @@ export function AdminUsersPage() {
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = () => {
-    setSearchParams({ search: searchInput, role: roleFilter, page: '1' });
+    setSearchParams({ search: searchInput, role: roleFilter === 'ALL' ? '' : roleFilter, page: '1' });
     doFetch(1);
   };
 
   const handlePageChange = (newPage: number) => {
-    setSearchParams({ search: searchInput, role: roleFilter, page: String(newPage) });
+    setSearchParams({ search: searchInput, role: roleFilter === 'ALL' ? '' : roleFilter, page: String(newPage) });
     doFetch(newPage);
   };
 
@@ -111,16 +118,17 @@ export function AdminUsersPage() {
             className="pl-9"
           />
         </div>
-        <select
-          value={roleFilter}
-          onChange={(e) => { setRoleFilter(e.target.value); }}
-          className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">All Roles</option>
-          <option value="INDIVIDUAL">Individual</option>
-          <option value="ORG_ADMIN">Org Admin</option>
-          <option value="ORG_MEMBER">Org Member</option>
-        </select>
+        <Select value={roleFilter} onValueChange={setRoleFilter}>
+          <SelectTrigger className="w-[160px]">
+            <SelectValue placeholder="All Roles" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ALL">All Roles</SelectItem>
+            <SelectItem value="INDIVIDUAL">Individual</SelectItem>
+            <SelectItem value="ORG_ADMIN">Org Admin</SelectItem>
+            <SelectItem value="ORG_MEMBER">Org Member</SelectItem>
+          </SelectContent>
+        </Select>
         <Button onClick={handleSearch} variant="outline" size="sm" className="h-10">
           Search
         </Button>
@@ -151,36 +159,60 @@ export function AdminUsersPage() {
           ) : items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">No users found.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="pb-2 pr-4">Email</th>
-                    <th className="pb-2 pr-4 hidden sm:table-cell">Name</th>
-                    <th className="pb-2 pr-4 hidden md:table-cell">Role</th>
-                    <th className="pb-2 pr-4 hidden lg:table-cell">Organization</th>
-                    <th className="pb-2">Joined</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((u) => (
-                    <tr key={u.id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/admin/users/${u.id}`)}>
-                      <td className="py-3 pr-4 font-mono text-xs">{u.email}</td>
-                      <td className="py-3 pr-4 hidden sm:table-cell">{u.full_name ?? '—'}</td>
-                      <td className="py-3 pr-4 hidden md:table-cell">
-                        <RoleBadge role={u.role} />
-                      </td>
-                      <td className="py-3 pr-4 hidden lg:table-cell text-muted-foreground">
-                        {u.org_name ?? '—'}
-                      </td>
-                      <td className="py-3 text-muted-foreground">
-                        {new Date(u.created_at).toLocaleDateString()}
-                      </td>
+            <>
+              {/* Mobile card layout */}
+              <div className="space-y-3 md:hidden">
+                {items.map((u) => (
+                  <div
+                    key={u.id}
+                    className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
+                    onClick={() => navigate(`/admin/users/${u.id}`)}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-mono text-xs truncate max-w-[200px]">{u.email}</span>
+                      <RoleBadge role={u.role} />
+                    </div>
+                    <div className="text-sm">{u.full_name ?? '—'}</div>
+                    <div className="flex items-center justify-between mt-1 text-xs text-muted-foreground">
+                      <span>{u.org_name ?? 'No organization'}</span>
+                      <span>{new Date(u.created_at).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="overflow-x-auto hidden md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="pb-2 pr-4">Email</th>
+                      <th className="pb-2 pr-4">Name</th>
+                      <th className="pb-2 pr-4">Role</th>
+                      <th className="pb-2 pr-4">Organization</th>
+                      <th className="pb-2">Joined</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {items.map((u) => (
+                      <tr key={u.id} className="border-b last:border-0 hover:bg-muted/50 cursor-pointer" onClick={() => navigate(`/admin/users/${u.id}`)}>
+                        <td className="py-3 pr-4 font-mono text-xs">{u.email}</td>
+                        <td className="py-3 pr-4">{u.full_name ?? '—'}</td>
+                        <td className="py-3 pr-4">
+                          <RoleBadge role={u.role} />
+                        </td>
+                        <td className="py-3 pr-4 text-muted-foreground">
+                          {u.org_name ?? '—'}
+                        </td>
+                        <td className="py-3 text-muted-foreground">
+                          {new Date(u.created_at).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {/* Pagination */}

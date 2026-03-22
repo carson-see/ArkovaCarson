@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight, Upload, FileCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
@@ -95,6 +95,17 @@ export function DashboardPage() {
       .in('status', ['active', 'trialing'])
       .maybeSingle()
       .then(({ data }) => setHasBillingPlan(!!data));
+  }, [user?.id]);
+
+  // Attestation count
+  const [attestationCount, setAttestationCount] = useState(0);
+  useEffect(() => {
+    if (!user?.id) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from('attestations')
+      .select('id', { count: 'exact', head: true })
+      .then(({ count }: { count: number | null }) => setAttestationCount(count ?? 0));
   }, [user?.id]);
 
   const handleCopyId = useCallback(async () => {
@@ -211,7 +222,7 @@ export function DashboardPage() {
       </div>
 
       {/* Stats grid */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-8">
         <StatCard
           label="Total Records"
           value={stats.total}
@@ -233,6 +244,15 @@ export function DashboardPage() {
           variant="warning"
           loading={loading}
         />
+        <div className="cursor-pointer" onClick={() => navigate(ROUTES.ATTESTATIONS)}>
+          <StatCard
+            label="Attestations"
+            value={attestationCount}
+            icon={FileCheck}
+            variant="default"
+            loading={loading}
+          />
+        </div>
       </div>
 
       {/* Usage tracking (UF-06) + Credit usage (MVP-25) */}

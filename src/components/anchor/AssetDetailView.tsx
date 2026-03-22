@@ -343,7 +343,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           })()}
 
           {/* Network Receipt (BETA-11) */}
-          {anchor.chainTxId && (
+          {anchor.chainTxId ? (
             <>
               <Separator />
               <div className="space-y-2">
@@ -356,7 +356,22 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
             </>
-          )}
+          ) : (anchor.status === 'PENDING' || anchor.status === 'SUBMITTED') ? (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
+                <a
+                  href="https://mempool.space/signet/address/tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
+                >
+                  Awaiting network confirmation — view treasury
+                </a>
+              </div>
+            </>
+          ) : null}
         </CardContent>
       </Card>
 

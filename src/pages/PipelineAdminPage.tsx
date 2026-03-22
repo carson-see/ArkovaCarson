@@ -817,28 +817,42 @@ export function PipelineAdminPage() {
                               </div>
                             </div>
 
-                            {anchorDetails.chain_tx_id && (
-                              <div>
-                                <span className="text-[10px] text-muted-foreground">Network Receipt (Mempool)</span>
-                                <div className="flex items-center gap-2 mt-0.5">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground">
+                                {anchorDetails.chain_tx_id ? 'Network Receipt (Mempool)' : 'Mempool'}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {anchorDetails.chain_tx_id ? (
+                                  <>
+                                    <a
+                                      href={`https://mempool.space/signet/tx/${anchorDetails.chain_tx_id}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 truncate max-w-[200px] flex items-center gap-1"
+                                    >
+                                      <Link2 className="h-3 w-3 shrink-0" />
+                                      {anchorDetails.chain_tx_id.slice(0, 16)}…
+                                    </a>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.chain_tx_id!, 'txId'); }}
+                                      className="text-muted-foreground hover:text-foreground shrink-0"
+                                    >
+                                      {copiedField === 'txId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                                    </button>
+                                  </>
+                                ) : (
                                   <a
-                                    href={`https://mempool.space/signet/tx/${anchorDetails.chain_tx_id}`}
+                                    href="https://mempool.space/signet/address/tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r"
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 truncate max-w-[200px] flex items-center gap-1"
+                                    className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1"
                                   >
                                     <Link2 className="h-3 w-3 shrink-0" />
-                                    {anchorDetails.chain_tx_id.slice(0, 16)}…
+                                    Awaiting anchor — view treasury
                                   </a>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); handleCopy(anchorDetails.chain_tx_id!, 'txId'); }}
-                                    className="text-muted-foreground hover:text-foreground shrink-0"
-                                  >
-                                    {copiedField === 'txId' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                                  </button>
-                                </div>
+                                )}
                               </div>
-                            )}
+                            </div>
 
                             {anchorDetails.chain_block_height && (
                               <div>
