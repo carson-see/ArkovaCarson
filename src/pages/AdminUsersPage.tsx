@@ -82,9 +82,15 @@ export function AdminUsersPage() {
   if (!profileLoading && !isAdmin) {
     return (
       <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
-        <div className="flex flex-col items-center justify-center py-20">
-          <AlertTriangle className="h-8 w-8 text-destructive mb-4" />
-          <h2 className="text-xl font-semibold mb-2">Unauthorized</h2>
+        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 mb-4">
+            <AlertTriangle className="h-8 w-8 text-destructive" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Access Restricted</h2>
+          <p className="text-sm text-muted-foreground mb-2">This page is only available to platform administrators.</p>
+          <p className="text-xs text-muted-foreground mb-6">
+            If you believe you should have access, contact your organization admin or reach out to support.
+          </p>
           <Button variant="outline" onClick={() => navigate(ROUTES.DASHBOARD)}>Back to Dashboard</Button>
         </div>
       </AppShell>
@@ -156,7 +162,14 @@ export function AdminUsersPage() {
               ))}
             </div>
           ) : items.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No users found.</p>
+            <div className="text-center py-8">
+              <p className="text-sm text-muted-foreground">No users found.</p>
+              {(searchInput || roleFilter !== 'ALL') && (
+                <Button variant="link" size="sm" className="mt-2" onClick={() => { setSearchInput(''); setRoleFilter('ALL'); setSearchParams({}); fetchList({ page: 1, search: '', filters: { role: '' } }); }}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
           ) : (
             <>
               {/* Mobile card layout */}

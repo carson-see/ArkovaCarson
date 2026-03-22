@@ -4,7 +4,7 @@
  * Displays a metric with label and optional trend indicator.
  */
 
-import { LucideIcon } from 'lucide-react';
+import { LucideIcon, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -16,6 +16,7 @@ interface StatCardProps {
   variant?: 'default' | 'success' | 'warning' | 'primary';
   loading?: boolean;
   description?: string;
+  onClick?: () => void;
 }
 
 const variantStyles = {
@@ -44,6 +45,7 @@ export function StatCard({
   variant = 'default',
   loading = false,
   description,
+  onClick,
 }: Readonly<StatCardProps>) {
   const styles = variantStyles[variant];
 
@@ -64,7 +66,13 @@ export function StatCard({
   }
 
   return (
-    <Card className="transition-all border-[#00d4ff]/15 hover:border-[#00d4ff]/30 bg-transparent hover:shadow-[0_0_20px_rgba(0,212,255,0.06)]">
+    <Card
+      className={cn(
+        'transition-all border-[#00d4ff]/15 hover:border-[#00d4ff]/30 bg-transparent hover:shadow-[0_0_20px_rgba(0,212,255,0.06)]',
+        onClick && 'cursor-pointer'
+      )}
+      onClick={onClick}
+    >
       <CardContent className="p-6">
         <div className="flex items-center gap-4">
           <div
@@ -75,7 +83,7 @@ export function StatCard({
           >
             <Icon className={cn('h-6 w-6', styles.iconColor)} />
           </div>
-          <div>
+          <div className="flex-1">
             <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground">
               {label}
             </p>
@@ -88,6 +96,9 @@ export function StatCard({
               </p>
             )}
           </div>
+          {onClick && (
+            <ChevronRight className="h-5 w-5 text-muted-foreground/50" />
+          )}
         </div>
       </CardContent>
     </Card>

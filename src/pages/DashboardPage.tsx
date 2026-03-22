@@ -244,15 +244,14 @@ export function DashboardPage() {
           variant="warning"
           loading={loading}
         />
-        <div className="cursor-pointer" onClick={() => navigate(ROUTES.ATTESTATIONS)}>
-          <StatCard
-            label="Attestations"
-            value={attestationCount}
-            icon={FileCheck}
-            variant="default"
-            loading={loading}
-          />
-        </div>
+        <StatCard
+          label="Attestations"
+          value={attestationCount}
+          icon={FileCheck}
+          variant="default"
+          loading={loading}
+          onClick={() => navigate(ROUTES.ATTESTATIONS)}
+        />
       </div>
 
       {/* Usage tracking (UF-06) + Credit usage (MVP-25) */}

@@ -43,8 +43,8 @@ export function OrgOnboardingForm({
     e.preventDefault();
     setValidationError(null);
 
-    if (!legalName.trim()) {
-      setValidationError('Legal name is required');
+    if (!displayName.trim() && !legalName.trim()) {
+      setValidationError('Organization name is required');
       return;
     }
 
@@ -57,9 +57,10 @@ export function OrgOnboardingForm({
       }
     }
 
+    const effectiveDisplay = displayName.trim() || legalName.trim();
     onSubmit({
-      legalName: legalName.trim(),
-      displayName: displayName.trim() || legalName.trim(),
+      legalName: legalName.trim() || effectiveDisplay,
+      displayName: effectiveDisplay,
       domain: domain.trim().toLowerCase() || null,
     });
   };
@@ -87,35 +88,35 @@ export function OrgOnboardingForm({
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="legalName">
-              Legal name <span className="text-destructive">*</span>
+            <Label htmlFor="displayName">
+              Organization name <span className="text-destructive">*</span>
             </Label>
-            <Input
-              id="legalName"
-              type="text"
-              value={legalName}
-              onChange={(e) => setLegalName(e.target.value)}
-              placeholder="Acme Corporation Inc."
-              required
-              disabled={loading}
-            />
-            <p className="text-xs text-muted-foreground">
-              Official registered business name
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="displayName">Display name</Label>
             <Input
               id="displayName"
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Acme Corp"
+              required
               disabled={loading}
             />
             <p className="text-xs text-muted-foreground">
-              Short name shown in the app (defaults to legal name)
+              The name shown throughout Arkova
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="legalName">Legal name</Label>
+            <Input
+              id="legalName"
+              type="text"
+              value={legalName}
+              onChange={(e) => setLegalName(e.target.value)}
+              placeholder="Acme Corporation Inc."
+              disabled={loading}
+            />
+            <p className="text-xs text-muted-foreground">
+              Official registered business name (defaults to organization name)
             </p>
           </div>
 

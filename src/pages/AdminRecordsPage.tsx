@@ -176,7 +176,14 @@ export function AdminRecordsPage() {
               ))}
             </div>
           ) : items.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No records found.</p>
+            <div className="text-center py-8">
+              <p className="text-sm text-muted-foreground">No records found.</p>
+              {(searchInput || statusFilter !== 'ALL' || typeFilter !== 'ALL') && (
+                <Button variant="link" size="sm" className="mt-2" onClick={() => { setSearchInput(''); setStatusFilter('ALL'); setTypeFilter('ALL'); setSearchParams({}); fetchList({ page: 1, search: '', filters: { status: '', type: '' } }); }}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
           ) : (
             <>
               {/* Mobile card layout */}

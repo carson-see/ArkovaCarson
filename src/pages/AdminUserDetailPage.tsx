@@ -132,10 +132,15 @@ export function AdminUserDetailPage() {
   if (!profileLoading && !isAdmin) {
     return (
       <AppShell user={authUser} profile={authProfile} profileLoading={profileLoading} onSignOut={handleSignOut}>
-        <div className="flex flex-col items-center justify-center py-20">
-          <AlertTriangle className="h-8 w-8 text-destructive mb-4" />
-          <h2 className="text-xl font-semibold mb-2">Unauthorized</h2>
-          <p className="text-sm text-muted-foreground mb-4">Platform admin access is required to view user details.</p>
+        <div className="flex flex-col items-center justify-center py-20 max-w-md mx-auto text-center">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10 mb-4">
+            <AlertTriangle className="h-8 w-8 text-destructive" />
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Access Restricted</h2>
+          <p className="text-sm text-muted-foreground mb-2">This page is only available to platform administrators.</p>
+          <p className="text-xs text-muted-foreground mb-6">
+            If you believe you should have access, contact your organization admin or reach out to support.
+          </p>
           <Button variant="outline" onClick={() => navigate(ROUTES.DASHBOARD)}>Back to Dashboard</Button>
         </div>
       </AppShell>
