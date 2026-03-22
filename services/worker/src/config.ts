@@ -99,6 +99,14 @@ const ConfigSchema = z.object({
   /** Verified sender email address */
   emailFrom: z.string().email().default('noreply@arkova.ai'),
 
+  // x402 Payment Protocol (USDC on Base)
+  /** x402 facilitator URL for payment verification */
+  x402FacilitatorUrl: z.string().url().optional(),
+  /** Arkova USDC receiving address */
+  arkovaUsdcAddress: z.string().optional(),
+  /** x402 network identifier (default: Base Sepolia) */
+  x402Network: z.string().default('eip155:84532'),
+
   // Verification API (P4.5)
   /** HMAC-SHA256 secret for API key hashing (Constitution 1.4) — never logged */
   apiKeyHmacSecret: z.string().min(1).optional(),
@@ -157,6 +165,9 @@ function loadConfig(): Config {
     cronSecret: process.env.CRON_SECRET,
     cronOidcAudience: process.env.CRON_OIDC_AUDIENCE,
     corsAllowedOrigins: process.env.CORS_ALLOWED_ORIGINS,
+    x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
+    arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
+    x402Network: process.env.X402_NETWORK,
     resendApiKey: process.env.RESEND_API_KEY,
     emailFrom: process.env.EMAIL_FROM,
   });
