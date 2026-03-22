@@ -59,7 +59,7 @@ function delay(ms: number): Promise<void> {
 export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): Promise<void> {
   // Check switchboard flag
   const { data: enabled } = await supabase.rpc('get_flag', {
-    p_flag_id: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+    p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
   });
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping Federal Register fetch');

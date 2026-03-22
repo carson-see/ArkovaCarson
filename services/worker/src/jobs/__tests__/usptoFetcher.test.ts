@@ -57,7 +57,7 @@ describe('usptoFetcher', () => {
     await fetchUsptoPAtents(createMockSupabase() as any);
 
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
-      p_flag_id: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+      p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
     });
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.stringContaining('disabled')

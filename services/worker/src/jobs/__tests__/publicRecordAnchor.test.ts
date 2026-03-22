@@ -104,7 +104,7 @@ describe('publicRecordAnchor', () => {
 
     expect(result.processed).toBe(0);
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
-      p_flag_id: 'ENABLE_PUBLIC_RECORD_ANCHORING',
+      p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
     });
   });
 

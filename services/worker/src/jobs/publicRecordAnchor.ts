@@ -50,7 +50,7 @@ export async function processPublicRecordAnchoring(
 
   // Check switchboard flag
   const { data: enabled } = await client.rpc('get_flag', {
-    p_flag_id: 'ENABLE_PUBLIC_RECORD_ANCHORING',
+    p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
   });
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
