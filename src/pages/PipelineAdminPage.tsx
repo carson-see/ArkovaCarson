@@ -230,6 +230,12 @@ export function PipelineAdminPage() {
   const handleRecordClick = useCallback(async (record: PublicRecord) => {
     setSelectedRecord(record);
     setAnchorDetails(null);
+
+    // Scroll the detail panel into view after render
+    setTimeout(() => {
+      document.getElementById('pipeline-record-detail')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+
     if (record.anchor_id) {
       setAnchorLoading(true);
       try {
@@ -706,7 +712,7 @@ export function PipelineAdminPage() {
 
                 {/* Record Detail Panel */}
                 {selectedRecord && (
-                  <div className="mt-4 rounded-lg border border-[#00d4ff]/20 bg-[#0d141b]/80 p-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div id="pipeline-record-detail" className="mt-4 rounded-lg border border-[#00d4ff]/20 bg-[#0d141b]/80 p-4 space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0">
                         <h3 className="text-sm font-semibold truncate pr-4">

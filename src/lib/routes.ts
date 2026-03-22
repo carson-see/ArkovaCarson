@@ -57,6 +57,9 @@ export const ROUTES = {
   ADMIN_TREASURY: '/admin/treasury',
   ADMIN_PIPELINE: '/admin/pipeline',
   ADMIN_PAYMENTS: '/admin/payments',
+  ADMIN_USERS: '/admin/users',
+  ADMIN_RECORDS: '/admin/records',
+  ADMIN_SUBSCRIPTIONS: '/admin/subscriptions',
 
   // Billing routes
   BILLING: '/billing',

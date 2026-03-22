@@ -28,12 +28,13 @@ import { verifyAuthToken } from './auth.js';
 import { apiV1Router } from './api/v1/router.js';
 import { docsRouter } from './api/v1/docs.js';
 // Pipeline jobs (Phase 1.5)
-import { fetchEdgarFilings } from './jobs/edgarFetcher.js';
+import { fetchEdgarFilings, fetchEdgarHistoricalBackfill } from './jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from './jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from './jobs/federalRegisterFetcher.js';
 import { fetchOpenAlexWorks } from './jobs/openalexFetcher.js';
 import { processPublicRecordAnchoring } from './jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from './jobs/publicRecordEmbedder.js';
+import { processAttestationAnchoring } from './jobs/attestationAnchor.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -673,6 +674,34 @@ app.post('/jobs/anchor-public-records', cronJobsLimiter, async (req, res) => {
   }
 });
 
+app.post('/jobs/edgar-backfill', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await fetchEdgarHistoricalBackfill(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'EDGAR historical backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/anchor-attestations', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await processAttestationAnchoring();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Attestation anchoring failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // =========================================================================
 // Treasury Status — Arkova platform admin only (feedback_treasury_access)
 // =========================================================================
@@ -715,6 +744,52 @@ app.get('/api/admin/platform-stats', rateLimiters.checkout, async (req, res) => 
     await handlePlatformStats(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Platform stats request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// =========================================================================
+// Admin Detail Lists — Arkova platform admin only (SN1)
+// =========================================================================
+app.options('/api/admin/users', (req, res) => { setCorsHeaders(req, res); });
+app.options('/api/admin/records', (req, res) => { setCorsHeaders(req, res); });
+app.options('/api/admin/subscriptions', (req, res) => { setCorsHeaders(req, res); });
+
+app.get('/api/admin/users', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    const { handleAdminUsers } = await import('./api/admin-lists.js');
+    await handleAdminUsers(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin users request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/records', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    const { handleAdminRecords } = await import('./api/admin-lists.js');
+    await handleAdminRecords(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin records request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.get('/api/admin/subscriptions', rateLimiters.checkout, async (req, res) => {
+  if (setCorsHeaders(req, res)) return;
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    const { handleAdminSubscriptions } = await import('./api/admin-lists.js');
+    await handleAdminSubscriptions(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin subscriptions request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

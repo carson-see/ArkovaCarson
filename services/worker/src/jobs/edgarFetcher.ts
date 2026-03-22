@@ -29,7 +29,7 @@ const EDGAR_EFTS_URL = 'https://efts.sec.gov/LATEST/search-index';
 const EDGAR_SUBMISSIONS_URL = 'https://data.sec.gov/submissions';
 
 /** Number of filings to fetch per API call */
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 200;
 
 /** Filing types to ingest */
 const FILING_TYPES = ['10-K', '10-Q', '8-K', '20-F', '6-K', 'S-1', 'DEF 14A'];
@@ -285,17 +285,209 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
 }
 
 /**
+ * Top S&P 500 CIKs for historical backfill.
+ * These cover the most-searched companies and provide broad market coverage.
+ */
+const TOP_COMPANY_CIKS = [
+  '0000320193', // Apple
+  '0000789019', // Microsoft
+  '0001652044', // Alphabet (Google)
+  '0001018724', // Amazon
+  '0001326801', // Meta (Facebook)
+  '0001045810', // NVIDIA
+  '0000034088', // Exxon Mobil
+  '0000078003', // Pfizer
+  '0000050863', // Intel
+  '0000051143', // IBM
+  '0000200406', // Johnson & Johnson
+  '0000060714', // Lockheed Martin
+  '0001341439', // Oracle
+  '0000092380', // Thermo Fisher
+  '0000732717', // AT&T
+  '0000354950', // Home Depot
+  '0001067983', // Berkshire Hathaway
+  '0000021344', // Coca-Cola
+  '0000093410', // Chevron
+  '0000886982', // Goldman Sachs
+  '0000072971', // Wells Fargo
+  '0000070858', // Bank of America
+  '0000019617', // JPMorgan Chase
+  '0000718877', // Visa
+  '0001141391', // Mastercard
+  '0001652130', // Snap Inc
+  '0001318605', // Tesla
+  '0001559720', // Uber
+  '0001364742', // Palantir
+  '0001783879', // CrowdStrike
+];
+
+interface SubmissionsResponse {
+  cik: string;
+  entityType: string;
+  name: string;
+  tickers: string[];
+  exchanges: string[];
+  filings: {
+    recent: {
+      accessionNumber: string[];
+      filingDate: string[];
+      reportDate: string[];
+      form: string[];
+      primaryDocument: string[];
+      primaryDocDescription: string[];
+    };
+    files: Array<{ name: string; filingCount: number; filingFrom: string; filingTo: string }>;
+  };
+}
+
+/**
  * Fallback: Fetch filings from EDGAR submissions API.
  * Uses company CIK-based lookups (more stable endpoint).
+ * Also serves as historical backfill — iterates through TOP_COMPANY_CIKS.
  */
 async function fetchEdgarViaSubmissionsApi(
   supabase: SupabaseClient,
   formType: string,
   startDate: string,
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
-  // Use the EDGAR full-text search as primary — this is a stub fallback
-  // for when the EFTS endpoint returns errors. In production, implement
-  // bulk CSV download from https://www.sec.gov/cgi-bin/browse-edgar
-  logger.info({ formType, startDate }, 'EDGAR submissions API fallback — not yet implemented');
-  return { inserted: 0, skipped: 0, errors: 0 };
+  let totalInserted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+
+  for (const cik of TOP_COMPANY_CIKS) {
+    try {
+      const url = `${EDGAR_SUBMISSIONS_URL}/CIK${cik}.json`;
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': getEdgarUserAgent(),
+          Accept: 'application/json',
+        },
+      });
+
+      if (response.status === 429) {
+        logger.warn({ cik }, 'EDGAR submissions rate limited — backing off');
+        await delay(10_000);
+        continue;
+      }
+
+      if (!response.ok) {
+        logger.warn({ cik, status: response.status }, 'EDGAR submissions request failed');
+        totalErrors++;
+        continue;
+      }
+
+      const data = (await response.json()) as SubmissionsResponse;
+      const recent = data.filings?.recent;
+      if (!recent?.accessionNumber) continue;
+
+      const entityName = data.name || 'Unknown Entity';
+      const tickers = data.tickers ?? [];
+
+      for (let i = 0; i < recent.accessionNumber.length; i++) {
+        const form = recent.form[i];
+        // Filter to target form types
+        if (!FILING_TYPES.includes(form)) continue;
+
+        const filingDate = recent.filingDate[i];
+        if (filingDate < startDate) continue;
+
+        const accession = recent.accessionNumber[i];
+        const sourceId = accession.replace(/-/g, '');
+
+        // Check for duplicates
+        const { data: existing } = await supabase
+          .from('public_records')
+          .select('id')
+          .eq('source', 'edgar')
+          .eq('source_id', accession)
+          .limit(1);
+
+        if (existing && existing.length > 0) {
+          totalSkipped++;
+          continue;
+        }
+
+        const contentForHash = JSON.stringify({
+          accession,
+          form_type: form,
+          entity_name: entityName,
+          file_date: filingDate,
+        });
+
+        const { error: insertError } = await supabase.from('public_records').insert({
+          source: 'edgar',
+          source_id: accession,
+          source_url: `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '')}/${sourceId}`,
+          record_type: 'sec_filing',
+          title: `${entityName} — ${form} (${filingDate})`,
+          content_hash: computeContentHash(contentForHash),
+          metadata: {
+            form_type: form,
+            entity_name: entityName,
+            filing_date: filingDate,
+            period_of_report: recent.reportDate[i] || null,
+            tickers,
+            ciks: [cik],
+            primary_document: recent.primaryDocument[i] || null,
+            primary_doc_description: recent.primaryDocDescription[i] || null,
+          },
+        });
+
+        if (insertError) {
+          if (insertError.code !== '23505') {
+            logger.error({ accession, error: insertError }, 'Failed to insert EDGAR submission record');
+            totalErrors++;
+          } else {
+            totalSkipped++;
+          }
+        } else {
+          totalInserted++;
+        }
+      }
+
+      // Rate limit compliance
+      await delay(EDGAR_RATE_LIMIT_MS);
+    } catch (err) {
+      logger.error({ cik, error: err }, 'EDGAR submissions fetch failed for CIK');
+      totalErrors++;
+    }
+  }
+
+  logger.info(
+    { totalInserted, totalSkipped, totalErrors, formType },
+    'EDGAR submissions API fallback complete',
+  );
+
+  return { inserted: totalInserted, skipped: totalSkipped, errors: totalErrors };
+}
+
+/**
+ * Historical backfill: Fetch filings from all TOP_COMPANY_CIKS via the submissions API.
+ * Unlike the main fetcher, this always starts from 5 years ago for broader coverage.
+ * Exported so it can be triggered via a dedicated cron endpoint.
+ */
+export async function fetchEdgarHistoricalBackfill(supabase: SupabaseClient): Promise<{
+  inserted: number;
+  skipped: number;
+  errors: number;
+}> {
+  // Check switchboard flag
+  const { data: enabled } = await supabase.rpc('get_flag', {
+    p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+  });
+  if (!enabled) {
+    logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping EDGAR backfill');
+    return { inserted: 0, skipped: 0, errors: 0 };
+  }
+
+  const fiveYearsAgo = new Date();
+  fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+  const startDate = fiveYearsAgo.toISOString().slice(0, 10);
+
+  logger.info({ startDate, companyCIKs: TOP_COMPANY_CIKS.length }, 'Starting EDGAR historical backfill');
+
+  const result = await fetchEdgarViaSubmissionsApi(supabase, 'ALL', startDate);
+
+  logger.info(result, 'EDGAR historical backfill complete');
+  return result;
 }
