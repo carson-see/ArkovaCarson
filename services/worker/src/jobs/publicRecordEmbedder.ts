@@ -72,14 +72,26 @@ export async function embedPublicRecords(
     return { total: 0, succeeded: 0, failed: 0, errors: [] };
   }
 
-  // Fetch records without embeddings
-  // Left anti-join: public_records NOT IN public_record_embeddings
-  const { data: records, error: fetchError } = await client
+  // Fetch records without embeddings via RPC (PostgREST doesn't support subquery anti-joins)
+  // First get IDs that already have embeddings, then exclude them
+  const { data: embeddedIds } = await client
+    .from('public_record_embeddings')
+    .select('public_record_id');
+
+  const excludeIds = (embeddedIds ?? []).map((r: { public_record_id: string }) => r.public_record_id);
+
+  let query = client
     .from('public_records')
     .select('id, title, source, record_type, metadata')
-    .not('id', 'in', `(SELECT public_record_id FROM public_record_embeddings)`)
     .order('created_at', { ascending: true })
     .limit(EMBED_BATCH_SIZE);
+
+  // Exclude already-embedded records (if any exist)
+  if (excludeIds.length > 0) {
+    query = query.not('id', 'in', `(${excludeIds.join(',')})`);
+  }
+
+  const { data: records, error: fetchError } = await query;
 
   if (fetchError) {
     logger.error({ error: fetchError }, 'Failed to fetch unembedded public records');

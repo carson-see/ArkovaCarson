@@ -80,6 +80,6 @@ $$;
 COMMENT ON FUNCTION search_public_record_embeddings IS 'Cosine similarity search over public record embeddings for Nessie RAG';
 
 -- ─── Switchboard Flags ───────────────────────────
-INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
-  ('ENABLE_X402_PAYMENTS', false, false, 'Enable x402 pay-per-request verification (USDC on Base)', false),
-  ('ENABLE_PUBLIC_RECORD_EMBEDDINGS', false, false, 'Enable vector embeddings and Nessie RAG queries for public records', false);
+INSERT INTO switchboard_flags (flag_key, enabled, description) VALUES
+  ('ENABLE_X402_PAYMENTS', false, 'Enable x402 pay-per-request verification (USDC on Base)'),
+  ('ENABLE_PUBLIC_RECORD_EMBEDDINGS', false, 'Enable vector embeddings and Nessie RAG queries for public records');

@@ -114,9 +114,29 @@ export class GeminiProvider implements IAIProvider {
     this.checkCircuit();
 
     const result = await this.withRetry(async () => {
-      const model = this.client.getGenerativeModel({ model: this.embeddingModelName });
-      const response = await model.embedContent(text);
-      return response.embedding;
+      // Use REST API directly with v1 endpoint (SDK defaults to v1beta which doesn't support embedding models)
+      const apiKey = process.env.GEMINI_API_KEY;
+      const model = this.embeddingModelName;
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: `models/${model}`,
+            content: { parts: [{ text }] },
+            outputDimensionality: 768,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(`Gemini embedding API error ${response.status}: ${errorBody}`);
+      }
+
+      const data = (await response.json()) as { embedding: { values: number[] } };
+      return data.embedding;
     });
 
     return {

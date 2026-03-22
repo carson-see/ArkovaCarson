@@ -18,6 +18,8 @@ import {
   FileText,
   Scale,
   BookOpen,
+  GraduationCap,
+  Loader2,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -118,6 +120,36 @@ export function PipelineAdminPage() {
     fetchStats().finally(() => setRefreshing(false));
   }, [fetchStats]);
 
+  const [triggerStatus, setTriggerStatus] = useState<Record<string, 'idle' | 'running' | 'done' | 'error'>>({});
+
+  const triggerJob = useCallback(async (jobPath: string, _label: string) => {
+    setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
+    try {
+      const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'https://arkova-worker-270018525501.us-central1.run.app';
+      const response = await fetch(`${workerUrl}/jobs/${jobPath}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Cron-Secret': import.meta.env.VITE_CRON_SECRET ?? '',
+        },
+      });
+      if (response.ok) {
+        setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
+        // Refresh stats after a job completes
+        setTimeout(() => {
+          fetchStats();
+          setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
+        }, 2000);
+      } else {
+        setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
+        setTimeout(() => setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' })), 5000);
+      }
+    } catch {
+      setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
+      setTimeout(() => setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' })), 5000);
+    }
+  }, [fetchStats]);
+
   if (!isAdmin) {
     return (
       <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
@@ -144,6 +176,7 @@ export function PipelineAdminPage() {
       case 'edgar': return <FileText className="h-4 w-4" />;
       case 'uspto': return <Scale className="h-4 w-4" />;
       case 'federal_register': return <BookOpen className="h-4 w-4" />;
+      case 'openalex': return <GraduationCap className="h-4 w-4" />;
       default: return <Database className="h-4 w-4" />;
     }
   };
@@ -153,6 +186,7 @@ export function PipelineAdminPage() {
       case 'edgar': return PIPELINE_LABELS.SOURCE_EDGAR;
       case 'uspto': return PIPELINE_LABELS.SOURCE_USPTO;
       case 'federal_register': return PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER;
+      case 'openalex': return 'OpenAlex Academic';
       case 'mcp': return PIPELINE_LABELS.SOURCE_MCP;
       default: return source;
     }
@@ -243,6 +277,49 @@ export function PipelineAdminPage() {
                 )}
               </div>
             )}
+          </CardContent>
+        </Card>
+
+        {/* Pipeline Controls */}
+        <Card className="border-[#00d4ff]/10 bg-transparent">
+          <CardHeader>
+            <CardTitle className="text-base">Pipeline Controls</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {([
+                { path: 'fetch-edgar', label: 'Run EDGAR Fetch', icon: <FileText className="h-4 w-4" /> },
+                { path: 'fetch-uspto', label: 'Run USPTO Fetch', icon: <Scale className="h-4 w-4" /> },
+                { path: 'fetch-federal-register', label: 'Run Fed Register Fetch', icon: <BookOpen className="h-4 w-4" /> },
+                { path: 'fetch-openalex', label: 'Run OpenAlex Fetch', icon: <GraduationCap className="h-4 w-4" /> },
+                { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
+                { path: 'anchor-public-records', label: 'Run Anchoring', icon: <Shield className="h-4 w-4" /> },
+              ] as const).map(({ path, label, icon }) => {
+                const status = triggerStatus[path] ?? 'idle';
+                return (
+                  <Button
+                    key={path}
+                    variant="outline"
+                    size="sm"
+                    className="justify-start border-[#00d4ff]/20 hover:bg-[#00d4ff]/5"
+                    disabled={status === 'running'}
+                    onClick={() => triggerJob(path, label)}
+                  >
+                    {status === 'running' ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <span className="mr-2">{icon}</span>
+                    )}
+                    {label}
+                    {status === 'done' && <Badge variant="secondary" className="ml-auto text-emerald-400">Done</Badge>}
+                    {status === 'error' && <Badge variant="destructive" className="ml-auto">Error</Badge>}
+                  </Button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              Jobs run on the worker at {import.meta.env.VITE_WORKER_URL ?? 'arkova-worker (Cloud Run)'}. Requires CRON_SECRET.
+            </p>
           </CardContent>
         </Card>
 

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-22 (PR #127 merged: Phase 1.5 Sprints 1-4 complete, security fixes, stale branches cleaned) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-22 (Pipeline activated: EDGAR 2,340 + OpenAlex 200 records ingested, embeddings generating, Merkle anchoring live, Nessie RAG returning real results) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -13,7 +13,7 @@ _Last updated: 2026-03-22 (PR #127 merged: Phase 1.5 Sprints 1-4 complete, secur
 | BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
 | E2E Validation Bugs | 7 | 7 fixed | 0 | No |
 | Demo Readiness (DEMO) | 4 | 4 | 0 | No |
-| Phase 1.5 Foundation | 15 | 12 | 3 | No |
+| Phase 1.5 Foundation | 16 | 14 | 2 | No |
 | Stories (NOT STARTED) | 7 | — | 7 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
@@ -301,7 +301,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ID | Story | Priority | Status | Sprint | Depends On |
 |----|-------|----------|--------|--------|------------|
 | ~~PH1-UI-01~~ | ~~Design system refresh (match arkova.ai)~~ | P0 | **COMPLETE** | S1 | — |
-| PH1-DATA-01 | EDGAR full-text fetcher enhancement | P0 | NOT STARTED | S1 | Migration 0077 |
+| ~~PH1-DATA-01~~ | ~~EDGAR full-text fetcher enhancement~~ | P0 | **COMPLETE** | S5 | Migration 0077 |
+| ~~PH1-DATA-06~~ | ~~OpenAlex academic paper fetcher~~ | P1 | **COMPLETE** | S5 | Migration 0077 |
 | ~~PH1-DATA-02~~ | ~~USPTO patent fetcher~~ | P0 | **COMPLETE** | S1 | Migration 0077 |
 | ~~PH1-DATA-04~~ | ~~Merkle batch anchoring for public records~~ | P0 | **COMPLETE** | S2 | PH1-DATA-01 |
 | ~~PH1-PAY-01~~ | ~~x402 Express middleware integration~~ | P0 | **COMPLETE** | S2 | Migration 0078 |
@@ -317,7 +318,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | PH1-SDK-02 | Python SDK (arkova-python) | P2 | NOT STARTED | S5 | PH1-PAY-01 |
 
 **PR #127 merged 2026-03-22:** Sprints 1-4 complete (12/15 stories). PRs #125, #126 superseded and closed.
-**Remaining:** PH1-DATA-01 (EDGAR full-text), PH1-PAY-02 (facilitator deploy), PH1-SDK-02 (Python SDK)
+**Remaining:** PH1-PAY-02 (facilitator deploy), PH1-SDK-02 (Python SDK)
 
 ---
 

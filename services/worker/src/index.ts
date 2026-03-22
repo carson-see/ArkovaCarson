@@ -27,6 +27,13 @@ import { rateLimiters, rateLimit } from './utils/rateLimit.js';
 import { verifyAuthToken } from './auth.js';
 import { apiV1Router } from './api/v1/router.js';
 import { docsRouter } from './api/v1/docs.js';
+// Pipeline jobs (Phase 1.5)
+import { fetchEdgarFilings } from './jobs/edgarFetcher.js';
+import { fetchUsptoPAtents } from './jobs/usptoFetcher.js';
+import { fetchFederalRegisterDocuments } from './jobs/federalRegisterFetcher.js';
+import { fetchOpenAlexWorks } from './jobs/openalexFetcher.js';
+import { processPublicRecordAnchoring } from './jobs/publicRecordAnchor.js';
+import { embedPublicRecords } from './jobs/publicRecordEmbedder.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -574,6 +581,94 @@ app.post('/jobs/credit-expiry', cronJobsLimiter, async (req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// =========================================================================
+// Phase 1.5 Pipeline Jobs — Data Ingestion, Embedding, Anchoring
+// =========================================================================
+
+app.post('/jobs/fetch-edgar', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await fetchEdgarFilings(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'EDGAR fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/fetch-uspto', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    await fetchUsptoPAtents(db);
+    res.json({ status: 'complete' });
+  } catch (error) {
+    logger.error({ error }, 'USPTO fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/fetch-federal-register', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    await fetchFederalRegisterDocuments(db);
+    res.json({ status: 'complete' });
+  } catch (error) {
+    logger.error({ error }, 'Federal Register fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/fetch-openalex', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await fetchOpenAlexWorks(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'OpenAlex fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/embed-public-records', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await embedPublicRecords();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Public record embedding failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/anchor-public-records', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await processPublicRecordAnchoring();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Public record anchoring failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

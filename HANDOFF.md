@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 164/176 stories complete (93%) incl. 13 Beta stories (BETA-01–13). 2,018 tests (975 frontend + 1,043 worker). 75 migration files (0001-0075, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet** (switched from testnet4 2026-03-18). Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **7+ real Signet transactions confirmed end-to-end.** All feature gates fixed (p_flag_key + column names). Worker rev 00030 deployed. Frontend on arkova-26.vercel.app. **Design system: "Precision Engine"** (DM Sans + JetBrains Mono, #00d4ff cyan, sharp corners, tonal layering). See `docs/reference/BRAND.md`. MCP server live at edge.arkova.ai.
+**Overall progress:** 166/178 stories complete (~93%) incl. 13 Beta stories (BETA-01–13). 2,050+ tests. 80 migration files (0001-0080, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00043 deployed. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 2,540 public records (2,340 EDGAR + 200 OpenAlex), 100 embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai.
 
 ### Open Blockers
 
