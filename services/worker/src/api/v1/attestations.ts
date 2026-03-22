@@ -24,6 +24,19 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
 
+// ─── Type Code Mapping ────────────────────────────────────
+const ATTESTATION_TYPE_CODES: Record<string, string> = {
+  VERIFICATION: 'VER',
+  ENDORSEMENT: 'END',
+  AUDIT: 'AUD',
+  APPROVAL: 'APR',
+  WITNESS: 'WIT',
+  COMPLIANCE: 'COM',
+  SUPPLY_CHAIN: 'SUP',
+  IDENTITY: 'IDN',
+  CUSTOM: 'CUS',
+};
+
 // ─── Schemas ───────────────────────────────────────────────
 
 const CreateAttestationSchema = z.object({
@@ -99,59 +112,101 @@ router.post('/', async (req: Request, res: Response) => {
   const data = parsed.data;
 
   try {
-    // Look up attester's org
-    const { data: profile } = await db
+    // Look up attester's org + org_prefix
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    // Generate public ID
-    const shortId = randomUUID().slice(0, 8).toUpperCase();
-    const publicId = `ARK-ATT-${new Date().getFullYear()}-${shortId}`;
+    if (profileError) {
+      logger.warn({ error: profileError, userId }, 'Profile lookup failed, defaulting to IND prefix');
+    }
 
-    // Compute attestation fingerprint (hash of the claims + subject + attester)
+    let orgPrefix = 'IND'; // Default for individual users (no org)
+    if (profile?.org_id) {
+      const { data: org } = await dbAny
+        .from('organizations')
+        .select('org_prefix')
+        .eq('id', profile.org_id)
+        .single();
+      if (org?.org_prefix) {
+        orgPrefix = org.org_prefix;
+      }
+    }
+
+    // Generate structured public ID: ARK-{org_prefix}-{type_code}-{unique_6}
+    const typeCode = ATTESTATION_TYPE_CODES[data.attestation_type] ?? 'ATT';
+    const issuedAt = new Date().toISOString();
+
+    // Compute attestation fingerprint
     const attestationContent = JSON.stringify({
       subject_identifier: data.subject_identifier,
       attestation_type: data.attestation_type,
       attester_name: data.attester_name,
       claims: data.claims,
-      issued_at: new Date().toISOString(),
+      issued_at: issuedAt,
     });
     const fingerprint = createHash('sha256').update(attestationContent).digest('hex');
 
-    const { data: attestation, error: insertError } = await dbAny
-      .from('attestations')
-      .insert({
-        public_id: publicId,
-        anchor_id: data.anchor_id ?? null,
-        subject_type: data.subject_type,
-        subject_identifier: data.subject_identifier,
-        attester_org_id: profile?.org_id ?? null,
-        attester_user_id: userId,
-        attester_name: data.attester_name,
-        attester_type: data.attester_type,
-        attester_title: data.attester_title ?? null,
-        attestation_type: data.attestation_type,
-        claims: data.claims,
-        summary: data.summary ?? null,
-        jurisdiction: data.jurisdiction ?? null,
-        evidence_fingerprint: data.evidence_fingerprint ?? null,
-        fingerprint,
-        status: 'PENDING',
-        expires_at: data.expires_at ?? null,
-        metadata: data.metadata ?? {},
-      })
-      .select('id, public_id, attestation_type, status, fingerprint, created_at')
-      .single();
+    // Retry loop for public_id collision (max 3 attempts)
+    const MAX_RETRIES = 3;
+    let attestation = null;
+    let insertError = null;
 
-    if (insertError) {
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      const uniquePart = randomUUID().slice(0, 6).toUpperCase();
+      const publicId = `ARK-${orgPrefix}-${typeCode}-${uniquePart}`;
+
+      const result = await dbAny
+        .from('attestations')
+        .insert({
+          public_id: publicId,
+          anchor_id: data.anchor_id ?? null,
+          subject_type: data.subject_type,
+          subject_identifier: data.subject_identifier,
+          attester_org_id: profile?.org_id ?? null,
+          attester_user_id: userId,
+          attester_name: data.attester_name,
+          attester_type: data.attester_type,
+          attester_title: data.attester_title ?? null,
+          attestation_type: data.attestation_type,
+          claims: data.claims,
+          summary: data.summary ?? null,
+          jurisdiction: data.jurisdiction ?? null,
+          evidence_fingerprint: data.evidence_fingerprint ?? null,
+          fingerprint,
+          status: 'PENDING',
+          expires_at: data.expires_at ?? null,
+          metadata: data.metadata ?? {},
+        })
+        .select('id, public_id, attestation_type, status, fingerprint, created_at')
+        .single();
+
+      if (!result.error) {
+        attestation = result.data;
+        insertError = null;
+        break;
+      }
+
+      // Retry on unique constraint violation (public_id collision)
+      if (result.error?.code === '23505') {
+        logger.warn({ attempt, publicId }, 'Attestation public_id collision, retrying');
+        continue;
+      }
+
+      // Non-collision error — stop retrying
+      insertError = result.error;
+      break;
+    }
+
+    if (insertError || !attestation) {
       logger.error({ error: insertError }, 'Failed to create attestation');
       res.status(500).json({ error: 'Failed to create attestation' });
       return;
     }
 
-    logger.info({ publicId, attestationType: data.attestation_type, attester: data.attester_name }, 'Attestation created');
+    logger.info({ publicId: attestation.public_id, attestationType: data.attestation_type, attester: data.attester_name }, 'Attestation created');
 
     res.status(201).json({
       public_id: attestation.public_id,
