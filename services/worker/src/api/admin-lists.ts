@@ -1,0 +1,228 @@
+/**
+ * Admin Lists API — Arkova Internal Only (SN1)
+ *
+ * GET /api/admin/users         — Paginated user list
+ * GET /api/admin/records       — Paginated records list
+ * GET /api/admin/subscriptions — Paginated subscriptions list
+ *
+ * All endpoints gated behind platform admin email whitelist.
+ * These provide click-through detail for the Platform Overview dashboard.
+ */
+
+import type { Request, Response } from 'express';
+import { logger } from '../utils/logger.js';
+import { db } from '../utils/db.js';
+import { isPlatformAdmin } from '../utils/platformAdmin.js';
+
+/** Parse pagination params with defaults */
+function parsePagination(req: Request): { page: number; limit: number; search: string } {
+  const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 25));
+  const search = (req.query.search as string || '').trim();
+  return { page, limit, search };
+}
+
+// ─── GET /api/admin/users ────────────────────────────────────
+
+export async function handleAdminUsers(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const { page, limit, search } = parsePagination(req);
+  const offset = (page - 1) * limit;
+  const roleFilter = (req.query.role as string) || '';
+
+  try {
+    let query = db
+      .from('profiles')
+      .select('id, email, full_name, account_type, org_id, created_at, updated_at, deleted_at', { count: 'exact' })
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (search) {
+      query = query.or(`email.ilike.%${search}%,full_name.ilike.%${search}%`);
+    }
+    if (roleFilter) {
+      query = query.eq('account_type', roleFilter);
+    }
+
+    const { data: users, count, error } = await query;
+
+    if (error) {
+      logger.error({ error }, 'Admin users query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    // Enrich with org names
+    const orgIds = [...new Set((users ?? []).map((u) => u.org_id).filter(Boolean))];
+    let orgMap: Record<string, string> = {};
+    if (orgIds.length > 0) {
+      const { data: orgs } = await db
+        .from('organizations')
+        .select('id, display_name')
+        .in('id', orgIds);
+      if (orgs) {
+        orgMap = Object.fromEntries(orgs.map((o) => [o.id, o.display_name]));
+      }
+    }
+
+    res.json({
+      users: (users ?? []).map((u) => ({
+        ...u,
+        org_name: u.org_id ? (orgMap[u.org_id] ?? null) : null,
+      })),
+      total: count ?? 0,
+      page,
+      limit,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Admin users request failed');
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+}
+
+// ─── GET /api/admin/records ──────────────────────────────────
+
+export async function handleAdminRecords(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const { page, limit, search } = parsePagination(req);
+  const offset = (page - 1) * limit;
+  const statusFilter = (req.query.status as string) || '';
+  const typeFilter = (req.query.type as string) || '';
+
+  try {
+    let query = db
+      .from('anchors')
+      .select('id, public_id, filename, credential_type, status, chain_tx_id, fingerprint, user_id, org_id, created_at, metadata', { count: 'exact' })
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (search) {
+      query = query.or(`filename.ilike.%${search}%,public_id.ilike.%${search}%,fingerprint.ilike.%${search}%`);
+    }
+    if (statusFilter) {
+      query = query.eq('status', statusFilter);
+    }
+    if (typeFilter) {
+      query = query.eq('credential_type', typeFilter);
+    }
+
+    const { data: records, count, error } = await query;
+
+    if (error) {
+      logger.error({ error }, 'Admin records query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    // Enrich with user emails
+    const userIds = [...new Set((records ?? []).map((r) => r.user_id).filter(Boolean))];
+    let userMap: Record<string, string> = {};
+    if (userIds.length > 0) {
+      const { data: profiles } = await db
+        .from('profiles')
+        .select('id, email')
+        .in('id', userIds);
+      if (profiles) {
+        userMap = Object.fromEntries(profiles.map((p) => [p.id, p.email]));
+      }
+    }
+
+    res.json({
+      records: (records ?? []).map((r) => ({
+        ...r,
+        user_email: r.user_id ? (userMap[r.user_id] ?? null) : null,
+      })),
+      total: count ?? 0,
+      page,
+      limit,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Admin records request failed');
+    res.status(500).json({ error: 'Failed to fetch records' });
+  }
+}
+
+// ─── GET /api/admin/subscriptions ────────────────────────────
+
+export async function handleAdminSubscriptions(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const { page, limit, search } = parsePagination(req);
+  const offset = (page - 1) * limit;
+  const statusFilter = (req.query.status as string) || '';
+
+  try {
+    let query = db
+      .from('subscriptions')
+      .select('id, user_id, plan_id, status, stripe_customer_id, stripe_subscription_id, current_period_start, current_period_end, created_at, plans(name, price_cents)', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (statusFilter) {
+      query = query.eq('status', statusFilter);
+    }
+
+    const { data: subscriptions, count, error } = await query;
+
+    if (error) {
+      logger.error({ error }, 'Admin subscriptions query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    // Enrich with user emails
+    const userIds = [...new Set((subscriptions ?? []).map((s) => s.user_id).filter(Boolean))];
+    let userMap: Record<string, { email: string; full_name: string | null }> = {};
+    if (userIds.length > 0) {
+      const { data: profiles } = await db
+        .from('profiles')
+        .select('id, email, full_name')
+        .in('id', userIds);
+      if (profiles) {
+        userMap = Object.fromEntries(profiles.map((p) => [p.id, { email: p.email, full_name: p.full_name }]));
+      }
+    }
+
+    res.json({
+      subscriptions: (subscriptions ?? []).map((s) => ({
+        ...s,
+        user_email: s.user_id ? (userMap[s.user_id]?.email ?? null) : null,
+        user_name: s.user_id ? (userMap[s.user_id]?.full_name ?? null) : null,
+      })),
+      total: count ?? 0,
+      page,
+      limit,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Admin subscriptions request failed');
+    res.status(500).json({ error: 'Failed to fetch subscriptions' });
+  }
+}

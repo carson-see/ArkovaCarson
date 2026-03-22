@@ -117,15 +117,17 @@ export function PlatformOverviewPage() {
         </div>
       )}
 
-      {/* Top row: 4 StatCards */}
+      {/* Top row: 4 StatCards — clickable to detail lists */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-        <StatCard
-          label="Total Users"
-          value={stats?.users.total ?? 0}
-          icon={Users}
-          loading={statsLoading}
-          variant="primary"
-        />
+        <div className="cursor-pointer" onClick={() => navigate(ROUTES.ADMIN_USERS)}>
+          <StatCard
+            label="Total Users"
+            value={stats?.users.total ?? 0}
+            icon={Users}
+            loading={statsLoading}
+            variant="primary"
+          />
+        </div>
         <StatCard
           label="Total Organizations"
           value={stats?.organizations.total ?? 0}
@@ -133,20 +135,24 @@ export function PlatformOverviewPage() {
           loading={statsLoading}
           variant="default"
         />
-        <StatCard
-          label="Total Records"
-          value={stats?.anchors.total ?? 0}
-          icon={FileText}
-          loading={statsLoading}
-          variant="success"
-        />
-        <StatCard
-          label="Active Subscriptions"
-          value={stats ? Object.values(stats.subscriptions.byPlan).reduce((a, b) => a + b, 0) : 0}
-          icon={CreditCard}
-          loading={statsLoading}
-          variant="warning"
-        />
+        <div className="cursor-pointer" onClick={() => navigate(ROUTES.ADMIN_RECORDS)}>
+          <StatCard
+            label="Total Records"
+            value={stats?.anchors.total ?? 0}
+            icon={FileText}
+            loading={statsLoading}
+            variant="success"
+          />
+        </div>
+        <div className="cursor-pointer" onClick={() => navigate(ROUTES.ADMIN_SUBSCRIPTIONS)}>
+          <StatCard
+            label="Active Subscriptions"
+            value={stats ? Object.values(stats.subscriptions.byPlan).reduce((a, b) => a + b, 0) : 0}
+            icon={CreditCard}
+            loading={statsLoading}
+            variant="warning"
+          />
+        </div>
       </div>
 
       {/* Second row: New Users (7d) and Records (24h) */}
