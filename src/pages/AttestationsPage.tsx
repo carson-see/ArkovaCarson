@@ -321,14 +321,19 @@ export function AttestationsPage() {
 
               {/* Subject */}
               <div className="space-y-2">
-                <Label>Subject Identifier *</Label>
+                <Label>Subject *</Label>
                 <Input
-                  placeholder="e.g., ARK-2026-XXXX, Company Name, Document Title"
+                  placeholder={subjectType === 'credential' ? 'e.g., Bachelor of Science in Computer Science' :
+                    subjectType === 'entity' ? 'e.g., Acme Corporation, University of Michigan' :
+                    subjectType === 'process' ? 'e.g., SOC 2 Type II Audit, ISO 27001 Certification' :
+                    'e.g., Patent Application #12345, Financial Statement Q4 2026'}
                   value={subjectIdentifier}
                   onChange={(e) => setSubjectIdentifier(e.target.value)}
                   className="bg-transparent border-[#00d4ff]/20"
                 />
-                <p className="text-xs text-muted-foreground">What is being attested about — a credential ID, entity name, or description</p>
+                <p className="text-xs text-muted-foreground">
+                  What is being attested — a unique attestation ID will be auto-generated (e.g., ARK-UMI-VER-A3F2B1)
+                </p>
               </div>
 
               {/* Attester Info */}
@@ -589,7 +594,7 @@ export function AttestationsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border/50 hover:bg-transparent">
-                      <TableHead className="text-xs font-semibold">Type</TableHead>
+                      <TableHead className="text-xs font-semibold">ID</TableHead>
                       <TableHead className="text-xs font-semibold">Subject</TableHead>
                       <TableHead className="text-xs font-semibold hidden md:table-cell">Attester</TableHead>
                       <TableHead className="text-xs font-semibold">Status</TableHead>
@@ -604,7 +609,10 @@ export function AttestationsPage() {
                         onClick={() => setSelectedAttestation(att)}
                       >
                         <TableCell className="py-2">
-                          <Badge variant="secondary" className="text-[10px] font-mono">
+                          <code className="text-[11px] font-mono text-[#00d4ff]">
+                            {att.public_id}
+                          </code>
+                          <Badge variant="secondary" className="text-[9px] font-mono ml-1.5">
                             {att.attestation_type.replace(/_/g, ' ')}
                           </Badge>
                         </TableCell>

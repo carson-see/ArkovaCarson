@@ -24,6 +24,19 @@ const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
 
+// ─── Type Code Mapping ────────────────────────────────────
+const ATTESTATION_TYPE_CODES: Record<string, string> = {
+  VERIFICATION: 'VER',
+  ENDORSEMENT: 'END',
+  AUDIT: 'AUD',
+  APPROVAL: 'APR',
+  WITNESS: 'WIT',
+  COMPLIANCE: 'COM',
+  SUPPLY_CHAIN: 'SUP',
+  IDENTITY: 'IDN',
+  CUSTOM: 'CUS',
+};
+
 // ─── Schemas ───────────────────────────────────────────────
 
 const CreateAttestationSchema = z.object({
@@ -99,16 +112,29 @@ router.post('/', async (req: Request, res: Response) => {
   const data = parsed.data;
 
   try {
-    // Look up attester's org
+    // Look up attester's org + org_prefix
     const { data: profile } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
       .single();
 
-    // Generate public ID
-    const shortId = randomUUID().slice(0, 8).toUpperCase();
-    const publicId = `ARK-ATT-${new Date().getFullYear()}-${shortId}`;
+    let orgPrefix = 'IND'; // Default for individual users (no org)
+    if (profile?.org_id) {
+      const { data: org } = await dbAny
+        .from('organizations')
+        .select('org_prefix')
+        .eq('id', profile.org_id)
+        .single();
+      if (org?.org_prefix) {
+        orgPrefix = org.org_prefix;
+      }
+    }
+
+    // Generate structured public ID: ARK-{org_prefix}-{type_code}-{unique_6}
+    const typeCode = ATTESTATION_TYPE_CODES[data.attestation_type] ?? 'ATT';
+    const uniquePart = randomUUID().slice(0, 6).toUpperCase();
+    const publicId = `ARK-${orgPrefix}-${typeCode}-${uniquePart}`;
 
     // Compute attestation fingerprint (hash of the claims + subject + attester)
     const attestationContent = JSON.stringify({

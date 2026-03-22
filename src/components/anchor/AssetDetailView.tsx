@@ -21,6 +21,7 @@ import {
   Hash,
   Lock,
   Share2,
+  ExternalLink,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
@@ -304,6 +305,42 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               </div>
             </>
           )}
+
+          {/* Source Document Link (pipeline records) */}
+          {(() => {
+            const sourceUrl = anchor.metadata?.source_url;
+            const pipelineSource = String(anchor.metadata?.pipeline_source ?? '');
+            const recordType = String(anchor.metadata?.record_type ?? '');
+            if (typeof sourceUrl !== 'string' || !sourceUrl) return null;
+            const linkLabel = pipelineSource === 'edgar' ? 'View on SEC EDGAR' :
+              pipelineSource === 'openalex' ? 'View on OpenAlex' :
+              pipelineSource === 'uspto' ? 'View on USPTO' :
+              pipelineSource === 'federal_register' ? 'View on Federal Register' :
+              'View Original Document';
+            return (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">Source Document</p>
+                  <a
+                    href={sourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-sm text-primary hover:text-primary/80 transition-colors"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {linkLabel}
+                  </a>
+                  {recordType && (
+                    <p className="text-xs text-muted-foreground">
+                      {recordType.replace(/_/g, ' ')}
+                      {pipelineSource && ` via ${pipelineSource.toUpperCase()}`}
+                    </p>
+                  )}
+                </div>
+              </>
+            );
+          })()}
 
           {/* Network Receipt (BETA-11) */}
           {anchor.chainTxId && (
