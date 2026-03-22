@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 165/192 stories complete (~86%) incl. 13 Beta stories (BETA-01–13). 2,076+ tests. 85 migration files (0001-0085, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00052 deployed. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 11,547+ public records, 1,000+ embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury. **Attestation IDs** now use structured format: ARK-{org_prefix}-{type_code}-{unique}.
+**Overall progress:** 165/192 stories complete (~86%) incl. 13 Beta stories (BETA-01–13). 2,094+ tests. 86 migration files (0001-0086, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00052 deployed. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 11,547+ public records, 1,000+ embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury. **Attestation IDs** now use structured format: ARK-{org_prefix}-{type_code}-{unique}.
 
 ### Open Blockers
 
@@ -21,6 +21,18 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-23, Session 5)
+
+**PR #131:** `feat/session5-attestation-anchoring-admin-lists` — Attestation anchoring + admin master lists + EDGAR scaling
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| Attestation anchoring job | `attestationAnchor.ts`, `0086_*.sql`, `index.ts` | Merkle-batches PENDING attestations to Bitcoin, PENDING→ACTIVE, race condition detection, 8 tests |
+| Admin master lists (SN1) | `admin-lists.ts`, `AdminUsersPage.tsx`, `AdminRecordsPage.tsx`, `AdminSubscriptionsPage.tsx` | Paginated searchable detail lists for users/records/subscriptions, click-through from Overview |
+| EDGAR scaling | `edgarFetcher.ts`, `index.ts` | Submissions API with 30 S&P 500 CIKs, batch 100→200, historical backfill endpoint |
+| Security hardening | `admin-lists.ts` | ilike wildcard sanitization, search length limit, type-safe filter assertions |
+| Pipeline UX | `PipelineAdminPage.tsx` | Detail panel auto-scrolls into view on record click |
 
 ### Recent Changes (2026-03-22, Session 4)
 
