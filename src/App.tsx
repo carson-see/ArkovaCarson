@@ -62,6 +62,7 @@ const AuthCallbackPage = React.lazy(() => import('@/pages/AuthCallbackPage').the
 const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(m => ({ default: m.ReviewQueuePage })));
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
 const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
+const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -156,6 +157,9 @@ export function App() {
           {/* AI Intelligence routes */}
           <Route path={ROUTES.REVIEW_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ReviewQueue"><ReviewQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.AI_REPORTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AIReports"><AIReportsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+
+          {/* Attestations (Phase II) */}
+          <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Admin routes */}
           <Route path={ROUTES.ADMIN_OVERVIEW} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform Overview"><PlatformOverviewPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

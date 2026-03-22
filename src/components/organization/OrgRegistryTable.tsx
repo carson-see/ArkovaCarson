@@ -178,8 +178,13 @@ export function OrgRegistryTable({
     if (error) {
       console.error('Error fetching anchors:', error);
     } else {
-      setAnchors(data || []);
-      setTotalCount(count || 0);
+      // Exclude pipeline-generated anchors (pipeline_source in metadata)
+      const userAnchors = (data || []).filter((a) => {
+        const meta = a.metadata as { pipeline_source?: string } | null;
+        return !meta?.pipeline_source;
+      });
+      setAnchors(userAnchors);
+      setTotalCount(userAnchors.length < PAGE_SIZE ? userAnchors.length + (currentPage - 1) * PAGE_SIZE : (count || 0));
     }
 
     setLoading(false);

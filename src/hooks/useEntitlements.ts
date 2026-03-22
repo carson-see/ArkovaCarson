@@ -120,16 +120,17 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
       const { count, error: countError } = await countQuery;
       if (countError) throw countError;
 
+      // Beta: set unlimited for all users — credit/quota enforcement disabled
       setRecordsUsed(count ?? 0);
-      setRecordsLimit(limit >= UNLIMITED_THRESHOLD ? null : limit);
+      setRecordsLimit(null); // null = unlimited in beta
       setPlanName(name);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to check plan quota';
       setError(message);
       // Fail closed: fall back to free tier defaults on error.
       // Never leave recordsLimit as null (unlimited) when we can't verify the plan.
-      setRecordsLimit(3);
-      setPlanName('Free');
+      setRecordsLimit(null); // Beta: unlimited on error too
+      setPlanName('Beta');
       setRecordsUsed(0);
     } finally {
       setLoading(false);

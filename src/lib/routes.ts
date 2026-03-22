@@ -43,6 +43,10 @@ export const ROUTES = {
   HELP: '/help',
   REVIEW_PENDING: '/review-pending',
 
+  // Attestations (Phase II)
+  ATTESTATIONS: '/attestations',
+  VERIFY_ATTESTATION: '/verify/attestation/:publicId',
+
   // AI Intelligence routes (P8 Phase II)
   REVIEW_QUEUE: '/organization/review-queue',
   AI_REPORTS: '/organization/ai-reports',

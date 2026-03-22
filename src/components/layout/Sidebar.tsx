@@ -30,6 +30,7 @@ import {
   Activity,
   Database,
   DollarSign,
+  FileCheck,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -57,6 +58,7 @@ const mainNavItems: NavItem[] = [
   { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Inbox, to: ROUTES.MY_CREDENTIALS },
   { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATION },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
+  { label: 'Attestations', icon: FileCheck, to: ROUTES.ATTESTATIONS },
 ];
 
 // UI-only visibility hint — NOT a security control. Actual admin access must be

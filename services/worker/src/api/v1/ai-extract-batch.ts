@@ -101,32 +101,11 @@ router.post('/', async (req: Request, res: Response) => {
 
     const orgId = profile?.org_id ?? undefined;
 
-    // Check AI credits — need enough for all rows
-    const credits = await checkAICredits(orgId, userId);
-    if (!credits) {
-      res.status(503).json({
-        error: 'credits_unavailable',
-        message: 'Unable to verify credit balance. Please try again.',
-      });
-      return;
-    }
-    if (credits.remaining < rowCount) {
-      res.status(402).json({
-        error: 'insufficient_credits',
-        message: `Need ${rowCount} credits but only ${credits.remaining} remaining.`,
-        credits: {
-          monthlyAllocation: credits.monthlyAllocation,
-          usedThisMonth: credits.usedThisMonth,
-          remaining: credits.remaining,
-          needed: rowCount,
-        },
-      });
-      return;
-    }
-
-    // Deduct credits upfront for the whole batch
-    const deducted = await deductAICredits(orgId, userId, rowCount);
-    if (!deducted) {
+    // Beta: credit checks disabled — all users get unlimited AI extraction
+    // TODO: Re-enable credit checks post-beta launch
+    void checkAICredits(orgId, userId); // Track usage for analytics only
+    void deductAICredits(orgId, userId, rowCount).catch(() => { /* non-blocking in beta */ });
+    if (false) { // eslint-disable-line no-constant-condition — beta bypass
       res.status(402).json({
         error: 'insufficient_credits',
         message: 'Credit deduction failed. Please try again.',
@@ -210,7 +189,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const batchDurationMs = Date.now() - batchStartMs;
-    const creditsRemaining = Math.max(0, credits.remaining - successCount);
+    const creditsRemaining = null; // Beta: unlimited
 
     // Structured observability log — batch extraction summary
     logger.info({
