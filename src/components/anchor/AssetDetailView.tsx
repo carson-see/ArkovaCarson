@@ -368,7 +368,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                   rel="noopener noreferrer"
                   className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
                 >
-                  Awaiting network confirmation — view treasury
+                  Awaiting network confirmation — view anchor
                 </a>
               </div>
             </>

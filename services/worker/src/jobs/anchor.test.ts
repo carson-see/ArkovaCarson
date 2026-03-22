@@ -695,7 +695,7 @@ describe('processPendingAnchors', () => {
 
   it('processes all pending anchors', async () => {
     mockLimit.mockResolvedValue({
-      data: [{ id: 'a1' }, { id: 'a2' }],
+      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
       error: null,
     });
 
@@ -707,7 +707,7 @@ describe('processPendingAnchors', () => {
 
   it('counts failures separately from successes', async () => {
     mockLimit.mockResolvedValue({
-      data: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }],
+      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
       error: null,
     });
 
@@ -724,7 +724,7 @@ describe('processPendingAnchors', () => {
 
   it('handles all anchors failing', async () => {
     mockLimit.mockResolvedValue({
-      data: [{ id: 'a1' }, { id: 'a2' }],
+      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
       error: null,
     });
 
@@ -748,28 +748,28 @@ describe('processPendingAnchors', () => {
 
     it('proceeds when switchboard flag is enabled', async () => {
       mockRpc.mockResolvedValue({ data: true, error: null });
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1' }], error: null });
+      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result.processed).toBe(1);
     });
 
     it('defaults to disabled when flag read fails (fail-closed)', async () => {
       mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC error' } });
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1' }], error: null });
+      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
 
     it('defaults to disabled when RPC throws (fail-closed)', async () => {
       mockRpc.mockRejectedValue(new Error('DB unreachable'));
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1' }], error: null });
+      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
 
     it('defaults to disabled when flag data is not a boolean', async () => {
       mockRpc.mockResolvedValue({ data: 'true', error: null });
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1' }], error: null });
+      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
@@ -816,7 +816,7 @@ describe('processPendingAnchors', () => {
       const callOrder: string[] = [];
 
       mockLimit.mockResolvedValue({
-        data: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }],
+        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
         error: null,
       });
 
@@ -839,7 +839,7 @@ describe('processPendingAnchors', () => {
 
     it('continues processing remaining anchors after one fails', async () => {
       mockLimit.mockResolvedValue({
-        data: [{ id: 'a1' }, { id: 'a2' }, { id: 'a3' }],
+        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
         error: null,
       });
 
@@ -863,7 +863,7 @@ describe('processPendingAnchors', () => {
 
     it('does not throw even when all anchors fail with exceptions', async () => {
       mockLimit.mockResolvedValue({
-        data: [{ id: 'a1' }, { id: 'a2' }],
+        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
         error: null,
       });
 
@@ -878,7 +878,7 @@ describe('processPendingAnchors', () => {
 
     it('logs total counts on completion', async () => {
       mockLimit.mockResolvedValue({
-        data: [{ id: 'a1' }],
+        data: [{ id: 'a1', metadata: null }],
         error: null,
       });
 

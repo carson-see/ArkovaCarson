@@ -167,13 +167,14 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
     return { processed: 0, failed: 0 };
   }
 
-  // Fetch all PENDING anchors
+  // Fetch PENDING anchors — exclude pipeline records (handled by Merkle batch job)
+  // Pipeline records have metadata.pipeline_source set by publicRecordAnchor.ts
   const { data: anchors, error } = await db
     .from('anchors')
-    .select('id')
+    .select('id, metadata')
     .eq('status', 'PENDING')
     .is('deleted_at', null)
-    .limit(100); // Process in batches
+    .limit(100);
 
   if (error) {
     logger.error({ error }, 'Failed to fetch pending anchors');
@@ -185,12 +186,23 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
     return { processed: 0, failed: 0 };
   }
 
-  logger.info({ count: anchors.length }, 'Found pending anchors');
+  // Filter out pipeline records — they use Merkle batch anchoring via /jobs/anchor-public-records
+  const userAnchors = anchors.filter((a) => {
+    const meta = a.metadata as Record<string, unknown> | null;
+    return !meta?.pipeline_source;
+  });
+
+  if (userAnchors.length === 0) {
+    logger.debug({ totalPending: anchors.length }, 'No user anchors to process (pipeline records filtered)');
+    return { processed: 0, failed: 0 };
+  }
+
+  logger.info({ count: userAnchors.length, pipelineSkipped: anchors.length - userAnchors.length }, 'Found pending user anchors');
 
   let processed = 0;
   let failed = 0;
 
-  for (const anchor of anchors) {
+  for (const anchor of userAnchors) {
     const success = await processAnchor(anchor.id);
     if (success) {
       processed++;
