@@ -10,7 +10,7 @@ Credential display components. `CredentialRenderer` is the core component that r
 
 ## Do / Don't Rules
 - DO: Use `useCredentialTemplate` hook (in `src/hooks/`) to fetch template data
-- DO: Follow Nordic Vault design system — `glass-card`, `shadow-card-rest/hover`, `animate-in-view`, `font-mono` for fingerprints
+- DO: Follow Precision Engine design system — sharp corners (`rounded-sm`), `shadow-neon`, `animate-in-view`, `font-mono` for fingerprints. See `docs/reference/BRAND.md`.
 - DO: Handle all 3 rendering modes gracefully (template+metadata, metadata-only, no-metadata)
 - DON'T: Expose internal template config in public-facing renders — only rendered output
 - DON'T: Format dates without `timeZone: 'UTC'` — causes off-by-one day errors
