@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 168/178 stories complete (~94%) incl. 13 Beta stories (BETA-01–13). 2,050+ tests. 80 migration files (0001-0080, 0033 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00044 deploying. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 2,540 public records (2,340 EDGAR + 200 OpenAlex), 100 embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury.
+**Overall progress:** 164/192 stories complete (~85%) incl. 13 Beta stories (BETA-01–13). 2,050+ tests. 83 migration files (0001-0084, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00044 deploying. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 2,540 public records (2,340 EDGAR + 200 OpenAlex), 100 embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury.
 
 ### Open Blockers
 
@@ -36,7 +36,7 @@
 
 ### What's Production-Ready
 
-- Database layer (80 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
+- Database layer (83 migrations, RLS on all tables, audit trail immutable, GDPR erasure RPCs)
 - Auth flow (Supabase auth, Google OAuth, AuthGuard + RouteGuard)
 - Org admin credential issuance + individual anchor creation
 - Public verification portal (5-section display, verification event logging)
@@ -52,7 +52,7 @@
 - Semantic search (pgvector embeddings, cosine similarity)
 - MCP server at edge.arkova.ai
 - GDPR compliance (PII erasure RPCs, audit log anonymization)
-- Synthetic Sentinel design system (PRs #117-120)
+- Precision Engine design system (PRs #117-120, refined 2026-03-22)
 - 16 credential templates + type-specific visual cards
 - Pipeline: EDGAR + OpenAlex fetchers, embedder, Nessie RAG
 - Pipeline admin page with records browser + controls

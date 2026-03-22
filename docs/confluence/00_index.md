@@ -85,7 +85,7 @@ npm run dev
 
 ### Production
 
-The production site is deployed at `https://arkova-26.vercel.app` connected to production Supabase (`vzwyaatejekddvltxyye`). All 75 migrations (0001-0075) applied to production. Seed data loaded, Stripe Price IDs configured.
+The production site is deployed at `https://arkova-26.vercel.app` connected to production Supabase (`vzwyaatejekddvltxyye`). All 83 migrations (0001-0084) applied to production. Seed data loaded, Stripe Price IDs configured.
 
 ---
 

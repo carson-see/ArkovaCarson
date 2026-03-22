@@ -105,7 +105,7 @@ services/edge/                               <- Cloudflare Worker scripts (ADR-0
     mcp-tools.ts                             <- MCP tool definitions (verify + search)
 wrangler.toml                                <- Root config (R2 bucket, queue, AI bindings)
 supabase/
-  migrations/                                <- 75 files (0001-0075, 0033 skipped, 0068 split into 0068a/0068b)
+  migrations/                                <- 83 files (0001-0084, 0033+0078 skipped, 0068 split into 0068a/0068b)
   seed.sql                                   <- Demo data
   config.toml                                <- Local Supabase config
 docs/confluence/                             <- Architecture, data model, security, audit, etc.
