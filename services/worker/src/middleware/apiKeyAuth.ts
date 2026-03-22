@@ -20,6 +20,7 @@ import { logger } from '../utils/logger.js';
 export interface ApiKeyMeta {
   keyId: string;
   orgId: string;
+  userId: string;
   scopes: string[];
   rateLimitTier: 'free' | 'paid' | 'custom';
   keyPrefix: string;
@@ -132,7 +133,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
     // Look up in database
     try {
       const { data: apiKey, error } = await db.from('api_keys')
-        .select('id, org_id, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
+        .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
         .eq('key_hash', keyHash)
         .single();
 
@@ -166,6 +167,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
       req.apiKey = {
         keyId: apiKey.id,
         orgId: apiKey.org_id,
+        userId: apiKey.created_by,
         scopes: apiKey.scopes,
         rateLimitTier: apiKey.rate_limit_tier,
         keyPrefix: apiKey.key_prefix,

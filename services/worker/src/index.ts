@@ -453,7 +453,7 @@ app.delete('/api/account', rateLimiters.checkout, async (req, res) => {
 // Dedicated rate limiter for cron endpoints — separate from user-facing limits
 const cronJobsLimiter = rateLimit({
   windowMs: 60000,
-  maxRequests: 5, // 5 req/min — cron fires at most every minute
+  maxRequests: 30, // 30 req/min — Cloud Scheduler hits 10+ endpoints on overlapping schedules
   keyGenerator: () => 'cron-jobs', // Global limit (not per-IP)
 });
 

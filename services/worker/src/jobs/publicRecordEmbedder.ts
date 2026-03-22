@@ -72,26 +72,12 @@ export async function embedPublicRecords(
     return { total: 0, succeeded: 0, failed: 0, errors: [] };
   }
 
-  // Fetch records without embeddings via RPC (PostgREST doesn't support subquery anti-joins)
-  // First get IDs that already have embeddings, then exclude them
-  const { data: embeddedIds } = await client
-    .from('public_record_embeddings')
-    .select('public_record_id');
-
-  const excludeIds = (embeddedIds ?? []).map((r: { public_record_id: string }) => r.public_record_id);
-
-  let query = client
-    .from('public_records')
-    .select('id, title, source, record_type, metadata')
-    .order('created_at', { ascending: true })
-    .limit(EMBED_BATCH_SIZE);
-
-  // Exclude already-embedded records (if any exist)
-  if (excludeIds.length > 0) {
-    query = query.not('id', 'in', `(${excludeIds.join(',')})`);
-  }
-
-  const { data: records, error: fetchError } = await query;
+  // Use RPC with proper SQL anti-join (LEFT JOIN … WHERE NULL) — the old approach
+  // of fetching all embedded IDs client-side broke at scale (PostgREST URL limits).
+  const { data: records, error: fetchError } = await client.rpc(
+    'get_unembedded_public_records',
+    { p_limit: EMBED_BATCH_SIZE },
+  );
 
   if (fetchError) {
     logger.error({ error: fetchError }, 'Failed to fetch unembedded public records');
@@ -132,7 +118,7 @@ export async function embedPublicRecords(
         .insert({
           public_record_id: record.id,
           embedding: embeddingResult.embedding,
-          model_version: 'text-embedding-004',
+          model_version: process.env.GEMINI_EMBEDDING_MODEL ?? 'text-embedding-004',
         });
 
       if (insertError) {
