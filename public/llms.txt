@@ -1,85 +1,29 @@
 # Arkova
 
-> Arkova is a privacy-first document verification platform. It creates tamper-proof cryptographic fingerprints of documents entirely in the user's browser (SHA-256 via `Web Crypto API`) and anchors them to a permanent public network. Documents never leave the user's device.
+> Privacy-first document verification platform. Creates tamper-proof cryptographic fingerprints client-side and anchors them to a permanent public network. Documents never leave the user's device.
 
 ## Description
 
-Arkova builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform is designed for both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
+Arkova builds infrastructure for verifiable credentials. Organizations use Arkova to issue, anchor, and verify academic degrees, professional certifications, legal documents, and any digital file. The platform serves both human users and AI agents that need machine-verifiable, tamper-proof, independently auditable records.
 
 - Website: https://arkova.ai
 - App: https://app.arkova.ai
 - Contact: hello@arkova.ai
 - LinkedIn: https://www.linkedin.com/company/arkovatech
 
-## How It Works
-
-1. **Upload:** User selects a document in their browser.
-2. **Fingerprint:** A SHA-256 fingerprint is computed client-side (document bytes never leave the device).
-3. **Anchor:** The fingerprint is anchored to a permanent public network with an immutable timestamp.
-4. **Verify:** Anyone can verify the document by re-fingerprinting it and checking the result against the public record. No account required.
-
-## Capabilities
-
-- Client-side SHA-256 cryptographic fingerprinting (`Web Crypto API`)
-- Public verification via shareable links and QR codes (no login required)
-- AI-powered credential metadata extraction and classification
-- Verification API (REST) with batch processing (up to 100 per request)
-- PDF proof certificates with full audit trails
-- Bulk CSV credential anchoring for organizations
-- Organization management with role-based access
-- Credential templates for standardized issuance
-- Webhook notifications for real-time event delivery
-- Downloadable JSON proof packages
-
 ## Endpoints
 
 Base URL: `https://app.arkova.ai/api/v1`
 
-### Verify a Credential
-
-```
-GET /verify/:publicId
-```
-
-Returns verification status and metadata for a credential by its public identifier.
-
-**Response fields:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| verified | boolean | Whether the credential is verified on the network |
-| status | string | ACTIVE, REVOKED, SUPERSEDED, or EXPIRED |
-| issuer_name | string | Organization that issued the credential |
-| credential_type | string | DEGREE, CERTIFICATE, LICENSE, etc. |
-| issued_date | string or null | ISO 8601 issue date |
-| expiry_date | string or null | ISO 8601 expiry date |
-| anchor_timestamp | string | ISO 8601 timestamp when anchored |
-| record_uri | string | Canonical verification URL |
-
-### Verify by Fingerprint
-
-```
-POST /verify-anchor
-Content-Type: application/json
-
-{ "fingerprint": "<64-char hex SHA-256 fingerprint>" }
-```
-
-Accepts a document's SHA-256 fingerprint and returns whether it matches an anchored record.
-
-### Search Credentials
-
-```
-GET /verify/search?q=<query>&max_results=<n>
-```
-
-Semantic search across verified credentials using natural language.
+- `GET /verify/:publicId` — Returns verification status: verified, status, issuer_name, credential_type, issued_date, expiry_date, anchor_timestamp, record_uri
+- `POST /verify-anchor` — Accepts `{ "fingerprint": "<SHA-256 hex>" }`, returns matching record
+- `GET /verify/search?q=<query>&max_results=<n>` — Semantic search across verified credentials
 
 ## Authentication
 
-- **API Key:** Pass via `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
+- **API Key:** `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
 - **OAuth 2.0:** Bearer token for enterprise integrations
-- **Public verification:** No authentication required for read-only verification lookups
+- **Public:** No auth required for read-only verification
 
 ## Rate Limits
 
@@ -87,41 +31,18 @@ Semantic search across verified credentials using natural language.
 |------|-------|
 | Anonymous | 100 req/min per IP |
 | Free API key | 1,000 req/min |
-| Batch endpoints | 10 req/min per key |
+| Batch | 10 req/min per key |
 
-Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) included on every response. HTTP 429 with `Retry-After` on excess.
+## Tools
 
-## Tools (Coming Soon)
+MCP server for AI agent access:
 
-Arkova is building a Model Context Protocol server for AI agent access:
+- **Endpoint:** `https://edge.arkova.ai/mcp`
+- **Transport:** Streamable HTTP
+- `verify_credential` — Verify by public_id
+- `search_credentials` — Search by query with max_results
+- `verify_fingerprint` — Check SHA-256 fingerprint match
 
-**Endpoint:** TBD (Cloudflare Workers deployment pending)
-**Transport:** Streamable HTTP
+## Optional
 
-### Planned Tools
-
-- `verify_credential` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
-- `search_credentials` — Search credentials by natural language query. Input: `{ "query": "string", "max_results": number }`
-
-## Use Cases
-
-- **Universities:** Verify degrees, transcripts, and academic certificates
-- **Professional bodies:** Anchor and verify professional licenses and certifications
-- **Legal:** Timestamp contracts, patents, and compliance documents
-- **HR/ATS systems:** Programmatic credential verification via API
-- **AI agents:** Machine-verifiable record lookup via MCP or REST API
-
-## Privacy Model
-
-- Documents are fingerprinted entirely in the user's browser using SHA-256
-- Document bytes never leave the user's device — only the cryptographic fingerprint is transmitted
-- Recipient identifiers are always anonymized — raw PII is never stored or returned
-- The platform cannot access, read, or reconstruct original documents from fingerprints
-
-## Pricing
-
-Free tier available. Request early access at https://arkova.ai.
-
-## Structured Data
-
-Arkova provides Organization, SoftwareApplication, FAQPage, and Article schema markup at https://arkova.ai for search engine and AI system consumption.
+- [Full Documentation](https://app.arkova.ai/llms-full.txt)
