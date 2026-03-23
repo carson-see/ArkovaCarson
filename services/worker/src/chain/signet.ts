@@ -47,8 +47,23 @@ const OP_RETURN_PREFIX = Buffer.from('ARKV');
 // With metadata:    Prefix (4) + SHA-256 fingerprint (32) + truncated metadata hash (8) = 44 bytes.
 const MAX_OP_RETURN_DATA = 80;
 
-/** Truncated metadata hash length in bytes (appended after fingerprint in OP_RETURN) */
-const METADATA_HASH_TRUNCATED_BYTES = 8;
+/**
+ * CRIT-6: Truncated metadata hash length in bytes (appended after fingerprint in OP_RETURN).
+ *
+ * Security tradeoff:
+ *   8 bytes (64-bit) → birthday bound 2^32 (~4B). At 10K docs/day, collision in ~20 years.
+ *     Adversarial preimage: ~4B attempts (~hours on modern hardware). Acceptable for integrity, not security.
+ *   16 bytes (128-bit) → birthday bound 2^64. Computationally infeasible collision.
+ *     Total payload: 52 bytes (ARKV:4 + fingerprint:32 + metadataHash:16). Still under 80-byte limit.
+ *
+ * Default: 8 bytes. Set METADATA_HASH_BYTES=16 env var for enhanced collision resistance.
+ * The fingerprint (32 bytes, full SHA-256) remains the primary integrity guarantee.
+ */
+const METADATA_HASH_TRUNCATED_BYTES = (() => {
+  const envBytes = parseInt(process.env.METADATA_HASH_BYTES ?? '8', 10);
+  if (envBytes === 16) return 16;
+  return 8; // Default — only 8 or 16 allowed
+})();
 
 /**
  * Compute a canonical JSON representation of metadata for deterministic hashing.
@@ -160,6 +175,68 @@ export function selectUtxo(
 }
 
 /**
+ * INEFF-4/CRIT-5: Select multiple UTXOs to cover the required fee.
+ *
+ * When no single UTXO is large enough, combine multiple smaller ones.
+ * Also enables UTXO consolidation as a side effect (many inputs → one change output).
+ *
+ * Strategy: largest-first accumulation until total >= requiredFee.
+ * Each additional input adds ~68 vbytes to the transaction.
+ *
+ * @param utxos - Available UTXOs from the provider
+ * @param requiredFee - Minimum fee in satoshis (for single input)
+ * @param feeRate - Fee rate in sat/vbyte (needed to account for additional input costs)
+ * @returns Array of selected UTXOs, or null if total value is insufficient
+ */
+export function selectMultipleUtxos(
+  utxos: Utxo[],
+  requiredFee: number,
+  feeRate: number,
+): SelectedUtxo[] | null {
+  if (utxos.length === 0) return null;
+
+  const INPUT_VSIZE = 68; // P2WPKH input vbytes
+  const sorted = [...utxos].sort((a, b) => b.valueSats - a.valueSats);
+
+  // Try single UTXO first (most efficient)
+  if (sorted[0].valueSats >= requiredFee) {
+    return [{
+      txid: sorted[0].txid,
+      vout: sorted[0].vout,
+      valueSats: sorted[0].valueSats,
+      rawTxHex: sorted[0].rawTxHex,
+    }];
+  }
+
+  // Accumulate UTXOs until we have enough
+  const selected: SelectedUtxo[] = [];
+  let totalValue = 0;
+  let totalFeeNeeded = requiredFee;
+
+  for (const u of sorted) {
+    selected.push({
+      txid: u.txid,
+      vout: u.vout,
+      valueSats: u.valueSats,
+      rawTxHex: u.rawTxHex,
+    });
+    totalValue += u.valueSats;
+
+    // Each additional input beyond the first adds to the fee
+    if (selected.length > 1) {
+      totalFeeNeeded = requiredFee + (selected.length - 1) * INPUT_VSIZE * feeRate;
+    }
+
+    if (totalValue >= totalFeeNeeded) {
+      return selected;
+    }
+  }
+
+  // Not enough total value even with all UTXOs
+  return null;
+}
+
+/**
  * Estimate the virtual size of an OP_RETURN anchor transaction.
  *
  * P2WPKH input: ~68 vbytes (SegWit discount on witness data)
@@ -187,6 +264,14 @@ export function estimateTxVsize(hasChange: boolean, opReturnPayloadSize: number 
 
 /** Dust threshold in satoshis — outputs below this are unspendable */
 const DUST_THRESHOLD = 546;
+
+/**
+ * CRIT-3: BIP125 RBF opt-in nSequence value.
+ * Per BIP125, any input with nSequence < 0xfffffffe signals RBF replaceability.
+ * 0xfffffffd enables both RBF and nLockTime (0xfffffffe disables RBF).
+ * This allows fee-bumping stuck transactions via replacement.
+ */
+const RBF_SEQUENCE = 0xfffffffd;
 
 /**
  * Build an OP_RETURN transaction embedding a document fingerprint
@@ -268,9 +353,11 @@ export async function buildOpReturnTransaction(
   });
 
   // Add input with witnessUtxo (SegWit P2WPKH)
+  // CRIT-3: Set nSequence to 0xfffffffd for BIP125 RBF opt-in
   psbt.addInput({
     hash: utxo.txid,
     index: utxo.vout,
+    sequence: RBF_SEQUENCE,
     witnessUtxo: {
       script: p2wpkh.output!,
       value: utxo.valueSats,
@@ -321,6 +408,104 @@ export async function buildOpReturnTransaction(
     txId: tx.getId(),
     fee,
   };
+}
+
+/**
+ * INEFF-4: Build a multi-input OP_RETURN transaction.
+ * Combines multiple UTXOs into a single transaction, enabling:
+ * - Spending when no single UTXO covers the fee
+ * - Implicit UTXO consolidation (many inputs → one change output)
+ */
+export async function buildMultiInputOpReturnTransaction(
+  fingerprint: string,
+  utxos: SelectedUtxo[],
+  signer: SigningProvider,
+  feeRate: number = 1,
+  network: bitcoin.Network = SIGNET_NETWORK,
+  metadataHashBytes?: Buffer,
+): Promise<{ txHex: string; txId: string; fee: number }> {
+  if (!/^[a-f0-9]{64}$/i.test(fingerprint)) {
+    throw new Error('Fingerprint must be a 64-character hex string (SHA-256)');
+  }
+  if (utxos.length === 0) {
+    throw new Error('At least one UTXO required');
+  }
+
+  const fingerprintBytes = Buffer.from(fingerprint, 'hex');
+  const opReturnData = metadataHashBytes
+    ? Buffer.concat([OP_RETURN_PREFIX, fingerprintBytes, metadataHashBytes])
+    : Buffer.concat([OP_RETURN_PREFIX, fingerprintBytes]);
+
+  if (opReturnData.length > MAX_OP_RETURN_DATA) {
+    throw new Error(`OP_RETURN data exceeds ${MAX_OP_RETURN_DATA} bytes`);
+  }
+
+  const opReturnScript = bitcoin.script.compile([
+    bitcoin.opcodes.OP_RETURN,
+    opReturnData,
+  ]);
+
+  const totalInputValue = utxos.reduce((sum, u) => sum + u.valueSats, 0);
+
+  // Estimate fee: multiple inputs + OP_RETURN + potential change
+  const INPUT_SIZE = 68;
+  const OP_RETURN_OVERHEAD = 11;
+  const CHANGE_OUTPUT_SIZE = 31;
+  const OVERHEAD = 11;
+  const txSizeWithChange = (INPUT_SIZE * utxos.length) + OP_RETURN_OVERHEAD + opReturnData.length + CHANGE_OUTPUT_SIZE + OVERHEAD;
+  const feeWithChange = Math.ceil(txSizeWithChange * feeRate);
+  const changeAmount = totalInputValue - feeWithChange;
+  const hasChange = changeAmount >= DUST_THRESHOLD;
+
+  const txSizeFinal = (INPUT_SIZE * utxos.length) + OP_RETURN_OVERHEAD + opReturnData.length + (hasChange ? CHANGE_OUTPUT_SIZE : 0) + OVERHEAD;
+  const fee = Math.ceil(txSizeFinal * feeRate);
+  const finalChange = totalInputValue - fee;
+
+  if (finalChange < 0) {
+    throw new Error(
+      `Insufficient funds: total UTXO value ${totalInputValue} sats, estimated fee ${fee} sats`,
+    );
+  }
+
+  const psbt = new bitcoin.Psbt({ network });
+  const publicKey = Buffer.from(signer.getPublicKey());
+  const p2wpkh = bitcoin.payments.p2wpkh({ pubkey: publicKey, network });
+
+  // Add all inputs with RBF signaling
+  for (const utxo of utxos) {
+    psbt.addInput({
+      hash: utxo.txid,
+      index: utxo.vout,
+      sequence: RBF_SEQUENCE,
+      witnessUtxo: {
+        script: p2wpkh.output!,
+        value: utxo.valueSats,
+      },
+    });
+  }
+
+  // OP_RETURN output
+  psbt.addOutput({ script: opReturnScript, value: 0 });
+
+  // Change output if above dust
+  if (hasChange && finalChange >= DUST_THRESHOLD) {
+    const { address } = bitcoin.payments.p2wpkh({ pubkey: publicKey, network });
+    if (!address) throw new Error('Failed to derive change address');
+    psbt.addOutput({ address, value: finalChange });
+  }
+
+  // Sign all inputs
+  for (let i = 0; i < utxos.length; i++) {
+    await psbt.signInputAsync(i, {
+      publicKey,
+      sign: (hash: Buffer) => signer.sign(hash),
+    });
+  }
+
+  psbt.finalizeAllInputs();
+  const tx = psbt.extractTransaction();
+
+  return { txHex: tx.toHex(), txId: tx.getId(), fee };
 }
 
 // ─── Type guard helpers for config shapes ────────────────────────────────
@@ -441,16 +626,54 @@ export class BitcoinChainClient implements ChainClient {
       'Fetched UTXOs for treasury',
     );
 
-    // 4. Select the best UTXO
+    // 4. Select the best UTXO(s) — try single first, then multi-input
     const payloadSize = metadataHashBytes ? 44 : 36; // ARKV(4) + fingerprint(32) [+ metadataHash(8)]
     const estimatedFee = Math.ceil(estimateTxVsize(true, payloadSize) * feeRate);
     const selected = selectUtxo(utxos, estimatedFee);
 
     if (!selected) {
-      const maxValue = Math.max(...utxos.map((u) => u.valueSats));
-      throw new Error(
-        `No UTXO large enough to cover fee: need ${estimatedFee} sats, largest is ${maxValue} sats`,
+      // INEFF-4: Fall back to multi-input selection
+      const multiSelected = selectMultipleUtxos(utxos, estimatedFee, feeRate);
+      if (!multiSelected) {
+        const totalValue = utxos.reduce((sum, u) => sum + u.valueSats, 0);
+        throw new Error(
+          `Insufficient total UTXO value: need ${estimatedFee} sats, total available is ${totalValue} sats`,
+        );
+      }
+
+      logger.info(
+        { inputCount: multiSelected.length, totalValue: multiSelected.reduce((s, u) => s + u.valueSats, 0) },
+        'Using multi-input UTXO selection (INEFF-4)',
       );
+
+      // Build multi-input transaction
+      const { txHex: multiTxHex, txId: multiTxId, fee: multiFee } = await buildMultiInputOpReturnTransaction(
+        data.fingerprint,
+        multiSelected,
+        this.signingProvider,
+        feeRate,
+        this.network,
+        metadataHashBytes,
+      );
+
+      logger.info(
+        { txId: multiTxId, fee: multiFee, inputCount: multiSelected.length },
+        'Multi-input transaction built, broadcasting',
+      );
+
+      const { txid: multiBroadcastTxid } = await this.provider.broadcastTx(multiTxHex);
+      const finalMultiTxId = multiBroadcastTxid || multiTxId;
+      const blockchainInfo = await this.provider.getBlockchainInfo();
+
+      return {
+        receiptId: finalMultiTxId,
+        blockHeight: blockchainInfo.blocks,
+        blockTimestamp: new Date().toISOString(),
+        confirmations: 0,
+        metadataHash: fullMetadataHash,
+        rawTxHex: multiTxHex,
+        feeSats: multiFee,
+      };
     }
 
     logger.debug(
@@ -500,6 +723,8 @@ export class BitcoinChainClient implements ChainClient {
       blockTimestamp: new Date().toISOString(),
       confirmations: 0, // Just broadcast, not yet confirmed
       metadataHash: fullMetadataHash,
+      rawTxHex: txHex, // NET-4: Store for rebroadcast, RBF, and audit
+      feeSats: fee, // Cost tracking per anchor
     };
   }
 

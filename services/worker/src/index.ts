@@ -18,6 +18,7 @@ import { callRpc } from './utils/rpc.js';
 import { processPendingAnchors } from './jobs/anchor.js';
 import { checkSubmittedConfirmations } from './jobs/check-confirmations.js';
 import { processRevokedAnchors } from './jobs/revocation.js';
+import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from './jobs/chain-maintenance.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature, createCheckoutSession, createBillingPortalSession } from './stripe/client.js';
@@ -738,6 +739,80 @@ app.post('/jobs/anchor-attestations', cronJobsLimiter, async (req, res) => {
 });
 
 // =========================================================================
+// Bitcoin Audit: Chain Maintenance Jobs (CRIT-2, NET-1, NET-3, INEFF-1, NET-6)
+// =========================================================================
+
+app.post('/jobs/detect-reorgs', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await detectReorgs();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Reorg detection failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/monitor-stuck-txs', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await monitorStuckTransactions();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Stuck TX monitor failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/rebroadcast-txs', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await rebroadcastDroppedTransactions();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'TX rebroadcast failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/consolidate-utxos', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await consolidateUtxos();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'UTXO consolidation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/monitor-fees', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await monitorFeeRates();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Fee monitoring failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// =========================================================================
 // Treasury Status — Arkova platform admin only (feedback_treasury_access)
 // =========================================================================
 app.options('/api/treasury/status', (req, res) => { setCorsHeaders(req, res); });
@@ -990,7 +1065,59 @@ function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  logger.info('Scheduled jobs configured');
+  // Bitcoin Audit: Chain maintenance jobs
+  // CRIT-2: Reorg detection every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const result = await trackOperation(detectReorgs());
+      if (result.reorgsDetected > 0) {
+        logger.warn({ ...result }, 'Reorg detection found issues');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Reorg detection cron failed');
+    }
+  });
+
+  // NET-1: Stuck TX monitor every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const result = await trackOperation(monitorStuckTransactions());
+      if (result.stuck > 0) {
+        logger.warn({ ...result }, 'Stuck transactions detected');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Stuck TX monitor cron failed');
+    }
+  });
+
+  // NET-3: Rebroadcast dropped TXs every 6 hours
+  cron.schedule('0 */6 * * *', async () => {
+    try {
+      await trackOperation(rebroadcastDroppedTransactions());
+    } catch (error) {
+      logger.error({ error }, 'TX rebroadcast cron failed');
+    }
+  });
+
+  // INEFF-1: UTXO consolidation daily at 4:00 AM UTC
+  cron.schedule('0 4 * * *', async () => {
+    try {
+      await trackOperation(consolidateUtxos());
+    } catch (error) {
+      logger.error({ error }, 'UTXO consolidation cron failed');
+    }
+  });
+
+  // NET-6: Fee monitoring every 10 minutes
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      await trackOperation(monitorFeeRates());
+    } catch (error) {
+      logger.error({ error }, 'Fee monitoring cron failed');
+    }
+  });
+
+  logger.info('Scheduled jobs configured (including chain maintenance)');
 }
 
 // ERR-3: Track active job operations for graceful shutdown

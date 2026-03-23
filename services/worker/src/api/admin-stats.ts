@@ -24,6 +24,10 @@ export interface PlatformStatsResponse {
     total: number;
     byStatus: Record<string, number>;
     last24h: number;
+    /** Average network fee in satoshis per anchor (from _fee_sats metadata) */
+    avgSatsPerAnchor: number | null;
+    /** Total network fees in satoshis across all anchors */
+    totalFeeSats: number | null;
   };
   subscriptions: {
     byPlan: Record<string, number>;
@@ -54,6 +58,7 @@ export async function handlePlatformStats(
       { count: submittedAnchors },
       { count: recentAnchors },
       { data: subscriptionData },
+      { data: feeData },
     ] = await Promise.all([
       // Total users
       db.from('profiles').select('*', { count: 'exact', head: true })
@@ -87,6 +92,11 @@ export async function handlePlatformStats(
       // Subscriptions by plan
       db.from('subscriptions').select('plan_id, plans(name)')
         .in('status', ['active', 'trialing']),
+      // Anchor fee data — fetch metadata._fee_sats for cost tracking
+      db.from('anchors').select('metadata')
+        .not('metadata->_fee_sats', 'is', null)
+        .is('deleted_at', null)
+        .limit(10000),
     ]);
 
     // Aggregate subscription counts by plan name
@@ -96,6 +106,37 @@ export async function handlePlatformStats(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const planName = (sub as any).plans?.name ?? 'Unknown';
         byPlan[planName] = (byPlan[planName] ?? 0) + 1;
+      }
+    }
+
+    // Calculate average sats per anchor from metadata._fee_sats
+    let avgSatsPerAnchor: number | null = null;
+    let totalFeeSats: number | null = null;
+    if (feeData && feeData.length > 0) {
+      let feeSum = 0;
+      let feeCount = 0;
+      for (const anchor of feeData) {
+        const meta = anchor.metadata as Record<string, unknown> | null;
+        const feeSats = meta?._fee_sats;
+        if (typeof feeSats === 'number' && feeSats > 0) {
+          // For batch anchors, divide batch fee by batch size to get per-anchor cost
+          const batchId = meta?.batch_id as string | undefined;
+          if (batchId) {
+            // Count anchors in same batch to divide fee
+            const batchAnchors = feeData.filter((a) => {
+              const m = a.metadata as Record<string, unknown> | null;
+              return m?.batch_id === batchId;
+            });
+            feeSum += feeSats / Math.max(batchAnchors.length, 1);
+          } else {
+            feeSum += feeSats;
+          }
+          feeCount++;
+        }
+      }
+      if (feeCount > 0) {
+        avgSatsPerAnchor = Math.round(feeSum / feeCount);
+        totalFeeSats = Math.round(feeSum);
       }
     }
 
@@ -116,6 +157,8 @@ export async function handlePlatformStats(
           REVOKED: revokedAnchors ?? 0,
         },
         last24h: recentAnchors ?? 0,
+        avgSatsPerAnchor,
+        totalFeeSats,
       },
       subscriptions: {
         byPlan,

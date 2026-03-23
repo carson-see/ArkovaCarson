@@ -151,8 +151,8 @@ export function PlatformOverviewPage() {
         </div>
       </div>
 
-      {/* Second row: New Users (7d) and Records (24h) */}
-      <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
+      {/* Second row: New Users (7d), Records (24h), Avg Sats/Anchor */}
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-3 mb-8">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
@@ -192,6 +192,38 @@ export function PlatformOverviewPage() {
             <p className="text-xs text-muted-foreground mt-2">
               Records created in the last 24 hours
             </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              Avg Network Fee / Anchor
+            </CardTitle>
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {statsLoading ? (
+              <Skeleton className="h-12 w-24" />
+            ) : stats?.anchors.avgSatsPerAnchor != null ? (
+              <>
+                <p className="text-4xl font-black tracking-tighter">
+                  {stats.anchors.avgSatsPerAnchor.toLocaleString()}
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  sats/anchor{stats.anchors.totalFeeSats != null && ` (${stats.anchors.totalFeeSats.toLocaleString()} sats total)`}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-4xl font-black tracking-tighter text-muted-foreground">
+                  --
+                </p>
+                <p className="text-xs text-muted-foreground mt-2">
+                  Fee data available after next anchoring cycle
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
       </div>

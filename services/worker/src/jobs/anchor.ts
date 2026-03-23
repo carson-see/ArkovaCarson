@@ -78,13 +78,22 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       chain_timestamp: receipt.blockTimestamp,
     };
 
-    // If metadata hash was computed, store it in the metadata JSON
+    // Store chain-related metadata: metadata hash, raw TX hex, fee
+    const existingMetadata = (anchor.metadata as Record<string, unknown>) ?? {};
+    const chainMetadata: Record<string, unknown> = { ...existingMetadata };
     if (receipt.metadataHash) {
-      const existingMetadata = (anchor.metadata as Record<string, unknown>) ?? {};
-      updatePayload.metadata = {
-        ...existingMetadata,
-        _metadata_hash: receipt.metadataHash,
-      };
+      chainMetadata._metadata_hash = receipt.metadataHash;
+    }
+    // NET-4: Store raw TX hex for rebroadcast/RBF recovery
+    if (receipt.rawTxHex) {
+      chainMetadata._raw_tx_hex = receipt.rawTxHex;
+    }
+    // Cost tracking: fee paid in satoshis
+    if (receipt.feeSats !== undefined) {
+      chainMetadata._fee_sats = receipt.feeSats;
+    }
+    if (Object.keys(chainMetadata).length > Object.keys(existingMetadata).length) {
+      updatePayload.metadata = chainMetadata;
     }
 
     // RACE-1 fix: Add status guard to prevent double-broadcast.

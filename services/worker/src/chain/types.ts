@@ -21,6 +21,10 @@ export interface ChainReceipt {
   confirmations: number;
   /** Full SHA-256 hash of canonical metadata JSON (64-char hex), if metadata was anchored */
   metadataHash?: string;
+  /** NET-4: Raw transaction hex for rebroadcast, RBF, and independent audit */
+  rawTxHex?: string;
+  /** Fee paid in satoshis (for cost tracking) */
+  feeSats?: number;
 }
 
 export interface VerificationResult {

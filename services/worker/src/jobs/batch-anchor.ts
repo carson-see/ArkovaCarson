@@ -17,11 +17,16 @@ import { getInitializedChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
 
-/** Max anchors per batch transaction */
-export const BATCH_SIZE = 50;
+/** Max anchors per batch transaction (user uploads) */
+export const BATCH_SIZE = 100;
 
-/** Minimum anchors required for batch processing (otherwise use individual) */
-export const MIN_BATCH_SIZE = 2;
+/**
+ * INEFF-2: Minimum anchors required for batch processing.
+ * Lowered from 2 to 1 so ALL anchors benefit from Merkle batching.
+ * A single-anchor Merkle tree has root === fingerprint (identity),
+ * so there's no overhead — but it unifies the anchoring path.
+ */
+export const MIN_BATCH_SIZE = 1;
 
 export interface BatchAnchorResult {
   processed: number;
@@ -99,6 +104,10 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
           merkle_proof: proof.map((p) => ({ hash: p.hash, position: p.position })),
           merkle_root: tree.root,
           batch_id: batchId,
+          // NET-4: Store raw TX hex for rebroadcast/RBF recovery
+          ...(receipt.rawTxHex ? { _raw_tx_hex: receipt.rawTxHex } : {}),
+          // Cost tracking: fee paid per batch (shared across all anchors in batch)
+          ...(receipt.feeSats !== undefined ? { _fee_sats: receipt.feeSats } : {}),
         })),
       })
       .eq('id', anchor.id)

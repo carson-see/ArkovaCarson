@@ -519,7 +519,7 @@ describe('BitcoinChainClient.submitFingerprint', () => {
 
     await expect(
       client.submitFingerprint({ fingerprint: TEST_FINGERPRINT, timestamp: new Date().toISOString() }),
-    ).rejects.toThrow('No UTXO large enough');
+    ).rejects.toThrow('Insufficient total UTXO value');
   });
 
   it('broadcasts and returns receipt on success', async () => {

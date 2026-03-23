@@ -343,8 +343,8 @@ describe('worker server', () => {
   });
 
   describe('cron job setup', () => {
-    it('registers 6 cron jobs', () => {
-      expect(cronCalls).toHaveLength(6);
+    it('registers 11 cron jobs (6 original + 5 chain maintenance)', () => {
+      expect(cronCalls).toHaveLength(11);
     });
 
     it('registers anchor processing at every minute', () => {

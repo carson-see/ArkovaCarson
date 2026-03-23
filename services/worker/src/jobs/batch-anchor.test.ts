@@ -174,7 +174,7 @@ describe('processBatchAnchors', () => {
 
   // ---- Not enough for batch ----
 
-  it('returns 0 processed when only 1 pending anchor (below MIN_BATCH_SIZE)', async () => {
+  it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {
     limitMock.mockResolvedValue({
       data: [ANCHOR_A],
       error: null,
@@ -182,8 +182,9 @@ describe('processBatchAnchors', () => {
 
     const result = await processBatchAnchors();
 
-    expect(result.processed).toBe(0);
-    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    // With INEFF-2 fix, even single anchors are batch-processed
+    expect(result.processed).toBe(1);
+    expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
   });
 
   // ---- Successful batch processing ----
@@ -345,12 +346,12 @@ describe('processBatchAnchors', () => {
 
   // ---- Constants ----
 
-  it('exports BATCH_SIZE as 50', () => {
-    expect(BATCH_SIZE).toBe(50);
+  it('exports BATCH_SIZE as 100 (increased per audit)', () => {
+    expect(BATCH_SIZE).toBe(100);
   });
 
-  it('exports MIN_BATCH_SIZE as 2', () => {
-    expect(MIN_BATCH_SIZE).toBe(2);
+  it('exports MIN_BATCH_SIZE as 1 (INEFF-2: all anchors benefit from Merkle batching)', () => {
+    expect(MIN_BATCH_SIZE).toBe(1);
   });
 
   // ---- Logging ----
