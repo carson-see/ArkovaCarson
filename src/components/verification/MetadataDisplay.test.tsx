@@ -182,6 +182,18 @@ describe('MetadataDisplay', () => {
     expect(link).toHaveAttribute('href', 'https://portfolio.example.com');
   });
 
+  it('renders object values as JSON, not [object Object]', () => {
+    render(
+      <MetadataDisplay
+        metadata={{
+          nested: { key: 'value' } as unknown as string,
+        }}
+      />
+    );
+    expect(screen.getByText('{"key":"value"}')).toBeInTheDocument();
+    expect(screen.queryByText('[object Object]')).not.toBeInTheDocument();
+  });
+
   it('uses schema type hint for email formatting', () => {
     const schema: TemplateFieldDefinition[] = [
       {

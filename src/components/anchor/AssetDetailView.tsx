@@ -39,7 +39,6 @@ import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
 import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
-import { mempoolAddressUrl } from '@/lib/platform';
 import { verifyUrl } from '@/lib/routes';
 
 interface AnchorRecord {

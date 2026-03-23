@@ -160,6 +160,9 @@ export function CredentialRenderer({
     if (type === 'date' && typeof value === 'string') {
       return formatDate(value);
     }
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
     return String(value);
   };
 
@@ -180,7 +183,7 @@ export function CredentialRenderer({
     }
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
-      if (key.startsWith('_') || key === 'recipient' || key === 'jurisdiction') continue;
+      if (key.startsWith('_') || ['recipient', 'jurisdiction', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source', 'abstract', 'description', 'summary'].includes(key)) continue;
       const formatted = formatFieldValue(value);
       if (formatted) {
         const label = key

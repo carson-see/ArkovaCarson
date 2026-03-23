@@ -112,7 +112,7 @@ function renderValue(
     );
   }
 
-  const strValue = String(value);
+  const strValue = typeof value === 'object' ? JSON.stringify(value) : String(value);
 
   // Schema-driven formatting
   if (fieldType === 'url' || (fieldType === null && isUrlValue(strValue))) {

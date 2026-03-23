@@ -136,6 +136,39 @@ describe('CredentialRenderer', () => {
       expect(screen.queryByText('hidden@test.com')).not.toBeInTheDocument();
       expect(screen.queryByText('skip')).not.toBeInTheDocument();
     });
+
+    it('skips pipeline metadata fields (merkle_proof, batch_id, etc.)', () => {
+      render(
+        <CredentialRenderer
+          metadata={{
+            issuer: 'MIT',
+            merkle_proof: [{ hash: 'abc', position: 0 }],
+            merkle_root: 'def456',
+            chain_tx_id: 'tx_789',
+            batch_id: 'batch_123',
+            pipeline_source: 'edgar',
+            abstract: 'Some abstract text',
+          }}
+          status="SECURED"
+        />
+      );
+      expect(screen.getByText('MIT')).toBeInTheDocument();
+      expect(screen.queryByText(/merkle/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/batch/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/pipeline/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/abstract/i)).not.toBeInTheDocument();
+    });
+
+    it('renders object values as JSON strings, not [object Object]', () => {
+      render(
+        <CredentialRenderer
+          metadata={{ nested_data: { foo: 'bar', count: 42 } }}
+          status="SECURED"
+        />
+      );
+      expect(screen.getByText('{"foo":"bar","count":42}')).toBeInTheDocument();
+      expect(screen.queryByText('[object Object]')).not.toBeInTheDocument();
+    });
   });
 
   describe('Mode 3: No Metadata', () => {

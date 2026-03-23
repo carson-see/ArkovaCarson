@@ -11,7 +11,6 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Building2, Users, FileText, Settings, Plus, Upload, UserPlus,
   ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
-  BarChart3,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
