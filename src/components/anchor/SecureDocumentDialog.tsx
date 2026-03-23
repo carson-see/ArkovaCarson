@@ -203,20 +203,30 @@ export function SecureDocumentDialog({
     );
 
     if (result) {
-      setExtractedFields(result.fields);
+      // Auto-accept all high-confidence fields
+      const autoAccepted = result.fields.map(f =>
+        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
+      );
+      setExtractedFields(autoAccepted);
       setOverallConfidence(result.overallConfidence);
       setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
 
-      // Auto-detect document type from AI extraction results
+      // Auto-detect document type and auto-select template
       const typeField = result.fields.find(f => f.key === 'credentialType');
       if (typeField && typeField.confidence >= 0.5) {
-        await autoSelectTemplate(typeField.value);
+        const matched = await autoSelectTemplate(typeField.value);
+        if (matched) {
+          // Template auto-selected — skip template step, go straight to confirm
+          setStep('confirm');
+          return;
+        }
       }
     } else {
-      // Extraction failed — still allow user to proceed without AI
+      // Extraction failed — auto-select General Document and go to confirm
       setExtractionProgress(null);
-      setStep('template');
+      const fallback = await autoSelectTemplate('OTHER');
+      setStep(fallback ? 'confirm' : 'template');
     }
   }, [fileData, selectedTemplate, autoSelectTemplate]);
 
@@ -227,7 +237,9 @@ export function SecureDocumentDialog({
     if (aiEnabled) {
       await handleStartExtraction();
     } else {
-      setStep('template');
+      // No AI — auto-select General Document template and skip to confirm
+      const fallback = await autoSelectTemplate('OTHER');
+      setStep(fallback ? 'confirm' : 'template');
     }
   }, [fileData, aiEnabled, handleStartExtraction]);
 
@@ -500,11 +512,13 @@ export function SecureDocumentDialog({
               <p className="text-sm text-muted-foreground">
                 Choose a template for this credential
               </p>
-              <TemplateSelector
-                orgId={profile?.org_id}
-                onSelect={setSelectedTemplate}
-                selectedId={selectedTemplate?.id}
-              />
+              <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1">
+                <TemplateSelector
+                  orgId={profile?.org_id}
+                  onSelect={setSelectedTemplate}
+                  selectedId={selectedTemplate?.id}
+                />
+              </div>
             </div>
           )}
 
