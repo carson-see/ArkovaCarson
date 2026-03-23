@@ -26,7 +26,8 @@ _Last updated: 2026-03-23 (Session 13: 29K+ public records, 1,572+ SECURED ancho
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **10** | |
+| QA Audit (PR #162) | 25 | 11 fixed | 14 | No |
+| **Total Open Items** | | | **24** | |
 
 ---
 
@@ -359,6 +360,59 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | UX-QR-01 | QR download for SECURED records | **COMPLETE** | PNG export on RecordDetailPage |
 | UX-SEARCH-01 | Drag-to-verify on Search | **COMPLETE** | File drop → client-side hash → auto-search |
 | UX-SEARCH-02 | Search type tabs | **COMPLETE** | Issuers / Credentials / Verify Document tabs |
+
+---
+
+## TIER 5E: QA AUDIT — REMAINING ITEMS (2026-03-23)
+
+_From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 action items implemented in PR #162. Remaining items require infrastructure changes or new feature work._
+
+### Completed (PR #162 — merged to main)
+| ID | Fix | Status |
+|----|-----|--------|
+| ~~RACE-1~~ | ~~Status guard on anchor UPDATE~~ | **FIXED** |
+| ~~RACE-2~~ | ~~Validate broadcast response~~ | **FIXED** |
+| ~~RACE-3~~ | ~~Advisory lock on confirmation job~~ | **FIXED** |
+| ~~RACE-5~~ | ~~Status guard on revocation UPDATE~~ | **FIXED** |
+| ~~RACE-6~~ | ~~Webhook idempotency key fix~~ | **FIXED** |
+| ~~ERR-1~~ | ~~DB circuit breaker + /health~~ | **FIXED** |
+| ~~ERR-2~~ | ~~Mempool.space retry + blockstream fallback~~ | **FIXED** |
+| ~~ERR-3~~ | ~~Graceful shutdown awaits in-flight ops~~ | **FIXED** |
+| ~~PERF-2~~ | ~~Parallel confirmation DB updates~~ | **FIXED** |
+| ~~PERF-7~~ | ~~Configurable fee ceiling (BITCOIN_MAX_FEE_RATE)~~ | **FIXED** |
+
+### Infrastructure — Requires External Services
+| ID | Description | Priority | Blocker |
+|----|-------------|----------|---------|
+| QA-PERF-1 | Redis-backed rate limiting (Upstash Redis) | HIGH | Needs Upstash Redis provisioning. Current in-memory rate limiter won't scale across Cloud Run instances. |
+| QA-PERF-3 | PgBouncer connection pooling | MEDIUM | Supabase config change — use port 6543 for transaction pooling. |
+| QA-PERF-6 | Database query performance monitoring | MEDIUM | Enable pg_stat_statements in Supabase dashboard. Add EXPLAIN ANALYZE for critical queries. |
+
+### Frontend — New Feature Work
+| ID | Description | Priority | Notes |
+|----|-------------|----------|-------|
+| QA-PERF-5 | Virtual scrolling for 500+ record lists | LOW | Implement react-window or @tanstack/virtual for OrgRegistryTable, RecordsList. PipelineAdminPage pagination is correct pattern. |
+
+### E2E Coverage Gaps — New Playwright Specs Needed
+| ID | Description | Priority | Journey |
+|----|-------------|----------|---------|
+| QA-E2E-01 | Billing E2E suite (Stripe test mode) | HIGH | J4: Billing → Subscribe → Use Credits → Upgrade (0% covered) |
+| QA-E2E-02 | API key + verify + webhook E2E | HIGH | J5: API → Create Key → Call Verify → Receive Webhook (0% covered) |
+| QA-E2E-03 | Member invite E2E | MEDIUM | J2: Org Admin → Invite → Member Join (missing steps) |
+| QA-E2E-04 | Public search E2E | MEDIUM | J3: Search page not tested |
+| QA-E2E-05 | Proof download E2E (PDF + JSON) | MEDIUM | J3: Download buttons visible but not tested |
+| QA-E2E-06 | Issue credential full submit E2E | MEDIUM | J2: Dialog opens but form not submitted |
+| QA-E2E-07 | Seed SECURED anchors fixture | LOW | Required for J1/J2 anchoring tests (signet UTXO unavailable in E2E) |
+| QA-E2E-08 | Cross-browser E2E (Firefox + Safari) | LOW | Chromium-only currently |
+| QA-E2E-09 | Mobile viewport E2E (375px) | LOW | Desktop-only currently |
+
+### Resilience — Chaos/Fault Testing (Future)
+| ID | Description | Priority | Notes |
+|----|-------------|----------|-------|
+| QA-CHAOS-01 | Supabase outage simulation test | MEDIUM | Validate circuit breaker in integration env |
+| QA-CHAOS-02 | Mempool.space unavailability test | MEDIUM | Validate retry + fallback in integration env |
+| QA-CHAOS-03 | Stripe webhook duplicate delivery test | LOW | Validate idempotency under concurrent delivery |
+| QA-CHAOS-04 | Embedding memory pressure test | LOW | Monitor process.memoryUsage() under sustained load |
 
 ---
 
