@@ -131,6 +131,16 @@ const ConfigSchema = z.object({
       path: ['cronSecret'],
     });
   }
+
+  // ARCH-3: Fail fast if API_KEY_HMAC_SECRET is unset in production —
+  // empty string would make all API key HMAC hashes reproducible (security risk)
+  if (cfg.nodeEnv === 'production' && !cfg.apiKeyHmacSecret) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Production requires API_KEY_HMAC_SECRET — API key authentication would be insecure without it',
+      path: ['apiKeyHmacSecret'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

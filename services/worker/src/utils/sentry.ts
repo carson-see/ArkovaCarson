@@ -185,4 +185,49 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   console.log(`[Sentry] Initialized for ${environment}`); // eslint-disable-line no-console
 }
 
+// ---------------------------------------------------------------------------
+// Sentry Cron Monitoring (Phase 4, Item 18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps a cron job function with Sentry Crons monitoring.
+ * Reports check-in start, success, or failure to Sentry for visibility.
+ *
+ * @param monitorSlug - Unique slug for this cron monitor in Sentry
+ * @param schedule - Cron schedule expression (for auto-creating monitors)
+ * @param fn - The cron job function to wrap
+ */
+export function withCronMonitoring<T>(
+  monitorSlug: string,
+  schedule: string,
+  fn: () => Promise<T>,
+): () => Promise<T> {
+  return async () => {
+    const checkInId = Sentry.captureCheckIn({
+      monitorSlug,
+      status: 'in_progress',
+    }, {
+      schedule: { type: 'crontab', value: schedule },
+      maxRuntime: 10, // minutes
+    });
+
+    try {
+      const result = await fn();
+      Sentry.captureCheckIn({
+        checkInId,
+        monitorSlug,
+        status: 'ok',
+      });
+      return result;
+    } catch (error) {
+      Sentry.captureCheckIn({
+        checkInId,
+        monitorSlug,
+        status: 'error',
+      });
+      throw error;
+    }
+  };
+}
+
 export { Sentry };

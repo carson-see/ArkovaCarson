@@ -107,3 +107,44 @@ export function resetDbCircuit(): void {
   dbCircuit.openedAt = null;
   dbCircuit.lastError = null;
 }
+
+// ─── SCALE-3: DB call timeout wrapper ───────────────────────────────
+// Prevents DB calls from hanging indefinitely under load.
+
+const DEFAULT_DB_TIMEOUT_MS = 15_000; // 15 seconds
+
+/**
+ * Execute a DB operation with a timeout.
+ * If the operation exceeds the timeout, the promise rejects with a timeout error.
+ * The circuit breaker records the failure automatically.
+ *
+ * @example
+ *   const data = await withDbTimeout(() => db.from('anchors').select('*').limit(10));
+ */
+export async function withDbTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs = DEFAULT_DB_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`DB operation timed out after ${timeoutMs}ms`);
+      recordDbFailure(err);
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([operation(), timeout]);
+    recordDbSuccess();
+    return result;
+  } catch (err) {
+    if (!(err instanceof Error && err.message.includes('timed out'))) {
+      recordDbFailure(err);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
