@@ -26,6 +26,14 @@
 | `tla-verify` | TLA+ formal verification of anchor lifecycle (TLA-02) | CI logs |
 | `e2e` | Playwright E2E tests | CI logs + Playwright report artifacts |
 
+### Branch Protection (CC6.1 — Logical Access)
+- **Main branch protection** enabled 2026-03-23
+- Required status checks: `typecheck`, `lint`, `test`, `copy-lint`, `build-check` (strict mode)
+- Force pushes: **disabled**
+- Branch deletions: **disabled**
+- Pull request required for all changes to `main`
+- Evidence: `gh api repos/carson-see/ArkovaCarson/branches/main/protection`
+
 ### Deployment
 - **Frontend:** Auto-deploys from `main` via Vercel (immutable deployments)
 - **Worker:** Manual deploy via `gcloud run deploy` (Cloud Run, rev-tagged)
