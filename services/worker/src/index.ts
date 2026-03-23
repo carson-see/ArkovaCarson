@@ -35,6 +35,7 @@ import { fetchOpenAlexWorks } from './jobs/openalexFetcher.js';
 import { processPublicRecordAnchoring } from './jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from './jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from './jobs/attestationAnchor.js';
+import { fetchDapipInstitutions } from './jobs/dapipFetcher.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -685,6 +686,20 @@ app.post('/jobs/edgar-backfill', cronJobsLimiter, async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'EDGAR historical backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+app.post('/jobs/fetch-dapip', cronJobsLimiter, async (req, res) => {
+  if (!(await verifyCronAuth(req))) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+  try {
+    const result = await fetchDapipInstitutions(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DAPIP fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
