@@ -27,8 +27,9 @@ import { getInitializedChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** Max records per batch — Merkle tree handles thousands efficiently */
-export const PUBLIC_RECORD_BATCH_SIZE = 2000;
+/** Max records per batch — Merkle tree handles thousands efficiently.
+ * Increased from 2,000 to 2,500 per audit recommendation. Monitor performance. */
+export const PUBLIC_RECORD_BATCH_SIZE = 2500;
 
 /** Minimum records to trigger a batch */
 export const MIN_BATCH_SIZE = 1;

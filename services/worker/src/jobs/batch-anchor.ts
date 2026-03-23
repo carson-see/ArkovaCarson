@@ -17,8 +17,8 @@ import { getInitializedChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
 
-/** Max anchors per batch transaction */
-export const BATCH_SIZE = 50;
+/** Max anchors per batch transaction (user uploads) */
+export const BATCH_SIZE = 100;
 
 /**
  * INEFF-2: Minimum anchors required for batch processing.
