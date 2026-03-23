@@ -47,7 +47,7 @@ _Last updated: 2026-03-22 (Pipeline activated: EDGAR 2,340 + OpenAlex 200 record
 | # | ID | Issue | Status |
 |---|-----|-------|--------|
 | 9 | ~~OPS-01~~ | ~~Apply migrations 0059-0071 to production Supabase + regenerate types~~ | **DONE** — All migrations applied (0059-0075) |
-| 10 | OPS-02 | Run `scripts/strip-demo-seeds.sql` on production | PENDING |
+| 10 | ~~OPS-02~~ | ~~Run `scripts/strip-demo-seeds.sql` on production~~ | **DONE** — Session 6: `admin@umich-demo.arkova.io` deleted, 0 demo users remain |
 | 11 | OPS-03 | Set Sentry DSN env vars (Vercel + Cloud Run) | PENDING |
 | 12 | OPS-04 | Sentry source map upload plugin | PENDING |
 | 13 | OPS-05 | AWS KMS key provisioning (mainnet signing) | PENDING |
@@ -202,7 +202,7 @@ _All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071
 ### MVP Launch Gaps — 1 not started
 | ID | Description | Priority |
 |----|-------------|----------|
-| MVP-12 | Dark mode toggle | LOW |
+| ~~MVP-12~~ | ~~Dark mode toggle~~ | ~~LOW~~ — **DONE** (sidebar ThemeToggle cycles light/dark/system) |
 
 > ~~MVP-20 (LinkedIn badge integration)~~ — Superseded by BETA-09 (LinkedInShare.tsx)
 
@@ -309,7 +309,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~PH1-DATA-03~~ | ~~Federal Register fetcher~~ | P1 | **COMPLETE** | S2 | Migration 0077 |
 | ~~PH1-INT-01~~ | ~~Vector DB enhancement for public records~~ | P0 | **COMPLETE** | S3 | Migration 0077 |
 | ~~PH1-INT-02~~ | ~~RAG retrieval endpoint (Nessie query)~~ | P0 | **COMPLETE** | S3 | PH1-INT-01 |
-| PH1-PAY-02 | Self-hosted x402 facilitator | P0 | NOT STARTED | S3 | PH1-PAY-01 |
+| PH1-PAY-02 | Self-hosted x402 facilitator | P0 | **PARTIAL** — flag enabled, needs USDC address + facilitator deploy | S3 | PH1-PAY-01 |
 | ~~PH1-INT-03~~ | ~~Gemini RAG integration~~ | P1 | **COMPLETE** | S4 | PH1-INT-02 |
 | ~~PH1-SDK-01~~ | ~~TypeScript SDK (@arkova/sdk)~~ | P1 | **COMPLETE** | S4 | PH1-PAY-01 |
 | ~~PH1-SDK-03~~ | ~~MCP server enhancement (nessie tools)~~ | P1 | **COMPLETE** | S4 | PH1-INT-02 |

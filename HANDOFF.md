@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 165/192 stories complete (~86%) incl. 13 Beta stories (BETA-01–13). 2,094+ tests. 86 migration files (0001-0086, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 14/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00052 deployed. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 11,547+ public records, 1,000+ embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Individual anchoring rewritten** — each document gets its own anchor visible in Treasury. **Attestation IDs** now use structured format: ARK-{org_prefix}-{type_code}-{unique}.
+**Overall progress:** 170/192 stories complete (~89%) incl. 13 Beta stories (BETA-01–13). 2,094+ tests. 86 migration files (0001-0086, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed** (incl. Merkle batch anchor `5d652cf4...`). Worker rev 00053 deploying. Frontend on arkova-26.vercel.app (app.arkova.ai). **Pipeline LIVE:** 11,567+ public records, 1,000+ embeddings, Nessie RAG returning real results. MCP server live at edge.arkova.ai. **Unified Secure Document flow** — single catchall for all uploads (single/bulk/attestation). **Pipeline records filtered from individual anchor processor** — Merkle batch only. **x402 payments enabled** (switchboard flag on). **Demo seeds stripped** from production (OPS-02). Dark mode toggle confirmed in sidebar (MVP-12).
 
 ### Open Blockers
 
@@ -21,6 +21,26 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-23, Session 6)
+
+**PR #132 merged:** `feat/session6-critical-fixes` — Critical fixes + hardening + P3/P4 polish
+
+| Change | Files | Detail |
+|--------|-------|--------|
+| Public attestation verify page | `PublicAttestationVerifyPage.tsx`, `App.tsx`, `routes.ts` | `/verify/attestation/:publicId` — full verification display with status, claims, proof, revocation |
+| Attestation revoke UI | `AttestationsPage.tsx` | Revoke button + confirmation dialog in detail panel |
+| DevelopersPage API reference | `DevelopersPage.tsx` | Org role requirement notice + rate limits + error codes section |
+| Admin user detail | `AdminUserDetailPage.tsx`, `admin-lists.ts`, `index.ts` | `/admin/users/:id` with dedicated worker endpoint |
+| Dashboard attestation stat | `DashboardPage.tsx`, `StatCard.tsx` | 4th stat card with chevron affordance, onClick prop |
+| Admin UX overhaul | `AdminUsersPage.tsx`, `AdminRecordsPage.tsx`, `AdminSubscriptionsPage.tsx` | shadcn Select, mobile card layout, auto-search on filter, clear filters button |
+| Centralized platform constants | `platform.ts` | `isPlatformAdmin()`, treasury address, mempool URL helpers — removed from 10 files |
+| Mempool links | `AssetDetailView.tsx`, `PipelineAdminPage.tsx` | Treasury fallback for PENDING/SUBMITTED records |
+| Unified Secure Document | `SecureDocumentDialog.tsx`, `FileUpload.tsx` | Single catchall: auto-detects single/bulk/CSV upload |
+| Anchor filter fix | `anchor.ts` | Pipeline records filtered from individual processor (Merkle batch only) |
+| Org onboarding | `OrgOnboardingForm.tsx` | legal_name optional, display_name primary |
+| x402 payments | switchboard_flags | `ENABLE_X402_PAYMENTS` enabled in production |
+| Demo seed strip | Production DB | OPS-02: `admin@umich-demo.arkova.io` deleted |
 
 ### Recent Changes (2026-03-23, Session 5)
 
