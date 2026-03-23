@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 170/192 stories complete (~89%) incl. 13 Beta stories (BETA-01–13). 978 tests. 89 migration files (0001-0089, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Worker **rev00058**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 22,333+ public records (12K EDGAR, 7.7K Fed Register, 2K+ DAPIP, 536 OpenAlex), 9,700+ embeddings, 1,413 SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. **TLA-01+02 resolved.** Session 10: UX overhaul + QR/verify + AI hardening.
+**Overall progress:** 170/192 stories complete (~89%) incl. 13 Beta stories (BETA-01–13). **2,098 tests** (978 frontend + 1,120 worker, all green). 89 migration files (0001-0089, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Worker **rev00058**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 22,333+ public records (12K EDGAR, 7.7K Fed Register, 2K+ DAPIP, 536 OpenAlex), 9,700+ embeddings, 1,413 SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. **TLA-01+02 resolved.** Branch protection enabled. Session 11: GEO fixes + embedding acceleration + test stabilization + SOC 2 compliance.
 
 ### Open Blockers
 
@@ -21,6 +21,18 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-23, Session 11)
+
+**PRs #150-154 (5 sprints):** GEO fixes + embedding acceleration + test stabilization + SOC 2
+
+| Change | Detail |
+|--------|--------|
+| GEO infrastructure | robots.txt: 4 new AI crawlers; llms.txt: standard format with live MCP; OG image: SVG→PNG; Schema: address, jobTitle, sameAs, ORCID |
+| Embedding acceleration | EMBED_BATCH_SIZE 100→500, EMBED_CONCURRENCY=10 (bounded-concurrency Promise.all) |
+| Worker test stabilization | 11 flaky tests fixed: mock fetch for embeddings, beta credit bypass, anchors table mock, sequential RPC mocking |
+| Branch protection | Main branch: required CI checks, no force push, no deletions. SOC 2 CC6.1 evidence |
+| Test total | 2,098 tests (978 frontend + 1,120 worker), all green |
 
 ### Recent Changes (2026-03-23, Session 10)
 
