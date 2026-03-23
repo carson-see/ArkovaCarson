@@ -41,6 +41,7 @@ import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECUR
 import { supabase } from '@/lib/supabase';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
+import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
 import { useOrganization } from '@/hooks/useOrganization';
 
@@ -250,6 +251,11 @@ export function DashboardPage() {
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 mb-8">
         <UsageWidget />
         <CreditUsageWidget />
+      </div>
+
+      {/* CLE Credit Summary (visible only when user has CLE records) */}
+      <div className="mb-8">
+        <CleCreditWidget />
       </div>
 
       {/* Getting started checklist (UF-10) */}

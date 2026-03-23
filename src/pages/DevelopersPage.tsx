@@ -349,6 +349,46 @@ export function DevelopersPage() {
         </section>
       </main>
 
+        {/* CLE API for State Bars */}
+        <section className="px-6 py-20 bg-[#0d141b]">
+          <div className="max-w-7xl mx-auto">
+            <h2 className="text-2xl font-black tracking-tight mb-4 flex items-center gap-3">
+              <span className="w-1.5 h-6 bg-[#00d4ff]" />
+              CLE Verification API
+            </h2>
+            <p className="text-[#bbc9cf] mb-12 max-w-2xl">
+              For state bars and CLE providers. Verify attorney compliance, submit course completions,
+              and query CLE credit records — all anchored to an immutable network.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              <div className="bg-[#192028] p-6 rounded-lg border border-[#3c494e]/15">
+                <code className="text-[#00d4ff] text-xs font-mono">GET</code>
+                <h3 className="text-sm font-bold mt-2 mb-1">/api/v1/cle/verify</h3>
+                <p className="text-xs text-[#bbc9cf]">Verify CLE compliance for a bar number against state requirements. Returns credit totals, compliance status, and anchored records.</p>
+                <p className="text-[10px] text-[#859398] mt-3 font-mono">$0.005 / request</p>
+              </div>
+              <div className="bg-[#192028] p-6 rounded-lg border border-[#3c494e]/15">
+                <code className="text-[#00d4ff] text-xs font-mono">GET</code>
+                <h3 className="text-sm font-bold mt-2 mb-1">/api/v1/cle/credits</h3>
+                <p className="text-xs text-[#bbc9cf]">List all anchored CLE credits for an attorney. Filter by jurisdiction and reporting period.</p>
+                <p className="text-[10px] text-[#859398] mt-3 font-mono">$0.005 / request</p>
+              </div>
+              <div className="bg-[#192028] p-6 rounded-lg border border-[#3c494e]/15">
+                <code className="text-[#a8e8ff] text-xs font-mono">POST</code>
+                <h3 className="text-sm font-bold mt-2 mb-1">/api/v1/cle/submit</h3>
+                <p className="text-xs text-[#bbc9cf]">Submit a CLE course completion for anchoring. Includes credit hours, category, provider, and jurisdiction.</p>
+                <p className="text-[10px] text-[#859398] mt-3 font-mono">$0.005 / request</p>
+              </div>
+              <div className="bg-[#192028] p-6 rounded-lg border border-[#3c494e]/15">
+                <code className="text-[#00d4ff] text-xs font-mono">GET</code>
+                <h3 className="text-sm font-bold mt-2 mb-1">/api/v1/cle/requirements</h3>
+                <p className="text-xs text-[#bbc9cf]">State-by-state CLE requirements reference. 15 jurisdictions with total hours, ethics hours, and reporting periods.</p>
+                <p className="text-[10px] text-[#859398] mt-3 font-mono">Free</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
       {/* Footer */}
       <footer className="border-t border-[#bbc9cf]/15">
         <div className="max-w-7xl mx-auto py-12 px-6 flex flex-col md:flex-row justify-between items-center gap-8">
