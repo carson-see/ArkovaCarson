@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 170/192 stories complete (~89%) incl. 13 Beta stories (BETA-01–13). 974 tests. 89 migration files (0001-0089, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Worker **rev00058**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 22,289+ public records (12K EDGAR, 7.7K Fed Register, 2K+ DAPIP, 492+ OpenAlex), 9,300+ embeddings, 1,112 SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. **TLA-01 resolved:** credential_type immutability trigger (migration 0089).
+**Overall progress:** 170/192 stories complete (~89%) incl. 13 Beta stories (BETA-01–13). 978 tests. 89 migration files (0001-0089, 0033+0078 skipped, 0068 split into 0068a/0068b). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Worker **rev00058**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 22,333+ public records (12K EDGAR, 7.7K Fed Register, 2K+ DAPIP, 536 OpenAlex), 9,700+ embeddings, 1,413 SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. **TLA-01+02 resolved.** Session 10: UX overhaul + QR/verify + AI hardening.
 
 ### Open Blockers
 
@@ -21,6 +21,26 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-23, Session 10)
+
+**PRs #145-149 (5 sprints):** UX overhaul + QR/verify + AI hardening + SOC 2
+
+| Change | Detail |
+|--------|--------|
+| Sidebar simplified | 5 main items: Dashboard, Documents, Organization, Search, Settings. Billing/Help/Developers in user dropdown. Admin collapsible. |
+| Unified Documents page | `/documents` with tabs: All / My Records / Issued to Me / Attestations |
+| Create Organization fixed | Dialog-based instead of broken redirect to onboarding |
+| Org pages consolidated | OrganizationPage redirects to OrgProfilePage |
+| Badge forwardRef | Fixed console ref warning |
+| QR download | PNG export on RecordDetailPage for SECURED records |
+| Drag-to-verify | SearchPage file drop → client-side hash → auto-search |
+| Search type tabs | Issuers / Credentials / Verify Document tabs |
+| CLE extraction enhanced | creditHours, creditType, barNumber, activityNumber, providerName, approvedBy |
+| Fraud signal detection | AI flags: DUPLICATE_FINGERPRINT, EXPIRED_ISSUER, SUSPICIOUS_DATES, etc. |
+| SOC 2 evidence doc | `docs/compliance/soc2-evidence.md` |
+| TLA-02 confirmed | tla-verify CI job already existed |
+| Production metrics | 22,333 records, 9,700 embeddings, 1,413 SECURED anchors, 12 scheduler jobs |
 
 ### Recent Changes (2026-03-23, Session 9)
 
