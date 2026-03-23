@@ -14,12 +14,13 @@ const {
   mockSubmitFingerprint,
   mockSingle,
   mockLimit,
-  mockUpdateEq,
   mockAuditInsert,
   mockChainIndexUpsert,
   mockDispatchWebhookEvent,
   mockLogger,
   anchorsTable,
+  setUpdateResult,
+  updateChain,
   selectChain,
 } = vi.hoisted(() => {
   // Terminal operations — configured per test
@@ -45,8 +46,19 @@ const {
   selectChain.single = mockSingle;
   selectChain.limit = mockLimit;
 
-  // Update chain: .update({...}).eq('id', ...)
-  const updateChain = { eq: mockUpdateEq };
+  // Update chain: .update({...}).eq('id', ...).eq('status', ...) — supports chaining
+  // RACE-1: Now chains two .eq() calls. Chain is thenable (like Supabase's query builder).
+  let updateResult: Record<string, unknown> = { error: null, count: 1 };
+  const updateChain: Record<string, unknown> = {};
+  updateChain.eq = vi.fn(() => updateChain);
+  updateChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+    return Promise.resolve(updateResult).then(resolve, reject);
+  };
+
+  // Helper to configure the update result per test
+  const setUpdateResult = (result: Record<string, unknown>) => {
+    updateResult = result;
+  };
 
   // Table mocks
   const anchorsTable = {
@@ -84,6 +96,7 @@ const {
     chainIndexTable,
     updateChain,
     selectChain,
+    setUpdateResult,
   };
 });
 
@@ -173,7 +186,7 @@ describe('processAnchor', () => {
     // Defaults: happy path
     mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
-    mockUpdateEq.mockResolvedValue({ error: null });
+    setUpdateResult({ error: null, count: 1 });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
@@ -209,7 +222,7 @@ describe('processAnchor', () => {
           chain_timestamp: MOCK_RECEIPT.blockTimestamp,
         }),
       );
-      expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-001');
+      expect(updateChain.eq).toHaveBeenCalledWith('id', 'anchor-001');
     });
 
     it('stores _metadata_hash in metadata JSON when receipt includes metadataHash (DEMO-01)', async () => {
@@ -408,7 +421,7 @@ describe('processAnchor', () => {
 
   describe('DB update failure after chain submission', () => {
     it('returns false when anchor update fails', async () => {
-      mockUpdateEq.mockResolvedValue({
+      setUpdateResult({
         error: { message: 'constraint violation', code: '23505' },
       });
 
@@ -418,7 +431,7 @@ describe('processAnchor', () => {
 
     it('logs the update error', async () => {
       const dbError = { message: 'constraint violation', code: '23505' };
-      mockUpdateEq.mockResolvedValue({ error: dbError });
+      setUpdateResult({ error: dbError });
 
       await processAnchor('anchor-001');
 
@@ -429,7 +442,7 @@ describe('processAnchor', () => {
     });
 
     it('does not log audit event when DB update fails', async () => {
-      mockUpdateEq.mockResolvedValue({
+      setUpdateResult({
         error: { message: 'constraint violation' },
       });
 
@@ -625,7 +638,7 @@ describe('processAnchor', () => {
     });
 
     it('does not dispatch webhook when DB update fails', async () => {
-      mockUpdateEq.mockResolvedValue({
+      setUpdateResult({
         error: { message: 'constraint violation' },
       });
 
@@ -661,7 +674,7 @@ describe('processPendingAnchors', () => {
     // Defaults for processAnchor internals
     mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
-    mockUpdateEq.mockResolvedValue({ error: null });
+    setUpdateResult({ error: null, count: 1 });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
     mockRpc.mockResolvedValue({ data: true, error: null });

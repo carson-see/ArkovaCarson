@@ -22,6 +22,7 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 import type {
   ChainClient,
   ChainReceipt,
@@ -418,6 +419,13 @@ export class BitcoinChainClient implements ChainClient {
     // 2. Estimate fee rate
     const feeRate = await this.feeEstimator.estimateFee();
     logger.debug({ feeRate, estimator: this.feeEstimator.name }, 'Fee rate estimated');
+
+    // PERF-7: Fee ceiling — reject if fee rate exceeds configured maximum
+    if (config.bitcoinMaxFeeRate && feeRate > config.bitcoinMaxFeeRate) {
+      throw new Error(
+        `Fee rate ${feeRate} sat/vB exceeds ceiling ${config.bitcoinMaxFeeRate} sat/vB — anchor queued for later`,
+      );
+    }
 
     // 3. Fetch UTXOs for treasury address
     const utxos = await this.provider.listUnspent(this.address);

@@ -59,6 +59,15 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       metadata: metadata && Object.keys(metadata).length > 0 ? metadata : undefined,
     });
 
+    // RACE-2 fix: Validate broadcast response — reject if mempool didn't accept
+    if (!receipt || !receipt.receiptId) {
+      logger.error(
+        { anchorId, receipt },
+        'Chain broadcast returned empty receipt — mempool may have rejected the transaction',
+      );
+      return false;
+    }
+
     // BETA-01: Set status to SUBMITTED (broadcast but unconfirmed).
     // The check-confirmations cron job will promote to SECURED once the tx is mined.
     // DEMO-01: Store metadata_hash in metadata JSON for independent verification.
@@ -78,10 +87,18 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       };
     }
 
-    const { error: updateError } = await db
+    // RACE-1 fix: Add status guard to prevent double-broadcast.
+    // If another worker already claimed this anchor, the UPDATE returns 0 rows.
+    const { error: updateError, count } = await db
       .from('anchors')
       .update(updatePayload)
-      .eq('id', anchorId);
+      .eq('id', anchorId)
+      .eq('status', 'PENDING');
+
+    if (!updateError && count === 0) {
+      logger.warn({ anchorId }, 'Anchor already claimed by another worker — skipping update');
+      return false;
+    }
 
     if (updateError) {
       logger.error({ anchorId, error: updateError }, 'Failed to update anchor');

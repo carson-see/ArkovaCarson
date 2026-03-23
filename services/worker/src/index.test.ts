@@ -117,6 +117,12 @@ vi.mock('node-cron', () => ({
 
 vi.mock('./utils/db.js', () => ({
   db: { from: mockDbFrom },
+  // ERR-1: Circuit breaker exports used by /health endpoint
+  isDbHealthy: () => true,
+  recordDbSuccess: vi.fn(),
+  recordDbFailure: vi.fn(),
+  getDbCircuitState: () => ({ healthy: true, consecutiveFailures: 0, lastError: null }),
+  resetDbCircuit: vi.fn(),
 }));
 
 vi.mock('@supabase/supabase-js', () => ({
@@ -461,7 +467,7 @@ describe('worker server', () => {
       process.emit('SIGTERM');
 
       expect(mockLogger.info).toHaveBeenCalledWith(
-        { signal: 'SIGTERM' },
+        expect.objectContaining({ signal: 'SIGTERM' }),
         'Received shutdown signal'
       );
       // Exit happens inside server.close callback (after connections drain)

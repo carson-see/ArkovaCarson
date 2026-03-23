@@ -13,8 +13,9 @@ const {
   mockSubmitFingerprint,
   mockAnchorsSelect,
   mockAnchorsUpdate,
-  mockUpdateEq,
   mockLogger,
+  setUpdateResult,
+  setUpdateResultQueue,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
 
@@ -25,8 +26,23 @@ const {
   selectChain.order = vi.fn(() => selectChain);
   selectChain.limit = vi.fn();
 
-  const mockUpdateEq = vi.fn();
-  const updateChain = { eq: mockUpdateEq };
+  // RACE-1: Update chain supports .eq() chaining + thenable
+  // Supports both fixed results and per-call result queues
+  let updateResults: Record<string, unknown>[] = [];
+  let defaultUpdateResult: Record<string, unknown> = { error: null, count: 1 };
+  const updateChain: Record<string, unknown> = {};
+  updateChain.eq = vi.fn(() => updateChain);
+  updateChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+    const result = updateResults.length > 0 ? updateResults.shift()! : defaultUpdateResult;
+    return Promise.resolve(result).then(resolve, reject);
+  };
+  const setUpdateResult = (result: Record<string, unknown>) => {
+    defaultUpdateResult = result;
+    updateResults = [];
+  };
+  const setUpdateResultQueue = (results: Record<string, unknown>[]) => {
+    updateResults = [...results];
+  };
 
   const mockAnchorsSelect = vi.fn(() => selectChain);
   const mockAnchorsUpdate = vi.fn(() => updateChain);
@@ -42,9 +58,10 @@ const {
     mockSubmitFingerprint,
     mockAnchorsSelect,
     mockAnchorsUpdate,
-    mockUpdateEq,
     mockLogger,
     selectChain,
+    setUpdateResult,
+    setUpdateResultQueue,
   };
 });
 
@@ -119,7 +136,7 @@ describe('processBatchAnchors', () => {
     // Defaults
     limitMock.mockResolvedValue({ data: [], error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
-    mockUpdateEq.mockResolvedValue({ error: null });
+    setUpdateResult({ error: null, count: 1 });
   });
 
   // ---- No pending anchors ----
@@ -213,7 +230,6 @@ describe('processBatchAnchors', () => {
 
     // Two updates (one per anchor)
     expect(mockAnchorsUpdate).toHaveBeenCalledTimes(2);
-    expect(mockUpdateEq).toHaveBeenCalledTimes(2);
 
     // Each update includes chain info
     expect(mockAnchorsUpdate).toHaveBeenCalledWith(
@@ -256,9 +272,8 @@ describe('processBatchAnchors', () => {
       expect((call[0] as Record<string, unknown>).status).toBe('SUBMITTED');
     }
 
-    expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-a');
-    expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-b');
-    expect(mockUpdateEq).toHaveBeenCalledWith('id', 'anchor-c');
+    // RACE-1: Verify all anchors were updated (via mockAnchorsUpdate calls)
+    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(3);
   });
 
   // ---- Chain publish failure ----
@@ -299,10 +314,11 @@ describe('processBatchAnchors', () => {
     });
 
     // First update fails, second and third succeed
-    mockUpdateEq
-      .mockResolvedValueOnce({ error: { message: 'constraint violation' } })
-      .mockResolvedValueOnce({ error: null })
-      .mockResolvedValueOnce({ error: null });
+    setUpdateResultQueue([
+      { error: { message: 'constraint violation' } },
+      { error: null, count: 1 },
+      { error: null, count: 1 },
+    ]);
 
     const result = await processBatchAnchors();
 

@@ -652,6 +652,24 @@ describe('deliverToEndpoint', () => {
       }),
     );
   });
+
+  it('RACE-6: idempotency key does NOT include attempt number', async () => {
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    const insertCall = deliveryLogInsert.insert.mock.calls[0][0] as Record<string, unknown>;
+    const key = insertCall.idempotency_key as string;
+
+    // Key should be endpoint_id-event_id (no attempt suffix)
+    // Old format was "ep-001-evt-001-1" (with attempt), new is "ep-001-evt-001"
+    expect(key).toBe('ep-001-evt-001');
+    // Confirm it's exactly endpoint_id + event_id, no extra segments
+    expect(key).not.toContain('-1-'); // No embedded attempt number
+  });
 });
 
 // ================================================================

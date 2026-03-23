@@ -69,30 +69,81 @@ function getMempoolBaseUrl(): string {
  * @param txid - The transaction ID to look up
  * @returns Transaction response or null if not found/error
  */
+/** ERR-2: Retry with exponential backoff for transient mempool.space failures */
+const MEMPOOL_MAX_RETRIES = 3;
+const MEMPOOL_INITIAL_BACKOFF_MS = 500;
+
+/** Blockstream.info fallback base URLs */
+function getBlockstreamBaseUrl(): string {
+  const networkPaths: Record<string, string> = {
+    testnet4: 'https://blockstream.info/testnet',
+    testnet: 'https://blockstream.info/testnet',
+    signet: 'https://blockstream.info/signet',
+    mainnet: 'https://blockstream.info',
+  };
+  return networkPaths[config.bitcoinNetwork] ?? 'https://blockstream.info/signet';
+}
+
 async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
   const baseUrl = getMempoolBaseUrl();
   const url = `${baseUrl}/api/tx/${txid}`;
 
-  try {
-    const response = await fetch(url, {
-      signal: AbortSignal.timeout(10000), // 10s timeout
-    });
+  // ERR-2: Retry with exponential backoff
+  for (let attempt = 0; attempt <= MEMPOOL_MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(10000),
+      });
 
-    if (!response.ok) {
+      if (response.ok) {
+        return (await response.json()) as MempoolTxResponse;
+      }
+
       if (response.status === 404) {
         logger.warn({ txid }, 'Transaction not found on mempool.space — may not have propagated yet');
-        return null;
+        return null; // 404 is not retryable
       }
-      logger.warn({ txid, status: response.status }, 'Mempool.space API returned error');
-      return null;
-    }
 
-    const data = (await response.json()) as MempoolTxResponse;
-    return data;
-  } catch (error) {
-    logger.warn({ txid, error }, 'Failed to fetch tx status from mempool.space');
-    return null;
+      // Rate limited or server error — retry
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt < MEMPOOL_MAX_RETRIES) {
+          const delay = MEMPOOL_INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+          logger.debug({ txid, attempt, delay, status: response.status }, 'Retrying mempool.space after backoff');
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+
+      logger.warn({ txid, status: response.status }, 'Mempool.space API returned error');
+      break; // Fall through to fallback
+    } catch (error) {
+      if (attempt < MEMPOOL_MAX_RETRIES) {
+        const delay = MEMPOOL_INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+        logger.debug({ txid, attempt, delay, error }, 'Retrying mempool.space after network error');
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      logger.warn({ txid, error }, 'All mempool.space retries exhausted');
+      break; // Fall through to fallback
+    }
   }
+
+  // ERR-2: Fallback to blockstream.info
+  try {
+    const fallbackUrl = `${getBlockstreamBaseUrl()}/api/tx/${txid}`;
+    logger.info({ txid, fallbackUrl }, 'Falling back to blockstream.info');
+    const response = await fetch(fallbackUrl, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      return (await response.json()) as MempoolTxResponse;
+    }
+  } catch (fallbackError) {
+    logger.warn({ txid, error: fallbackError }, 'Blockstream.info fallback also failed');
+  }
+
+  return null;
 }
 
 /**
@@ -219,6 +270,17 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     return autoConfirmMockAnchors();
   }
 
+  // RACE-3: Distributed lock — prevent concurrent cron runs from overlapping.
+  // pg_try_advisory_lock returns false (not blocking) if another worker holds the lock.
+  const CONFIRMATION_LOCK_ID = 42001; // Unique ID for this job type
+  const { data: lockAcquired } = await db.rpc('pg_try_advisory_lock' as never, {
+    key: CONFIRMATION_LOCK_ID,
+  } as never);
+  if (!lockAcquired) {
+    logger.info('Confirmation check skipped — another worker holds the advisory lock');
+    return { checked: 0, confirmed: 0 };
+  }
+
   // Fetch SUBMITTED anchors — get enough to fill MAX_TX_CHECKS_PER_RUN unique tx_ids
   // We fetch more anchors than tx limit since many share a tx_id (Merkle batching)
   const { data: anchors, error } = await db
@@ -272,20 +334,29 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           return 0;
         }
 
-        // Transaction confirmed — promote ALL anchors sharing this tx_id
+        // PERF-2: Promote ALL anchors sharing this tx_id in parallel batches
         const groupAnchors = txGroups.get(txId) || [];
         let groupConfirmed = 0;
 
-        for (const anchor of groupAnchors) {
-          const wasConfirmed = await checkAnchorConfirmation({
-            id: anchor.id,
-            chain_tx_id: anchor.chain_tx_id!,
-            user_id: anchor.user_id,
-            org_id: anchor.org_id,
-            fingerprint: anchor.fingerprint,
-            public_id: anchor.public_id,
-          });
-          if (wasConfirmed) groupConfirmed++;
+        // Process in parallel batches of 50 to avoid overwhelming DB
+        const CONFIRM_BATCH_SIZE = 50;
+        for (let j = 0; j < groupAnchors.length; j += CONFIRM_BATCH_SIZE) {
+          const batch = groupAnchors.slice(j, j + CONFIRM_BATCH_SIZE);
+          const results = await Promise.allSettled(
+            batch.map((anchor) =>
+              checkAnchorConfirmation({
+                id: anchor.id,
+                chain_tx_id: anchor.chain_tx_id!,
+                user_id: anchor.user_id,
+                org_id: anchor.org_id,
+                fingerprint: anchor.fingerprint,
+                public_id: anchor.public_id,
+              }),
+            ),
+          );
+          for (const result of results) {
+            if (result.status === 'fulfilled' && result.value) groupConfirmed++;
+          }
         }
 
         if (groupConfirmed > 0) {
@@ -305,6 +376,9 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
       }
     }
   }
+
+  // RACE-3: Release advisory lock
+  await db.rpc('pg_advisory_unlock' as never, { key: CONFIRMATION_LOCK_ID } as never);
 
   logger.info(
     { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: anchors.length },

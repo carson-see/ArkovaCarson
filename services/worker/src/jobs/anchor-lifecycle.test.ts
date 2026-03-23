@@ -96,20 +96,27 @@ vi.mock('../utils/db.js', () => {
 
   const createUpdateChain = () => {
     let updateData: Record<string, unknown> = {};
+    let targetId: string | null = null;
     return {
       update: vi.fn((data: Record<string, unknown>) => {
         updateData = data;
-        return {
-          eq: vi.fn((field: string, value: string) => {
-            if (field === 'id') {
-              const anchor = dbState.anchors.get(value);
-              if (anchor) {
-                Object.assign(anchor, updateData);
-              }
+        targetId = null;
+        // RACE-1 fix: Support chaining .eq('id', ...).eq('status', ...) and .is(...)
+        const chain: Record<string, unknown> = {};
+        chain.eq = vi.fn((field: string, value: string) => {
+          if (field === 'id') targetId = value;
+          if (field === 'id' && targetId) {
+            const anchor = dbState.anchors.get(value);
+            if (anchor) {
+              Object.assign(anchor, updateData);
             }
-            return Promise.resolve({ error: null });
-          }),
-        };
+          }
+          return chain;
+        });
+        chain.is = vi.fn(() => chain);
+        // Make chain thenable so `await` resolves
+        chain.then = (resolve: (v: unknown) => void) => resolve({ error: null, count: 1 });
+        return chain;
       }),
     };
   };

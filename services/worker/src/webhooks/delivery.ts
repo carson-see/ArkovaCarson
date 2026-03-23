@@ -187,7 +187,9 @@ async function deliverToEndpoint(
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
-  const idempotencyKey = `${endpoint.id}-${payload.event_id}-${attempt}`;
+  // RACE-6 fix: Remove attempt number from idempotency key to prevent
+  // duplicate deliveries across retry attempts after worker restart
+  const idempotencyKey = `${endpoint.id}-${payload.event_id}`;
 
   // Check if already delivered
   const { data: existing } = await db

@@ -143,6 +143,8 @@ vi.mock('../utils/db.js', () => {
             return {};
         }
       }),
+      // RACE-3: Advisory lock mock — always returns true (lock acquired)
+      rpc: vi.fn(() => ({ data: true, error: null })),
     },
   };
 });

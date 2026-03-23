@@ -86,7 +86,8 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
     // Set to SUBMITTED (not SECURED) — the check-confirmations cron will
     // promote to SECURED once the batch tx is confirmed on chain.
     // This matches the standard anchor.ts lifecycle (TLA review finding #5).
-    const { error: updateError } = await db
+    // RACE-1 fix: Add status guard to prevent double-broadcast in concurrent workers
+    const { error: updateError, count: updateCount } = await db
       .from('anchors')
       .update({
         status: 'SUBMITTED' as const,
@@ -100,7 +101,13 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
           batch_id: batchId,
         })),
       })
-      .eq('id', anchor.id);
+      .eq('id', anchor.id)
+      .eq('status', 'PENDING');
+
+    if (!updateError && updateCount === 0) {
+      logger.warn({ anchorId: anchor.id }, 'Anchor already claimed by another worker — skipping batch update');
+      continue;
+    }
 
     if (updateError) {
       logger.error(

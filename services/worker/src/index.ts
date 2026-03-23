@@ -13,7 +13,7 @@ import cron from 'node-cron';
 import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
-import { db } from './utils/db.js';
+import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState } from './utils/db.js';
 import { callRpc } from './utils/rpc.js';
 import { processPendingAnchors } from './jobs/anchor.js';
 import { checkSubmittedConfirmations } from './jobs/check-confirmations.js';
@@ -56,21 +56,40 @@ app.get('/health', async (req, res) => {
   const detailed = req.query.detailed === 'true';
   const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
 
-  // Critical check: Supabase connectivity (determines HTTP status code)
-  const dbStart = Date.now();
-  try {
-    const { error } = await db.from('plans').select('id').limit(1);
-    checks.supabase = {
-      status: error ? 'error' : 'ok',
-      latencyMs: Date.now() - dbStart,
-      ...(error ? { message: error.message } : {}),
-    };
-  } catch (err) {
+  // ERR-1: Check DB circuit breaker first — if open, skip the probe
+  if (!isDbHealthy()) {
+    const circuitState = getDbCircuitState();
     checks.supabase = {
       status: 'error',
-      latencyMs: Date.now() - dbStart,
-      message: err instanceof Error ? err.message : 'Connection failed',
+      message: `Circuit breaker open (${circuitState.consecutiveFailures} consecutive failures): ${circuitState.lastError}`,
     };
+  } else {
+    // Critical check: Supabase connectivity (determines HTTP status code)
+    const dbStart = Date.now();
+    try {
+      const { error } = await db.from('plans').select('id').limit(1);
+      if (error) {
+        recordDbFailure(error);
+        checks.supabase = {
+          status: 'error',
+          latencyMs: Date.now() - dbStart,
+          message: error.message,
+        };
+      } else {
+        recordDbSuccess();
+        checks.supabase = {
+          status: 'ok',
+          latencyMs: Date.now() - dbStart,
+        };
+      }
+    } catch (err) {
+      recordDbFailure(err);
+      checks.supabase = {
+        status: 'error',
+        latencyMs: Date.now() - dbStart,
+        message: err instanceof Error ? err.message : 'Connection failed',
+      };
+    }
   }
 
   // Informational checks — config presence, don't affect HTTP status
@@ -890,7 +909,7 @@ function setupScheduledJobs(chainInitialized: boolean): void {
     cron.schedule('* * * * *', async () => {
       logger.debug('Running scheduled anchor processing (in-process cron)');
       try {
-        await processPendingAnchors();
+        await trackOperation(processPendingAnchors());
       } catch (error) {
         logger.error({ error }, 'Scheduled anchor processing failed');
       }
@@ -905,7 +924,7 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   cron.schedule('*/2 * * * *', async () => {
     logger.debug('Running scheduled confirmation check');
     try {
-      const result = await checkSubmittedConfirmations();
+      const result = await trackOperation(checkSubmittedConfirmations());
       if (result.confirmed > 0) {
         logger.info({ confirmed: result.confirmed, checked: result.checked }, 'Confirmed anchors');
       }
@@ -918,7 +937,7 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   cron.schedule('*/5 * * * *', async () => {
     logger.debug('Running scheduled revocation processing');
     try {
-      const result = await processRevokedAnchors();
+      const result = await trackOperation(processRevokedAnchors());
       if (result.processed > 0) {
         logger.info({ processed: result.processed, failed: result.failed }, 'Processed revocations');
       }
@@ -931,7 +950,7 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   cron.schedule('*/2 * * * *', async () => {
     logger.debug('Running scheduled webhook retry processing');
     try {
-      const retried = await processWebhookRetries();
+      const retried = await trackOperation(processWebhookRetries());
       if (retried > 0) {
         logger.info({ retried }, 'Processed webhook retries');
       }
@@ -974,6 +993,18 @@ function setupScheduledJobs(chainInitialized: boolean): void {
   logger.info('Scheduled jobs configured');
 }
 
+// ERR-3: Track active job operations for graceful shutdown
+const activeOps = new Set<Promise<unknown>>();
+
+/** Register an in-flight operation for graceful shutdown tracking */
+export function trackOperation<T>(promise: Promise<T>): Promise<T> {
+  activeOps.add(promise);
+  // Use .then() with both handlers to avoid unhandled rejection from .finally()
+  const cleanup = () => activeOps.delete(promise);
+  promise.then(cleanup, cleanup);
+  return promise;
+}
+
 // Graceful shutdown
 function setupGracefulShutdown(): void {
   let isShuttingDown = false;
@@ -982,7 +1013,7 @@ function setupGracefulShutdown(): void {
     if (isShuttingDown) return;
     isShuttingDown = true;
 
-    logger.info({ signal }, 'Received shutdown signal');
+    logger.info({ signal, activeOps: activeOps.size }, 'Received shutdown signal');
 
     // Force exit after 30 seconds if server.close() hangs
     const forceTimer = setTimeout(() => {
@@ -990,6 +1021,13 @@ function setupGracefulShutdown(): void {
       process.exit(1);
     }, 30000);
     forceTimer.unref();
+
+    // ERR-3: Await all in-flight job operations before closing
+    if (activeOps.size > 0) {
+      logger.info({ count: activeOps.size }, 'Awaiting in-flight operations before shutdown');
+      await Promise.allSettled([...activeOps]);
+      logger.info('All in-flight operations completed');
+    }
 
     // Stop accepting new requests, then exit after in-flight requests drain
     server.close(() => {

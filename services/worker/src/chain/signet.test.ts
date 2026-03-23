@@ -25,6 +25,14 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+// PERF-7: Mock config for fee ceiling check
+vi.mock('../config.js', () => ({
+  config: {
+    bitcoinNetwork: 'signet',
+    bitcoinMaxFeeRate: undefined, // No ceiling in tests
+  },
+}));
+
 // Mock fetch for legacy RPC path
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);

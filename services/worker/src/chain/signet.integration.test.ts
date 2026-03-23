@@ -21,6 +21,14 @@ import { buildOpReturnTransaction, type SelectedUtxo } from './signet.js';
 import { WifSigningProvider } from './signing-provider.js';
 import { generateSignetKeypair } from './wallet.js';
 
+// PERF-7: Mock config for fee ceiling check
+vi.mock('../config.js', () => ({
+  config: {
+    bitcoinNetwork: 'signet',
+    bitcoinMaxFeeRate: undefined,
+  },
+}));
+
 vi.mock('../utils/logger.js', () => ({
   logger: {
     info: vi.fn(),

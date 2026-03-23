@@ -45,6 +45,8 @@ const ConfigSchema = z.object({
   bitcoinStaticFeeRate: z.coerce.number().positive().optional(),
   /** Fallback fee rate in sat/vB (used when live estimation fails) */
   bitcoinFallbackFeeRate: z.coerce.number().positive().optional(),
+  /** PERF-7: Maximum fee rate in sat/vB — anchor is queued if live rate exceeds this */
+  bitcoinMaxFeeRate: z.coerce.number().positive().optional(),
 
   // Bitcoin mainnet KMS signing (Constitution 1.1)
   /** KMS provider selection: 'aws' or 'gcp' (default: 'aws') */
@@ -150,6 +152,7 @@ function loadConfig(): Config {
     bitcoinFeeStrategy: process.env.BITCOIN_FEE_STRATEGY,
     bitcoinStaticFeeRate: process.env.BITCOIN_STATIC_FEE_RATE,
     bitcoinFallbackFeeRate: process.env.BITCOIN_FALLBACK_FEE_RATE,
+    bitcoinMaxFeeRate: process.env.BITCOIN_MAX_FEE_RATE,
     kmsProvider: process.env.KMS_PROVIDER,
     bitcoinKmsKeyId: process.env.BITCOIN_KMS_KEY_ID,
     bitcoinKmsRegion: process.env.BITCOIN_KMS_REGION,

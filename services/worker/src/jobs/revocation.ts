@@ -81,14 +81,21 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
       },
     });
 
-    // Update anchor with revocation chain data
-    const { error: updateError } = await db
+    // RACE-5 fix: Add status guard to prevent concurrent revocation overwrites
+    const { error: updateError, count: updateCount } = await db
       .from('anchors')
       .update({
         revocation_tx_id: receipt.receiptId,
         revocation_block_height: receipt.blockHeight,
       })
-      .eq('id', anchorId);
+      .eq('id', anchorId)
+      .eq('status', 'REVOKED')
+      .is('revocation_tx_id', null); // Only update if not already revoked on-chain
+
+    if (!updateError && updateCount === 0) {
+      logger.warn({ anchorId }, 'Revocation already processed by another worker — skipping');
+      return false;
+    }
 
     if (updateError) {
       logger.error({ anchorId, error: updateError }, 'Failed to update revocation chain data');
