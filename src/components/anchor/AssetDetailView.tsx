@@ -429,7 +429,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col items-center gap-4">
-            <div className="rounded-lg border bg-white p-4">
+            <div id="qr-code-container" className="rounded-lg border bg-white p-4">
               <QRCodeSVG
                 value={verifyUrl(anchor.publicId)}
                 size={180}
@@ -439,6 +439,34 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             <p className="text-xs text-muted-foreground text-center">
               {verifyUrl(anchor.publicId)}
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const svg = document.querySelector('#qr-code-container svg');
+                if (!svg) return;
+                const canvas = document.createElement('canvas');
+                canvas.width = 220;
+                canvas.height = 220;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, 220, 220);
+                const svgData = new XMLSerializer().serializeToString(svg);
+                const img = new Image();
+                img.onload = () => {
+                  ctx.drawImage(img, 20, 20, 180, 180);
+                  const link = document.createElement('a');
+                  link.download = `arkova-qr-${(anchor.publicId ?? 'unknown').slice(0, 8)}.png`;
+                  link.href = canvas.toDataURL('image/png');
+                  link.click();
+                };
+                img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+              }}
+            >
+              <Download className="mr-2 h-3.5 w-3.5" />
+              Download QR as PNG
+            </Button>
           </CardContent>
         </Card>
       )}

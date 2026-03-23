@@ -1,6 +1,8 @@
 /**
  * Tests for SearchPage
  *
+ * Session 10: Updated for search type tabs + drag-to-verify.
+ *
  * @see UF-02, GAP-03 — Unified search with auto-detection
  */
 
@@ -43,6 +45,11 @@ vi.mock('@/components/search/IssuerCard', () => ({
   IssuerCard: () => <div data-testid="issuer-card" />,
 }));
 
+// Mock fileHasher
+vi.mock('@/lib/fileHasher', () => ({
+  generateFingerprint: vi.fn().mockResolvedValue('a'.repeat(64)),
+}));
+
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -70,9 +77,16 @@ describe('SearchPage', () => {
     expect(screen.getByText('Search Credentials')).toBeInTheDocument();
   });
 
-  it('renders unified search input with auto-detect placeholder', () => {
+  it('renders search type tabs (Issuers, Credentials, Verify Document)', () => {
     renderSearchPage();
-    expect(screen.getByPlaceholderText(/issuer name.*verification ID.*fingerprint/i)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /issuers/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /credentials/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /verify document/i })).toBeInTheDocument();
+  });
+
+  it('renders search input on issuers tab by default', () => {
+    renderSearchPage();
+    expect(screen.getByPlaceholderText(/issuer name/i)).toBeInTheDocument();
   });
 
   it('renders search button', () => {
@@ -88,5 +102,10 @@ describe('SearchPage', () => {
   it('renders back to dashboard link', () => {
     renderSearchPage();
     expect(screen.getByText('Back to Dashboard')).toBeInTheDocument();
+  });
+
+  it('renders example query buttons', () => {
+    renderSearchPage();
+    expect(screen.getByText('Harvard University')).toBeInTheDocument();
   });
 });
