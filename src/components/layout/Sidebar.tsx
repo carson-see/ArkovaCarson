@@ -56,7 +56,7 @@ const mainNavItems: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
   { label: NAV_LABELS.MY_RECORDS, icon: FileText, to: ROUTES.RECORDS },
   { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Inbox, to: ROUTES.MY_CREDENTIALS },
-  { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATION },
+  { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATIONS },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
   { label: 'Attestations', icon: FileCheck, to: ROUTES.ATTESTATIONS },
 ];

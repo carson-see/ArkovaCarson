@@ -163,7 +163,7 @@ export function AdminOrganizationsPage() {
                   <div
                     key={org.id}
                     className="rounded-lg border p-4 cursor-pointer hover:bg-muted/50 transition-colors"
-                    onClick={() => navigate(`/issuer/${org.id}`)}
+                    onClick={() => navigate(`/organizations/${org.id}`)}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium">{org.display_name}</span>
@@ -201,7 +201,7 @@ export function AdminOrganizationsPage() {
                       <tr
                         key={org.id}
                         className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
-                        onClick={() => navigate(`/issuer/${org.id}`)}
+                        onClick={() => navigate(`/organizations/${org.id}`)}
                       >
                         <td className="py-3 pr-4">
                           <div className="font-medium">{org.display_name}</div>

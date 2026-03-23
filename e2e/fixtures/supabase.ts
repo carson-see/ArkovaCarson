@@ -36,33 +36,33 @@ export function getServiceClient(): SupabaseClient {
 // ── Seed User Constants ─────────────────────────────────────────────────────
 
 export const SEED_USERS = {
-  /** ORG_ADMIN at University of Michigan demo org */
+  /** Platform admin / ORG_ADMIN at Arkova org — Carson */
   orgAdmin: {
-    id: '11111111-0000-0000-0000-000000000001',
-    email: 'admin@umich-demo.arkova.io',
+    id: '44444444-0000-0000-0000-000000000001',
+    email: 'carson@arkova.ai',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
-  /** ORG_MEMBER at University of Michigan demo org */
+  /** Platform admin / ORG_ADMIN at Arkova org — Sarah */
   registrar: {
-    id: '11111111-0000-0000-0000-000000000002',
-    email: 'registrar@umich-demo.arkova.io',
-    password: SEED_PASSWORD,
-    role: 'ORG_MEMBER' as const,
-  },
-  /** ORG_ADMIN at Midwest Medical (second org — RLS isolation) */
-  orgBAdmin: {
-    id: '22222222-0000-0000-0000-000000000001',
-    email: 'admin@midwest-medical.arkova.io',
+    id: '44444444-0000-0000-0000-000000000002',
+    email: 'sarah@arkova.ai',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
-  /** INDIVIDUAL user (no org) */
-  individual: {
-    id: '33333333-0000-0000-0000-000000000001',
-    email: 'individual@demo.arkova.io',
+  /** Alias for backward compat — points to Sarah */
+  orgBAdmin: {
+    id: '44444444-0000-0000-0000-000000000002',
+    email: 'sarah@arkova.ai',
     password: SEED_PASSWORD,
-    role: 'INDIVIDUAL' as const,
+    role: 'ORG_ADMIN' as const,
+  },
+  /** Alias for backward compat — points to Carson */
+  individual: {
+    id: '44444444-0000-0000-0000-000000000001',
+    email: 'carson@arkova.ai',
+    password: SEED_PASSWORD,
+    role: 'ORG_ADMIN' as const,
   },
 };
 

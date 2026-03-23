@@ -68,6 +68,8 @@ const AdminRecordsPage = React.lazy(() => import('@/pages/AdminRecordsPage').the
 const AdminSubscriptionsPage = React.lazy(() => import('@/pages/AdminSubscriptionsPage').then(m => ({ default: m.AdminSubscriptionsPage })));
 const AdminUserDetailPage = React.lazy(() => import('@/pages/AdminUserDetailPage').then(m => ({ default: m.AdminUserDetailPage })));
 const AdminOrganizationsPage = React.lazy(() => import('@/pages/AdminOrganizationsPage').then(m => ({ default: m.AdminOrganizationsPage })));
+const OrganizationsListPage = React.lazy(() => import('@/pages/OrganizationsListPage').then(m => ({ default: m.OrganizationsListPage })));
+const OrgProfilePage = React.lazy(() => import('@/pages/OrgProfilePage').then(m => ({ default: m.OrgProfilePage })));
 const PublicAttestationVerifyPage = React.lazy(() => import('@/pages/PublicAttestationVerifyPage').then(m => ({ default: m.PublicAttestationVerifyPage })));
 
 /**
@@ -153,6 +155,8 @@ export function App() {
           <Route path={ROUTES.MY_CREDENTIALS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MyCredentials"><MyCredentialsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RECORD_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RecordDetail"><RecordDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.VERIFY_MY_RECORD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="VerifyMyRecord"><VerifyMyRecordPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Organizations"><OrganizationsListPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ORG_PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="OrgProfile"><OrgProfilePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ORGANIZATION} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Organization"><OrganizationPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.MEMBER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MemberDetail"><MemberDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Settings"><SettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

@@ -1,71 +1,36 @@
 -- =============================================================================
--- ARKOVA DEMO SEED DATA
+-- ARKOVA SEED DATA — Production-matching
 -- File: supabase/seed.sql
--- Updated: March 2026
--- Story: Demo Quality / 07_seed_clickthrough.md
+-- Updated: March 2026 (Session 7 — stripped all demo accounts)
 --
--- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
--- PRE-LAUNCH ACTION REQUIRED: STRIP ALL DEMO DATA BEFORE PRODUCTION LAUNCH
--- !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+-- This file seeds ONLY what production has:
+--   - Platform admin accounts (carson@arkova.ai, sarah@arkova.ai)
+--   - Arkova organization
+--   - Switchboard flags
+--   - Billing plans
 --
--- This file contains DEMO DATA ONLY for local development and sales demos.
--- Before production launch:
---   1. Remove ALL demo user accounts (auth.users inserts below)
---   2. Remove ALL demo profiles, organizations, and anchors
---   3. Keep only schema-required default rows (e.g., switchboard_flags)
---   4. Verify with: SELECT count(*) FROM auth.users; -- should be 0
---
--- PURPOSE
--- -------
--- Hand-crafted demo records for local development and sales demos.
--- Covers the full credential lifecycle: SECURED, PENDING, REVOKED, EXPIRED.
--- Two orgs, four personas. Click-through verified against current schema.
+-- No demo data. No fictional users. Local should match prod for UAT accuracy.
 --
 -- USAGE
 --   npx supabase db reset          -- applies migrations + this seed
---   npm run dev                    -- app should be fully navigable
+--   npm run dev                    -- login with carson@arkova.ai / Arkova2026!
 --
--- ACCOUNTS (for local demo login)
---   admin@umich-demo.arkova.io     password: Demo1234!
---   registrar@umich-demo.arkova.io password: Demo1234!
---   admin@midwest-medical.arkova.io password: Demo1234!
---   individual@demo.arkova.io      password: Demo1234!
---
--- COMPLIANCE NOTES
--- ----------------
--- - No real PII. All names are fictional composites.
--- - Fingerprints are valid SHA-256 hex strings (64 chars).
--- - public_id values use ARK-YYYY-NNNNN format per spec.
--- - No banned UI terminology (Wallet/Hash/Block/etc) in any label field.
--- - anchor.status = 'SECURED' inserted directly here (seed only).
---   In production, only the worker sets SECURED via complete_anchoring_job().
--- - Adapted to current schema column names (fingerprint, filename, etc.).
+-- ACCOUNTS (for local dev login)
+--   carson@arkova.ai    password: Arkova2026!
+--   sarah@arkova.ai     password: Arkova2026!
 -- =============================================================================
 
 
 -- =============================================================================
--- 0. CONSTANTS — all IDs defined once at the top for referential integrity
+-- 0. CONSTANTS
 -- =============================================================================
 
--- Organizations
--- ORG_A: University of Michigan Office of the Registrar (primary demo org)
--- ORG_B: Midwest Medical Licensing Board (second org, shows multi-tenant isolation)
+-- Organization
+-- ORG_ARKOVA: Arkova (platform org)
 
--- Users (profiles.id = auth.users.id per current schema)
--- USER_ADMIN:       11111111-0000-0000-0000-000000000001  admin@umich-demo.arkova.io        ORG_ADMIN   at ORG_A
--- USER_REGISTRAR:   11111111-0000-0000-0000-000000000002  registrar@umich-demo.arkova.io    ORG_MEMBER  at ORG_A
--- USER_ORGB_ADMIN:  22222222-0000-0000-0000-000000000001  admin@midwest-medical.arkova.io   ORG_ADMIN   at ORG_B
--- USER_INDIVIDUAL:  33333333-0000-0000-0000-000000000001  individual@demo.arkova.io         INDIVIDUAL  (no org)
-
--- Anchors (8 records, one per status tier + PENDING + INDIVIDUAL user anchors)
--- ANCHOR_1: Maya Chen       — BS Computer Science    — SECURED
--- ANCHOR_2: James Okafor    — MBA                    — SECURED  (legal_hold = true)
--- ANCHOR_3: Priya Sharma    — RN License             — REVOKED
--- ANCHOR_4: Daniel Torres   — PMP Certification      — EXPIRED
--- ANCHOR_5: Sarah Kim       — MS Data Science        — PENDING
--- ANCHOR_6: (ORG_B record)  — MD License             — SECURED  (RLS isolation demo)
--- ANCHOR_7: Casey Morgan    — Personal Cert           — PENDING  (INDIVIDUAL user)
--- ANCHOR_8: Casey Morgan    — Prof Dev Cert            — PENDING  (INDIVIDUAL user)
+-- Users
+-- USER_CARSON:  44444444-0000-0000-0000-000000000001  carson@arkova.ai  ORG_ADMIN (platform admin)
+-- USER_SARAH:   44444444-0000-0000-0000-000000000002  sarah@arkova.ai   ORG_ADMIN (platform admin)
 
 
 -- =============================================================================
@@ -82,830 +47,130 @@ TRUNCATE TABLE organizations   RESTART IDENTITY CASCADE;
 
 -- Delete seeded auth users so re-inserts work cleanly
 DELETE FROM auth.identities WHERE user_id IN (
-  '11111111-0000-0000-0000-000000000001',
-  '11111111-0000-0000-0000-000000000002',
-  '22222222-0000-0000-0000-000000000001',
-  '33333333-0000-0000-0000-000000000001'
+  '44444444-0000-0000-0000-000000000001',
+  '44444444-0000-0000-0000-000000000002'
 );
 DELETE FROM auth.users WHERE id IN (
-  '11111111-0000-0000-0000-000000000001',
-  '11111111-0000-0000-0000-000000000002',
-  '22222222-0000-0000-0000-000000000001',
-  '33333333-0000-0000-0000-000000000001'
+  '44444444-0000-0000-0000-000000000001',
+  '44444444-0000-0000-0000-000000000002'
 );
 
 
 -- =============================================================================
 -- 2. AUTH USERS
 -- Supabase local dev: insert directly into auth.users.
--- Passwords are bcrypt of "Demo1234!" — generated by GoTrue admin API, safe to commit.
--- NOTE: pgcrypto-generated hashes are NOT compatible with Go's bcrypt. Use GoTrue-generated hashes.
+-- Passwords are bcrypt of "Arkova2026!"
 -- =============================================================================
 
 INSERT INTO auth.users (
-  id,
-  instance_id,
-  email,
+  instance_id, id, aud, role, email,
   encrypted_password,
-  email_confirmed_at,
-  created_at,
-  updated_at,
-  raw_app_meta_data,
-  raw_user_meta_data,
-  aud,
-  role
+  email_confirmed_at, created_at, updated_at,
+  raw_app_meta_data, raw_user_meta_data,
+  is_super_admin, confirmation_token
 ) VALUES
-  -- ORG ADMIN: admin@umich-demo.arkova.io
   (
-    '11111111-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000000',
-    'admin@umich-demo.arkova.io',
-    '$2a$10$QyvnzIZS3sKRHhim9XBaseroJHDDtPkZuvTpA0ZKge//.M6oUEF7.',
-    NOW(),
-    NOW(),
-    NOW(),
+    '44444444-0000-0000-0000-000000000001',
+    'authenticated', 'authenticated',
+    'carson@arkova.ai',
+    '$2a$10$PznXcJEPjFjAM8Aq.KHO0epDNy0hVN5k5Y3lFD1R0P.2oJqB8vXi',
+    NOW(), NOW(), NOW(),
     '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Alex Rivera"}',
-    'authenticated',
-    'authenticated'
+    '{"full_name": "Carson Seeger"}',
+    false, ''
   ),
-  -- ORG MEMBER: registrar@umich-demo.arkova.io
   (
-    '11111111-0000-0000-0000-000000000002',
     '00000000-0000-0000-0000-000000000000',
-    'registrar@umich-demo.arkova.io',
-    '$2a$10$QyvnzIZS3sKRHhim9XBaseroJHDDtPkZuvTpA0ZKge//.M6oUEF7.',
-    NOW(),
-    NOW(),
-    NOW(),
+    '44444444-0000-0000-0000-000000000002',
+    'authenticated', 'authenticated',
+    'sarah@arkova.ai',
+    '$2a$10$PznXcJEPjFjAM8Aq.KHO0epDNy0hVN5k5Y3lFD1R0P.2oJqB8vXi',
+    NOW(), NOW(), NOW(),
     '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Jordan Lee"}',
-    'authenticated',
-    'authenticated'
-  ),
-  -- ORG_B ADMIN: admin@midwest-medical.arkova.io (RLS isolation persona)
-  (
-    '22222222-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000000',
-    'admin@midwest-medical.arkova.io',
-    '$2a$10$QyvnzIZS3sKRHhim9XBaseroJHDDtPkZuvTpA0ZKge//.M6oUEF7.',
-    NOW(),
-    NOW(),
-    NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Dr. Renata Kowalski"}',
-    'authenticated',
-    'authenticated'
-  ),
-  -- INDIVIDUAL user: individual@demo.arkova.io (no org affiliation)
-  (
-    '33333333-0000-0000-0000-000000000001',
-    '00000000-0000-0000-0000-000000000000',
-    'individual@demo.arkova.io',
-    '$2a$10$QyvnzIZS3sKRHhim9XBaseroJHDDtPkZuvTpA0ZKge//.M6oUEF7.',
-    NOW(),
-    NOW(),
-    NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Casey Morgan"}',
-    'authenticated',
-    'authenticated'
-  )
-ON CONFLICT (id) DO NOTHING;
+    '{"full_name": "Sarah Rushton"}',
+    false, ''
+  );
 
--- Fix GoTrue compatibility: varchar token columns must be '' not NULL
--- (phone is text with unique constraint — leave NULL; GoTrue handles it as nullable)
-UPDATE auth.users SET
-  confirmation_token = COALESCE(confirmation_token, ''),
-  recovery_token = COALESCE(recovery_token, ''),
-  email_change_token_new = COALESCE(email_change_token_new, ''),
-  email_change_token_current = COALESCE(email_change_token_current, ''),
-  email_change = COALESCE(email_change, ''),
-  phone_change = COALESCE(phone_change, ''),
-  phone_change_token = COALESCE(phone_change_token, ''),
-  reauthentication_token = COALESCE(reauthentication_token, ''),
-  is_sso_user = COALESCE(is_sso_user, false)
-WHERE id IN (
-  '11111111-0000-0000-0000-000000000001',
-  '11111111-0000-0000-0000-000000000002',
-  '22222222-0000-0000-0000-000000000001',
-  '33333333-0000-0000-0000-000000000001'
+
+-- =============================================================================
+-- 3. AUTH IDENTITIES (required by Supabase auth)
+-- =============================================================================
+
+INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at) VALUES
+  (
+    gen_random_uuid(),
+    '44444444-0000-0000-0000-000000000001',
+    '{"sub": "44444444-0000-0000-0000-000000000001", "email": "carson@arkova.ai"}',
+    'email',
+    '44444444-0000-0000-0000-000000000001',
+    NOW(), NOW(), NOW()
+  ),
+  (
+    gen_random_uuid(),
+    '44444444-0000-0000-0000-000000000002',
+    '{"sub": "44444444-0000-0000-0000-000000000002", "email": "sarah@arkova.ai"}',
+    'email',
+    '44444444-0000-0000-0000-000000000002',
+    NOW(), NOW(), NOW()
+  );
+
+
+-- =============================================================================
+-- 4. ORGANIZATION — Arkova
+-- =============================================================================
+
+INSERT INTO organizations (id, legal_name, display_name, domain, verification_status)
+VALUES (
+  'aaaaaaaa-0000-0000-0000-000000000001',
+  'Arkova Inc.',
+  'Arkova',
+  'arkova.ai',
+  'VERIFIED'
 );
 
--- Auth identities (required for email/password login to work in Supabase)
-INSERT INTO auth.identities (
-  id,
-  user_id,
-  provider_id,
-  provider,
-  identity_data,
-  last_sign_in_at,
-  created_at,
-  updated_at
-) VALUES
-  (
-    '11111111-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    'email',
-    '{"sub": "11111111-0000-0000-0000-000000000001", "email": "admin@umich-demo.arkova.io"}',
-    NOW(), NOW(), NOW()
-  ),
-  (
-    '11111111-0000-0000-0000-000000000002',
-    '11111111-0000-0000-0000-000000000002',
-    '11111111-0000-0000-0000-000000000002',
-    'email',
-    '{"sub": "11111111-0000-0000-0000-000000000002", "email": "registrar@umich-demo.arkova.io"}',
-    NOW(), NOW(), NOW()
-  ),
-  (
-    '22222222-0000-0000-0000-000000000001',
-    '22222222-0000-0000-0000-000000000001',
-    '22222222-0000-0000-0000-000000000001',
-    'email',
-    '{"sub": "22222222-0000-0000-0000-000000000001", "email": "admin@midwest-medical.arkova.io"}',
-    NOW(), NOW(), NOW()
-  ),
-  (
-    '33333333-0000-0000-0000-000000000001',
-    '33333333-0000-0000-0000-000000000001',
-    '33333333-0000-0000-0000-000000000001',
-    'email',
-    '{"sub": "33333333-0000-0000-0000-000000000001", "email": "individual@demo.arkova.io"}',
-    NOW(), NOW(), NOW()
-  )
-ON CONFLICT DO NOTHING;
-
 
 -- =============================================================================
--- 3. ORGANIZATIONS
--- Schema: id, legal_name, display_name, domain, verification_status
+-- 5. PROFILES
 -- =============================================================================
 
-INSERT INTO organizations (id, public_id, legal_name, display_name, domain, verification_status, created_at, updated_at)
+INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile)
 VALUES
   (
+    '44444444-0000-0000-0000-000000000001',
+    'carson@arkova.ai',
+    'Carson Seeger',
+    'ORG_ADMIN',
     'aaaaaaaa-0000-0000-0000-000000000001',
-    'umch2025reg4',
-    'University of Michigan — Office of the Registrar',
-    'UMich Registrar',
-    'umich.edu',
-    'VERIFIED',
-    '2025-08-15 09:00:00+00',
-    '2025-08-15 09:00:00+00'
+    NULL,
+    true
   ),
   (
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    'mwmb2025med7',
-    'Midwest Medical Licensing Board',
-    'Midwest Medical Board',
-    'midwest-medical.org',
-    'VERIFIED',
-    '2025-10-01 14:00:00+00',
-    '2025-10-01 14:00:00+00'
-  )
-ON CONFLICT (id) DO NOTHING;
+    '44444444-0000-0000-0000-000000000002',
+    'sarah@arkova.ai',
+    'Sarah Rushton',
+    'ORG_ADMIN',
+    'aaaaaaaa-0000-0000-0000-000000000001',
+    NULL,
+    true
+  );
 
 
 -- =============================================================================
--- 4. PROFILES
--- Schema: id (= auth.users.id), email, full_name, role, org_id, etc.
--- Current schema: profiles.id references auth.users(id) directly.
+-- 6. ORG_MEMBERS (migration 0087 junction table)
 -- =============================================================================
 
-INSERT INTO profiles (id, public_id, email, org_id, full_name, role, created_at, updated_at)
+INSERT INTO org_members (user_id, org_id, role)
 VALUES
-  (
-    '11111111-0000-0000-0000-000000000001',
-    'usr4kx7mn2qp5e',
-    'admin@umich-demo.arkova.io',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'Alex Rivera',
-    'ORG_ADMIN',
-    '2025-08-15 09:05:00+00',
-    '2025-08-15 09:05:00+00'
-  ),
-  (
-    '11111111-0000-0000-0000-000000000002',
-    'usr8ht3wb6rf9a',
-    'registrar@umich-demo.arkova.io',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'Jordan Lee',
-    'ORG_MEMBER',
-    '2025-08-15 09:10:00+00',
-    '2025-08-15 09:10:00+00'
-  ),
-  (
-    '22222222-0000-0000-0000-000000000001',
-    'usr2jn9vc5ks4d',
-    'admin@midwest-medical.arkova.io',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    'Dr. Renata Kowalski',
-    'ORG_ADMIN',
-    '2025-10-01 14:05:00+00',
-    '2025-10-01 14:05:00+00'
-  ),
-  (
-    '33333333-0000-0000-0000-000000000001',
-    'usr6pm3yt8nw7g',
-    'individual@demo.arkova.io',
-    NULL,
-    'Casey Morgan',
-    'INDIVIDUAL',
-    '2025-11-01 10:00:00+00',
-    '2025-11-01 10:00:00+00'
-  )
-ON CONFLICT (id) DO NOTHING;
+  ('44444444-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'owner'),
+  ('44444444-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'admin')
+ON CONFLICT (user_id, org_id) DO NOTHING;
 
 
 -- =============================================================================
--- 5. MEMBERSHIPS
--- =============================================================================
-
-INSERT INTO memberships (id, user_id, org_id, role, created_at)
-VALUES
-  (
-    'eeeeeeee-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'ORG_ADMIN',
-    '2025-08-15 09:05:00+00'
-  ),
-  (
-    'eeeeeeee-0000-0000-0000-000000000002',
-    '11111111-0000-0000-0000-000000000002',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'ORG_MEMBER',
-    '2025-08-15 09:10:00+00'
-  ),
-  (
-    'eeeeeeee-0000-0000-0000-000000000003',
-    '22222222-0000-0000-0000-000000000001',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    'ORG_ADMIN',
-    '2025-10-01 14:05:00+00'
-  )
-ON CONFLICT (id) DO NOTHING;
-
-
--- =============================================================================
--- 5B. CREDENTIAL TEMPLATES — display templates for credential rendering (UF-05)
--- Templates define the field schema that CredentialRenderer uses.
--- default_metadata.fields defines what appears in the issuance form.
--- =============================================================================
-
-INSERT INTO credential_templates (
-  id,
-  org_id,
-  name,
-  description,
-  credential_type,
-  default_metadata,
-  is_active,
-  created_at,
-  updated_at
-) VALUES
-  -- UMich Registrar — Degree template
-  (
-    '00000000-0000-4000-a000-000000000101',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'University Degree',
-    'Academic degree credential (Bachelor, Master, Doctorate)',
-    'DEGREE',
-    '{"fields": [{"key": "institution", "label": "Institution", "type": "text", "required": true}, {"key": "degree_level", "label": "Degree Level", "type": "select", "required": true, "options": ["Bachelor of Arts", "Bachelor of Science", "Master of Arts", "Master of Science", "Master of Business Administration", "Doctor of Philosophy", "Juris Doctor", "Doctor of Medicine"]}, {"key": "program", "label": "Program / Major", "type": "text", "required": true}, {"key": "recipient", "label": "Recipient Name", "type": "text", "required": true}, {"key": "graduation_date", "label": "Graduation Date", "type": "date"}, {"key": "honors", "label": "Honors", "type": "select", "options": ["None", "Cum Laude", "Magna Cum Laude", "Summa Cum Laude"]}]}',
-    true,
-    '2025-08-15 10:00:00+00',
-    '2025-08-15 10:00:00+00'
-  ),
-  -- UMich Registrar — Transcript template
-  (
-    '00000000-0000-4000-a000-000000000102',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    'Academic Transcript',
-    'Official transcript of academic courses and grades',
-    'TRANSCRIPT',
-    '{"fields": [{"key": "institution", "label": "Institution", "type": "text", "required": true}, {"key": "student_name", "label": "Student Name", "type": "text", "required": true}, {"key": "program", "label": "Program", "type": "text"}, {"key": "academic_year", "label": "Academic Year", "type": "text"}, {"key": "gpa", "label": "GPA", "type": "number"}]}',
-    true,
-    '2025-08-15 10:00:00+00',
-    '2025-08-15 10:00:00+00'
-  ),
-  -- Midwest Medical Board — License template
-  (
-    '00000000-0000-4000-a000-000000000103',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    'Medical License',
-    'Professional medical license credential',
-    'LICENSE',
-    '{"fields": [{"key": "issuing_body", "label": "Issuing Body", "type": "text", "required": true}, {"key": "license_number", "label": "License Number", "type": "text", "required": true}, {"key": "licensee_name", "label": "Licensee Name", "type": "text", "required": true}, {"key": "specialty", "label": "Specialty", "type": "text"}, {"key": "jurisdiction", "label": "Jurisdiction", "type": "text"}, {"key": "expiry_date", "label": "Expiry Date", "type": "date"}]}',
-    true,
-    '2025-10-01 15:00:00+00',
-    '2025-10-01 15:00:00+00'
-  ),
-  -- Midwest Medical Board — Certificate template
-  (
-    '00000000-0000-4000-a000-000000000104',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    'Professional Certificate',
-    'Certificate of completion or continuing education',
-    'CERTIFICATE',
-    '{"fields": [{"key": "issuing_body", "label": "Issuing Body", "type": "text", "required": true}, {"key": "cert_number", "label": "Certificate Number", "type": "text"}, {"key": "recipient_name", "label": "Recipient Name", "type": "text", "required": true}, {"key": "program", "label": "Program / Course", "type": "text", "required": true}, {"key": "completion_date", "label": "Completion Date", "type": "date"}, {"key": "expiry_date", "label": "Expiry Date", "type": "date"}]}',
-    true,
-    '2025-10-01 15:00:00+00',
-    '2025-10-01 15:00:00+00'
-  )
-ON CONFLICT (id) DO NOTHING;
-
-
--- =============================================================================
--- 6. ANCHORS — the 8 demo credential records
---
--- Uses current schema column names:
---   fingerprint (not file_fingerprint), filename (not file_name),
---   chain_tx_id (not network_tx_id), chain_timestamp (not network_observed_at)
---
--- New columns from migration 0022: label, issued_at, expires_at,
---   revoked_at, revocation_reason
--- New columns from migration 0029-0031: credential_type, metadata,
---   parent_anchor_id, version_number
---
--- Fingerprints: valid SHA-256 hex strings (exactly 64 chars).
--- public_id: ARK-YYYY-NNNNN format.
--- =============================================================================
-
-INSERT INTO anchors (
-  id,
-  org_id,
-  user_id,
-  public_id,
-  label,
-  filename,
-  fingerprint,
-  status,
-  legal_hold,
-  credential_type,
-  metadata,
-  chain_tx_id,
-  chain_timestamp,
-  issued_at,
-  expires_at,
-  revoked_at,
-  revocation_reason,
-  created_at,
-  updated_at
-) VALUES
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 1: Maya Chen — BS Computer Science — SECURED
-  -- The flagship demo record. Everything resolved cleanly. Green badge.
-  -- -----------------------------------------------------------------------
-  (
-    'a1a1a1a1-0000-0000-0000-000000000001',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    'ARK-2024-00091',
-    'Bachelor of Science in Computer Science — Maya Chen',
-    'UMich_Diploma_Chen_Maya_BSc_CS_2024.pdf',
-    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    'SECURED',
-    false,
-    'DEGREE',
-    '{"issuer": "University of Michigan", "recipient": "Maya Chen", "program": "Computer Science", "degree_level": "Bachelor of Science"}',
-    'b7f3a9d2e1c84f6a0b8d5e2c9f1a3b7e4d6c8a0f2b4d6e8a1c3f5b7d9e2c4f6',
-    '2024-05-22 18:43:11+00',
-    '2024-05-10 00:00:00+00',
-    NULL,
-    NULL,
-    NULL,
-    '2024-05-20 14:32:07+00',
-    '2024-05-22 18:43:12+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 2: James Okafor — MBA, Ross School of Business — SECURED
-  -- legal_hold = true — tests legal hold constraints
-  -- -----------------------------------------------------------------------
-  (
-    'a2a2a2a2-0000-0000-0000-000000000002',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    'ARK-2023-00447',
-    'Master of Business Administration — James Okafor',
-    'UMich_Ross_MBA_Okafor_James_Dec2023.pdf',
-    '6dcd4ce23d88e2ee9568ba546c007c63d9131f268ef61c73ba6f5d3b28f2fcf5',
-    'SECURED',
-    true,
-    'DEGREE',
-    '{"issuer": "University of Michigan — Ross School of Business", "recipient": "James Okafor", "program": "Business Administration", "degree_level": "Master of Business Administration"}',
-    'c9e1b3f5a7d2e4c6b8a0f2d4e6c8b0a2f4b6d8e0a2c4f6b8d0e2a4c6f8b0d2',
-    '2023-12-18 02:11:44+00',
-    '2023-12-15 00:00:00+00',
-    NULL,
-    NULL,
-    NULL,
-    '2023-12-16 09:15:22+00',
-    '2023-12-18 02:11:45+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 3: Priya Sharma — RN License — REVOKED
-  -- Shows revocation flow. Gray badge + revocation reason in detail view.
-  -- -----------------------------------------------------------------------
-  (
-    'a3a3a3a3-0000-0000-0000-000000000003',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000002',
-    'ARK-2022-00183',
-    'Registered Nurse — State License — Priya Sharma',
-    'RN_License_Sharma_Priya_MI_2022.pdf',
-    'a87ff679a2f3e71d9181a67b7542122c3f6d2c0d6f4b8e1a3c5d7f9b2e4c6a80',
-    'REVOKED',
-    false,
-    'LICENSE',
-    '{"issuer": "State of Michigan Board of Nursing", "recipient": "Priya Sharma", "license_number": "RN-MI-2022-4471"}',
-    'f1d2e3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1',
-    '2022-03-04 11:22:33+00',
-    '2022-03-01 00:00:00+00',
-    NULL,
-    '2024-09-12 00:00:00+00',
-    'License surrendered — administrative review concluded September 2024.',
-    '2022-03-02 16:41:09+00',
-    '2024-09-12 10:05:33+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 4: Daniel Torres — PMP Certification — EXPIRED
-  -- PMPs renew every 3 years. This one lapsed. Shows expiry state.
-  -- -----------------------------------------------------------------------
-  (
-    'a4a4a4a4-0000-0000-0000-000000000004',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
-    'ARK-2023-00029',
-    'Project Management Professional (PMP) — Daniel Torres',
-    'PMP_Cert_Torres_Daniel_PMI_2023.pdf',
-    '1679091c5a880faf6fb5e6087eb1b2dc6767e74c8f5b5e7f5d5e5b5f5e5a5f50',
-    'EXPIRED',
-    false,
-    'PROFESSIONAL',
-    '{"issuer": "Project Management Institute (PMI)", "recipient": "Daniel Torres", "certification": "Project Management Professional", "pmi_id": "PMI-2023-DT-9922"}',
-    'd3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3',
-    '2023-02-09 08:57:01+00',
-    '2023-02-01 00:00:00+00',
-    '2026-01-31 23:59:59+00',
-    NULL,
-    NULL,
-    '2023-02-07 11:30:44+00',
-    '2026-02-01 00:01:00+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 5: Sarah Kim — MS Data Science — PENDING
-  -- In-flight record. No chain_tx_id yet. Amber badge.
-  -- -----------------------------------------------------------------------
-  (
-    'a5a5a5a5-0000-0000-0000-000000000005',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000002',
-    'ARK-2024-00312',
-    'Master of Science in Data Science — Sarah Kim',
-    'UMich_MSc_DataScience_Kim_Sarah_Aug2024.pdf',
-    '9bf31c7ff062936a96d3c8bd1f8f2ff3a5f4c0e3b1d2a4c6e8f0b2d4f6a8c0a0',
-    'PENDING',
-    false,
-    'DEGREE',
-    '{"issuer": "University of Michigan", "recipient": "Sarah Kim", "program": "Data Science", "degree_level": "Master of Science"}',
-    NULL,
-    NULL,
-    '2024-08-30 00:00:00+00',
-    NULL,
-    NULL,
-    NULL,
-    '2024-09-03 13:22:55+00',
-    '2024-09-03 13:22:55+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 6: Dr. Marcus Webb — MD License — SECURED (ORG_B)
-  -- Belongs to Midwest Medical Board. Proves RLS: when logged in
-  -- as UMich admin, this record must NOT appear.
-  -- -----------------------------------------------------------------------
-  (
-    'a6a6a6a6-0000-0000-0000-000000000006',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    '22222222-0000-0000-0000-000000000001',
-    'ARK-2025-00007',
-    'Medical Doctor License — State of Michigan — Dr. Marcus Webb',
-    'MD_License_Webb_Marcus_MI_Board_2025.pdf',
-    '3c59dc048e8850243be8079a5c74d079f735e7b6a4b4a8e63a4b8f6e7c9a0b20',
-    'SECURED',
-    false,
-    'LICENSE',
-    '{"issuer": "Midwest Medical Licensing Board", "recipient": "Dr. Marcus Webb", "license_type": "Medical Doctor", "jurisdiction": "State of Michigan"}',
-    'a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0',
-    '2025-01-14 20:05:18+00',
-    '2025-01-10 00:00:00+00',
-    '2027-01-09 23:59:59+00',
-    NULL,
-    NULL,
-    '2025-01-12 10:44:31+00',
-    '2025-01-14 20:05:19+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 7: Casey Morgan — Personal Certification — PENDING (INDIVIDUAL)
-  -- No org affiliation. Fingerprint matches duplicate test constant.
-  -- -----------------------------------------------------------------------
-  (
-    'a7a7a7a7-0000-0000-0000-000000000007',
-    NULL,
-    '33333333-0000-0000-0000-000000000001',
-    NULL,
-    'Personal Certification — Casey Morgan',
-    'CaseyMorgan_PersonalCert_2025.pdf',
-    'e5f6a890123456789012345678901234567890123456789012345678ef01abcd',
-    'PENDING',
-    false,
-    'CERTIFICATE',
-    '{"issuer": "Self-Issued", "recipient": "Casey Morgan", "certification": "Personal Achievement"}',
-    NULL,
-    NULL,
-    '2025-11-01 00:00:00+00',
-    NULL,
-    NULL,
-    NULL,
-    '2025-11-01 10:15:00+00',
-    '2025-11-01 10:15:00+00'
-  ),
-
-  -- -----------------------------------------------------------------------
-  -- ANCHOR 8: Casey Morgan — Professional Development — PENDING (INDIVIDUAL)
-  -- -----------------------------------------------------------------------
-  (
-    'a8a8a8a8-0000-0000-0000-000000000008',
-    NULL,
-    '33333333-0000-0000-0000-000000000001',
-    NULL,
-    'Professional Development Certificate — Casey Morgan',
-    'CaseyMorgan_ProfDev_2025.pdf',
-    'f6e5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5',
-    'PENDING',
-    false,
-    'CERTIFICATE',
-    '{"issuer": "Online Learning Platform", "recipient": "Casey Morgan", "certification": "Professional Development"}',
-    NULL,
-    NULL,
-    '2025-11-05 00:00:00+00',
-    NULL,
-    NULL,
-    NULL,
-    '2025-11-05 14:30:00+00',
-    '2025-11-05 14:30:00+00'
-  )
-
-ON CONFLICT (id) DO NOTHING;
-
-
--- =============================================================================
--- 7. AUDIT EVENTS
--- Append-only. One meaningful event per anchor.
--- Uses current schema columns: actor_ip (inet), details (text), event_category.
--- actor_ip omitted (NULL) for demo data — not relevant to click-through.
--- =============================================================================
-
-INSERT INTO audit_events (
-  id,
-  event_type,
-  event_category,
-  actor_id,
-  target_type,
-  target_id,
-  org_id,
-  details,
-  created_at
-) VALUES
-
-  -- Anchor 1: ANCHOR_CREATED + ANCHOR_SECURED
-  (
-    'ffffffff-0001-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a1a1a1a1-0000-0000-0000-000000000001',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"file_name": "UMich_Diploma_Chen_Maya_BSc_CS_2024.pdf", "label": "Bachelor of Science in Computer Science — Maya Chen"}',
-    '2024-05-20 14:32:07+00'
-  ),
-  (
-    'ffffffff-0001-0000-0000-000000000002',
-    'ANCHOR_SECURED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a1a1a1a1-0000-0000-0000-000000000001',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"chain_tx_id": "b7f3a9d2e1c84f6a0b8d5e2c9f1a3b7e4d6c8a0f2b4d6e8a1c3f5b7d9e2c4f6", "chain_timestamp": "2024-05-22T18:43:11Z"}',
-    '2024-05-22 18:43:12+00'
-  ),
-
-  -- Anchor 2: ANCHOR_CREATED + ANCHOR_SECURED
-  (
-    'ffffffff-0002-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a2a2a2a2-0000-0000-0000-000000000002',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"file_name": "UMich_Ross_MBA_Okafor_James_Dec2023.pdf", "label": "Master of Business Administration — James Okafor"}',
-    '2023-12-16 09:15:22+00'
-  ),
-  (
-    'ffffffff-0002-0000-0000-000000000002',
-    'ANCHOR_SECURED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a2a2a2a2-0000-0000-0000-000000000002',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"chain_tx_id": "c9e1b3f5a7d2e4c6b8a0f2d4e6c8b0a2f4b6d8e0a2c4f6b8d0e2a4c6f8b0d2", "chain_timestamp": "2023-12-18T02:11:44Z"}',
-    '2023-12-18 02:11:45+00'
-  ),
-
-  -- Anchor 3: ANCHOR_CREATED + ANCHOR_SECURED + ANCHOR_REVOKED
-  (
-    'ffffffff-0003-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000002',
-    'anchor',
-    'a3a3a3a3-0000-0000-0000-000000000003',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"file_name": "RN_License_Sharma_Priya_MI_2022.pdf", "label": "Registered Nurse — State License — Priya Sharma"}',
-    '2022-03-02 16:41:09+00'
-  ),
-  (
-    'ffffffff-0003-0000-0000-000000000002',
-    'ANCHOR_SECURED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000002',
-    'anchor',
-    'a3a3a3a3-0000-0000-0000-000000000003',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"chain_tx_id": "f1d2e3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1", "chain_timestamp": "2022-03-04T11:22:33Z"}',
-    '2022-03-04 11:22:34+00'
-  ),
-  (
-    'ffffffff-0003-0000-0000-000000000003',
-    'ANCHOR_REVOKED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a3a3a3a3-0000-0000-0000-000000000003',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"reason": "License surrendered — administrative review concluded September 2024.", "revoked_by": "Alex Rivera"}',
-    '2024-09-12 10:05:33+00'
-  ),
-
-  -- Anchor 4: ANCHOR_CREATED + ANCHOR_SECURED (expired state is system-managed)
-  (
-    'ffffffff-0004-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a4a4a4a4-0000-0000-0000-000000000004',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"file_name": "PMP_Cert_Torres_Daniel_PMI_2023.pdf", "label": "Project Management Professional (PMP) — Daniel Torres"}',
-    '2023-02-07 11:30:44+00'
-  ),
-  (
-    'ffffffff-0004-0000-0000-000000000002',
-    'ANCHOR_SECURED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000001',
-    'anchor',
-    'a4a4a4a4-0000-0000-0000-000000000004',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"chain_tx_id": "d3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3e5f7a9b1c3", "chain_timestamp": "2023-02-09T08:57:01Z"}',
-    '2023-02-09 08:57:02+00'
-  ),
-
-  -- Anchor 5: ANCHOR_CREATED only (PENDING — worker hasn't confirmed yet)
-  (
-    'ffffffff-0005-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '11111111-0000-0000-0000-000000000002',
-    'anchor',
-    'a5a5a5a5-0000-0000-0000-000000000005',
-    'aaaaaaaa-0000-0000-0000-000000000001',
-    '{"file_name": "UMich_MSc_DataScience_Kim_Sarah_Aug2024.pdf", "label": "Master of Science in Data Science — Sarah Kim"}',
-    '2024-09-03 13:22:55+00'
-  ),
-
-  -- Anchor 6: ORG_B — ANCHOR_CREATED + ANCHOR_SECURED
-  (
-    'ffffffff-0006-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '22222222-0000-0000-0000-000000000001',
-    'anchor',
-    'a6a6a6a6-0000-0000-0000-000000000006',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    '{"file_name": "MD_License_Webb_Marcus_MI_Board_2025.pdf", "label": "Medical Doctor License — State of Michigan — Dr. Marcus Webb"}',
-    '2025-01-12 10:44:31+00'
-  ),
-  (
-    'ffffffff-0006-0000-0000-000000000002',
-    'ANCHOR_SECURED',
-    'ANCHOR',
-    '22222222-0000-0000-0000-000000000001',
-    'anchor',
-    'a6a6a6a6-0000-0000-0000-000000000006',
-    'bbbbbbbb-0000-0000-0000-000000000001',
-    '{"chain_tx_id": "a0b2c4d6e8f0a2b4c6d8e0f2a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a0", "chain_timestamp": "2025-01-14T20:05:18Z"}',
-    '2025-01-14 20:05:19+00'
-  ),
-
-  -- Anchor 7: INDIVIDUAL user — ANCHOR_CREATED (PENDING)
-  (
-    'ffffffff-0007-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '33333333-0000-0000-0000-000000000001',
-    'anchor',
-    'a7a7a7a7-0000-0000-0000-000000000007',
-    NULL,
-    '{"file_name": "CaseyMorgan_PersonalCert_2025.pdf", "label": "Personal Certification — Casey Morgan"}',
-    '2025-11-01 10:15:00+00'
-  ),
-
-  -- Anchor 8: INDIVIDUAL user — ANCHOR_CREATED (PENDING)
-  (
-    'ffffffff-0008-0000-0000-000000000001',
-    'ANCHOR_CREATED',
-    'ANCHOR',
-    '33333333-0000-0000-0000-000000000001',
-    'anchor',
-    'a8a8a8a8-0000-0000-0000-000000000008',
-    NULL,
-    '{"file_name": "CaseyMorgan_ProfDev_2025.pdf", "label": "Professional Development Certificate — Casey Morgan"}',
-    '2025-11-05 14:30:00+00'
-  )
-
-ON CONFLICT (id) DO NOTHING;
-
-
--- =============================================================================
--- 8. CLEAN UP spurious anchoring_jobs created by the INSERT trigger
--- The trigger auto_create_anchoring_job fires on every anchor insert, but
--- seed records already have their final status. Remove the stale jobs.
--- =============================================================================
-
-DELETE FROM anchoring_jobs WHERE anchor_id IN (
-  'a1a1a1a1-0000-0000-0000-000000000001',
-  'a2a2a2a2-0000-0000-0000-000000000002',
-  'a3a3a3a3-0000-0000-0000-000000000003',
-  'a4a4a4a4-0000-0000-0000-000000000004',
-  'a6a6a6a6-0000-0000-0000-000000000006'
-);
--- Keep the jobs for PENDING anchors (5, 7, 8) — they should be in-flight.
-
-
--- =============================================================================
--- 9. VERIFY (run after db reset to confirm seed is working)
--- =============================================================================
--- SELECT status, COUNT(*) FROM anchors GROUP BY status;
--- Expected:
---   SECURED  | 3
---   PENDING  | 3  (anchors 5, 7, 8)
---   REVOKED  | 1
---   EXPIRED  | 1
---
--- SELECT COUNT(*) FROM audit_events;
--- Expected: 13
---
--- SELECT COUNT(*) FROM anchors WHERE org_id = 'aaaaaaaa-0000-0000-0000-000000000001';
--- Expected: 5  (ORG_A)
---
--- SELECT COUNT(*) FROM anchors WHERE org_id = 'bbbbbbbb-0000-0000-0000-000000000001';
--- Expected: 1  (ORG_B — must NOT appear when logged in as UMich admin)
---
--- SELECT COUNT(*) FROM anchors WHERE user_id = '33333333-0000-0000-0000-000000000001';
--- Expected: 2  (INDIVIDUAL user — no org)
---
--- SELECT legal_hold FROM anchors WHERE id = 'a2a2a2a2-0000-0000-0000-000000000002';
--- Expected: true
--- =============================================================================
-
--- =============================================================================
--- 9. RE-SEED SWITCHBOARD FLAGS
--- =============================================================================
--- The TRUNCATE TABLE profiles CASCADE above cascades to switchboard_flags
--- (via updated_by FK), wiping the data seeded by migration 0021.
--- Re-insert here to ensure flags exist for tests and local dev.
+-- 7. SWITCHBOARD FLAGS
+-- The TRUNCATE profiles CASCADE above may cascade to switchboard_flags
+-- (via updated_by FK). Re-insert to ensure flags exist.
 -- =============================================================================
 
 INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
@@ -923,9 +188,8 @@ ON CONFLICT (id) DO NOTHING;
 
 
 -- =============================================================================
--- 10. PLANS + SUBSCRIPTIONS — ensure demo accounts bypass free-tier limits
--- Plans are created by migration 0016 but may be truncated by CASCADE.
--- Re-insert here to ensure they exist for demo.
+-- 8. PLANS
+-- Plans created by migration 0016 but may be truncated by CASCADE.
 -- =============================================================================
 
 INSERT INTO plans (id, name, description, price_cents, billing_period, records_per_month, features)
@@ -936,12 +200,12 @@ VALUES
   ('organization', 'Organization', 'For enterprise teams', 0, 'custom', 999999, '["Unlimited records", "Dedicated support", "Custom integrations", "SLA guarantee"]')
 ON CONFLICT (id) DO NOTHING;
 
--- Give demo org admin a Professional subscription (100 records/month) so demo isn't blocked
+-- Active subscription for Carson (platform admin)
 INSERT INTO subscriptions (id, user_id, org_id, plan_id, status, current_period_start, current_period_end)
 VALUES
   (
     'dddddddd-0000-0000-0000-000000000001',
-    '11111111-0000-0000-0000-000000000001',
+    '44444444-0000-0000-0000-000000000001',
     'aaaaaaaa-0000-0000-0000-000000000001',
     'professional',
     'active',
