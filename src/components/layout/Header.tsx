@@ -6,7 +6,7 @@
  */
 
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, User, Settings, ChevronDown, CreditCard, HelpCircle, Code2 } from 'lucide-react';
+import { LogOut, User, Settings, ChevronDown, CreditCard, HelpCircle, Code2, Info } from 'lucide-react';
 import { Breadcrumbs } from './Breadcrumbs';
 import { Button } from '@/components/ui/button';
 import {
@@ -119,6 +119,10 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
           <DropdownMenuItem onClick={() => navigate(ROUTES.DEVELOPERS)}>
             <Code2 className="mr-2 h-4 w-4" />
             Developers
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => navigate(ROUTES.ABOUT)}>
+            <Info className="mr-2 h-4 w-4" />
+            About Arkova
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
