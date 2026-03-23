@@ -25,6 +25,9 @@ const dbAny = db as any;
 export const X402_PRICING: Record<string, number> = {
   '/api/v1/verify': 0.002,
   '/api/v1/verify/batch': 0.002, // per item — multiplied by count
+  '/api/v1/verify/entity': 0.005,
+  '/api/v1/compliance/check': 0.01,
+  '/api/v1/regulatory/lookup': 0.002,
   '/api/v1/ai/search': 0.01,
   '/api/v1/nessie/query': 0.01,
 };
