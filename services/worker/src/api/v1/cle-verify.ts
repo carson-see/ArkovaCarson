@@ -110,7 +110,8 @@ router.get('/verify', async (req: Request, res: Response) => {
     const { data: anchors } = await db
       .from('anchors')
       .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, chain_block_height')
-      .eq('credential_type', 'CLE')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .eq('credential_type', 'CLE' as any)
       .eq('status', 'SECURED')
       .order('created_at', { ascending: false });
 
@@ -209,7 +210,8 @@ router.get('/credits', async (req: Request, res: Response) => {
     let query = db
       .from('anchors')
       .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, public_id')
-      .eq('credential_type', 'CLE')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .eq('credential_type', 'CLE' as any)
       .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
       .order('created_at', { ascending: false });
 
@@ -297,7 +299,8 @@ router.post('/submit', async (req: Request, res: Response) => {
         fingerprint: `cle_${data.bar_number}_${data.course_title}_${data.completion_date}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64).padEnd(64, '0'),
         filename: `CLE_${data.jurisdiction}_${data.bar_number}_${data.completion_date}.json`,
         file_size: 0,
-        credential_type: 'CLE',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        credential_type: 'CLE' as any,
         metadata: {
           bar_number: data.bar_number,
           attorney_name: data.attorney_name ?? null,
