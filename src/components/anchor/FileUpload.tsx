@@ -20,10 +20,60 @@ export function isBulkUploadFile(file: File): boolean {
     || file.type === 'application/vnd.ms-excel';
 }
 
+/** Check if a file is a JSON file (potential attestation) */
+export function isJsonFile(file: File): boolean {
+  const ext = file.name.toLowerCase().split('.').pop() ?? '';
+  return ext === 'json' || file.type === 'application/json';
+}
+
+/** Parse a JSON file and check if it's an attestation document */
+export async function parseAttestationFile(file: File): Promise<AttestationUpload | null> {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    // Check for attestation markers
+    if (data.document_type === 'attestation' || data.attestation_type || (data.claims && data.attester)) {
+      return {
+        attestation_type: data.attestation_type ?? data.type ?? 'VERIFICATION',
+        subject_type: data.subject?.type ?? data.subject_type ?? 'credential',
+        subject_identifier: data.subject?.identifier ?? data.subject_identifier ?? data.subject ?? '',
+        attester_name: data.attester?.name ?? data.attester_name ?? '',
+        attester_type: data.attester?.type ?? data.attester_type ?? 'INSTITUTION',
+        attester_title: data.attester?.title ?? data.attester_title ?? null,
+        claims: (data.claims ?? []).map((c: { claim?: string; evidence?: string; text?: string }) => ({
+          claim: c.claim ?? c.text ?? '',
+          evidence: c.evidence,
+        })),
+        summary: data.summary ?? data.description ?? null,
+        jurisdiction: data.jurisdiction ?? null,
+        expires_at: data.expires_at ?? null,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export interface AttestationUpload {
+  attestation_type: string;
+  subject_type: string;
+  subject_identifier: string;
+  attester_name: string;
+  attester_type: string;
+  attester_title: string | null;
+  claims: Array<{ claim: string; evidence?: string }>;
+  summary: string | null;
+  jurisdiction: string | null;
+  expires_at: string | null;
+}
+
 interface FileUploadProps {
   onFileSelect: (file: File, fingerprint: string) => void;
   /** Called when a bulk upload file (CSV/XLSX) or multiple files are detected */
   onBulkDetected?: (files: File[]) => void;
+  /** Called when a JSON attestation file is detected */
+  onAttestationDetected?: (data: AttestationUpload) => void;
   disabled?: boolean;
 }
 
@@ -33,7 +83,7 @@ interface SelectedFile {
   processing: boolean;
 }
 
-export function FileUpload({ onFileSelect, onBulkDetected, disabled }: Readonly<FileUploadProps>) {
+export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected, disabled }: Readonly<FileUploadProps>) {
   const [dragActive, setDragActive] = useState(false);
   const [selectedFile, setSelectedFile] = useState<SelectedFile | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -77,9 +127,16 @@ export function FileUpload({ onFileSelect, onBulkDetected, disabled }: Readonly<
         onBulkDetected?.(Array.from(files));
         return;
       }
+      // JSON → check if attestation
+      if (isJsonFile(files[0]) && onAttestationDetected) {
+        parseAttestationFile(files[0]).then((att) => {
+          if (att) { onAttestationDetected(att); } else { processFile(files[0]); }
+        });
+        return;
+      }
       processFile(files[0]);
     }
-  }, [disabled, processFile, onBulkDetected]);
+  }, [disabled, processFile, onBulkDetected, onAttestationDetected]);
 
   const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -88,9 +145,15 @@ export function FileUpload({ onFileSelect, onBulkDetected, disabled }: Readonly<
         onBulkDetected?.(Array.from(files));
         return;
       }
+      if (isJsonFile(files[0]) && onAttestationDetected) {
+        parseAttestationFile(files[0]).then((att) => {
+          if (att) { onAttestationDetected(att); } else { processFile(files[0]); }
+        });
+        return;
+      }
       processFile(files[0]);
     }
-  }, [processFile, onBulkDetected]);
+  }, [processFile, onBulkDetected, onAttestationDetected]);
 
   const handleRemove = useCallback(() => {
     setSelectedFile(null);

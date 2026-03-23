@@ -33,8 +33,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { FileUpload } from './FileUpload';
+import { FileUpload, type AttestationUpload } from './FileUpload';
 import { BulkUploadWizard } from '@/components/upload';
+import { WORKER_URL } from '@/lib/workerClient';
 import { TemplateSelector } from './TemplateSelector';
 import type { TemplateOption } from './TemplateSelector';
 import { AIFieldSuggestions } from './AIFieldSuggestions';
@@ -56,7 +57,7 @@ interface SecureDocumentDialogProps {
   onSuccess?: () => void;
 }
 
-type Step = 'upload' | 'extracting' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk';
+type Step = 'upload' | 'extracting' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
 
 interface FileData {
   file: File;
@@ -106,6 +107,61 @@ export function SecureDocumentDialog({
   const handleBulkDetected = useCallback((_files: File[]) => {
     setStep('bulk');
   }, []);
+
+  // Attestation upload state
+  const [attestationData, setAttestationData] = useState<AttestationUpload | null>(null);
+
+  const handleAttestationDetected = useCallback((data: AttestationUpload) => {
+    setAttestationData(data);
+    setStep('attestation-review');
+  }, []);
+
+  const handleAttestationSubmit = useCallback(async () => {
+    if (!attestationData || !user) return;
+    setStep('attestation-submitting');
+    setError(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setError('Authentication required'); setStep('error'); return; }
+
+      const workerUrl = import.meta.env.VITE_WORKER_URL ?? WORKER_URL;
+      const response = await fetch(`${workerUrl}/api/v1/attestations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          attestation_type: attestationData.attestation_type,
+          attester_name: attestationData.attester_name,
+          attester_type: attestationData.attester_type,
+          attester_title: attestationData.attester_title || undefined,
+          subject_type: attestationData.subject_type,
+          subject_identifier: attestationData.subject_identifier,
+          claims: attestationData.claims.filter(c => c.claim.trim()),
+          summary: attestationData.summary || undefined,
+          jurisdiction: attestationData.jurisdiction || undefined,
+          expires_at: attestationData.expires_at || undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Failed to create attestation' }));
+        setError(err.error || 'Failed to create attestation');
+        setStep('error');
+        return;
+      }
+
+      const result = await response.json();
+      setCreatedAnchor({ id: result.attestation_id, publicId: result.public_id });
+      toast.success('Attestation created successfully');
+      setStep('success');
+      onSuccess?.();
+    } catch {
+      setError('Network error — please try again');
+      setStep('error');
+    }
+  }, [attestationData, user, onSuccess]);
 
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
@@ -252,6 +308,7 @@ export function SecureDocumentDialog({
     setLinkCopied(false);
     setExtractedFields([]);
     setExtractionProgress(null);
+    setAttestationData(null);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -301,8 +358,59 @@ export function SecureDocumentDialog({
             <FileUpload
               onFileSelect={handleFileSelect}
               onBulkDetected={handleBulkDetected}
+              onAttestationDetected={handleAttestationDetected}
               disabled={false}
             />
+          )}
+
+          {step === 'attestation-review' && attestationData && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-[#00d4ff]/20 bg-[#00d4ff]/5 px-4 py-3">
+                <p className="text-sm font-medium flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-[#00d4ff]" />
+                  Attestation detected
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  This file contains an attestation that will be anchored to the network.
+                </p>
+              </div>
+              <div className="rounded-lg border p-4 space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Type</span>
+                  <span className="font-medium">{attestationData.attestation_type.replace(/_/g, ' ')}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Subject</span>
+                  <span className="font-medium truncate max-w-[250px]">{attestationData.subject_identifier}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Attester</span>
+                  <span className="font-medium">{attestationData.attester_name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Claims</span>
+                  <span className="font-medium">{attestationData.claims.length}</span>
+                </div>
+                {attestationData.jurisdiction && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-muted-foreground">Jurisdiction</span>
+                    <span className="font-medium">{attestationData.jurisdiction}</span>
+                  </div>
+                )}
+                {attestationData.summary && (
+                  <div className="border-t pt-2 mt-2">
+                    <p className="text-xs text-muted-foreground">{attestationData.summary}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {step === 'attestation-submitting' && (
+            <div className="flex flex-col items-center justify-center py-8">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+              <p className="text-sm text-muted-foreground">Creating attestation and anchoring to network...</p>
+            </div>
           )}
 
           {step === 'bulk' && (
@@ -612,6 +720,17 @@ export function SecureDocumentDialog({
               </Button>
               <Button onClick={handleRetry}>
                 {SECURE_DIALOG_LABELS.TRY_AGAIN}
+              </Button>
+            </>
+          )}
+          {step === 'attestation-review' && (
+            <>
+              <Button variant="outline" onClick={handleClose}>
+                Cancel
+              </Button>
+              <Button onClick={handleAttestationSubmit}>
+                <Shield className="mr-2 h-4 w-4" />
+                Create Attestation
               </Button>
             </>
           )}
