@@ -1,0 +1,129 @@
+# Arkova — Full Documentation for AI Systems
+
+> Arkova is a privacy-first document verification platform that creates tamper-proof cryptographic fingerprints of documents entirely in the user's browser using SHA-256 via the Web Crypto API. The fingerprints are anchored to a permanent public network, creating independently verifiable proof of document existence and integrity. Documents never leave the user's device.
+
+## Company
+
+- Name: Arkova
+- Website: https://arkova.ai
+- App: https://app.arkova.ai
+- Contact: hello@arkova.ai
+- Founded: 2025
+- Founders: Carson Seeger, Sarah Rushton, Dr. Yaacov Petscher
+- LinkedIn: https://www.linkedin.com/company/arkovatech
+- X/Twitter: https://x.com/arkovatech
+- YouTube: https://www.youtube.com/channel/UCTTDFFSLxl85omCeJ9DBvrg
+- GitHub: https://github.com/carson-see/ArkovaCarson
+
+## How It Works
+
+1. **Upload:** User selects a document in their browser.
+2. **Fingerprint:** A SHA-256 fingerprint is computed client-side. Document bytes never leave the device.
+3. **Anchor:** The fingerprint is anchored to a permanent public network with an immutable timestamp via OP_RETURN.
+4. **Verify:** Anyone can verify the document by re-fingerprinting it and checking the result against the public record. No account required.
+
+## Capabilities
+
+- Client-side SHA-256 cryptographic fingerprinting (Web Crypto API)
+- Public verification via shareable links and QR codes (no login required)
+- AI-powered credential metadata extraction and classification (Gemini)
+- Verification API (REST) with batch processing (up to 100 per request)
+- PDF proof certificates with full audit trails
+- Bulk CSV/XLSX credential anchoring for organizations
+- Organization management with role-based access control
+- 16 credential templates for standardized issuance
+- Webhook notifications for real-time event delivery
+- Downloadable JSON proof packages
+- Semantic search across 22,000+ public records (EDGAR, Federal Register, DAPIP, OpenAlex)
+- MCP server for AI agent access at edge.arkova.ai
+
+## API Reference
+
+Base URL: `https://app.arkova.ai/api/v1`
+
+### Verify a Credential
+
+```
+GET /verify/:publicId
+```
+
+Returns verification status and metadata for a credential by its public identifier.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| verified | boolean | Whether the credential is verified on the network |
+| status | string | ACTIVE, REVOKED, SUPERSEDED, or EXPIRED |
+| issuer_name | string | Organization that issued the credential |
+| credential_type | string | DEGREE, CERTIFICATE, LICENSE, etc. |
+| issued_date | string or null | ISO 8601 issue date |
+| expiry_date | string or null | ISO 8601 expiry date |
+| anchor_timestamp | string | ISO 8601 timestamp when anchored |
+| record_uri | string | Canonical verification URL |
+
+### Verify by Fingerprint
+
+```
+POST /verify-anchor
+Content-Type: application/json
+
+{ "fingerprint": "<64-char hex SHA-256 fingerprint>" }
+```
+
+### Search Credentials
+
+```
+GET /verify/search?q=<query>&max_results=<n>
+```
+
+Semantic search across verified credentials using natural language.
+
+### Authentication
+
+- **API Key:** Pass via `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
+- **Public verification:** No authentication required for read-only verification lookups
+
+### Rate Limits
+
+| Tier | Limit |
+|------|-------|
+| Anonymous | 100 req/min per IP |
+| Free API key | 1,000 req/min |
+| Batch endpoints | 10 req/min per key |
+
+Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) included on every response.
+
+## MCP Server
+
+- **Endpoint:** `https://edge.arkova.ai/mcp`
+- **Transport:** Streamable HTTP
+
+### Tools
+
+- `verify_credential` — Verify a credential by public ID. Input: `{ "public_id": "string" }`
+- `search_credentials` — Search credentials by natural language query. Input: `{ "query": "string", "max_results": number }`
+- `verify_fingerprint` — Check if a SHA-256 fingerprint matches an anchored record. Input: `{ "fingerprint": "string" }`
+
+## Use Cases
+
+- **Universities:** Verify degrees, transcripts, and academic certificates
+- **Professional bodies:** Anchor and verify professional licenses and certifications
+- **Legal & IP:** Timestamp contracts, patents, and compliance documents
+- **HR/ATS systems:** Programmatic credential verification via API
+- **AI agents:** Machine-verifiable record lookup via MCP or REST API
+- **Government:** Public record verification for regulatory filings
+
+## Privacy Model
+
+- Documents are fingerprinted entirely in the user's browser using SHA-256
+- Document bytes never leave the user's device — only the cryptographic fingerprint is transmitted
+- Recipient identifiers are always anonymized — raw PII is never stored or returned
+- The platform cannot access, read, or reconstruct original documents from fingerprints
+- AI-powered metadata extraction runs client-side with PII stripping before any server transmission
+
+## Pricing
+
+Free tier available with unlimited anchoring during beta. Three paid tiers available.
+
+## Structured Data
+
+Arkova provides Organization, SoftwareApplication, FAQPage, HowTo, Article, and Person schema markup at https://arkova.ai for search engine and AI system consumption.
