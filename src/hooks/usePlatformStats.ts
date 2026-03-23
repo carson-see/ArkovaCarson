@@ -11,7 +11,13 @@ import { workerFetch } from '@/lib/workerClient';
 export interface PlatformStats {
   users: { total: number; last7Days: number };
   organizations: { total: number };
-  anchors: { total: number; byStatus: Record<string, number>; last24h: number };
+  anchors: {
+    total: number;
+    byStatus: Record<string, number>;
+    last24h: number;
+    avgSatsPerAnchor: number | null;
+    totalFeeSats: number | null;
+  };
   subscriptions: { byPlan: Record<string, number> };
 }
 

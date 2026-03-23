@@ -27,8 +27,15 @@ const MAX_TX_CHECKS_PER_RUN = 50;
 /** Concurrency for parallel mempool.space API calls */
 const MEMPOOL_CONCURRENCY = 5;
 
-/** Minimum confirmations to consider a transaction confirmed */
-const MIN_CONFIRMATIONS = 1;
+/** Minimum confirmations to consider a transaction confirmed.
+ * CRIT-1: 6 confirmations for mainnet (Bitcoin Core standard for "settled"),
+ * 1 for signet/testnet (fast development cycles).
+ * On mainnet, 1-block reorgs occur ~monthly. 6 confirmations makes reorg
+ * invalidation statistically negligible (probability < 1e-10).
+ */
+function getMinConfirmations(): number {
+  return config.bitcoinNetwork === 'mainnet' ? 6 : 1;
+}
 
 /**
  * Mempool.space transaction status response shape
@@ -158,7 +165,7 @@ async function checkAnchorConfirmation(anchor: {
   org_id: string | null;
   fingerprint: string;
   public_id: string | null;
-}): Promise<boolean> {
+}, currentTipHeight: number): Promise<boolean> {
   const txData = await fetchTxStatus(anchor.chain_tx_id);
 
   if (!txData?.status.confirmed) {
@@ -171,14 +178,44 @@ async function checkAnchorConfirmation(anchor: {
     ? new Date(txData.status.block_time * 1000).toISOString()
     : new Date().toISOString();
 
-  // Promote SUBMITTED → SECURED
+  // CRIT-1: Calculate actual confirmations from block height difference
+  const minConfirmations = getMinConfirmations();
+  let confirmations = 1; // At minimum, TX is in a block
+  if (blockHeight > 0 && currentTipHeight > 0) {
+    confirmations = currentTipHeight - blockHeight + 1;
+  }
+
+  // CRIT-1: Only promote to SECURED when sufficient confirmations reached
+  if (confirmations < minConfirmations) {
+    // Update chain index with current confirmation count (progress tracking)
+    await db
+      .from('anchor_chain_index')
+      .upsert(
+        {
+          fingerprint_sha256: anchor.fingerprint,
+          chain_tx_id: anchor.chain_tx_id,
+          chain_block_height: blockHeight,
+          chain_block_timestamp: blockTimestamp,
+          confirmations,
+          anchor_id: anchor.id,
+        },
+        { onConflict: 'fingerprint_sha256,chain_tx_id' },
+      );
+
+    logger.debug(
+      { anchorId: anchor.id, confirmations, required: minConfirmations, blockHeight },
+      `Anchor confirmed but waiting for ${minConfirmations} confirmations (${confirmations}/${minConfirmations})`,
+    );
+    return false;
+  }
+
+  // Promote SUBMITTED → SECURED (sufficient confirmations reached)
   const { error: updateError } = await db
     .from('anchors')
     .update({
       status: 'SECURED',
       chain_block_height: blockHeight,
       chain_timestamp: blockTimestamp,
-      // chain_confirmations: MIN_CONFIRMATIONS, — column pending migration 0068b
     })
     .eq('id', anchor.id)
     .eq('status', 'SUBMITTED'); // Guard: only update if still SUBMITTED
@@ -197,7 +234,7 @@ async function checkAnchorConfirmation(anchor: {
         chain_tx_id: anchor.chain_tx_id,
         chain_block_height: blockHeight,
         chain_block_timestamp: blockTimestamp,
-        confirmations: MIN_CONFIRMATIONS,
+        confirmations,
         anchor_id: anchor.id,
       },
       { onConflict: 'fingerprint_sha256,chain_tx_id' },
@@ -314,8 +351,23 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   // Take only MAX_TX_CHECKS_PER_RUN unique tx_ids
   const txIds = Array.from(txGroups.keys()).slice(0, MAX_TX_CHECKS_PER_RUN);
 
+  // CRIT-1: Fetch current chain tip height for confirmation counting
+  let currentTipHeight = 0;
+  try {
+    const baseUrl = getMempoolBaseUrl();
+    const tipResp = await fetch(`${baseUrl}/api/blocks/tip/height`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (tipResp.ok) {
+      currentTipHeight = parseInt(await tipResp.text(), 10);
+    }
+  } catch {
+    logger.warn('Failed to fetch chain tip height — using block-relative confirmations');
+  }
+
+  const minConf = getMinConfirmations();
   logger.info(
-    { uniqueTxIds: txIds.length, totalAnchors: anchors.length, totalUniqueTx: txGroups.size },
+    { uniqueTxIds: txIds.length, totalAnchors: anchors.length, totalUniqueTx: txGroups.size, currentTipHeight, minConfirmations: minConf },
     'Checking SUBMITTED anchors grouped by tx_id',
   );
 
@@ -341,9 +393,9 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
         // Process in parallel batches of 50 to avoid overwhelming DB
         const CONFIRM_BATCH_SIZE = 50;
         for (let j = 0; j < groupAnchors.length; j += CONFIRM_BATCH_SIZE) {
-          const batch = groupAnchors.slice(j, j + CONFIRM_BATCH_SIZE);
-          const results = await Promise.allSettled(
-            batch.map((anchor) =>
+          const confirmBatch = groupAnchors.slice(j, j + CONFIRM_BATCH_SIZE);
+          const confirmResults = await Promise.allSettled(
+            confirmBatch.map((anchor) =>
               checkAnchorConfirmation({
                 id: anchor.id,
                 chain_tx_id: anchor.chain_tx_id!,
@@ -351,10 +403,10 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
                 org_id: anchor.org_id,
                 fingerprint: anchor.fingerprint,
                 public_id: anchor.public_id,
-              }),
+              }, currentTipHeight),
             ),
           );
-          for (const result of results) {
+          for (const result of confirmResults) {
             if (result.status === 'fulfilled' && result.value) groupConfirmed++;
           }
         }

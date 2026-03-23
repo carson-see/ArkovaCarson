@@ -212,10 +212,16 @@ export async function createChainClient(): Promise<ChainClient> {
       wif: config.bitcoinTreasuryWif,
     });
 
+    // INEFF-5: When FORCE_DYNAMIC_FEE_ESTIMATION is enabled, use mempool.space
+    // fee estimator even on signet/testnet to validate the full fee path pre-mainnet
+    const feeStrategy = config.forceDynamicFeeEstimation
+      ? 'mempool'
+      : (config.bitcoinFeeStrategy ?? 'static');
     const feeEstimator = createFeeEstimator({
-      strategy: config.bitcoinFeeStrategy ?? 'static',
+      strategy: feeStrategy,
       staticRate: config.bitcoinStaticFeeRate,
       fallbackRate: config.bitcoinFallbackFeeRate,
+      mempoolApiUrl: config.mempoolApiUrl,
     });
 
     logger.info(
