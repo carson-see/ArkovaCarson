@@ -43,23 +43,23 @@ const RLS_TEST_PASSWORD = requireEnv('RLS_TEST_PASSWORD');
 export type TypedClient = SupabaseClient<Database>;
 
 /**
- * Demo user credentials — must match supabase/seed.sql
+ * Seed user credentials — must match supabase/seed.sql
  */
 export const DEMO_CREDENTIALS = {
-  // ORG_ADMIN user (UMich Registrar org)
-  adminEmail: 'admin@umich-demo.arkova.io',
+  // Platform admin / ORG_ADMIN (Arkova org) — Carson
+  adminEmail: 'carson@arkova.ai',
   adminPassword: RLS_TEST_PASSWORD,
-  adminId: '11111111-0000-0000-0000-000000000001',
+  adminId: '44444444-0000-0000-0000-000000000001',
 
-  // INDIVIDUAL user (no org)
-  userEmail: 'individual@demo.arkova.io',
+  // Platform admin / ORG_ADMIN (Arkova org) — Sarah
+  userEmail: 'sarah@arkova.ai',
   userPassword: RLS_TEST_PASSWORD,
-  userId: '33333333-0000-0000-0000-000000000001',
+  userId: '44444444-0000-0000-0000-000000000002',
 
-  // ORG_ADMIN user (Midwest Medical Board org)
-  betaAdminEmail: 'admin@midwest-medical.arkova.io',
+  // Kept for backward compat in tests — points to Sarah (second admin)
+  betaAdminEmail: 'sarah@arkova.ai',
   betaAdminPassword: RLS_TEST_PASSWORD,
-  betaAdminId: '22222222-0000-0000-0000-000000000001',
+  betaAdminId: '44444444-0000-0000-0000-000000000002',
 };
 
 /**
@@ -67,7 +67,8 @@ export const DEMO_CREDENTIALS = {
  */
 export const ORG_IDS = {
   arkova: 'aaaaaaaa-0000-0000-0000-000000000001',
-  betaCorp: 'bbbbbbbb-0000-0000-0000-000000000001',
+  /** @deprecated No second org in production-matching seed. Alias for arkova. */
+  betaCorp: 'aaaaaaaa-0000-0000-0000-000000000001',
 };
 
 /**
@@ -83,11 +84,10 @@ export type UserRole = 'INDIVIDUAL' | 'ORG_ADMIN';
  * @returns Promise resolving to authenticated Supabase client
  *
  * @example
- * const adminClient = await withUser('admin@umich-demo.arkova.io', 'ORG_ADMIN');
- * const userClient = await withUser('individual@demo.arkova.io', 'INDIVIDUAL');
+ * const adminClient = await withUser('carson@arkova.ai', 'ORG_ADMIN');
+ * const sarahClient = await withUser('sarah@arkova.ai', 'ORG_ADMIN');
  */
 export async function withUser(email: string, role: UserRole): Promise<TypedClient> {
-  // Get password based on email (all demo users have same password)
   const password = getPasswordForEmail(email);
 
   const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -130,7 +130,7 @@ export async function cleanupClient(client: TypedClient): Promise<void> {
 }
 
 /**
- * Get password for demo email (all seed users share the same password)
+ * Get password for seed email (all seed users share the same password)
  */
 function getPasswordForEmail(email: string): string {
   const knownEmails = [
@@ -141,7 +141,7 @@ function getPasswordForEmail(email: string): string {
 
   if (!knownEmails.includes(email)) {
     throw new Error(
-      `Unknown demo email: ${email}. Use one of: ${knownEmails.join(', ')}`
+      `Unknown seed email: ${email}. Use one of: ${knownEmails.join(', ')}`
     );
   }
 
@@ -155,7 +155,7 @@ export const withArkovaAdmin = () =>
   withUser(DEMO_CREDENTIALS.adminEmail, 'ORG_ADMIN');
 
 export const withIndividualUser = () =>
-  withUser(DEMO_CREDENTIALS.userEmail, 'INDIVIDUAL');
+  withUser(DEMO_CREDENTIALS.userEmail, 'ORG_ADMIN');
 
 export const withBetaAdmin = () =>
   withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');

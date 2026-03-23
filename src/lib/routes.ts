@@ -34,6 +34,11 @@ export const ROUTES = {
   DASHBOARD: '/dashboard',
   RECORDS: '/records',
   RECORD_DETAIL: '/records/:id',
+  ORGANIZATIONS: '/organizations',
+  ORG_PROFILE: '/organizations/:orgId',
+  ORG_MEMBERS: '/organizations/:orgId/members',
+  ORG_RECORDS: '/organizations/:orgId/records',
+  ORG_SETTINGS: '/organizations/:orgId/settings',
   ORGANIZATION: '/organization',
   MEMBER_DETAIL: '/organization/member/:memberId',
   SETTINGS: '/settings',
@@ -105,6 +110,11 @@ export function recordDetailPath(id: string): string {
 /** Build a member detail URL for a given member ID */
 export function memberDetailPath(memberId: string): string {
   return `/organization/member/${memberId}`;
+}
+
+/** Build an org profile URL for a given org ID */
+export function orgProfilePath(orgId: string): string {
+  return `/organizations/${orgId}`;
 }
 
 /** Build an issuer registry URL for a given org ID */

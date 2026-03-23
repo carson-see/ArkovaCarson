@@ -46,7 +46,7 @@ describe('Sidebar', () => {
     renderSidebar();
     expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('My Records').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Organizations').length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders secondary navigation items', () => {
