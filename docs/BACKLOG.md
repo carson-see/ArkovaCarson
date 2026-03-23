@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-22 (Pipeline activated: EDGAR 2,340 + OpenAlex 200 records ingested, embeddings generating, Merkle anchoring live, Nessie RAG returning real results) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-23 (Session 13: 29K+ public records, 1,572+ SECURED anchors, 2,148 tests, 91 migrations, AI eval F1=82.1%, Phase 1.5 15/16 complete) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -13,8 +13,11 @@ _Last updated: 2026-03-22 (Pipeline activated: EDGAR 2,340 + OpenAlex 200 record
 | BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
 | E2E Validation Bugs | 7 | 7 fixed | 0 | No |
 | Demo Readiness (DEMO) | 4 | 4 | 0 | No |
-| Phase 1.5 Foundation | 16 | 14 | 2 | No |
-| Stories (NOT STARTED) | 7 | — | 7 | No (post-launch) |
+| Phase 1.5 Foundation | 16 | 15 | 1 | No |
+| AI Infrastructure (Session 12) | 6 | 6 | 0 | No (all complete) |
+| UX Overhaul (Sessions 9-10) | 7 | 7 | 0 | No (all complete) |
+| P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
+| Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs | 29 | 29 | 0 | No |
@@ -23,7 +26,7 @@ _Last updated: 2026-03-22 (Pipeline activated: EDGAR 2,340 + OpenAlex 200 record
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
-| **Total Open Items** | | | **12** | |
+| **Total Open Items** | | | **10** | |
 
 ---
 
@@ -319,6 +322,43 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 **PR #127 merged 2026-03-22:** Sprints 1-4 complete (12/15 stories). PRs #125, #126 superseded and closed.
 **Remaining:** PH1-PAY-02 (facilitator deploy), PH1-SDK-02 (Python SDK)
+
+---
+
+## TIER 0B: AI INFRASTRUCTURE SPRINT (Session 12 — 2026-03-23) — ALL COMPLETE
+
+> Source: Session 12 PRs #4-10 (7 PRs merged). Builds on P8 AI Intelligence (19/19 complete).
+
+| ID | Story | Priority | Status | Detail |
+|----|-------|----------|--------|--------|
+| AI-EVAL-01 | Golden dataset + scoring engine | P0 | **COMPLETE** | 210 entries, F1/precision/recall per field, eval runner, 42 tests |
+| AI-EVAL-02 | Live Gemini eval baseline | P0 | **COMPLETE** | F1=82.1%, confidence r=0.426, ECE=13.5%. Best: CLE 94.3%, Worst: LICENSE 59.4% |
+| AI-PROMPT-01 | Prompt version tracking | P1 | **COMPLETE** | Prompt hash stored with every extraction event (migration 0092) |
+| AI-PROMPT-02 | Few-shot expansion | P1 | **COMPLETE** | 11→25 examples, targeting LICENSE and TRANSCRIPT weaknesses |
+| AI-FRAUD-01 | Fraud audit framework | P1 | **COMPLETE** | CLI framework, 0 flagged items in prod (integrity scoring not yet active) |
+| AI-OBS-01 | Admin AI metrics dashboard | P1 | **COMPLETE** | /admin/ai-metrics: usage, feedback, provider stats, eval baseline |
+
+**Also in Session 12:**
+- Anchoring throughput 110x: confirm job 10→50 tx groups (~1,100 confirms/run), Merkle batch 500→2,000
+- Pipeline credential types: migration 0091 adds SEC_FILING, PATENT, REGULATION, PUBLICATION
+- ExtractedFieldsSchema: CLE fields + fraudSignals added (was silently rejecting Gemini responses)
+- Pipeline metadata display: arrays formatted, nulls hidden
+
+---
+
+## TIER 0C: UX OVERHAUL (Sessions 9-10 — 2026-03-23) — ALL COMPLETE
+
+> Source: Sessions 9-10 PRs #143-149. Full redesign of navigation and document management.
+
+| ID | Story | Status | Detail |
+|----|-------|--------|--------|
+| UX-NAV-01 | Sidebar simplification | **COMPLETE** | 5 main items: Dashboard, Documents, Organization, Search, Settings |
+| UX-DOC-01 | Unified Documents page | **COMPLETE** | `/documents` with tabs: All / My Records / Issued to Me / Attestations |
+| UX-ORG-01 | Create Organization fix | **COMPLETE** | Dialog-based instead of broken redirect |
+| UX-ORG-02 | Org pages consolidated | **COMPLETE** | OrganizationPage redirects to OrgProfilePage |
+| UX-QR-01 | QR download for SECURED records | **COMPLETE** | PNG export on RecordDetailPage |
+| UX-SEARCH-01 | Drag-to-verify on Search | **COMPLETE** | File drop → client-side hash → auto-search |
+| UX-SEARCH-02 | Search type tabs | **COMPLETE** | Issuers / Credentials / Verify Document tabs |
 
 ---
 

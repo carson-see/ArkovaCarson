@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-23 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 91 migrations | 2,148 tests | 198 stories (176 complete, 89%) | 24/24 audit findings resolved
+> **Stats:** 91 migrations | 2,148 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved | AI eval F1=82.1% | 29K+ public records | 1,572+ SECURED anchors
 
 Read this file before every task. Rules here override all other documents.
 
@@ -244,35 +244,46 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | P7 Go-Live | 11/13 | 0 | 2 | 85% |
 | P4.5 Verification API | 13/13 | 0 | 0 | 100% |
 | DH Deferred Hardening | 12/12 | 0 | 0 | 100% |
-| MVP Launch Gaps | 24/27 | 0 | 3 | 89% |
+| MVP Launch Gaps | 25/27 | 0 | 2 | 93% |
 | P8 AI Intelligence | 19/19 | 0 | 0 | 100% |
+| AI Infrastructure (S12) | 6/6 | 0 | 0 | 100% |
+| UX Overhaul (S9-10) | 7/7 | 0 | 0 | 100% |
+| Phase 1.5 Foundation | 15/16 | 1 | 0 | 94% |
 | INFRA Edge & Ingress | 7/8 | 1 | 0 | 88% |
 | UAT + UF | 27/27 | 0 | 0 | 100% |
-| GEO & SEO | 6/12 | 2 | 4 | 50% |
+| GEO & SEO | 6/12 | 1 | 5 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
-| **Total** | **164/176** | **3/176** | **9/176** | **~93%** |
+| **Total** | **180/192** | **3/192** | **9/192** | **~94%** |
 
 ### Incomplete Stories
 
 **P7 Go-Live (2 not started):**
 - P7-TS-04, P7-TS-06: No individual scope defined
 
-**MVP Launch Gaps (1 not started, 3 post-launch):**
-- MVP-12 (LOW): Dark mode toggle
+**MVP Launch Gaps (2 post-launch):**
+- ~~MVP-12 (LOW): Dark mode toggle~~ — **DONE** (sidebar ThemeToggle)
 - MVP-13 (LOW): Organization logo upload — post-launch
 - MVP-14 (LOW): Embeddable verification widget — post-launch
-- MVP-30 (MEDIUM): GCP CI/CD pipeline — post-launch
 > ~~MVP-20 (LinkedIn badge integration)~~ — Superseded by BETA-09
+> ~~MVP-30 (MEDIUM): GCP CI/CD pipeline~~ — Post-launch
+
+**Phase 1.5 Foundation (1 partial):**
+- PH1-PAY-02: Self-hosted x402 facilitator — flag enabled, needs USDC address + facilitator deploy
+- PH1-SDK-02: Python SDK — NOT STARTED
+
+**AI Infrastructure (Session 12 — ALL COMPLETE):**
+- AI-EVAL-01: Golden dataset + scoring engine (210 entries, 42 tests)
+- AI-EVAL-02: Live Gemini eval baseline (F1=82.1%, confidence r=0.426)
+- AI-PROMPT-01: Prompt version tracking (migration 0092)
+- AI-PROMPT-02: Few-shot expansion (11→25 examples)
+- AI-FRAUD-01: Fraud audit CLI framework
+- AI-OBS-01: Admin AI metrics dashboard (/admin/ai-metrics)
 
 **INFRA (1 partial):**
 - INFRA-07: Sentry integration — code complete (30 tests + vite plugin + init), needs SENTRY_AUTH_TOKEN + DSN env vars in Vercel/Cloud Run
 
-**GEO & SEO (5 not started, 2 partial):**
+**GEO & SEO (5 not started, 1 partial):**
 - See `docs/stories/15_geo_seo.md` and `docs/BACKLOG.md` for details
-
-**TLA+ Verification Findings (all resolved):**
-- ~~TLA-01: `credential_type` not immutable after SECURED~~ — **RESOLVED** (migration 0089: `trg_credential_type_immutable` trigger)
-- ~~TLA-02: TLA+ check not in CI pipeline~~ — **RESOLVED** (`tla-verify` job in `.github/workflows/ci.yml`)
 
 ### Remaining Production Blockers
 
@@ -286,11 +297,11 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Task | Detail |
 |------|--------|
 | DNS + custom domain | `app.arkova.io` or equivalent |
-| Seed data strip | Remove demo users |
-| SOC 2 evidence | Begin collection (CI logs, RLS tests, audit events) |
+| ~~Seed data strip~~ | ~~Remove demo users~~ — **DONE** (Session 6: OPS-02 executed) |
+| ~~SOC 2 evidence~~ | ~~Begin collection~~ — **DONE** (`docs/compliance/soc2-evidence.md` + branch protection CC6.1) |
 
 ### Do NOT Start
-- MVP-12/13/14 (post-launch polish)
+- MVP-13/14 (post-launch polish)
 - OpenTimestamps (decision made: direct OP_RETURN only)
 
 ---
@@ -375,5 +386,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-23 | 91 migrations | 2,148 tests | 198 stories (176 complete, 89%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-23 | 91 migrations | 2,148 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

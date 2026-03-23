@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 176/198 stories complete (~89%) incl. 13 Beta stories (BETA-01–13) + 6 AI infra stories. **2,148 tests** (979 frontend + 1,169 worker, all green). 91 migration files (0001-0092, gaps at 0033+0078). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval, calibration, prompt versioning, few-shot expansion, fraud audit, metrics dashboard). GEO: 6 complete, 2 partial, 4 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Worker **rev00058**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 29,000+ public records, 1,572+ SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. **TLA-01+02 resolved.** Branch protection enabled. Session 12: AI infrastructure sprint (eval framework, live Gemini eval F1=82.1%, confidence calibration r=0.426, anchoring 110x throughput fix).
+**Overall progress:** 180/192 stories complete (~94%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,148 tests** (979 frontend + 1,169 worker, all green). 91 migration files (0001-0092, gaps at 0033+0078). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, calibration, prompt versioning, few-shot, fraud audit, metrics dashboard). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 29,000+ public records, 1,572+ SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Branch protection enabled. Session 13: [object Object] display fix, lint cleanup, doc sync.
 
 ### Open Blockers
 
@@ -21,6 +21,21 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-23, Session 13 — Bug Fixes + Org Rebuild + Deploy)
+
+**PRs #157-160 (4 PRs):** [object Object] fix + extraction toast + org LinkedIn rebuild + About nav
+
+| Change | Detail |
+|--------|--------|
+| [object Object] fix | CredentialRenderer + MetadataDisplay: JSON.stringify objects instead of String(). Pipeline fields filtered from display. 4 regression tests. |
+| Extraction toast | Silent failure now shows warning toast. AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST. 2 new tests. |
+| Org page rebuild | LinkedIn-style: larger banner, 28x28 logo, meta row with icons, Home/People/Settings tabs with underline indicators |
+| About nav | "About Arkova" added to header user dropdown (Info icon) |
+| Worker deploy | Rev00064: env vars restored (were stripped). Rev00063 image + YAML env file. /health confirmed healthy. |
+| Lint cleanup | Removed unused BarChart3, mempoolAddressUrl, CardDescription, Separator imports |
+| Docs sync | CLAUDE.md, BACKLOG.md, HANDOFF.md updated with AI infra stories, corrected counts (180/192 = 94%) |
+| Test total | 984 frontend tests, all green. 0 lint errors. |
 
 ### Recent Changes (2026-03-23, Session 12 — AI Infrastructure + Anchoring Throughput)
 
