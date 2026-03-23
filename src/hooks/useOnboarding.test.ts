@@ -4,12 +4,26 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Hoist mock function
-const mockRpc = vi.hoisted(() => vi.fn());
+// Hoist mock functions
+const { mockRpc, mockFrom } = vi.hoisted(() => ({
+  mockRpc: vi.fn(),
+  mockFrom: vi.fn(() => ({
+    insert: vi.fn(() => ({
+      select: vi.fn(() => ({
+        single: vi.fn().mockResolvedValue({ data: { id: 'new-org-direct' }, error: null }),
+      })),
+    })),
+    update: vi.fn(() => ({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    })),
+  })),
+}));
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     rpc: mockRpc,
+    from: mockFrom,
+    auth: { getUser: vi.fn().mockResolvedValue({ data: { user: { id: 'user-123' } } }) },
   },
 }));
 
@@ -119,9 +133,17 @@ describe('useOnboarding', () => {
     });
 
     it('should handle missing legal name error', async () => {
+      // RPC fails AND direct insert fails (both return errors)
       mockRpc.mockResolvedValue({
         data: null,
         error: { message: 'Organization legal name is required for ORG_ADMIN' },
+      });
+      mockFrom.mockReturnValueOnce({
+        insert: vi.fn(() => ({
+          select: vi.fn(() => ({
+            single: vi.fn().mockResolvedValue({ data: null, error: { message: 'Organization legal name is required' } }),
+          })),
+        })),
       });
 
       const { result } = renderHook(() => useOnboarding());

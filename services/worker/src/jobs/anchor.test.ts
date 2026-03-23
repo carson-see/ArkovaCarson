@@ -247,7 +247,9 @@ describe('processAnchor', () => {
 
       await processAnchor('anchor-001');
 
-      const updateArg = anchorsTable.update.mock.calls[0][0] as Record<string, unknown>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const updateCalls = anchorsTable.update.mock.calls as any[];
+      const updateArg = (updateCalls.length > 0 ? updateCalls[0][0] : {}) as Record<string, unknown>;
       expect(updateArg.metadata).toBeUndefined();
     });
 

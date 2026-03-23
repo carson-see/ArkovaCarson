@@ -140,15 +140,23 @@ export function PipelineAdminPage() {
         .from('public_record_embeddings')
         .select('*', { count: 'exact', head: true });
 
-      // Records by source
-      const { data: sources } = await dbAny
-        .from('public_records')
-        .select('source');
-
+      // Records by source — use RPC to avoid PostgREST row limit (was only returning 1000)
+      const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
       const bySource: Record<string, number> = {};
-      ((sources ?? []) as Array<{ source: string }>).forEach((r) => {
-        bySource[r.source] = (bySource[r.source] ?? 0) + 1;
-      });
+      if (sourceCounts && Array.isArray(sourceCounts)) {
+        (sourceCounts as Array<{ source: string; count: number }>).forEach((r) => {
+          bySource[r.source] = r.count;
+        });
+      } else {
+        // Fallback: individual count queries per known source
+        for (const src of ['edgar', 'federal_register', 'dapip', 'openalex', 'uspto']) {
+          const { count } = await dbAny
+            .from('public_records')
+            .select('*', { count: 'exact', head: true })
+            .eq('source', src);
+          if (count && count > 0) bySource[src] = count;
+        }
+      }
 
       setStats({
         totalRecords: totalRecords ?? 0,
@@ -169,6 +177,9 @@ export function PipelineAdminPage() {
   useEffect(() => {
     if (isAdmin) {
       fetchStats();
+      // Auto-refresh every 30 seconds
+      const interval = setInterval(fetchStats, 30_000);
+      return () => clearInterval(interval);
     } else {
       setLoading(false);
     }

@@ -357,19 +357,30 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
             </>
-          ) : (anchor.status === 'PENDING' || anchor.status === 'SUBMITTED') ? (
+          ) : anchor.status === 'SUBMITTED' && anchor.chainTxId ? (
             <>
               <Separator />
               <div className="space-y-2">
                 <p className="text-sm font-medium">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
                 <a
-                  href={mempoolAddressUrl()}
+                  href={`https://mempool.space/signet/tx/${anchor.chainTxId}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
                 >
-                  Awaiting network confirmation — view anchor
+                  <ExternalLink className="h-3 w-3" />
+                  Awaiting confirmation — view transaction
                 </a>
+              </div>
+            </>
+          ) : (anchor.status === 'PENDING' || anchor.status === 'SUBMITTED') ? (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <p className="text-sm font-medium">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  Processing — awaiting network submission
+                </p>
               </div>
             </>
           ) : null}
