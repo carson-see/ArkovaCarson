@@ -9,8 +9,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Building2, Users, FileText, Settings, Plus, Upload, UserPlus,
+  Building2, Settings, Plus, Upload, UserPlus,
   ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
+  Globe, MapPin, Calendar,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -26,9 +27,8 @@ import { BulkUploadWizard } from '@/components/upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
@@ -200,219 +200,219 @@ export function OrgProfilePage() {
 
   return (
     <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut} orgName={organization?.display_name}>
-      {/* LinkedIn-style profile header */}
-      <div className="mb-6">
-        {/* Cover banner */}
-        <div className="h-28 md:h-36 rounded-t-xl bg-gradient-to-r from-primary/20 via-primary/10 to-primary/5 relative">
-          <Button variant="ghost" size="icon" className="absolute top-3 left-3 bg-background/80 backdrop-blur-sm" onClick={() => navigate(ROUTES.ORGANIZATIONS)}>
+      {/* LinkedIn-style profile card */}
+      <Card className="mb-6 overflow-hidden border-border/50">
+        {/* Cover banner — tall gradient with back button */}
+        <div className="h-32 sm:h-40 md:h-48 bg-gradient-to-br from-primary/30 via-primary/15 to-primary/5 relative">
+          <Button variant="ghost" size="icon" className="absolute top-3 left-3 bg-background/60 backdrop-blur-sm hover:bg-background/80" onClick={() => navigate(ROUTES.ORGANIZATIONS)}>
             <ArrowLeft className="h-4 w-4" />
           </Button>
         </div>
 
-        {/* Profile info overlapping banner */}
-        <div className="px-4 md:px-6 -mt-10 relative">
-          <div className="flex flex-col md:flex-row md:items-end gap-4">
-            {/* Org avatar */}
-            <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border-4 border-background bg-card shadow-lg">
-              <Building2 className="h-10 w-10 text-primary" />
+        {/* Profile info section */}
+        <CardContent className="relative pt-0 pb-0">
+          {/* Org logo overlapping banner */}
+          <div className="-mt-14 mb-3 flex items-end justify-between">
+            <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl">
+              <Building2 className="h-14 w-14 text-primary" />
             </div>
-
-            {/* Name + meta */}
-            <div className="flex-1 min-w-0 pb-1">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-semibold tracking-tight truncate">
-                  {organization?.display_name ?? 'Organization'}
-                </h1>
-                {orgPrefix && (
-                  <Badge variant="secondary" className="font-mono text-[10px] shrink-0">
-                    {orgPrefix}
-                  </Badge>
-                )}
-                {organization?.verification_status === 'VERIFIED' && (
-                  <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
-                    <Check className="mr-1 h-3 w-3" />
-                    Verified
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground mt-0.5">
-                {organization?.domain && <span>{organization.domain}</span>}
-              </p>
-            </div>
-
-            {/* Actions */}
-            <div className="flex gap-2 pb-1">
+            {/* Action buttons (top right) */}
+            <div className="flex gap-2 pb-2">
               {userRole && (
-                <Badge variant="outline" className="text-[10px] h-7">
-                  {userRole === 'owner' && <Crown className="mr-1 h-3 w-3" />}
-                  {userRole === 'admin' && <Shield className="mr-1 h-3 w-3" />}
-                  {userRole === 'member' && <User className="mr-1 h-3 w-3" />}
+                <Badge variant="outline" className="text-xs h-8 px-3">
+                  {userRole === 'owner' && <Crown className="mr-1.5 h-3.5 w-3.5" />}
+                  {userRole === 'admin' && <Shield className="mr-1.5 h-3.5 w-3.5" />}
+                  {userRole === 'member' && <User className="mr-1.5 h-3.5 w-3.5" />}
                   {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
                 </Badge>
               )}
               <Button variant="outline" size="sm" onClick={() => navigate(issuerRegistryPath(orgId))}>
                 <ExternalLink className="mr-2 h-4 w-4" />
-                Public Profile
+                View Public Page
               </Button>
             </div>
           </div>
 
-          {/* Inline stats (LinkedIn-style) */}
-          <div className="flex items-center gap-6 mt-4 text-sm text-muted-foreground border-b border-border/50 pb-4">
-            <span><strong className="text-foreground">{recordsCount !== null ? recordsCount.toLocaleString() : '—'}</strong> records</span>
-            <span><strong className="text-foreground">{members.length}</strong> members</span>
-            <span>Founded {organization?.created_at ? new Date(organization.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '—'}</span>
+          {/* Org name + verification badge */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-bold tracking-tight">
+              {organization?.display_name ?? 'Organization'}
+            </h1>
+            {organization?.verification_status === 'VERIFIED' && (
+              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                <Check className="mr-1 h-3 w-3" />
+                Verified
+              </Badge>
+            )}
           </div>
-        </div>
-      </div>
 
-      {/* Tabbed content — Records first (primary content, like LinkedIn posts) */}
-      <Tabs defaultValue="records" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="records" className="gap-2">
-            <FileText className="h-4 w-4" />
-            Records
-          </TabsTrigger>
-          <TabsTrigger value="members" className="gap-2">
-            <Users className="h-4 w-4" />
-            Members
-          </TabsTrigger>
-          {isAdmin && (
-            <TabsTrigger value="settings" className="gap-2">
-              <Settings className="h-4 w-4" />
-              Settings
-            </TabsTrigger>
+          {/* Tagline / description */}
+          {organization?.legal_name && organization.legal_name !== organization.display_name && (
+            <p className="text-sm text-muted-foreground mt-1">{organization.legal_name}</p>
           )}
-        </TabsList>
 
-        {/* Members Tab */}
-        <TabsContent value="members">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Team Members
-                {!membersLoading && members.length > 0 && (
-                  <Badge variant="secondary">{members.length}</Badge>
-                )}
-              </CardTitle>
+          {/* Meta row: domain, location, founding date */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-muted-foreground">
+            {organization?.domain && (
+              <span className="flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5" />
+                {organization.domain}
+              </span>
+            )}
+            {orgPrefix && (
+              <span className="flex items-center gap-1.5 font-mono text-xs">
+                <MapPin className="h-3.5 w-3.5" />
+                {orgPrefix}
+              </span>
+            )}
+            <span className="flex items-center gap-1.5">
+              <Calendar className="h-3.5 w-3.5" />
+              Founded {organization?.created_at ? new Date(organization.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '—'}
+            </span>
+          </div>
+
+          {/* Stats row — LinkedIn-style follower/connection counts */}
+          <div className="flex items-center gap-6 mt-4 pb-4 text-sm">
+            <span className="text-muted-foreground">
+              <strong className="text-foreground font-semibold">{recordsCount !== null ? recordsCount.toLocaleString() : '—'}</strong> records
+            </span>
+            <span className="text-muted-foreground">
+              <strong className="text-foreground font-semibold">{members.length}</strong> {members.length === 1 ? 'member' : 'members'}
+            </span>
+          </div>
+        </CardContent>
+
+        {/* Tabs integrated into the card bottom — like LinkedIn */}
+        <Tabs defaultValue="home" className="w-full">
+          <div className="border-t border-border/50 px-4 md:px-6">
+            <TabsList className="h-auto bg-transparent p-0 gap-0">
+              <TabsTrigger value="home" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+                Home
+              </TabsTrigger>
+              <TabsTrigger value="people" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+                People
+              </TabsTrigger>
               {isAdmin && (
-                <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
-                  <UserPlus className="mr-2 h-4 w-4" />
-                  {ORG_PAGE_LABELS.INVITE_MEMBER}
-                </Button>
+                <TabsTrigger value="settings" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
+                  Settings
+                </TabsTrigger>
               )}
-            </CardHeader>
-            <Separator />
-            <CardContent className="pt-4">
-              <MembersTable
-                members={members}
-                loading={membersLoading}
-                currentUserId={user?.id}
-                onChangeRole={isAdmin ? handleChangeRole : undefined}
-              />
-            </CardContent>
-          </Card>
+            </TabsList>
+          </div>
+
+        {/* Home Tab — Records (like LinkedIn posts feed) */}
+        <TabsContent value="home" className="p-4 md:p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold">Records</h2>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setBulkUploadOpen(true)}>
+                  <Upload className="mr-2 h-4 w-4" />
+                  {ORG_PAGE_LABELS.BULK_UPLOAD}
+                </Button>
+                <Button size="sm" onClick={() => setIssueDialogOpen(true)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  {ORG_PAGE_LABELS.ISSUE_CREDENTIAL}
+                </Button>
+              </div>
+            )}
+          </div>
+          <OrgRegistryTable
+            key={refreshKey}
+            orgId={orgId}
+            onViewAnchor={handleViewAnchor}
+            onRevokeAnchor={isAdmin ? handleRevokeAnchor : undefined}
+          />
         </TabsContent>
 
-        {/* Records Tab */}
-        <TabsContent value="records">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0">
-              <CardTitle className="text-lg">Organization Records</CardTitle>
-              {isAdmin && (
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => setBulkUploadOpen(true)}>
-                    <Upload className="mr-2 h-4 w-4" />
-                    {ORG_PAGE_LABELS.BULK_UPLOAD}
-                  </Button>
-                  <Button onClick={() => setIssueDialogOpen(true)}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    {ORG_PAGE_LABELS.ISSUE_CREDENTIAL}
-                  </Button>
-                </div>
+        {/* People Tab */}
+        <TabsContent value="people" className="p-4 md:p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              People
+              {!membersLoading && members.length > 0 && (
+                <Badge variant="secondary" className="text-xs">{members.length}</Badge>
               )}
-            </CardHeader>
-            <Separator />
-            <CardContent className="pt-4">
-              <OrgRegistryTable
-                key={refreshKey}
-                orgId={orgId}
-                onViewAnchor={handleViewAnchor}
-                onRevokeAnchor={isAdmin ? handleRevokeAnchor : undefined}
-              />
-            </CardContent>
-          </Card>
+            </h2>
+            {isAdmin && (
+              <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
+                <UserPlus className="mr-2 h-4 w-4" />
+                {ORG_PAGE_LABELS.INVITE_MEMBER}
+              </Button>
+            )}
+          </div>
+          <MembersTable
+            members={members}
+            loading={membersLoading}
+            currentUserId={user?.id}
+            onChangeRole={isAdmin ? handleChangeRole : undefined}
+          />
         </TabsContent>
 
         {/* Settings Tab (admin only) */}
         {isAdmin && (
-          <TabsContent value="settings">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg flex items-center gap-2">
-                  <Settings className="h-5 w-5" />
-                  Organization Settings
-                </CardTitle>
-                <CardDescription>
-                  Update your organization display name and domain
-                </CardDescription>
-              </CardHeader>
-              <Separator />
-              <CardContent className="pt-4 space-y-4 max-w-lg">
-                <div className="space-y-2">
-                  <Label htmlFor="org-display-name">Display Name</Label>
-                  <Input
-                    id="org-display-name"
-                    value={orgDisplayName}
-                    onChange={(e) => { setOrgDisplayName(e.target.value); setOrgSaved(false); }}
-                    placeholder="Organization display name"
-                    disabled={orgUpdating}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="org-domain">Domain</Label>
-                  <Input
-                    id="org-domain"
-                    value={orgDomain}
-                    onChange={(e) => { setOrgDomain(e.target.value); setOrgSaved(false); }}
-                    placeholder="example.com"
-                    disabled={orgUpdating}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Used for verifier display on public verification pages
-                  </p>
-                </div>
-                <Button
-                  onClick={async () => {
-                    const success = await updateOrganization({
-                      display_name: orgDisplayName.trim(),
-                      domain: orgDomain.trim() || null,
-                    });
-                    if (success) {
-                      setOrgSaved(true);
-                      setTimeout(() => setOrgSaved(false), 2000);
-                    }
-                  }}
-                  disabled={orgUpdating || !orgDisplayName.trim()}
-                  size="sm"
-                >
-                  {orgUpdating ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (orgSaved ? (
-                    <>
-                      <Check className="mr-2 h-4 w-4" />
-                      Saved
-                    </>
-                  ) : (
-                    'Save Settings'
-                  ))}
-                </Button>
-              </CardContent>
-            </Card>
+          <TabsContent value="settings" className="p-4 md:p-6">
+            <h2 className="text-lg font-semibold flex items-center gap-2 mb-4">
+              <Settings className="h-5 w-5" />
+              Organization Settings
+            </h2>
+            <p className="text-sm text-muted-foreground mb-6">
+              Update your organization display name and domain
+            </p>
+            <div className="space-y-4 max-w-lg">
+              <div className="space-y-2">
+                <Label htmlFor="org-display-name">Display Name</Label>
+                <Input
+                  id="org-display-name"
+                  value={orgDisplayName}
+                  onChange={(e) => { setOrgDisplayName(e.target.value); setOrgSaved(false); }}
+                  placeholder="Organization display name"
+                  disabled={orgUpdating}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="org-domain">Domain</Label>
+                <Input
+                  id="org-domain"
+                  value={orgDomain}
+                  onChange={(e) => { setOrgDomain(e.target.value); setOrgSaved(false); }}
+                  placeholder="example.com"
+                  disabled={orgUpdating}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Used for verifier display on public verification pages
+                </p>
+              </div>
+              <Button
+                onClick={async () => {
+                  const success = await updateOrganization({
+                    display_name: orgDisplayName.trim(),
+                    domain: orgDomain.trim() || null,
+                  });
+                  if (success) {
+                    setOrgSaved(true);
+                    setTimeout(() => setOrgSaved(false), 2000);
+                  }
+                }}
+                disabled={orgUpdating || !orgDisplayName.trim()}
+                size="sm"
+              >
+                {orgUpdating ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (orgSaved ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  'Save Settings'
+                ))}
+              </Button>
+            </div>
           </TabsContent>
         )}
-      </Tabs>
+        </Tabs>
+      </Card>
 
       {/* Dialogs */}
       <IssueCredentialForm
