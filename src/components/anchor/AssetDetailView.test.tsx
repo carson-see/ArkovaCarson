@@ -163,7 +163,7 @@ describe('AssetDetailView', () => {
     const { container } = render(<AssetDetailView anchor={pendingAnchor} />);
 
     expect(container.innerHTML).toContain('Awaiting network confirmation');
-    expect(container.innerHTML).toContain('view treasury');
+    expect(container.innerHTML).toContain('view anchor');
   });
 
   // BETA-12: Description display

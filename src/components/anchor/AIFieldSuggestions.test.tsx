@@ -36,13 +36,14 @@ describe('AIFieldSuggestions', () => {
 
   it('shows confidence badge', () => {
     render(<AIFieldSuggestions {...defaultProps} />);
-    expect(screen.getByText(/High confidence/)).toBeInTheDocument();
+    expect(screen.getByText(/Auto-detected/)).toBeInTheDocument();
     expect(screen.getByText(/85%/)).toBeInTheDocument();
   });
 
-  it('shows credits remaining', () => {
-    render(<AIFieldSuggestions {...defaultProps} />);
-    expect(screen.getByText(/45 credits remaining/)).toBeInTheDocument();
+  it('accepts creditsRemaining prop without error', () => {
+    // Beta: credits display is disabled but prop should not cause errors
+    const { container } = render(<AIFieldSuggestions {...defaultProps} />);
+    expect(container.querySelector('.glass-card')).toBeInTheDocument();
   });
 
   it('shows accept all button', () => {

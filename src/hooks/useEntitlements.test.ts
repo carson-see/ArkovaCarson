@@ -1,5 +1,7 @@
 /**
  * useEntitlements Hook Tests
+ *
+ * Updated for beta mode: all quotas disabled, recordsLimit = null (unlimited).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -90,7 +92,8 @@ describe('useEntitlements', () => {
     mockUser.current = { id: 'test-user-id' };
   });
 
-  it('should return free tier defaults when no subscription', async () => {
+  // Beta: all users get unlimited (recordsLimit = null)
+  it('should return unlimited for all users during beta', async () => {
     setupMocks({ count: 0 });
 
     const { result } = renderHook(() => useEntitlements());
@@ -98,13 +101,13 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Free');
-    expect(result.current.recordsLimit).toBe(3);
+    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
     expect(result.current.recordsUsed).toBe(0);
-    expect(result.current.remaining).toBe(3);
+    expect(result.current.remaining).toBeNull(); // unlimited
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
-  it('should return correct quota for paid plan', async () => {
+  it('should return plan name for paid subscription', async () => {
     setupMocks({
       subscription: { plan_id: 'pro', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 100, name: 'Professional' },
@@ -116,27 +119,24 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Professional');
-    expect(result.current.recordsLimit).toBe(100);
+    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
     expect(result.current.recordsUsed).toBe(42);
-    expect(result.current.remaining).toBe(58);
     expect(result.current.canCreateAnchor).toBe(true);
-    expect(result.current.percentUsed).toBe(42);
     expect(result.current.isNearLimit).toBe(false);
   });
 
-  it('should block creation when quota exhausted', async () => {
-    setupMocks({ count: 3 });
+  it('should never block creation during beta', async () => {
+    setupMocks({ count: 99999 });
 
     const { result } = renderHook(() => useEntitlements());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.canCreateAnchor).toBe(false);
-    expect(result.current.remaining).toBe(0);
-    expect(result.current.percentUsed).toBe(100);
+    expect(result.current.canCreateAnchor).toBe(true);
+    expect(result.current.recordsLimit).toBeNull();
   });
 
-  it('should detect near-limit state (>=80%)', async () => {
+  it('should not detect near-limit during beta (unlimited)', async () => {
     setupMocks({
       subscription: { plan_id: 'ind', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 10, name: 'Individual' },
@@ -147,9 +147,8 @@ describe('useEntitlements', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.isNearLimit).toBe(true);
-    expect(result.current.percentUsed).toBe(80);
-    expect(result.current.remaining).toBe(2);
+    expect(result.current.isNearLimit).toBe(false); // unlimited = never near limit
+    expect(result.current.percentUsed).toBeNull();
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
@@ -171,17 +170,16 @@ describe('useEntitlements', () => {
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
-  it('canCreateCount should check bulk amounts', async () => {
-    setupMocks({ count: 1 }); // free tier: 3 limit, 1 used, 2 remaining
+  it('canCreateCount should always return true during beta', async () => {
+    setupMocks({ count: 1 });
 
     const { result } = renderHook(() => useEntitlements());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.canCreateCount(1)).toBe(true);
-    expect(result.current.canCreateCount(2)).toBe(true);
-    expect(result.current.canCreateCount(3)).toBe(false);
-    expect(result.current.canCreateCount(100)).toBe(false);
+    expect(result.current.canCreateCount(100)).toBe(true);
+    expect(result.current.canCreateCount(999999)).toBe(true);
   });
 
   it('canCreateCount should always return true for unlimited', async () => {
@@ -199,7 +197,7 @@ describe('useEntitlements', () => {
     expect(result.current.canCreateCount(100000)).toBe(true);
   });
 
-  it('should fall back to free tier for inactive subscription', async () => {
+  it('should fall back to beta unlimited for inactive subscription', async () => {
     setupMocks({
       subscription: { plan_id: 'pro', current_period_start: '2026-03-01T00:00:00Z', status: 'past_due' },
       count: 0,
@@ -210,7 +208,7 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Free');
-    expect(result.current.recordsLimit).toBe(3);
+    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
   });
 
   it('should handle no user (logged out)', async () => {
@@ -221,7 +219,7 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Free');
-    expect(result.current.recordsLimit).toBe(3);
+    expect(result.current.recordsLimit).toBe(3); // logged out = real free tier
     expect(result.current.recordsUsed).toBe(0);
   });
 
@@ -235,18 +233,17 @@ describe('useEntitlements', () => {
     expect(result.current.error).toContain('Network error');
   });
 
-  it('should fall back to free tier on fetch error (not fail open)', async () => {
+  it('should stay unlimited on fetch error during beta', async () => {
     setupMocks({ subError: new Error('DB connection lost') });
 
     const { result } = renderHook(() => useEntitlements());
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // Verify it does NOT stay in the unlimited state (recordsLimit=null)
-    // after an error — it should fall back to free tier limits
-    expect(result.current.recordsLimit).toBe(3);
-    expect(result.current.planName).toBe('Free');
-    expect(result.current.canCreateAnchor).toBe(true); // free tier with 0 usage
+    // Beta: unlimited even on error
+    expect(result.current.recordsLimit).toBeNull();
+    expect(result.current.planName).toBe('Beta');
+    expect(result.current.canCreateAnchor).toBe(true);
   });
 
   it('refresh should re-fetch entitlements', async () => {
@@ -275,12 +272,10 @@ describe('useEntitlements', () => {
       renderHook(() => useEntitlements());
 
       await waitFor(() => {
-        // Channel should be set up with postgres_changes listeners
         expect(mockChannel.on).toHaveBeenCalledTimes(2);
         expect(mockChannel.subscribe).toHaveBeenCalled();
       });
 
-      // First on() call: subscriptions table
       expect(mockChannel.on).toHaveBeenCalledWith(
         'postgres_changes',
         expect.objectContaining({
@@ -291,7 +286,6 @@ describe('useEntitlements', () => {
         expect.any(Function),
       );
 
-      // Second on() call: anchors table INSERT
       expect(mockChannel.on).toHaveBeenCalledWith(
         'postgres_changes',
         expect.objectContaining({
