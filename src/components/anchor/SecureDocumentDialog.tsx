@@ -165,10 +165,24 @@ export function SecureDocumentDialog({
 
   // Auto-select template based on AI-detected credential type
   const autoSelectTemplate = useCallback(async (detectedType: string) => {
-    // Map AI output to valid credential_type enum values
-    const validTypes = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CLE', 'OTHER'] as const;
-    const normalized = detectedType.toUpperCase();
-    const matchedType = validTypes.find(t => t === normalized) ?? 'OTHER';
+    const normalized = detectedType.toUpperCase().trim();
+
+    // Fuzzy mapping: AI output → credential_type enum
+    const typeMap: Record<string, string> = {
+      'DEGREE': 'DEGREE', 'DIPLOMA': 'DEGREE', 'BACHELOR': 'DEGREE', 'MASTER': 'DEGREE', 'PHD': 'DEGREE', 'DOCTORATE': 'DEGREE',
+      'LICENSE': 'LICENSE', 'MEDICAL_LICENSE': 'LICENSE', 'NURSING_LICENSE': 'LICENSE', 'PE_LICENSE': 'LICENSE',
+      'CERTIFICATE': 'CERTIFICATE', 'CERTIFICATION': 'CERTIFICATE', 'PMP': 'CERTIFICATE', 'INSURANCE': 'CERTIFICATE',
+      'TRANSCRIPT': 'TRANSCRIPT', 'GRADE_REPORT': 'TRANSCRIPT',
+      'PROFESSIONAL': 'PROFESSIONAL', 'PROFESSIONAL_CREDENTIAL': 'PROFESSIONAL',
+      'CLE': 'CLE', 'CLE_CREDIT': 'CLE', 'CLE_ETHICS': 'CLE', 'CONTINUING_EDUCATION': 'CLE',
+      'ATTESTATION': 'ATTESTATION', 'EMPLOYMENT_VERIFICATION': 'ATTESTATION', 'VERIFICATION_LETTER': 'ATTESTATION', 'LETTER_OF_RECOMMENDATION': 'ATTESTATION',
+      'CONTRACT': 'OTHER', 'NDA': 'OTHER', 'AGREEMENT': 'OTHER',
+      'OTHER': 'OTHER', 'GENERAL': 'OTHER', 'GENERAL_DOCUMENT': 'OTHER',
+    };
+    const matchedType = typeMap[normalized] ?? (
+      // Partial match fallback
+      Object.entries(typeMap).find(([k]) => normalized.includes(k))?.[1] ?? 'OTHER'
+    );
 
     // Fetch system templates to find a match
     const { data: templates } = await supabase
@@ -212,21 +226,23 @@ export function SecureDocumentDialog({
       setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
 
-      // Auto-detect document type and auto-select template
+      // Auto-detect document type, auto-select template, and auto-submit
       const typeField = result.fields.find(f => f.key === 'credentialType');
       if (typeField && typeField.confidence >= 0.5) {
-        const matched = await autoSelectTemplate(typeField.value);
-        if (matched) {
-          // Template auto-selected — skip template step, go straight to confirm
-          setStep('confirm');
-          return;
-        }
+        await autoSelectTemplate(typeField.value);
+      } else {
+        await autoSelectTemplate('OTHER');
       }
+      // One-click flow: skip confirm, go straight to anchoring
+      // Description auto-generated from AI fields
+      handleConfirm();
+      return;
     } else {
-      // Extraction failed — auto-select General Document and go to confirm
+      // Extraction failed — auto-select General Document and anchor immediately
       setExtractionProgress(null);
-      const fallback = await autoSelectTemplate('OTHER');
-      setStep(fallback ? 'confirm' : 'template');
+      await autoSelectTemplate('OTHER');
+      handleConfirm();
+      return;
     }
   }, [fileData, selectedTemplate, autoSelectTemplate]);
 
@@ -237,9 +253,9 @@ export function SecureDocumentDialog({
     if (aiEnabled) {
       await handleStartExtraction();
     } else {
-      // No AI — auto-select General Document template and skip to confirm
-      const fallback = await autoSelectTemplate('OTHER');
-      setStep(fallback ? 'confirm' : 'template');
+      // No AI — auto-select General Document and anchor immediately
+      await autoSelectTemplate('OTHER');
+      handleConfirm();
     }
   }, [fileData, aiEnabled, handleStartExtraction]);
 
