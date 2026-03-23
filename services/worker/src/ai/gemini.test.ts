@@ -167,15 +167,20 @@ describe('GeminiProvider', () => {
   describe('generateEmbedding', () => {
     it('returns embedding vector', async () => {
       const mockValues = new Array(768).fill(0.1);
-      mockEmbedContent.mockResolvedValue({
-        embedding: { values: mockValues },
-      });
+      // generateEmbedding uses fetch directly (REST API), not the SDK's embedContent
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({ embedding: { values: mockValues } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
 
       const provider = new GeminiProvider('test-key');
       const result = await provider.generateEmbedding('University of Michigan Computer Science');
 
       expect(result.embedding).toHaveLength(768);
       expect(result.model).toBe('text-embedding-004');
+      fetchSpy.mockRestore();
     });
   });
 

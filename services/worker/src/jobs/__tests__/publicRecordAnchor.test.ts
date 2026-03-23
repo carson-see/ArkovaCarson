@@ -65,28 +65,51 @@ vi.mock('../../chain/client.js', () => ({
 function createMockSupabase(records: Array<Record<string, unknown>> = []) {
   const updateEq = vi.fn().mockResolvedValue({ error: null });
 
-  mockInsert.mockReturnValue({
+  let insertCallCount = 0;
+  mockInsert.mockImplementation((anchor: Record<string, unknown>) => ({
     select: vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({
-        data: { id: 'anchor-uuid-123' },
+        data: { id: `anchor-uuid-${insertCallCount++}`, fingerprint: anchor?.fingerprint ?? 'a'.repeat(64) },
         error: null,
       }),
     }),
-  });
+  }));
 
+  const mockIs = vi.fn().mockResolvedValue({ error: null });
   mockUpdate.mockReturnValue({
-    eq: updateEq,
+    eq: vi.fn().mockReturnValue({
+      is: mockIs,
+      eq: vi.fn().mockReturnValue({
+        is: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      }),
+    }),
   });
 
   mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
 
   return {
     rpc: mockRpc,
-    from: vi.fn((_table: string) => ({
-      select: vi.fn(() => mockSelectChain.chain),
-      insert: mockInsert,
-      update: mockUpdate,
-    })),
+    from: vi.fn((table: string) => {
+      if (table === 'profiles') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { id: 'admin-user-id', org_id: 'admin-org-id' },
+                error: null,
+              }),
+            })),
+          })),
+        };
+      }
+      return {
+        select: vi.fn(() => mockSelectChain.chain),
+        insert: mockInsert,
+        update: mockUpdate,
+      };
+    }),
   };
 }
 
@@ -108,12 +131,9 @@ describe('publicRecordAnchor', () => {
     });
   });
 
-  it('skips batch when fewer than MIN_BATCH_SIZE records', async () => {
+  it('skips batch when no unanchored records exist', async () => {
     mockRpc.mockResolvedValue({ data: true });
-    const fewRecords = [
-      { id: 'r1', content_hash: 'a'.repeat(64), metadata: {} },
-    ];
-    const mockSupa = createMockSupabase(fewRecords);
+    const mockSupa = createMockSupabase([]);
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,7 +149,12 @@ describe('publicRecordAnchor', () => {
     const records = Array.from({ length: 20 }, (_, i) => ({
       id: `record-${i}`,
       content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
-      metadata: { source: 'test' },
+      metadata: {},
+      source: 'edgar',
+      source_id: `CIK-${i}`,
+      source_url: `https://sec.gov/filing/${i}`,
+      record_type: '10-K',
+      title: `Test Filing ${i}`,
     }));
 
     const mockSupa = createMockSupabase(records);

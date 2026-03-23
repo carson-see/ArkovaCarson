@@ -116,13 +116,34 @@ describe('GET /nessie/query', () => {
       return Promise.resolve({ data: null, error: null });
     });
 
-    mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        in: vi.fn().mockResolvedValue({
-          data: MOCK_RECORDS,
-          error: null,
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'anchors') {
+        return {
+          select: vi.fn().mockReturnValue({
+            in: vi.fn().mockResolvedValue({
+              data: [
+                {
+                  id: 'anchor-1',
+                  chain_tx_id: 'tx-abc',
+                  chain_block_height: 100,
+                  chain_timestamp: '2026-01-01T00:00:00Z',
+                  status: 'SECURED',
+                  public_id: 'pub-abc',
+                },
+              ],
+              error: null,
+            }),
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockResolvedValue({
+            data: MOCK_RECORDS,
+            error: null,
+          }),
         }),
-      }),
+      };
     });
   });
 

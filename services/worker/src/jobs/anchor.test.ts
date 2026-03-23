@@ -784,10 +784,10 @@ describe('processPendingAnchors', () => {
       expect(db.from).toHaveBeenCalledWith('anchors');
     });
 
-    it('selects only id column', async () => {
+    it('selects id and metadata columns', async () => {
       await processPendingAnchors();
 
-      expect(anchorsTable.select).toHaveBeenCalledWith('id');
+      expect(anchorsTable.select).toHaveBeenCalledWith('id, metadata');
     });
 
     it('filters by status PENDING', async () => {

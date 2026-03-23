@@ -113,7 +113,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
     expect(res.body.error).toBe('validation_error');
   });
 
-  it('returns 402 if insufficient credits for batch', async () => {
+  it('allows batch extraction even with low credits (beta: unlimited)', async () => {
     vi.mocked(checkAICredits).mockResolvedValueOnce({
       monthlyAllocation: 500,
       usedThisMonth: 499,
@@ -131,8 +131,9 @@ describe('POST /api/v1/ai/extract-batch', () => {
         ],
       });
 
-    expect(res.status).toBe(402);
-    expect(res.body.error).toBe('insufficient_credits');
+    // Beta: credit checks disabled — extraction proceeds regardless
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(2);
   });
 
   it('successfully extracts batch of rows', async () => {
