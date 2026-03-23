@@ -41,6 +41,10 @@ import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { attestationsRouter } from './attestations.js';
+import { entityVerifyRouter } from './entity-verify.js';
+import { complianceCheckRouter } from './compliance-check.js';
+import { regulatoryLookupRouter } from './regulatory-lookup.js';
+import { cleVerifyRouter } from './cle-verify.js';
 
 const router = Router();
 
@@ -197,6 +201,19 @@ router.use('/anchor', anchorSubmitRouter);
 // ─── Attestations — Phase II ───
 // Create, verify, list, revoke attestations
 router.use('/attestations', attestationsRouter);
+
+// ─── Phase 1.5 Paid API endpoints ───
+// Entity verification — search across all records for an entity
+router.use('/verify/entity', x402PaymentGate('/api/v1/verify/entity'), entityVerifyRouter);
+
+// Compliance check — check entity against regulatory records
+router.use('/compliance/check', x402PaymentGate('/api/v1/compliance/check'), complianceCheckRouter);
+
+// Regulatory lookup — search public regulatory records
+router.use('/regulatory/lookup', x402PaymentGate('/api/v1/regulatory/lookup'), regulatoryLookupRouter);
+
+// CLE (Continuing Legal Education) — verify compliance, list credits, submit completions
+router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

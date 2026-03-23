@@ -163,6 +163,30 @@ export function SecureDocumentDialog({
     }
   }, [attestationData, user, onSuccess]);
 
+  // Auto-select template based on AI-detected credential type
+  const autoSelectTemplate = useCallback(async (detectedType: string) => {
+    // Map AI output to valid credential_type enum values
+    const validTypes = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CLE', 'OTHER'] as const;
+    const normalized = detectedType.toUpperCase();
+    const matchedType = validTypes.find(t => t === normalized) ?? 'OTHER';
+
+    // Fetch system templates to find a match
+    const { data: templates } = await supabase
+      .from('credential_templates')
+      .select('id, name, description, credential_type, is_system, org_id')
+      .eq('is_system', true)
+      // CLE added in migration 0088 — cast until types regenerated
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .eq('credential_type', matchedType as any)
+      .limit(1);
+
+    if (templates && templates.length > 0) {
+      const match = templates[0] as unknown as TemplateOption;
+      setSelectedTemplate(match);
+      return match;
+    }
+    return null;
+  }, []);
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
     if (!fileData) return;
@@ -183,12 +207,18 @@ export function SecureDocumentDialog({
       setOverallConfidence(result.overallConfidence);
       setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
+
+      // Auto-detect document type from AI extraction results
+      const typeField = result.fields.find(f => f.key === 'credentialType');
+      if (typeField && typeField.confidence >= 0.5) {
+        await autoSelectTemplate(typeField.value);
+      }
     } else {
       // Extraction failed — still allow user to proceed without AI
       setExtractionProgress(null);
       setStep('template');
     }
-  }, [fileData, selectedTemplate]);
+  }, [fileData, selectedTemplate, autoSelectTemplate]);
 
   // Handle proceeding from upload step — always run AI extraction
   const handleUploadContinue = useCallback(async () => {
@@ -441,15 +471,26 @@ export function SecureDocumentDialog({
               )}
 
               {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
-                <AIFieldSuggestions
-                  fields={extractedFields}
-                  overallConfidence={overallConfidence}
-                  creditsRemaining={creditsRemaining}
-                  onFieldAccept={handleFieldAccept}
-                  onFieldReject={handleFieldReject}
-                  onFieldEdit={handleFieldEdit}
-                  onAcceptAll={handleAcceptAll}
-                />
+                <>
+                  {/* Show auto-detected document type */}
+                  {selectedTemplate && (
+                    <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+                      <Sparkles className="h-4 w-4 text-primary shrink-0" />
+                      <span>
+                        Auto-detected as <strong>{selectedTemplate.name}</strong>
+                      </span>
+                    </div>
+                  )}
+                  <AIFieldSuggestions
+                    fields={extractedFields}
+                    overallConfidence={overallConfidence}
+                    creditsRemaining={creditsRemaining}
+                    onFieldAccept={handleFieldAccept}
+                    onFieldReject={handleFieldReject}
+                    onFieldEdit={handleFieldEdit}
+                    onAcceptAll={handleAcceptAll}
+                  />
+                </>
               )}
             </div>
           )}
@@ -627,7 +668,8 @@ export function SecureDocumentDialog({
                   <Button variant="outline" onClick={() => setStep('upload')}>
                     {SECURE_DIALOG_LABELS.BACK}
                   </Button>
-                  <Button onClick={() => setStep('template')}>
+                  {/* Skip template selection if AI auto-detected a type */}
+                  <Button onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}>
                     {SECURE_DIALOG_LABELS.CONTINUE}
                   </Button>
                 </>

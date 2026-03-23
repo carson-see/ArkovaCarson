@@ -33,7 +33,7 @@ CONFIDENCE CALIBRATION:
 - 0.0-0.29: Very little extractable content, mostly guesswork
 
 FIELDS TO EXTRACT:
-- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | BADGE | OTHER
+- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | OTHER
 - issuerName: Full official name of the issuing institution/organization
 - issuedDate: When issued (YYYY-MM-DD)
 - expiryDate: When it expires, if applicable (YYYY-MM-DD)
@@ -64,7 +64,23 @@ Output: {"credentialType":"TRANSCRIPT","issuerName":"Harvard University","issued
 
 Example 5 — Medical Credential:
 Input: "American Board of Internal Medicine ... [NAME_REDACTED] ... certified in Internal Medicine ... Initial Certification: 2020-07-15 ... Valid through: 2030-12-31"
-Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","accreditingBody":"American Board of Internal Medicine","confidence":0.93}`;
+Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","accreditingBody":"American Board of Internal Medicine","confidence":0.93}
+
+Example 6 — Employment Verification Letter:
+Input: "To Whom It May Concern ... This letter confirms that [NAME_REDACTED] has been employed at [COMPANY] ... Position: Senior Engineer ... Start Date: 2021-03-15 ... Department: Engineering"
+Output: {"credentialType":"PROFESSIONAL","issuerName":"[COMPANY]","issuedDate":"2021-03-15","fieldOfStudy":"Engineering","confidence":0.85}
+
+Example 7 — Financial Statement:
+Input: "Annual Financial Statement ... Fiscal Year Ending December 31, 2024 ... Prepared by [COMPANY] ... Audited by Deloitte LLP ... Total Assets: $X ... Revenue: $Y"
+Output: {"credentialType":"OTHER","issuerName":"[COMPANY]","issuedDate":"2024-12-31","accreditingBody":"Deloitte LLP","confidence":0.80}
+
+Example 8 — CLE Course Completion:
+Input: "Continuing Legal Education Certificate ... [NAME_REDACTED] ... Bar No. [REDACTED] ... Course: Advanced Ethics in Digital Practice ... 3.0 Credit Hours (Ethics) ... Approved by California State Bar ... Provider: National Legal Academy ... Completed: February 15, 2026 ... Activity No. CLE-2026-1234"
+Output: {"credentialType":"CLE","issuerName":"National Legal Academy","issuedDate":"2026-02-15","fieldOfStudy":"Advanced Ethics in Digital Practice","accreditingBody":"California State Bar","jurisdiction":"California, USA","confidence":0.94}
+
+Example 9 — Contract / Agreement:
+Input: "SERVICE AGREEMENT ... Between [NAME_REDACTED] and [COMPANY] ... Effective Date: January 1, 2025 ... Term: 12 months ... Governing Law: State of Delaware"
+Output: {"credentialType":"OTHER","issuerName":"[COMPANY]","issuedDate":"2025-01-01","expiryDate":"2025-12-31","jurisdiction":"Delaware, USA","confidence":0.82}`;
 
 /**
  * Build the user prompt for a specific extraction request.
