@@ -44,6 +44,7 @@ import { attestationsRouter } from './attestations.js';
 import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
+import { cleVerifyRouter } from './cle-verify.js';
 
 const router = Router();
 
@@ -210,6 +211,9 @@ router.use('/compliance/check', x402PaymentGate('/api/v1/compliance/check'), com
 
 // Regulatory lookup — search public regulatory records
 router.use('/regulatory/lookup', x402PaymentGate('/api/v1/regulatory/lookup'), regulatoryLookupRouter);
+
+// CLE (Continuing Legal Education) — verify compliance, list credits, submit completions
+router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

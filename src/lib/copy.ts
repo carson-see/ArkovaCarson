@@ -56,6 +56,7 @@ export const CREDENTIAL_TYPE_LABELS = {
   CERTIFICATE: 'Certificate',
   TRANSCRIPT: 'Transcript',
   PROFESSIONAL: 'Professional Credential',
+  CLE: 'CLE Credit',
   OTHER: 'Other',
 } as const;
 
@@ -65,6 +66,7 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   CERTIFICATE: 'Certificate of completion or achievement',
   TRANSCRIPT: 'Academic transcript or record of courses',
   PROFESSIONAL: 'Professional certification or accreditation',
+  CLE: 'Continuing Legal Education credit',
   OTHER: 'Other credential type',
 } as const;
 
