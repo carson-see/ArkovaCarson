@@ -4,14 +4,19 @@
  * Shows all organizations the current user belongs to.
  * Click into an org to see its profile page.
  * Users with no orgs see an empty state with option to create one.
+ *
+ * Session 10: Fixed Create Organization — opens dialog instead of
+ * redirecting to onboarding (which is RouteGuard-blocked for onboarded users).
  */
 
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Plus, Crown, Shield, User } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useUserOrgs } from '@/hooks/useUserOrgs';
 import { AppShell } from '@/components/layout';
+import { CreateOrgDialog } from '@/components/organization';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -28,11 +33,17 @@ export function OrganizationsListPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { orgs, loading } = useUserOrgs();
+  const { orgs, loading, refreshOrgs } = useUserOrgs();
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
 
   const handleSignOut = async () => {
     await signOut();
     navigate(ROUTES.LOGIN);
+  };
+
+  const handleOrgCreated = (orgId: string) => {
+    refreshOrgs();
+    navigate(orgProfilePath(orgId));
   };
 
   return (
@@ -44,7 +55,7 @@ export function OrganizationsListPage() {
             {orgs.length > 0 ? `You belong to ${orgs.length} organization${orgs.length > 1 ? 's' : ''}` : 'Manage your organization memberships'}
           </p>
         </div>
-        <Button onClick={() => navigate(ROUTES.ONBOARDING_ORG)} size="sm">
+        <Button onClick={() => setCreateDialogOpen(true)} size="sm">
           <Plus className="mr-2 h-4 w-4" />
           Create Organization
         </Button>
@@ -65,7 +76,7 @@ export function OrganizationsListPage() {
           <p className="text-sm text-muted-foreground max-w-sm mb-6">
             You are not currently part of any organization. Create one to start sharing verification capabilities with your team.
           </p>
-          <Button onClick={() => navigate(ROUTES.ONBOARDING_ORG)}>
+          <Button onClick={() => setCreateDialogOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Create Organization
           </Button>
@@ -112,6 +123,12 @@ export function OrganizationsListPage() {
           })}
         </div>
       )}
+
+      <CreateOrgDialog
+        open={createDialogOpen}
+        onOpenChange={setCreateDialogOpen}
+        onCreated={handleOrgCreated}
+      />
     </AppShell>
   );
 }

@@ -2,10 +2,11 @@
  * Header Component
  *
  * Top navigation bar with user menu.
+ * Session 10: Billing/Help/Developers moved from sidebar to user dropdown.
  */
 
 import { useLocation, useNavigate } from 'react-router-dom';
-import { LogOut, User, Settings, ChevronDown } from 'lucide-react';
+import { LogOut, User, Settings, ChevronDown, CreditCard, HelpCircle, Code2 } from 'lucide-react';
 import { Breadcrumbs } from './Breadcrumbs';
 import { Button } from '@/components/ui/button';
 import {
@@ -19,17 +20,20 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS } from '@/lib/copy';
+import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
 
 /** Map pathname to a display title for the header */
 function getPageTitle(pathname: string): string {
   if (pathname === ROUTES.DASHBOARD) return NAV_LABELS.DASHBOARD;
+  if (pathname === ROUTES.DOCUMENTS || pathname.startsWith('/documents')) return DOCUMENTS_PAGE_LABELS.PAGE_TITLE;
   if (pathname === ROUTES.RECORDS || pathname.startsWith('/records/')) return NAV_LABELS.MY_RECORDS;
   if (pathname === ROUTES.ORGANIZATION) return NAV_LABELS.ORGANIZATION;
+  if (pathname === ROUTES.ORGANIZATIONS || pathname.startsWith('/organizations/')) return NAV_LABELS.ORGANIZATION;
   if (pathname === ROUTES.SETTINGS || pathname.startsWith('/settings/')) return NAV_LABELS.SETTINGS;
   if (pathname === ROUTES.HELP) return NAV_LABELS.HELP;
   if (pathname === ROUTES.BILLING || pathname.startsWith('/billing/')) return BILLING_LABELS.PAGE_TITLE;
   if (pathname === ROUTES.MY_CREDENTIALS) return MY_CREDENTIALS_LABELS.PAGE_TITLE;
+  if (pathname === ROUTES.ATTESTATIONS) return 'Attestations';
   return NAV_LABELS.DASHBOARD;
 }
 
@@ -102,6 +106,19 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
           <DropdownMenuItem onClick={() => navigate(ROUTES.SETTINGS)}>
             <Settings className="mr-2 h-4 w-4" />
             Settings
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => navigate(ROUTES.BILLING)}>
+            <CreditCard className="mr-2 h-4 w-4" />
+            Billing & Plans
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => navigate(ROUTES.HELP)}>
+            <HelpCircle className="mr-2 h-4 w-4" />
+            Help
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => navigate(ROUTES.DEVELOPERS)}>
+            <Code2 className="mr-2 h-4 w-4" />
+            Developers
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

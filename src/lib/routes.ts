@@ -31,6 +31,7 @@ export const ROUTES = {
   ONBOARDING_ORG: '/onboarding/org',
 
   // Authenticated routes
+  DOCUMENTS: '/documents',
   MY_CREDENTIALS: '/my-credentials',
   DASHBOARD: '/dashboard',
   RECORDS: '/records',
