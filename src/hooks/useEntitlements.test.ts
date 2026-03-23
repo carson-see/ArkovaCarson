@@ -77,7 +77,9 @@ function setupMocks(opts: {
       return {
         select: () => ({
           eq: () => ({
-            gte: () => Promise.resolve({ count, error: countError }),
+            is: () => ({
+              gte: () => Promise.resolve({ count, error: countError }),
+            }),
           }),
         }),
       };

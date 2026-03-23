@@ -99,11 +99,12 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
         name = freePlan.name;
       }
 
-      // 2. Count anchors created in current period
+      // 2. Count anchors created in current period (exclude pipeline records)
       let countQuery = supabase
         .from('anchors')
         .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id);
+        .eq('user_id', user.id)
+        .is('metadata->pipeline_source', null);
 
       if (periodStart) {
         countQuery = countQuery.gte('created_at', periodStart);

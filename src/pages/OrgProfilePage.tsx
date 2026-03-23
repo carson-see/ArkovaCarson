@@ -51,7 +51,7 @@ export function OrgProfilePage() {
   const { orgId } = useParams<{ orgId: string }>();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
+  const { organization, loading: orgLoading, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
   const { members, loading: membersLoading } = useOrgMembers(orgId ?? null);
   const { revokeAnchor } = useRevokeAnchor();
   const { inviteMember } = useInviteMember();
@@ -66,6 +66,17 @@ export function OrgProfilePage() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  // Org records count
+  const [recordsCount, setRecordsCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!orgId) return;
+    supabase
+      .from('anchors')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', orgId)
+      .then(({ count }) => setRecordsCount(count ?? 0));
+  }, [orgId, refreshKey]);
 
   // Settings state
   const [orgDisplayName, setOrgDisplayName] = useState('');
@@ -152,7 +163,7 @@ export function OrgProfilePage() {
   }
 
   // Loading state
-  if (roleLoading || profileLoading) {
+  if (roleLoading || profileLoading || orgLoading) {
     return (
       <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
         <div className="flex items-center justify-center py-20">
@@ -237,7 +248,7 @@ export function OrgProfilePage() {
           <CardContent className="p-4 flex items-center gap-3">
             <FileText className="h-5 w-5 text-muted-foreground" />
             <div>
-              <p className="text-2xl font-semibold">{refreshKey >= 0 ? '—' : '0'}</p>
+              <p className="text-2xl font-semibold">{recordsCount !== null ? recordsCount.toLocaleString() : '—'}</p>
               <p className="text-xs text-muted-foreground">Records</p>
             </div>
           </CardContent>
@@ -247,7 +258,7 @@ export function OrgProfilePage() {
             <BarChart3 className="h-5 w-5 text-muted-foreground" />
             <div>
               <p className="text-2xl font-semibold">
-                {organization?.verification_status === 'VERIFIED' ? 'Verified' : 'Pending'}
+                {organization?.verification_status === 'VERIFIED' ? 'Verified' : 'Active'}
               </p>
               <p className="text-xs text-muted-foreground">Status</p>
             </div>

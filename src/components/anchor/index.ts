@@ -9,3 +9,4 @@ export { TemplateSelector } from './TemplateSelector';
 export type { TemplateOption } from './TemplateSelector';
 export { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 export { VerificationWalkthrough } from './VerificationWalkthrough';
+export { VersionChainSection } from './VersionChainSection';

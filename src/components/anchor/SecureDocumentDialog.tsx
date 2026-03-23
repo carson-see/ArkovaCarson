@@ -1,17 +1,17 @@
 /**
  * Secure Document Dialog
  *
- * Modal for securing a new document with step-by-step flow.
- * Uses real Supabase insert (following IssueCredentialForm pattern).
+ * Anchor-first architecture: Upload → Secure → Done.
+ * Clicking "Secure" immediately creates the anchor (PENDING),
+ * shows success screen with verification URL.
+ * AI extraction runs async in the background via useBackgroundExtraction.
  *
- * Enhanced with AI extraction (P8-S5): upload → AI extraction → template → confirm → anchor.
- * Enhanced success screen (UF-04): shows verification URL, copy link,
- * and "anchoring in progress" messaging.
+ * No intermediate steps (no template selection, no confirm screen).
  *
  * @see CRIT-1, UF-04, P8-S5
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Shield,
   CheckCircle,
@@ -20,8 +20,6 @@ import {
   Copy,
   Check,
   ExternalLink,
-  Sparkles,
-  SkipForward,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,22 +30,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { FileUpload, type AttestationUpload } from './FileUpload';
 import { BulkUploadWizard } from '@/components/upload';
 import { WORKER_URL } from '@/lib/workerClient';
-import { TemplateSelector } from './TemplateSelector';
-import type { TemplateOption } from './TemplateSelector';
-import { AIFieldSuggestions } from './AIFieldSuggestions';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
-import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
-import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useBackgroundExtraction } from '@/hooks/useBackgroundExtraction';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
 import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -57,7 +52,7 @@ interface SecureDocumentDialogProps {
   onSuccess?: () => void;
 }
 
-type Step = 'upload' | 'extracting' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
+type Step = 'upload' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
 
 interface FileData {
   file: File;
@@ -77,28 +72,17 @@ export function SecureDocumentDialog({
   const { user } = useAuth();
   const { profile } = useProfile();
   const navigate = useNavigate();
+  const { runInBackground } = useBackgroundExtraction();
 
   const [step, setStep] = useState<Step>('upload');
   const [fileData, setFileData] = useState<FileData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateOption | null>(null);
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [description, setDescription] = useState('');
+  const [expiresAt, setExpiresAt] = useState<string>('');
 
-  // AI extraction state
-  const [aiEnabled, setAiEnabled] = useState(false);
-  const [extractionProgress, setExtractionProgress] = useState<ExtractionProgress | null>(null);
-  const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
-  const [overallConfidence, setOverallConfidence] = useState(0);
-  const [creditsRemaining, setCreditsRemaining] = useState(0);
-
-  // Check AI extraction flag on mount
-  useEffect(() => {
-    if (open) {
-      isAIExtractionEnabled().then(setAiEnabled).catch(() => setAiEnabled(false));
-    }
-  }, [open]);
+  // Attestation upload state
+  const [attestationData, setAttestationData] = useState<AttestationUpload | null>(null);
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
@@ -107,9 +91,6 @@ export function SecureDocumentDialog({
   const handleBulkDetected = useCallback((_files: File[]) => {
     setStep('bulk');
   }, []);
-
-  // Attestation upload state
-  const [attestationData, setAttestationData] = useState<AttestationUpload | null>(null);
 
   const handleAttestationDetected = useCallback((data: AttestationUpload) => {
     setAttestationData(data);
@@ -163,153 +144,21 @@ export function SecureDocumentDialog({
     }
   }, [attestationData, user, onSuccess]);
 
-  // Auto-select template based on AI-detected credential type
-  const autoSelectTemplate = useCallback(async (detectedType: string) => {
-    const normalized = detectedType.toUpperCase().trim();
-
-    // Fuzzy mapping: AI output → credential_type enum
-    const typeMap: Record<string, string> = {
-      'DEGREE': 'DEGREE', 'DIPLOMA': 'DEGREE', 'BACHELOR': 'DEGREE', 'MASTER': 'DEGREE', 'PHD': 'DEGREE', 'DOCTORATE': 'DEGREE',
-      'LICENSE': 'LICENSE', 'MEDICAL_LICENSE': 'LICENSE', 'NURSING_LICENSE': 'LICENSE', 'PE_LICENSE': 'LICENSE',
-      'CERTIFICATE': 'CERTIFICATE', 'CERTIFICATION': 'CERTIFICATE', 'PMP': 'CERTIFICATE', 'INSURANCE': 'CERTIFICATE',
-      'TRANSCRIPT': 'TRANSCRIPT', 'GRADE_REPORT': 'TRANSCRIPT',
-      'PROFESSIONAL': 'PROFESSIONAL', 'PROFESSIONAL_CREDENTIAL': 'PROFESSIONAL',
-      'CLE': 'CLE', 'CLE_CREDIT': 'CLE', 'CLE_ETHICS': 'CLE', 'CONTINUING_EDUCATION': 'CLE',
-      'ATTESTATION': 'ATTESTATION', 'EMPLOYMENT_VERIFICATION': 'ATTESTATION', 'VERIFICATION_LETTER': 'ATTESTATION', 'LETTER_OF_RECOMMENDATION': 'ATTESTATION',
-      'CONTRACT': 'OTHER', 'NDA': 'OTHER', 'AGREEMENT': 'OTHER',
-      'OTHER': 'OTHER', 'GENERAL': 'OTHER', 'GENERAL_DOCUMENT': 'OTHER',
-    };
-    const matchedType = typeMap[normalized] ?? (
-      // Partial match fallback
-      Object.entries(typeMap).find(([k]) => normalized.includes(k))?.[1] ?? 'OTHER'
-    );
-
-    // Fetch system templates to find a match
-    const { data: templates } = await supabase
-      .from('credential_templates')
-      .select('id, name, description, credential_type, is_system, org_id')
-      .eq('is_system', true)
-      // CLE added in migration 0088 — cast until types regenerated
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .eq('credential_type', matchedType as any)
-      .limit(1);
-
-    if (templates && templates.length > 0) {
-      const match = templates[0] as unknown as TemplateOption;
-      setSelectedTemplate(match);
-      return match;
-    }
-    return null;
-  }, []);
-  // Run AI extraction after file upload
-  const handleStartExtraction = useCallback(async () => {
-    if (!fileData) return;
-
-    setStep('extracting');
-    setExtractedFields([]);
-    setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
-
-    const result = await runExtraction(
-      fileData.file,
-      fileData.fingerprint,
-      selectedTemplate?.credential_type ?? 'OTHER',
-      (progress) => setExtractionProgress(progress),
-    );
-
-    if (result) {
-      // Auto-accept all high-confidence fields
-      const autoAccepted = result.fields.map(f =>
-        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
-      );
-      setExtractedFields(autoAccepted);
-      setOverallConfidence(result.overallConfidence);
-      setCreditsRemaining(result.creditsRemaining);
-      setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
-
-      // Auto-detect document type, auto-select template, and auto-submit
-      const typeField = result.fields.find(f => f.key === 'credentialType');
-      if (typeField && typeField.confidence >= 0.5) {
-        await autoSelectTemplate(typeField.value);
-      } else {
-        await autoSelectTemplate('OTHER');
-      }
-      // One-click flow: skip confirm, go straight to anchoring
-      // Description auto-generated from AI fields
-      handleConfirm();
-      return;
-    } else {
-      // Extraction failed — auto-select General Document and anchor immediately
-      setExtractionProgress(null);
-      await autoSelectTemplate('OTHER');
-      handleConfirm();
-      return;
-    }
-  }, [fileData, selectedTemplate, autoSelectTemplate]);
-
-  // Handle proceeding from upload step — always run AI extraction
-  const handleUploadContinue = useCallback(async () => {
-    if (!fileData) return;
-
-    if (aiEnabled) {
-      await handleStartExtraction();
-    } else {
-      // No AI — auto-select General Document and anchor immediately
-      await autoSelectTemplate('OTHER');
-      handleConfirm();
-    }
-  }, [fileData, aiEnabled, handleStartExtraction]);
-
-  // AI field callbacks
-  const handleFieldAccept = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
-    );
-  }, []);
-
-  const handleFieldReject = useCallback((key: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
-    );
-  }, []);
-
-  const handleFieldEdit = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
-    );
-  }, []);
-
-  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
-    setExtractedFields(prev =>
-      prev.map(f => {
-        const matched = fields.find(sf => sf.key === f.key);
-        return matched ? { ...f, status: 'accepted' as const } : f;
-      })
-    );
-  }, []);
-
-  const handleConfirm = useCallback(async () => {
+  // Anchor-first: immediately create anchor, then run AI extraction in background
+  const handleSecure = useCallback(async () => {
     if (!fileData || !user) return;
 
     setStep('processing');
     setError(null);
 
     try {
-      // Build metadata from AI-extracted fields (all non-rejected fields)
-      const acceptedFields = extractedFields
-        .filter(f => f.status !== 'rejected')
-        .reduce<Record<string, string>>((acc, f) => {
-          acc[f.key] = f.value;
-          return acc;
-        }, {});
-
       const validated = validateAnchorCreate({
         fingerprint: fileData.fingerprint,
         filename: fileData.file.name,
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
         org_id: profile?.org_id || null,
-        ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type } : {}),
-        ...(description.trim() ? { description: description.trim() } : {}),
+        ...(expiresAt ? { expires_at: new Date(expiresAt).toISOString() } : {}),
       });
 
       const { data: inserted, error: insertError } = await supabase
@@ -317,18 +166,17 @@ export function SecureDocumentDialog({
         .insert({
           ...validated,
           user_id: user.id,
-          ...(Object.keys(acceptedFields).length > 0 ? { metadata: acceptedFields } : {}),
         })
         .select('id, public_id')
         .single();
 
       if (insertError) throw insertError;
 
-      setCreatedAnchor({
+      const anchor: CreatedAnchor = {
         id: inserted.id,
-        // public_id is auto-generated by trigger (migration 0037) — always non-null after insert
         publicId: inserted.public_id!,
-      });
+      };
+      setCreatedAnchor(anchor);
 
       logAuditEvent({
         eventType: 'ANCHOR_CREATED',
@@ -342,6 +190,14 @@ export function SecureDocumentDialog({
       toast.success(TOAST.ANCHOR_SUBMITTED);
       setStep('success');
       onSuccess?.();
+
+      // Fire-and-forget: background AI extraction updates metadata async
+      runInBackground({
+        anchorId: anchor.id,
+        file: fileData.file,
+        fingerprint: fileData.fingerprint,
+        userId: user.id,
+      });
     } catch (err) {
       if (err instanceof Error && err.name === 'ZodError') {
         const zodErr = err as import('zod').ZodError;
@@ -354,18 +210,15 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, extractedFields, onSuccess]);
+  }, [fileData, user, profile, expiresAt, onSuccess, runInBackground]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
     setFileData(null);
-    setSelectedTemplate(null);
-    setDescription('');
     setError(null);
     setCreatedAnchor(null);
     setLinkCopied(false);
-    setExtractedFields([]);
-    setExtractionProgress(null);
+    setExpiresAt('');
     setAttestationData(null);
     onOpenChange(false);
   }, [onOpenChange]);
@@ -373,12 +226,9 @@ export function SecureDocumentDialog({
   const handleRetry = useCallback(() => {
     setStep('upload');
     setFileData(null);
-    setSelectedTemplate(null);
-    setDescription('');
     setError(null);
     setCreatedAnchor(null);
-    setExtractedFields([]);
-    setExtractionProgress(null);
+    setExpiresAt('');
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -413,12 +263,32 @@ export function SecureDocumentDialog({
 
         <div className="py-4">
           {step === 'upload' && (
-            <FileUpload
-              onFileSelect={handleFileSelect}
-              onBulkDetected={handleBulkDetected}
-              onAttestationDetected={handleAttestationDetected}
-              disabled={false}
-            />
+            <div className="space-y-4">
+              <FileUpload
+                onFileSelect={handleFileSelect}
+                onBulkDetected={handleBulkDetected}
+                onAttestationDetected={handleAttestationDetected}
+                disabled={false}
+              />
+              {fileData && (
+                <div className="space-y-2">
+                  <Label htmlFor="expires-at" className="text-sm">
+                    Expiration Date <span className="text-muted-foreground font-normal">(optional)</span>
+                  </Label>
+                  <Input
+                    id="expires-at"
+                    type="date"
+                    value={expiresAt}
+                    min={new Date().toISOString().split('T')[0]}
+                    onChange={(e) => setExpiresAt(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Set an expiration date to receive a reminder when this credential expires.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           {step === 'attestation-review' && attestationData && (
@@ -481,122 +351,6 @@ export function SecureDocumentDialog({
                 setStep('upload');
               }}
             />
-          )}
-
-          {step === 'extracting' && (
-            <div className="space-y-4">
-              {extractionProgress && extractionProgress.stage !== 'complete' && (
-                <AIFieldSuggestions
-                  fields={[]}
-                  overallConfidence={0}
-                  creditsRemaining={0}
-                  progress={extractionProgress}
-                  onFieldAccept={handleFieldAccept}
-                  onFieldReject={handleFieldReject}
-                  onFieldEdit={handleFieldEdit}
-                  onAcceptAll={handleAcceptAll}
-                />
-              )}
-
-              {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
-                <>
-                  {/* Show auto-detected document type */}
-                  {selectedTemplate && (
-                    <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
-                      <Sparkles className="h-4 w-4 text-primary shrink-0" />
-                      <span>
-                        Auto-detected as <strong>{selectedTemplate.name}</strong>
-                      </span>
-                    </div>
-                  )}
-                  <AIFieldSuggestions
-                    fields={extractedFields}
-                    overallConfidence={overallConfidence}
-                    creditsRemaining={creditsRemaining}
-                    onFieldAccept={handleFieldAccept}
-                    onFieldReject={handleFieldReject}
-                    onFieldEdit={handleFieldEdit}
-                    onAcceptAll={handleAcceptAll}
-                  />
-                </>
-              )}
-            </div>
-          )}
-
-          {step === 'template' && (
-            <div className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Choose a template for this credential
-              </p>
-              <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1">
-                <TemplateSelector
-                  orgId={profile?.org_id}
-                  onSelect={setSelectedTemplate}
-                  selectedId={selectedTemplate?.id}
-                />
-              </div>
-            </div>
-          )}
-
-          {step === 'confirm' && fileData && (
-            <div className="space-y-4">
-              <div className="rounded-lg border p-4">
-                <h4 className="text-sm font-medium mb-2">{SECURE_DIALOG_LABELS.READY_TO_SECURE}</h4>
-                <dl className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.DOCUMENT_LABEL}</dt>
-                    <dd className="font-medium truncate max-w-[200px]">
-                      {fileData.file.name}
-                    </dd>
-                  </div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.SIZE_LABEL}</dt>
-                    <dd className="font-medium">
-                      {(fileData.file.size / 1024).toFixed(1)} KB
-                    </dd>
-                  </div>
-                  {selectedTemplate && (
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">Template</dt>
-                      <dd className="font-medium">{selectedTemplate.name}</dd>
-                    </div>
-                  )}
-                  {extractedFields.some(f => f.status === 'accepted' || f.status === 'edited') && (
-                    <div className="flex justify-between">
-                      <dt className="text-muted-foreground">{SECURE_DIALOG_LABELS.AI_FIELDS}</dt>
-                      <dd className="font-medium text-primary">
-                        {extractedFields.filter(f => f.status === 'accepted' || f.status === 'edited').length} accepted
-                      </dd>
-                    </div>
-                  )}
-                </dl>
-              </div>
-
-              {/* Description field (BETA-12) */}
-              <div className="space-y-2">
-                <label htmlFor="anchor-description" className="text-sm font-medium">
-                  {DESCRIPTION_LABELS.FIELD_LABEL}
-                </label>
-                <textarea
-                  id="anchor-description"
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-                  placeholder={DESCRIPTION_LABELS.FIELD_PLACEHOLDER}
-                  maxLength={500}
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {DESCRIPTION_LABELS.FIELD_HELP}
-                </p>
-              </div>
-              <Alert>
-                <Shield className="h-4 w-4" />
-                <AlertDescription>
-                  {SECURE_DIALOG_LABELS.SECURITY_NOTICE}
-                </AlertDescription>
-              </Alert>
-            </div>
           )}
 
           {step === 'processing' && (
@@ -680,75 +434,9 @@ export function SecureDocumentDialog({
                 {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button
-                onClick={handleUploadContinue}
+                onClick={handleSecure}
                 disabled={!fileData}
               >
-                {aiEnabled && fileData?.file.type === 'application/pdf' && (
-                  <Sparkles className="mr-2 h-4 w-4" />
-                )}
-                {SECURE_DIALOG_LABELS.CONTINUE}
-              </Button>
-            </>
-          )}
-
-          {step === 'extracting' && (
-            <>
-              {extractionProgress?.stage === 'complete' ? (
-                <>
-                  <Button variant="outline" onClick={() => setStep('upload')}>
-                    {SECURE_DIALOG_LABELS.BACK}
-                  </Button>
-                  {/* Skip template selection if AI auto-detected a type */}
-                  <Button onClick={() => setStep(selectedTemplate ? 'confirm' : 'template')}>
-                    {SECURE_DIALOG_LABELS.CONTINUE}
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setExtractionProgress(null);
-                    setStep('template');
-                  }}
-                >
-                  <SkipForward className="mr-2 h-4 w-4" />
-                  {SECURE_DIALOG_LABELS.SKIP_AI_ANALYSIS}
-                </Button>
-              )}
-            </>
-          )}
-
-          {step === 'template' && (
-            <>
-              <Button variant="outline" onClick={() => setStep(extractedFields.length > 0 ? 'extracting' : 'upload')}>
-                {SECURE_DIALOG_LABELS.BACK}
-              </Button>
-              <div className="flex gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setSelectedTemplate(null);
-                    setStep('confirm');
-                  }}
-                >
-                  Skip
-                </Button>
-                <Button
-                  onClick={() => setStep('confirm')}
-                  disabled={!selectedTemplate}
-                >
-                  {SECURE_DIALOG_LABELS.CONTINUE}
-                </Button>
-              </div>
-            </>
-          )}
-
-          {step === 'confirm' && (
-            <>
-              <Button variant="outline" onClick={() => setStep('template')}>
-                {SECURE_DIALOG_LABELS.BACK}
-              </Button>
-              <Button onClick={handleConfirm}>
                 <Shield className="mr-2 h-4 w-4" />
                 {SECURE_DIALOG_LABELS.SECURE_BUTTON}
               </Button>

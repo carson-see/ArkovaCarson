@@ -13,8 +13,9 @@ import { Loader2, AlertCircle, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchor } from '@/hooks/useAnchor';
+import { useVersionChain } from '@/hooks/useVersionChain';
 import { AppShell } from '@/components/layout';
-import { AssetDetailView } from '@/components/anchor';
+import { AssetDetailView, VersionChainSection } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { ROUTES } from '@/lib/routes';
@@ -25,6 +26,7 @@ export function RecordDetailPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { anchor, loading: anchorLoading, error } = useAnchor(id);
+  const { chain, hasChain } = useVersionChain(id);
 
   const handleSignOut = async () => {
     await signOut();
@@ -156,6 +158,11 @@ export function RecordDetailPage() {
           }
         }}
       />
+      {hasChain && (
+        <div className="mt-6">
+          <VersionChainSection chain={chain} />
+        </div>
+      )}
     </AppShell>
   );
 }

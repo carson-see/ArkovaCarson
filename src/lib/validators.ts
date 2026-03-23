@@ -150,6 +150,12 @@ export const AnchorCreateSchema = z.object({
     .max(500, 'Description must be 500 characters or less')
     .optional()
     .nullable(),
+
+  expires_at: z
+    .string()
+    .datetime({ message: 'expires_at must be a valid ISO datetime' })
+    .optional()
+    .nullable(),
 });
 
 export type AnchorCreate = z.infer<typeof AnchorCreateSchema>;
