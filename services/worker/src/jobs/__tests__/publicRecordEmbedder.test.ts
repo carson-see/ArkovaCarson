@@ -76,7 +76,9 @@ describe('publicRecordEmbedder', () => {
   });
 
   it('handles empty result set', async () => {
-    mockRpc.mockResolvedValue({ data: true });
+    mockRpc
+      .mockResolvedValueOnce({ data: true })   // get_flag
+      .mockResolvedValueOnce({ data: [], error: null }); // get_unembedded_public_records
     const mockSupa = createMockSupabase([]);
 
     const { embedPublicRecords } = await import('../publicRecordEmbedder.js');
@@ -87,7 +89,6 @@ describe('publicRecordEmbedder', () => {
   });
 
   it('generates embeddings for unembedded records', async () => {
-    mockRpc.mockResolvedValue({ data: true });
     const records = [
       {
         id: 'rec-1',
@@ -97,6 +98,9 @@ describe('publicRecordEmbedder', () => {
         metadata: { abstract: 'A test patent' },
       },
     ];
+    mockRpc
+      .mockResolvedValueOnce({ data: true })   // get_flag
+      .mockResolvedValueOnce({ data: records, error: null }); // get_unembedded_public_records
     const mockSupa = createMockSupabase(records);
 
     mockAiProvider.generateEmbedding.mockResolvedValue({
