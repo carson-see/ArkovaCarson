@@ -28,21 +28,29 @@ IMPORTANT RULES:
 - Dates MUST be in ISO 8601 format (YYYY-MM-DD). Convert any date format you find.
 - The "confidence" field MUST be a number from 0.0 to 1.0 reflecting extraction certainty.
 
-CONFIDENCE CALIBRATION (IMPORTANT — read carefully):
-Your confidence scores tend to be 10-15 points too high. Be conservative.
-- 0.9-1.0: ONLY when ALL key fields are explicitly stated, unambiguous, and you extracted every one. Reserve this for near-perfect documents.
-- 0.7-0.89: Most fields present but 1-2 are inferred or slightly ambiguous. This should be your most common range for clean documents.
-- 0.5-0.69: Several fields missing or ambiguous, credential type unclear, or significant OCR noise.
-- 0.3-0.49: Sparse text, many fields inferred rather than directly stated. Non-English documents with uncertain translation.
-- 0.0-0.29: Very little extractable content, mostly guesswork, or severely corrupted/truncated text.
+CONFIDENCE CALIBRATION (CRITICAL — you MUST follow these ranges):
+Your confidence scores tend to be 10-15 points too high. Actively compensate by choosing the LOWER end of each range.
+- 0.90-1.0: NEVER use unless EVERY key field is explicitly and unambiguously present. This range should apply to <10% of documents. If ANY field is inferred or absent, you MUST drop below 0.90.
+- 0.75-0.89: Clean document with most fields present. 1-2 fields inferred or slightly ambiguous. THIS SHOULD BE YOUR DEFAULT RANGE for typical clean credentials.
+- 0.55-0.74: Several fields missing, ambiguous, or require inference. OCR noise present. Credential type is clear but details are partial.
+- 0.35-0.54: Sparse text, many fields inferred rather than directly stated. Non-English documents with uncertain translation. Multiple ambiguities.
+- 0.0-0.34: Very little extractable content, mostly guesswork, or severely corrupted/truncated text.
+SELF-CHECK: Before returning confidence >0.85, count how many fields you extracted vs how many the document type typically has. If you left 2+ fields empty, confidence should be ≤0.80.
 
 LICENSE-SPECIFIC GUIDANCE:
 Licenses are highly variable in format. Pay special attention to:
 - The issuing BOARD or DEPARTMENT is the issuerName (not the state itself). Example: "California Board of Registered Nursing" not "State of California".
 - License numbers often have prefixes (RN-, PE-, CPA-, etc.) — include the full format.
+- CRITICAL: If the license number is redacted (e.g., "[REDACTED]", "RN-[REDACTED]", "AR-[REDACTED]", "A-[REDACTED]", "NMW[REDACTED]"), do NOT extract licenseNumber. Only extract actual visible numbers like "TX-PE-89012" or "475.123456".
 - Expiration dates may say "Exp:", "Expires:", "Valid through:", "Renewal date:" — all mean expiryDate.
-- The jurisdiction is the STATE, not the city. Format as "State, USA" (e.g., "California, USA").
-- For licenses, accreditingBody is the regulatory authority if different from the issuer.
+- The jurisdiction is the STATE, not the city. Format as "State, USA" (e.g., "California, USA"). For federal agencies (FAA, SEC, etc.), use "United States".
+- accreditingBody: Include when a SEPARATE accrediting, certifying, or regulatory organization is explicitly named in the text and is DIFFERENT from the issuerName. Do NOT duplicate the issuer. Examples of when to include:
+  - AHPRA oversees the Nursing Board → accreditingBody: "AHPRA" (different from issuer)
+  - "ABIM" board certifies, "State Education Department" issues license → accreditingBody: "ABIM"
+  - "Accredited by CAEP" on a teaching license → accreditingBody: "CAEP"
+  - "NCARB certified" on an architect license → accreditingBody: "NCARB"
+  Examples of when to OMIT: FAA issues and regulates (same entity), California Medical Board (board IS the authority)
+- fieldOfStudy for licenses: Infer the professional field from context. "Real Estate Broker" → "Real Estate", "Pharmacist" → "Pharmacy", "Speech-Language Pathologist" → "Speech-Language Pathology", "Registered Nurse" → "Nursing".
 
 FIELDS TO EXTRACT:
 - credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | OTHER
@@ -77,11 +85,11 @@ FEW-SHOT EXAMPLES:
 
 Example 1 — University Diploma:
 Input: "University of Michigan ... Bachelor of Science ... Computer Science ... Conferred May 15, 2024 ... [NAME_REDACTED] ... Ann Arbor, Michigan"
-Output: {"credentialType":"DEGREE","issuerName":"University of Michigan","issuedDate":"2024-05-15","fieldOfStudy":"Computer Science","degreeLevel":"Bachelor","jurisdiction":"Michigan, USA","fraudSignals":[],"confidence":0.95}
+Output: {"credentialType":"DEGREE","issuerName":"University of Michigan","issuedDate":"2024-05-15","fieldOfStudy":"Computer Science","degreeLevel":"Bachelor","jurisdiction":"Michigan, USA","fraudSignals":[],"confidence":0.88}
 
-Example 2 — Professional License:
+Example 2 — Professional License (redacted number — omit licenseNumber):
 Input: "State of California ... Board of Registered Nursing ... License No. RN-[REDACTED] ... Issued: 01/10/2023 ... Expires: 01/10/2025 ... [NAME_REDACTED]"
-Output: {"credentialType":"LICENSE","issuerName":"California Board of Registered Nursing","issuedDate":"2023-01-10","expiryDate":"2025-01-10","accreditingBody":"State of California","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.92}
+Output: {"credentialType":"LICENSE","issuerName":"California Board of Registered Nursing","issuedDate":"2023-01-10","expiryDate":"2025-01-10","fieldOfStudy":"Nursing","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.82}
 
 Example 3 — Certificate of Completion:
 Input: "Google Cloud ... Professional Cloud Architect ... Certification Date: March 2024 ... Valid through March 2026 ... Credential ID: [REDACTED]"
@@ -93,7 +101,7 @@ Output: {"credentialType":"TRANSCRIPT","issuerName":"Harvard University","issued
 
 Example 5 — Medical Credential:
 Input: "American Board of Internal Medicine ... [NAME_REDACTED] ... certified in Internal Medicine ... Initial Certification: 2020-07-15 ... Valid through: 2030-12-31"
-Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","accreditingBody":"American Board of Internal Medicine","fraudSignals":[],"confidence":0.93}
+Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","fraudSignals":[],"confidence":0.86}
 
 Example 6 — Employment Verification Letter:
 Input: "To Whom It May Concern ... This letter confirms that [NAME_REDACTED] has been employed at [COMPANY] ... Position: Senior Engineer ... Start Date: 2021-03-15 ... Department: Engineering"
@@ -105,11 +113,11 @@ Output: {"credentialType":"OTHER","issuerName":"[COMPANY]","issuedDate":"2024-12
 
 Example 8 — CLE Course Completion:
 Input: "Continuing Legal Education Certificate ... [NAME_REDACTED] ... Bar No. [REDACTED] ... Course: Advanced Ethics in Digital Practice ... 3.0 Credit Hours (Ethics) ... Approved by California State Bar ... Provider: National Legal Academy ... Completed: February 15, 2026 ... Activity No. CLE-2026-1234"
-Output: {"credentialType":"CLE","issuerName":"National Legal Academy","issuedDate":"2026-02-15","fieldOfStudy":"Advanced Ethics in Digital Practice","accreditingBody":"California State Bar","jurisdiction":"California, USA","creditHours":3.0,"creditType":"Ethics","providerName":"National Legal Academy","approvedBy":"California State Bar","activityNumber":"CLE-2026-1234","fraudSignals":[],"confidence":0.94}
+Output: {"credentialType":"CLE","issuerName":"National Legal Academy","issuedDate":"2026-02-15","fieldOfStudy":"Advanced Ethics in Digital Practice","accreditingBody":"California State Bar","jurisdiction":"California, USA","creditHours":3.0,"creditType":"Ethics","providerName":"National Legal Academy","approvedBy":"California State Bar","activityNumber":"CLE-2026-1234","fraudSignals":[],"confidence":0.87}
 
 Example 9 — CLE Multi-Credit:
 Input: "CLE Certificate of Attendance ... [NAME_REDACTED] ... Florida Bar No. [REDACTED] ... Program: Annual Litigation Update 2026 ... Total Credits: 6.5 (4.0 General, 1.5 Ethics, 1.0 Technology) ... Approved by The Florida Bar ... Date: March 10, 2026 ... Provider: Florida Bar Association CLE"
-Output: {"credentialType":"CLE","issuerName":"Florida Bar Association CLE","issuedDate":"2026-03-10","fieldOfStudy":"Annual Litigation Update 2026","accreditingBody":"The Florida Bar","jurisdiction":"Florida, USA","creditHours":6.5,"creditType":"General, Ethics, Technology","providerName":"Florida Bar Association CLE","approvedBy":"The Florida Bar","fraudSignals":[],"confidence":0.92}
+Output: {"credentialType":"CLE","issuerName":"Florida Bar Association CLE","issuedDate":"2026-03-10","fieldOfStudy":"Annual Litigation Update 2026","accreditingBody":"The Florida Bar","jurisdiction":"Florida, USA","creditHours":6.5,"creditType":"General, Ethics, Technology","providerName":"Florida Bar Association CLE","approvedBy":"The Florida Bar","fraudSignals":[],"confidence":0.85}
 
 Example 10 — Contract / Agreement:
 Input: "SERVICE AGREEMENT ... Between [NAME_REDACTED] and [COMPANY] ... Effective Date: January 1, 2025 ... Term: 12 months ... Governing Law: State of Delaware"
@@ -125,19 +133,19 @@ Output: {"credentialType":"LICENSE","issuerName":"Illinois Department of Financi
 
 Example 13 — Teaching License:
 Input: "State of Ohio ... Department of Education ... Professional Teaching License ... [NAME_REDACTED] ... License Number: OH-TCH-2024-87654 ... Effective: August 1, 2024 ... Expires: July 31, 2029 ... Endorsements: Mathematics (7-12), Computer Science (7-12) ... Accredited by CAEP"
-Output: {"credentialType":"LICENSE","issuerName":"Ohio Department of Education","issuedDate":"2024-08-01","expiryDate":"2029-07-31","fieldOfStudy":"Mathematics, Computer Science","licenseNumber":"OH-TCH-2024-87654","accreditingBody":"CAEP","jurisdiction":"Ohio, USA","fraudSignals":[],"confidence":0.94}
+Output: {"credentialType":"LICENSE","issuerName":"Ohio Department of Education","issuedDate":"2024-08-01","expiryDate":"2029-07-31","fieldOfStudy":"Mathematics, Computer Science","licenseNumber":"OH-TCH-2024-87654","accreditingBody":"CAEP","jurisdiction":"Ohio, USA","fraudSignals":[],"confidence":0.87}
 
 Example 14 — Engineering License:
 Input: "State of Texas ... Texas Board of Professional Engineers and Land Surveyors ... Professional Engineer License ... Civil Engineering ... [NAME_REDACTED], PE ... License Number: TX-PE-89012 ... Original Issue Date: June 1, 2020 ... Current Renewal Date: June 1, 2026"
-Output: {"credentialType":"LICENSE","issuerName":"Texas Board of Professional Engineers and Land Surveyors","issuedDate":"2020-06-01","expiryDate":"2026-06-01","fieldOfStudy":"Civil Engineering","licenseNumber":"TX-PE-89012","jurisdiction":"Texas, USA","fraudSignals":[],"confidence":0.95}
+Output: {"credentialType":"LICENSE","issuerName":"Texas Board of Professional Engineers and Land Surveyors","issuedDate":"2020-06-01","expiryDate":"2026-06-01","fieldOfStudy":"Civil Engineering","licenseNumber":"TX-PE-89012","jurisdiction":"Texas, USA","fraudSignals":[],"confidence":0.88}
 
-Example 15 — Pharmacy License:
+Example 15 — Pharmacy License (redacted number — omit licenseNumber):
 Input: "State of Florida ... Board of Pharmacy ... Pharmacist License ... [NAME_REDACTED], PharmD ... License No. PH-[REDACTED] ... Issue Date: March 1, 2023 ... Exp: February 28, 2025"
-Output: {"credentialType":"LICENSE","issuerName":"Florida Board of Pharmacy","issuedDate":"2023-03-01","expiryDate":"2025-02-28","jurisdiction":"Florida, USA","fraudSignals":[],"confidence":0.90}
+Output: {"credentialType":"LICENSE","issuerName":"Florida Board of Pharmacy","issuedDate":"2023-03-01","expiryDate":"2025-02-28","fieldOfStudy":"Pharmacy","jurisdiction":"Florida, USA","fraudSignals":[],"confidence":0.82}
 
 Example 16 — Bar Admission:
 Input: "Supreme Court of the State of New York ... Appellate Division ... [NAME_REDACTED] ... admitted to practice as an Attorney and Counselor-at-Law ... Date of Admission: January 5, 2024"
-Output: {"credentialType":"LICENSE","issuerName":"Supreme Court of the State of New York","issuedDate":"2024-01-05","fieldOfStudy":"Law","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.91}
+Output: {"credentialType":"LICENSE","issuerName":"Supreme Court of the State of New York","issuedDate":"2024-01-05","fieldOfStudy":"Law","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.83}
 
 Example 17 — Undergraduate Transcript with GPA:
 Input: "University of California, Los Angeles ... Official Transcript ... [NAME_REDACTED] ... Program: Bachelor of Arts in Psychology ... Graduation: June 2024 ... Cumulative GPA: 3.45 ... Total Units: 180 ... Issued: July 1, 2024"
@@ -173,7 +181,35 @@ Output: {"credentialType":"LICENSE","issuerName":"Pennsylvania State Board of Ac
 
 Example 25 — Multiple Issuers (Joint Certificate):
 Input: "Harvard Medical School and Massachusetts General Hospital jointly certify that [NAME_REDACTED] has completed the combined residency program in Neurology ... Training Period: July 2021 — June 2025 ... Accredited by ACGME"
-Output: {"credentialType":"PROFESSIONAL","issuerName":"Harvard Medical School","issuedDate":"2025-06-01","fieldOfStudy":"Neurology","accreditingBody":"ACGME","fraudSignals":[],"confidence":0.87}`;
+Output: {"credentialType":"PROFESSIONAL","issuerName":"Harvard Medical School","issuedDate":"2025-06-01","fieldOfStudy":"Neurology","accreditingBody":"ACGME","fraudSignals":[],"confidence":0.87}
+
+Example 26 — License with REDACTED number (do NOT extract licenseNumber):
+Input: "State of Florida. Board of Pharmacy. Pharmacist License. [NAME_REDACTED], PharmD. License No. PH-[REDACTED]. Issue Date: March 1, 2023. Exp: February 28, 2025."
+Output: {"credentialType":"LICENSE","issuerName":"Florida Board of Pharmacy","issuedDate":"2023-03-01","expiryDate":"2025-02-28","fieldOfStudy":"Pharmacy","jurisdiction":"Florida, USA","fraudSignals":[],"confidence":0.82}
+
+Example 27 — License where issuer IS the authority (no accreditingBody):
+Input: "California Medical Board. [NAME_REDACTED], MD. License No. A-[REDACTED]. Status: INACTIVE/EXPIRED. Last Renewal: 2019. Expired: December 31, 2021."
+Output: {"credentialType":"LICENSE","issuerName":"California Medical Board","issuedDate":"2019-01-01","expiryDate":"2021-12-31","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.72}
+
+Example 28 — Nursing license with separate regulatory body (AHPRA):
+Input: "Australian Health Practitioner Regulation Agency (AHPRA). Nursing and Midwifery Board of Australia. [NAME_REDACTED] is registered as a Registered Nurse. Registration Number: NMW[REDACTED]. Division: Division 1. Registration Date: 1 March 2024. Expiry: 31 May 2025."
+Output: {"credentialType":"LICENSE","issuerName":"Nursing and Midwifery Board of Australia","issuedDate":"2024-03-01","expiryDate":"2025-05-31","fieldOfStudy":"Nursing","accreditingBody":"AHPRA","jurisdiction":"Australia","fraudSignals":[],"confidence":0.85}
+
+Example 29 — Federal license (FAA — no separate accrediting body):
+Input: "United States of America. Federal Aviation Administration. Airman Certificate. This certifies that [NAME_REDACTED] has been found qualified to exercise the privileges of Airline Transport Pilot. Certificate No. ATP-[REDACTED]. Date of Issue: April 10, 2024. Ratings: Airplane Multi-Engine Land."
+Output: {"credentialType":"LICENSE","issuerName":"Federal Aviation Administration","issuedDate":"2024-04-10","fieldOfStudy":"Aviation","jurisdiction":"United States","fraudSignals":[],"confidence":0.84}
+
+Example 30 — Speech-language pathology license (infer fieldOfStudy):
+Input: "State of Pennsylvania. Bureau of Professional and Occupational Affairs. [NAME_REDACTED], CCC-SLP. Licensed Speech-Language Pathologist. License No. [REDACTED]. Issued: April 2023. Exp: March 2025."
+Output: {"credentialType":"LICENSE","issuerName":"Pennsylvania Bureau of Professional and Occupational Affairs","issuedDate":"2023-04-01","expiryDate":"2025-03-31","fieldOfStudy":"Speech-Language Pathology","jurisdiction":"Pennsylvania, USA","fraudSignals":[],"confidence":0.80}
+
+Example 31 — Real estate appraiser (infer field, redacted number):
+Input: "The Appraisal Subcommittee. Federal Registry. [NAME_REDACTED] is a Certified Residential Real Property Appraiser in the State of Minnesota. License No. AR-[REDACTED]. Effective: April 2024. Expires: March 2026."
+Output: {"credentialType":"LICENSE","issuerName":"The Appraisal Subcommittee","issuedDate":"2024-04-01","expiryDate":"2026-03-31","fieldOfStudy":"Real Estate Appraisal","jurisdiction":"Minnesota, USA","fraudSignals":[],"confidence":0.82}
+
+Example 32 — Heavily redacted license (low confidence):
+Input: "[NAME_REDACTED] [ORG_REDACTED] [ADDRESS_REDACTED]. License granted. License No. [REDACTED]. Date: [DATE_REDACTED]. Expiry: [DATE_REDACTED]."
+Output: {"credentialType":"LICENSE","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.18}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.

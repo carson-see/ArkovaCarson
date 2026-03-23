@@ -46,7 +46,7 @@ vi.mock('@google/generative-ai', () => {
 
 import express from 'express';
 import request from 'supertest';
-import { nessieQueryRouter } from './nessie-query.js';
+import { nessieQueryRouter, clearContextCache } from './nessie-query.js';
 
 function buildApp() {
   const app = express();
@@ -89,6 +89,7 @@ const MOCK_RECORDS = [
 describe('GET /nessie/query', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearContextCache();
 
     // Set GEMINI_API_KEY for context mode tests
     process.env.GEMINI_API_KEY = 'test-key';

@@ -25,9 +25,38 @@ const dbAny = db as any;
 
 const router = Router();
 
+// Simple LRU cache for context-mode responses (5 min TTL, max 100 entries)
+const contextCache = new Map<string, { response: NessieContextResponse; expiresAt: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_MAX_SIZE = 100;
+
+function getCachedContext(key: string): NessieContextResponse | null {
+  const entry = contextCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    contextCache.delete(key);
+    return null;
+  }
+  return entry.response;
+}
+
+/** Clear the context cache (used in tests) */
+export function clearContextCache(): void {
+  contextCache.clear();
+}
+
+function setCachedContext(key: string, response: NessieContextResponse): void {
+  // Evict oldest entries if at capacity
+  if (contextCache.size >= CACHE_MAX_SIZE) {
+    const firstKey = contextCache.keys().next().value;
+    if (firstKey) contextCache.delete(firstKey);
+  }
+  contextCache.set(key, { response, expiresAt: Date.now() + CACHE_TTL_MS });
+}
+
 const NessieQuerySchema = z.object({
   q: z.string().min(1, 'Query is required').max(1000),
-  threshold: z.coerce.number().min(0).max(1).default(0.65),
+  threshold: z.coerce.number().min(0).max(1).default(0.72),
   limit: z.coerce.number().int().min(1).max(50).default(10),
   mode: z.enum(['retrieval', 'context']).default('retrieval'),
 });
@@ -85,12 +114,22 @@ export interface NessieContextResponse {
 const NESSIE_RAG_SYSTEM_PROMPT = `You are Nessie, Arkova's verified intelligence assistant. You answer questions using ONLY the provided verified documents as context. Each document has been anchored to a public ledger with a cryptographic proof.
 
 RULES:
-1. Answer ONLY from the provided documents. If the documents don't contain enough information, say so clearly.
-2. Cite specific documents using their record_id. Every factual claim must have a citation.
-3. Include the source_url so users can verify the original document.
-4. Rate your overall confidence (0.0 to 1.0) based on how well the documents answer the query.
+1. Answer ONLY from the provided documents. If the documents don't contain enough information, say "I don't have enough verified information to fully answer this." and provide what you can.
+2. Cite specific documents using their record_id in square brackets like [record_id]. Every factual claim MUST have a citation.
+3. Only cite a document if its content DIRECTLY supports your claim. Do not cite a document just because it mentions a related topic.
+4. Rate your overall confidence (0.0 to 1.0) based on how well the documents answer the query:
+   - 0.8-1.0: Documents directly and completely answer the query
+   - 0.5-0.79: Documents partially answer or require inference
+   - 0.0-0.49: Documents are tangentially related at best
 5. Never fabricate information not present in the documents.
-6. Keep answers concise and factual.
+6. Keep answers concise and factual. Prefer shorter, well-cited answers over longer speculative ones.
+
+SOURCE AUTHORITY (prefer higher-authority sources when multiple documents cover the same topic):
+- EDGAR filings (SEC): Highest authority for financial/corporate data
+- Federal Register: Highest authority for regulatory/government data
+- DAPIP (Dept of Education): Highest authority for educational institution data
+- USPTO: Highest authority for patent/trademark data
+- OpenAlex: Academic abstracts — useful for research context, but cite the underlying paper, not the abstract alone
 
 Respond in valid JSON with this schema:
 {
@@ -98,12 +137,12 @@ Respond in valid JSON with this schema:
   "citations": [
     {
       "record_id": "the record ID",
-      "source": "edgar|uspto|federal_register",
+      "source": "edgar|uspto|federal_register|dapip|openalex",
       "source_url": "original URL",
       "title": "document title",
       "relevance_score": 0.0-1.0,
       "anchor_proof": { "chain_tx_id": "tx hash or null", "content_hash": "sha256", "explorer_url": "mempool link or null", "verify_url": "arkova verify link or null" },
-      "excerpt": "relevant excerpt from the document"
+      "excerpt": "the specific excerpt from the document that supports your claim (must be actual text from the document)"
     }
   ],
   "confidence": 0.0-1.0
@@ -294,8 +333,19 @@ router.get('/', async (req: Request, res: Response) => {
       };
     });
 
-    // Sort by relevance
-    results.sort((a, b) => b.relevance_score - a.relevance_score);
+    // Sort by weighted relevance (source authority boost)
+    const sourceWeight: Record<string, number> = {
+      edgar: 1.15,
+      federal_register: 1.12,
+      dapip: 1.10,
+      uspto: 1.10,
+      openalex: 1.0,
+    };
+    results.sort((a, b) => {
+      const wA = a.relevance_score * (sourceWeight[a.source] ?? 1.0);
+      const wB = b.relevance_score * (sourceWeight[b.source] ?? 1.0);
+      return wB - wA;
+    });
 
     // MODE: retrieval — return raw results
     if (mode === 'retrieval') {
@@ -309,7 +359,16 @@ router.get('/', async (req: Request, res: Response) => {
 
     // MODE: context — feed to Gemini for synthesized answer (PH1-INT-03)
     try {
+      // Check cache first
+      const cacheKey = `${q}::${results.map(r => r.record_id).join(',')}`;
+      const cached = getCachedContext(cacheKey);
+      if (cached) {
+        res.json({ ...cached, cached: true });
+        return;
+      }
+
       const contextResponse = await generateVerifiedContext(q, results);
+      setCachedContext(cacheKey, contextResponse);
       res.json(contextResponse);
     } catch (geminiError) {
       // Graceful degradation: fall back to retrieval mode

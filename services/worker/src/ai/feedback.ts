@@ -138,3 +138,151 @@ export async function getExtractionAccuracy(
     return [];
   }
 }
+
+// =============================================================================
+// FEEDBACK LOOP ANALYSIS
+// =============================================================================
+
+/** A weak field identified from feedback data */
+export interface WeakFieldReport {
+  credentialType: string;
+  fieldKey: string;
+  rejectionRate: number;
+  editRate: number;
+  totalFeedback: number;
+  commonCorrections: Array<{ original: string; corrected: string; count: number }>;
+  suggestion: string;
+}
+
+/** Overall feedback analysis report */
+export interface FeedbackAnalysisReport {
+  analyzedAt: string;
+  totalFeedbackItems: number;
+  weakFields: WeakFieldReport[];
+  overallAcceptanceRate: number;
+  promptImprovementSuggestions: string[];
+}
+
+/**
+ * Analyze feedback data to identify weak fields and generate prompt improvement suggestions.
+ * This closes the feedback loop: user corrections → identify patterns → suggest prompt fixes.
+ */
+export async function analyzeFeedbackForPromptImprovement(
+  days: number = 30,
+): Promise<FeedbackAnalysisReport> {
+  const stats = await getExtractionAccuracy(undefined, undefined, days);
+
+  const totalItems = stats.reduce((sum, s) => sum + s.totalSuggestions, 0);
+  const totalAccepted = stats.reduce((sum, s) => sum + s.acceptedCount, 0);
+  const overallAcceptanceRate = totalItems > 0 ? totalAccepted / totalItems : 1;
+
+  // Identify weak fields: rejection rate > 20% or edit rate > 15%, with min 5 samples
+  const weakFields: WeakFieldReport[] = stats
+    .filter((s) => s.totalSuggestions >= 5)
+    .filter((s) => {
+      const rejectionRate = s.rejectedCount / s.totalSuggestions;
+      const editRate = s.editedCount / s.totalSuggestions;
+      return rejectionRate > 0.20 || editRate > 0.15;
+    })
+    .map((s) => {
+      const rejectionRate = s.rejectedCount / s.totalSuggestions;
+      const editRate = s.editedCount / s.totalSuggestions;
+
+      let suggestion = '';
+      if (rejectionRate > 0.40) {
+        suggestion = `CRITICAL: ${s.fieldKey} for ${s.credentialType} has ${(rejectionRate * 100).toFixed(0)}% rejection rate. Consider adding specific few-shot examples or tightening extraction rules.`;
+      } else if (editRate > 0.30) {
+        suggestion = `${s.fieldKey} for ${s.credentialType} is frequently edited (${(editRate * 100).toFixed(0)}%). Review common corrections to update extraction guidance.`;
+      } else {
+        suggestion = `${s.fieldKey} for ${s.credentialType} needs attention — ${(rejectionRate * 100).toFixed(0)}% rejected, ${(editRate * 100).toFixed(0)}% edited.`;
+      }
+
+      return {
+        credentialType: s.credentialType,
+        fieldKey: s.fieldKey,
+        rejectionRate,
+        editRate,
+        totalFeedback: s.totalSuggestions,
+        commonCorrections: [], // Populated by getCommonCorrections if available
+        suggestion,
+      };
+    })
+    .sort((a, b) => b.rejectionRate - a.rejectionRate);
+
+  // Generate high-level suggestions
+  const suggestions: string[] = [];
+  if (overallAcceptanceRate < 0.70) {
+    suggestions.push(`Overall acceptance rate is ${(overallAcceptanceRate * 100).toFixed(0)}% — below 70% threshold. Prompt needs significant revision.`);
+  }
+
+  const weakByType = new Map<string, number>();
+  for (const wf of weakFields) {
+    weakByType.set(wf.credentialType, (weakByType.get(wf.credentialType) ?? 0) + 1);
+  }
+  for (const [type, count] of weakByType) {
+    if (count >= 3) {
+      suggestions.push(`${type} has ${count} weak fields — consider adding more ${type}-specific few-shot examples.`);
+    }
+  }
+
+  // Fetch common corrections for top weak fields
+  for (const wf of weakFields.slice(0, 5)) {
+    try {
+      const corrections = await getCommonCorrections(wf.credentialType, wf.fieldKey, days);
+      wf.commonCorrections = corrections;
+    } catch {
+      // Non-critical — continue without corrections
+    }
+  }
+
+  return {
+    analyzedAt: new Date().toISOString(),
+    totalFeedbackItems: totalItems,
+    weakFields,
+    overallAcceptanceRate,
+    promptImprovementSuggestions: suggestions,
+  };
+}
+
+/**
+ * Get common correction patterns for a specific field.
+ * Identifies what users are changing original→corrected values to.
+ */
+async function getCommonCorrections(
+  credentialType: string,
+  fieldKey: string,
+  days: number,
+): Promise<Array<{ original: string; corrected: string; count: number }>> {
+  try {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('extraction_feedback')
+      .select('original_value, corrected_value')
+      .eq('credential_type', credentialType)
+      .eq('field_key', fieldKey)
+      .eq('action', 'edited')
+      .gte('created_at', cutoff)
+      .not('corrected_value', 'is', null)
+      .limit(100);
+
+    if (error || !data) return [];
+
+    // Count frequency of original→corrected pairs
+    const counts = new Map<string, number>();
+    for (const row of data as Array<{ original_value: string | null; corrected_value: string | null }>) {
+      const key = `${row.original_value ?? '(empty)'}→${row.corrected_value ?? '(empty)'}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries())
+      .map(([key, count]) => {
+        const [original, corrected] = key.split('→');
+        return { original, corrected, count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  } catch {
+    return [];
+  }
+}

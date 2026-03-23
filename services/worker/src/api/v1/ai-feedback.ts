@@ -8,7 +8,7 @@
  */
 
 import { Router, Request, Response } from 'express';
-import { FeedbackBatchSchema, storeExtractionFeedback, getExtractionAccuracy } from '../../ai/feedback.js';
+import { FeedbackBatchSchema, storeExtractionFeedback, getExtractionAccuracy, analyzeFeedbackForPromptImprovement } from '../../ai/feedback.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -90,6 +90,36 @@ router.get('/accuracy', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error({ error: err }, 'Failed to get accuracy stats');
     res.status(500).json({ error: 'Failed to get accuracy stats' });
+  }
+});
+
+// GET /analysis — Analyze feedback for prompt improvement suggestions
+router.get('/analysis', async (req: Request, res: Response) => {
+  const userId = req.authUserId;
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  try {
+    // Admin-only endpoint (check role)
+    const { data: profile } = await db
+      .from('profiles')
+      .select('role')
+      .eq('id', userId)
+      .single();
+
+    if (profile?.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Admin access required' });
+      return;
+    }
+
+    const days = Math.min(Math.max(1, parseInt(req.query.days as string, 10) || 30), 90);
+    const report = await analyzeFeedbackForPromptImprovement(days);
+    res.json(report);
+  } catch (err) {
+    logger.error({ error: err }, 'Failed to analyze feedback');
+    res.status(500).json({ error: 'Failed to analyze feedback' });
   }
 });
 

@@ -124,7 +124,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Speech-language pathology license',
     strippedText: 'State of Pennsylvania. Bureau of Professional and Occupational Affairs. [NAME_REDACTED], CCC-SLP. Licensed Speech-Language Pathologist. License No. [REDACTED]. Issued: April 2023. Exp: March 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Pennsylvania Bureau of Professional and Occupational Affairs', issuedDate: '2023-04-01', expiryDate: '2025-03-31', jurisdiction: 'Pennsylvania, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Pennsylvania Bureau of Professional and Occupational Affairs', issuedDate: '2023-04-01', expiryDate: '2025-03-31', fieldOfStudy: 'Speech-Language Pathology', jurisdiction: 'Pennsylvania, USA', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'slp'],
   },
   {
