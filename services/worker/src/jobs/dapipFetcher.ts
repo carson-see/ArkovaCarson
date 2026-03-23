@@ -25,6 +25,7 @@ const DAPIP_SEARCH_URL = 'https://surveys.ope.ed.gov/dapip/api/search/advanced';
 const RATE_LIMIT_MS = 300;
 const PAGE_SIZE = 100;
 const MAX_PAGES = 500; // Safety cap: 500 * 100 = 50K max
+const MAX_PAGES_PER_RUN = 60; // ~6K records per run, fits within Cloud Run 5-min timeout
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = (db: SupabaseClient) => db as any;
@@ -146,13 +147,19 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
   let totalInserted = 0;
   let totalSkipped = 0;
   let totalErrors = 0;
-  let totalInstitutions = 0;
 
-  // First request to get AllUnitIds count
+  // Resume from where we left off: count existing DAPIP records to calculate start page
+  const { count: existingCount } = await dbAny(supabase)
+    .from('public_records')
+    .select('id', { count: 'exact', head: true })
+    .eq('source', 'dapip');
+  const startPage = Math.floor((existingCount ?? 0) / PAGE_SIZE) + 1;
+
+  // First request to get total count
   const firstResp = await fetch(DAPIP_SEARCH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ PageSize: PAGE_SIZE, PageNumber: 1 }),
+    body: JSON.stringify({ PageSize: PAGE_SIZE, PageNumber: startPage }),
   });
 
   if (!firstResp.ok) {
@@ -161,12 +168,17 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
   }
 
   const firstData = await firstResp.json() as DapipSearchResponse;
-  totalInstitutions = firstData.AllUnitIds?.length ?? 0;
+  const totalInstitutions = firstData.AllUnitIds?.length ?? 0;
   const totalPages = Math.min(Math.ceil(totalInstitutions / PAGE_SIZE), MAX_PAGES);
+  const endPage = Math.min(startPage + MAX_PAGES_PER_RUN - 1, totalPages);
+  const isComplete = endPage >= totalPages;
 
-  logger.info({ totalInstitutions, totalPages }, 'DAPIP fetch starting');
+  logger.info(
+    { totalInstitutions, totalPages, startPage, endPage, existingCount, isComplete },
+    'DAPIP fetch starting (resumable batch)',
+  );
 
-  // Process first page
+  // Process first page of this batch
   for (const inst of firstData.results ?? []) {
     const result = await insertInstitution(supabase, inst);
     if (result === 'inserted') totalInserted++;
@@ -174,8 +186,8 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
     else totalErrors++;
   }
 
-  // Process remaining pages
-  for (let page = 2; page <= totalPages; page++) {
+  // Process remaining pages in this batch
+  for (let page = startPage + 1; page <= endPage; page++) {
     await delay(RATE_LIMIT_MS);
     try {
       const response = await fetch(DAPIP_SEARCH_URL, {
@@ -198,9 +210,9 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
         else totalErrors++;
       }
 
-      if (page % 50 === 0) {
+      if (page % 10 === 0) {
         logger.info(
-          { page, totalPages, inserted: totalInserted, skipped: totalSkipped, errors: totalErrors },
+          { page, endPage, totalPages, inserted: totalInserted, skipped: totalSkipped, errors: totalErrors },
           'DAPIP fetch progress',
         );
       }
@@ -210,6 +222,9 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
     }
   }
 
-  logger.info({ totalInserted, totalSkipped, totalErrors, totalInstitutions }, 'DAPIP fetch complete');
+  logger.info(
+    { totalInserted, totalSkipped, totalErrors, totalInstitutions, startPage, endPage, isComplete },
+    isComplete ? 'DAPIP fetch complete (all pages processed)' : 'DAPIP fetch batch complete (more pages remaining)',
+  );
   return { inserted: totalInserted, skipped: totalSkipped, errors: totalErrors };
 }

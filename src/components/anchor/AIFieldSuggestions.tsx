@@ -53,7 +53,7 @@ function getConfidenceLabel(confidence: number): string {
 export function AIFieldSuggestions({
   fields,
   overallConfidence,
-  creditsRemaining,
+  creditsRemaining: _creditsRemaining,
   progress,
   onFieldAccept,
   onFieldReject,

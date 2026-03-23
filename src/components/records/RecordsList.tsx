@@ -16,6 +16,12 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from '@/components/ui/tooltip';
 
 export interface Record {
   id: string;
@@ -40,27 +46,32 @@ interface RecordsListProps {
 
 const statusConfig = {
   PENDING: {
-    label: 'Pending',
+    label: 'Processing',
+    tooltip: 'Your document is being anchored to the network',
     variant: 'warning' as const,
     icon: Clock,
   },
   SUBMITTED: {
-    label: 'Awaiting Confirmation',
+    label: 'Submitted',
+    tooltip: 'Awaiting network confirmation — typically a few minutes',
     variant: 'secondary' as const,
     icon: Loader2,
   },
   SECURED: {
-    label: 'Secured',
+    label: 'Verified',
+    tooltip: 'Permanently anchored and independently verifiable',
     variant: 'success' as const,
     icon: CheckCircle,
   },
   REVOKED: {
     label: 'Revoked',
+    tooltip: 'This record has been revoked by the issuer',
     variant: 'destructive' as const,
     icon: XCircle,
   },
   EXPIRED: {
     label: 'Expired',
+    tooltip: 'This record\'s validity period has ended',
     variant: 'outline' as const,
     icon: AlertTriangle,
   },
@@ -130,10 +141,19 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
           {record.filename}
         </p>
         <div className="flex items-center gap-2 flex-wrap">
-          <Badge variant={status.variant} className="shrink-0">
-            <StatusIcon className="mr-1 h-3 w-3" />
-            {status.label}
-          </Badge>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant={status.variant} className="shrink-0 cursor-help">
+                  <StatusIcon className="mr-1 h-3 w-3" />
+                  {status.label}
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">{status.tooltip}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           {record.credentialType && (
             <span className="inline-flex items-center gap-1 text-xs text-muted-foreground shrink-0">
               <GraduationCap className="h-3 w-3" />

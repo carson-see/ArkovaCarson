@@ -7,7 +7,7 @@
  * created via a minimal xlsx generator helper.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { isExcelFile, parseSpreadsheetFile } from './xlsxParser';
 
 // Helper to create a mock File

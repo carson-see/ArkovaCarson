@@ -28,16 +28,23 @@ vi.mock('@/hooks/useTheme', () => ({
   useTheme: vi.fn().mockReturnValue({ theme: 'dark', setTheme: vi.fn() }),
 }));
 
-vi.mock('@/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        not: vi.fn().mockResolvedValue({ count: 40, data: null, error: null }),
-        is: vi.fn().mockResolvedValue({ count: 10, data: null, error: null }),
+vi.mock('@/lib/supabase', () => {
+  const mockQuery = {
+    not: vi.fn().mockResolvedValue({ count: 40, data: null, error: null }),
+    is: vi.fn().mockResolvedValue({ count: 10, data: null, error: null }),
+    limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+    eq: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    range: vi.fn().mockResolvedValue({ data: [], count: 0, error: null }),
+  };
+  return {
+    supabase: {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue(mockQuery),
       }),
-    }),
-  },
-}));
+    },
+  };
+});
 
 import { PipelineAdminPage } from './PipelineAdminPage';
 

@@ -79,6 +79,7 @@ interface OpenAlexResponse {
     count: number;
     per_page: number;
     page: number;
+    next_cursor: string | null;
   };
   results: OpenAlexWork[];
 }
@@ -151,7 +152,7 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
 
   for (let pageCount = 0; pageCount < MAX_PAGES_PER_RUN; pageCount++) {
     const params = new URLSearchParams({
-      'filter': `from_publication_date:${startDate},cited_by_count:>10,type:article`,
+      'filter': `from_publication_date:${startDate},cited_by_count:>3,type:article`,
       'per_page': String(PER_PAGE),
       'cursor': cursor,
       'sort': 'cited_by_count:desc',
@@ -197,9 +198,8 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
     const works = result.results ?? [];
     if (works.length === 0) break;
 
-    // Extract next cursor from response headers or meta
-    const nextCursor = response.headers.get('x-cursor') ??
-      (works.length === PER_PAGE ? works[works.length - 1].id : null);
+    // Extract next cursor from response body
+    const nextCursor = result.meta?.next_cursor ?? null;
 
     logger.info(
       { page: pageCount, count: works.length, total: result.meta?.count },
