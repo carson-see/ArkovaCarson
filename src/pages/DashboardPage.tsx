@@ -11,7 +11,7 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight, Upload, FileCheck } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Shield, Eye, EyeOff, Copy, Check, Search, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
@@ -37,19 +37,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
-import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, ORG_PAGE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
+import { IDENTITY_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
 import { useOrganization } from '@/hooks/useOrganization';
-import { BulkUploadWizard } from '@/components/upload';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 
 const PAGE_SIZES = [10, 25, 50] as const;
 type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -62,7 +55,6 @@ export function DashboardPage() {
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
-  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
 
   // Search, filter, pagination state (MVP-09)
@@ -532,21 +524,6 @@ export function DashboardPage() {
         onSuccess={handleSecureSuccess}
       />
 
-      {/* Bulk Upload Dialog */}
-      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{ORG_PAGE_LABELS.BULK_UPLOAD_DIALOG_TITLE}</DialogTitle>
-          </DialogHeader>
-          <BulkUploadWizard
-            onComplete={() => {
-              setBulkUploadOpen(false);
-              refreshAnchors();
-            }}
-            onCancel={() => setBulkUploadOpen(false)}
-          />
-        </DialogContent>
-      </Dialog>
     </AppShell>
   );
 }
