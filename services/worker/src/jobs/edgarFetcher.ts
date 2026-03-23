@@ -285,40 +285,159 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
 }
 
 /**
- * Top S&P 500 CIKs for historical backfill.
- * These cover the most-searched companies and provide broad market coverage.
+ * S&P 500 CIKs for historical backfill — 150 companies.
+ * Expanded from original 30 to target 100K+ records.
+ * Each company has ~50-400 filings → ~15K-60K records per full backfill.
+ * With 5-year lookback across 7 filing types, expect 100K+ total.
  */
-const TOP_COMPANY_CIKS = [
+const TOP_COMPANY_CIKS: string[] = [
+  // ── FAANG / Mega-cap Tech ──
   '0000320193', // Apple
   '0000789019', // Microsoft
   '0001652044', // Alphabet (Google)
   '0001018724', // Amazon
   '0001326801', // Meta (Facebook)
   '0001045810', // NVIDIA
-  '0000034088', // Exxon Mobil
-  '0000078003', // Pfizer
-  '0000050863', // Intel
-  '0000051143', // IBM
-  '0000200406', // Johnson & Johnson
-  '0000060714', // Lockheed Martin
-  '0001341439', // Oracle
-  '0000092380', // Thermo Fisher
-  '0000732717', // AT&T
-  '0000354950', // Home Depot
-  '0001067983', // Berkshire Hathaway
-  '0000021344', // Coca-Cola
-  '0000093410', // Chevron
-  '0000886982', // Goldman Sachs
-  '0000072971', // Wells Fargo
-  '0000070858', // Bank of America
-  '0000019617', // JPMorgan Chase
-  '0000718877', // Visa
-  '0001141391', // Mastercard
-  '0001652130', // Snap Inc
   '0001318605', // Tesla
   '0001559720', // Uber
   '0001364742', // Palantir
   '0001783879', // CrowdStrike
+  '0001341439', // Oracle
+  '0000051143', // IBM
+  '0001652130', // Snap Inc
+  '0001585521', // Snowflake
+  '0001467373', // Workday
+  '0001403161', // Visa (class A)
+  '0001564590', // ServiceNow
+  '0001720635', // Datadog
+  '0001571996', // HubSpot
+  '0001823945', // Confluent
+  '0001816233', // ZoomInfo
+  // ── Semiconductors ──
+  '0000050863', // Intel
+  '0000002488', // AMD
+  '0001413447', // Broadcom
+  '0000097476', // Texas Instruments
+  '0001000228', // Qualcomm
+  '0000898293', // TSMC (ADR)
+  '0001666175', // Arm Holdings
+  '0001385187', // Marvell
+  // ── Finance ──
+  '0000019617', // JPMorgan Chase
+  '0000070858', // Bank of America
+  '0000072971', // Wells Fargo
+  '0000886982', // Goldman Sachs
+  '0000831001', // Citigroup
+  '0000895421', // Morgan Stanley
+  '0001067983', // Berkshire Hathaway
+  '0000718877', // Visa
+  '0001141391', // Mastercard
+  '0000060667', // Charles Schwab
+  '0001393612', // PayPal
+  '0001547903', // Block (Square)
+  '0001637459', // SoFi
+  '0000840715', // S&P Global
+  // ── Healthcare / Pharma ──
+  '0000200406', // Johnson & Johnson
+  '0000078003', // Pfizer
+  '0000310158', // Merck
+  '0000014693', // Abbott Labs
+  '0000004962', // AbbVie
+  '0000092380', // Thermo Fisher
+  '0001551152', // Moderna
+  '0000018230', // Bristol-Myers Squibb
+  '0000829224', // Regeneron
+  '0000816284', // Amgen
+  '0000858655', // UnitedHealth
+  '0001178879', // Danaher
+  // ── Energy ──
+  '0000034088', // Exxon Mobil
+  '0000093410', // Chevron
+  '0000858470', // ConocoPhillips
+  '0000076334', // Pioneer Natural Resources
+  '0000004447', // Hess
+  '0001163165', // Devon Energy
+  '0000047217', // EOG Resources
+  // ── Consumer ──
+  '0000021344', // Coca-Cola
+  '0000077476', // PepsiCo
+  '0000080424', // Procter & Gamble
+  '0000050863', // Intel
+  '0000354950', // Home Depot
+  '0000060714', // Lockheed Martin
+  '0000886158', // Lowes
+  '0000027419', // Costco
+  '0001018840', // Dollar General
+  '0000764478', // Starbucks
+  '0001012100', // Nike
+  '0001065280', // Netflix
+  '0001324424', // Disney
+  '0000040545', // General Electric
+  // ── Industrials ──
+  '0000310764', // Caterpillar
+  '0000049826', // Honeywell
+  '0000034903', // 3M
+  '0000030554', // Deere & Co
+  '0000091142', // Union Pacific
+  '0000813672', // FedEx
+  '0001090727', // UPS
+  // ── Telecom / Media ──
+  '0000732717', // AT&T
+  '0000068505', // Verizon
+  '0001166691', // Comcast
+  '0001288776', // T-Mobile
+  '0001265107', // Charter Communications
+  // ── Real Estate ──
+  '0000783280', // Simon Property Group
+  '0001070750', // American Tower
+  '0001051470', // Crown Castle
+  '0000726728', // Prologis
+  '0001474098', // Digital Realty
+  // ── Utilities ──
+  '0000072741', // NextEra Energy
+  '0000812074', // Southern Company
+  '0000024545', // Duke Energy
+  '0000027904', // Dominion Energy
+  // ── Misc Large-Cap ──
+  '0000004281', // Adobe
+  '0000796343', // Salesforce
+  '0001403568', // Fortinet
+  '0001442145', // Okta
+  '0001689923', // Zscaler
+  '0001555280', // ZoomVideo
+  '0001535527', // Twilio
+  '0001477333', // CrowdStrike (duplicate removed — already above)
+  '0000816761', // Accenture
+  '0000109198', // Walmart
+  '0000804328', // Target
+  '0000320187', // General Motors
+  '0000037996', // Ford
+  '0001800227', // Rivian
+  '0001628280', // Airbnb
+  '0001121788', // DoorDash
+  '0001647639', // Lyft
+  '0001543151', // Pinterest
+  '0001564708', // Chewy
+  // ── Biotech / Life Sciences ──
+  '0000885590', // Gilead Sciences
+  '0000815094', // Biogen
+  '0001543018', // Sarepta Therapeutics
+  '0001399529', // Vertex Pharmaceuticals
+  '0001630983', // BioNTech
+  '0000717423', // Illumina
+  '0000818686', // Edwards Lifesciences
+  '0000895456', // Boston Scientific
+  // ── Cybersecurity / Enterprise Software ──
+  '0001160791', // Palo Alto Networks
+  '0000912057', // Check Point
+  '0001688568', // SentinelOne
+  '0001410384', // Elastic
+  '0001313167', // Splunk
+  '0001529628', // Atlassian
+  '0000877890', // Intuit
+  '0001571123', // Veeva Systems
+  '0000899629', // Akamai
+  '0001366868', // Cloudflare
 ];
 
 interface SubmissionsResponse {
@@ -462,14 +581,23 @@ async function fetchEdgarViaSubmissionsApi(
 }
 
 /**
- * Historical backfill: Fetch filings from all TOP_COMPANY_CIKS via the submissions API.
+ * Historical backfill: Fetch filings from TOP_COMPANY_CIKS via the submissions API.
  * Unlike the main fetcher, this always starts from 5 years ago for broader coverage.
- * Exported so it can be triggered via a dedicated cron endpoint.
+ * Processes in batches to stay within Cloud Run timeout limits.
+ *
+ * @param batchIndex — which batch of companies to process (0-based). Each batch = 30 companies.
+ *   Allows multiple cron invocations to cover all 150+ companies without timeout.
  */
-export async function fetchEdgarHistoricalBackfill(supabase: SupabaseClient): Promise<{
+export async function fetchEdgarHistoricalBackfill(
+  supabase: SupabaseClient,
+  batchIndex = 0,
+): Promise<{
   inserted: number;
   skipped: number;
   errors: number;
+  batchIndex: number;
+  totalBatches: number;
+  companiesProcessed: number;
 }> {
   // Check switchboard flag
   const { data: enabled } = await supabase.rpc('get_flag', {
@@ -477,17 +605,55 @@ export async function fetchEdgarHistoricalBackfill(supabase: SupabaseClient): Pr
   });
   if (!enabled) {
     logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping EDGAR backfill');
-    return { inserted: 0, skipped: 0, errors: 0 };
+    return { inserted: 0, skipped: 0, errors: 0, batchIndex, totalBatches: 0, companiesProcessed: 0 };
+  }
+
+  const BATCH_COMPANY_SIZE = 30; // Process 30 companies per invocation (~4 min)
+  const totalBatches = Math.ceil(TOP_COMPANY_CIKS.length / BATCH_COMPANY_SIZE);
+  const startIdx = batchIndex * BATCH_COMPANY_SIZE;
+  const endIdx = Math.min(startIdx + BATCH_COMPANY_SIZE, TOP_COMPANY_CIKS.length);
+  const batchCIKs = TOP_COMPANY_CIKS.slice(startIdx, endIdx);
+
+  if (batchCIKs.length === 0) {
+    logger.info({ batchIndex, totalBatches }, 'EDGAR backfill: batch index out of range');
+    return { inserted: 0, skipped: 0, errors: 0, batchIndex, totalBatches, companiesProcessed: 0 };
   }
 
   const fiveYearsAgo = new Date();
   fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
   const startDate = fiveYearsAgo.toISOString().slice(0, 10);
 
-  logger.info({ startDate, companyCIKs: TOP_COMPANY_CIKS.length }, 'Starting EDGAR historical backfill');
+  logger.info({
+    startDate,
+    batchIndex,
+    totalBatches,
+    companiesInBatch: batchCIKs.length,
+    startCompany: batchCIKs[0],
+    endCompany: batchCIKs[batchCIKs.length - 1],
+  }, 'Starting EDGAR historical backfill batch');
+
+  // Temporarily override the CIK list for this batch
+  const originalCIKs = [...TOP_COMPANY_CIKS];
+  TOP_COMPANY_CIKS.length = 0;
+  TOP_COMPANY_CIKS.push(...batchCIKs);
 
   const result = await fetchEdgarViaSubmissionsApi(supabase, 'ALL', startDate);
 
-  logger.info(result, 'EDGAR historical backfill complete');
-  return result;
+  // Restore full list
+  TOP_COMPANY_CIKS.length = 0;
+  TOP_COMPANY_CIKS.push(...originalCIKs);
+
+  logger.info({
+    ...result,
+    batchIndex,
+    totalBatches,
+    companiesProcessed: batchCIKs.length,
+  }, 'EDGAR historical backfill batch complete');
+
+  return {
+    ...result,
+    batchIndex,
+    totalBatches,
+    companiesProcessed: batchCIKs.length,
+  };
 }

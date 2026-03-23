@@ -680,7 +680,8 @@ app.post('/jobs/edgar-backfill', cronJobsLimiter, async (req, res) => {
     return;
   }
   try {
-    const result = await fetchEdgarHistoricalBackfill(db);
+    const batchIndex = parseInt(String(req.query.batch ?? req.body?.batch ?? '0'), 10);
+    const result = await fetchEdgarHistoricalBackfill(db, batchIndex);
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'EDGAR historical backfill failed');
