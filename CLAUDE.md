@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-21 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 89 migrations | 974 tests | 192 stories (165 complete, 86%) | 24/24 audit findings resolved
+> **Version:** 2026-03-23 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
+> **Stats:** 89 migrations | 978 tests | 192 stories (170 complete, 89%) | 24/24 audit findings resolved
 
 Read this file before every task. Rules here override all other documents.
 
@@ -265,14 +265,14 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 > ~~MVP-20 (LinkedIn badge integration)~~ — Superseded by BETA-09
 
 **INFRA (1 partial):**
-- INFRA-07: Sentry integration -- code done (30 tests), missing source map upload plugin + DSN env vars in production
+- INFRA-07: Sentry integration — code complete (30 tests + vite plugin + init), needs SENTRY_AUTH_TOKEN + DSN env vars in Vercel/Cloud Run
 
 **GEO & SEO (5 not started, 2 partial):**
 - See `docs/stories/15_geo_seo.md` and `docs/BACKLOG.md` for details
 
-**TLA+ Verification Findings (1 open):**
+**TLA+ Verification Findings (all resolved):**
 - ~~TLA-01: `credential_type` not immutable after SECURED~~ — **RESOLVED** (migration 0089: `trg_credential_type_immutable` trigger)
-- TLA-02: TLA+ check not in CI pipeline (add step for `machines/` changes)
+- ~~TLA-02: TLA+ check not in CI pipeline~~ — **RESOLVED** (`tla-verify` job in `.github/workflows/ci.yml`)
 
 ### Remaining Production Blockers
 
@@ -375,5 +375,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-23 | 89 migrations | 974 tests | 192 stories (165 complete, 86%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-23 | 89 migrations | 978 tests | 192 stories (170 complete, 89%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
