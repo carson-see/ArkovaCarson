@@ -144,6 +144,9 @@ describe('useOnboarding', () => {
             single: vi.fn().mockResolvedValue({ data: null, error: { message: 'Organization legal name is required' } }),
           })),
         })),
+        update: vi.fn(() => ({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        })),
       });
 
       const { result } = renderHook(() => useOnboarding());

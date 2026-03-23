@@ -54,11 +54,15 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('does not render Help, Billing, or Developers in sidebar (moved to dropdown)', () => {
+  it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
     renderSidebar();
     expect(screen.queryByText('Help')).toBeNull();
     expect(screen.queryByText('Billing & Plans')).toBeNull();
-    expect(screen.queryByText('Developers')).toBeNull();
+  });
+
+  it('renders Developers link in sidebar', () => {
+    renderSidebar();
+    expect(screen.getByText('Developers')).toBeDefined();
   });
 
   it('does not render My Records, My Credentials, or Attestations as separate items', () => {
