@@ -1515,6 +1515,7 @@ export type Database = {
           email: string
           full_name: string | null
           id: string
+          is_platform_admin: boolean
           is_public_profile: boolean
           is_verified: boolean
           manual_review_completed_at: string | null
@@ -1538,6 +1539,7 @@ export type Database = {
           email: string
           full_name?: string | null
           id: string
+          is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
           manual_review_completed_at?: string | null
@@ -1561,6 +1563,7 @@ export type Database = {
           email?: string
           full_name?: string | null
           id?: string
+          is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
           manual_review_completed_at?: string | null
@@ -2410,6 +2413,14 @@ export type Database = {
           status: string
         }[]
       }
+      search_issuer_ground_truth: {
+        Args: { p_issuer_name: string }
+        Returns: {
+          id: string
+          name: string
+          match_strategy: string
+        }[]
+      }
       search_public_credentials: {
         Args: { p_limit?: number; p_query: string }
         Returns: Json[]
@@ -2433,6 +2444,24 @@ export type Database = {
           public_record_id: string
           similarity: number
         }[]
+      }
+      archive_old_audit_events: {
+        Args: { retention_days?: number }
+        Returns: number
+      }
+      check_orphaned_anchors: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          anchor_id: string
+          user_id: string
+          fingerprint: string
+          status: string
+          created_at: string
+        }[]
+      }
+      cleanup_orphaned_anchors: {
+        Args: Record<PropertyKey, never>
+        Returns: number
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }

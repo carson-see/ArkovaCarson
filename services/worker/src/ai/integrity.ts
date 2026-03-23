@@ -194,60 +194,32 @@ export async function computeIntegrityScore(
     // Non-fatal — use default
   }
 
-  // 3. Issuer verification — multi-strategy ground truth matching
+  // 3. Issuer verification — parameterized RPC ground truth matching (SEC-2)
+  //    Uses search_issuer_ground_truth() RPC to avoid PostgREST filter injection.
   //    Strategy A: exact ilike match (score 100)
   //    Strategy B: fuzzy contains match (score 80)
-  //    Strategy C: domain match from metadata (score 70)
   //    No match: score 30
   let issuerVerification = 50; // default
   const issuerName = metadata.issuerName as string | undefined;
   if (issuerName) {
     try {
-      // Strategy A: exact match (case-insensitive)
+      // Use parameterized RPC — all matching logic is server-side
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: exactMatch } = await (db as any)
-        .from('institution_ground_truth')
-        .select('id, name')
-        .ilike('name', issuerName)
-        .limit(1);
+      const { data: matches, error: rpcError } = await (db as any)
+        .rpc('search_issuer_ground_truth', { p_issuer_name: issuerName });
 
-      if (exactMatch && exactMatch.length > 0) {
-        issuerVerification = 100;
+      if (rpcError) {
+        logger.warn({ error: rpcError, issuerName }, 'Issuer RPC lookup failed');
+      } else if (matches && matches.length > 0) {
+        const match = matches[0];
+        issuerVerification = match.match_strategy === 'exact' ? 100 : 80;
         details.issuerMatch = true;
-        details.issuerMatchStrategy = 'exact';
-        details.matchedInstitution = exactMatch[0].name;
+        details.issuerMatchStrategy = match.match_strategy;
+        details.matchedInstitution = match.name;
       } else {
-        // Strategy B: fuzzy contains — strip common prefixes ("The ", "University of ")
-        // and check if issuer name contains or is contained in ground truth names
-        const normalizedIssuer = issuerName
-          .replace(/^(The|A)\s+/i, '')
-          .trim()
-          // Sanitize for PostgREST filter interpolation — strip characters that could
-          // manipulate the .or() filter string (commas, dots, parentheses, LIKE wildcards)
-          .replace(/[,.()"'\\%_]/g, '');
-        if (!normalizedIssuer || normalizedIssuer.length < 2) {
-          issuerVerification = 30;
-          flags.push('issuer_not_in_registry');
-          details.issuerMatch = false;
-        } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: fuzzyMatch } = await (db as any)
-          .from('institution_ground_truth')
-          .select('id, name')
-          .or(`name.ilike.%${normalizedIssuer}%,name.ilike.${normalizedIssuer}%`)
-          .limit(1);
-
-        if (fuzzyMatch && fuzzyMatch.length > 0) {
-          issuerVerification = 80;
-          details.issuerMatch = true;
-          details.issuerMatchStrategy = 'fuzzy';
-          details.matchedInstitution = fuzzyMatch[0].name;
-        } else {
-          issuerVerification = 30;
-          flags.push('issuer_not_in_registry');
-          details.issuerMatch = false;
-        }
-        }
+        issuerVerification = 30;
+        flags.push('issuer_not_in_registry');
+        details.issuerMatch = false;
       }
     } catch {
       // Non-fatal — use default

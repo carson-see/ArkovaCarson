@@ -15,12 +15,25 @@ import type { Database } from '../types/database.types.js';
 
 let client: SupabaseClient<Database> | null = null;
 
+/**
+ * PERF-2: Configure Supabase client with PgBouncer-compatible settings.
+ * When SUPABASE_POOLER_URL is set, uses PgBouncer (port 6543, transaction mode)
+ * to prevent connection exhaustion under concurrent load.
+ */
 export function getDb(): SupabaseClient<Database> {
   if (!client) {
-    client = createClient<Database>(config.supabaseUrl, config.supabaseServiceKey, {
+    // Prefer pooler URL if available (PgBouncer transaction mode)
+    const dbUrl = process.env.SUPABASE_POOLER_URL || config.supabaseUrl;
+    if (process.env.SUPABASE_POOLER_URL) {
+      logger.info('Using PgBouncer pooler connection');
+    }
+    client = createClient<Database>(dbUrl, config.supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
+      },
+      db: {
+        schema: 'public',
       },
     });
   }

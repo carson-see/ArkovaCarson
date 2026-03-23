@@ -225,6 +225,58 @@ jobs:
         working-directory: machines
         run: npx tla-precheck check bitcoinAnchor.machine.ts
 
+  # Migration safety gate (SCALE-20) — verify migrations are additive-only
+  migration-check:
+    name: Migration Safety Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for modified migrations (additive-only policy)
+        run: |
+          # Get changed files in this PR/push
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD -- 'supabase/migrations/*.sql' || true)
+          if [ -z "$CHANGED" ]; then
+            echo "No migration changes detected"
+            exit 0
+          fi
+
+          echo "Changed migration files:"
+          echo "$CHANGED"
+
+          # Check for MODIFIED (not new) migrations — these violate additive-only policy
+          for file in $CHANGED; do
+            if git log --oneline ${{ github.event.pull_request.base.sha || 'HEAD~1' }} -- "$file" | head -1 | grep -q .; then
+              echo "::error::MODIFIED existing migration: $file — write a compensating migration instead"
+              exit 1
+            fi
+          done
+
+          echo "All migration changes are new files (additive-only policy satisfied)"
+
+      - name: Check migration naming convention
+        run: |
+          # Verify new migrations follow NNNN_descriptive_name.sql pattern
+          for file in supabase/migrations/*.sql; do
+            basename=$(basename "$file")
+            if ! echo "$basename" | grep -qE '^[0-9]{4}[a-b]?_[a-z_]+\.sql$'; then
+              echo "::warning::Migration $basename doesn't follow naming convention: NNNN_descriptive_name.sql"
+            fi
+          done
+
+      - name: Check rollback comments
+        run: |
+          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD -- 'supabase/migrations/*.sql' || true)
+          for file in $CHANGED; do
+            if [ -f "$file" ] && ! grep -qi 'ROLLBACK' "$file"; then
+              echo "::warning::Migration $file is missing a ROLLBACK comment section"
+            fi
+          done
+
   # End-to-end tests
   e2e:
     name: E2E Tests
