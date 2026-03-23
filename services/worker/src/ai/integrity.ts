@@ -73,6 +73,7 @@ const EXPECTED_FIELDS: Record<string, string[]> = {
   LICENSE: ['issuerName', 'issuedDate', 'expiryDate', 'licenseNumber', 'jurisdiction'],
   TRANSCRIPT: ['issuerName', 'issuedDate'],
   PROFESSIONAL: ['issuerName', 'issuedDate', 'accreditingBody'],
+  CLE: ['issuerName', 'issuedDate', 'creditHours', 'creditType', 'accreditingBody', 'jurisdiction'],
   OTHER: ['issuerName'],
 };
 
@@ -283,6 +284,13 @@ export async function computeIntegrityScore(
     anchor.expires_at as string | null,
   );
   flags.push(...temporal.flags);
+
+  // 6. AI fraud signals — if extraction returned fraudSignals array, include them
+  const fraudSignals = metadata.fraudSignals as string[] | undefined;
+  if (Array.isArray(fraudSignals) && fraudSignals.length > 0) {
+    flags.push(...fraudSignals.map((s) => `ai_fraud:${s}`));
+    details.aiFraudSignals = fraudSignals;
+  }
 
   // Calculate overall (weighted average)
   const weights = {
