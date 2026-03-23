@@ -313,3 +313,88 @@ export async function handleAdminSubscriptions(
     res.status(500).json({ error: 'Failed to fetch subscriptions' });
   }
 }
+
+// ─── GET /api/admin/organizations ────────────────────────────
+
+export async function handleAdminOrganizations(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  const { page, limit, search } = parsePagination(req);
+  const offset = (page - 1) * limit;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = db as any;
+
+    let query = dbAny
+      .from('organizations')
+      .select('id, legal_name, display_name, domain, org_prefix, verification_status, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (search) {
+      query = query.or(`display_name.ilike.%${search}%,legal_name.ilike.%${search}%,domain.ilike.%${search}%`);
+    }
+
+    const { data: orgs, count, error } = await query;
+
+    if (error) {
+      logger.error({ error }, 'Admin organizations query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    // Enrich with member count + anchor count
+    const orgIds = (orgs ?? []).map((o: { id: string }) => o.id);
+    let memberCounts: Record<string, number> = {};
+    let anchorCounts: Record<string, number> = {};
+
+    if (orgIds.length > 0) {
+      // Member counts
+      const { data: members } = await db
+        .from('profiles')
+        .select('org_id')
+        .in('org_id', orgIds)
+        .is('deleted_at', null);
+      if (members) {
+        for (const m of members) {
+          if (m.org_id) memberCounts[m.org_id] = (memberCounts[m.org_id] ?? 0) + 1;
+        }
+      }
+
+      // Anchor counts
+      const { data: anchors } = await db
+        .from('anchors')
+        .select('org_id')
+        .in('org_id', orgIds)
+        .is('deleted_at', null);
+      if (anchors) {
+        for (const a of anchors) {
+          if (a.org_id) anchorCounts[a.org_id] = (anchorCounts[a.org_id] ?? 0) + 1;
+        }
+      }
+    }
+
+    res.json({
+      organizations: (orgs ?? []).map((o: { id: string }) => ({
+        ...o,
+        member_count: memberCounts[o.id] ?? 0,
+        anchor_count: anchorCounts[o.id] ?? 0,
+      })),
+      total: count ?? 0,
+      page,
+      limit,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Admin organizations request failed');
+    res.status(500).json({ error: 'Failed to fetch organizations' });
+  }
+}

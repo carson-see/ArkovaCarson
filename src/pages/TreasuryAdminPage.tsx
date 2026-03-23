@@ -313,6 +313,17 @@ export function TreasuryAdminPage() {
         </Card>
       </div>
 
+      {/* x402 USDC Revenue (PH1-PAY-02) */}
+      <Card className="mb-8">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">x402 Payment Revenue</CardTitle>
+          <Badge variant="secondary" className="text-[10px]">Base Sepolia</Badge>
+        </CardHeader>
+        <CardContent>
+          <X402PaymentStats />
+        </CardContent>
+      </Card>
+
       {/* Recent Anchors */}
       <Card>
         <CardHeader>
@@ -407,4 +418,74 @@ function AnchorStatusBadge({ status }: Readonly<{ status: string }>) {
     default:
       return <Badge variant="outline">{status}</Badge>;
   }
+}
+
+/** x402 payment stats from x402_payments table */
+function X402PaymentStats() {
+  const [stats, setStats] = useState<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = supabase as any;
+    Promise.all([
+      dbAny.from('x402_payments').select('*', { count: 'exact', head: true }),
+      dbAny.from('x402_payments').select('amount_usd'),
+      dbAny.from('x402_payments').select('tx_hash, amount_usd, payer_address, created_at').order('created_at', { ascending: false }).limit(5),
+    ]).then(([countRes, amountRes, recentRes]: [{ count: number | null }, { data: Array<{ amount_usd: number }> | null }, { data: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> | null }]) => {
+      const revenue = (amountRes.data ?? []).reduce((sum: number, p: { amount_usd: number }) => sum + (p.amount_usd ?? 0), 0);
+      setStats({
+        total: countRes.count ?? 0,
+        revenue,
+        recent: recentRes.data ?? [],
+      });
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <Skeleton className="h-20 w-full" />;
+  if (!stats || stats.total === 0) {
+    return (
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">USDC Address</span>
+          <span className="font-mono text-xs">0xae1201D68cE24fC6...75ba04</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Payments</span>
+          <span className="font-mono text-sm">0</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted-foreground">Status</span>
+          <Badge variant="outline" className="text-xs bg-green-500/10 text-green-700 border-green-500/30">Active</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
+          x402 payment gate is enabled. Unauthenticated API calls return 402 with USDC payment requirements.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Total Payments</span>
+        <span className="font-mono text-sm font-semibold">{stats.total}</span>
+      </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-muted-foreground">Revenue (USDC)</span>
+        <span className="font-mono text-sm font-semibold">${stats.revenue.toFixed(4)}</span>
+      </div>
+      {stats.recent.length > 0 && (
+        <div className="border-t pt-3 mt-2 space-y-2">
+          <p className="text-xs text-muted-foreground">Recent payments:</p>
+          {stats.recent.map((p) => (
+            <div key={p.tx_hash} className="flex items-center justify-between text-xs">
+              <span className="font-mono truncate max-w-[140px]">{p.payer_address}</span>
+              <span className="font-mono">${p.amount_usd.toFixed(4)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

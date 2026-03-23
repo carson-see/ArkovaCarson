@@ -237,7 +237,7 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
         const { error: insertError } = await supabase.from('public_records').insert({
           source: 'edgar',
           source_id: hit._id,
-          source_url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accession}`,
+          source_url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accession.replace(/-/g, '')}/${accession}-index.htm`,
           record_type: 'sec_filing',
           title: `${entityName} — ${formTypeValue} (${fileDate})`,
           content_hash: computeContentHash(contentForHash),
@@ -417,7 +417,7 @@ async function fetchEdgarViaSubmissionsApi(
         const { error: insertError } = await supabase.from('public_records').insert({
           source: 'edgar',
           source_id: accession,
-          source_url: `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '')}/${sourceId}`,
+          source_url: `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '')}/${sourceId}/${accession}-index.htm`,
           record_type: 'sec_filing',
           title: `${entityName} — ${form} (${filingDate})`,
           content_hash: computeContentHash(contentForHash),
