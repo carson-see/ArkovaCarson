@@ -5,7 +5,7 @@
  * Uses the existing AI provider abstraction (Gemini text-embedding-004).
  *
  * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
- * Processes in batches of 100 records per run.
+ * Processes in batches of 500 records per run.
  *
  * Constitution 4A: Only metadata is embedded — no raw document content.
  */
@@ -15,8 +15,11 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** Batch size for embedding generation */
-const EMBED_BATCH_SIZE = 100;
+/** Batch size for embedding generation — increased from 100 to clear 12K+ backlog faster */
+const EMBED_BATCH_SIZE = 500;
+
+/** Number of concurrent embedding API calls */
+const EMBED_CONCURRENCY = 10;
 
 export interface BatchEmbedResult {
   total: number;
@@ -97,20 +100,16 @@ export async function embedPublicRecords(
     errors: [],
   };
 
-  for (const record of records) {
+  // Process records with bounded concurrency for throughput
+  const processRecord = async (record: { id: string; title: string | null; source: string; record_type: string; metadata: Record<string, unknown> }) => {
     try {
-      const text = buildPublicRecordEmbeddingText(record as {
-        title: string | null;
-        source: string;
-        record_type: string;
-        metadata: Record<string, unknown>;
-      });
+      const text = buildPublicRecordEmbeddingText(record);
 
       const embeddingResult = await aiProvider.generateEmbedding(text);
       if (!embeddingResult.embedding || embeddingResult.embedding.length === 0) {
         result.failed++;
         result.errors.push({ recordId: record.id, error: 'Empty embedding returned' });
-        continue;
+        return;
       }
 
       const { error: insertError } = await client
@@ -134,6 +133,12 @@ export async function embedPublicRecords(
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     }
+  };
+
+  // Process in chunks of EMBED_CONCURRENCY for bounded parallelism
+  for (let i = 0; i < records.length; i += EMBED_CONCURRENCY) {
+    const chunk = records.slice(i, i + EMBED_CONCURRENCY);
+    await Promise.all(chunk.map((r: { id: string; title: string | null; source: string; record_type: string; metadata: Record<string, unknown> }) => processRecord(r)));
   }
 
   logger.info(
