@@ -113,12 +113,25 @@ export const ACTION_LABELS = {
 
 export const NAV_LABELS = {
   DASHBOARD: 'Dashboard',
+  DOCUMENTS: 'Documents',
   MY_RECORDS: 'My Records',
-  ORGANIZATION: 'Organizations',
+  ORGANIZATION: 'Organization',
   SETTINGS: 'Settings',
   HELP: 'Help',
   SEARCH: 'Search',
   TREASURY: 'Treasury',
+} as const;
+
+export const DOCUMENTS_PAGE_LABELS = {
+  PAGE_TITLE: 'Documents',
+  PAGE_SUBTITLE: 'All your records, credentials, and attestations in one place.',
+  TAB_ALL: 'All',
+  TAB_RECORDS: 'My Records',
+  TAB_CREDENTIALS: 'Issued to Me',
+  TAB_ATTESTATIONS: 'Attestations',
+  EMPTY_TITLE: 'No documents yet',
+  EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
+  SECURE_DOCUMENT: 'Secure Document',
 } as const;
 
 // =============================================================================

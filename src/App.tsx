@@ -32,6 +32,7 @@ const OnboardingRolePage = React.lazy(() => import('@/pages/OnboardingRolePage')
 const OnboardingOrgPage = React.lazy(() => import('@/pages/OnboardingOrgPage').then(m => ({ default: m.OnboardingOrgPage })));
 const ReviewPendingPage = React.lazy(() => import('@/pages/ReviewPendingPage').then(m => ({ default: m.ReviewPendingPage })));
 const MyRecordsPage = React.lazy(() => import('@/pages/MyRecordsPage').then(m => ({ default: m.MyRecordsPage })));
+const DocumentsPage = React.lazy(() => import('@/pages/DocumentsPage').then(m => ({ default: m.DocumentsPage })));
 const OrganizationPage = React.lazy(() => import('@/pages/OrganizationPage').then(m => ({ default: m.OrganizationPage })));
 const RecordDetailPage = React.lazy(() => import('@/pages/RecordDetailPage').then(m => ({ default: m.RecordDetailPage })));
 const SettingsPage = React.lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
@@ -153,6 +154,7 @@ export function App() {
 
           {/* Main app routes — auth required, onboarding must be complete */}
           <Route path={ROUTES.DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Dashboard"><DashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.DOCUMENTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Documents"><DocumentsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RECORDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Records"><MyRecordsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.MY_CREDENTIALS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MyCredentials"><MyCredentialsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RECORD_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RecordDetail"><RecordDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

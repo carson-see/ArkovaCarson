@@ -1,10 +1,12 @@
 /**
  * Sidebar Navigation Component
  *
- * Professional sidebar with navigation links.
- * Responsive: hidden on mobile (<md), shown as overlay when mobileOpen=true.
+ * Radically simplified sidebar (Session 10):
+ * - Max 5 items: Dashboard, Documents, Organization, Search, Settings
+ * - Billing/Help/Developers moved to Header user dropdown
+ * - Admin section behind collapsible toggle, only for platform admins
  *
- * @see MVP-07
+ * @see MVP-07, Session 10 Sprint A
  */
 
 import { useState, useEffect } from 'react';
@@ -14,30 +16,26 @@ import {
   FileText,
   Building2,
   Settings,
-  HelpCircle,
-  CreditCard,
   ChevronLeft,
   ChevronRight,
   X,
-  Inbox,
   Search,
   Landmark,
   Moon,
   Sun,
   Monitor,
-  Code2,
   BarChart3,
   Activity,
   Database,
   DollarSign,
-  FileCheck,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
+import { NAV_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
-import { Separator } from '@/components/ui/separator';
 import { useTheme, type Theme } from '@/hooks/useTheme';
 import {
   Tooltip,
@@ -54,11 +52,10 @@ interface NavItem {
 
 const mainNavItems: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
-  { label: NAV_LABELS.MY_RECORDS, icon: FileText, to: ROUTES.RECORDS },
-  { label: MY_CREDENTIALS_LABELS.NAV_LABEL, icon: Inbox, to: ROUTES.MY_CREDENTIALS },
+  { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
   { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATIONS },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
-  { label: 'Attestations', icon: FileCheck, to: ROUTES.ATTESTATIONS },
+  { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },
 ];
 
 import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
@@ -70,13 +67,6 @@ const adminNavItems: NavItem[] = [
   { label: 'Pipeline', icon: Database, to: ROUTES.ADMIN_PIPELINE },
   { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
   { label: 'Payments', icon: DollarSign, to: ROUTES.ADMIN_PAYMENTS },
-];
-
-const secondaryNavItems: NavItem[] = [
-  { label: BILLING_LABELS.PAGE_TITLE, icon: CreditCard, to: ROUTES.BILLING },
-  { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },
-  { label: NAV_LABELS.HELP, icon: HelpCircle, to: ROUTES.HELP },
-  { label: 'Developers', icon: Code2, to: ROUTES.DEVELOPERS },
 ];
 
 // ---------------------------------------------------------------------------
@@ -151,6 +141,7 @@ interface SidebarProps {
 export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
   const isPlatformAdmin = checkPlatformAdmin(userEmail);
   const [collapsed, setCollapsed] = useState(false);
+  const [adminExpanded, setAdminExpanded] = useState(false);
   const location = useLocation();
 
   // Close mobile sidebar on navigation
@@ -161,6 +152,24 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
     // Only trigger on pathname change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
+
+  // Check if any admin route is active to auto-expand
+  const isAdminActive = adminNavItems.some(
+    (item) => location.pathname === item.to || location.pathname.startsWith(item.to + '/')
+  );
+
+  const isNavActive = (item: NavItem) => {
+    if (item.to === ROUTES.DOCUMENTS) {
+      // Documents tab should be active for /documents, /records, /my-credentials, /attestations
+      return location.pathname === ROUTES.DOCUMENTS
+        || location.pathname.startsWith(ROUTES.DOCUMENTS + '/')
+        || location.pathname === ROUTES.RECORDS
+        || location.pathname.startsWith(ROUTES.RECORDS + '/')
+        || location.pathname === ROUTES.MY_CREDENTIALS
+        || location.pathname === ROUTES.ATTESTATIONS;
+    }
+    return location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+  };
 
   const sidebarContent = (
     <aside
@@ -216,28 +225,38 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         </div>
       )}
 
-      {/* Scrollable nav area — ensures bottom items visible on short screens */}
+      {/* Scrollable nav area */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Main Navigation */}
+        {/* Main Navigation — max 5 items */}
         <nav className="space-y-1 p-3">
           {mainNavItems.map((item) => (
             <SidebarNavLink
               key={item.label}
               item={item}
               collapsed={collapsed}
-              active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+              active={isNavActive(item)}
             />
           ))}
 
-          {/* Admin-only items */}
+          {/* Admin section — collapsible toggle, platform admins only */}
           {isPlatformAdmin && (
             <>
-              {!collapsed && (
-                <p className="px-3 pt-4 pb-1 font-mono text-[10px] font-medium uppercase tracking-widest text-[#859398]">
-                  Admin
-                </p>
+              {!collapsed ? (
+                <button
+                  onClick={() => setAdminExpanded(!adminExpanded)}
+                  className="flex w-full items-center justify-between px-3 pt-4 pb-1 font-mono text-[10px] font-medium uppercase tracking-widest text-[#859398] hover:text-[#bbc9cf] transition-colors"
+                >
+                  <span>Admin</span>
+                  {adminExpanded || isAdminActive ? (
+                    <ChevronUp className="h-3 w-3" />
+                  ) : (
+                    <ChevronDown className="h-3 w-3" />
+                  )}
+                </button>
+              ) : (
+                <div className="my-2 border-t border-white/5" />
               )}
-              {adminNavItems.map((item) => (
+              {(adminExpanded || isAdminActive || collapsed) && adminNavItems.map((item) => (
                 <SidebarNavLink
                   key={item.label}
                   item={item}
@@ -247,20 +266,6 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
               ))}
             </>
           )}
-        </nav>
-
-        <Separator className="mx-3" />
-
-        {/* Secondary Navigation */}
-        <nav className="space-y-1 p-3">
-          {secondaryNavItems.map((item) => (
-            <SidebarNavLink
-              key={item.label}
-              item={item}
-              collapsed={collapsed}
-              active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
-            />
-          ))}
         </nav>
       </div>
 
