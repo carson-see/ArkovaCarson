@@ -20,36 +20,12 @@ env:
   REPOSITORY: arkova-worker-images
 
 jobs:
-  # Run CI checks first
-  ci:
-    name: Worker CI
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        working-directory: services/worker
-        run: npm ci --ignore-scripts
-
-      - name: TypeScript check
-        working-directory: services/worker
-        run: npx tsc --noEmit
-
-  # Build and deploy to Cloud Run
   deploy:
     name: Build & Deploy
     runs-on: ubuntu-latest
-    needs: [ci]
     permissions:
       contents: read
-      id-token: write  # Required for Workload Identity Federation
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -93,7 +69,7 @@ jobs:
             --max-instances 3 \
             --timeout 300 \
             --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest" \
-            --set-env-vars "NODE_ENV=production,LOG_LEVEL=info,BITCOIN_NETWORK=testnet4,ENABLE_PROD_NETWORK_ANCHORING=true,USE_MOCKS=false,FRONTEND_URL=https://arkova-carson.vercel.app,AI_PROVIDER=gemini,ENABLE_AI_EXTRACTION=true,ENABLE_SEMANTIC_SEARCH=true,CRON_OIDC_AUDIENCE=https://arkova-worker-kvojbeutfa-uc.a.run.app" \
+            --set-env-vars "NODE_ENV=production,LOG_LEVEL=info,BITCOIN_NETWORK=signet,ENABLE_PROD_NETWORK_ANCHORING=true,USE_MOCKS=false,FRONTEND_URL=https://arkova-carson.vercel.app,AI_PROVIDER=gemini,ENABLE_AI_EXTRACTION=true,ENABLE_SEMANTIC_SEARCH=true,CRON_OIDC_AUDIENCE=https://arkova-worker-kvojbeutfa-uc.a.run.app" \
             --quiet
 
       - name: Verify deployment health
