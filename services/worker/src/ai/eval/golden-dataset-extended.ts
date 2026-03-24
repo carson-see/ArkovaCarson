@@ -208,7 +208,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'OSHA 30-hour card',
     strippedText: 'U.S. Department of Labor. Occupational Safety and Health Administration. OSHA 30-Hour Construction Safety and Health. [NAME_REDACTED] has completed the Outreach Training Program. Card Number: [REDACTED]. Completed: May 2025.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Occupational Safety and Health Administration', issuedDate: '2025-05-01', fieldOfStudy: 'Construction Safety and Health', accreditingBody: 'U.S. Department of Labor', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Occupational Safety and Health Administration', issuedDate: '2025-05-01', fieldOfStudy: 'Construction Safety', accreditingBody: 'U.S. Department of Labor', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'safety', 'osha'],
   },
   {
@@ -224,7 +224,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'PMI-ACP agile certification',
     strippedText: 'PMI. Agile Certified Practitioner (PMI-ACP). [NAME_REDACTED]. Certification Number: [REDACTED]. Date Granted: November 2025. Expiration: November 2028.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Project Management Institute', issuedDate: '2025-11-01', expiryDate: '2028-11-01', fieldOfStudy: 'Agile', accreditingBody: 'Project Management Institute', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Project Management Institute', issuedDate: '2025-11-01', expiryDate: '2028-11-01', fieldOfStudy: 'Agile / Scrum', accreditingBody: 'Project Management Institute', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'agile', 'pmi'],
   },
   {
@@ -232,7 +232,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Certified Ethical Hacker',
     strippedText: 'EC-Council. Certified Ethical Hacker (CEH). [NAME_REDACTED]. Certificate Number: ECC[REDACTED]. Date of Issuance: August 2025. Valid through: August 2028.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'EC-Council', issuedDate: '2025-08-01', expiryDate: '2028-08-01', fieldOfStudy: 'Ethical Hacking', accreditingBody: 'EC-Council', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'EC-Council', issuedDate: '2025-08-01', expiryDate: '2028-08-01', fieldOfStudy: 'Cybersecurity', accreditingBody: 'EC-Council', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'security', 'hacking'],
   },
   {

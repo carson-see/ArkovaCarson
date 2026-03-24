@@ -46,8 +46,8 @@ describe('verifyGrounding', () => {
   it('should detect hallucinated fields not in source text', () => {
     const fields = {
       issuerName: 'Stanford Medical School', // NOT in source text at all
-      fieldOfStudy: 'Quantum Physics', // NOT in source text
-      degreeLevel: 'Doctor of Philosophy', // NOT in source text
+      jurisdiction: 'Narnia', // NOT in source text
+      expiryDate: '2099-12-31', // NOT in source text
     };
 
     const report = verifyGrounding(fields, sampleText);
@@ -60,18 +60,18 @@ describe('verifyGrounding', () => {
     expect(stanfordResult?.matchType).toBe('not_found');
   });
 
-  it('should apply -0.3 penalty when <50% fields are grounded', () => {
+  it('should apply -0.15 penalty when <50% groundable fields are grounded', () => {
     const fields = {
       issuerName: 'Completely Fabricated University',
-      fieldOfStudy: 'Quantum Basket Weaving',
-      degreeLevel: 'Doctorate of Nothing',
       jurisdiction: 'Narnia',
+      issuedDate: '1999-01-01',
+      expiryDate: '2000-01-01',
     };
 
     const report = verifyGrounding(fields, sampleText);
 
     expect(report.groundingScore).toBeLessThan(0.5);
-    expect(report.confidenceAdjustment).toBe(-0.3);
+    expect(report.confidenceAdjustment).toBe(-0.15);
   });
 
   it('should handle date format variations (ISO vs numeric display)', () => {
@@ -128,7 +128,7 @@ describe('verifyGrounding', () => {
     const report = verifyGrounding(fields, '');
 
     expect(report.groundingScore).toBe(0);
-    expect(report.confidenceAdjustment).toBe(-0.3);
+    expect(report.confidenceAdjustment).toBe(-0.15);
   });
 
   it('should use normalized matching for case differences and whitespace', () => {
@@ -156,8 +156,8 @@ describe('verifyGrounding', () => {
   it('should return correct report structure', () => {
     const fields = {
       issuerName: 'University of Michigan',
-      fieldOfStudy: 'Computer Science',
-      degreeLevel: 'Fabricated Degree', // hallucinated
+      fieldOfStudy: 'Computer Science', // non-groundable (inferred field)
+      degreeLevel: 'Fabricated Degree', // non-groundable (inferred field)
     };
 
     const report = verifyGrounding(fields, sampleText);
@@ -168,6 +168,7 @@ describe('verifyGrounding', () => {
     expect(report).toHaveProperty('groundedFieldCount');
     expect(report).toHaveProperty('confidenceAdjustment');
     expect(report.fieldResults).toBeInstanceOf(Array);
-    expect(report.groundableFieldCount).toBe(3);
+    // fieldOfStudy and degreeLevel are non-groundable, only issuerName is checked
+    expect(report.groundableFieldCount).toBe(1);
   });
 });
