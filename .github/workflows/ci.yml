@@ -114,6 +114,13 @@ jobs:
         run: supabase start
         continue-on-error: true
 
+      - name: Fix SUBMITTED enum (ALTER TYPE ADD VALUE silently fails inside transaction)
+        if: steps.supabase-start.outcome == 'success'
+        run: |
+          docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';"
+          docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "NOTIFY pgrst, 'reload schema';"
+          sleep 3
+
       - name: Generate types
         if: steps.supabase-start.outcome == 'success'
         run: npm run gen:types
