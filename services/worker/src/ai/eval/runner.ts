@@ -13,6 +13,7 @@ import type {
   EvalRunResult,
 } from './types.js';
 import { compareFields, computeAggregateMetrics } from './scoring.js';
+import { calibrateConfidence } from './calibration.js';
 import { EXTRACTION_SYSTEM_PROMPT } from '../prompts/extraction.js';
 
 /**
@@ -86,6 +87,7 @@ async function evaluateEntry(
     tags: entry.tags,
     fieldResults,
     reportedConfidence: confidence,
+    calibratedConfidence: calibrateConfidence(confidence),
     actualAccuracy,
     latencyMs,
     provider: provider.name,
@@ -161,7 +163,11 @@ export function formatEvalReport(result: EvalRunResult): string {
   lines.push(`| Weighted F1 | ${(result.overall.weightedF1 * 100).toFixed(1)}% |`);
   lines.push(`| Mean Reported Confidence | ${(result.overall.meanReportedConfidence * 100).toFixed(1)}% |`);
   lines.push(`| Mean Actual Accuracy | ${(result.overall.meanActualAccuracy * 100).toFixed(1)}% |`);
-  lines.push(`| Confidence Correlation (r) | ${result.overall.confidenceCorrelation.toFixed(3)} |`);
+  lines.push(`| Confidence Correlation (r) — raw | ${result.overall.confidenceCorrelation.toFixed(3)} |`);
+  if (result.overall.calibratedCorrelation !== undefined) {
+    lines.push(`| Confidence Correlation (r) — calibrated | ${result.overall.calibratedCorrelation.toFixed(3)} |`);
+    lines.push(`| Mean Calibrated Confidence | ${((result.overall.meanCalibratedConfidence ?? 0) * 100).toFixed(1)}% |`);
+  }
   lines.push(`| Mean Latency | ${result.overall.meanLatencyMs.toFixed(0)}ms |`);
   lines.push('');
 

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { analyzeCalibration, formatCalibrationReport } from './calibration.js';
+import { analyzeCalibration, formatCalibrationReport, calibrateConfidence } from './calibration.js';
 import type { EntryEvalResult } from './types.js';
 
 function makeEntry(overrides: Partial<EntryEvalResult>): EntryEvalResult {
@@ -97,6 +97,47 @@ describe('analyzeCalibration', () => {
     const result = analyzeCalibration(entries);
     expect(result.recalibrationSuggestions.length).toBeGreaterThan(0);
     expect(result.recalibrationSuggestions.some(s => s.includes('PROMPT FIX'))).toBe(true);
+  });
+});
+
+describe('calibrateConfidence', () => {
+  it('maps raw 0.0 to floor value', () => {
+    expect(calibrateConfidence(0.0)).toBeCloseTo(0.65, 2);
+  });
+
+  it('maps raw 0.80 to ~0.94', () => {
+    expect(calibrateConfidence(0.80)).toBeCloseTo(0.94, 2);
+  });
+
+  it('maps raw 0.90 to ~0.95', () => {
+    expect(calibrateConfidence(0.90)).toBeCloseTo(0.95, 2);
+  });
+
+  it('caps at 0.95 for raw 1.0', () => {
+    expect(calibrateConfidence(1.0)).toBeCloseTo(0.95, 2);
+  });
+
+  it('interpolates between knots (raw 0.75 between 0.70→0.92 and 0.80→0.94)', () => {
+    const result = calibrateConfidence(0.75);
+    expect(result).toBeGreaterThan(0.92);
+    expect(result).toBeLessThan(0.94);
+    expect(result).toBeCloseTo(0.93, 2);
+  });
+
+  it('maps negative values to floor', () => {
+    expect(calibrateConfidence(-0.5)).toBeCloseTo(0.65, 2);
+  });
+
+  it('maps values > 1 to cap', () => {
+    expect(calibrateConfidence(1.5)).toBeCloseTo(0.95, 2);
+  });
+
+  it('is monotonically non-decreasing', () => {
+    const values = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+    const calibrated = values.map(calibrateConfidence);
+    for (let i = 1; i < calibrated.length; i++) {
+      expect(calibrated[i]).toBeGreaterThanOrEqual(calibrated[i - 1]);
+    }
   });
 });
 

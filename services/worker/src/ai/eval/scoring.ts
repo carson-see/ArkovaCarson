@@ -358,6 +358,17 @@ export function computeAggregateMetrics(
   const meanActualAccuracy = accuracies.reduce((a, b) => a + b, 0) / entries.length;
   const confidenceCorrelation = pearsonCorrelation(confidences, accuracies);
 
+  // Calibrated confidence metrics (if calibration data present)
+  const calibratedConfidences = entries
+    .map(e => e.calibratedConfidence)
+    .filter((c): c is number => c !== undefined);
+  const calibratedCorrelation = calibratedConfidences.length === entries.length
+    ? pearsonCorrelation(calibratedConfidences, accuracies)
+    : undefined;
+  const meanCalibratedConfidence = calibratedConfidences.length > 0
+    ? calibratedConfidences.reduce((a, b) => a + b, 0) / calibratedConfidences.length
+    : undefined;
+
   // Latency
   const meanLatencyMs =
     entries.reduce((sum, e) => sum + e.latencyMs, 0) / entries.length;
@@ -371,6 +382,8 @@ export function computeAggregateMetrics(
     meanReportedConfidence,
     meanActualAccuracy,
     confidenceCorrelation,
+    calibratedCorrelation,
+    meanCalibratedConfidence,
     meanLatencyMs,
   };
 }

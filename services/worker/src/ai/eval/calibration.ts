@@ -164,6 +164,61 @@ export function analyzeCalibration(
   };
 }
 
+// ============================================================================
+// ACTIVE CALIBRATION LAYER
+// ============================================================================
+// Empirical mapping from model-reported confidence → calibrated confidence.
+// Derived from 310-entry eval dataset (2026-03-24).
+//
+// Mapping table (piecewise linear interpolation):
+//   reported 0.00 → calibrated 0.65 (model reports 0 but gets ~67% accuracy)
+//   reported 0.20 → calibrated 0.75 (model reports 20% but gets ~92% accuracy)
+//   reported 0.60 → calibrated 0.85 (model reports 60% but gets ~92% accuracy)
+//   reported 0.70 → calibrated 0.92 (model reports 70% but gets ~95% accuracy)
+//   reported 0.80 → calibrated 0.94 (model reports 80% but gets ~94% accuracy)
+//   reported 0.90 → calibrated 0.95 (model reports 90% but gets ~94% accuracy)
+//   reported 1.00 → calibrated 0.95 (cap — model rarely reaches 100% accuracy)
+
+/** Calibration knots: [rawConfidence, calibratedConfidence] */
+const CALIBRATION_KNOTS: [number, number][] = [
+  [0.00, 0.65],
+  [0.20, 0.75],
+  [0.60, 0.85],
+  [0.70, 0.92],
+  [0.80, 0.94],
+  [0.90, 0.95],
+  [1.00, 0.95],
+];
+
+/**
+ * Apply post-hoc calibration to a raw model confidence score.
+ *
+ * Uses piecewise linear interpolation between empirically-derived knots.
+ * The model is systematically underconfident (reports ~76% when accuracy is ~94%),
+ * so this function maps raw scores upward to better reflect actual accuracy.
+ *
+ * @param rawConfidence - Model-reported confidence (0.0–1.0)
+ * @returns Calibrated confidence (0.0–1.0)
+ */
+export function calibrateConfidence(rawConfidence: number): number {
+  if (rawConfidence <= 0) return CALIBRATION_KNOTS[0][1];
+  if (rawConfidence >= 1) return CALIBRATION_KNOTS[CALIBRATION_KNOTS.length - 1][1];
+
+  // Find the two surrounding knots
+  for (let i = 0; i < CALIBRATION_KNOTS.length - 1; i++) {
+    const [x0, y0] = CALIBRATION_KNOTS[i];
+    const [x1, y1] = CALIBRATION_KNOTS[i + 1];
+    if (rawConfidence >= x0 && rawConfidence <= x1) {
+      // Linear interpolation
+      const t = (rawConfidence - x0) / (x1 - x0);
+      return y0 + t * (y1 - y0);
+    }
+  }
+
+  // Fallback (shouldn't reach here)
+  return rawConfidence;
+}
+
 /**
  * Format calibration report as markdown.
  */

@@ -45,5 +45,6 @@ export type { EvalRunOptions } from './runner.js';
 export {
   analyzeCalibration,
   formatCalibrationReport,
+  calibrateConfidence,
 } from './calibration.js';
 export type { CalibrationResult, CalibrationBucket } from './calibration.js';

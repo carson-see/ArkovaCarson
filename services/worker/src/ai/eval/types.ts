@@ -78,8 +78,10 @@ export interface EntryEvalResult {
   tags: string[];
   /** Per-field results */
   fieldResults: FieldResult[];
-  /** AI-reported confidence */
+  /** AI-reported confidence (raw model output) */
   reportedConfidence: number;
+  /** Post-hoc calibrated confidence (after applying calibration layer) */
+  calibratedConfidence?: number;
   /** Actual accuracy for this entry (fraction of fields correct) */
   actualAccuracy: number;
   /** Extraction latency in ms */
@@ -127,8 +129,12 @@ export interface AggregateMetrics {
   meanReportedConfidence: number;
   /** Mean actual accuracy */
   meanActualAccuracy: number;
-  /** Confidence-accuracy correlation (Pearson r) */
+  /** Confidence-accuracy correlation (Pearson r) — raw model confidence */
   confidenceCorrelation: number;
+  /** Confidence-accuracy correlation (Pearson r) — after calibration layer */
+  calibratedCorrelation?: number;
+  /** Mean calibrated confidence */
+  meanCalibratedConfidence?: number;
   /** Mean extraction latency */
   meanLatencyMs: number;
 }
