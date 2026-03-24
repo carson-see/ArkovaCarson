@@ -69,8 +69,9 @@ CREATE TRIGGER set_public_records_updated_at
   EXECUTE FUNCTION update_public_records_updated_at();
 
 -- ─── Switchboard Flag for Ingestion ──────────────
-INSERT INTO switchboard_flags (flag_key, enabled, description) VALUES
-  ('ENABLE_PUBLIC_RECORDS_INGESTION', false, 'Enable public records data ingestion pipeline (EDGAR, USPTO, Federal Register, OpenAlex)');
+INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
+  ('ENABLE_PUBLIC_RECORDS_INGESTION', false, false, 'Enable public records data ingestion pipeline (EDGAR, USPTO, Federal Register, OpenAlex)', false)
+ON CONFLICT (id) DO NOTHING;
 
 -- ─── Count-by-source RPC for admin dashboard ─────
 CREATE OR REPLACE FUNCTION get_public_records_stats()
