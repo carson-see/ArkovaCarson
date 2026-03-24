@@ -304,7 +304,7 @@ describe('BaseChainClient', () => {
       expect(receipt.blockHeight).toBe(Number(TEST_BLOCK_NUMBER));
       expect(receipt.confirmations).toBe(1);
       expect(receipt.blockTimestamp).toBeTruthy();
-      expect(receipt.feeSats).toBe(Number(TEST_GAS_USED * TEST_GAS_PRICE));
+      expect(receipt.feeWei).toBe((TEST_GAS_USED * TEST_GAS_PRICE).toString());
     });
 
     it('includes metadata hash in receipt when metadata provided', async () => {
@@ -420,7 +420,7 @@ describe('BaseChainClient', () => {
       expect(receipt.rawTxHex).toBe(buildAnchorCalldata(TEST_FINGERPRINT));
     });
 
-    it('calculates fee in wei stored as feeSats', async () => {
+    it('calculates fee in wei stored as feeWei string', async () => {
       const request: SubmitFingerprintRequest = {
         fingerprint: TEST_FINGERPRINT,
         timestamp: new Date().toISOString(),
@@ -428,7 +428,7 @@ describe('BaseChainClient', () => {
 
       const receipt = await client.submitFingerprint(request);
       // gasUsed (21500) * gasPrice (100000000) = 2150000000000
-      expect(receipt.feeSats).toBe(Number(TEST_GAS_USED * TEST_GAS_PRICE));
+      expect(receipt.feeWei).toBe((TEST_GAS_USED * TEST_GAS_PRICE).toString());
     });
   });
 
@@ -527,7 +527,7 @@ describe('BaseChainClient', () => {
       expect(receipt!.blockHeight).toBe(Number(TEST_BLOCK_NUMBER));
       expect(receipt!.confirmations).toBe(5); // currentBlock - blockNumber
       expect(receipt!.blockTimestamp).toBeTruthy();
-      expect(receipt!.feeSats).toBe(Number(TEST_GAS_USED * TEST_GAS_PRICE));
+      expect(receipt!.feeWei).toBe((TEST_GAS_USED * TEST_GAS_PRICE).toString());
     });
 
     it('returns null for non-ARKV transaction', async () => {

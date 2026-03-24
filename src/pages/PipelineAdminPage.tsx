@@ -134,9 +134,9 @@ export function PipelineAdminPage() {
       } else {
         // Fallback: direct count queries when RPC function doesn't exist
         const { count: total } = await dbAny.from('public_records').select('*', { count: 'exact', head: true });
-        const { count: anchored } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).eq('anchor_status', 'ANCHORED');
-        const { count: pending } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).eq('anchor_status', 'PENDING');
-        const { count: embedded } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).not('embedding', 'is', null);
+        const { count: anchored } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).not('anchor_id', 'is', null);
+        const { count: pending } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).is('anchor_id', null);
+        const { count: embedded } = await dbAny.from('public_record_embeddings').select('*', { count: 'exact', head: true });
         totalRecords = total ?? 0;
         anchoredRecords = anchored ?? 0;
         pendingRecords = pending ?? 0;

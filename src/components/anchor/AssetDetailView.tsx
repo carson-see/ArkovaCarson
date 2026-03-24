@@ -43,6 +43,7 @@ import {
   TooltipProvider,
 } from '@/components/ui/tooltip';
 import { verifyUrl } from '@/lib/routes';
+import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 
 /** Inline copy button for values */
 function CopyButton({ value }: { value: string }) {
@@ -325,7 +326,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 {anchor.chainTxId ? (
                   <div className="flex items-center gap-1.5">
                     <a
-                      href={`https://mempool.space/signet/tx/${anchor.chainTxId}`}
+                      href={`${getExplorerBaseUrl()}/tx/${anchor.chainTxId}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="text-sm text-[#00d4ff] hover:underline font-mono truncate"

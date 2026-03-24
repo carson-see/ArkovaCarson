@@ -401,7 +401,7 @@ export class BaseChainClient implements ChainClient {
       confirmations: 1, // Just confirmed
       metadataHash: fullMetadataHash,
       rawTxHex: calldata, // Store calldata as raw tx reference
-      feeSats: Number(feeWei), // Store wei cost in feeSats field (EVM equivalent)
+      feeWei: feeWei.toString(), // EVM fee in wei — NOT satoshis; consumers must check chain type
     };
   }
 
@@ -496,7 +496,7 @@ export class BaseChainClient implements ChainClient {
           ? parsed.metadataHashTruncated
           : undefined,
         rawTxHex: input,
-        feeSats: Number(feeWei),
+        feeWei: feeWei.toString(), // EVM fee in wei — NOT satoshis; consumers must check chain type
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

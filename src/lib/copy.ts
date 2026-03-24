@@ -1216,6 +1216,12 @@ export const BILLING_PAGE_LABELS = {
   PAGE_SUBTITLE: 'Manage your plan, view usage, and update payment methods.',
 } as const;
 
+export const SYSTEM_HEALTH_LABELS = {
+  CONNECTION_ERROR: 'Unable to connect to the server. Please check your connection and try again.',
+  WORKER_HINT: 'Ensure the worker service is running and accessible.',
+  WORKER_OFFLINE: 'Worker offline',
+} as const;
+
 export const TERM_REPLACEMENTS: Record<string, string> = {
   wallet: 'vault',
   gas: '(remove or rephrase)',

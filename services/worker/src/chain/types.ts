@@ -23,8 +23,10 @@ export interface ChainReceipt {
   metadataHash?: string;
   /** NET-4: Raw transaction hex for rebroadcast, RBF, and independent audit */
   rawTxHex?: string;
-  /** Fee paid in satoshis (for cost tracking) */
+  /** Fee paid in satoshis (for Bitcoin cost tracking) */
   feeSats?: number;
+  /** Fee paid in wei (for EVM chain cost tracking) — mutually exclusive with feeSats */
+  feeWei?: string;
 }
 
 export interface VerificationResult {

@@ -32,6 +32,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
+import { SYSTEM_HEALTH_LABELS } from '@/lib/copy';
 
 import { isPlatformAdmin } from '@/lib/platform';
 
@@ -145,9 +146,9 @@ export function SystemHealthPage() {
       {healthError && (
         <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5">
           <AlertTriangle className="inline h-4 w-4 mr-2" />
-          Unable to connect to the server. Please check your connection and try again.
+          {SYSTEM_HEALTH_LABELS.CONNECTION_ERROR}
           <p className="mt-2 text-xs opacity-70">
-            Ensure the worker is running (npm run dev:worker) or set VITE_WORKER_URL to your Cloud Run endpoint.
+            {SYSTEM_HEALTH_LABELS.WORKER_HINT}
           </p>
         </div>
       )}
@@ -210,7 +211,7 @@ export function SystemHealthPage() {
                 )}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Worker offline</p>
+              <p className="text-sm text-muted-foreground">{SYSTEM_HEALTH_LABELS.WORKER_OFFLINE}</p>
             )}
           </CardContent>
         </Card>
@@ -245,7 +246,7 @@ export function SystemHealthPage() {
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Worker offline</p>
+              <p className="text-sm text-muted-foreground">{SYSTEM_HEALTH_LABELS.WORKER_OFFLINE}</p>
             )}
           </CardContent>
         </Card>
@@ -300,7 +301,7 @@ export function SystemHealthPage() {
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Worker offline</p>
+              <p className="text-sm text-muted-foreground">{SYSTEM_HEALTH_LABELS.WORKER_OFFLINE}</p>
             )}
           </CardContent>
         </Card>
