@@ -36,7 +36,9 @@ jobs:
 
       - name: Install dependencies
         working-directory: services/worker
-        run: npm ci
+        run: |
+          npm ci
+          npm rebuild
 
       - name: TypeScript check
         working-directory: services/worker
