@@ -69,12 +69,12 @@ GRANT EXECUTE ON FUNCTION archive_old_audit_events(integer) TO service_role;
 -- ---------------------------------------------------------------------------
 -- 3. Partial index for unanchored public_records (speeds up pipeline queries)
 -- ---------------------------------------------------------------------------
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_public_records_unanchored
+CREATE INDEX IF NOT EXISTS idx_public_records_unanchored
   ON public_records (source, created_at)
   WHERE anchor_id IS NULL;
 
 -- Partial index for pipeline source filtering on anchors
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_pipeline_source
+CREATE INDEX IF NOT EXISTS idx_anchors_pipeline_source
   ON anchors ((metadata->>'pipeline_source'))
   WHERE metadata->>'pipeline_source' IS NOT NULL;
 

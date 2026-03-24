@@ -282,7 +282,7 @@ CREATE OR REPLACE VIEW payment_ledger AS
     'USD' AS currency,
     be.user_id,
     NULL::uuid AS org_id,
-    be.created_at AS event_at,
+    be.processed_at AS event_at,
     be.payload AS details
   FROM billing_events be
   WHERE be.event_type IN ('checkout.session.completed', 'invoice.payment_succeeded')

@@ -20,16 +20,16 @@
 -- =============================================================================
 
 -- 1. Anchors metadata — used for pipeline_source filtering, recipient lookups
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_metadata_gin
+CREATE INDEX IF NOT EXISTS idx_anchors_metadata_gin
   ON anchors USING GIN (metadata jsonb_path_ops);
 
 -- 2. Entitlements value — used for quota type lookups
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_entitlements_value_gin
+CREATE INDEX IF NOT EXISTS idx_entitlements_value_gin
   ON entitlements USING GIN (value jsonb_path_ops);
 
--- 3. AI usage events — used for provider/model analytics queries
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_ai_usage_events_metadata_gin
-  ON ai_usage_events USING GIN (metadata jsonb_path_ops);
+-- 3. AI usage events — SKIPPED: ai_usage_events has no metadata JSONB column.
+--    Table uses discrete columns (provider, event_type, etc.) per migration 0059.
+--    Original index target was incorrect.
 
 -- ---------------------------------------------------------------------------
 -- ROLLBACK

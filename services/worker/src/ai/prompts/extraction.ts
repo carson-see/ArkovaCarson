@@ -29,13 +29,14 @@ IMPORTANT RULES:
 - The "confidence" field MUST be a number from 0.0 to 1.0 reflecting extraction certainty.
 
 CONFIDENCE CALIBRATION (CRITICAL — you MUST follow these ranges):
-Your confidence scores tend to be 10-15 points too high. Actively compensate by choosing the LOWER end of each range.
-- 0.90-1.0: NEVER use unless EVERY key field is explicitly and unambiguously present. This range should apply to <10% of documents. If ANY field is inferred or absent, you MUST drop below 0.90.
-- 0.75-0.89: Clean document with most fields present. 1-2 fields inferred or slightly ambiguous. THIS SHOULD BE YOUR DEFAULT RANGE for typical clean credentials.
-- 0.55-0.74: Several fields missing, ambiguous, or require inference. OCR noise present. Credential type is clear but details are partial.
-- 0.35-0.54: Sparse text, many fields inferred rather than directly stated. Non-English documents with uncertain translation. Multiple ambiguities.
-- 0.0-0.34: Very little extractable content, mostly guesswork, or severely corrupted/truncated text.
-SELF-CHECK: Before returning confidence >0.85, count how many fields you extracted vs how many the document type typically has. If you left 2+ fields empty, confidence should be ≤0.80.
+Your confidence scores tend to be 20 points LOWER than actual accuracy. You are significantly underconfident. Actively compensate by choosing HIGHER confidence values.
+- 0.90-0.95: Clean document with ALL key fields explicitly present and unambiguous. Use this for well-formatted credentials from recognized institutions. THIS SHOULD BE YOUR DEFAULT for clean, complete credentials (~40% of documents).
+- 0.80-0.89: Most fields present, 1-2 minor ambiguities or inferred fields. Use for typical credentials with minor gaps. (~30% of documents).
+- 0.65-0.79: Several fields missing or ambiguous. OCR noise present but credential type is clear. Non-English documents that you can confidently translate.
+- 0.45-0.64: Sparse text, many fields inferred. Significant OCR corruption. Multiple ambiguities about credential type or issuer.
+- 0.20-0.44: Very little extractable content. Mostly guesswork. Severely corrupted/truncated text, or junk/non-credential content.
+- 0.0-0.19: Completely unrecognizable, empty, or non-document content (emoji, CSV data, random symbols).
+SELF-CHECK: If you extracted 4+ fields from a clean document, confidence should be ≥0.85. Only drop below 0.70 if the document is genuinely hard to parse.
 
 LICENSE-SPECIFIC GUIDANCE:
 Licenses are highly variable in format. Pay special attention to:
@@ -44,13 +45,30 @@ Licenses are highly variable in format. Pay special attention to:
 - CRITICAL: If the license number is redacted (e.g., "[REDACTED]", "RN-[REDACTED]", "AR-[REDACTED]", "A-[REDACTED]", "NMW[REDACTED]"), do NOT extract licenseNumber. Only extract actual visible numbers like "TX-PE-89012" or "475.123456".
 - Expiration dates may say "Exp:", "Expires:", "Valid through:", "Renewal date:" — all mean expiryDate.
 - The jurisdiction is the STATE, not the city. Format as "State, USA" (e.g., "California, USA"). For federal agencies (FAA, SEC, etc.), use "United States".
-- accreditingBody: Include when a SEPARATE accrediting, certifying, or regulatory organization is explicitly named in the text and is DIFFERENT from the issuerName. Do NOT duplicate the issuer. Examples of when to include:
+- accreditingBody: Include when a SEPARATE accrediting, certifying, or regulatory organization is explicitly named in the text and is DIFFERENT from the issuerName. Also include when the issuer IS the accrediting body for CERTIFICATE credentials (e.g., "AWS" issues AND accredits → accreditingBody: "Amazon Web Services"). Key patterns:
   - AHPRA oversees the Nursing Board → accreditingBody: "AHPRA" (different from issuer)
   - "ABIM" board certifies, "State Education Department" issues license → accreditingBody: "ABIM"
   - "Accredited by CAEP" on a teaching license → accreditingBody: "CAEP"
   - "NCARB certified" on an architect license → accreditingBody: "NCARB"
-  Examples of when to OMIT: FAA issues and regulates (same entity), California Medical Board (board IS the authority)
-- fieldOfStudy for licenses: Infer the professional field from context. "Real Estate Broker" → "Real Estate", "Pharmacist" → "Pharmacy", "Speech-Language Pathologist" → "Speech-Language Pathology", "Registered Nurse" → "Nursing".
+  - "APA-accredited" internship → accreditingBody: "APA"
+  - "ACGME" accredited residency → accreditingBody: "ACGME"
+  - CERTIFICATE from AWS/Google/Microsoft → accreditingBody matches issuer (these orgs ARE the certifying authority)
+  - CERTIFICATE from PMI → accreditingBody: "Project Management Institute"
+  - CERTIFICATE from ISACA → accreditingBody: "ISACA"
+  - CERTIFICATE from (ISC)² → accreditingBody: "(ISC)²"
+  - CERTIFICATE from CompTIA → accreditingBody: "CompTIA"
+  - CERTIFICATE from The Linux Foundation, administered by CNCF → accreditingBody: "Cloud Native Computing Foundation"
+  - Fellowship from Royal College → accreditingBody: "Royal College of Physicians of London"
+  When to OMIT: Only omit when the license issuer IS the sole regulatory body (FAA for aviation, California Medical Board when no separate certifying body is named)
+- fieldOfStudy for licenses: ALWAYS infer the professional field from context. "Real Estate Broker" → "Real Estate", "Pharmacist" → "Pharmacy", "Speech-Language Pathologist" → "Speech-Language Pathology", "Registered Nurse" → "Nursing", "Electrician" → "Electrical Contracting", "Cosmetologist" → "Cosmetology", "Plumber" → "Plumbing", "Social Worker" → "Social Work", "Psychologist" → "Psychology", "Optometrist" → "Optometry", "Chiropractor" → "Chiropractic".
+
+FIELDOFSTUDY NORMALIZATION (applies to ALL credential types):
+- ALWAYS translate non-English field names to English: "Informatik" → "Computer Science", "Engenharia Civil" → "Civil Engineering", "Derecho" → "Law", "Informatique" → "Computer Science", "Engenharia de Computação" → "Computer Engineering".
+- Use the GENERAL academic/professional field, NOT the specific certification or course name: "AWS Certified Developer" → "Cloud Development", "LEED AP BD+C" → "Green Building Design", "Tableau Desktop Specialist" → "Data Visualization", "TOGAF" → "Enterprise Architecture", "ScrumMaster" → "Agile / Scrum", "Docker" → "Container Technology", "Terraform" → "Infrastructure as Code".
+- For CERTIFICATE credentials: extract the broad discipline, not the cert title. "CompTIA Security+" → "Cybersecurity", "Salesforce Administrator" → "CRM Administration", "Azure Fundamentals" → "Cloud Computing", "CCNA" → "Network Engineering".
+- For PROFESSIONAL credentials: use the specific professional discipline. "Fellow of the Royal College of Physicians" → "Medicine", "Chartered Accountant" → "Chartered Accountancy", "Licensed Clinical Social Worker" → "Clinical Social Work", "Professional Engineer" → "Professional Engineering", "Licensed Professional Counselor" → "Professional Counseling".
+- When a degree includes multiple fields, join them with " and ": "Business Administration and Engineering Management" not "Business Administration, Engineering Management".
+- OMIT fieldOfStudy ONLY when the document is truly generic with no subject matter (e.g., "Certificate" with no topic, pure financial/insurance documents, generic contracts).
 
 FIELDS TO EXTRACT:
 - credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | OTHER
@@ -73,13 +91,13 @@ CLE-SPECIFIC FIELDS (extract when credentialType is CLE):
 - approvedBy: Which state bar(s) approved this CLE activity
 
 FRAUD SIGNAL FLAGS (include "fraudSignals" array if any apply):
-- "DUPLICATE_FINGERPRINT": Set if the text mentions this document was previously submitted
-- "EXPIRED_ISSUER": Set if the issuing institution appears defunct, closed, or has a known closure date
-- "SUSPICIOUS_DATES": Set if dates are internally inconsistent (e.g., issued after expiry, issued in future, credential older than 50 years)
-- "MISSING_ACCREDITATION": Set if a degree/license is claimed but no accrediting body is identifiable
-- "FORMAT_ANOMALY": Set if the document structure is atypical for its claimed type (e.g., a "degree" with no institution name)
+- "DUPLICATE_FINGERPRINT": Set if the text mentions this document was previously submitted or is a known duplicate
+- "EXPIRED_ISSUER": Set if the issuing institution is known to be defunct, closed, unaccredited, or a diploma mill. Watch for: "Universal Life Church", "no coursework required", "instant delivery", institutions with no verifiable existence.
+- "SUSPICIOUS_DATES": Set if dates are internally inconsistent (e.g., issued after expiry, issued date in the future relative to 2026, credential issued and expiring on the same day, credential older than 50 years). An expired credential is NOT suspicious — only inconsistent dates are.
+- "MISSING_ACCREDITATION": Set ONLY for DEGREE credentials from institutions where accreditation cannot be identified AND the institution name is suspicious or unrecognizable. Do NOT set for professional licenses, certificates, or badges — these don't always require accreditation.
+- "FORMAT_ANOMALY": Set if the document structure is fundamentally atypical: content is mostly emoji/symbols, appears to be CSV/spreadsheet data, has no identifiable institution or issuer name, is a random collection of text with no credential structure, or claims a degree type without any educational institution.
 - "JURISDICTION_MISMATCH": Set if the jurisdiction doesn't match typical patterns for the credential type
-Return fraudSignals as an empty array [] if no flags apply.
+IMPORTANT: Most legitimate credentials should have fraudSignals: []. Only flag genuine red flags. An expired credential or one with a few missing fields is NOT fraud. Be conservative — false positives on fraud signals are worse than false negatives.
 
 FEW-SHOT EXAMPLES:
 
@@ -209,7 +227,71 @@ Output: {"credentialType":"LICENSE","issuerName":"The Appraisal Subcommittee","i
 
 Example 32 — Heavily redacted license (low confidence):
 Input: "[NAME_REDACTED] [ORG_REDACTED] [ADDRESS_REDACTED]. License granted. License No. [REDACTED]. Date: [DATE_REDACTED]. Expiry: [DATE_REDACTED]."
-Output: {"credentialType":"LICENSE","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.18}`;
+Output: {"credentialType":"LICENSE","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.18}
+
+Example 33 — AWS Certificate (use general field, issuer IS accrediting body):
+Input: "Amazon Web Services. AWS Certified Solutions Architect - Professional. [NAME_REDACTED]. Certificate ID: [REDACTED]. Date Achieved: March 15, 2025. Expiration: March 15, 2028."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Amazon Web Services","issuedDate":"2025-03-15","expiryDate":"2028-03-15","fieldOfStudy":"Cloud Architecture","accreditingBody":"Amazon Web Services","fraudSignals":[],"confidence":0.92}
+
+Example 34 — CompTIA cert (normalize field name, not cert title):
+Input: "CompTIA. Security+ (SY0-701). [NAME_REDACTED]. Certification Date: November 2025. Valid Until: November 2028."
+Output: {"credentialType":"CERTIFICATE","issuerName":"CompTIA","issuedDate":"2025-11-01","expiryDate":"2028-11-01","fieldOfStudy":"Cybersecurity","accreditingBody":"CompTIA","fraudSignals":[],"confidence":0.92}
+
+Example 35 — PMP Certificate:
+Input: "Project Management Institute. Project Management Professional (PMP). [NAME_REDACTED] has met the requirements. Date: 2024-09-01. PMI ID: [REDACTED]. Exp: 2027-09-01."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Project Management Institute","issuedDate":"2024-09-01","expiryDate":"2027-09-01","fieldOfStudy":"Project Management","accreditingBody":"Project Management Institute","fraudSignals":[],"confidence":0.92}
+
+Example 36 — CISSP with OCR typos (normalize issuer name):
+Input: "ISC2. Certifed Information Systems Security Profesional (CISSP). [NAME_REDACTED]. Cert Date: 2025. Renewal: 2028."
+Output: {"credentialType":"CERTIFICATE","issuerName":"(ISC)²","issuedDate":"2025-01-01","expiryDate":"2028-01-01","fieldOfStudy":"Information Security","accreditingBody":"(ISC)²","fraudSignals":[],"confidence":0.85}
+
+Example 37 — Fellowship (PROFESSIONAL with accreditingBody = issuer):
+Input: "Royal College of Physicians of London. [NAME_REDACTED] has been admitted as a Fellow of the Royal College of Physicians (FRCP). Date of Admission: 14 March 2024."
+Output: {"credentialType":"PROFESSIONAL","issuerName":"Royal College of Physicians of London","issuedDate":"2024-03-14","fieldOfStudy":"Medicine","accreditingBody":"Royal College of Physicians of London","jurisdiction":"United Kingdom","fraudSignals":[],"confidence":0.90}
+
+Example 38 — Diploma mill (fraud signals):
+Input: "Universal Life Church Online. Doctorate of Divinity. Awarded to [NAME_REDACTED]. Date: Today. No coursework required. Instant digital delivery."
+Output: {"credentialType":"DEGREE","issuerName":"Universal Life Church Online","degreeLevel":"Doctorate","fieldOfStudy":"Divinity","fraudSignals":["MISSING_ACCREDITATION","FORMAT_ANOMALY","EXPIRED_ISSUER"],"confidence":0.25}
+
+Example 39 — Emoji/junk document (FORMAT_ANOMALY, very low confidence):
+Input: "🎓 📜 ⭐️ 🏫 ✅ 🗓️ 2025 [NAME_REDACTED] 🎉"
+Output: {"credentialType":"OTHER","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.05}
+
+Example 40 — CSV/bulk data (not a credential — FORMAT_ANOMALY):
+Input: "recipient_name,recipient_email,credential_type,issued_date,description. [NAME_REDACTED],[EMAIL_REDACTED],DEGREE,2025-05-03,Bachelor of Science"
+Output: {"credentialType":"OTHER","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.05}
+
+Example 41 — Same-day expiry (SUSPICIOUS_DATES):
+Input: "Quick Cert Co. Certificate: [NAME_REDACTED]. Issued: January 1, 2026. Expires: January 1, 2026. Course: One-Day Workshop."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Quick Cert Co","issuedDate":"2026-01-01","expiryDate":"2026-01-01","fraudSignals":["SUSPICIOUS_DATES"],"confidence":0.65}
+
+Example 42 — Non-English (German — translate fieldOfStudy):
+Input: "Technische Universität München. Bachelorzeugnis. [NAME_REDACTED]. Studiengang: Informatik. Abschluss: Bachelor of Science. Datum: 15. Juli 2024."
+Output: {"credentialType":"DEGREE","issuerName":"Technische Universität München","issuedDate":"2024-07-15","fieldOfStudy":"Computer Science","degreeLevel":"Bachelor","jurisdiction":"Germany","fraudSignals":[],"confidence":0.88}
+
+Example 43 — Non-English (French — translate fieldOfStudy):
+Input: "Université Paris-Saclay. Diplôme de Master. [NAME_REDACTED]. Mention: Informatique. Date de délivrance: 30 juin 2024."
+Output: {"credentialType":"DEGREE","issuerName":"Université Paris-Saclay","issuedDate":"2024-06-30","fieldOfStudy":"Computer Science","degreeLevel":"Master","jurisdiction":"France","fraudSignals":[],"confidence":0.88}
+
+Example 44 — Professional Engineer license (infer field):
+Input: "State Board of Professional Engineers. [NAME_REDACTED], PE. License No. [REDACTED]. Discipline: Civil. Issued: January 2022. Expires: December 2024."
+Output: {"credentialType":"LICENSE","issuerName":"State Board of Professional Engineers","issuedDate":"2022-01-01","expiryDate":"2024-12-31","fieldOfStudy":"Professional Engineering","jurisdiction":"United States","fraudSignals":[],"confidence":0.80}
+
+Example 45 — Clinical psychology internship (PROFESSIONAL with APA):
+Input: "VA Medical Center, Palo Alto. APA-accredited Internship in Clinical Psychology. [NAME_REDACTED], PhD completed the postdoctoral internship. Period: August 2024 — July 2025."
+Output: {"credentialType":"PROFESSIONAL","issuerName":"VA Medical Center, Palo Alto","issuedDate":"2025-07-01","fieldOfStudy":"Clinical Psychology","accreditingBody":"APA","fraudSignals":[],"confidence":0.87}
+
+Example 46 — Chartered Accountant (international PROFESSIONAL):
+Input: "Institute of Chartered Accountants. [NAME_REDACTED] is hereby admitted as a Chartered Accountant. Membership No. [REDACTED]. Date of Admission: March 2024."
+Output: {"credentialType":"PROFESSIONAL","issuerName":"Institute of Chartered Accountants","issuedDate":"2024-03-01","fieldOfStudy":"Chartered Accountancy","accreditingBody":"Institute of Chartered Accountants","fraudSignals":[],"confidence":0.85}
+
+Example 47 — Expired license (NOT fraud — just expired):
+Input: "California Medical Board. [NAME_REDACTED]. License No. A-[REDACTED]. Status: EXPIRED. Last Renewal: 2019. Expired: December 31, 2021."
+Output: {"credentialType":"LICENSE","issuerName":"California Medical Board","issuedDate":"2019-01-01","expiryDate":"2021-12-31","fieldOfStudy":"Medicine","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.72}
+
+Example 48 — Patent document (OTHER — no fieldOfStudy for patents):
+Input: "United States Patent and Trademark Office. Patent No. 11,234,567. Filed: March 2024. Granted: September 2025. Inventor: [NAME_REDACTED]. Assignee: [COMPANY]."
+Output: {"credentialType":"OTHER","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-09-01","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.

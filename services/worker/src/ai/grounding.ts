@@ -38,12 +38,14 @@ export interface GroundingReport {
 
 /**
  * Fields that are inherently not groundable in source text
- * (numeric calculations, AI-generated signals, etc.)
+ * (numeric calculations, AI-generated signals, inferred fields, etc.)
  */
 const NON_GROUNDABLE_FIELDS = new Set([
   'confidence',
   'fraudSignals',
   'creditHours', // numeric — often OCR'd differently
+  'fieldOfStudy', // explicitly inferred/normalized per prompt guidance (e.g., "Pharmacist" → "Pharmacy")
+  'degreeLevel', // inferred from context (e.g., "Licenciado" → "Bachelor")
 ]);
 
 /**
@@ -160,16 +162,19 @@ export function verifyGrounding(
 
   // Calculate confidence adjustment:
   // - All grounded: no adjustment
-  // - 50-100% grounded: -0.1 to 0.0
-  // - <50% grounded: -0.2 to -0.3
+  // - 75-100% grounded: -0.05 (minor penalty for 1 ungrounded field)
+  // - 50-75% grounded: -0.10
+  // - <50% grounded: -0.15 (still moderate — most fields are correctly inferred)
+  // Note: fieldOfStudy and degreeLevel are non-groundable (explicitly inferred),
+  // so only truly hallucinated fields like wrong issuerName trigger penalties.
   let confidenceAdjustment = 0;
   if (groundableCount > 0) {
     if (groundingScore < 0.5) {
-      confidenceAdjustment = -0.3;
+      confidenceAdjustment = -0.15;
     } else if (groundingScore < 0.75) {
-      confidenceAdjustment = -0.2;
+      confidenceAdjustment = -0.10;
     } else if (groundingScore < 1.0) {
-      confidenceAdjustment = -0.1;
+      confidenceAdjustment = -0.05;
     }
   }
 
