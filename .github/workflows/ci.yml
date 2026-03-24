@@ -177,6 +177,7 @@ jobs:
         run: |
           docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';"
           docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U postgres -c "NOTIFY pgrst, 'reload schema';"
+          sleep 3
 
       - name: Run tests with coverage
         run: npm run test:coverage
@@ -187,7 +188,7 @@ jobs:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
           SUPABASE_ANON_KEY: ${{ steps.supabase-keys.outputs.anon_key }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
-          RLS_TEST_PASSWORD: Demo1234!
+          RLS_TEST_PASSWORD: Arkova2026!
 
       - name: Run worker tests with coverage
         working-directory: services/worker
@@ -376,7 +377,7 @@ jobs:
         env:
           E2E_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
-          E2E_SEED_PASSWORD: Demo1234!
+          E2E_SEED_PASSWORD: Arkova2026!
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v4
