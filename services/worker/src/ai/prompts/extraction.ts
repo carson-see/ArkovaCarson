@@ -28,6 +28,26 @@ IMPORTANT RULES:
 - Dates MUST be in ISO 8601 format (YYYY-MM-DD). Convert any date format you find.
 - The "confidence" field MUST be a number from 0.0 to 1.0 reflecting extraction certainty.
 
+FIELD-SPECIFIC GUIDANCE (addresses known extraction weaknesses):
+
+fieldOfStudy:
+- Only extract when an explicit field, discipline, or subject is named in the text.
+- Do NOT infer a fieldOfStudy from the credential type alone. "Certificate" alone does NOT mean fieldOfStudy exists.
+- Do NOT extract fieldOfStudy from an organization name (e.g., "Board of Pharmacy" does NOT mean fieldOfStudy is "Pharmacy" unless the credential explicitly names a field/specialty).
+- For certificates: extract the certification NAME as fieldOfStudy (e.g., "AWS Solutions Architect" → "Cloud Architecture"), but do NOT fabricate a field when only a generic title is present.
+
+accreditingBody:
+- Only extract when a SEPARATE accrediting, certifying, or regulatory body is EXPLICITLY named and is DIFFERENT from the issuer.
+- If the issuer IS the accrediting body (e.g., "CompTIA" issues and accredits CompTIA Security+), OMIT accreditingBody.
+- Common examples where accreditingBody exists: ABET (engineering programs), CAEP (teaching), ACGME (medical residencies), AHPRA (Australian health), regional accreditors (HLC, SACSCOC).
+- When in doubt, OMIT — do not guess at accrediting bodies.
+
+fraudSignals:
+- SUSPICIOUS_DATES: Flag when issued date is in the future (>1 year from now), or issued AFTER expiry, or credential is impossibly old (e.g., degree from 1880 when university founded in 1891). Also flag expired licenses presented without noting INACTIVE/EXPIRED status.
+- MISSING_ACCREDITATION: Flag when a degree is from a known diploma mill or an institution with no verifiable accreditation.
+- FORMAT_ANOMALY: Flag ALL-CAPS documents, mixed-case institution names like "UnIvErSiTy", documents claiming to be "awarded based on life experience", or credentials with nonsensical field names.
+- Return empty array [] when no flags apply — MOST documents should have empty fraudSignals.
+
 CONFIDENCE CALIBRATION (CRITICAL — you MUST follow these ranges):
 Your confidence scores tend to be 10-15 points too high. Actively compensate by choosing the LOWER end of each range.
 - 0.90-1.0: NEVER use unless EVERY key field is explicitly and unambiguously present. This range should apply to <10% of documents. If ANY field is inferred or absent, you MUST drop below 0.90.
@@ -209,7 +229,39 @@ Output: {"credentialType":"LICENSE","issuerName":"The Appraisal Subcommittee","i
 
 Example 32 — Heavily redacted license (low confidence):
 Input: "[NAME_REDACTED] [ORG_REDACTED] [ADDRESS_REDACTED]. License granted. License No. [REDACTED]. Date: [DATE_REDACTED]. Expiry: [DATE_REDACTED]."
-Output: {"credentialType":"LICENSE","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.18}`;
+Output: {"credentialType":"LICENSE","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.18}
+
+Example 33 — Certificate where issuer IS the accreditor (OMIT accreditingBody):
+Input: "CompTIA. Security+ (SY0-701). [NAME_REDACTED]. Certification Date: November 2025. Valid Until: November 2028."
+Output: {"credentialType":"CERTIFICATE","issuerName":"CompTIA","issuedDate":"2025-11-01","expiryDate":"2028-11-01","fieldOfStudy":"Cybersecurity","fraudSignals":[],"confidence":0.85}
+
+Example 34 — Certificate with separate accreditor:
+Input: "The Linux Foundation. Certified Kubernetes Administrator. [NAME_REDACTED]. Issued: 2025-06-20. Expires: 2027-06-20. Administered by the Cloud Native Computing Foundation."
+Output: {"credentialType":"CERTIFICATE","issuerName":"The Linux Foundation","issuedDate":"2025-06-20","expiryDate":"2027-06-20","fieldOfStudy":"Kubernetes Administration","accreditingBody":"Cloud Native Computing Foundation","fraudSignals":[],"confidence":0.87}
+
+Example 35 — Certificate with NO fieldOfStudy (do not fabricate):
+Input: "Certificate. [NAME_REDACTED]. 2025."
+Output: {"credentialType":"CERTIFICATE","issuedDate":"2025-01-01","fraudSignals":[],"confidence":0.15}
+
+Example 36 — Degree from diploma mill (fraud signals):
+Input: "Belford University. Doctor of Business Administration. [NAME_REDACTED]. This degree has been awarded based on life and work experience. Date: 2025."
+Output: {"credentialType":"DEGREE","issuerName":"Belford University","issuedDate":"2025-01-01","fieldOfStudy":"Business Administration","degreeLevel":"Doctorate","fraudSignals":["MISSING_ACCREDITATION","FORMAT_ANOMALY"],"confidence":0.30}
+
+Example 37 — License with impossible date (fraud):
+Input: "Stanford University. Bachelor of Science in Computer Science. [NAME_REDACTED]. Conferred: May 1880."
+Output: {"credentialType":"DEGREE","issuerName":"Stanford University","issuedDate":"1880-05-01","fieldOfStudy":"Computer Science","degreeLevel":"Bachelor","jurisdiction":"California, USA","fraudSignals":["SUSPICIOUS_DATES"],"confidence":0.35}
+
+Example 38 — Professional credential (OTHER type — military discharge):
+Input: "Department of Defense. DD Form 214. Certificate of Release or Discharge from Active Duty. [NAME_REDACTED]. Separation Date: 2025-03-01. Character of Service: Honorable."
+Output: {"credentialType":"OTHER","issuerName":"United States Department of Defense","issuedDate":"2025-03-01","fraudSignals":[],"confidence":0.83}
+
+Example 39 — Digital badge from Coursera (BADGE type):
+Input: "Coursera. Google UX Design Professional Certificate. [NAME_REDACTED]. Completed August 2025. Offered by Google."
+Output: {"credentialType":"BADGE","issuerName":"Google","issuedDate":"2025-08-01","fieldOfStudy":"UX Design","accreditingBody":"Coursera","fraudSignals":[],"confidence":0.85}
+
+Example 40 — ALL CAPS format anomaly:
+Input: "HARVARD UNIVERSITY. BACHELOR OF ARTS IN ENGLISH LITERATURE. [NAME_REDACTED]. THIS DEGREE WAS ISSUED ON JANUARY 1, 2025. ACCREDITED BY THE NATIONAL ACCREDITATION BOARD."
+Output: {"credentialType":"DEGREE","issuerName":"Harvard University","issuedDate":"2025-01-01","fieldOfStudy":"English Literature","degreeLevel":"Bachelor","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.60}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.
