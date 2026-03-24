@@ -48,7 +48,7 @@ function createMockReqRes() {
 
 function mockFlagQuery(flagKey: string, value: boolean | null, error: unknown = null) {
   const singleMock = vi.fn().mockResolvedValue({
-    data: value !== null ? { enabled: value } : null,
+    data: value !== null ? { value } : null,
     error,
   });
   const eqMock = vi.fn().mockReturnValue({ single: singleMock });

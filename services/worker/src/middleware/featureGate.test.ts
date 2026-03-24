@@ -42,7 +42,7 @@ function mockFlagQuery(enabled: string | boolean | null, error: unknown = null) 
   const selectMock = vi.fn().mockReturnValue({
     eq: vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({
-        data: enabled !== null ? { enabled } : null,
+        data: enabled !== null ? { value: enabled } : null,
         error,
       }),
     }),
@@ -72,12 +72,17 @@ describe('featureGate middleware', () => {
       expect(await isVerificationApiEnabled()).toBe(false);
     });
 
-    it('returns false when flag is not found', async () => {
+    it('falls back to env var when flag is not found in DB', async () => {
+      const origEnv = process.env.ENABLE_VERIFICATION_API;
+      process.env.ENABLE_VERIFICATION_API = 'true';
       mockFlagQuery(null, { message: 'not found' });
-      expect(await isVerificationApiEnabled()).toBe(false);
+      expect(await isVerificationApiEnabled()).toBe(true);
+      process.env.ENABLE_VERIFICATION_API = origEnv;
     });
 
-    it('returns false on DB error', async () => {
+    it('returns false on DB error when env var not set', async () => {
+      const origEnv = process.env.ENABLE_VERIFICATION_API;
+      delete process.env.ENABLE_VERIFICATION_API;
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -86,6 +91,7 @@ describe('featureGate middleware', () => {
         }),
       });
       expect(await isVerificationApiEnabled()).toBe(false);
+      process.env.ENABLE_VERIFICATION_API = origEnv;
     });
 
     it('caches the result for subsequent calls', async () => {
@@ -143,7 +149,9 @@ describe('featureGate middleware', () => {
       });
     });
 
-    it('returns 503 on DB failure (fail-closed)', async () => {
+    it('returns 503 on DB failure when env not set (fail-closed)', async () => {
+      const origEnv = process.env.ENABLE_VERIFICATION_API;
+      delete process.env.ENABLE_VERIFICATION_API;
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -158,6 +166,7 @@ describe('featureGate middleware', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(503);
+      process.env.ENABLE_VERIFICATION_API = origEnv;
     });
   });
 });

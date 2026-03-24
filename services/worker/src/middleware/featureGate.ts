@@ -34,17 +34,19 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
   try {
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('enabled')
-      .eq('flag_key', 'ENABLE_VERIFICATION_API')
-      .single() as { data: { enabled: boolean } | null; error: unknown };
+      .select('value')
+      .eq('id', 'ENABLE_VERIFICATION_API')
+      .single() as { data: { value: boolean } | null; error: unknown };
 
     if (error || !data) {
-      logger.warn({ error }, 'Failed to read ENABLE_VERIFICATION_API flag, defaulting to false');
-      flagCache = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
-      return false;
+      // Fall back to env var if DB flag not found
+      const envValue = process.env.ENABLE_VERIFICATION_API === 'true';
+      logger.warn({ error, envFallback: envValue }, 'Failed to read ENABLE_VERIFICATION_API flag from DB, falling back to env');
+      flagCache = { value: envValue, expiresAt: now + FLAG_CACHE_TTL_MS };
+      return envValue;
     }
 
-    const enabled = data.enabled === true;
+    const enabled = data.value === true;
     flagCache = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {
