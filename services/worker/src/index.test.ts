@@ -109,6 +109,8 @@ vi.mock('./stripe/client.js', () => ({
 
 vi.mock('./webhooks/delivery.js', () => ({
   processWebhookRetries: mockProcessWebhookRetries,
+  resetCircuitBreakers: vi.fn(),
+  getCircuitBreakerSize: vi.fn().mockReturnValue(0),
 }));
 
 vi.mock('node-cron', () => ({
@@ -146,6 +148,13 @@ vi.mock('./auth.js', () => ({
 
 vi.mock('dotenv/config', () => ({}));
 
+vi.mock('./middleware/idempotency.js', () => ({
+  idempotencyMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+  stopIdempotencyCleanup: vi.fn(),
+  clearIdempotencyStore: vi.fn(),
+  getIdempotencyStoreSize: vi.fn().mockReturnValue(0),
+}));
+
 // Bypass rate limiters in tests so requests aren't 429'd
 vi.mock('./utils/rateLimit.js', () => {
   const passthrough = (_req: unknown, _res: unknown, next: () => void) => next();
@@ -155,6 +164,8 @@ vi.mock('./utils/rateLimit.js', () => {
       stripeWebhook: passthrough,
       checkout: passthrough,
     },
+    stopRateLimitCleanup: vi.fn(),
+    getRateLimitStoreSize: vi.fn().mockReturnValue(0),
   };
 });
 

@@ -12,6 +12,7 @@ import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 
 const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const IDEMPOTENCY_MAX_SIZE = 100_000; // cap to prevent unbounded growth
 
 interface CachedResponse {
   statusCode: number;
@@ -24,7 +25,7 @@ interface CachedResponse {
 const idempotencyStore = new Map<string, CachedResponse>();
 
 // Cleanup expired entries every 10 minutes
-setInterval(() => {
+let idempotencyCleanupRef: ReturnType<typeof setInterval> | null = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of idempotencyStore.entries()) {
     if (now - entry.createdAt > IDEMPOTENCY_TTL_MS) {
@@ -32,6 +33,24 @@ setInterval(() => {
     }
   }
 }, 10 * 60 * 1000);
+
+/** Stop the idempotency cleanup interval (for graceful shutdown) */
+export function stopIdempotencyCleanup(): void {
+  if (idempotencyCleanupRef) {
+    clearInterval(idempotencyCleanupRef);
+    idempotencyCleanupRef = null;
+  }
+}
+
+/** Clear the idempotency store (for graceful shutdown / testing) */
+export function clearIdempotencyStore(): void {
+  idempotencyStore.clear();
+}
+
+/** Get current store size (for diagnostics / testing) */
+export function getIdempotencyStoreSize(): number {
+  return idempotencyStore.size;
+}
 
 /**
  * Idempotency middleware for POST endpoints.
@@ -79,6 +98,17 @@ export function idempotencyMiddleware() {
       const headersToCache: Record<string, string> = {};
       const xRequestId = res.getHeader('X-Request-Id');
       if (xRequestId) headersToCache['X-Request-Id'] = String(xRequestId);
+
+      // Evict expired/oldest entries if at capacity
+      if (idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
+        const now = Date.now();
+        for (const [k, e] of idempotencyStore) {
+          if (e.createdAt < now - IDEMPOTENCY_TTL_MS || idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
+            idempotencyStore.delete(k);
+          }
+          if (idempotencyStore.size < IDEMPOTENCY_MAX_SIZE * 0.8) break;
+        }
+      }
 
       idempotencyStore.set(cacheKey, {
         statusCode: res.statusCode,

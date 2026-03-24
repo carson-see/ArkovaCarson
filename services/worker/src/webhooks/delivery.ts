@@ -68,10 +68,13 @@ export function isPrivateUrl(url: string): boolean {
 // ─── Circuit Breaker (DH-04) ──────────────────────────────────────────
 const CIRCUIT_BREAKER_THRESHOLD = 5; // consecutive failures to open
 const CIRCUIT_BREAKER_HALF_OPEN_MS = 60_000; // 60s before half-open
+const CIRCUIT_MAX_AGE_MS = 2 * 60 * 60 * 1000; // 2 hours — evict stale entries
+const CIRCUIT_MAX_SIZE = 5_000; // cap to prevent unbounded growth
 
 interface CircuitState {
   consecutiveFailures: number;
   openedAt: number | null; // timestamp when circuit opened
+  lastAccessedAt: number; // timestamp for TTL eviction
 }
 
 // Per-endpoint circuit breaker state
@@ -80,9 +83,23 @@ const circuitBreakers = new Map<string, CircuitState>();
 /** Get or create circuit state for an endpoint */
 function getCircuit(endpointId: string): CircuitState {
   let state = circuitBreakers.get(endpointId);
+
+  // TTL eviction: discard entries older than CIRCUIT_MAX_AGE_MS
+  if (state && Date.now() - state.lastAccessedAt > CIRCUIT_MAX_AGE_MS) {
+    circuitBreakers.delete(endpointId);
+    state = undefined;
+  }
+
   if (!state) {
-    state = { consecutiveFailures: 0, openedAt: null };
+    // Evict oldest entry (first inserted) if at capacity
+    if (circuitBreakers.size >= CIRCUIT_MAX_SIZE) {
+      const oldestKey = circuitBreakers.keys().next().value;
+      if (oldestKey) circuitBreakers.delete(oldestKey);
+    }
+    state = { consecutiveFailures: 0, openedAt: null, lastAccessedAt: Date.now() };
     circuitBreakers.set(endpointId, state);
+  } else {
+    state.lastAccessedAt = Date.now();
   }
   return state;
 }
@@ -123,6 +140,11 @@ function recordFailure(endpointId: string): void {
 /** Exported for testing — clear all circuit state */
 export function resetCircuitBreakers(): void {
   circuitBreakers.clear();
+}
+
+/** Exported for diagnostics / testing — current Map size */
+export function getCircuitBreakerSize(): number {
+  return circuitBreakers.size;
 }
 
 interface WebhookPayload {

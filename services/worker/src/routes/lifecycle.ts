@@ -7,6 +7,9 @@
 
 import { Server } from 'http';
 import { logger } from '../utils/logger.js';
+import { stopRateLimitCleanup } from '../utils/rateLimit.js';
+import { stopIdempotencyCleanup, clearIdempotencyStore } from '../middleware/idempotency.js';
+import { resetCircuitBreakers } from '../webhooks/delivery.js';
 
 // ERR-3: Track active job operations for graceful shutdown
 const activeOps = new Set<Promise<unknown>>();
@@ -33,6 +36,12 @@ export function setupGracefulShutdown(server: Server): void {
     isShuttingDown = true;
 
     logger.info({ signal, activeOps: activeOps.size }, 'Received shutdown signal');
+
+    // LEAK-5: Clear all intervals and in-memory caches to allow clean event loop drain
+    stopRateLimitCleanup();
+    stopIdempotencyCleanup();
+    clearIdempotencyStore();
+    resetCircuitBreakers();
 
     // Force exit after 30 seconds if server.close() hangs
     const forceTimer = setTimeout(() => {

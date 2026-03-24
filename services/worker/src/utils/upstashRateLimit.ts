@@ -60,6 +60,10 @@ export class UpstashRateLimitStore implements IRateLimitStore {
     return this.cache.entries();
   }
 
+  get size(): number {
+    return this.cache.size;
+  }
+
   /** Sync local cache from Redis on startup */
   async syncFromRedis(keys: string[]): Promise<void> {
     for (const key of keys) {

@@ -227,10 +227,16 @@ export class GeminiProvider implements IAIProvider {
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       try {
         const result = await fn();
+        lastError = undefined; // Release error reference on success
         this.resetCircuit();
         return result;
       } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
+        // Store only message + name, not full error object (prevents holding
+        // large API response bodies, stack traces, and request context in memory
+        // during sustained Gemini API degradation — see LEAK-4)
+        const original = err instanceof Error ? err : new Error(String(err));
+        lastError = new Error(original.message);
+        lastError.name = original.name;
 
         // Don't retry on auth/validation errors
         if (lastError.message.includes('API_KEY') || lastError.message.includes('INVALID_ARGUMENT')) {

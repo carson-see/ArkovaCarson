@@ -66,6 +66,11 @@ export class RedisRateLimitStore implements IRateLimitStore {
     // Not used for cleanup in Redis (TTL handles expiry)
     return;
   }
+
+  // Redis manages its own size — return 0 since entries are TTL-managed server-side
+  get size(): number {
+    return 0;
+  }
 }
 
 /**

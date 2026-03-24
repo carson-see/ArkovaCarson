@@ -28,7 +28,10 @@ export interface IRateLimitStore {
   set(key: string, entry: RateLimitEntry): void;
   delete(key: string): void;
   entries(): IterableIterator<[string, RateLimitEntry]>;
+  readonly size: number;
 }
+
+const RATE_LIMIT_MAX_SIZE = 500_000; // cap to prevent unbounded growth
 
 // In-memory store — works for single-instance deployments
 let rateLimitStore: IRateLimitStore = new Map<string, RateLimitEntry>();
@@ -48,8 +51,21 @@ export function cleanupExpiredEntries(): void {
   }
 }
 
-// Run cleanup every minute
-setInterval(cleanupExpiredEntries, 60000);
+// Run cleanup every minute — save ref for graceful shutdown
+let cleanupIntervalRef: ReturnType<typeof setInterval> | null = setInterval(cleanupExpiredEntries, 60000);
+
+/** Stop the rate limit cleanup interval (for graceful shutdown) */
+export function stopRateLimitCleanup(): void {
+  if (cleanupIntervalRef) {
+    clearInterval(cleanupIntervalRef);
+    cleanupIntervalRef = null;
+  }
+}
+
+/** Get current store size (for diagnostics / testing) */
+export function getRateLimitStoreSize(): number {
+  return rateLimitStore.size;
+}
 
 interface RateLimitOptions {
   windowMs: number; // Time window in ms
@@ -76,6 +92,10 @@ export function rateLimit(options: RateLimitOptions) {
     let entry = rateLimitStore.get(key);
 
     if (!entry || entry.resetAt < now) {
+      // Emergency eviction if store is at capacity
+      if (rateLimitStore.get(key) === undefined && getRateLimitStoreSize() >= RATE_LIMIT_MAX_SIZE) {
+        cleanupExpiredEntries();
+      }
       // Create new entry
       entry = {
         count: 0,
