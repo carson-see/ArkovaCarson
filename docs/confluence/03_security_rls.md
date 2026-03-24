@@ -1,5 +1,5 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-03-10 | Story: P1-TS-03 through P6-TS-06_
+_Last updated: 2026-03-24 | Story: P1-TS-03 through P6-TS-06, migration 0107 (org RLS recursion fix)_
 
 ## Overview
 
@@ -22,7 +22,11 @@ Used by multiple RLS policies. Originally `SECURITY INVOKER` (migration 0009), u
 |----------|---------|----------|------------|---------|
 | `get_user_org_id()` | `uuid` | DEFINER (0038) | 0009, 0038 | Returns `profiles.org_id` for `auth.uid()` |
 | `is_org_admin()` | `boolean` | DEFINER (0038) | 0009, 0038 | Returns true if caller has `ORG_ADMIN` role |
-| `get_flag(text)` | `boolean` | DEFINER | 0021 | Safe switchboard flag lookup with default |
+| `is_org_admin_of(uuid)` | `boolean` | DEFINER (0107) | 0087, 0107 | Returns true if caller is admin/owner of given org |
+| `get_user_org_ids()` | `SETOF uuid` | DEFINER (0107) | 0087, 0107 | Returns all org_ids for caller via org_members |
+| `get_flag(text)` | `boolean` | DEFINER | 0021, 0102 | Safe switchboard flag lookup with default (param renamed p_flag_key in 0102) |
+
+> **Session 16 Fix (0107):** `is_org_admin_of()` and `get_user_org_ids()` were originally `SECURITY INVOKER` in migration 0087. This caused circular RLS when called from `organizations` policies that check `org_members` (which has its own self-referencing RLS). Migration 0107 changes both to `SECURITY DEFINER SET search_path = public`. This was the root cause of org settings silently failing to save.
 
 ## Access Control by Table
 

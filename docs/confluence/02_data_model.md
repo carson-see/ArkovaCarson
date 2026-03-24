@@ -1,11 +1,11 @@
 # Data Model
-_Last updated: 2026-03-21 | Migrations: 0001-0092 (gaps at 0033+0078, 0068 split into 0068a/0068b, 91 files)))_
+_Last updated: 2026-03-24 | Migrations: 0001-0107 (gaps at 0033+0078, 0068 split into 0068a/0068b, 107 files). All applied to production._
 
 ## Overview
 
 Arkova uses PostgreSQL via Supabase with a schema-first approach. All tables have Row Level Security (RLS) enabled via `FORCE ROW LEVEL SECURITY`. Data integrity is enforced through constraints, triggers, and Zod validators on all write paths.
 
-**Total tables:** 32+ across 91 migration files (versions 0001-0092).
+**Total tables:** 38+ across 107 migration files (versions 0001-0107). New tables since 0092: `audit_events_archive`, `payment_grace_periods`, `reconciliation_reports`, `financial_reports`, `unified_credits`. New view: `payment_ledger`.
 
 > **Note:** Column-level documentation below covers tables through migration ~0051 in detail. Tables created in migrations 0053-0075 (including `credits`, `anchor_recipients`, `api_keys`, `batch_verification_jobs`, `ai_credits`, `ai_usage_events`, `credentials_embeddings`, `extraction_feedback`, `review_queue_items`, `ai_reports`) are documented at summary level in [01_architecture_overview.md](./01_architecture_overview.md). Full column-level docs for these tables is a backlog item.
 

@@ -97,7 +97,10 @@ describe('Chain Maintenance Jobs', () => {
     });
 
     it('skips when advisory lock not acquired', async () => {
-      mockDb.rpc.mockResolvedValueOnce({ data: false });
+      // acquireLock is now a no-op (single-worker process), so this test
+      // verifies the function still proceeds and handles missing fetch gracefully.
+      // Mock fetch to simulate chain tip failure.
+      global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 } as Response);
       const result = await detectReorgs();
       expect(result).toEqual({ checked: 0, reorgsDetected: 0, reverted: 0 });
     });

@@ -474,16 +474,21 @@ export function OrgProfilePage() {
 
               <Button
                 onClick={async () => {
-                  const success = await updateOrganization({
+                  const updates: Parameters<typeof updateOrganization>[0] = {
                     display_name: orgDisplayName.trim(),
-                    domain: orgDomain.trim() || null,
-                    description: orgDescription.trim() || null,
-                    website_url: orgWebsiteUrl.trim() || null,
-                    org_type: orgType || null,
-                    linkedin_url: orgLinkedinUrl.trim() || null,
-                    location: orgLocation.trim() || null,
-                    founded_date: orgFoundedDate || null,
-                  } as Record<string, unknown>);
+                    domain: orgDomain.trim() || undefined,
+                    description: orgDescription.trim() || undefined,
+                    website_url: orgWebsiteUrl.trim() || undefined,
+                    org_type: orgType || undefined,
+                    linkedin_url: orgLinkedinUrl.trim() || undefined,
+                    location: orgLocation.trim() || undefined,
+                    founded_date: orgFoundedDate || undefined,
+                  };
+                  // Remove undefined fields so Supabase only sends actual changes
+                  const cleaned = Object.fromEntries(
+                    Object.entries(updates).filter(([, v]) => v !== undefined)
+                  );
+                  const success = await updateOrganization(cleaned as Parameters<typeof updateOrganization>[0]);
                   if (success) {
                     setOrgSaved(true);
                     setTimeout(() => setOrgSaved(false), 2000);

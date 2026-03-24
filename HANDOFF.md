@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 180/192 stories complete (~94%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,148 tests** (979 frontend + 1,169 worker, all green). 91 migration files (0001-0092, gaps at 0033+0078). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, calibration, prompt versioning, few-shot, fraud audit, metrics dashboard). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 29,000+ public records, 1,572+ SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Branch protection enabled. Session 13: [object Object] display fix, lint cleanup, doc sync.
+**Overall progress:** 180/192 stories complete (~94%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,433 tests** (1,024 frontend + 1,409 worker, all green). 107 migration files (0001-0107, gaps at 0033+0078, 0068 split). All 107 migrations applied to production. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, calibration, prompt versioning, few-shot, fraud audit, metrics dashboard). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **Signet**. Treasury: `tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r`. **8+ real Signet transactions confirmed**. Frontend on arkova-26.vercel.app. **Pipeline LIVE:** 29,000+ public records, 1,572+ SECURED anchors. 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Branch protection enabled. Worker migrating from GCP Cloud Run to Railway.
 
 ### Open Blockers
 
@@ -21,6 +21,20 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-03-24, Session 16 — Production Stability + Migration Sync)
+
+**Critical production fixes and full migration sync.**
+
+| Change | Detail |
+|--------|--------|
+| Railway worker deploy | Root `railway.json` created with build/deploy config pointing to `services/worker`. Root Directory set to `services/worker` in Railway dashboard. Env vars configured for signet anchoring + Gemini AI. |
+| Org settings RLS fix | Migration 0107: `is_org_admin_of()` and `get_user_org_ids()` changed from SECURITY INVOKER to SECURITY DEFINER. Fixes circular RLS that silently blocked all org setting updates. Applied to production. |
+| OrgProfilePage save fix | Removed unsafe `as Record<string, unknown>` cast. Proper typed updates with undefined filtering. |
+| Full migration sync | All 18 unapplied migrations (0090-0107) applied to production via Supabase MCP. Includes: pipeline RPCs, credential type enums, quota enforcement, advisory locks, payment tables, unified credits, GIN indexes, platform admin flag, org profile columns, and more. |
+| Worker test fixes | Fixed gemini.test.ts (embedding model name update) and chain-maintenance.test.ts (advisory lock now no-op). All 1,409 worker tests pass. |
+| Worker lockfile | Regenerated `services/worker/package-lock.json` (was deleted, blocking `npm ci`). |
+| Production DB data | Org fields populated, platform admin flags set, org RLS recursion fixed. |
 
 ### Recent Changes (2026-03-24, Session 15 — North Star Priorities: Base Chain + AI Tuning + Golden Dataset)
 
@@ -52,7 +66,7 @@
 | Database types | Regenerated database.types.ts for all new columns/enums. |
 | Sprint plan | docs/SPRINT_2026-03-25.md with 5-day plan covering AI tuning, GEO, infra debt, bugs. |
 
-### ⚠️ DEPLOY STATUS: Worker deploy in progress — Docker image builds successfully, Cloud Run deploy may need GCP secret fixes.
+### ⚠️ DEPLOY STATUS: Worker migrating from GCP Cloud Run to Railway. Railway configured with root directory, env vars, and railway.json. Awaiting healthy deploy confirmation.
 
 ---
 

@@ -195,7 +195,7 @@ describe('GeminiProvider', () => {
       const result = await provider.generateEmbedding('University of Michigan Computer Science');
 
       expect(result.embedding).toHaveLength(768);
-      expect(result.model).toBe('text-embedding-004');
+      expect(result.model).toBe('gemini-embedding-001');
       fetchSpy.mockRestore();
     });
   });

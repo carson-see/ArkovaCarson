@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-23 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 97 migrations | 2,236 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved | AI eval F1=82.1% | 29K+ public records | 1,572+ SECURED anchors
+> **Stats:** 107 migrations | 2,433 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved | AI eval F1=82.1% | 29K+ public records | 1,572+ SECURED anchors
 
 Read this file before every task. Rules here override all other documents.
 
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 97 files (0001-0098, 0033+0078 skipped, 0068 split into 0068a/0068b). Last: `0098_orphan_anchor_check.sql`. Migrations 0001-0089 applied to production.
+**Current:** 107 files (0001-0107, 0033+0078 skipped, 0068 split into 0068a/0068b). Last: `0107_fix_org_rls_recursion.sql`. All migrations 0001-0107 applied to production.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -386,5 +386,5 @@ ENABLE_SYNTHETIC_DATA=false
 
 ---
 
-_Directive version: 2026-03-23 | 97 migrations | 2,236 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved_
+_Directive version: 2026-03-23 | 107 migrations | 2,433 tests | 192 stories (180 complete, 94%) | 24/24 audit findings resolved_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
