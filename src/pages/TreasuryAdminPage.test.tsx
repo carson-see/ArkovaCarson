@@ -64,6 +64,18 @@ vi.mock('@/lib/supabase', () => {
           }),
         }),
       }),
+      // Session 14: TreasuryAdminPage uses supabase.rpc('get_treasury_stats') and 'get_pipeline_stats'
+      rpc: vi.fn().mockResolvedValue({
+        data: {
+          total_payments: 0,
+          total_revenue_usd: 0,
+          recent_payments: [],
+          total_records: 0,
+          pending_records: 0,
+          secured_records: 0,
+        },
+        error: null,
+      }),
     },
   };
 });

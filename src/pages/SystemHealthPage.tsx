@@ -143,9 +143,12 @@ export function SystemHealthPage() {
 
       {/* Error banner */}
       {healthError && (
-        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700">
+        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5">
           <AlertTriangle className="inline h-4 w-4 mr-2" />
-          {healthError}
+          Unable to connect to the server. Please check your connection and try again.
+          <p className="mt-2 text-xs opacity-70">
+            Ensure the worker is running (npm run dev:worker) or set VITE_WORKER_URL to your Cloud Run endpoint.
+          </p>
         </div>
       )}
 
@@ -207,7 +210,7 @@ export function SystemHealthPage() {
                 )}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No data</p>
+              <p className="text-sm text-muted-foreground">Worker offline</p>
             )}
           </CardContent>
         </Card>
@@ -242,7 +245,7 @@ export function SystemHealthPage() {
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No data</p>
+              <p className="text-sm text-muted-foreground">Worker offline</p>
             )}
           </CardContent>
         </Card>
@@ -297,7 +300,7 @@ export function SystemHealthPage() {
                 </p>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No data</p>
+              <p className="text-sm text-muted-foreground">Worker offline</p>
             )}
           </CardContent>
         </Card>

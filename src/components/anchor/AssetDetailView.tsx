@@ -17,9 +17,7 @@ import {
   RefreshCw,
   Download,
   ArrowLeft,
-  Calendar,
   Hash,
-  Lock,
   Share2,
   ExternalLink,
 } from 'lucide-react';
@@ -44,7 +42,6 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip';
-import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { verifyUrl } from '@/lib/routes';
 
 /** Inline copy button for values */
@@ -389,7 +386,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           {(() => {
             const sourceUrl = anchor.metadata?.source_url;
             const pipelineSource = String(anchor.metadata?.pipeline_source ?? '');
-            const recordType = String(anchor.metadata?.record_type ?? '');
+            const _recordType = String(anchor.metadata?.record_type ?? '');
             if (typeof sourceUrl !== 'string' || !sourceUrl) return null;
             const linkLabel = pipelineSource === 'edgar' ? 'SEC EDGAR' :
               pipelineSource === 'openalex' ? 'OpenAlex' :

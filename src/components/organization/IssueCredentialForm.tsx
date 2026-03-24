@@ -315,6 +315,7 @@ export function IssueCredentialForm({
         metadata,
       });
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- anchors table not in generated Database type yet
       const { data: inserted, error: insertError } = await (supabase as any)
         .from('anchors')
         .insert({
@@ -336,6 +337,7 @@ export function IssueCredentialForm({
       const emailTrimmed = recipientEmail.trim();
       if (emailTrimmed) {
         const emailHash = await hashEmail(emailTrimmed);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- anchor_recipients not in generated types
         await (supabase as any).from('anchor_recipients')
           .insert({
             anchor_id: inserted.id,

@@ -22,6 +22,18 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-03-24, Session 15 — North Star Priorities: Base Chain + AI Tuning + Golden Dataset)
+
+**All 5 North Star priorities advanced in this session.**
+
+| Change | Detail |
+|--------|--------|
+| Base L2 chain client | New `BaseChainClient` implementing `ChainClient` interface via viem. Calldata-based anchoring (ARKV prefix + fingerprint). Supports Base mainnet (8453) and Base Sepolia (84532). Comprehensive tests. |
+| Bitcoin mainnet readiness | Verified full code path: KMS signing (AWS + GCP), factory mainnet branch, fee estimation. Created `docs/ops/MAINNET_READINESS.md` operational runbook with step-by-step guide. |
+| Golden dataset expansion | Phase 5 + Phase 6 datasets (~1,300 new entries). Coverage: all 16 credential types including BADGE, ATTESTATION, FINANCIAL, LEGAL, INSURANCE, SEC_FILING, PATENT, REGULATION, PUBLICATION. Edge cases: corrupted OCR, international docs, adversarial inputs. Target: 2,050+ total entries. |
+| Gemini prompt tuning | Added 4 new guidance sections: CERTIFICATE-SPECIFIC, OTHER-TYPE, INSURANCE-SPECIFIC, LEGAL-SPECIFIC. Added 8 new few-shot examples (49-56) covering Azure cert, OSHA trade cert, attestation letter, IEEE membership, COI, NDA, patent, and journal article. |
+| viem dependency | Installed in services/worker for EVM chain interaction. |
+
 ### Recent Changes (2026-03-24, Session 14 — Anchor Pipeline Fix + Org Persistence + Performance + Deploy)
 
 **Critical fixes:** Anchor processing unblocked, org settings persistence, page performance, worker deploy pipeline
