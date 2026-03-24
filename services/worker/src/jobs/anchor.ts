@@ -267,15 +267,28 @@ async function isAnchoringEnabled(): Promise<boolean> {
     });
 
     if (error || typeof data !== 'boolean') {
+      // Fallback: check env var when DB RPC fails (e.g., PostgREST schema cache stale)
+      if (config.enableProdNetworkAnchoring) {
+        logger.warn(
+          { error, dataType: typeof data },
+          'DB get_flag failed — using env ENABLE_PROD_NETWORK_ANCHORING=true as fallback',
+        );
+        return true;
+      }
       logger.warn(
         { error, dataType: typeof data },
-        'Failed to read valid ENABLE_PROD_NETWORK_ANCHORING flag — defaulting to disabled',
+        'Failed to read ENABLE_PROD_NETWORK_ANCHORING flag — defaulting to disabled',
       );
       return false;
     }
 
     return data;
   } catch (err) {
+    // Fallback: check env var
+    if (config.enableProdNetworkAnchoring) {
+      logger.warn({ error: err }, 'get_flag threw — using env ENABLE_PROD_NETWORK_ANCHORING=true as fallback');
+      return true;
+    }
     logger.warn({ error: err }, 'ENABLE_PROD_NETWORK_ANCHORING flag lookup threw — defaulting to disabled');
     return false;
   }
@@ -295,37 +308,67 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
     return { processed: 0, failed: 0 };
   }
 
-  // Fetch PENDING anchors — exclude pipeline records (handled by Merkle batch job)
-  // Pipeline records have metadata.pipeline_source set by publicRecordAnchor.ts
-  const { data: anchors, error } = await db
-    .from('anchors')
-    .select('id, metadata')
-    .eq('status', 'PENDING')
-    .is('deleted_at', null)
-    .limit(100);
-
-  if (error) {
-    logger.error({ error }, 'Failed to fetch pending anchors');
-    return { processed: 0, failed: 0 };
-  }
-
-  if (!anchors || anchors.length === 0) {
-    logger.debug('No pending anchors to process');
-    return { processed: 0, failed: 0 };
-  }
-
-  // Filter out pipeline records — they use Merkle batch anchoring via /jobs/anchor-public-records
-  const userAnchors = anchors.filter((a) => {
-    const meta = a.metadata as Record<string, unknown> | null;
-    return !meta?.pipeline_source;
+  // Fetch PENDING user anchors — two-phase: DB fetch + JS filter.
+  // Pipeline records (metadata.pipeline_source IS NOT NULL) use Merkle batch
+  // anchoring via /jobs/anchor-public-records, not individual OP_RETURN.
+  //
+  // BUG FIX: Previously fetched limit(100) but with 10K+ pipeline records all
+  // 100 were pipeline. Now uses RPC to filter at DB level for reliability.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: userAnchors, error } = await (db.rpc as any)('get_pending_user_anchors', {
+    p_limit: 100,
   });
 
-  if (userAnchors.length === 0) {
-    logger.debug({ totalPending: anchors.length }, 'No user anchors to process (pipeline records filtered)');
+  if (error) {
+    // Fallback: if RPC doesn't exist yet, use broad query with JS filter
+    logger.warn({ error }, 'get_pending_user_anchors RPC failed — falling back to JS filter');
+    const { data: allPending, error: fallbackError } = await db
+      .from('anchors')
+      .select('id, metadata')
+      .eq('status', 'PENDING')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+
+    if (fallbackError) {
+      logger.error({ error: fallbackError }, 'Fallback anchor query failed');
+      return { processed: 0, failed: 0 };
+    }
+
+    logger.info({ rowCount: allPending?.length ?? 0 }, 'Fallback query returned rows');
+
+    if (!allPending || allPending.length === 0) {
+      logger.debug('Fallback returned no PENDING anchors');
+      return { processed: 0, failed: 0 };
+    }
+
+    const filtered = allPending.filter((a) => {
+      const meta = a.metadata as Record<string, unknown> | null;
+      return !meta?.pipeline_source;
+    });
+
+    if (filtered.length === 0) {
+      logger.debug({ totalScanned: allPending.length }, 'No pending user anchors found (all pipeline)');
+      return { processed: 0, failed: 0 };
+    }
+
+    logger.info({ count: filtered.length, totalScanned: allPending.length }, 'Found pending user anchors (fallback)');
+
+    let processed = 0;
+    let failed = 0;
+    for (const anchor of filtered) {
+      const success = await processAnchor(anchor.id);
+      if (success) processed++; else failed++;
+    }
+    return { processed, failed };
+  }
+
+  if (!userAnchors || !Array.isArray(userAnchors) || userAnchors.length === 0) {
+    logger.debug('No pending user anchors to process');
     return { processed: 0, failed: 0 };
   }
 
-  logger.info({ count: userAnchors.length, pipelineSkipped: anchors.length - userAnchors.length }, 'Found pending user anchors');
+  logger.info({ count: userAnchors.length }, 'Found pending user anchors');
 
   let processed = 0;
   let failed = 0;

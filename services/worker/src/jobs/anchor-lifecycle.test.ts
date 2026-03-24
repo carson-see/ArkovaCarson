@@ -89,6 +89,7 @@ vi.mock('../utils/db.js', () => {
       return chain;
     });
     chain.is = vi.fn(() => chain);
+    chain.order = vi.fn(() => chain);
     chain.single = vi.fn(() => {
       const id = chain._id;
       const anchor = id ? dbState.anchors.get(id) : undefined;
@@ -100,7 +101,7 @@ vi.mock('../utils/db.js', () => {
     chain.limit = vi.fn(() => {
       const pending = Array.from(dbState.anchors.entries())
         .filter(([, a]) => a.status === 'PENDING' && !a.deleted_at)
-        .map(([id]) => ({ id }));
+        .map(([id, a]) => ({ id, metadata: (a as Record<string, unknown>).metadata ?? null }));
       return Promise.resolve({ data: pending, error: null });
     });
 
@@ -136,7 +137,11 @@ vi.mock('../utils/db.js', () => {
 
   return {
     db: {
-      rpc: vi.fn(() => Promise.resolve({ data: true, error: null })),
+      rpc: vi.fn((fnName: string) => {
+        if (fnName === 'get_flag') return Promise.resolve({ data: true, error: null });
+        // get_pending_user_anchors: return error to trigger fallback to db.from('anchors')
+        return Promise.resolve({ data: null, error: { message: 'RPC not in cache' } });
+      }),
       from: vi.fn((table: string) => {
         if (table === 'anchors') {
           return {

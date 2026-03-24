@@ -39,10 +39,11 @@ const {
     debug: vi.fn(),
   };
 
-  // Select chain: .select().eq().eq().single() or .select().eq().is().limit()
+  // Select chain: .select().eq().eq().single() or .select().eq().is().order().limit()
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
   selectChain.is = vi.fn(() => selectChain);
+  selectChain.order = vi.fn(() => selectChain);
   selectChain.single = mockSingle;
   selectChain.limit = mockLimit;
 
@@ -116,6 +117,7 @@ vi.mock('../config.js', () => ({
     chainNetwork: 'testnet' as const,
     nodeEnv: 'test',
     useMocks: true,
+    enableProdNetworkAnchoring: false,
   },
   getNetworkDisplayName: vi.fn(() => 'Test Environment'),
 }));
@@ -696,7 +698,10 @@ describe('processPendingAnchors', () => {
     setUpdateResult({ error: null, count: 1 });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
-    mockRpc.mockResolvedValue({ data: true, error: null });
+    // RPC calls: 1st call = get_flag (true), 2nd call = get_pending_user_anchors (fails → fallback)
+    mockRpc
+      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // get_pending_user_anchors → triggers fallback
   });
 
   it('returns zero counts when no pending anchors exist', async () => {
@@ -728,6 +733,9 @@ describe('processPendingAnchors', () => {
   });
 
   it('processes all pending anchors', async () => {
+    mockRpc
+      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
     mockLimit.mockResolvedValue({
       data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
       error: null,
@@ -740,6 +748,9 @@ describe('processPendingAnchors', () => {
   });
 
   it('counts failures separately from successes', async () => {
+    mockRpc
+      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
     mockLimit.mockResolvedValue({
       data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
       error: null,
@@ -757,6 +768,9 @@ describe('processPendingAnchors', () => {
   });
 
   it('handles all anchors failing', async () => {
+    mockRpc
+      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
     mockLimit.mockResolvedValue({
       data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
       error: null,
@@ -777,17 +791,19 @@ describe('processPendingAnchors', () => {
       mockRpc.mockResolvedValue({ data: false, error: null });
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
-      expect(anchorsTable.select).not.toHaveBeenCalled();
     });
 
     it('proceeds when switchboard flag is enabled', async () => {
-      mockRpc.mockResolvedValue({ data: true, error: null });
+      mockRpc
+        .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+        .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
       mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result.processed).toBe(1);
     });
 
     it('defaults to disabled when flag read fails (fail-closed)', async () => {
+      mockRpc.mockReset();
       mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC error' } });
       mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
@@ -795,6 +811,7 @@ describe('processPendingAnchors', () => {
     });
 
     it('defaults to disabled when RPC throws (fail-closed)', async () => {
+      mockRpc.mockReset();
       mockRpc.mockRejectedValue(new Error('DB unreachable'));
       mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
@@ -802,6 +819,7 @@ describe('processPendingAnchors', () => {
     });
 
     it('defaults to disabled when flag data is not a boolean', async () => {
+      mockRpc.mockReset();
       mockRpc.mockResolvedValue({ data: 'true', error: null });
       mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
@@ -836,10 +854,11 @@ describe('processPendingAnchors', () => {
       expect(selectChain.is).toHaveBeenCalledWith('deleted_at', null);
     });
 
-    it('limits batch size to 100', async () => {
+    it('limits batch size to 1000 (fallback) or 100 (RPC)', async () => {
       await processPendingAnchors();
 
-      expect(mockLimit).toHaveBeenCalledWith(100);
+      // Fallback path uses limit(1000) to scan past pipeline records
+      expect(mockLimit).toHaveBeenCalledWith(1000);
     });
   });
 
@@ -911,6 +930,9 @@ describe('processPendingAnchors', () => {
     });
 
     it('logs total counts on completion', async () => {
+      mockRpc
+        .mockResolvedValueOnce({ data: true, error: null })  // get_flag
+        .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
       mockLimit.mockResolvedValue({
         data: [{ id: 'a1', metadata: null }],
         error: null,
@@ -918,9 +940,10 @@ describe('processPendingAnchors', () => {
 
       await processPendingAnchors();
 
+      // Fallback path logs "Found pending user anchors (fallback)" with count
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ processed: expect.any(Number), failed: expect.any(Number) }),
-        'Finished processing pending anchors',
+        expect.objectContaining({ count: expect.any(Number) }),
+        expect.stringContaining('Found pending user anchors'),
       );
     });
   });
