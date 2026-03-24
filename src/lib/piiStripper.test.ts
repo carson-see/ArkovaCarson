@@ -301,6 +301,35 @@ describe('piiStripper', () => {
     });
   });
 
+  // ─── CRIT-4: Hardened PII patterns ──────────────────────────────────
+  describe('CRIT-4: multi-line addresses', () => {
+    it('strips multi-line addresses (up to 3 lines)', () => {
+      const text = 'Address: 123 Main St\nApt 4B\nNew York, NY 10001';
+      const result = stripPII(text);
+      expect(result.strippedText).not.toContain('123 Main St');
+      expect(result.strippedText).not.toContain('New York, NY 10001');
+      expect(result.piiFound).toContain('address');
+    });
+  });
+
+  describe('CRIT-4: expanded national ID patterns', () => {
+    it('strips Aadhaar numbers (12 digits with spaces)', () => {
+      const result = stripPII('Aadhaar: 1234 5678 9012');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+      expect(result.piiFound).toContain('nationalId');
+    });
+
+    it('strips PAN card numbers', () => {
+      const result = stripPII('PAN Number: ABCDE1234F');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+    });
+
+    it('strips national IDs with dots and slashes', () => {
+      const result = stripPII('National ID: AB.123/456');
+      expect(result.strippedText).toContain('[NATIONAL_ID_REDACTED]');
+    });
+  });
+
   describe('edge cases', () => {
     it('handles empty string', () => {
       const result = stripPII('');

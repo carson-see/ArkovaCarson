@@ -20,7 +20,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 const MAX_BATCH_SIZE = 50;
-const CONCURRENCY_LIMIT = 3;
+// EFF-4: Configurable concurrency — Gemini Flash handles 5-10 concurrent requests well.
+const CONCURRENCY_LIMIT = Math.min(
+  Math.max(1, parseInt(process.env.AI_BATCH_CONCURRENCY ?? '3', 10) || 3),
+  20, // hard cap
+);
 
 const BatchRowSchema = z.object({
   text: z.string().min(1, 'Row text is required'),
@@ -160,7 +164,8 @@ router.post('/', async (req: Request, res: Response) => {
             provider: result.provider,
           };
         } catch (err) {
-          const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+          const internalMessage = err instanceof Error ? err.message : 'Unknown error';
+          // CRIT-2: Log full error server-side, return generic message to client
           logger.warn({ error: err, rowIndex: i }, 'Batch extraction failed for row');
 
           // Log failed usage event (non-blocking)
@@ -170,13 +175,13 @@ router.post('/', async (req: Request, res: Response) => {
             eventType: 'extraction',
             provider: 'unknown',
             success: false,
-            errorMessage,
+            errorMessage: internalMessage,
           }).catch(() => {});
 
           return {
             index: i,
             success: false,
-            error: errorMessage,
+            error: 'Extraction failed for this row',
           };
         }
       },

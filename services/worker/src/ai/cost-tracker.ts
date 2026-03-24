@@ -37,6 +37,8 @@ export interface UsageEvent {
   errorMessage?: string;
   /** SHA-256 hash prefix (12 chars) of the extraction prompt used */
   promptVersion?: string;
+  /** EFF-1: Cached extraction result fields for fingerprint-based caching */
+  resultJson?: Record<string, unknown>;
 }
 
 /** Default credit allocations per billing tier */
@@ -128,6 +130,7 @@ export async function logAIUsageEvent(event: UsageEvent): Promise<void> {
       success: event.success,
       error_message: event.errorMessage ?? null,
       prompt_version: event.promptVersion ?? null,
+      result_json: event.resultJson ?? null,
     });
 
     if (error) {

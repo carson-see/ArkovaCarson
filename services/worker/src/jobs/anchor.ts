@@ -41,6 +41,43 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
   }
 
   try {
+    // GAP-6: Confidence gate — block low-confidence AI extractions from being permanently anchored.
+    // Pipeline records (metadata.pipeline_source) are exempt — they use ground truth data.
+    const anchorMeta = anchor.metadata as Record<string, unknown> | null;
+    const isPipeline = !!anchorMeta?.pipeline_source;
+    if (!isPipeline) {
+      // Check for AI extraction confidence via ai_usage_events
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: usageData } = await (db as any)
+          .from('ai_usage_events')
+          .select('confidence')
+          .eq('fingerprint', anchor.fingerprint)
+          .eq('event_type', 'extraction')
+          .eq('success', true)
+          .order('created_at', { ascending: false })
+          .limit(1);
+
+        if (usageData && usageData.length > 0 && usageData[0].confidence != null) {
+          const confidence = usageData[0].confidence as number;
+          const CONFIDENCE_THRESHOLD = parseFloat(process.env.ANCHOR_CONFIDENCE_THRESHOLD ?? '0.4');
+          if (confidence < CONFIDENCE_THRESHOLD) {
+            logger.warn(
+              { anchorId, confidence, threshold: CONFIDENCE_THRESHOLD },
+              'Anchor blocked by confidence gate — extraction confidence too low for permanent anchoring',
+            );
+            // Update status to flag for review rather than silently skipping
+            await db.from('anchors').update({
+              metadata: { ...anchorMeta, _review_reason: 'low_confidence', _ai_confidence: confidence },
+            }).eq('id', anchorId).eq('status', 'PENDING');
+            return false;
+          }
+        }
+      } catch {
+        // Non-fatal — proceed with anchoring if confidence check fails
+      }
+    }
+
     // Validate fingerprint before submitting to chain
     if (!anchor.fingerprint || !FINGERPRINT_REGEX.test(anchor.fingerprint)) {
       logger.error(

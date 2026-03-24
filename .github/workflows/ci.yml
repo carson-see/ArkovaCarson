@@ -190,6 +190,48 @@ jobs:
           npm ci
           npm run test:coverage
 
+  # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
+  ai-eval-gate:
+    name: AI Eval Regression Gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if AI prompt/model code changed
+        id: ai-changed
+        run: |
+          if git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD | grep -qE '^(services/worker/src/ai/prompts/|services/worker/src/ai/gemini\.ts|services/worker/src/ai/schemas\.ts)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.ai-changed.outputs.changed == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install worker dependencies
+        if: steps.ai-changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: npm ci
+
+      - name: Run AI eval against golden dataset (mock provider)
+        if: steps.ai-changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: npx vitest run src/ai/eval/ --reporter=verbose
+        env:
+          AI_PROVIDER: mock
+
+      - name: Skip notice
+        if: steps.ai-changed.outputs.changed != 'true'
+        run: echo "No AI prompt/model changes detected — skipping eval gate"
+
   # TLA+ state machine verification (TLA-02)
   tla-verify:
     name: TLA+ Verification

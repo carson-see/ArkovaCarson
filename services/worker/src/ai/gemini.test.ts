@@ -6,6 +6,22 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Mock logger to avoid config dependency
+vi.mock('../utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+// Mock grounding verification to return neutral results (tested separately)
+vi.mock('./grounding.js', () => ({
+  verifyGrounding: vi.fn().mockReturnValue({
+    fieldResults: [],
+    groundingScore: 1.0,
+    groundableFieldCount: 0,
+    groundedFieldCount: 0,
+    confidenceAdjustment: 0,
+  }),
+}));
+
 // Mock @google/generative-ai
 const mockGenerateContent = vi.fn();
 const mockEmbedContent = vi.fn();

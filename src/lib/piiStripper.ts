@@ -56,7 +56,9 @@ const ADDRESS_KEYWORD = /(?:address|street|postal\s+code|zip\s*(?:code)?|postcod
 const DATE_DDMMYYYY = /\d{2}[/.-]\d{2}[/.-]\d{4}/;
 
 // PII-07: National ID patterns (after relevant keywords)
-const NATIONAL_ID_KEYWORD = /(?:national\s+id|tax\s+id|steuer[-\s]?id|ni\s+number|nino|passport\s+(?:no\.?|number))\s*:?\s*/gi;
+// CRIT-4: Expanded keyword list + broader value pattern to catch Aadhaar, passports with slashes/dots
+// Note: SSN is handled separately by SSN_PATTERN — do NOT add it here to avoid double-matching
+const NATIONAL_ID_KEYWORD = /(?:national\s+id|tax\s+id|steuer[-\s]?id|ni\s+number|nino|passport\s+(?:no\.?|number)|aadhaar|aadhar|pan\s+(?:no\.?|number|card)|cedula|dni|sin\s+(?:no\.?|number))\s*:?\s*/gi;
 
 /**
  * Strip PII from raw text. Returns the stripped text and a report of what was found.
@@ -184,7 +186,7 @@ function stripStudentIds(
 
 /**
  * PII-07: Strip address values that appear after address keywords.
- * Captures up to the next line break or end-of-string.
+ * CRIT-4: Captures multi-line addresses (up to 3 lines) not just single line.
  */
 function stripAddressValues(
   text: string,
@@ -194,8 +196,16 @@ function stripAddressValues(
   let result = text;
   let count = 0;
 
+  // Multi-line address: keyword followed by up to 3 lines of address content
+  // Each line: 5-80 non-empty chars. Captures patterns like:
+  //   Address: 123 Main St
+  //   Apt 4B
+  //   New York, NY 10001
   result = result.replace(
-    new RegExp(`(${ADDRESS_KEYWORD.source})([^\\n]{5,80})`, 'gi'),
+    new RegExp(
+      `(${ADDRESS_KEYWORD.source})([^\\n]{5,80}(?:\\n[^\\n]{3,80}){0,2})`,
+      'gi',
+    ),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('address');
@@ -218,8 +228,10 @@ function stripNationalIds(
   let result = text;
   let count = 0;
 
+  // CRIT-4: Broader value pattern — handles dots, slashes, and longer IDs (e.g. Aadhaar: 12 digits)
+  // Negative lookahead prevents matching redaction tokens like [SSN_REDACTED]
   result = result.replace(
-    new RegExp(`(${NATIONAL_ID_KEYWORD.source})([A-Za-z0-9\\s-]{4,20})`, 'gi'),
+    new RegExp(`(${NATIONAL_ID_KEYWORD.source})(?!\\[)([A-Za-z0-9\\s_./-]{4,30})`, 'gi'),
     (_match, prefix: string) => {
       count++;
       piiFoundSet.add('nationalId');
