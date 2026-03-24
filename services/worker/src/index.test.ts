@@ -665,7 +665,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(409);
-      expect(res.body.error.message).toContain('already has an active subscription');
+      expect((res.body as any).error.message).toContain('already has an active subscription');
     });
 
     it('creates checkout session and returns URL on success', async () => {

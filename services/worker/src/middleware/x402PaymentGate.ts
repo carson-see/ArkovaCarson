@@ -467,7 +467,7 @@ export function x402PaymentGate(endpoint: string) {
 
     // RISK-3: Record payment AFTER successful API execution (response interceptor)
     // RECON-2: Link to request ID
-    const requestId = (req.headers['x-request-id'] as string) ?? req.id ?? undefined;
+    const requestId = (req.headers['x-request-id'] as string) ?? (req as any).id ?? undefined;
 
     // Store payment context for post-execution recording
     const originalJson = res.json.bind(res);

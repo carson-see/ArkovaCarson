@@ -110,14 +110,14 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
 
       // ECON-4: Link anchor to payment source for revenue attribution
       if (paymentCheck.source) {
-        await db.from('anchors').update({
+        await (db as any).from('anchors').update({
           payment_source_id: paymentCheck.source.id,
           payment_source_type: paymentCheck.source.type,
         }).eq('id', anchorId);
       }
     } else {
       // Pipeline records: tag as admin_bypass for accounting
-      await db.from('anchors').update({
+      await (db as any).from('anchors').update({
         payment_source_type: 'pipeline',
       }).eq('id', anchorId);
     }

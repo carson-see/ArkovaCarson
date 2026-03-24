@@ -88,6 +88,7 @@ export async function initRedisRateLimit(): Promise<boolean> {
 
   try {
     // Dynamic import to avoid requiring @upstash/redis when not used
+    // @ts-expect-error — @upstash/redis is optional, only loaded when UPSTASH_REDIS_URL is set
     const { Redis } = await import('@upstash/redis');
     const redis = new Redis({ url, token });
 

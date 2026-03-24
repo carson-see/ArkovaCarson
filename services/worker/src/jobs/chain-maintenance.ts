@@ -65,25 +65,14 @@ function getMempoolBaseUrl(): string {
   return paths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
 }
 
-async function acquireLock(lockId: number): Promise<boolean> {
-  try {
-    const { data, error } = await db.rpc('try_advisory_lock', { lock_id: lockId });
-    if (error) {
-      // RPC doesn't exist — proceed without lock (safe in single-worker mode)
-      return true;
-    }
-    return data === true;
-  } catch {
-    return true; // Proceed without lock
-  }
+async function acquireLock(_lockId: number): Promise<boolean> {
+  // Advisory locks don't work with Supabase connection pooling.
+  // Single-worker process — always proceed.
+  return true;
 }
 
-async function releaseLock(lockId: number): Promise<void> {
-  try {
-    await db.rpc('release_advisory_lock', { lock_id: lockId });
-  } catch {
-    // Best-effort release
-  }
+async function releaseLock(_lockId: number): Promise<void> {
+  // No-op — in-process mutex handled at caller level
 }
 
 // ─── CRIT-2: Reorg Detection ────────────────────────────────────────────
