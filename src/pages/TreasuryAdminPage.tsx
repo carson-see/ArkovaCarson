@@ -432,19 +432,17 @@ function X402PaymentStats() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Single RPC replaces 3 separate x402_payments queries
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = supabase as any;
-    Promise.all([
-      dbAny.from('x402_payments').select('*', { count: 'exact', head: true }),
-      dbAny.from('x402_payments').select('amount_usd'),
-      dbAny.from('x402_payments').select('tx_hash, amount_usd, payer_address, created_at').order('created_at', { ascending: false }).limit(5),
-    ]).then(([countRes, amountRes, recentRes]: [{ count: number | null }, { data: Array<{ amount_usd: number }> | null }, { data: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> | null }]) => {
-      const revenue = (amountRes.data ?? []).reduce((sum: number, p: { amount_usd: number }) => sum + (p.amount_usd ?? 0), 0);
-      setStats({
-        total: countRes.count ?? 0,
-        revenue,
-        recent: recentRes.data ?? [],
-      });
+    dbAny.rpc('get_treasury_stats').then(({ data }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null }) => {
+      if (data) {
+        setStats({
+          total: data.total_payments ?? 0,
+          revenue: data.total_revenue_usd ?? 0,
+          recent: data.recent_payments ?? [],
+        });
+      }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
 

@@ -118,27 +118,12 @@ export function PipelineAdminPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      // Total records
-      const { count: totalRecords } = await dbAny
-        .from('public_records')
-        .select('*', { count: 'exact', head: true });
-
-      // Anchored records (anchor_id not null)
-      const { count: anchoredRecords } = await dbAny
-        .from('public_records')
-        .select('*', { count: 'exact', head: true })
-        .not('anchor_id', 'is', null);
-
-      // Pending records (anchor_id is null)
-      const { count: pendingRecords } = await dbAny
-        .from('public_records')
-        .select('*', { count: 'exact', head: true })
-        .is('anchor_id', null);
-
-      // Embedded records
-      const { count: embeddedRecords } = await dbAny
-        .from('public_record_embeddings')
-        .select('*', { count: 'exact', head: true });
+      // Single RPC replaces 4 separate count queries + record_types fetch
+      const { data: pipelineStats } = await dbAny.rpc('get_pipeline_stats');
+      const totalRecords = pipelineStats?.total_records ?? 0;
+      const anchoredRecords = pipelineStats?.anchored_records ?? 0;
+      const pendingRecords = pipelineStats?.pending_records ?? 0;
+      const embeddedRecords = pipelineStats?.embedded_records ?? 0;
 
       // Records by source — use RPC to avoid PostgREST row limit (was only returning 1000)
       const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
