@@ -72,7 +72,17 @@ FIELDOFSTUDY NORMALIZATION (applies to ALL credential types):
 - OMIT fieldOfStudy ONLY when the document is truly generic with no subject matter (e.g., "Certificate" with no topic, pure financial/insurance documents, generic contracts).
 
 FIELDS TO EXTRACT:
-- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | OTHER
+- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | ATTESTATION | FINANCIAL | LEGAL | INSURANCE | SEC_FILING | PATENT | REGULATION | PUBLICATION | OTHER
+  CLASSIFICATION RULES (choose the MOST SPECIFIC type):
+  - ATTESTATION: employment verifications, reference letters, character references, sworn affidavits, notarized statements, letters of good standing, verification of enrollment
+  - FINANCIAL: financial statements, audit reports, balance sheets, income statements, tax documents, 1099/W-2 forms, bank statements
+  - LEGAL: contracts, service agreements, NDAs, court orders, legal briefs, settlement agreements, powers of attorney, deeds
+  - INSURANCE: certificates of insurance (COI), liability insurance, bonds, surety bonds, policy declarations
+  - SEC_FILING: SEC 10-K, 10-Q, 8-K, DEF 14A, S-1, annual reports filed with securities regulators
+  - PATENT: utility patents, design patents, patent applications, intellectual property filings
+  - REGULATION: Federal Register notices, CFR sections, state regulatory orders, compliance notices
+  - PUBLICATION: academic papers, journal articles, research grants, conference proceedings
+  - OTHER: ONLY use when no other type fits. If you can identify the document purpose at all, use a specific type above
 - issuerName: Full official name of the issuing institution/organization
 - issuedDate: When issued (YYYY-MM-DD)
 - expiryDate: When it expires, if applicable (YYYY-MM-DD)
@@ -122,13 +132,13 @@ Example 5 — Medical Credential:
 Input: "American Board of Internal Medicine ... [NAME_REDACTED] ... certified in Internal Medicine ... Initial Certification: 2020-07-15 ... Valid through: 2030-12-31"
 Output: {"credentialType":"PROFESSIONAL","issuerName":"American Board of Internal Medicine","issuedDate":"2020-07-15","expiryDate":"2030-12-31","fieldOfStudy":"Internal Medicine","fraudSignals":[],"confidence":0.86}
 
-Example 6 — Employment Verification Letter:
+Example 6 — Employment Verification Letter (ATTESTATION, not PROFESSIONAL):
 Input: "To Whom It May Concern ... This letter confirms that [NAME_REDACTED] has been employed at [COMPANY] ... Position: Senior Engineer ... Start Date: 2021-03-15 ... Department: Engineering"
-Output: {"credentialType":"PROFESSIONAL","issuerName":"[COMPANY]","issuedDate":"2021-03-15","fieldOfStudy":"Engineering","fraudSignals":[],"confidence":0.85}
+Output: {"credentialType":"ATTESTATION","issuerName":"[COMPANY]","issuedDate":"2021-03-15","fieldOfStudy":"Engineering","fraudSignals":[],"confidence":0.85}
 
-Example 7 — Financial Statement:
+Example 7 — Financial Statement (FINANCIAL, not OTHER):
 Input: "Annual Financial Statement ... Fiscal Year Ending December 31, 2024 ... Prepared by [COMPANY] ... Audited by Deloitte LLP ... Total Assets: $X ... Revenue: $Y"
-Output: {"credentialType":"OTHER","issuerName":"[COMPANY]","issuedDate":"2024-12-31","accreditingBody":"Deloitte LLP","fraudSignals":[],"confidence":0.80}
+Output: {"credentialType":"FINANCIAL","issuerName":"[COMPANY]","issuedDate":"2024-12-31","accreditingBody":"Deloitte LLP","fraudSignals":[],"confidence":0.80}
 
 Example 8 — CLE Course Completion:
 Input: "Continuing Legal Education Certificate ... [NAME_REDACTED] ... Bar No. [REDACTED] ... Course: Advanced Ethics in Digital Practice ... 3.0 Credit Hours (Ethics) ... Approved by California State Bar ... Provider: National Legal Academy ... Completed: February 15, 2026 ... Activity No. CLE-2026-1234"
@@ -138,9 +148,9 @@ Example 9 — CLE Multi-Credit:
 Input: "CLE Certificate of Attendance ... [NAME_REDACTED] ... Florida Bar No. [REDACTED] ... Program: Annual Litigation Update 2026 ... Total Credits: 6.5 (4.0 General, 1.5 Ethics, 1.0 Technology) ... Approved by The Florida Bar ... Date: March 10, 2026 ... Provider: Florida Bar Association CLE"
 Output: {"credentialType":"CLE","issuerName":"Florida Bar Association CLE","issuedDate":"2026-03-10","fieldOfStudy":"Annual Litigation Update 2026","accreditingBody":"The Florida Bar","jurisdiction":"Florida, USA","creditHours":6.5,"creditType":"General, Ethics, Technology","providerName":"Florida Bar Association CLE","approvedBy":"The Florida Bar","fraudSignals":[],"confidence":0.85}
 
-Example 10 — Contract / Agreement:
+Example 10 — Contract / Agreement (LEGAL, not OTHER):
 Input: "SERVICE AGREEMENT ... Between [NAME_REDACTED] and [COMPANY] ... Effective Date: January 1, 2025 ... Term: 12 months ... Governing Law: State of Delaware"
-Output: {"credentialType":"OTHER","issuerName":"[COMPANY]","issuedDate":"2025-01-01","expiryDate":"2025-12-31","jurisdiction":"Delaware, USA","fraudSignals":[],"confidence":0.82}
+Output: {"credentialType":"LEGAL","issuerName":"[COMPANY]","issuedDate":"2025-01-01","expiryDate":"2025-12-31","jurisdiction":"Delaware, USA","fraudSignals":[],"confidence":0.82}
 
 Example 11 — Suspicious Document (fraud signals):
 Input: "Doctorate of Medicine ... Issued by University of [UNKNOWN] ... Date: 2030-06-15 ... [NAME_REDACTED]"
@@ -186,9 +196,9 @@ Example 21 — Sparse/Minimal Document:
 Input: "Certificate. [NAME_REDACTED]. 2025."
 Output: {"credentialType":"CERTIFICATE","fraudSignals":[],"confidence":0.15}
 
-Example 22 — Insurance Certificate:
+Example 22 — Insurance Certificate (INSURANCE, not OTHER):
 Input: "National Insurance Company ... Certificate of Liability Insurance ... Named Insured: [COMPANY_REDACTED] ... Policy Number: POL-2026-4521 ... Effective Date: January 1, 2026 ... Expiration Date: December 31, 2026 ... Coverage: Commercial General Liability"
-Output: {"credentialType":"OTHER","issuerName":"National Insurance Company","issuedDate":"2026-01-01","expiryDate":"2026-12-31","fraudSignals":[],"confidence":0.85}
+Output: {"credentialType":"INSURANCE","issuerName":"National Insurance Company","issuedDate":"2026-01-01","expiryDate":"2026-12-31","fieldOfStudy":"Commercial General Liability","fraudSignals":[],"confidence":0.85}
 
 Example 23 — Digital Badge:
 Input: "Credly Digital Badge ... Badge: Google Professional Data Engineer ... Issued by Google Cloud ... Earned by [NAME_REDACTED] ... Issue Date: November 10, 2025 ... Expiration Date: November 10, 2027"
@@ -290,9 +300,9 @@ Example 47 — Expired license (NOT fraud — just expired):
 Input: "California Medical Board. [NAME_REDACTED]. License No. A-[REDACTED]. Status: EXPIRED. Last Renewal: 2019. Expired: December 31, 2021."
 Output: {"credentialType":"LICENSE","issuerName":"California Medical Board","issuedDate":"2019-01-01","expiryDate":"2021-12-31","fieldOfStudy":"Medicine","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.72}
 
-Example 48 — Patent document (OTHER — no fieldOfStudy for patents):
+Example 48 — Patent document (PATENT, not OTHER):
 Input: "United States Patent and Trademark Office. Patent No. 11,234,567. Filed: March 2024. Granted: September 2025. Inventor: [NAME_REDACTED]. Assignee: [COMPANY]."
-Output: {"credentialType":"OTHER","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-09-01","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}`;
+Output: {"credentialType":"PATENT","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-09-01","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.

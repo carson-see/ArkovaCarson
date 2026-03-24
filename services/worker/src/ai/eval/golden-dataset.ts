@@ -145,9 +145,9 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
     id: 'GD-007',
     description: 'Employment verification letter from Global Finance Corp',
     strippedText: 'Global Finance Corp. 200 Park Avenue, 35th Floor, New York, NY 10166. March 20, 2026. To Whom It May Concern: RE: Employment Verification — [NAME_REDACTED]. This letter is to confirm that [NAME_REDACTED] was employed by Global Finance Corp in our New York headquarters. Employee ID: GFC-08294. Position: Vice President, Risk Analytics. Department: Quantitative Risk Management. Employment Start Date: September 8, 2019. Employment End Date: February 28, 2026. Employment Type: Full-Time. Final Base Salary: [SALARY_REDACTED]. Reason for Separation: Voluntary Resignation.',
-    credentialTypeHint: 'PROFESSIONAL',
+    credentialTypeHint: 'ATTESTATION',
     groundTruth: {
-      credentialType: 'PROFESSIONAL',
+      credentialType: 'ATTESTATION',
       issuerName: 'Global Finance Corp',
       issuedDate: '2026-03-20',
       fieldOfStudy: 'Risk Analytics',
@@ -155,17 +155,17 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
       fraudSignals: [],
     },
     source: 'test-data/attestation_employment_verification.html',
-    category: 'professional',
-    tags: ['clean', 'seed', 'employment'],
+    category: 'attestation',
+    tags: ['clean', 'seed', 'employment', 'attestation'],
   },
 
   {
     id: 'GD-008',
     description: 'Insurance certificate of liability',
     strippedText: 'National Insurance Company. Established 1952. A.M. Best Rating: A+ (Superior). 1500 Insurance Plaza, Hartford, CT 06103. Certificate of Liability Insurance. Named Insured: Riverside Construction LLC. DBA: Riverside Builders. Address: 4200 River Road, Austin, TX 78701. Policy Number: POL-2026-4521. NAIC Code: 20443. Effective Date: January 1, 2026. Expiration Date: December 31, 2026. Coverage: Commercial General Liability. Each Occurrence: $1,000,000. General Aggregate: $2,000,000. Date Issued: January 5, 2026.',
-    credentialTypeHint: 'OTHER',
+    credentialTypeHint: 'INSURANCE',
     groundTruth: {
-      credentialType: 'OTHER',
+      credentialType: 'INSURANCE',
       issuerName: 'National Insurance Company',
       issuedDate: '2026-01-05',
       expiryDate: '2026-12-31',
@@ -173,7 +173,7 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
       fraudSignals: [],
     },
     source: 'test-data/insurance_cert_2026.html',
-    category: 'other',
+    category: 'insurance',
     tags: ['clean', 'seed', 'insurance'],
   },
 
@@ -181,9 +181,9 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
     id: 'GD-009',
     description: 'Mutual NDA between two companies',
     strippedText: 'Mutual Non-Disclosure Agreement. Confidential — Do Not Distribute. This Mutual Non-Disclosure Agreement is entered into as of March 1, 2026 (the "Effective Date"), by and between: Acme Corp, a Delaware corporation, with its principal office at 1200 Innovation Drive, Suite 400, San Francisco, CA 94107 (the "First Party"), and Beta Technologies, Inc., a California corporation, with its principal office at 800 Market Street, Suite 200, San Jose, CA 95110 (the "Second Party"). Term: This Agreement shall remain in effect for a period of two (2) years from the Effective Date.',
-    credentialTypeHint: 'OTHER',
+    credentialTypeHint: 'LEGAL',
     groundTruth: {
-      credentialType: 'OTHER',
+      credentialType: 'LEGAL',
       issuerName: 'Acme Corp',
       issuedDate: '2026-03-01',
       expiryDate: '2028-03-01',
@@ -191,7 +191,7 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
       fraudSignals: [],
     },
     source: 'test-data/contract_nda_2026.html',
-    category: 'other',
+    category: 'legal',
     tags: ['clean', 'seed', 'contract'],
   },
 

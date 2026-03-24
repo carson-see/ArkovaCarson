@@ -47,9 +47,17 @@ const TYPE_OFFSETS: Record<string, number> = {
   CLE: 0.02,
   TRANSCRIPT: 0.01,
   CERTIFICATE: -0.04,
-  OTHER: -0.06,
   PROFESSIONAL: -0.01,
   BADGE: -0.02,
+  ATTESTATION: -0.02,
+  FINANCIAL: -0.01,
+  LEGAL: -0.02,
+  INSURANCE: -0.01,
+  SEC_FILING: 0.01,
+  PATENT: 0.01,
+  REGULATION: 0.0,
+  PUBLICATION: 0.0,
+  OTHER: -0.08, // heavily penalize — should rarely be used now
 };
 
 /**
