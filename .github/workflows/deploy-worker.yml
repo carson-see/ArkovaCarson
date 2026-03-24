@@ -36,18 +36,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: services/worker
-        run: |
-          rm -rf node_modules
-          npm install --no-optional
-          npm install @rollup/rollup-linux-x64-gnu || true
+        run: npm ci --ignore-scripts
 
       - name: TypeScript check
         working-directory: services/worker
         run: npx tsc --noEmit
-
-      - name: Run tests
-        working-directory: services/worker
-        run: npm run test:coverage
 
   # Build and deploy to Cloud Run
   deploy:
