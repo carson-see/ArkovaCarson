@@ -374,3 +374,40 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 14
+
+  # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
+  lockfile-integrity:
+    name: Lockfile Integrity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify root lockfile integrity
+        run: npx lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
+      - name: Verify worker lockfile integrity
+        run: npx lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
+
+  # SBOM generation (CISO Action-10) — produce CycloneDX bill of materials on main
+  sbom-generation:
+    name: SBOM Generation
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate SBOM (CycloneDX)
+        run: npx @cyclonedx/cyclonedx-npm --output-file sbom.json --output-format JSON
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.json
+          retention-days: 90

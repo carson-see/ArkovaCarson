@@ -117,6 +117,10 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
   if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues') || line.includes('cryptographic')) {
     return true;
   }
+  // Skip DOM API parameters (e.g. scrollIntoView({ block: 'nearest' }))
+  if (line.includes('scrollIntoView')) {
+    return true;
+  }
   return false;
 }
 

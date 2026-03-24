@@ -1,0 +1,29 @@
+# Arkova CODEOWNERS (CISO Action-11)
+# Require review from @carson-see for security-critical paths.
+
+# Security-critical: auth, secrets, PII, RLS
+services/worker/src/auth.ts                      @carson-see
+services/worker/src/config.ts                    @carson-see
+services/worker/src/middleware/apiKeyAuth.ts      @carson-see
+services/worker/src/utils/platformAdmin.ts        @carson-see
+services/worker/src/utils/sentry.ts              @carson-see
+src/lib/piiStripper.ts                           @carson-see
+
+# RLS policies and migrations
+supabase/migrations/                             @carson-see
+
+# CI/CD pipeline
+.github/                                         @carson-see
+
+# Infrastructure and deployment
+services/worker/Dockerfile                       @carson-see
+services/worker/src/index.ts                     @carson-see
+
+# Chain / treasury (Constitution 1.4)
+services/worker/src/chain/                       @carson-see
+
+# Compliance documentation
+docs/compliance/                                 @carson-see
+
+# Root config files
+CLAUDE.md                                        @carson-see

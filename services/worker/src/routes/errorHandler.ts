@@ -17,6 +17,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
+import { sanitizeErrorMessage } from '../middleware/errorSanitizer.js';
 
 /** Application error with typed code for consistent API responses */
 export class AppError extends Error {
@@ -43,10 +44,14 @@ export function globalErrorHandler(err: Error, _req: Request, res: Response, _ne
 
   if (err instanceof AppError) {
     logger.warn({ code: err.code, statusCode: err.statusCode }, err.message);
+    // CISO THREAT-4: Sanitize error messages to strip provider/infrastructure names
+    const safeMessage = config.nodeEnv === 'production'
+      ? sanitizeErrorMessage(err.message)
+      : err.message;
     res.status(err.statusCode).json({
       error: {
         code: err.code,
-        message: err.message,
+        message: safeMessage,
         ...(config.nodeEnv !== 'production' && err.details ? { details: err.details } : {}),
       },
     });
@@ -54,6 +59,7 @@ export function globalErrorHandler(err: Error, _req: Request, res: Response, _ne
   }
 
   // Unhandled errors — log full stack, return generic message
+  // CISO THREAT-4: Never surface internal error details to client
   logger.error({ error: err }, 'Unhandled error');
   res.status(500).json({
     error: {

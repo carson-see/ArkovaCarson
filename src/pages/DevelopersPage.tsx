@@ -168,7 +168,7 @@ export function DevelopersPage() {
               <div className="space-y-12">
                 {[
                   { step: '1', title: 'Create an Organization Account', desc: 'Sign up and select the Organization role during onboarding. API keys require an Organization account — Individual accounts cannot create API keys.' },
-                  { step: '2', title: 'Generate API Keys', desc: 'Navigate to Settings → API Keys in the dashboard. Keys use Bearer token authentication with HMAC-SHA256 security.' },
+                  { step: '2', title: 'Generate API Keys', desc: 'Navigate to Settings → API Keys in the dashboard. Keys use Bearer authentication with HMAC-SHA256 security.' },
                   { step: '3', title: 'Execute Verification', desc: 'Send your first verification request and receive real-time cryptographic proof.' },
                 ].map((s) => (
                   <div key={s.step} className="flex gap-6">
