@@ -17,7 +17,7 @@
  * @see UF-01, DEMO-04
  */
 
-import { Award, Building2, Calendar, Copy, Check, GraduationCap, Shield, ScrollText, BadgeCheck, FileText } from 'lucide-react';
+import { Award, Building2, Calendar, Copy, Check, GraduationCap, Shield, ScrollText, BadgeCheck, FileText, Scale, Landmark, ShieldCheck, FileSignature, Microscope, BookOpen, Stamp } from 'lucide-react';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -86,6 +86,76 @@ const TYPE_CONFIG: Record<string, {
     borderAccent: 'border-l-[#00d4ff]',
     bgGradient: 'from-[#00d4ff]/8 to-transparent',
     label: 'Professional Credential',
+  },
+  CLE: {
+    icon: Scale,
+    accentColor: 'text-[#a8e8ff]',
+    borderAccent: 'border-l-[#a8e8ff]',
+    bgGradient: 'from-[#a8e8ff]/8 to-transparent',
+    label: 'CLE Credit',
+  },
+  BADGE: {
+    icon: Stamp,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Digital Badge',
+  },
+  ATTESTATION: {
+    icon: FileSignature,
+    accentColor: 'text-[#00d4ff]',
+    borderAccent: 'border-l-[#00d4ff]',
+    bgGradient: 'from-[#00d4ff]/8 to-transparent',
+    label: 'Attestation',
+  },
+  FINANCIAL: {
+    icon: Landmark,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Financial Document',
+  },
+  LEGAL: {
+    icon: Scale,
+    accentColor: 'text-[#a8e8ff]',
+    borderAccent: 'border-l-[#a8e8ff]',
+    bgGradient: 'from-[#a8e8ff]/8 to-transparent',
+    label: 'Legal Document',
+  },
+  INSURANCE: {
+    icon: ShieldCheck,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Insurance Certificate',
+  },
+  SEC_FILING: {
+    icon: Landmark,
+    accentColor: 'text-[#00d4ff]',
+    borderAccent: 'border-l-[#00d4ff]',
+    bgGradient: 'from-[#00d4ff]/8 to-transparent',
+    label: 'SEC Filing',
+  },
+  PATENT: {
+    icon: Microscope,
+    accentColor: 'text-[#a8e8ff]',
+    borderAccent: 'border-l-[#a8e8ff]',
+    bgGradient: 'from-[#a8e8ff]/8 to-transparent',
+    label: 'Patent',
+  },
+  REGULATION: {
+    icon: BookOpen,
+    accentColor: 'text-[#5fd6eb]',
+    borderAccent: 'border-l-[#5fd6eb]',
+    bgGradient: 'from-[#5fd6eb]/8 to-transparent',
+    label: 'Regulation',
+  },
+  PUBLICATION: {
+    icon: BookOpen,
+    accentColor: 'text-[#00d4ff]',
+    borderAccent: 'border-l-[#00d4ff]',
+    bgGradient: 'from-[#00d4ff]/8 to-transparent',
+    label: 'Publication',
   },
   OTHER: {
     icon: FileText,

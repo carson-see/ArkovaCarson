@@ -49,6 +49,16 @@ export const CREDENTIAL_TYPES = [
   'CERTIFICATE',
   'TRANSCRIPT',
   'PROFESSIONAL',
+  'CLE',
+  'BADGE',
+  'ATTESTATION',
+  'FINANCIAL',
+  'LEGAL',
+  'INSURANCE',
+  'SEC_FILING',
+  'PATENT',
+  'REGULATION',
+  'PUBLICATION',
   'OTHER',
 ] as const;
 
