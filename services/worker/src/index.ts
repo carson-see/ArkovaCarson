@@ -32,6 +32,8 @@ import { globalErrorHandler } from './routes/errorHandler.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
+import { correlationIdMiddleware } from './utils/correlationId.js';
+import { initUpstashRateLimiting } from './utils/upstashRateLimit.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
@@ -45,6 +47,9 @@ app.disable('x-powered-by');
 if (config.nodeEnv === 'production') {
   app.set('trust proxy', 2);
 }
+
+// ─── X-Request-Id on every response (DX-6) ───
+app.use(correlationIdMiddleware);
 
 // ─── Health check — always available, no auth ───
 app.get('/health', async (req, res) => {
@@ -95,6 +100,9 @@ app.get('/health', async (req, res) => {
     compactChecks[key] = val.status;
   }
 
+  if (!allHealthy) {
+    res.setHeader('Retry-After', '60');
+  }
   res.status(allHealthy ? 200 : 503).json({
     status: allHealthy ? 'healthy' : 'degraded',
     version: process.env.npm_package_version ?? '0.1.0',
@@ -162,6 +170,9 @@ const server = app.listen(config.port, async () => {
     },
     'Worker service started'
   );
+
+  // IDEM-2: Initialize Redis-backed rate limiting if Upstash is configured
+  initUpstashRateLimiting();
 
   // ARCH-5: Initialize feature flag registry — logs all active flags
   await flagRegistry.init();

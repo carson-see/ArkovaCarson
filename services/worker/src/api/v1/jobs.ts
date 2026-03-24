@@ -19,6 +19,7 @@ export interface JobStatusResponse {
   error_message?: string;
   created_at: string;
   completed_at?: string | null;
+  expires_at: string;
 }
 
 /**
@@ -59,12 +60,16 @@ router.get('/:jobId', async (req, res) => {
       return;
     }
 
+    // DX-5: Calculate expiry from creation time (7-day retention)
+    const expiresAt = new Date(new Date(data.created_at).getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
     const response: JobStatusResponse = {
       job_id: data.id,
       status: data.status,
       total: data.total ?? 0,
       created_at: data.created_at,
       completed_at: data.completed_at,
+      expires_at: expiresAt,
     };
 
     if (data.status === 'complete' && data.results) {
@@ -83,10 +88,11 @@ router.get('/:jobId', async (req, res) => {
 });
 
 /**
- * Clean up expired jobs (> 24h old). Called from worker cron.
+ * Clean up expired jobs (> 7 days old). Called from worker cron.
+ * DX-5: Extended from 24h to 7 days for enterprise reliability.
  */
 export async function cleanupExpiredJobs(): Promise<number> {
-  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const cutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

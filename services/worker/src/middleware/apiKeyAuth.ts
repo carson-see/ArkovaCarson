@@ -89,6 +89,35 @@ function extractApiKey(req: Request): string | null {
 }
 
 /**
+ * Scope enforcement middleware (DX-2).
+ *
+ * Checks that the API key has the required scope. Returns 403 if missing.
+ * If no API key is attached (anonymous request), falls through.
+ */
+export function requireScope(scope: string) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    // Anonymous requests are handled by other auth guards
+    if (!req.apiKey) {
+      next();
+      return;
+    }
+
+    // Check if key has the required scope
+    if (!req.apiKey.scopes || !req.apiKey.scopes.includes(scope)) {
+      res.status(403).json({
+        error: 'insufficient_scope',
+        message: `This API key does not have the required scope: ${scope}`,
+        required: scope,
+        granted: req.apiKey.scopes ?? [],
+      });
+      return;
+    }
+
+    next();
+  };
+}
+
+/**
  * API key authentication middleware.
  *
  * If a valid API key is present, attaches metadata to req.apiKey.

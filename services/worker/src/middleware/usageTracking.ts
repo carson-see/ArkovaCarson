@@ -172,8 +172,12 @@ export function usageTracking() {
       return;
     }
 
-    // Increment usage (fire-and-forget — don't block response)
-    incrementUsage(keyId, orgId).catch(() => {});
+    // IDEM-5: Synchronous optimistic increment — charge first, refund on failure.
+    // This prevents over-quota requests from slipping through during concurrent access.
+    const result = await incrementUsage(keyId, orgId);
+    if (result) {
+      res.setHeader('X-Quota-Used', result.count.toString());
+    }
 
     next();
   };

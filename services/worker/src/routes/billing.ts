@@ -3,6 +3,8 @@
  *
  * Handles Stripe Checkout and Billing Portal sessions.
  * Extracted from index.ts as part of ARCH-1 refactor.
+ *
+ * DX-3: Consistent error format: { error: { code, message } }
  */
 
 import { Router } from 'express';
@@ -18,6 +20,11 @@ export const billingRouter = Router();
 // CORS for all billing routes
 billingRouter.use(corsMiddleware);
 
+/** DX-3: Standardized error response helper */
+function sendError(res: import('express').Response, statusCode: number, code: string, message: string) {
+  res.status(statusCode).json({ error: { code, message } });
+}
+
 /**
  * POST /api/checkout/session
  * Creates a Stripe Checkout Session for subscription purchase.
@@ -25,13 +32,13 @@ billingRouter.use(corsMiddleware);
 billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) {
-    res.status(401).json({ error: 'Authentication required' });
+    sendError(res, 401, 'authentication_required', 'Authentication required');
     return;
   }
 
   const { planId } = req.body as { planId?: string };
   if (!planId) {
-    res.status(400).json({ error: 'planId is required' });
+    sendError(res, 400, 'invalid_request', 'planId is required');
     return;
   }
 
@@ -45,13 +52,13 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
 
     if (planError || !plan) {
       logger.warn({ planId, planError }, 'Plan not found');
-      res.status(404).json({ error: 'Plan not found' });
+      sendError(res, 404, 'not_found', 'Plan not found');
       return;
     }
 
     if (!plan.stripe_price_id) {
       logger.warn({ planId }, 'Plan has no Stripe price ID configured');
-      res.status(400).json({ error: 'Plan is not available for online checkout' });
+      sendError(res, 400, 'invalid_request', 'Plan is not available for online checkout');
       return;
     }
 
@@ -63,7 +70,7 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
 
     if (profileError || !profile?.email) {
       logger.warn({ userId, profileError }, 'User profile or email not found');
-      res.status(404).json({ error: 'User profile not found' });
+      sendError(res, 404, 'not_found', 'User profile not found');
       return;
     }
 
@@ -75,7 +82,7 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
       .maybeSingle();
 
     if (existingSub) {
-      res.status(409).json({ error: 'User already has an active subscription. Use the billing portal to change plans.' });
+      sendError(res, 409, 'conflict', 'User already has an active subscription. Use the billing portal to change plans.');
       return;
     }
 
@@ -91,7 +98,7 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
     res.json({ sessionId: session.sessionId, url: session.url });
   } catch (error) {
     logger.error({ error, planId, userId }, 'Failed to create checkout session');
-    res.status(500).json({ error: 'Failed to create checkout session' });
+    sendError(res, 500, 'internal_error', 'Failed to create checkout session');
   }
 });
 
@@ -102,7 +109,7 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
 billingRouter.post('/billing/portal', rateLimiters.checkout, async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) {
-    res.status(401).json({ error: 'Authentication required' });
+    sendError(res, 401, 'authentication_required', 'Authentication required');
     return;
   }
 
@@ -115,7 +122,7 @@ billingRouter.post('/billing/portal', rateLimiters.checkout, async (req, res) =>
 
     if (subError || !subscription?.stripe_customer_id) {
       logger.warn({ userId, subError }, 'No subscription found for user');
-      res.status(404).json({ error: 'No active subscription found' });
+      sendError(res, 404, 'not_found', 'No active subscription found');
       return;
     }
 
@@ -128,6 +135,6 @@ billingRouter.post('/billing/portal', rateLimiters.checkout, async (req, res) =>
     res.json({ url: portal.url });
   } catch (error) {
     logger.error({ error, userId }, 'Failed to create billing portal session');
-    res.status(500).json({ error: 'Failed to create billing portal session' });
+    sendError(res, 500, 'internal_error', 'Failed to create billing portal session');
   }
 });

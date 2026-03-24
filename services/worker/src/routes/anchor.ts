@@ -3,6 +3,8 @@
  *
  * Public anchor verification and recipient management.
  * Extracted from index.ts as part of ARCH-1 refactor.
+ *
+ * DX-3: Consistent error format: { error: { code, message } }
  */
 
 import { Router } from 'express';
@@ -19,6 +21,11 @@ export const anchorRouter = Router();
 
 anchorRouter.use(corsMiddleware);
 
+/** DX-3: Standardized error response helper */
+function sendError(res: import('express').Response, statusCode: number, code: string, message: string) {
+  res.status(statusCode).json({ error: { code, message } });
+}
+
 /**
  * POST /api/verify-anchor
  * Public anchor verification — accepts fingerprint hash, NOT files.
@@ -28,7 +35,7 @@ anchorRouter.post('/verify-anchor', rateLimiters.checkout, async (req, res) => {
   const { fingerprint } = req.body as { fingerprint?: string };
 
   if (!fingerprint) {
-    res.status(400).json({ error: 'fingerprint is required (64-char hex SHA-256)' });
+    sendError(res, 400, 'invalid_request', 'fingerprint is required (64-char hex SHA-256)');
     return;
   }
 
@@ -63,7 +70,7 @@ anchorRouter.post('/verify-anchor', rateLimiters.checkout, async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Anchor verification failed');
-    res.status(500).json({ error: 'Verification failed' });
+    sendError(res, 500, 'verification_failed', 'Verification failed');
   }
 });
 
@@ -74,7 +81,7 @@ anchorRouter.post('/verify-anchor', rateLimiters.checkout, async (req, res) => {
 anchorRouter.post('/recipients', rateLimiters.checkout, async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) {
-    res.status(401).json({ error: 'Authentication required' });
+    sendError(res, 401, 'authentication_required', 'Authentication required');
     return;
   }
 
@@ -86,7 +93,7 @@ anchorRouter.post('/recipients', rateLimiters.checkout, async (req, res) => {
   };
 
   if (!email || !orgId) {
-    res.status(400).json({ error: 'email and orgId are required' });
+    sendError(res, 400, 'invalid_request', 'email and orgId are required');
     return;
   }
 
@@ -101,7 +108,7 @@ anchorRouter.post('/recipients', rateLimiters.checkout, async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Recipient creation failed');
-    res.status(500).json({ error: 'Failed to create recipient' });
+    sendError(res, 500, 'internal_error', 'Failed to create recipient');
   }
 });
 
@@ -112,7 +119,7 @@ anchorRouter.post('/recipients', rateLimiters.checkout, async (req, res) => {
 anchorRouter.delete('/account', rateLimiters.checkout, async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) {
-    res.status(401).json({ error: 'Authentication required' });
+    sendError(res, 401, 'authentication_required', 'Authentication required');
     return;
   }
 
@@ -120,6 +127,6 @@ anchorRouter.delete('/account', rateLimiters.checkout, async (req, res) => {
     await handleAccountDelete(userId, { db, logger }, req, res);
   } catch (error) {
     logger.error({ error }, 'Account deletion failed');
-    res.status(500).json({ error: 'Account deletion failed' });
+    sendError(res, 500, 'internal_error', 'Account deletion failed');
   }
 });

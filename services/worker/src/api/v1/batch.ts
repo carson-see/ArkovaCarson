@@ -12,7 +12,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { buildVerificationResult, type PublicIdLookup, type AnchorByPublicId } from './verify.js';
 import { incrementUsage } from '../../middleware/usageTracking.js';
+import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 import type { VerificationResult } from './verify.js';
+
+/** Job retention period — 7 days for all tiers (IDEM-4/DX-5) */
+export const JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const router = Router();
 
@@ -149,6 +153,7 @@ export async function processBatchSync(
 async function createBatchJob(
   publicIds: string[],
   apiKeyId: string,
+  orgId?: string,
 ): Promise<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
@@ -167,15 +172,17 @@ async function createBatchJob(
   }
 
   // Fire-and-forget: process in background
-  void processAsyncJob(data.id, publicIds);
+  void processAsyncJob(data.id, publicIds, orgId);
 
   return data.id;
 }
 
 /**
  * Process async batch job in background.
+ * IDEM-4: Saves partial results as items complete.
+ * WEBHOOK-1: Dispatches job.completed webhook event on finish.
  */
-async function processAsyncJob(jobId: string, publicIds: string[]): Promise<void> {
+async function processAsyncJob(jobId: string, publicIds: string[], orgId?: string): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)
@@ -183,7 +190,25 @@ async function processAsyncJob(jobId: string, publicIds: string[]): Promise<void
       .update({ status: 'processing' })
       .eq('id', jobId);
 
-    const results = await processBatchSync(publicIds);
+    // IDEM-4: Process items individually, saving partial results as they complete
+    const results: BatchResultItem[] = [];
+    const lookup = defaultLookup;
+    for (const publicId of publicIds) {
+      try {
+        const result = await verifyWithTimeout(publicId, lookup, PER_ITEM_TIMEOUT_MS);
+        results.push(result);
+        // Save partial results every 10 items
+        if (results.length % 10 === 0) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (db as any)
+            .from('batch_verification_jobs')
+            .update({ results, status: 'processing' })
+            .eq('id', jobId);
+        }
+      } catch {
+        results.push({ public_id: publicId, verified: false, error: 'Verification failed' });
+      }
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)
@@ -194,6 +219,16 @@ async function processAsyncJob(jobId: string, publicIds: string[]): Promise<void
         completed_at: new Date().toISOString(),
       })
       .eq('id', jobId);
+
+    // WEBHOOK-1: Dispatch job.completed event
+    if (orgId) {
+      void dispatchWebhookEvent(orgId, 'job.completed', jobId, {
+        job_id: jobId,
+        status: 'complete',
+        total: publicIds.length,
+        result_count: results.length,
+      });
+    }
   } catch (err) {
     logger.error({ error: err, jobId }, 'Async batch job failed');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -206,6 +241,17 @@ async function processAsyncJob(jobId: string, publicIds: string[]): Promise<void
       })
       .eq('id', jobId)
       .catch(() => {}); // best-effort
+
+    // WEBHOOK-1: Dispatch job.completed event (failed)
+    if (orgId) {
+      void dispatchWebhookEvent(orgId, 'job.completed', jobId, {
+        job_id: jobId,
+        status: 'failed',
+        total: publicIds.length,
+        result_count: 0,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    }
   }
 }
 
@@ -252,14 +298,18 @@ router.post('/', async (req, res) => {
       res.json(response);
     } else {
       // Async path — create job
-      const jobId = await createBatchJob(public_ids, req.apiKey.keyId);
+      const jobId = await createBatchJob(public_ids, req.apiKey.keyId, req.apiKey.orgId);
 
       // Increment usage by number of items
       void incrementUsage(req.apiKey.keyId, req.apiKey.orgId, public_ids.length);
 
-      const response: BatchResponse = {
+      // DX-5: Include expires_at so developers know the job retention deadline
+      const expiresAt = new Date(Date.now() + JOB_RETENTION_MS).toISOString();
+
+      const response: BatchResponse & { expires_at: string } = {
         job_id: jobId,
         total: public_ids.length,
+        expires_at: expiresAt,
       };
       res.status(202).json(response);
     }

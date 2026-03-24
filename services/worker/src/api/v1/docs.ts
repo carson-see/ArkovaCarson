@@ -441,6 +441,296 @@ export const openApiSpec = {
         },
       },
     },
+    // ── Phase 1.5 Paid API Endpoints ──────────────────────────────────
+    '/anchor': {
+      post: {
+        summary: 'Submit credential for anchoring',
+        description: 'Submit a credential fingerprint for Bitcoin anchoring. Idempotent: returns 200 if fingerprint already exists. Requires API key or x402 payment.',
+        operationId: 'submitAnchor',
+        tags: ['Anchoring'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['fingerprint', 'label'],
+                properties: {
+                  fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
+                  label: { type: 'string', description: 'Human-readable credential label' },
+                  credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+                  metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
+          '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/attestations': {
+      post: {
+        summary: 'Create attestation',
+        description: 'Create a new attestation claim for a credential. Collision retry (3x). Requires JWT or API key.',
+        operationId: 'createAttestation',
+        tags: ['Attestations'],
+        security: [{ SupabaseJWT: [] }, { ApiKeyBearer: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['anchor_public_id', 'attestation_type', 'claim'],
+                properties: {
+                  anchor_public_id: { type: 'string' },
+                  attestation_type: { type: 'string', enum: ['identity', 'employment', 'education', 'certification', 'compliance'] },
+                  claim: { type: 'object', additionalProperties: true },
+                  expires_at: { type: 'string', format: 'date-time', nullable: true },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Attestation created', content: { 'application/json': { schema: { $ref: '#/components/schemas/Attestation' } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+      get: {
+        summary: 'List attestations',
+        description: 'List attestations. Supports cursor-based pagination.',
+        operationId: 'listAttestations',
+        tags: ['Attestations'],
+        security: [],
+        parameters: [
+          { name: 'anchor_public_id', in: 'query', schema: { type: 'string' }, description: 'Filter by anchor public ID' },
+          { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Pagination cursor (opaque string from previous response)' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 } },
+        ],
+        responses: {
+          '200': { description: 'Paginated attestation list', content: { 'application/json': { schema: { type: 'object', properties: { attestations: { type: 'array', items: { $ref: '#/components/schemas/Attestation' } }, next_cursor: { type: 'string', nullable: true }, has_more: { type: 'boolean' } } } } } },
+        },
+      },
+    },
+    '/attestations/{attestationId}': {
+      get: {
+        summary: 'Get attestation',
+        description: 'Retrieve a single attestation by ID. Public access, checks expiry.',
+        operationId: 'getAttestation',
+        tags: ['Attestations'],
+        security: [],
+        parameters: [
+          { name: 'attestationId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'Attestation details', content: { 'application/json': { schema: { $ref: '#/components/schemas/Attestation' } } } },
+          '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+    },
+    '/attestations/{attestationId}/revoke': {
+      patch: {
+        summary: 'Revoke attestation',
+        description: 'Revoke an attestation. Requires ownership (JWT or API key that created it).',
+        operationId: 'revokeAttestation',
+        tags: ['Attestations'],
+        security: [{ SupabaseJWT: [] }, { ApiKeyBearer: [] }],
+        parameters: [
+          { name: 'attestationId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        requestBody: {
+          content: {
+            'application/json': {
+              schema: { type: 'object', properties: { reason: { type: 'string' } } },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Attestation revoked' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '403': { $ref: '#/components/responses/Forbidden' },
+          '409': { description: 'Already revoked', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/verify/entity': {
+      get: {
+        summary: 'Entity verification',
+        description: 'Search for an entity across all public records and credentials. x402 payment gate.',
+        operationId: 'verifyEntity',
+        tags: ['Verification'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          { name: 'name', in: 'query', required: true, schema: { type: 'string' }, description: 'Entity name to search' },
+          { name: 'type', in: 'query', schema: { type: 'string', enum: ['person', 'organization', 'any'] }, description: 'Entity type filter' },
+        ],
+        responses: {
+          '200': { description: 'Entity verification results', content: { 'application/json': { schema: { type: 'object', properties: { entity: { type: 'string' }, matches: { type: 'array', items: { type: 'object' } }, total: { type: 'integer' } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/compliance/check': {
+      post: {
+        summary: 'Compliance check',
+        description: 'Check an entity against regulatory records for compliance risk scoring. x402 payment gate.',
+        operationId: 'complianceCheck',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['entity_name'],
+                properties: {
+                  entity_name: { type: 'string' },
+                  entity_type: { type: 'string', enum: ['person', 'organization'] },
+                  jurisdiction: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Compliance check results with risk score', content: { 'application/json': { schema: { type: 'object', properties: { entity: { type: 'string' }, risk_score: { type: 'number' }, findings: { type: 'array', items: { type: 'object' } } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/regulatory/lookup': {
+      get: {
+        summary: 'Regulatory record lookup',
+        description: 'Search public regulatory records (EDGAR, Federal Register, DAPIP, OpenAlex). x402 payment gate.',
+        operationId: 'regulatoryLookup',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          { name: 'q', in: 'query', required: true, schema: { type: 'string' }, description: 'Search query' },
+          { name: 'source', in: 'query', schema: { type: 'string', enum: ['edgar', 'federal_register', 'dapip', 'openAlex', 'all'] } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 } },
+        ],
+        responses: {
+          '200': { description: 'Regulatory record search results' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/cle': {
+      get: {
+        summary: 'CLE verification lookup',
+        description: 'Verify Continuing Legal Education credits. x402 payment gate.',
+        operationId: 'cleVerify',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          { name: 'attorney_name', in: 'query', schema: { type: 'string' } },
+          { name: 'bar_number', in: 'query', schema: { type: 'string' } },
+          { name: 'jurisdiction', in: 'query', schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': { description: 'CLE verification results' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+      post: {
+        summary: 'Submit CLE completion',
+        description: 'Submit a CLE course completion. x402 payment gate.',
+        operationId: 'cleSubmit',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['course_name', 'credits'], properties: { course_name: { type: 'string' }, credits: { type: 'number' }, completion_date: { type: 'string', format: 'date' } } } } },
+        },
+        responses: {
+          '201': { description: 'CLE completion submitted' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/nessie/query': {
+      post: {
+        summary: 'RAG query (Nessie)',
+        description: 'Retrieval-augmented generation query against the Arkova knowledge base. Requires JWT + x402 payment.',
+        operationId: 'nessieQuery',
+        tags: ['AI Intelligence'],
+        security: [{ SupabaseJWT: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['query'],
+                properties: {
+                  query: { type: 'string', minLength: 1, maxLength: 2000, description: 'Natural language question' },
+                  max_sources: { type: 'integer', default: 5, maximum: 20, description: 'Max sources to include in response' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'RAG response with cited sources', content: { 'application/json': { schema: { type: 'object', properties: { answer: { type: 'string' }, sources: { type: 'array', items: { type: 'object', properties: { title: { type: 'string' }, url: { type: 'string' }, relevance: { type: 'number' } } } }, tokens_used: { type: 'integer' } } } } } },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+    },
+    // ── Webhook Management ────────────────────────────────────────────────
+    '/webhooks/test': {
+      post: {
+        summary: 'Test webhook endpoint',
+        description: 'Send a synthetic test event to a webhook endpoint to verify configuration. The payload includes test: true so consumers can distinguish test from real events.',
+        operationId: 'testWebhook',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: { 'application/json': { schema: { type: 'object', required: ['endpoint_id'], properties: { endpoint_id: { type: 'string', format: 'uuid' } } } } },
+        },
+        responses: {
+          '200': { description: 'Test delivery result', content: { 'application/json': { schema: { type: 'object', properties: { success: { type: 'boolean' }, status_code: { type: 'integer' }, response_body: { type: 'string' }, event_id: { type: 'string' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+    },
+    '/webhooks/deliveries': {
+      get: {
+        summary: 'List webhook deliveries',
+        description: 'View recent webhook delivery attempts for self-service debugging. Filter by endpoint_id.',
+        operationId: 'listWebhookDeliveries',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'endpoint_id', in: 'query', schema: { type: 'string', format: 'uuid' }, description: 'Filter by endpoint ID' },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 50, maximum: 100 } },
+        ],
+        responses: {
+          '200': { description: 'Delivery log entries', content: { 'application/json': { schema: { type: 'object', properties: { deliveries: { type: 'array', items: { $ref: '#/components/schemas/WebhookDelivery' } }, total: { type: 'integer' } } } } } },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
     '/verify/search': {
       get: {
         summary: 'Agentic verification search',
@@ -584,6 +874,38 @@ export const openApiSpec = {
         properties: {
           error: { type: 'string' },
           message: { type: 'string' },
+        },
+      },
+      Attestation: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          public_id: { type: 'string' },
+          anchor_public_id: { type: 'string' },
+          attestation_type: { type: 'string', enum: ['identity', 'employment', 'education', 'certification', 'compliance'] },
+          attester_name: { type: 'string' },
+          claim: { type: 'object', additionalProperties: true },
+          status: { type: 'string', enum: ['active', 'revoked', 'expired'] },
+          expires_at: { type: 'string', format: 'date-time', nullable: true },
+          revoked_at: { type: 'string', format: 'date-time', nullable: true },
+          revocation_reason: { type: 'string', nullable: true },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      WebhookDelivery: {
+        type: 'object',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          endpoint_id: { type: 'string', format: 'uuid' },
+          event_type: { type: 'string' },
+          event_id: { type: 'string' },
+          status: { type: 'string', enum: ['pending', 'success', 'retrying', 'failed'] },
+          response_status: { type: 'integer', nullable: true },
+          error_message: { type: 'string', nullable: true },
+          attempt_number: { type: 'integer' },
+          delivered_at: { type: 'string', format: 'date-time', nullable: true },
+          created_at: { type: 'string', format: 'date-time' },
+          next_retry_at: { type: 'string', format: 'date-time', nullable: true },
         },
       },
       // ── AI Intelligence Schemas (P8) ────────────────────────────────────
@@ -748,6 +1070,10 @@ export const openApiSpec = {
   },
   tags: [
     { name: 'Verification', description: 'Credential verification endpoints' },
+    { name: 'Anchoring', description: 'Bitcoin anchoring for credential integrity' },
+    { name: 'Attestations', description: 'Attestation claims (create, verify, revoke)' },
+    { name: 'Compliance', description: 'Regulatory lookups, CLE verification, compliance checks' },
+    { name: 'Webhooks', description: 'Webhook management, testing, and delivery logs' },
     { name: 'Jobs', description: 'Async batch job polling' },
     { name: 'Usage', description: 'API usage and quota monitoring' },
     { name: 'Key Management', description: 'API key lifecycle management (requires Supabase JWT)' },

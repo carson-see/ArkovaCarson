@@ -32,6 +32,7 @@ function createMockReqRes() {
   const res = {
     status: vi.fn().mockReturnThis(),
     json: vi.fn().mockReturnThis(),
+    setHeader: vi.fn().mockReturnThis(),
   } as unknown as Response;
   const next = vi.fn() as NextFunction;
   return { req, res, next };
@@ -138,6 +139,7 @@ describe('featureGate middleware', () => {
       expect(res.json).toHaveBeenCalledWith({
         error: 'service_unavailable',
         message: 'Verification API is not currently enabled',
+        retry_after: 60,
       });
     });
 

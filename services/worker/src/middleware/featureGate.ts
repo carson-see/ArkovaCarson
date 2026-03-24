@@ -62,9 +62,12 @@ export function verificationApiGate() {
     const enabled = await isVerificationApiEnabled();
 
     if (!enabled) {
+      // IDEM-3: Include Retry-After header per RFC 7231 for automated client retry
+      res.setHeader('Retry-After', '60');
       res.status(503).json({
         error: 'service_unavailable',
         message: 'Verification API is not currently enabled',
+        retry_after: 60,
       });
       return;
     }

@@ -562,7 +562,7 @@ describe('worker server', () => {
       const res = await request(app, 'POST', '/api/checkout/session', { planId: 'plan-1' });
 
       expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required' });
+      expect(res.body).toEqual({ error: { code: 'authentication_required', message: 'Authentication required' } });
     });
 
     it('returns 401 with invalid Bearer token', async () => {
@@ -573,7 +573,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required' });
+      expect(res.body).toEqual({ error: { code: 'authentication_required', message: 'Authentication required' } });
     });
 
     it('returns 400 when planId is missing', async () => {
@@ -584,7 +584,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'planId is required' });
+      expect(res.body).toEqual({ error: { code: 'invalid_request', message: 'planId is required' } });
     });
 
     it('returns 404 when plan not found', async () => {
@@ -598,7 +598,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: 'Plan not found' });
+      expect(res.body).toEqual({ error: { code: 'not_found', message: 'Plan not found' } });
     });
 
     it('returns 400 when plan has no stripe_price_id', async () => {
@@ -612,7 +612,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'Plan is not available for online checkout' });
+      expect(res.body).toEqual({ error: { code: 'invalid_request', message: 'Plan is not available for online checkout' } });
     });
 
     it('returns 404 when profile not found', async () => {
@@ -634,7 +634,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: 'User profile not found' });
+      expect(res.body).toEqual({ error: { code: 'not_found', message: 'User profile not found' } });
     });
 
     it('returns 409 when user has active subscription', async () => {
@@ -654,7 +654,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(409);
-      expect(res.body.error).toContain('already has an active subscription');
+      expect(res.body.error.message).toContain('already has an active subscription');
     });
 
     it('creates checkout session and returns URL on success', async () => {
@@ -704,7 +704,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: 'Failed to create checkout session' });
+      expect(res.body).toEqual({ error: { code: 'internal_error', message: 'Failed to create checkout session' } });
     });
 
     it('sets CORS headers when origin is allowed', async () => {
@@ -734,7 +734,7 @@ describe('worker server', () => {
       const res = await request(app, 'POST', '/api/billing/portal', {});
 
       expect(res.status).toBe(401);
-      expect(res.body).toEqual({ error: 'Authentication required' });
+      expect(res.body).toEqual({ error: { code: 'authentication_required', message: 'Authentication required' } });
     });
 
     it('returns 404 when no subscription found', async () => {
@@ -746,7 +746,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(404);
-      expect(res.body).toEqual({ error: 'No active subscription found' });
+      expect(res.body).toEqual({ error: { code: 'not_found', message: 'No active subscription found' } });
     });
 
     it('returns portal URL on success', async () => {
@@ -779,7 +779,7 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: 'Failed to create billing portal session' });
+      expect(res.body).toEqual({ error: { code: 'internal_error', message: 'Failed to create billing portal session' } });
     });
   });
 
@@ -796,7 +796,7 @@ describe('worker server', () => {
       const res = await request(app, 'POST', '/api/verify-anchor', {});
 
       expect(res.status).toBe(400);
-      expect(res.body).toEqual({ error: 'fingerprint is required (64-char hex SHA-256)' });
+      expect(res.body).toEqual({ error: { code: 'invalid_request', message: 'fingerprint is required (64-char hex SHA-256)' } });
     });
 
     it('returns verification result for valid fingerprint', async () => {
@@ -836,7 +836,7 @@ describe('worker server', () => {
       const res = await request(app, 'POST', '/api/verify-anchor', { fingerprint: 'a'.repeat(64) });
 
       expect(res.status).toBe(500);
-      expect(res.body).toEqual({ error: 'Verification failed' });
+      expect(res.body).toEqual({ error: { code: 'verification_failed', message: 'Verification failed' } });
     });
   });
 

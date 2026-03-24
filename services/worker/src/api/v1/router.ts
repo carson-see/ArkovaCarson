@@ -15,7 +15,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { verificationApiGate } from '../../middleware/featureGate.js';
-import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
+import { apiKeyAuth, requireScope } from '../../middleware/apiKeyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
 import { verifyRouter } from './verify.js';
 import { batchRouter } from './batch.js';
@@ -38,6 +38,7 @@ import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
+import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { attestationsRouter } from './attestations.js';
@@ -45,6 +46,7 @@ import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
+import { webhooksRouter } from './webhooks.js';
 
 const router = Router();
 
@@ -69,7 +71,8 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   if (API_CORS_ORIGINS.includes('*') || (origin && API_CORS_ORIGINS.includes(origin))) {
     res.setHeader('Access-Control-Allow-Origin', origin ?? '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-Request-Id, Idempotency-Key');
+    res.setHeader('Access-Control-Expose-Headers', 'X-Request-Id, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset, X-Quota-Used, X-Quota-Limit, X-Quota-Reset, Retry-After');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
   if (req.method === 'OPTIONS') {
@@ -114,6 +117,9 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   }
 });
 
+// ─── Idempotency-Key support on POST endpoints (DX-4) ───
+router.use(idempotencyMiddleware());
+
 // ─── Usage tracking + quota enforcement ───
 router.use(usageTracking());
 
@@ -149,20 +155,20 @@ const batchRateLimiter = rateLimit({
 router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
 // Batch verification — API key required, stricter rate limit
-router.use('/verify/batch', batchRateLimiter, batchRouter);
+router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);
 
 // Public verification — no auth required (API key optional for tracking)
 // x402 payment gate: returns 402 if no API key and no payment header
-router.use('/verify', x402PaymentGate('/api/v1/verify'), verifyRouter);
+router.use('/verify', requireScope('verify'), x402PaymentGate('/api/v1/verify'), verifyRouter);
 
 // Job status polling — API key required
-router.use('/jobs', jobsRouter);
+router.use('/jobs', requireScope('verify:batch'), jobsRouter);
 
 // Usage stats — API key required
-router.use('/usage', usageRouter);
+router.use('/usage', requireScope('usage:read'), usageRouter);
 
 // Key management — requires Supabase JWT auth
-router.use('/keys', requireAuth, keysRouter);
+router.use('/keys', requireAuth, requireScope('keys:manage'), keysRouter);
 
 // ─── AI rate limiter (30 req/min per user — AI ops are expensive) ───
 const aiRateLimiter = rateLimit({
@@ -193,6 +199,9 @@ router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRout
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
+
+// ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
+router.use('/webhooks', webhooksRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // API key required, standard rate limit

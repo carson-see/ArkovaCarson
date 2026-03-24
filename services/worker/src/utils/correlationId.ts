@@ -39,7 +39,8 @@ export function correlationIdMiddleware(
     (req.headers['x-request-id'] as string) ||
     generateCorrelationId();
 
-  // Set response header
+  // Set response headers (X-Request-Id for external devs, X-Correlation-ID for internal tracing)
+  res.setHeader('X-Request-Id', correlationId);
   res.setHeader('X-Correlation-ID', correlationId);
 
   // Run the rest of the request in correlation context

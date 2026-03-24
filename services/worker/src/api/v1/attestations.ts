@@ -66,6 +66,8 @@ const ListAttestationsSchema = z.object({
   subject_identifier: z.string().optional(),
   attestation_type: z.string().optional(),
   status: z.string().optional(),
+  // Support both offset-based (page) and cursor-based pagination
+  cursor: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
@@ -339,7 +341,7 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const { anchor_id, subject_identifier, attestation_type, status, page, limit } = parsed.data;
+  const { anchor_id, subject_identifier, attestation_type, status, cursor, page, limit } = parsed.data;
 
   try {
     let query = dbAny
@@ -351,10 +353,23 @@ router.get('/', async (req: Request, res: Response) => {
     if (attestation_type) query = query.eq('attestation_type', attestation_type);
     if (status) query = query.eq('status', status);
 
-    const offset = (page - 1) * limit;
+    // Item 17: Cursor-based pagination — cursor is a created_at timestamp
+    // Falls back to offset-based pagination if no cursor provided
+    if (cursor) {
+      try {
+        const cursorDate = Buffer.from(cursor, 'base64').toString('utf-8');
+        query = query.lt('created_at', cursorDate);
+      } catch {
+        // Invalid cursor — ignore and use offset
+      }
+    }
+
+    // Fetch limit+1 to detect if there are more results
+    const fetchLimit = limit + 1;
+    const offset = cursor ? 0 : (page - 1) * limit;
     const { data: attestations, count, error } = await query
       .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
+      .range(offset, offset + fetchLimit - 1);
 
     if (error) {
       logger.error({ error }, 'Attestation list query failed');
@@ -362,14 +377,24 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
+    const items = attestations ?? [];
+    const hasMore = items.length > limit;
+    const resultItems = hasMore ? items.slice(0, limit) : items;
+    const lastItem = resultItems[resultItems.length - 1] as Record<string, unknown> | undefined;
+    const nextCursor = hasMore && lastItem?.created_at
+      ? Buffer.from(String(lastItem.created_at)).toString('base64')
+      : null;
+
     res.json({
-      attestations: (attestations ?? []).map((a: Record<string, unknown>) => ({
+      attestations: resultItems.map((a: Record<string, unknown>) => ({
         ...a,
         verify_url: `https://app.arkova.io/verify/attestation/${a.public_id}`,
       })),
       total: count ?? 0,
-      page,
+      page: cursor ? undefined : page,
       limit,
+      next_cursor: nextCursor,
+      has_more: hasMore,
     });
   } catch (error) {
     logger.error({ error }, 'Attestation list failed');

@@ -7,8 +7,11 @@
  * @see feedback_treasury_access — treasury is NEVER customer-facing
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { workerFetch } from '@/lib/workerClient';
+
+/** Auto-poll interval for treasury balance (30 seconds) */
+const POLL_INTERVAL_MS = 30_000;
 
 export interface TreasuryWallet {
   address: string;
@@ -41,16 +44,21 @@ export interface TreasuryStatus {
   error?: string;
 }
 
-export function useTreasuryStatus() {
+export function useTreasuryStatus(autoPolling = true) {
   const [status, setStatus] = useState<TreasuryStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchedAt, setLastFetchedAt] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isMountedRef = useRef(true);
 
   const fetchStatus = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const response = await workerFetch('/api/treasury/status', { method: 'GET' });
+
+      if (!isMountedRef.current) return;
 
       if (response.status === 403) {
         setError('Access denied — platform admin required');
@@ -63,13 +71,39 @@ export function useTreasuryStatus() {
       }
 
       const data = (await response.json()) as TreasuryStatus;
-      setStatus(data);
+      if (isMountedRef.current) {
+        setStatus(data);
+        setLastFetchedAt(new Date().toISOString());
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch treasury status');
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch treasury status');
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
-  return { status, loading, error, fetchStatus };
+  // Auto-poll every 30s when enabled
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    if (autoPolling) {
+      pollRef.current = setInterval(() => {
+        void fetchStatus();
+      }, POLL_INTERVAL_MS);
+    }
+
+    return () => {
+      isMountedRef.current = false;
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [autoPolling, fetchStatus]);
+
+  return { status, loading, error, fetchStatus, lastFetchedAt };
 }
