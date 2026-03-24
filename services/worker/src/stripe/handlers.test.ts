@@ -126,6 +126,9 @@ const {
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
+vi.mock('../billing/reconciliation.js', () => ({
+  createGracePeriod: vi.fn().mockResolvedValue(undefined),
+}));
 
 // ---- System under test ----
 

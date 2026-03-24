@@ -16,6 +16,8 @@ import { callRpc } from '../utils/rpc.js';
 import { getInitializedChainClient } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
+import { checkPaymentGuard } from '../billing/paymentGuard.js';
+import { isFreeTierUser, isWithinBatchWindow } from '../billing/reconciliation.js';
 
 /** SHA-256 hex fingerprint pattern: exactly 64 lowercase hex characters */
 const FINGERPRINT_REGEX = /^[a-f0-9]{64}$/i;
@@ -78,6 +80,48 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
       }
     }
 
+    // RISK-1: Payment guard — verify user has valid payment before broadcasting.
+    // Checks: (a) active Stripe subscription, (b) x402 payment for this anchor, or (c) admin bypass.
+    // Pipeline records (public data) are exempt.
+    if (!isPipeline) {
+      const paymentCheck = await checkPaymentGuard(anchor.user_id, anchor.org_id, anchorId);
+      if (!paymentCheck.authorized) {
+        logger.warn(
+          { anchorId, reason: paymentCheck.reason },
+          'Anchor blocked by payment guard — no valid payment found',
+        );
+        await db.from('anchors').update({
+          metadata: { ...anchorMeta, _payment_blocked: true, _payment_block_reason: paymentCheck.reason },
+        }).eq('id', anchorId).eq('status', 'PENDING');
+        return false;
+      }
+
+      // Item #10: Free tier batch-only anchoring — only when beta override is NOT active
+      if (paymentCheck.source?.type !== 'beta_unlimited') {
+        const isFree = await isFreeTierUser(anchor.user_id);
+        if (isFree && !isWithinBatchWindow()) {
+          logger.debug(
+            { anchorId },
+            'Free tier anchor deferred to daily batch window (02:00-03:00 UTC)',
+          );
+          return false; // Will be picked up during batch window
+        }
+      }
+
+      // ECON-4: Link anchor to payment source for revenue attribution
+      if (paymentCheck.source) {
+        await db.from('anchors').update({
+          payment_source_id: paymentCheck.source.id,
+          payment_source_type: paymentCheck.source.type,
+        }).eq('id', anchorId);
+      }
+    } else {
+      // Pipeline records: tag as admin_bypass for accounting
+      await db.from('anchors').update({
+        payment_source_type: 'pipeline',
+      }).eq('id', anchorId);
+    }
+
     // Validate fingerprint before submitting to chain
     if (!anchor.fingerprint || !FINGERPRINT_REGEX.test(anchor.fingerprint)) {
       logger.error(
@@ -85,6 +129,27 @@ export async function processAnchor(anchorId: string): Promise<boolean> {
         'Anchor has invalid fingerprint — skipping chain submission',
       );
       return false;
+    }
+
+    // ECON-1 / Item #7: Check fee ceiling — defer anchor if fee rate exceeds MAX_FEE_SAT_PER_VBYTE
+    if (config.bitcoinMaxFeeRate) {
+      try {
+        const { MempoolFeeEstimator } = await import('../chain/fee-estimator.js');
+        const estimator = new MempoolFeeEstimator({ target: 'halfHour', timeoutMs: 3000 });
+        const currentFeeRate = await estimator.estimateFee();
+        if (currentFeeRate > config.bitcoinMaxFeeRate) {
+          logger.info(
+            { anchorId, currentFeeRate, maxFeeRate: config.bitcoinMaxFeeRate },
+            'Anchor deferred — current fee rate exceeds MAX_FEE_SAT_PER_VBYTE ceiling',
+          );
+          await db.from('anchors').update({
+            metadata: { ...anchorMeta, _fee_deferred: true, _deferred_fee_rate: currentFeeRate },
+          }).eq('id', anchorId).eq('status', 'PENDING');
+          return false;
+        }
+      } catch {
+        // Non-fatal: proceed if fee check fails
+      }
     }
 
     // Submit fingerprint to chain, with metadata for OP_RETURN embedding (DEMO-01)

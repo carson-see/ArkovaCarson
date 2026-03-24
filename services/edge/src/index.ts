@@ -82,6 +82,12 @@ export default {
       return handler.fetch(request, env, ctx);
     }
 
+    // x402 Facilitator (Item #16, RISK-7) — public endpoint for payment verification
+    if (url.pathname.startsWith('/x402')) {
+      const { handleX402Facilitator } = await import('./x402-facilitator');
+      return handleX402Facilitator(request, env);
+    }
+
     // MCP server — uses its own API key auth (handled internally)
     if (url.pathname.startsWith('/mcp')) {
       const { handleMcpRequest } = await import('./mcp-server');

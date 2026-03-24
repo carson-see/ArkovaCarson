@@ -29,6 +29,7 @@ import { embedPublicRecords } from '../jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
 import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 
 export const cronRouter = Router();
 
@@ -297,6 +298,38 @@ cronRouter.post('/monitor-fees', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Fee monitoring failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Billing Reconciliation & Recovery (RECON-1, RECON-3, RECON-5) ───
+
+cronRouter.post('/reconcile-stripe', async (_req, res) => {
+  try {
+    const result = await runStripeAnchorReconciliation();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Stripe reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/financial-report', async (_req, res) => {
+  try {
+    const result = await generateFinancialReport();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Financial report generation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/payment-recovery', async (_req, res) => {
+  try {
+    const result = await processFailedPaymentRecovery();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Payment recovery failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

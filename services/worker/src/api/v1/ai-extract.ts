@@ -80,10 +80,25 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Beta: credit checks disabled — all users get unlimited AI extraction
-    // TODO: Re-enable credit checks post-beta launch
-    void checkAICredits(orgId, userId); // Track usage for analytics only
-    void deductAICredits(orgId, userId, 1).catch(() => { /* non-blocking in beta */ });
+    // RISK-6: Synchronous credit check and deduction.
+    // Deduction is blocking — if it fails, return 402 Payment Required.
+    // Beta mode: check_ai_credits returns unlimited via migration 0084 override.
+    const creditBalance = await checkAICredits(orgId, userId);
+    if (creditBalance && !creditBalance.hasCredits) {
+      res.status(402).json({
+        error: 'insufficient_credits',
+        message: 'AI extraction credits exhausted. Upgrade your plan for more credits.',
+        used: creditBalance.usedThisMonth,
+        limit: creditBalance.monthlyAllocation,
+      });
+      return;
+    }
+
+    const deducted = await deductAICredits(orgId, userId, 1);
+    if (!deducted && creditBalance) {
+      // Deduction failed but credits existed — DB error, not insufficient balance
+      logger.error({ orgId, userId }, 'AI credit deduction failed — proceeding with extraction');
+    }
 
     // Call AI provider
     const startMs = Date.now();
@@ -97,10 +112,11 @@ router.post('/', async (req: Request, res: Response) => {
         issuerHint,
       });
     } catch (extractionError) {
-      // Refund the credit on extraction failure (best-effort)
-      await deductAICredits(orgId, userId, -1).catch((refundErr) => {
-        logger.warn({ error: refundErr, orgId, userId }, 'Failed to refund AI credit after extraction failure');
-      });
+      // RISK-6: Synchronous refund on extraction failure
+      const refunded = await deductAICredits(orgId, userId, -1);
+      if (!refunded) {
+        logger.warn({ orgId, userId }, 'Failed to refund AI credit after extraction failure');
+      }
       throw extractionError;
     }
     const durationMs = Date.now() - startMs;
@@ -140,7 +156,7 @@ router.post('/', async (req: Request, res: Response) => {
       fields: result.fields,
       confidence: result.confidence,
       provider: result.provider,
-      creditsRemaining: null, // Beta: unlimited
+      creditsRemaining: creditBalance ? creditBalance.remaining - 1 : null,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';

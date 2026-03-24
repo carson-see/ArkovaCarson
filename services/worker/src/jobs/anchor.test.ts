@@ -128,6 +128,19 @@ vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
+// Mock billing modules added by M2M payments audit
+vi.mock('../billing/paymentGuard.js', () => ({
+  checkPaymentGuard: vi.fn().mockResolvedValue({
+    authorized: true,
+    source: { id: 'beta_override', type: 'beta_unlimited' },
+  }),
+}));
+
+vi.mock('../billing/reconciliation.js', () => ({
+  isFreeTierUser: vi.fn().mockResolvedValue(false),
+  isWithinBatchWindow: vi.fn().mockReturnValue(true),
+}));
+
 const mockRpc = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/db.js', () => ({
@@ -357,12 +370,18 @@ describe('processAnchor', () => {
       expect(result).toBe(false);
     });
 
-    it('does not update anchor status on chain failure', async () => {
+    it('does not update anchor status to SUBMITTED on chain failure', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
 
       await processAnchor('anchor-001');
 
-      expect(anchorsTable.update).not.toHaveBeenCalled();
+      // Payment source update may happen before chain submission,
+      // but status should NOT be updated to SUBMITTED
+      const updateCalls = anchorsTable.update.mock.calls;
+      const statusUpdates = updateCalls.filter(
+        (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
+      );
+      expect(statusUpdates.length).toBe(0);
     });
 
     it('does not log audit event on chain failure', async () => {

@@ -106,16 +106,21 @@ router.post('/', async (req: Request, res: Response) => {
 
     const orgId = profile?.org_id ?? undefined;
 
-    // Beta: credit checks disabled — all users get unlimited AI extraction
-    // TODO: Re-enable credit checks post-beta launch
-    void checkAICredits(orgId, userId); // Track usage for analytics only
-    void deductAICredits(orgId, userId, rowCount).catch(() => { /* non-blocking in beta */ });
-    if (false) { // eslint-disable-line no-constant-condition — beta bypass
+    // RISK-6: Synchronous credit check and deduction for batch operations.
+    const creditBalance = await checkAICredits(orgId, userId);
+    if (creditBalance && !creditBalance.hasCredits) {
       res.status(402).json({
         error: 'insufficient_credits',
-        message: 'Credit deduction failed. Please try again.',
+        message: `AI extraction credits exhausted (${creditBalance.usedThisMonth}/${creditBalance.monthlyAllocation} used). Upgrade your plan.`,
+        used: creditBalance.usedThisMonth,
+        limit: creditBalance.monthlyAllocation,
       });
       return;
+    }
+
+    const deducted = await deductAICredits(orgId, userId, rowCount);
+    if (!deducted && creditBalance) {
+      logger.error({ orgId, userId, rowCount }, 'Batch AI credit deduction failed — proceeding');
     }
 
     // Process rows with concurrency limit (3 parallel to avoid flooding Gemini)

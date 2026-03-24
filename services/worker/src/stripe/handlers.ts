@@ -11,6 +11,7 @@
 import type Stripe from 'stripe';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { createGracePeriod } from '../billing/reconciliation.js';
 
 type StripeEvent = Stripe.Event;
 
@@ -349,6 +350,9 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
         actor_id: sub.user_id,
         details: `Payment failed for invoice: ${invoice.id}`,
       });
+
+      // RECON-5: Create 7-day grace period for failed payment recovery
+      await createGracePeriod(sub.user_id, invoice.subscription);
     }
   }
 }

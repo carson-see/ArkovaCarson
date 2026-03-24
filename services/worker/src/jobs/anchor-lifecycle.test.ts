@@ -65,6 +65,19 @@ vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
+// Mock billing modules added by M2M payments audit
+vi.mock('../billing/paymentGuard.js', () => ({
+  checkPaymentGuard: vi.fn().mockResolvedValue({
+    authorized: true,
+    source: { id: 'beta_override', type: 'beta_unlimited' },
+  }),
+}));
+
+vi.mock('../billing/reconciliation.js', () => ({
+  isFreeTierUser: vi.fn().mockResolvedValue(false),
+  isWithinBatchWindow: vi.fn().mockReturnValue(true),
+}));
+
 // Stateful DB mock that tracks mutations
 vi.mock('../utils/db.js', () => {
   const createSelectChain = (_anchorId?: string) => {

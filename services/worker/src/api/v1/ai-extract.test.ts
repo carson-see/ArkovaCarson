@@ -85,7 +85,7 @@ describe('AI Extraction Endpoint', () => {
     );
   });
 
-  it('allows extraction even with zero credits (beta: unlimited)', async () => {
+  it('returns 402 when credits exhausted (RISK-6: synchronous credit check)', async () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
@@ -122,23 +122,12 @@ describe('AI Extraction Endpoint', () => {
       hasCredits: false,
     });
 
-    (createAIProvider as ReturnType<typeof vi.fn>).mockReturnValue({
-      extractMetadata: vi.fn().mockResolvedValue({
-        fields: { credentialType: 'CERTIFICATE' },
-        confidence: 0.85,
-        provider: 'gemini',
-        tokensUsed: 100,
-      }),
-    });
-
-    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
-
     await handler!(req, res);
-    // Beta: credit checks disabled — extraction succeeds regardless
+    // RISK-6: Synchronous credit check now blocks extraction
+    expect(res.status).toHaveBeenCalledWith(402);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
-        confidence: 0.85,
-        creditsRemaining: null,
+        error: 'insufficient_credits',
       }),
     );
   });
@@ -203,7 +192,7 @@ describe('AI Extraction Endpoint', () => {
         }),
         confidence: 0.92,
         provider: 'gemini',
-        creditsRemaining: null, // Beta: unlimited
+        creditsRemaining: 489, // 490 - 1 credit deducted
       }),
     );
   });

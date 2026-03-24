@@ -24,6 +24,11 @@ export interface Env {
   // Authentication (AUDIT-03)
   CRON_SECRET: string;
   ALLOWED_ORIGINS: string; // comma-separated list of allowed CORS origins
+
+  // x402 Facilitator (Item #16, RISK-7)
+  BASE_RPC_URL: string;
+  USDC_CONTRACT_ADDRESS?: string;
+  ARKOVA_USDC_ADDRESS?: string;
 }
 
 export interface BatchQueueMessage {

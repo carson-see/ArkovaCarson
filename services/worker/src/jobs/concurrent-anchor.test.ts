@@ -99,6 +99,18 @@ vi.mock('../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
+vi.mock('../billing/paymentGuard.js', () => ({
+  checkPaymentGuard: vi.fn().mockResolvedValue({
+    authorized: true,
+    source: { id: 'beta_override', type: 'beta_unlimited' },
+  }),
+}));
+
+vi.mock('../billing/reconciliation.js', () => ({
+  isFreeTierUser: vi.fn().mockResolvedValue(false),
+  isWithinBatchWindow: vi.fn().mockReturnValue(true),
+}));
+
 vi.mock('../email/index.js', () => ({
   sendEmail: vi.fn(),
   buildRevocationEmail: vi.fn(() => ({ subject: 'test', html: '<p>test</p>' })),
@@ -210,7 +222,11 @@ describe('RACE-2: Validate broadcast response', () => {
 
     const result = await processAnchor('anchor-001');
     expect(result).toBe(false);
-    expect(anchorsTable.update).not.toHaveBeenCalled();
+    // Payment source update may happen before chain, but no SUBMITTED status update
+    const statusUpdates = anchorsTable.update.mock.calls.filter(
+      (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
+    );
+    expect(statusUpdates.length).toBe(0);
   });
 
   it('returns false when receipt has empty receiptId', async () => {
@@ -221,7 +237,11 @@ describe('RACE-2: Validate broadcast response', () => {
 
     const result = await processAnchor('anchor-001');
     expect(result).toBe(false);
-    expect(anchorsTable.update).not.toHaveBeenCalled();
+    // Payment source update may happen before chain, but no SUBMITTED status update
+    const statusUpdates = anchorsTable.update.mock.calls.filter(
+      (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
+    );
+    expect(statusUpdates.length).toBe(0);
   });
 
   it('logs error with receipt details when broadcast is rejected', async () => {
