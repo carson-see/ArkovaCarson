@@ -1732,7 +1732,7 @@ export const GOLDEN_DATASET: GoldenDatasetEntry[] = [
       credentialType: 'DEGREE',
       issuerName: 'Universal Life Church Online',
       degreeLevel: 'Doctorate',
-      fieldOfStudy: 'Divinity', fraudSignals: ['MISSING_ACCREDITATION', 'FORMAT_ANOMALY'],
+      fieldOfStudy: 'Divinity', fraudSignals: ['MISSING_ACCREDITATION', 'FORMAT_ANOMALY', 'EXPIRED_ISSUER'],
     },
     source: 'synthetic',
     category: 'degree',

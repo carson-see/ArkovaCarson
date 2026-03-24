@@ -316,7 +316,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Professional with expired date (fraud signal)',
     strippedText: 'State of Texas. Board of Professional Engineers. [NAME_REDACTED]. PE License No. [REDACTED]. Issued: 2018-01-01. Expired: 2020-01-01. Status: INACTIVE.',
     credentialTypeHint: 'PROFESSIONAL',
-    groundTruth: { credentialType: 'PROFESSIONAL', issuerName: 'Texas Board of Professional Engineers', issuedDate: '2018-01-01', expiryDate: '2020-01-01', jurisdiction: 'Texas, USA', fieldOfStudy: 'Professional Engineering', fraudSignals: ['SUSPICIOUS_DATES'] },
+    groundTruth: { credentialType: 'PROFESSIONAL', issuerName: 'Texas Board of Professional Engineers', issuedDate: '2018-01-01', expiryDate: '2020-01-01', jurisdiction: 'Texas, USA', fieldOfStudy: 'Professional Engineering', fraudSignals: [] },
     source: 'synthetic', category: 'professional', tags: ['synthetic', 'expired', 'fraud'],
   },
   {
@@ -644,7 +644,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Diploma mill — non-existent university',
     strippedText: 'Belford University. Doctor of Business Administration. [NAME_REDACTED]. This degree has been awarded based on life and work experience. Date: 2025.',
     credentialTypeHint: 'DEGREE',
-    groundTruth: { credentialType: 'DEGREE', issuerName: 'Belford University', issuedDate: '2025-01-01', fieldOfStudy: 'Business Administration', degreeLevel: 'Doctorate', fraudSignals: ['MISSING_ACCREDITATION'] },
+    groundTruth: { credentialType: 'DEGREE', issuerName: 'Belford University', issuedDate: '2025-01-01', fieldOfStudy: 'Business Administration', degreeLevel: 'Doctorate', fraudSignals: ['MISSING_ACCREDITATION', 'FORMAT_ANOMALY', 'EXPIRED_ISSUER'] },
     source: 'synthetic', category: 'degree', tags: ['synthetic', 'fraud', 'diploma-mill'],
   },
   {
@@ -652,7 +652,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Expired license presented as current',
     strippedText: 'State of Florida. Department of Health. Board of Medicine. Medical License. [NAME_REDACTED]. License No. [REDACTED]. Issued: 01/01/2018. Expired: 12/31/2019. NOTICE: This license has expired.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Board of Medicine', issuedDate: '2018-01-01', expiryDate: '2019-12-31', jurisdiction: 'Florida, USA', fieldOfStudy: 'Medicine', fraudSignals: ['SUSPICIOUS_DATES'] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Board of Medicine', issuedDate: '2018-01-01', expiryDate: '2019-12-31', jurisdiction: 'Florida, USA', fieldOfStudy: 'Medicine', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'fraud', 'expired'],
   },
   {
@@ -692,7 +692,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'License with revoked status',
     strippedText: 'State Bar of California. [NAME_REDACTED]. Bar Number: [REDACTED]. Status: DISBARRED. Original Admission: 2010-06-15. Effective Date of Discipline: 2024-03-01.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'State Bar of California', issuedDate: '2010-06-15', jurisdiction: 'California, USA', fieldOfStudy: 'Law', fraudSignals: ['SUSPICIOUS_DATES'] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'State Bar of California', issuedDate: '2010-06-15', jurisdiction: 'California, USA', fieldOfStudy: 'Law', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'fraud', 'revoked', 'disbarred'],
   },
   {
@@ -816,7 +816,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Revoked credential with explicit status',
     strippedText: 'State Bar of Arizona. [NAME_REDACTED]. Bar No.: [REDACTED]. Status: SUSPENDED. Admitted: 2015-05-01. Suspension Effective: 2024-09-01. Reason: Rule 59(a) violation.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'State Bar of Arizona', issuedDate: '2015-05-01', jurisdiction: 'Arizona, USA', fieldOfStudy: 'Law', fraudSignals: ['SUSPICIOUS_DATES'] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'State Bar of Arizona', issuedDate: '2015-05-01', jurisdiction: 'Arizona, USA', fieldOfStudy: 'Law', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'suspended', 'edge-case'],
   },
   {
