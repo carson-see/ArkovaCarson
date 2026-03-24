@@ -134,8 +134,13 @@ VALUES (
 -- 5. PROFILES
 -- =============================================================================
 
--- Profiles may already exist via the auto_create_profile trigger (0072).
--- Use ON CONFLICT to upsert with full seed data.
+-- Delete auto-created profiles (from trigger 0072) so we can insert with full seed data.
+-- The trigger creates minimal profiles; we need full data with org_id, role, etc.
+DELETE FROM profiles WHERE id IN (
+  '44444444-0000-0000-0000-000000000001',
+  '44444444-0000-0000-0000-000000000002'
+);
+
 INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile, is_platform_admin)
 VALUES
   (
@@ -157,13 +162,7 @@ VALUES
     NULL,
     true,
     true
-  )
-ON CONFLICT (id) DO UPDATE SET
-  role = EXCLUDED.role,
-  org_id = EXCLUDED.org_id,
-  full_name = EXCLUDED.full_name,
-  is_public_profile = EXCLUDED.is_public_profile,
-  is_platform_admin = EXCLUDED.is_platform_admin;
+  );
 
 
 -- =============================================================================
