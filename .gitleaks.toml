@@ -6,10 +6,15 @@
 useDefault = true
 
 [allowlist]
-  description = "Allow well-known Supabase local development JWTs"
+  description = "Allow well-known Supabase local development JWTs and test fixture strings"
   # These are publicly documented default keys for local Supabase development.
   # They are NOT real secrets — they only work with the local dev instance.
   # See: https://supabase.com/docs/guides/local-development
   commits = [
     "9710074050c09cc26152ddbe9033601f01126b9d",
+  ]
+  paths = [
+    '''\.test\.ts$''',
+    '''\.test\.tsx$''',
+    '''\.spec\.ts$''',
   ]
