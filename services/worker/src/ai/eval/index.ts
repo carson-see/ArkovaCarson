@@ -23,6 +23,7 @@ export {
 } from './golden-dataset.js';
 
 export { GOLDEN_DATASET_EXTENDED } from './golden-dataset-extended.js';
+export { GOLDEN_DATASET_PHASE2 } from './golden-dataset-phase2.js';
 
 export {
   compareField,
