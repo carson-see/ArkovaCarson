@@ -134,6 +134,8 @@ VALUES (
 -- 5. PROFILES
 -- =============================================================================
 
+-- Profiles may already exist via the auto_create_profile trigger (0072).
+-- Use ON CONFLICT to upsert with full seed data.
 INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile, is_platform_admin)
 VALUES
   (
@@ -155,7 +157,13 @@ VALUES
     NULL,
     true,
     true
-  );
+  )
+ON CONFLICT (id) DO UPDATE SET
+  role = EXCLUDED.role,
+  org_id = EXCLUDED.org_id,
+  full_name = EXCLUDED.full_name,
+  is_public_profile = EXCLUDED.is_public_profile,
+  is_platform_admin = EXCLUDED.is_platform_admin;
 
 
 -- =============================================================================
