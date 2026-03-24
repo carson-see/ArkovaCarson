@@ -27,6 +27,9 @@ const MAX_TX_CHECKS_PER_RUN = 50;
 /** Concurrency for parallel mempool.space API calls */
 const MEMPOOL_CONCURRENCY = 5;
 
+/** In-process mutex — prevents concurrent confirmation check runs */
+let confirmationCheckRunning = false;
+
 /** Minimum confirmations to consider a transaction confirmed.
  * CRIT-1: 6 confirmations for mainnet (Bitcoin Core standard for "settled"),
  * 1 for signet/testnet (fast development cycles).
@@ -307,30 +310,16 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     return autoConfirmMockAnchors();
   }
 
-  // RACE-3: Distributed lock — prevent concurrent cron runs from overlapping.
-  // Uses a wrapper RPC because pg_try_advisory_lock is a built-in PG function
-  // whose parameter names are not exposed through PostgREST, causing direct
-  // db.rpc('pg_try_advisory_lock') calls to fail silently (returns null).
-  const CONFIRMATION_LOCK_ID = 42001; // Unique ID for this job type
-  let lockAcquired = true; // Default to acquired — single worker is safe
-  try {
-    const { data, error: lockError } = await db.rpc('try_advisory_lock', {
-      lock_id: CONFIRMATION_LOCK_ID,
-    });
-    if (lockError) {
-      // RPC doesn't exist or failed — proceed without lock (safe in single-worker mode)
-      logger.debug({ error: lockError }, 'Advisory lock RPC unavailable — proceeding without lock');
-    } else {
-      lockAcquired = data === true;
-    }
-  } catch {
-    // Lock function not available — proceed without lock
-    logger.debug('Advisory lock RPC not available — proceeding without lock');
-  }
-  if (!lockAcquired) {
-    logger.info('Confirmation check skipped — another worker holds the advisory lock');
+  // RACE-3: In-process mutex — prevent concurrent cron runs from overlapping.
+  // NOTE: Advisory locks (pg_try_advisory_lock) don't work with Supabase connection
+  // pooling (Supavisor/PgBouncer in transaction mode) because each RPC call may
+  // use a different PG backend, and advisory locks are per-backend.
+  // Since we run a single worker process, an in-memory flag is sufficient.
+  if (confirmationCheckRunning) {
+    logger.info('Confirmation check skipped — already in progress');
     return { checked: 0, confirmed: 0 };
   }
+  confirmationCheckRunning = true;
 
   // Fetch SUBMITTED anchors — get enough to fill MAX_TX_CHECKS_PER_RUN unique tx_ids
   // We fetch more anchors than tx limit since many share a tx_id (Merkle batching)
@@ -345,11 +334,13 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
 
   if (error) {
     logger.error({ error }, 'Failed to fetch SUBMITTED anchors');
+    confirmationCheckRunning = false;
     return { checked: 0, confirmed: 0 };
   }
 
   if (!anchors || anchors.length === 0) {
     logger.debug('No SUBMITTED anchors to check');
+    confirmationCheckRunning = false;
     return { checked: 0, confirmed: 0 };
   }
 
@@ -443,8 +434,8 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     }
   }
 
-  // RACE-3: Release advisory lock
-  await db.rpc('pg_advisory_unlock' as never, { key: CONFIRMATION_LOCK_ID } as never);
+  // RACE-3: Release in-process mutex
+  confirmationCheckRunning = false;
 
   logger.info(
     { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: anchors.length },
