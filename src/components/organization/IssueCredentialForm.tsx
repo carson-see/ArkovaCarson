@@ -315,7 +315,7 @@ export function IssueCredentialForm({
         metadata,
       });
 
-      const { data: inserted, error: insertError } = await supabase
+      const { data: inserted, error: insertError } = await (supabase as any)
         .from('anchors')
         .insert({
           ...validated,
@@ -336,7 +336,7 @@ export function IssueCredentialForm({
       const emailTrimmed = recipientEmail.trim();
       if (emailTrimmed) {
         const emailHash = await hashEmail(emailTrimmed);
-        await (supabase.from as (table: string) => ReturnType<typeof supabase.from>)('anchor_recipients')
+        await (supabase as any).from('anchor_recipients')
           .insert({
             anchor_id: inserted.id,
             recipient_email_hash: emailHash,
