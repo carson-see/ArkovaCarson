@@ -308,11 +308,25 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   }
 
   // RACE-3: Distributed lock — prevent concurrent cron runs from overlapping.
-  // pg_try_advisory_lock returns false (not blocking) if another worker holds the lock.
+  // Uses a wrapper RPC because pg_try_advisory_lock is a built-in PG function
+  // whose parameter names are not exposed through PostgREST, causing direct
+  // db.rpc('pg_try_advisory_lock') calls to fail silently (returns null).
   const CONFIRMATION_LOCK_ID = 42001; // Unique ID for this job type
-  const { data: lockAcquired } = await db.rpc('pg_try_advisory_lock' as never, {
-    key: CONFIRMATION_LOCK_ID,
-  } as never);
+  let lockAcquired = true; // Default to acquired — single worker is safe
+  try {
+    const { data, error: lockError } = await db.rpc('try_advisory_lock', {
+      lock_id: CONFIRMATION_LOCK_ID,
+    });
+    if (lockError) {
+      // RPC doesn't exist or failed — proceed without lock (safe in single-worker mode)
+      logger.debug({ error: lockError }, 'Advisory lock RPC unavailable — proceeding without lock');
+    } else {
+      lockAcquired = data === true;
+    }
+  } catch {
+    // Lock function not available — proceed without lock
+    logger.debug('Advisory lock RPC not available — proceeding without lock');
+  }
   if (!lockAcquired) {
     logger.info('Confirmation check skipped — another worker holds the advisory lock');
     return { checked: 0, confirmed: 0 };

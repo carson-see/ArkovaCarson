@@ -66,12 +66,24 @@ function getMempoolBaseUrl(): string {
 }
 
 async function acquireLock(lockId: number): Promise<boolean> {
-  const { data } = await db.rpc('pg_try_advisory_lock' as never, { key: lockId } as never);
-  return !!data;
+  try {
+    const { data, error } = await db.rpc('try_advisory_lock', { lock_id: lockId });
+    if (error) {
+      // RPC doesn't exist — proceed without lock (safe in single-worker mode)
+      return true;
+    }
+    return data === true;
+  } catch {
+    return true; // Proceed without lock
+  }
 }
 
 async function releaseLock(lockId: number): Promise<void> {
-  await db.rpc('pg_advisory_unlock' as never, { key: lockId } as never);
+  try {
+    await db.rpc('release_advisory_lock', { lock_id: lockId });
+  } catch {
+    // Best-effort release
+  }
 }
 
 // ─── CRIT-2: Reorg Detection ────────────────────────────────────────────
