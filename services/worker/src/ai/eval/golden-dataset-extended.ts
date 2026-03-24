@@ -100,7 +100,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Physician assistant license',
     strippedText: 'State of Maryland. Board of Physicians. [NAME_REDACTED], PA-C is licensed as a Physician Assistant. License No. PA-[REDACTED]. Issued: August 2024. Expires: September 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Maryland Board of Physicians', issuedDate: '2024-08-01', expiryDate: '2026-09-30', jurisdiction: 'Maryland, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Maryland Board of Physicians', issuedDate: '2024-08-01', expiryDate: '2026-09-30', jurisdiction: 'Maryland, USA', fieldOfStudy: 'Physician Assistant Studies', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'pa'],
   },
   {
@@ -108,7 +108,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Occupational therapy license',
     strippedText: 'State of Wisconsin. Department of Safety and Professional Services. [NAME_REDACTED], OTR/L. Licensed Occupational Therapist. Credential No. [REDACTED]. Effective: January 2025. Exp: December 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Wisconsin Department of Safety and Professional Services', issuedDate: '2025-01-01', expiryDate: '2026-12-31', jurisdiction: 'Wisconsin, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Wisconsin Department of Safety and Professional Services', issuedDate: '2025-01-01', expiryDate: '2026-12-31', jurisdiction: 'Wisconsin, USA', fieldOfStudy: 'Occupational Therapy', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'ot'],
   },
   {
@@ -116,7 +116,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Private investigator license',
     strippedText: 'State of Florida. Department of Agriculture and Consumer Services. Division of Licensing. Private Investigator License. [NAME_REDACTED]. License No. C-[REDACTED]. Issued: March 2024. Exp: September 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Department of Agriculture and Consumer Services', issuedDate: '2024-03-01', expiryDate: '2026-09-30', jurisdiction: 'Florida, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Department of Agriculture and Consumer Services', issuedDate: '2024-03-01', expiryDate: '2026-09-30', jurisdiction: 'Florida, USA', fieldOfStudy: 'Private Investigation', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'investigation'],
   },
   {
@@ -132,7 +132,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'General contractor license NV',
     strippedText: 'State of Nevada. State Contractors Board. [NAME_REDACTED] dba [COMPANY_REDACTED]. License Classification: B-2 Residential and Small Commercial. License No. [REDACTED]. Issue: July 2024. Exp: June 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Nevada State Contractors Board', issuedDate: '2024-07-01', expiryDate: '2026-06-30', jurisdiction: 'Nevada, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Nevada State Contractors Board', issuedDate: '2024-07-01', expiryDate: '2026-06-30', jurisdiction: 'Nevada, USA', fieldOfStudy: 'HVAC', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'construction'],
   },
   {
@@ -140,7 +140,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Acupuncture license',
     strippedText: 'State of New York. Education Department. [NAME_REDACTED], LAc. Licensed Acupuncturist. License No. [REDACTED]. Issued: February 2025. Exp: January 2028.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'New York Education Department', issuedDate: '2025-02-01', expiryDate: '2028-01-31', jurisdiction: 'New York, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'New York Education Department', issuedDate: '2025-02-01', expiryDate: '2028-01-31', jurisdiction: 'New York, USA', fieldOfStudy: 'Acupuncture', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'acupuncture'],
   },
   {
@@ -148,7 +148,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Funeral director license',
     strippedText: 'State of Ohio. Board of Embalmers and Funeral Directors. [NAME_REDACTED] is licensed as a Funeral Director. License No. [REDACTED]. Effective: January 2024. Expiration: December 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Ohio Board of Embalmers and Funeral Directors', issuedDate: '2024-01-01', expiryDate: '2025-12-31', jurisdiction: 'Ohio, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Ohio Board of Embalmers and Funeral Directors', issuedDate: '2024-01-01', expiryDate: '2025-12-31', jurisdiction: 'Ohio, USA', fieldOfStudy: 'Funeral Directing', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'funeral'],
   },
   {
@@ -156,7 +156,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Surveyor license',
     strippedText: 'State of Oregon. Board of Examiners for Engineering and Land Surveying. Professional Land Surveyor. [NAME_REDACTED]. License No. LS-[REDACTED]. Issued: 2022. Renewed: 2024. Expires: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Oregon Board of Examiners for Engineering and Land Surveying', issuedDate: '2022-01-01', expiryDate: '2026-01-01', jurisdiction: 'Oregon, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Oregon Board of Examiners for Engineering and Land Surveying', issuedDate: '2022-01-01', expiryDate: '2026-01-01', jurisdiction: 'Oregon, USA', fieldOfStudy: 'Land Surveying', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'surveying'],
   },
   {
@@ -164,7 +164,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Audiologist license',
     strippedText: 'State of Tennessee. Board of Communication Disorders and Sciences. [NAME_REDACTED], AuD. Licensed Audiologist. License No. [REDACTED]. Issue: May 2025. Exp: April 2027.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Tennessee Board of Communication Disorders and Sciences', issuedDate: '2025-05-01', expiryDate: '2027-04-30', jurisdiction: 'Tennessee, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Tennessee Board of Communication Disorders and Sciences', issuedDate: '2025-05-01', expiryDate: '2027-04-30', jurisdiction: 'Tennessee, USA', fieldOfStudy: 'Audiology', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'audiology'],
   },
   {
@@ -172,7 +172,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Chiropractor license',
     strippedText: 'State of Georgia. Board of Chiropractic Examiners. [NAME_REDACTED], DC is licensed. License No. [REDACTED]. Issued: September 2023. Expires: August 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Georgia Board of Chiropractic Examiners', issuedDate: '2023-09-01', expiryDate: '2025-08-31', jurisdiction: 'Georgia, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Georgia Board of Chiropractic Examiners', issuedDate: '2023-09-01', expiryDate: '2025-08-31', jurisdiction: 'Georgia, USA', fieldOfStudy: 'Chiropractic', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'chiropractic'],
   },
 
@@ -184,7 +184,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Salesforce Administrator certification',
     strippedText: 'Salesforce. Certified Administrator. [NAME_REDACTED]. Credential ID: [REDACTED]. Date Certified: March 2026. Status: Active.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Salesforce', issuedDate: '2026-03-01', fieldOfStudy: 'Salesforce Administration', accreditingBody: 'Salesforce', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Salesforce', issuedDate: '2026-03-01', fieldOfStudy: 'CRM Administration', accreditingBody: 'Salesforce', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'tech', 'crm'],
   },
   {
@@ -200,7 +200,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'CPR/First Aid certification',
     strippedText: 'American Red Cross. CPR/AED for Professional Rescuers and Health Care Providers. [NAME_REDACTED]. Certification Date: October 15, 2025. Valid Through: October 15, 2027. Cert ID: [REDACTED].',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'American Red Cross', issuedDate: '2025-10-15', expiryDate: '2027-10-15', fieldOfStudy: 'CPR/AED', accreditingBody: 'American Red Cross', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'American Red Cross', issuedDate: '2025-10-15', expiryDate: '2027-10-15', fieldOfStudy: 'First Aid / CPR / AED', accreditingBody: 'American Red Cross', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'healthcare', 'cpr'],
   },
   {
@@ -308,7 +308,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Patent agent registration',
     strippedText: 'United States Patent and Trademark Office. Registration to Practice in Patent Cases. [NAME_REDACTED]. Registration Number: [REDACTED]. Date of Registration: March 2024.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'United States Patent and Trademark Office', issuedDate: '2024-03-01', jurisdiction: 'United States', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'United States Patent and Trademark Office', issuedDate: '2024-03-01', jurisdiction: 'United States', fieldOfStudy: 'Patent Law', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'legal', 'patent'],
   },
   {
@@ -316,7 +316,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Customs broker license',
     strippedText: 'U.S. Customs and Border Protection. Licensed Customs Broker. [NAME_REDACTED]. License No. [REDACTED]. Issued: 2023. District: Port of Los Angeles.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'U.S. Customs and Border Protection', issuedDate: '2023-01-01', jurisdiction: 'United States', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'U.S. Customs and Border Protection', issuedDate: '2023-01-01', jurisdiction: 'United States', fieldOfStudy: 'Customs Brokerage', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'trade', 'customs'],
   },
   {
@@ -324,7 +324,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Respiratory therapy license',
     strippedText: 'State of North Carolina. Respiratory Care Board. [NAME_REDACTED], RRT. Licensed Respiratory Therapist. License No. [REDACTED]. Issued: June 2024. Exp: May 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'North Carolina Respiratory Care Board', issuedDate: '2024-06-01', expiryDate: '2026-05-31', jurisdiction: 'North Carolina, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'North Carolina Respiratory Care Board', issuedDate: '2024-06-01', expiryDate: '2026-05-31', jurisdiction: 'North Carolina, USA', fieldOfStudy: 'Respiratory Therapy', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'respiratory'],
   },
   {
@@ -332,7 +332,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Peer support specialist cert',
     strippedText: 'State of Ohio. Department of Mental Health and Addiction Services. Certified Peer Recovery Supporter. [NAME_REDACTED]. Cert No. [REDACTED]. Issued: November 2025.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Ohio Department of Mental Health and Addiction Services', issuedDate: '2025-11-01', jurisdiction: 'Ohio, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Ohio Department of Mental Health and Addiction Services', issuedDate: '2025-11-01', jurisdiction: 'Ohio, USA', fieldOfStudy: 'Peer Recovery Support', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'mental-health'],
   },
   {
@@ -376,7 +376,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Very old license from 1995',
     strippedText: 'State of New Jersey. Board of Medical Examiners. [NAME_REDACTED], MD. License No. [REDACTED]. Original Issue: 1995. Status: Active. Current Expiration: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'New Jersey Board of Medical Examiners', issuedDate: '1995-01-01', expiryDate: '2026-01-01', jurisdiction: 'New Jersey, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'New Jersey Board of Medical Examiners', issuedDate: '1995-01-01', expiryDate: '2026-01-01', jurisdiction: 'New Jersey, USA', fieldOfStudy: 'Medicine', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'old-date', 'edge-case'],
   },
   {
@@ -392,7 +392,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Certificate with no dates',
     strippedText: 'Toastmasters International. Certificate of Achievement. [NAME_REDACTED] has achieved the designation of Competent Communicator.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Toastmasters International', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Toastmasters International', fieldOfStudy: 'Public Speaking', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'no-dates', 'edge-case'],
   },
   {
@@ -416,7 +416,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Certificate with special chars in issuer',
     strippedText: "O'Reilly Media, Inc. Certificate of Completion. [NAME_REDACTED] completed \"Advanced Python: Beyond the Basics\". Date: July 2025.",
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: "O'Reilly Media", issuedDate: '2025-07-01', fieldOfStudy: 'Python', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: "O'Reilly Media", issuedDate: '2025-07-01', fieldOfStudy: 'Python Programming', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'special-chars', 'edge-case'],
   },
   {
@@ -436,7 +436,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Community college transcript',
     strippedText: 'Northern Virginia Community College. Official Transcript. [NAME_REDACTED]. Program: Associate of Science. GPA: 3.2. Credits: 64. Date Issued: August 2024.',
     credentialTypeHint: 'TRANSCRIPT',
-    groundTruth: { credentialType: 'TRANSCRIPT', issuerName: 'Northern Virginia Community College', issuedDate: '2024-08-01', degreeLevel: 'Associate', jurisdiction: 'Virginia, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'TRANSCRIPT', issuerName: 'Northern Virginia Community College', issuedDate: '2024-08-01', degreeLevel: 'Associate', jurisdiction: 'Virginia, USA', fieldOfStudy: 'Science', fraudSignals: [] },
     source: 'synthetic', category: 'transcript', tags: ['synthetic', 'clean', 'community-college'],
   },
   {
@@ -468,7 +468,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Consulting firm reference letter',
     strippedText: 'McKinsey & Company. To Whom It May Concern. This confirms [NAME_REDACTED] was employed as an Associate from June 2022 to March 2025 in our Chicago office. Signed: [NAME_REDACTED], Partner. Date: April 1, 2025.',
     credentialTypeHint: 'PROFESSIONAL',
-    groundTruth: { credentialType: 'PROFESSIONAL', issuerName: 'McKinsey & Company', issuedDate: '2025-04-01', jurisdiction: 'Illinois, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'PROFESSIONAL', issuerName: 'McKinsey & Company', issuedDate: '2025-04-01', jurisdiction: 'Illinois, USA', fieldOfStudy: 'Consulting', fraudSignals: [] },
     source: 'synthetic', category: 'professional', tags: ['synthetic', 'clean', 'consulting', 'employment'],
   },
 
@@ -540,7 +540,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Optician license',
     strippedText: 'State of Connecticut. Department of Public Health. Licensed Optician. [NAME_REDACTED]. License No. [REDACTED]. Issued: 2024. Exp: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Connecticut Department of Public Health', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Connecticut, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Connecticut Department of Public Health', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Connecticut, USA', fieldOfStudy: 'Opticianry', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean'],
   },
   {
@@ -548,7 +548,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Hearing aid specialist license',
     strippedText: 'State of Kansas. Board of Hearing Aid Examiners. [NAME_REDACTED]. Licensed Hearing Instrument Specialist. License No. [REDACTED]. Effective: March 2025. Exp: February 2027.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Kansas Board of Hearing Aid Examiners', issuedDate: '2025-03-01', expiryDate: '2027-02-28', jurisdiction: 'Kansas, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Kansas Board of Hearing Aid Examiners', issuedDate: '2025-03-01', expiryDate: '2027-02-28', jurisdiction: 'Kansas, USA', fieldOfStudy: 'Hearing Instrument Specialist', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean'],
   },
   {
@@ -624,7 +624,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Dental hygienist license',
     strippedText: 'State of Minnesota. Board of Dentistry. [NAME_REDACTED], RDH. Licensed Dental Hygienist. License No. [REDACTED]. Issue: August 2024. Exp: July 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Minnesota Board of Dentistry', issuedDate: '2024-08-01', expiryDate: '2026-07-31', jurisdiction: 'Minnesota, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Minnesota Board of Dentistry', issuedDate: '2024-08-01', expiryDate: '2026-07-31', jurisdiction: 'Minnesota, USA', fieldOfStudy: 'Dental Hygiene', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'dental'],
   },
   {
@@ -632,7 +632,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Dietitian license',
     strippedText: 'State of Illinois. Department of Financial and Professional Regulation. Licensed Dietitian Nutritionist. [NAME_REDACTED]. License No. [REDACTED]. Issued: 2024. Exp: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Illinois Department of Financial and Professional Regulation', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Illinois, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Illinois Department of Financial and Professional Regulation', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Illinois, USA', fieldOfStudy: 'Dietetics and Nutrition', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'nutrition'],
   },
   {
@@ -656,7 +656,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Pharmacy technician cert',
     strippedText: 'Pharmacy Technician Certification Board. Certified Pharmacy Technician (CPhT). [NAME_REDACTED]. Cert No. [REDACTED]. Certified: March 2025. Renewal: March 2027.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Pharmacy Technician Certification Board', issuedDate: '2025-03-01', expiryDate: '2027-03-01', accreditingBody: 'Pharmacy Technician Certification Board', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Pharmacy Technician Certification Board', issuedDate: '2025-03-01', expiryDate: '2027-03-01', accreditingBody: 'Pharmacy Technician Certification Board', fieldOfStudy: 'Pharmacy Technology', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'pharmacy'],
   },
   {
@@ -708,7 +708,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'HVAC technician license',
     strippedText: 'State of Texas. Department of Licensing and Regulation. HVAC Technician License. [NAME_REDACTED]. License No. [REDACTED]. Issued: 2024. Exp: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Texas Department of Licensing and Regulation', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Texas, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Texas Department of Licensing and Regulation', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Texas, USA', fieldOfStudy: 'HVAC', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'trade', 'hvac'],
   },
   {
@@ -716,7 +716,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Midwifery license',
     strippedText: 'State of Oregon. Board of Direct Entry Midwifery. [NAME_REDACTED], LDM. License No. [REDACTED]. Issued: October 2024. Exp: September 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Oregon Board of Direct Entry Midwifery', issuedDate: '2024-10-01', expiryDate: '2026-09-30', jurisdiction: 'Oregon, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Oregon Board of Direct Entry Midwifery', issuedDate: '2024-10-01', expiryDate: '2026-09-30', jurisdiction: 'Oregon, USA', fieldOfStudy: 'Midwifery', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare', 'midwifery'],
   },
   {
@@ -732,7 +732,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Enrolled Agent IRS',
     strippedText: 'Internal Revenue Service. Enrolled Agent. [NAME_REDACTED] is authorized to represent taxpayers before the IRS. EA Number: [REDACTED]. Enrollment Date: February 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Internal Revenue Service', issuedDate: '2025-02-01', jurisdiction: 'United States', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Internal Revenue Service', issuedDate: '2025-02-01', jurisdiction: 'United States', fieldOfStudy: 'Tax Law', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'tax', 'federal'],
   },
   {
@@ -740,7 +740,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Art therapy license',
     strippedText: 'State of New York. Education Department. Licensed Creative Arts Therapist (LCAT). [NAME_REDACTED]. License No. [REDACTED]. Issued: July 2025. Exp: June 2028.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'New York Education Department', issuedDate: '2025-07-01', expiryDate: '2028-06-30', jurisdiction: 'New York, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'New York Education Department', issuedDate: '2025-07-01', expiryDate: '2028-06-30', jurisdiction: 'New York, USA', fieldOfStudy: 'Creative Arts Therapy', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'art-therapy'],
   },
   {
@@ -812,7 +812,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Wisconsin PE license',
     strippedText: 'State of Wisconsin. Department of Safety and Professional Services. Professional Engineer. [NAME_REDACTED], PE. License No. [REDACTED]. Issued: 2021. Exp: 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Wisconsin Department of Safety and Professional Services', issuedDate: '2021-01-01', expiryDate: '2025-01-01', jurisdiction: 'Wisconsin, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Wisconsin Department of Safety and Professional Services', issuedDate: '2021-01-01', expiryDate: '2025-01-01', jurisdiction: 'Wisconsin, USA', fieldOfStudy: 'Engineering', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'engineering'],
   },
   {
@@ -836,7 +836,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Architect license Florida',
     strippedText: 'State of Florida. Board of Architecture and Interior Design. [NAME_REDACTED], AIA. License No. AR-[REDACTED]. Issued: 2023. Exp: 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Board of Architecture and Interior Design', issuedDate: '2023-01-01', expiryDate: '2025-01-01', jurisdiction: 'Florida, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Florida Board of Architecture and Interior Design', issuedDate: '2023-01-01', expiryDate: '2025-01-01', jurisdiction: 'Florida, USA', fieldOfStudy: 'Architecture', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'architecture'],
   },
   {
@@ -852,7 +852,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Naturopathic physician license',
     strippedText: 'State of Washington. Department of Health. [NAME_REDACTED], ND. Licensed Naturopathic Physician. Credential No. [REDACTED]. Issue: 2024. Exp: 2026.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Washington Department of Health', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Washington, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Washington Department of Health', issuedDate: '2024-01-01', expiryDate: '2026-01-01', jurisdiction: 'Washington, USA', fieldOfStudy: 'Naturopathic Medicine', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'healthcare'],
   },
   {
@@ -876,7 +876,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Certified sommelier',
     strippedText: 'Court of Master Sommeliers. Certified Sommelier. [NAME_REDACTED] has passed the Certified Sommelier examination. Date of Examination: October 2025.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Court of Master Sommeliers', issuedDate: '2025-10-01', accreditingBody: 'Court of Master Sommeliers', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'Court of Master Sommeliers', issuedDate: '2025-10-01', accreditingBody: 'Court of Master Sommeliers', fieldOfStudy: 'Sommelier', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'hospitality'],
   },
   {
@@ -892,7 +892,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Phlebotomy technician cert',
     strippedText: 'National Healthcareer Association. Certified Phlebotomy Technician (CPT). [NAME_REDACTED]. Cert Date: April 2025. Renewal: April 2027.',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'National Healthcareer Association', issuedDate: '2025-04-01', expiryDate: '2027-04-01', accreditingBody: 'National Healthcareer Association', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'National Healthcareer Association', issuedDate: '2025-04-01', expiryDate: '2027-04-01', accreditingBody: 'National Healthcareer Association', fieldOfStudy: 'Phlebotomy', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'clean', 'healthcare'],
   },
   {
@@ -900,7 +900,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'Marriage and family therapist license',
     strippedText: 'State of California. Board of Behavioral Sciences. Licensed Marriage and Family Therapist (LMFT). [NAME_REDACTED]. License No. [REDACTED]. Issued: 2023. Exp: 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'California Board of Behavioral Sciences', issuedDate: '2023-01-01', expiryDate: '2025-01-01', jurisdiction: 'California, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'California Board of Behavioral Sciences', issuedDate: '2023-01-01', expiryDate: '2025-01-01', jurisdiction: 'California, USA', fieldOfStudy: 'Marriage and Family Therapy', fraudSignals: [] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'clean', 'therapy'],
   },
   {
@@ -916,7 +916,7 @@ export const GOLDEN_DATASET_EXTENDED: GoldenDatasetEntry[] = [
     description: 'DNP (Doctor of Nursing Practice)',
     strippedText: 'Vanderbilt University. School of Nursing. Doctor of Nursing Practice. [NAME_REDACTED]. Conferred August 2025. Nashville, Tennessee.',
     credentialTypeHint: 'DEGREE',
-    groundTruth: { credentialType: 'DEGREE', issuerName: 'Vanderbilt University', issuedDate: '2025-08-01', fieldOfStudy: 'Nursing Practice', degreeLevel: 'Doctorate', jurisdiction: 'Tennessee, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'DEGREE', issuerName: 'Vanderbilt University', issuedDate: '2025-08-01', fieldOfStudy: 'Nursing', degreeLevel: 'Doctorate', jurisdiction: 'Tennessee, USA', fraudSignals: [] },
     source: 'synthetic', category: 'degree', tags: ['synthetic', 'clean', 'nursing', 'doctorate'],
   },
   {

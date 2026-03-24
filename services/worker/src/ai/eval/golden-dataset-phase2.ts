@@ -484,7 +484,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Peace Corps completion certificate',
     strippedText: 'Peace Corps. Certificate of Volunteer Service. This certifies that [NAME_REDACTED] has completed 27 months of Peace Corps Volunteer service in Senegal from 2023 to 2025. Description of Service: Education.',
     credentialTypeHint: 'OTHER',
-    groundTruth: { credentialType: 'OTHER', issuerName: 'Peace Corps', issuedDate: '2025-01-01', jurisdiction: 'Senegal', fraudSignals: [] },
+    groundTruth: { credentialType: 'OTHER', issuerName: 'Peace Corps', issuedDate: '2025-01-01', jurisdiction: 'Senegal', fieldOfStudy: 'Education', fraudSignals: [] },
     source: 'synthetic', category: 'other', tags: ['synthetic', 'clean', 'volunteer', 'government'],
   },
   {
@@ -568,7 +568,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Nigerian WAEC certificate',
     strippedText: 'West African Examinations Council. West African Senior School Certificate. [NAME_REDACTED]. Centre No.: [REDACTED]. Candidate No.: [REDACTED]. Year: 2024. Subjects: Mathematics (A1), English Language (B2), Physics (B3), Chemistry (A1), Biology (B2).',
     credentialTypeHint: 'CERTIFICATE',
-    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'West African Examinations Council', issuedDate: '2024-01-01', jurisdiction: 'Nigeria', fraudSignals: [] },
+    groundTruth: { credentialType: 'CERTIFICATE', issuerName: 'West African Examinations Council', issuedDate: '2024-01-01', jurisdiction: 'Nigeria', fieldOfStudy: 'Mathematics, English Language, Physics, Chemistry, Biology', fraudSignals: [] },
     source: 'synthetic', category: 'certificate', tags: ['synthetic', 'international', 'nigeria', 'secondary'],
   },
   {
@@ -668,7 +668,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Certificate with mismatched issuer and jurisdiction',
     strippedText: 'Texas Board of Nursing. Licensed Practical Nurse. [NAME_REDACTED]. License No. [REDACTED]. Jurisdiction: State of Oregon. Issued: 2025.',
     credentialTypeHint: 'LICENSE',
-    groundTruth: { credentialType: 'LICENSE', issuerName: 'Texas Board of Nursing', issuedDate: '2025-01-01', jurisdiction: 'Oregon, USA', fraudSignals: ['JURISDICTION_MISMATCH'] },
+    groundTruth: { credentialType: 'LICENSE', issuerName: 'Texas Board of Nursing', issuedDate: '2025-01-01', jurisdiction: 'Oregon, USA', fieldOfStudy: 'Nursing', fraudSignals: ['JURISDICTION_MISMATCH'] },
     source: 'synthetic', category: 'license', tags: ['synthetic', 'fraud', 'jurisdiction-mismatch'],
   },
   {
@@ -728,7 +728,7 @@ export const GOLDEN_DATASET_PHASE2: GoldenDatasetEntry[] = [
     description: 'Heavily corrupted OCR text',
     strippedText: 'Un1vers1ty 0f Cal1f0rn1a, Berk3ley. Bache10r 0f Sc1ence. [NAME_REDACTED]. C0nferred: May 2O25.',
     credentialTypeHint: 'DEGREE',
-    groundTruth: { credentialType: 'DEGREE', issuerName: 'University of California, Berkeley', issuedDate: '2025-05-01', degreeLevel: 'Bachelor', jurisdiction: 'California, USA', fraudSignals: [] },
+    groundTruth: { credentialType: 'DEGREE', issuerName: 'University of California, Berkeley', issuedDate: '2025-05-01', degreeLevel: 'Bachelor', jurisdiction: 'California, USA', fieldOfStudy: 'Science', fraudSignals: [] },
     source: 'synthetic', category: 'degree', tags: ['synthetic', 'ocr-failure', 'edge-case', 'corrupted'],
   },
   {
