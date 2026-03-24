@@ -63,6 +63,82 @@ Licenses are highly variable in format. Pay special attention to:
   When to OMIT for PROFESSIONAL: Omit when the board IS the issuer (e.g., "American Board of Surgery" issues AND certifies → do NOT add accreditingBody since issuer is self-evident as certifier). Only add accreditingBody when a SEPARATE org accredits (e.g., ACGME accredits a residency program)
 - fieldOfStudy for licenses: ALWAYS infer the professional field from context. "Real Estate Broker" → "Real Estate", "Pharmacist" → "Pharmacy", "Speech-Language Pathologist" → "Speech-Language Pathology", "Registered Nurse" → "Nursing", "Electrician" → "Electrical Contracting", "Cosmetologist" → "Cosmetology", "Plumber" → "Plumbing", "Social Worker" → "Social Work", "Psychologist" → "Psychology", "Optometrist" → "Optometry", "Chiropractor" → "Chiropractic".
 
+CERTIFICATE-SPECIFIC GUIDANCE:
+Certificates are one of the broadest credential categories. Pay special attention to:
+- TECH CERTIFICATIONS (AWS, Google Cloud, Microsoft Azure, Cisco, CompTIA, (ISC)², ISACA, PMI, etc.):
+  - issuerName: The company or organization (e.g., "Amazon Web Services", "Google Cloud", "Microsoft").
+  - accreditingBody: For tech certs, the issuer IS the accrediting body. Set accreditingBody to the same org (e.g., issuer: "Amazon Web Services", accreditingBody: "Amazon Web Services").
+  - fieldOfStudy: Use the GENERAL discipline, NOT the cert name. "AWS Certified Solutions Architect" → "Cloud Architecture". "CCNA" → "Network Engineering". "CompTIA A+" → "IT Support". "Azure Data Engineer" → "Data Engineering". "Terraform Associate" → "Infrastructure as Code".
+- TRADE / VOCATIONAL CERTIFICATIONS:
+  - Issued by agencies like OSHA, EPA, state trade boards, NCCER, or union training programs.
+  - issuerName: The certifying agency or board (e.g., "OSHA", "National Center for Construction Education and Research").
+  - fieldOfStudy: The trade discipline. "OSHA 30-Hour Construction" → "Construction Safety". "EPA Section 608" → "Refrigerant Handling". "NCCER Welding" → "Welding".
+  - jurisdiction: Include state/country if noted (e.g., "Texas, USA" for a state trade board cert).
+- ONLINE COURSE COMPLETIONS vs BADGES:
+  - A CERTIFICATE requires a structured assessment (exam, project, proctored test). If it says "Certificate of Completion" with an exam or assessment, it is CERTIFICATE.
+  - A BADGE is typically a micro-credential from platforms like Credly, Acclaim, or Badgr with no formal exam. If it explicitly says "badge" or comes from a badge platform, use BADGE.
+  - A generic "Certificate of Attendance" or "Certificate of Participation" with no exam may still be CERTIFICATE if from a recognized institution, but confidence should be lower (0.70-0.80).
+- fieldOfStudy NORMALIZATION FOR CERTIFICATES:
+  - NEVER use the cert name as fieldOfStudy. Extract the broad discipline:
+    "AWS Certified Developer - Associate" → "Cloud Development"
+    "Google Professional Data Engineer" → "Data Engineering"
+    "Certified ScrumMaster (CSM)" → "Agile / Scrum"
+    "LEED AP BD+C" → "Green Building Design"
+    "Salesforce Certified Administrator" → "CRM Administration"
+    "Certified Kubernetes Administrator" → "Container Orchestration"
+    "OSHA 10-Hour General Industry" → "Workplace Safety"
+    "ServSafe Food Handler" → "Food Safety"
+
+OTHER-TYPE GUIDANCE:
+OTHER should be your LAST RESORT — only use it when absolutely no other type fits.
+- Before selecting OTHER, re-check ALL specific types:
+  - Employment verification letter → ATTESTATION
+  - Financial data, audit reports, tax docs → FINANCIAL
+  - Legal terms, contracts, NDAs, court orders → LEGAL
+  - Insurance policies, COIs, bonds → INSURANCE
+  - SEC filings (10-K, 10-Q, 8-K) → SEC_FILING
+  - Patents, IP filings → PATENT
+  - Federal Register, compliance notices → REGULATION
+  - Academic papers, journal articles → PUBLICATION
+  - Micro-credentials, digital awards → BADGE
+  - Professional memberships, fellowships → PROFESSIONAL
+  - Sworn statements, notarized letters → ATTESTATION
+- Legitimate uses of OTHER: emoji-only content, CSV/bulk data, completely unrecognizable content, random text with no credential structure.
+- NEGATIVE EXAMPLES (these are NOT OTHER):
+  - "Letter confirming membership in IEEE" → PROFESSIONAL (membership credential)
+  - "Certificate of Insurance showing $1M coverage" → INSURANCE
+  - "Notarized statement that [NAME] completed training" → ATTESTATION
+  - "Research paper published in Nature" → PUBLICATION
+  - "Non-Disclosure Agreement between parties" → LEGAL
+  If you are tempted to use OTHER, ask: "Does this document have ANY identifiable purpose?" If yes, there is almost certainly a more specific type.
+
+INSURANCE-SPECIFIC GUIDANCE:
+- CERTIFICATE OF INSURANCE (COI): The most common insurance document. Look for:
+  - issuerName: The insurance company (e.g., "State Farm", "Liberty Mutual", "Zurich Insurance").
+  - Policy number: Extract as licenseNumber if visible and not redacted.
+  - Effective date → issuedDate. Expiration date → expiryDate.
+  - Coverage type → fieldOfStudy (e.g., "Commercial General Liability", "Professional Liability", "Workers Compensation", "Cyber Liability").
+  - Named insured: Do NOT extract (PII).
+- BONDS / SURETY: Issued by surety companies. issuerName is the surety company. fieldOfStudy is the bond type (e.g., "Performance Bond", "Bid Bond", "License Bond").
+- POLICY DECLARATIONS PAGE: issuerName is the insurer, extract policy period dates, and coverage type as fieldOfStudy.
+
+LEGAL-SPECIFIC GUIDANCE:
+- CONTRACTS / NDAs / SERVICE AGREEMENTS:
+  - issuerName: The company or party that drafted/issued the agreement (often the first-named party or the employer).
+  - issuedDate: The effective date or execution date.
+  - expiryDate: Term end date if specified. For "12 months from effective date", calculate the end date.
+  - jurisdiction: Governing law clause → jurisdiction (e.g., "Governing Law: State of Delaware" → "Delaware, USA").
+  - fieldOfStudy: OMIT for generic legal documents. Include only if the agreement covers a specific domain (e.g., "Technology Licensing" for a software license agreement).
+- COURT ORDERS / LEGAL DECISIONS:
+  - issuerName: The court (e.g., "United States District Court for the Southern District of New York").
+  - issuedDate: Date of the order or ruling.
+  - jurisdiction: The court's jurisdiction (e.g., "New York, USA" or "United States" for federal courts).
+  - licenseNumber: Case number if visible (e.g., "Case No. 1:24-cv-01234").
+  - fieldOfStudy: The area of law if identifiable (e.g., "Intellectual Property", "Employment Law").
+- POWERS OF ATTORNEY / DEEDS:
+  - issuerName: The notary or law firm if identified, otherwise the grantor entity.
+  - jurisdiction: State/country where executed.
+
 FIELDOFSTUDY NORMALIZATION (applies to ALL credential types):
 - ALWAYS translate non-English field names to English: "Informatik" → "Computer Science", "Engenharia Civil" → "Civil Engineering", "Derecho" → "Law", "Informatique" → "Computer Science", "Engenharia de Computação" → "Computer Engineering".
 - Use the GENERAL academic/professional field, NOT the specific certification or course name: "AWS Certified Developer" → "Cloud Development", "LEED AP BD+C" → "Green Building Design", "Tableau Desktop Specialist" → "Data Visualization", "TOGAF" → "Enterprise Architecture", "ScrumMaster" → "Agile / Scrum", "Docker" → "Container Technology", "Terraform" → "Infrastructure as Code".
@@ -302,7 +378,39 @@ Output: {"credentialType":"LICENSE","issuerName":"California Medical Board","iss
 
 Example 48 — Patent document (PATENT, not OTHER):
 Input: "United States Patent and Trademark Office. Patent No. 11,234,567. Filed: March 2024. Granted: September 2025. Inventor: [NAME_REDACTED]. Assignee: [COMPANY]."
-Output: {"credentialType":"PATENT","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-09-01","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}`;
+Output: {"credentialType":"PATENT","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-09-01","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}
+
+Example 49 — Tech Certificate — Azure (normalize fieldOfStudy, issuer = accrediting body):
+Input: "Microsoft. Microsoft Certified: Azure Solutions Architect Expert. [NAME_REDACTED]. Achievement Date: June 10, 2025. Certification Number: [REDACTED]. Valid Until: June 10, 2027."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Microsoft","issuedDate":"2025-06-10","expiryDate":"2027-06-10","fieldOfStudy":"Cloud Architecture","accreditingBody":"Microsoft","fraudSignals":[],"confidence":0.92}
+
+Example 50 — Trade/Vocational Certificate (OSHA):
+Input: "U.S. Department of Labor. Occupational Safety and Health Administration. OSHA 30-Hour Construction Industry Outreach Training. [NAME_REDACTED]. Card Number: [REDACTED]. Date of Completion: August 20, 2025."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Occupational Safety and Health Administration","issuedDate":"2025-08-20","fieldOfStudy":"Construction Safety","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}
+
+Example 51 — Generic Completion Letter (ATTESTATION, not OTHER):
+Input: "To Whom It May Concern. This letter certifies that [NAME_REDACTED] has successfully completed the 200-hour Leadership Development Program at [COMPANY]. Date of Completion: April 15, 2025. Signed by [NAME_REDACTED], Director of Training."
+Output: {"credentialType":"ATTESTATION","issuerName":"[COMPANY]","issuedDate":"2025-04-15","fieldOfStudy":"Leadership Development","fraudSignals":[],"confidence":0.80}
+
+Example 52 — Membership Card (PROFESSIONAL, not OTHER):
+Input: "Institute of Electrical and Electronics Engineers (IEEE). Member Card. [NAME_REDACTED]. Member Number: [REDACTED]. Membership Grade: Senior Member. Valid: January 2026 — December 2026."
+Output: {"credentialType":"PROFESSIONAL","issuerName":"Institute of Electrical and Electronics Engineers","issuedDate":"2026-01-01","expiryDate":"2026-12-31","fieldOfStudy":"Electrical Engineering","accreditingBody":"IEEE","fraudSignals":[],"confidence":0.85}
+
+Example 53 — Certificate of Insurance (COI):
+Input: "Zurich American Insurance Company. Certificate of Liability Insurance. This certificate is issued as a matter of information only. Named Insured: [COMPANY_REDACTED]. Policy Number: GLO-2026-78901. Effective: March 1, 2026. Expiration: March 1, 2027. Type of Insurance: Commercial General Liability. Each Occurrence: $1,000,000. General Aggregate: $2,000,000."
+Output: {"credentialType":"INSURANCE","issuerName":"Zurich American Insurance Company","issuedDate":"2026-03-01","expiryDate":"2027-03-01","fieldOfStudy":"Commercial General Liability","licenseNumber":"GLO-2026-78901","fraudSignals":[],"confidence":0.90}
+
+Example 54 — NDA (LEGAL, not OTHER):
+Input: "MUTUAL NON-DISCLOSURE AGREEMENT. This Agreement is entered into as of February 1, 2026 between [NAME_REDACTED] ('Disclosing Party') and [COMPANY_REDACTED] ('Receiving Party'). Term: This Agreement shall remain in effect for three (3) years from the Effective Date. Governing Law: This Agreement shall be governed by the laws of the State of New York."
+Output: {"credentialType":"LEGAL","issuerName":"[COMPANY_REDACTED]","issuedDate":"2026-02-01","expiryDate":"2029-02-01","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.85}
+
+Example 55 — Utility Patent (PATENT with field):
+Input: "United States Patent. Patent Number: US 12,345,678 B2. Date of Patent: January 14, 2026. Title: Machine Learning System for Anomaly Detection in Network Traffic. Inventor: [NAME_REDACTED]. Assignee: [COMPANY_REDACTED]. Filed: June 3, 2023."
+Output: {"credentialType":"PATENT","issuerName":"United States Patent and Trademark Office","issuedDate":"2026-01-14","fieldOfStudy":"Machine Learning","licenseNumber":"US 12,345,678 B2","jurisdiction":"United States","fraudSignals":[],"confidence":0.92}
+
+Example 56 — Journal Article (PUBLICATION, not OTHER):
+Input: "Journal of the American Medical Association (JAMA). Original Investigation. Title: Long-term Outcomes of Novel Immunotherapy Approaches in Non-Small Cell Lung Cancer. Authors: [NAME_REDACTED], [NAME_REDACTED], et al. Published Online: October 5, 2025. DOI: 10.1001/jama.2025.xxxxx. Volume 334, Issue 14, Pages 1201-1215."
+Output: {"credentialType":"PUBLICATION","issuerName":"Journal of the American Medical Association","issuedDate":"2025-10-05","fieldOfStudy":"Oncology","fraudSignals":[],"confidence":0.90}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.

@@ -94,10 +94,12 @@ describe('AssetDetailView', () => {
 
   it('should show QR code section when publicId is present', () => {
     const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
-    const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
+    const { getByText, getAllByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
 
     expect(getByText('Verification QR Code')).toBeInTheDocument();
-    expect(getByText(/ARK-2024-00091/)).toBeInTheDocument();
+    // Public ID may appear in multiple places (QR section + badge link)
+    const publicIdElements = getAllByText(/ARK-2024-00091/);
+    expect(publicIdElements.length).toBeGreaterThan(0);
   });
 
   it('should not show QR code section when publicId is absent', () => {
@@ -162,8 +164,9 @@ describe('AssetDetailView', () => {
     const pendingAnchor = { ...mockAnchor, status: 'PENDING' as const };
     const { container } = render(<AssetDetailView anchor={pendingAnchor} />);
 
-    expect(container.innerHTML).toContain('Processing');
-    expect(container.innerHTML).toContain('awaiting network submission');
+    // Session 14 redesign: PENDING anchors show "Preparing for anchoring" instead of "Processing"
+    expect(container.innerHTML).toContain('Preparing for anchoring');
+    expect(container.innerHTML).toContain('prepared for permanent anchoring');
   });
 
   // BETA-12: Description display

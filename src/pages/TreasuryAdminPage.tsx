@@ -435,15 +435,20 @@ function X402PaymentStats() {
     // Single RPC replaces 3 separate x402_payments queries
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = supabase as any;
-    dbAny.rpc('get_treasury_stats').then(({ data }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null }) => {
-      if (data) {
+    dbAny.rpc('get_treasury_stats').then(({ data, error }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null; error: unknown }) => {
+      if (!error && data) {
         setStats({
           total: data.total_payments ?? 0,
           revenue: data.total_revenue_usd ?? 0,
           recent: data.recent_payments ?? [],
         });
+      } else {
+        // RPC function may not exist — fall back to zero state instead of hanging
+        setStats({ total: 0, revenue: 0, recent: [] });
       }
-    }).catch(() => {}).finally(() => setLoading(false));
+    }).catch(() => {
+      setStats({ total: 0, revenue: 0, recent: [] });
+    }).finally(() => setLoading(false));
   }, []);
 
   if (loading) return <Skeleton className="h-20 w-full" />;

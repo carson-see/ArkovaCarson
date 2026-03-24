@@ -132,11 +132,13 @@ describe('useOrganization', () => {
       expect(result.current.loading).toBe(false);
     });
 
-    // Update call
+    // Update call — Session 14: update().eq().select() chain for silent RLS failure detection
     mockFrom
       .mockReturnValueOnce({
         update: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ error: null }),
+          eq: vi.fn().mockReturnValue({
+            select: vi.fn().mockResolvedValue({ data: [{ id: 'org-1' }], error: null }),
+          }),
         }),
       })
       .mockReturnValueOnce({
