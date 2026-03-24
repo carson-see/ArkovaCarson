@@ -1,10 +1,10 @@
 # Arkova Worker — Railway Build (minimal, single-stage)
-FROM node:22-alpine
+FROM node:lts-alpine
 WORKDIR /app
 
 # Copy manifests and install ALL deps (need typescript for build)
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install
 
 # Copy source and build
 COPY tsconfig.json tsconfig.build.json ./
