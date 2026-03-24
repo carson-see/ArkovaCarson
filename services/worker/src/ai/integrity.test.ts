@@ -30,6 +30,8 @@ vi.mock('../utils/db.js', () => ({
       })),
       upsert: vi.fn().mockResolvedValue({ data: null, error: null }),
     })),
+    // SEC-2: Mock RPC for parameterized issuer matching
+    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   },
 }));
 

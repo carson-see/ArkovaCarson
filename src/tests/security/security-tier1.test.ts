@@ -258,11 +258,12 @@ describe('PII-03: Data retention policy', () => {
   });
 
   it('worker cron job is configured for daily retention cleanup', () => {
-    const indexPath = path.join(
+    // ARCH-1: Scheduled jobs extracted to routes/scheduled.ts
+    const scheduledPath = path.join(
       process.cwd(),
-      'services/worker/src/index.ts',
+      'services/worker/src/routes/scheduled.ts',
     );
-    const content = fs.readFileSync(indexPath, 'utf8');
+    const content = fs.readFileSync(scheduledPath, 'utf8');
 
     expect(content).toContain('cleanup_expired_data');
     expect(content).toContain('0 2 * * *');

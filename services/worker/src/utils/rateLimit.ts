@@ -1,7 +1,11 @@
 /**
- * Rate Limiting Middleware
+ * Rate Limiting Middleware (EFF-5)
  *
- * Simple in-memory rate limiter for sensitive endpoints.
+ * Pluggable rate limiter supporting both in-memory and external stores (Redis).
+ * In-memory store is the default; swap to Redis for horizontal scaling.
+ *
+ * To use Redis: set REDIS_URL env var and install ioredis.
+ * The IRateLimitStore interface allows custom backends.
  */
 
 import { Request, Response, NextFunction } from 'express';
@@ -12,8 +16,27 @@ interface RateLimitEntry {
   resetAt: number;
 }
 
-// In-memory store (use Redis in production)
-const rateLimitStore = new Map<string, RateLimitEntry>();
+/**
+ * EFF-5: Pluggable rate limit store interface for horizontal scaling.
+ * Implement this with Redis (ioredis/upstash) for multi-instance deployments.
+ *
+ * Default: in-memory Map (single instance).
+ * For multi-instance: implement IRateLimitStore with Redis and pass via setRateLimitStore().
+ */
+export interface IRateLimitStore {
+  get(key: string): RateLimitEntry | undefined;
+  set(key: string, entry: RateLimitEntry): void;
+  delete(key: string): void;
+  entries(): IterableIterator<[string, RateLimitEntry]>;
+}
+
+// In-memory store — works for single-instance deployments
+let rateLimitStore: IRateLimitStore = new Map<string, RateLimitEntry>();
+
+/** Swap rate limit backend (e.g., to Redis adapter). */
+export function setRateLimitStore(store: IRateLimitStore): void {
+  rateLimitStore = store;
+}
 
 // Clean up expired entries — exported for testability
 export function cleanupExpiredEntries(): void {

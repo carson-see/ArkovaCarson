@@ -15,12 +15,25 @@ import type { Database } from '../types/database.types.js';
 
 let client: SupabaseClient<Database> | null = null;
 
+/**
+ * PERF-2: Configure Supabase client with PgBouncer-compatible settings.
+ * When SUPABASE_POOLER_URL is set, uses PgBouncer (port 6543, transaction mode)
+ * to prevent connection exhaustion under concurrent load.
+ */
 export function getDb(): SupabaseClient<Database> {
   if (!client) {
-    client = createClient<Database>(config.supabaseUrl, config.supabaseServiceKey, {
+    // Prefer pooler URL if available (PgBouncer transaction mode)
+    const dbUrl = process.env.SUPABASE_POOLER_URL || config.supabaseUrl;
+    if (process.env.SUPABASE_POOLER_URL) {
+      logger.info('Using PgBouncer pooler connection');
+    }
+    client = createClient<Database>(dbUrl, config.supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
+      },
+      db: {
+        schema: 'public',
       },
     });
   }
@@ -106,4 +119,45 @@ export function resetDbCircuit(): void {
   dbCircuit.consecutiveFailures = 0;
   dbCircuit.openedAt = null;
   dbCircuit.lastError = null;
+}
+
+// ─── SCALE-3: DB call timeout wrapper ───────────────────────────────
+// Prevents DB calls from hanging indefinitely under load.
+
+const DEFAULT_DB_TIMEOUT_MS = 15_000; // 15 seconds
+
+/**
+ * Execute a DB operation with a timeout.
+ * If the operation exceeds the timeout, the promise rejects with a timeout error.
+ * The circuit breaker records the failure automatically.
+ *
+ * @example
+ *   const data = await withDbTimeout(() => db.from('anchors').select('*').limit(10));
+ */
+export async function withDbTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs = DEFAULT_DB_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`DB operation timed out after ${timeoutMs}ms`);
+      recordDbFailure(err);
+      reject(err);
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([operation(), timeout]);
+    recordDbSuccess();
+    return result;
+  } catch (err) {
+    if (!(err instanceof Error && err.message.includes('timed out'))) {
+      recordDbFailure(err);
+    }
+    throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

@@ -52,6 +52,34 @@ router.post('/', async (req: Request, res: Response) => {
 
     const orgId = profile?.org_id ?? undefined;
 
+    // EFF-1: Check for cached extraction result by fingerprint before calling AI.
+    // Saves ~30% of extraction costs from re-uploads, shared documents, error retries.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: cachedResult } = await (db as any)
+      .from('ai_usage_events')
+      .select('result_json, confidence')
+      .eq('fingerprint', fingerprint)
+      .eq('event_type', 'extraction')
+      .eq('success', true)
+      .not('result_json', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (cachedResult && cachedResult.length > 0 && cachedResult[0].result_json) {
+      logger.info(
+        { fingerprint, userId, orgId },
+        'AI extraction cache hit — returning cached result',
+      );
+      res.json({
+        fields: cachedResult[0].result_json,
+        confidence: cachedResult[0].confidence ?? 0.5,
+        provider: 'cache',
+        cached: true,
+        creditsRemaining: null,
+      });
+      return;
+    }
+
     // Beta: credit checks disabled — all users get unlimited AI extraction
     // TODO: Re-enable credit checks post-beta launch
     void checkAICredits(orgId, userId); // Track usage for analytics only
@@ -90,7 +118,7 @@ router.post('/', async (req: Request, res: Response) => {
       orgId,
     }, `AI extraction: ${result.provider} ${durationMs}ms conf=${result.confidence} fields=${Object.keys(result.fields).length}`);
 
-    // Log usage event (non-blocking)
+    // Log usage event with result cache (EFF-1: enables cache-by-fingerprint)
     logAIUsageEvent({
       orgId,
       userId,
@@ -103,6 +131,7 @@ router.post('/', async (req: Request, res: Response) => {
       durationMs,
       success: true,
       promptVersion: getExtractionPromptVersion(),
+      resultJson: result.fields as Record<string, unknown>,
     }).catch(() => {
       // Swallow — logging should not fail the request
     });

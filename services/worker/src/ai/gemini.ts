@@ -21,8 +21,12 @@ import type {
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
+import { logger } from '../utils/logger.js';
+import { verifyGrounding } from './grounding.js';
 
-const DEFAULT_MODEL = 'gemini-2.0-flash';
+// GAP-5: Pin to specific model versions to prevent silent quality drift.
+// Before upgrading: run eval suite, compare F1, document delta, update pin.
+const DEFAULT_MODEL = 'gemini-2.0-flash-001';
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-004';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
@@ -93,7 +97,8 @@ export class GeminiProvider implements IAIProvider {
         const { confidence: _, ...rawFields } = parsed;
         const validated = ExtractedFieldsSchema.safeParse(rawFields);
         if (!validated.success) {
-          throw new Error(`Schema validation failed: ${validated.error.message}`);
+          logger.warn({ zodError: validated.error.message, model: this.modelName }, 'Extraction schema validation failed');
+          throw new Error('Extraction schema validation failed');
         }
 
         return { fields: validated.data, confidence, tokensUsed: usage?.totalTokenCount };
@@ -102,9 +107,21 @@ export class GeminiProvider implements IAIProvider {
       }
     });
 
+    // CRIT-5/GAP-3: Grounding verification — check extracted fields against source text
+    const groundingReport = verifyGrounding(
+      result.fields as Record<string, unknown>,
+      request.strippedText,
+    );
+
+    // Apply confidence adjustment for ungrounded fields
+    const adjustedConfidence = Math.min(
+      1,
+      Math.max(0, result.confidence + groundingReport.confidenceAdjustment),
+    );
+
     return {
       fields: result.fields,
-      confidence: Math.min(1, Math.max(0, result.confidence)),
+      confidence: adjustedConfidence,
       provider: this.name,
       tokensUsed: result.tokensUsed,
     };
@@ -114,14 +131,18 @@ export class GeminiProvider implements IAIProvider {
     this.checkCircuit();
 
     const result = await this.withRetry(async () => {
-      // Use REST API directly with v1 endpoint (SDK defaults to v1beta which doesn't support embedding models)
+      // CRIT-1 fix: Use header auth instead of URL query parameter to prevent API key leakage in logs/proxies.
+      // CRIT-2 fix: Log full error server-side, return generic message to caller.
       const apiKey = process.env.GEMINI_API_KEY;
       const model = this.embeddingModelName;
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent?key=${apiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey!,
+          },
           body: JSON.stringify({
             model: `models/${model}`,
             content: { parts: [{ text }] },
@@ -132,7 +153,9 @@ export class GeminiProvider implements IAIProvider {
 
       if (!response.ok) {
         const errorBody = await response.text();
-        throw new Error(`Gemini embedding API error ${response.status}: ${errorBody}`);
+        // Log full error server-side for debugging, but never surface to client
+        logger.error({ status: response.status, errorBody, model }, 'Gemini embedding API error');
+        throw new Error(`Embedding generation failed (status ${response.status})`);
       }
 
       const data = (await response.json()) as { embedding: { values: number[] } };
@@ -216,7 +239,9 @@ export class GeminiProvider implements IAIProvider {
         }
 
         if (attempt < MAX_RETRIES - 1) {
-          const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+          // EFF-2: Add jitter to prevent thundering herd on transient outages
+          const baseDelay = BASE_DELAY_MS * Math.pow(2, attempt);
+          const delay = baseDelay * (0.5 + Math.random() * 0.5);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }
       }

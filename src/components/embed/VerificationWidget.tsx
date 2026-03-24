@@ -8,6 +8,7 @@
  *   <iframe src="https://app.arkova.io/embed/verify/ABC123" width="400" height="500" />
  *
  * @see P6-TS-03
+ * @see MVP-14 — Full embeddable widget integration (post-launch)
  */
 
 import { useState, useEffect } from 'react';

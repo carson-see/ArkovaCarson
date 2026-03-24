@@ -17,9 +17,17 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 /** Default page size — shared with frontend useAdminList hook */
 export const ADMIN_PAGE_SIZE = 25;
 
-/** Escape ilike wildcard characters to prevent filter injection */
+/**
+ * Escape ilike wildcard characters AND PostgREST filter syntax characters.
+ * CRIT-3: PostgREST .or() uses commas, dots, and parens as delimiters.
+ * Unescaped input can break out of the ilike value and inject filter conditions.
+ */
 function escapeIlike(input: string): string {
-  return input.replace(/[%_\\]/g, '\\$&');
+  // First escape SQL ilike wildcards
+  let escaped = input.replace(/[%_\\]/g, '\\$&');
+  // Then strip PostgREST filter syntax chars that could break .or() parsing
+  escaped = escaped.replace(/[,.()"']/g, '');
+  return escaped;
 }
 
 /** Parse pagination params with defaults */

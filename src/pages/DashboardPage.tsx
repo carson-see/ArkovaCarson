@@ -9,13 +9,14 @@
  * @see MVP-09 — Search, filter, and pagination
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, CheckCircle, Clock, Plus, Search, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
+import { useChecklist } from '@/hooks/useChecklist';
 import { AppShell } from '@/components/layout';
 import { StatCard, EmptyState } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
@@ -34,7 +35,6 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
-import { supabase } from '@/lib/supabase';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
@@ -59,42 +59,12 @@ export function DashboardPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(10);
 
-  // BUG-2.5 fix: Query actual checklist context for org admin steps
-  const [hasTemplates, setHasTemplates] = useState(false);
-  const [hasBillingPlan, setHasBillingPlan] = useState(false);
-
-  useEffect(() => {
-    if (!profile?.org_id || profile.role !== 'ORG_ADMIN') return;
-    // Check if org has any credential templates
-    supabase
-      .from('credential_templates')
-      .select('id', { count: 'exact', head: true })
-      .eq('org_id', profile.org_id)
-      .then(({ count }) => setHasTemplates((count ?? 0) > 0));
-  }, [profile?.org_id, profile?.role]);
-
-  useEffect(() => {
-    if (!user?.id) return;
-    // Check if user has an active subscription (any non-free plan)
-    supabase
-      .from('subscriptions')
-      .select('id')
-      .eq('user_id', user.id)
-      .in('status', ['active', 'trialing'])
-      .maybeSingle()
-      .then(({ data }) => setHasBillingPlan(!!data));
-  }, [user?.id]);
-
-  // Attestation count
-  const [attestationCount, setAttestationCount] = useState(0);
-  useEffect(() => {
-    if (!user?.id) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
-      .from('attestations')
-      .select('id', { count: 'exact', head: true })
-      .then(({ count }: { count: number | null }) => setAttestationCount(count ?? 0));
-  }, [user?.id]);
+  // DEBT-5: Consolidated checklist state (replaces 3 scattered useEffect blocks)
+  const { hasTemplates, hasBillingPlan, attestationCount } = useChecklist(
+    user?.id,
+    profile?.org_id,
+    profile?.role,
+  );
 
   const handleSignOut = async () => {
     await signOut();

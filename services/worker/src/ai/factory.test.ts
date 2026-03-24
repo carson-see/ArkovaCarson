@@ -5,7 +5,13 @@
  * Cloudflare Workers AI fallback gated by ENABLE_AI_FALLBACK.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+
+// Mock logger to avoid config dependency (gemini.ts now imports logger)
+vi.mock('../utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
 import { createAIProvider, getProviderName } from './factory.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';

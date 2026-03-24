@@ -134,7 +134,7 @@ VALUES (
 -- 5. PROFILES
 -- =============================================================================
 
-INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile)
+INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile, is_platform_admin)
 VALUES
   (
     '44444444-0000-0000-0000-000000000001',
@@ -143,6 +143,7 @@ VALUES
     'ORG_ADMIN',
     'aaaaaaaa-0000-0000-0000-000000000001',
     NULL,
+    true,
     true
   ),
   (
@@ -152,6 +153,7 @@ VALUES
     'ORG_ADMIN',
     'aaaaaaaa-0000-0000-0000-000000000001',
     NULL,
+    true,
     true
   );
 
