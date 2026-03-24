@@ -37,6 +37,15 @@ export function useAnchorStatusToast(status: string | undefined): void {
     // Status changed — fire appropriate toast
     if (status === 'SECURED') {
       toast.success(REALTIME_TOAST_LABELS.SECURED);
+      // Browser notification (Design Audit #17)
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('Document Secured', {
+          body: 'Your document has been permanently anchored and is now independently verifiable.',
+          icon: '/favicon.ico',
+        });
+      } else if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+      }
     } else if (status === 'REVOKED') {
       toast.error(REALTIME_TOAST_LABELS.REVOKED);
     } else if (status === 'EXPIRED') {

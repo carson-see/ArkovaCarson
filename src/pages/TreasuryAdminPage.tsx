@@ -204,7 +204,8 @@ export function TreasuryAdminPage() {
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_NETWORK}</span>
                 <Badge variant="secondary" className="font-mono text-xs">
-                  {network?.name ?? 'signet'}
+                  {/* eslint-disable-next-line -- lint:copy exempt: internal network name check */}
+                  {network?.name === 'signet' || network?.name === 'testnet' || network?.name === 'testnet4' ? 'Test Environment' : 'Production Network'}
                 </Badge>
               </div>
               <div className="flex items-center justify-between text-sm">

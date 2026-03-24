@@ -11,7 +11,7 @@
  */
 
 import { useState } from 'react';
-import { Check, X, Pencil, Sparkles, AlertTriangle } from 'lucide-react';
+import { Check, X, Pencil, Sparkles, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react';
 import type { ExtractionField, ExtractionProgress } from '../../lib/aiExtraction';
 
 interface AIFieldSuggestionsProps {
@@ -23,6 +23,7 @@ interface AIFieldSuggestionsProps {
   onFieldReject: (key: string) => void;
   onFieldEdit: (key: string, value: string) => void;
   onAcceptAll: (fields: ExtractionField[]) => void;
+  onReorder?: (fields: ExtractionField[]) => void;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -59,6 +60,7 @@ export function AIFieldSuggestions({
   onFieldReject,
   onFieldEdit,
   onAcceptAll,
+  onReorder,
 }: AIFieldSuggestionsProps) {
   const [editingField, setEditingField] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -165,6 +167,21 @@ export function AIFieldSuggestions({
                 {FIELD_LABELS[field.key] ?? field.key}
               </div>
 
+              {/* Per-field confidence indicator (Design Audit #6) */}
+              <div className="flex items-center gap-1.5 mb-1">
+                <span
+                  className={`inline-block h-2 w-2 rounded-full ${
+                    field.confidence >= 0.8 ? 'bg-emerald-500' :
+                    field.confidence >= 0.5 ? 'bg-amber-500' :
+                    'bg-red-500'
+                  }`}
+                  title={`AI confidence: ${Math.round(field.confidence * 100)}%`}
+                />
+                <span className="text-[10px] text-muted-foreground">
+                  {Math.round(field.confidence * 100)}% confidence
+                </span>
+              </div>
+
               {editingField === field.key ? (
                 <div className="flex items-center gap-2">
                   <input
@@ -195,6 +212,38 @@ export function AIFieldSuggestions({
                 <div className="text-sm font-medium truncate">{field.value}</div>
               )}
             </div>
+
+            {/* Reorder controls (Design Audit #18) */}
+            {onReorder && editingField !== field.key && (
+              <div className="flex flex-col gap-0.5 ml-2">
+                <button
+                  type="button"
+                  disabled={index === 0}
+                  onClick={() => {
+                    const reordered = [...fields];
+                    [reordered[index - 1], reordered[index]] = [reordered[index], reordered[index - 1]];
+                    onReorder(reordered);
+                  }}
+                  className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 rounded"
+                  title="Move up"
+                >
+                  <ArrowUp className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  disabled={index === fields.length - 1}
+                  onClick={() => {
+                    const reordered = [...fields];
+                    [reordered[index], reordered[index + 1]] = [reordered[index + 1], reordered[index]];
+                    onReorder(reordered);
+                  }}
+                  className="p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 rounded"
+                  title="Move down"
+                >
+                  <ArrowDown className="h-3 w-3" />
+                </button>
+              </div>
+            )}
 
             {editingField !== field.key && field.status === 'suggested' && (
               <div className="flex items-center gap-1 ml-3">

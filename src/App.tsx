@@ -40,7 +40,7 @@ const HelpPage = React.lazy(() => import('@/pages/HelpPage').then(m => ({ defaul
 const PublicVerifyPage = React.lazy(() => import('@/components/public/PublicVerifyPage').then(m => ({ default: m.PublicVerifyPage })));
 const WebhookSettingsPage = React.lazy(() => import('@/pages/WebhookSettingsPage').then(m => ({ default: m.WebhookSettingsPage })));
 const CredentialTemplatesPage = React.lazy(() => import('@/pages/CredentialTemplatesPage').then(m => ({ default: m.CredentialTemplatesPage })));
-const PricingPage = React.lazy(() => import('@/pages/PricingPage').then(m => ({ default: m.PricingPage })));
+const BillingPage = React.lazy(() => import('@/pages/BillingPage').then(m => ({ default: m.BillingPage })));
 const CheckoutSuccessPage = React.lazy(() => import('@/pages/CheckoutSuccessPage').then(m => ({ default: m.CheckoutSuccessPage })));
 const CheckoutCancelPage = React.lazy(() => import('@/pages/CheckoutCancelPage').then(m => ({ default: m.CheckoutCancelPage })));
 const VerifyMyRecordPage = React.lazy(() => import('@/pages/VerifyMyRecordPage').then(m => ({ default: m.VerifyMyRecordPage })));
@@ -193,7 +193,7 @@ export function App() {
           <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Billing routes */}
-          <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><PricingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><BillingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.BILLING_SUCCESS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><CheckoutSuccessPage /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.BILLING_CANCEL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><CheckoutCancelPage /></RouteGuard></AuthGuard>} />
 

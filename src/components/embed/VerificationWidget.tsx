@@ -1,13 +1,17 @@
 /**
  * Embeddable Verification Widget
  *
+ * STATUS: POST-LAUNCH (MVP-14) — This component exists but is not yet
+ * routed or exported. It will be integrated when the embeddable widget
+ * feature is prioritized. See docs/BACKLOG.md for MVP-14 status.
+ *
  * A self-contained component that can be embedded on third-party websites
  * via an iframe or script tag. Shows verification status for a given publicId.
  *
  * Usage (iframe):
  *   <iframe src="https://app.arkova.io/embed/verify/ABC123" width="400" height="500" />
  *
- * @see P6-TS-03
+ * @see P6-TS-03, MVP-14
  * @see MVP-14 — Full embeddable widget integration (post-launch)
  */
 

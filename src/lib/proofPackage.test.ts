@@ -71,12 +71,12 @@ describe('ProofPackageSchema', () => {
       public_id: 'ARK-ABC123',
     },
     network_receipt: {
-      receipt_id: 'tx_mock_001',
+      network_proof_id: 'tx_mock_001',
       block_height: 850000,
       observed_time: '2026-01-15T12:00:00.000Z',
     },
     proof: {
-      merkle_root: 'deadbeef'.repeat(8),
+      verification_tree_root: 'deadbeef'.repeat(8),
       proof_path: ['aabb'.repeat(16)],
     },
     metadata: {
@@ -174,10 +174,10 @@ describe('ProofPackageSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts null merkle_root and proof_path in proof', () => {
+  it('accepts null verification_tree_root and proof_path in proof', () => {
     const pkg = {
       ...validPackage,
-      proof: { merkle_root: null, proof_path: null },
+      proof: { verification_tree_root: null, proof_path: null },
     };
     const result = ProofPackageSchema.safeParse(pkg);
     expect(result.success).toBe(true);
@@ -211,7 +211,7 @@ describe('generateProofPackage', () => {
     expect(pkg.verification.verified).toBe(true);
     expect(pkg.verification.public_id).toBe('ARK-ABC123');
     expect(pkg.network_receipt).not.toBeNull();
-    expect(pkg.network_receipt!.receipt_id).toBe('tx_mock_001');
+    expect(pkg.network_receipt!.network_proof_id).toBe('tx_mock_001');
     expect(pkg.network_receipt!.block_height).toBe(850000);
     expect(pkg.network_receipt!.observed_time).toBe('2026-01-15T12:00:00.000Z');
   });
@@ -227,7 +227,7 @@ describe('generateProofPackage', () => {
   it('includes proof data when provided', () => {
     const pkg = generateProofPackage(validAnchorSecured, validProofData);
     expect(pkg.proof).not.toBeNull();
-    expect(pkg.proof!.merkle_root).toBe(validProofData.merkle_root);
+    expect(pkg.proof!.verification_tree_root).toBe(validProofData.merkle_root);
     expect(pkg.proof!.proof_path).toEqual(validProofData.proof_path);
   });
 

@@ -37,7 +37,13 @@ import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP } from '@/lib/copy';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+  TooltipProvider,
+} from '@/components/ui/tooltip';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { verifyUrl } from '@/lib/routes';
 
@@ -210,7 +216,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 </p>
               </div>
             </div>
-            <Badge variant={status.variant} className="h-7">
+            <Badge variant={status.variant} className={`h-7 ${anchor.status === 'SECURED' ? 'animate-secured animate-status-pulse' : ''}`}>
               <StatusIcon className="mr-1 h-3.5 w-3.5" />
               {status.label}
             </Badge>
@@ -241,6 +247,17 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               <div className="flex items-center gap-2 text-sm font-medium">
                 <Hash className="h-4 w-4 text-muted-foreground" />
                 Document Fingerprint
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button type="button" className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-muted text-[10px] font-medium text-muted-foreground hover:bg-muted/80 cursor-help" aria-label={FINGERPRINT_TOOLTIP.TITLE}>?</button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs">
+                      <p className="text-xs font-medium mb-1">{FINGERPRINT_TOOLTIP.TITLE}</p>
+                      <p className="text-xs text-muted-foreground">{FINGERPRINT_TOOLTIP.DESCRIPTION}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
               <Button
                 variant="ghost"
@@ -342,8 +359,8 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             );
           })()}
 
-          {/* Network Receipt (BETA-11) */}
-          {anchor.chainTxId ? (
+          {/* Network Receipt (BETA-11) — fixed SUBMITTED condition (Design Audit #4) */}
+          {anchor.status === 'SECURED' && anchor.chainTxId ? (
             <>
               <Separator />
               <div className="space-y-2">
@@ -356,23 +373,29 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
             </>
-          ) : anchor.status === 'SUBMITTED' && anchor.chainTxId ? (
+          ) : anchor.status === 'SUBMITTED' ? (
             <>
               <Separator />
               <div className="space-y-2">
                 <p className="text-sm font-medium">{EXPLORER_LABELS.NETWORK_RECEIPT}</p>
-                <a
-                  href={`https://mempool.space/signet/tx/${anchor.chainTxId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Awaiting confirmation — view transaction
-                </a>
+                {anchor.chainTxId ? (
+                  <a
+                    href={`https://mempool.space/signet/tx/${anchor.chainTxId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Awaiting confirmation — view on network
+                  </a>
+                ) : (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    Submitted — awaiting network confirmation
+                  </p>
+                )}
               </div>
             </>
-          ) : (anchor.status === 'PENDING' || anchor.status === 'SUBMITTED') ? (
+          ) : anchor.status === 'PENDING' ? (
             <>
               <Separator />
               <div className="space-y-2">
@@ -385,6 +408,33 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           ) : null}
         </CardContent>
       </Card>
+
+      {/* Live anchoring progress indicator (Design Audit #16) */}
+      {(anchor.status === 'PENDING' || anchor.status === 'SUBMITTED') && (
+        <Card className="border-amber-500/20 bg-amber-500/5">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-4">
+              <div className="relative flex h-10 w-10 items-center justify-center">
+                <div className="absolute inset-0 animate-ping rounded-full bg-amber-500/20" />
+                <Clock className="relative h-5 w-5 text-amber-500" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium">
+                  {anchor.status === 'SUBMITTED' ? 'Awaiting network confirmation' : 'Preparing for anchoring'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {anchor.status === 'SUBMITTED'
+                    ? 'Your record has been submitted to the network. Confirmation typically takes ~10 minutes.'
+                    : 'Your record is being prepared for permanent anchoring.'}
+                </p>
+              </div>
+              <Badge variant="secondary" className="text-xs shrink-0">
+                {anchor.status === 'SUBMITTED' ? 'Confirming' : 'Queued'}
+              </Badge>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Verification Walkthrough (DEMO-02) */}
       <VerificationWalkthrough hasMetadata={!!anchor.metadata && Object.keys(anchor.metadata).length > 0} />

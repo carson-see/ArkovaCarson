@@ -4,8 +4,9 @@
  * Displays a list of secured documents with status and actions.
  */
 
-import { FileText, CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, GraduationCap, Loader2 } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { FileText, CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, GraduationCap, Loader2, RefreshCw, Mail } from 'lucide-react';
+import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -98,6 +99,19 @@ export function RecordsList({
     return null;
   }
 
+  // Virtual scrolling: progressively render for large lists (Design Audit #20)
+  const VIRTUAL_THRESHOLD = 100;
+  if (records.length > VIRTUAL_THRESHOLD) {
+    return (
+      <VirtualizedRecordsList
+        records={records}
+        onViewRecord={onViewRecord}
+        onDownloadProof={onDownloadProof}
+        onRevokeRecord={onRevokeRecord}
+      />
+    );
+  }
+
   return (
     <div className="divide-y">
       {records.map((record) => (
@@ -109,6 +123,58 @@ export function RecordsList({
           onRevoke={() => onRevokeRecord?.(record)}
         />
       ))}
+    </div>
+  );
+}
+
+/** Progressive rendering for large lists (Design Audit #20) */
+function VirtualizedRecordsList({
+  records,
+  onViewRecord,
+  onDownloadProof,
+  onRevokeRecord,
+}: Readonly<Omit<RecordsListProps, 'loading'>>) {
+  const BATCH_SIZE = 50;
+  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const loadMore = useCallback(() => {
+    setVisibleCount(prev => Math.min(prev + BATCH_SIZE, records.length));
+  }, [records.length]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) loadMore(); },
+      { rootMargin: '200px' }
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadMore]);
+
+  const visible = records.slice(0, visibleCount);
+
+  return (
+    <div className="divide-y">
+      {visible.map((record) => (
+        <RecordRow
+          key={record.id}
+          record={record}
+          onView={() => onViewRecord?.(record)}
+          onDownload={() => onDownloadProof?.(record)}
+          onRevoke={() => onRevokeRecord?.(record)}
+        />
+      ))}
+      {visibleCount < records.length && (
+        <div ref={sentinelRef} className="flex items-center justify-center py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+          <span className="ml-2 text-sm text-muted-foreground">
+            Showing {visibleCount} of {records.length} records
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,7 +260,29 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
                 Download Proof
               </DropdownMenuItem>
             )}
-            {record.status !== 'REVOKED' && (
+            {record.status === 'REVOKED' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onView}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {REVOKED_EXPIRED_ACTIONS.REQUEST_REISSUANCE}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={onView}>
+                  <Mail className="mr-2 h-4 w-4" />
+                  {REVOKED_EXPIRED_ACTIONS.CONTACT_ISSUER}
+                </DropdownMenuItem>
+              </>
+            )}
+            {record.status === 'EXPIRED' && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={onView}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {REVOKED_EXPIRED_ACTIONS.REQUEST_RENEWAL}
+                </DropdownMenuItem>
+              </>
+            )}
+            {record.status !== 'REVOKED' && record.status !== 'EXPIRED' && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem

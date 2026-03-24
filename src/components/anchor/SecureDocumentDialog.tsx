@@ -22,6 +22,9 @@ import {
   ExternalLink,
   Sparkles,
   SkipForward,
+  RefreshCw,
+  PenLine,
+  Clock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -47,7 +50,7 @@ import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { toast } from 'sonner';
-import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS } from '@/lib/copy';
+import { TOAST, ANCHORING_STATUS_LABELS, SECURE_DIALOG_LABELS, DESCRIPTION_LABELS, AI_EXTRACTION_LABELS, EXTRACTION_RECOVERY_LABELS, CONFIRMATION_PROGRESS_LABELS } from '@/lib/copy';
 import { verifyUrl, recordDetailPath } from '@/lib/routes';
 import { useNavigate } from 'react-router-dom';
 
@@ -57,7 +60,7 @@ interface SecureDocumentDialogProps {
   onSuccess?: () => void;
 }
 
-type Step = 'upload' | 'extracting' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
+type Step = 'upload' | 'extracting' | 'extraction-failed' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
 
 interface FileData {
   file: File;
@@ -238,11 +241,10 @@ export function SecureDocumentDialog({
       handleConfirm(autoAccepted);
       return;
     } else {
-      // Extraction failed — notify user, then anchor without metadata
+      // Extraction failed — show recovery screen with retry/manual/skip options
       toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
       setExtractionProgress(null);
-      await autoSelectTemplate('OTHER');
-      handleConfirm([]);
+      setStep('extraction-failed');
       return;
     }
   }, [fileData, selectedTemplate, autoSelectTemplate]);
@@ -526,6 +528,50 @@ export function SecureDocumentDialog({
             </div>
           )}
 
+          {step === 'extraction-failed' && (
+            <div className="space-y-4 py-2">
+              <Alert className="border-amber-500/30 bg-amber-500/10">
+                <AlertCircle className="h-4 w-4 text-amber-600" />
+                <AlertDescription className="text-sm">
+                  <p className="font-medium mb-1">{EXTRACTION_RECOVERY_LABELS.TITLE}</p>
+                  <p className="text-muted-foreground">{EXTRACTION_RECOVERY_LABELS.DESCRIPTION}</p>
+                </AlertDescription>
+              </Alert>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() => handleStartExtraction()}
+                >
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {EXTRACTION_RECOVERY_LABELS.RETRY}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={async () => {
+                    await autoSelectTemplate('OTHER');
+                    setStep('template');
+                  }}
+                >
+                  <PenLine className="mr-2 h-4 w-4" />
+                  {EXTRACTION_RECOVERY_LABELS.ENTER_MANUALLY}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="w-full justify-start text-muted-foreground"
+                  onClick={async () => {
+                    await autoSelectTemplate('OTHER');
+                    handleConfirm([]);
+                  }}
+                >
+                  <SkipForward className="mr-2 h-4 w-4" />
+                  {EXTRACTION_RECOVERY_LABELS.SKIP}
+                </Button>
+              </div>
+            </div>
+          )}
+
           {step === 'template' && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
@@ -625,6 +671,19 @@ export function SecureDocumentDialog({
                 <p className="text-sm text-muted-foreground mt-1">
                   {ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING}
                 </p>
+              </div>
+
+              {/* Confirmation progress notice */}
+              <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                <Clock className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="text-xs text-amber-700 dark:text-amber-300">
+                    {CONFIRMATION_PROGRESS_LABELS.IN_PROGRESS}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {CONFIRMATION_PROGRESS_LABELS.NOTIFICATION_NOTE}
+                  </p>
+                </div>
               </div>
 
               {/* Verification link */}

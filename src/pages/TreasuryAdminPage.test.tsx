@@ -89,7 +89,7 @@ describe('TreasuryAdminPage', () => {
 
   it('renders the page title for admin users', () => {
     renderPage();
-    expect(screen.getByText('Treasury Dashboard')).toBeInTheDocument();
+    expect(screen.getByText('Anchoring Infrastructure')).toBeInTheDocument();
   });
 
   it('renders anchor stat cards', () => {
@@ -102,7 +102,7 @@ describe('TreasuryAdminPage', () => {
 
   it('renders treasury vault section', () => {
     renderPage();
-    expect(screen.getByText('Treasury Vault')).toBeInTheDocument();
+    expect(screen.getByText('Anchoring Account')).toBeInTheDocument();
   });
 
   it('renders network status section', () => {

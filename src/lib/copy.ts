@@ -853,13 +853,13 @@ export const ACCOUNT_DELETE_LABELS = {
 // =============================================================================
 
 export const TREASURY_LABELS = {
-  PAGE_TITLE: 'Treasury Dashboard',
+  PAGE_TITLE: 'Anchoring Infrastructure',
   PAGE_SUBTITLE: 'Internal operations dashboard for Arkova platform administrators.',
-  VAULT_SECTION: 'Treasury Vault',
-  VAULT_ADDRESS: 'Address',
-  VAULT_BALANCE: 'Balance (sats)',
-  VAULT_NETWORK: 'Network',
-  UTXO_SECTION: 'Unspent Outputs',
+  VAULT_SECTION: 'Anchoring Account',
+  VAULT_ADDRESS: 'Account Address',
+  VAULT_BALANCE: 'Available Anchoring Credits',
+  VAULT_NETWORK: 'Environment',
+  UTXO_SECTION: 'Available Outputs',
   UTXO_COUNT: 'Available Outputs',
   ANCHOR_STATS_SECTION: 'Anchor Processing',
   TOTAL_ANCHORS: 'Total Anchors',
@@ -1160,6 +1160,50 @@ export const PAYMENT_LABELS = {
   TOP_ENDPOINTS: 'Revenue by Endpoint',
   SETTLEMENT_STATUS: 'Settlement Status',
   AVERAGE_PAYMENT: 'Avg Payment',
+} as const;
+
+// =============================================================================
+// DESIGN AUDIT — NEW LABELS
+// =============================================================================
+
+export const EXTRACTION_RECOVERY_LABELS = {
+  TITLE: 'Extraction Unsuccessful',
+  DESCRIPTION: 'We couldn\'t extract metadata from this document. This may be due to image quality or an unsupported format.',
+  RETRY: 'Retry Extraction',
+  ENTER_MANUALLY: 'Enter Manually',
+  SKIP: 'Skip \u2014 Anchor Without Metadata',
+} as const;
+
+export const CONFIRMATION_PROGRESS_LABELS = {
+  IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified in ~10 minutes.',
+  NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
+} as const;
+
+export const FINGERPRINT_TOOLTIP = {
+  TITLE: 'What is a document fingerprint?',
+  DESCRIPTION: 'A document fingerprint is a unique identifier calculated from the document\u2019s contents. Like a human fingerprint, no two documents produce the same one. This fingerprint is what gets permanently anchored.',
+} as const;
+
+export const ONBOARDING_VALUE_PROP_LABELS = {
+  TITLE: 'Welcome to Arkova',
+  STEP_1_TITLE: 'Upload any document',
+  STEP_1_DESC: 'Drag and drop a credential, certificate, or any file you need to verify.',
+  STEP_2_TITLE: 'AI extracts and verifies metadata',
+  STEP_2_DESC: 'Our AI reads your document, extracts key fields, and checks for inconsistencies \u2014 all on your device.',
+  STEP_3_TITLE: 'Permanently anchored and verifiable',
+  STEP_3_DESC: 'Your proof is permanently recorded. Anyone can independently verify it \u2014 no Arkova account needed.',
+  CONTINUE: 'Get Started',
+} as const;
+
+export const REVOKED_EXPIRED_ACTIONS = {
+  REQUEST_REISSUANCE: 'Request Re-Issuance',
+  REQUEST_RENEWAL: 'Request Renewal',
+  CONTACT_ISSUER: 'Contact Issuer',
+} as const;
+
+export const BILLING_PAGE_LABELS = {
+  PAGE_TITLE: 'Billing & Subscription',
+  PAGE_SUBTITLE: 'Manage your plan, view usage, and update payment methods.',
 } as const;
 
 export const TERM_REPLACEMENTS: Record<string, string> = {

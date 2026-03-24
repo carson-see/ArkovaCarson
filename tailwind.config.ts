@@ -114,13 +114,13 @@ const config: Config = {
       },
       fontFamily: {
         sans: [
-          'Inter',
+          'DM Sans',
           'ui-sans-serif',
           'system-ui',
           'sans-serif',
         ],
         mono: [
-          'Space Grotesk',
+          'JetBrains Mono',
           'ui-monospace',
           'SFMono-Regular',
           'monospace',

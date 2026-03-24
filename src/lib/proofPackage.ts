@@ -33,19 +33,19 @@ export const ProofPackageSchema = z.object({
     public_id: z.string().nullable(),
   }),
 
-  // Network receipt (chain data)
+  // Network receipt (chain data) — humanized field names (Design Audit #10)
   network_receipt: z
     .object({
-      receipt_id: z.string(),
+      network_proof_id: z.string(),
       block_height: z.number(),
       observed_time: z.string().datetime(),
     })
     .nullable(),
 
-  // Merkle proof (if available)
+  // Verification tree proof (if available) — humanized field names (Design Audit #10)
   proof: z
     .object({
-      merkle_root: z.string().nullable(),
+      verification_tree_root: z.string().nullable(),
       proof_path: z.array(z.string()).nullable(),
     })
     .nullable(),
@@ -56,6 +56,9 @@ export const ProofPackageSchema = z.object({
     user_id: z.string().uuid(),
     org_id: z.string().uuid().nullable(),
   }),
+
+  // Human-readable glossary (Design Audit #10)
+  proof_glossary: z.record(z.string()).optional(),
 });
 
 export type ProofPackage = z.infer<typeof ProofPackageSchema>;
@@ -112,7 +115,7 @@ export function generateProofPackage(
     network_receipt:
       anchor.status === 'SECURED' && anchor.chain_tx_id
         ? {
-            receipt_id: anchor.chain_tx_id,
+            network_proof_id: anchor.chain_tx_id,
             block_height: anchor.chain_block_height!,
             observed_time: anchor.chain_timestamp!,
           }
@@ -120,7 +123,7 @@ export function generateProofPackage(
 
     proof: proof
       ? {
-          merkle_root: proof.merkle_root,
+          verification_tree_root: proof.merkle_root,
           proof_path: proof.proof_path,
         }
       : null,
@@ -129,6 +132,15 @@ export function generateProofPackage(
       created_at: anchor.created_at,
       user_id: anchor.user_id,
       org_id: anchor.org_id,
+    },
+
+    proof_glossary: {
+      fingerprint: 'A SHA-256 hash of the document contents. Two identical documents always produce the same fingerprint.',
+      network_proof_id: 'The unique identifier for the network record that contains this document\'s proof.',
+      verification_tree_root: 'The root of the Merkle tree that groups multiple documents into a single network record.',
+      proof_path: 'The cryptographic path from this document\'s fingerprint to the verification tree root.',
+      observed_time: 'The timestamp when the network confirmed this record.',
+      block_height: 'The position in the network\'s permanent record chain where this proof was stored.',
     },
   };
 

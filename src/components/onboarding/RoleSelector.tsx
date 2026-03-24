@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { User, Building2, ArrowRight, Loader2, CheckCircle } from 'lucide-react';
+import { User, Building2, ArrowRight, Loader2, CheckCircle, Upload, Sparkles, Shield } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -16,6 +16,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { ONBOARDING_VALUE_PROP_LABELS } from '@/lib/copy';
 
 type RoleOption = 'INDIVIDUAL' | 'ORG_ADMIN';
 
@@ -26,12 +27,49 @@ interface RoleSelectorProps {
 
 export function RoleSelector({ onSelect, loading = false }: Readonly<RoleSelectorProps>) {
   const [selected, setSelected] = useState<RoleOption | null>(null);
+  const [showValueProp, setShowValueProp] = useState(true);
 
   const handleContinue = () => {
     if (selected) {
       onSelect(selected);
     }
   };
+
+  // Value proposition screen (Design Audit #7)
+  if (showValueProp) {
+    const steps = [
+      { icon: Upload, title: ONBOARDING_VALUE_PROP_LABELS.STEP_1_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_1_DESC },
+      { icon: Sparkles, title: ONBOARDING_VALUE_PROP_LABELS.STEP_2_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_2_DESC },
+      { icon: Shield, title: ONBOARDING_VALUE_PROP_LABELS.STEP_3_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_3_DESC },
+    ];
+    return (
+      <div className="space-y-8">
+        <div className="text-center space-y-2">
+          <h1 className="text-2xl font-bold">{ONBOARDING_VALUE_PROP_LABELS.TITLE}</h1>
+        </div>
+        <div className="space-y-4">
+          {steps.map((step, i) => (
+            <div key={step.title} className="flex items-start gap-4">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <step.icon className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">
+                  <span className="text-primary mr-2">{i + 1}.</span>
+                  {step.title}
+                </p>
+                <p className="text-sm text-muted-foreground mt-0.5">{step.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <Button className="w-full" size="lg" onClick={() => setShowValueProp(false)}>
+          {ONBOARDING_VALUE_PROP_LABELS.CONTINUE}
+          <ArrowRight className="ml-2 h-4 w-4" />
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
