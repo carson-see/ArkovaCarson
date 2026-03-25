@@ -21,10 +21,10 @@ export const FLAGS = {
   ENABLE_REPORTS: true,
   MAINTENANCE_MODE: false,
   ENABLE_BATCH_ANCHORING: false,
-  ENABLE_AI_EXTRACTION: false,
-  ENABLE_SEMANTIC_SEARCH: false,
-  ENABLE_AI_FRAUD: false,
-  ENABLE_AI_REPORTS: false,
+  ENABLE_AI_EXTRACTION: true,
+  ENABLE_SEMANTIC_SEARCH: true,
+  ENABLE_AI_FRAUD: true,
+  ENABLE_AI_REPORTS: true,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;

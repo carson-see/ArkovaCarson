@@ -1,22 +1,20 @@
-# Arkova Worker — Cloud Run Build (minimal, single-stage)
-FROM node:lts-alpine
+# Arkova Worker — Cloud Run Build (multi-stage)
+
+# Stage 1: Build
+FROM node:lts-alpine AS builder
 WORKDIR /app
-
-# Copy manifests and install ALL deps (need typescript for build)
 COPY package.json package-lock.json ./
-RUN npm install
-
-# Copy source and build
+RUN npm ci
 COPY tsconfig.json tsconfig.build.json ./
 COPY src/ ./src/
 RUN npm run build
 
-# Remove dev dependencies after build
-RUN npm prune --omit=dev && npm cache clean --force
-
-# Remove source (only need compiled dist/)
-RUN rm -rf src/ tsconfig.json tsconfig.build.json
-
+# Stage 2: Production
+FROM node:lts-alpine
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY --from=builder /app/dist ./dist
 ENV PORT=3001
 EXPOSE 3001
 CMD ["node", "dist/index.js"]
