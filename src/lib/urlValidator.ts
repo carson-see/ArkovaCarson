@@ -20,6 +20,7 @@ export function isSafeUrl(url: string): boolean {
   if (!trimmed) return false;
 
   // Reject URLs with leading whitespace/control characters that could bypass checks
+  // eslint-disable-next-line no-control-regex
   if (/^[\s\x00-\x1f]/.test(url)) return false;
 
   try {
