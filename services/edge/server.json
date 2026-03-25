@@ -1,0 +1,83 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.arkova/verification",
+  "title": "Arkova Verification",
+  "description": "Privacy-first document verification anchored to the public ledger. Verify credentials, search 29,000+ anchored records, query SEC filings and patents via RAG, and anchor document fingerprints — all without documents ever leaving the user's device.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/carson-see/ArkovaCarson",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "arkova-edge",
+      "version": "1.0.0",
+      "transport": {
+        "type": "streamable-http",
+        "url": "https://edge.arkova.ai/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "ARKOVA_API_KEY",
+          "description": "Your Arkova API key. Get one at https://app.arkova.io/settings/api-keys",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "verify_credential",
+      "description": "Verify a credential's authenticity and current status by its public identifier."
+    },
+    {
+      "name": "search_credentials",
+      "description": "Search for credentials using natural language queries with semantic similarity matching."
+    },
+    {
+      "name": "nessie_query",
+      "description": "Query Arkova's verified intelligence engine over SEC filings, patents, and regulatory documents."
+    },
+    {
+      "name": "anchor_document",
+      "description": "Submit a document SHA-256 fingerprint for anchoring to the public ledger."
+    },
+    {
+      "name": "verify_document",
+      "description": "Verify a document by its SHA-256 fingerprint and get anchor proof."
+    }
+  ],
+  "resources": [
+    {
+      "name": "api-overview",
+      "uri": "arkova://api/overview",
+      "description": "Overview of Arkova's verification API, available tools, and authentication."
+    },
+    {
+      "name": "credential-types",
+      "uri": "arkova://schema/credential-types",
+      "description": "Supported credential types, record types, and status values."
+    }
+  ],
+  "prompts": [
+    {
+      "name": "verify-credential",
+      "description": "Look up and verify a credential by its Arkova public ID."
+    },
+    {
+      "name": "search-and-verify",
+      "description": "Search for credentials and verify the top result."
+    },
+    {
+      "name": "anchor-and-verify",
+      "description": "Anchor a document fingerprint and confirm submission."
+    },
+    {
+      "name": "research-topic",
+      "description": "Research a topic using Nessie's verified intelligence engine."
+    }
+  ]
+}

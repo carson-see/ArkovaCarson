@@ -2,13 +2,13 @@
  * Arkova Remote MCP Server (P8-S19)
  *
  * Cloudflare Worker implementing the Model Context Protocol over
- * Streamable HTTP transport. Exposes verification and semantic search
+ * Streamable HTTP transport. Exposes verification, search, and anchoring
  * tools for AI agents, ATS systems, and background check integrations.
  *
- * Uses @modelcontextprotocol/sdk McpServer + WebStandardStreamableHTTPServerTransport
- * for Cloudflare Workers compatibility.
+ * Connector-ready: resources, prompts, tool annotations, and
+ * OAuth Protected Resource Metadata for MCP registry listing.
  *
- * Authentication: OAuth 2.0 or API key via X-API-Key header.
+ * Authentication: OAuth 2.0 Bearer or API key via X-API-Key header.
  * Constitution 1.4: No raw PII in tool responses.
  */
 
@@ -16,6 +16,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { z } from 'zod';
 import {
+  TOOL_DEFINITIONS,
   handleVerifyCredential,
   handleSearchCredentials,
   handleNessieQuery,
@@ -25,64 +26,55 @@ import {
 } from './mcp-tools';
 import type { Env } from './env';
 
+/** Server identity */
+const SERVER_NAME = 'arkova-verification';
+const SERVER_VERSION = '1.0.0';
+
+/** Map tool name → description from the single source of truth */
+const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
+
 /**
- * Create and configure the MCP server with Arkova tools.
+ * Create and configure the MCP server with Arkova tools, resources, and prompts.
  */
 function createMcpServer(config: SupabaseConfig): McpServer {
   const server = new McpServer({
-    name: 'arkova-verification',
-    version: '1.0.0',
+    name: SERVER_NAME,
+    version: SERVER_VERSION,
   });
 
-  // ── Tool: verify_credential ──────────────────────────────────────────
+  // ── Tools ─────────────────────────────────────────────────────────────
+
   server.tool(
     'verify_credential',
-    'Verify a credential\'s authenticity and current status by its public identifier. ' +
-    'Returns verification status, issuer information, credential type, dates, and network anchoring proof.',
-    {
-      public_id: z.string().describe('The credential\'s public identifier (e.g., ARK-2026-001)'),
-    },
-    async ({ public_id }) => {
-      return handleVerifyCredential({ public_id }, config);
-    },
+    TOOL_DESC['verify_credential'],
+    { public_id: z.string().describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
+    async ({ public_id }) => handleVerifyCredential({ public_id }, config),
   );
 
-  // ── Tool: search_credentials ─────────────────────────────────────────
   server.tool(
     'search_credentials',
-    'Search for credentials using natural language queries. ' +
-    'Uses semantic similarity matching to find relevant credentials. ' +
-    'Returns ranked results with verification status and relevance scores.',
+    TOOL_DESC['search_credentials'],
     {
       query: z.string().describe('Natural language search query'),
       max_results: z.number().optional().describe('Maximum results to return (default: 10, max: 50)'),
     },
-    async ({ query, max_results }) => {
-      return handleSearchCredentials({ query, max_results }, config);
-    },
+    async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
   );
 
-  // ── Tool: nessie_query (PH1-SDK-03) ──────────────────────────────────
   server.tool(
     'nessie_query',
-    'Query Arkova\'s verified intelligence engine (Nessie). Searches anchored public records ' +
-    '(SEC filings, patents, regulatory documents) using semantic similarity. ' +
-    'In "context" mode, returns a synthesized answer with citations linking to anchored documents.',
+    TOOL_DESC['nessie_query'],
     {
       query: z.string().describe('Natural language query'),
       mode: z.enum(['retrieval', 'context']).optional().describe('Query mode (default: retrieval)'),
       limit: z.number().optional().describe('Max results (default: 10, max: 50)'),
     },
-    async ({ query, mode, limit }) => {
-      return handleNessieQuery({ query, mode, limit }, config);
-    },
+    async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
   );
 
-  // ── Tool: anchor_document (PH1-SDK-03) ─────────────────────────────
   server.tool(
     'anchor_document',
-    'Submit a document fingerprint for anchoring to the public ledger. ' +
-    'Only the SHA-256 fingerprint is sent — the document itself never leaves your device.',
+    TOOL_DESC['anchor_document'],
     {
       content_hash: z.string().describe('SHA-256 fingerprint of the document'),
       record_type: z.string().optional().describe('Record type (e.g., patent_grant, 10-K)'),
@@ -90,107 +82,274 @@ function createMcpServer(config: SupabaseConfig): McpServer {
       title: z.string().optional().describe('Document title'),
       source_url: z.string().optional().describe('Original document URL'),
     },
-    async ({ content_hash, record_type, source, title, source_url }) => {
-      return handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config);
-    },
+    async ({ content_hash, record_type, source, title, source_url }) =>
+      handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
   );
 
-  // ── Tool: verify_document (PH1-SDK-03) ─────────────────────────────
   server.tool(
     'verify_document',
-    'Verify a document by its SHA-256 fingerprint. Checks if it has been anchored ' +
-    'and returns the anchor proof including network receipt and timestamp.',
+    TOOL_DESC['verify_document'],
+    { content_hash: z.string().describe('SHA-256 fingerprint of the document to verify') },
+    async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
+  );
+
+  // ── Resources ─────────────────────────────────────────────────────────
+
+  server.resource(
+    'api-overview',
+    'arkova://api/overview',
+    { mimeType: 'text/plain' },
+    async () => ({
+      contents: [{
+        uri: 'arkova://api/overview',
+        mimeType: 'text/plain',
+        text: [
+          'Arkova Verification API — Overview',
+          '',
+          'Arkova anchors document fingerprints (SHA-256 hashes) to the public ledger',
+          'for tamper-proof verification. Documents never leave the user\'s device —',
+          'only their cryptographic fingerprints are submitted.',
+          '',
+          'Available tools:',
+          '  verify_credential  — Verify a credential by its public ID (e.g., ARK-2026-001)',
+          '  search_credentials — Semantic search across 29,000+ anchored records',
+          '  nessie_query       — RAG search over SEC filings, patents, and regulatory docs',
+          '  anchor_document    — Submit a SHA-256 fingerprint for batch anchoring',
+          '  verify_document    — Check if a document fingerprint has been anchored',
+          '',
+          'Authentication: API key (X-API-Key header) or OAuth Bearer token.',
+          'Get your API key at https://app.arkova.io/settings/api-keys',
+          '',
+          'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
+        ].join('\n'),
+      }],
+    }),
+  );
+
+  server.resource(
+    'credential-types',
+    'arkova://schema/credential-types',
+    { mimeType: 'application/json' },
+    async () => ({
+      contents: [{
+        uri: 'arkova://schema/credential-types',
+        mimeType: 'application/json',
+        text: JSON.stringify({
+          credential_types: [
+            'DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'CLE',
+            'PROFESSIONAL', 'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL',
+            'INSURANCE', 'SEC_FILING', 'PATENT', 'REGULATION', 'PUBLICATION', 'OTHER',
+          ],
+          record_types: [
+            'patent_grant', '10-K', '10-Q', '8-K', 'regulatory_notice',
+            'federal_register', 'academic_paper', 'document',
+          ],
+          statuses: ['ACTIVE', 'REVOKED', 'SUPERSEDED', 'EXPIRED', 'PENDING', 'UNKNOWN'],
+        }),
+      }],
+    }),
+  );
+
+  // ── Prompts ───────────────────────────────────────────────────────────
+
+  server.prompt(
+    'verify-credential',
+    'Look up and verify a credential by its Arkova public ID',
+    { public_id: z.string().describe('Credential public ID (e.g., ARK-2026-001)') },
+    async ({ public_id }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: `Please verify the credential with public ID "${public_id}" using the verify_credential tool. ` +
+            'Report the verification status, issuer, credential type, dates, and anchoring proof.',
+        },
+      }],
+    }),
+  );
+
+  server.prompt(
+    'search-and-verify',
+    'Search for credentials matching a query and verify the top result',
+    { query: z.string().describe('What to search for') },
+    async ({ query }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: `Search for credentials matching "${query}" using search_credentials, then verify the top result ` +
+            'with verify_credential. Summarize your findings.',
+        },
+      }],
+    }),
+  );
+
+  server.prompt(
+    'anchor-and-verify',
+    'Anchor a document fingerprint and confirm it was submitted',
     {
-      content_hash: z.string().describe('SHA-256 fingerprint of the document to verify'),
+      content_hash: z.string().describe('SHA-256 fingerprint of the document'),
+      title: z.string().optional().describe('Document title'),
     },
-    async ({ content_hash }) => {
-      return handleVerifyDocument({ content_hash }, config);
-    },
+    async ({ content_hash, title }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: `Anchor the document "${title ?? 'Untitled'}" with fingerprint ${content_hash} ` +
+            'using anchor_document, then verify it was submitted using verify_document.',
+        },
+      }],
+    }),
+  );
+
+  server.prompt(
+    'research-topic',
+    'Research a topic using Nessie\'s verified intelligence engine',
+    { topic: z.string().describe('Research topic or question') },
+    async ({ topic }) => ({
+      messages: [{
+        role: 'user' as const,
+        content: {
+          type: 'text' as const,
+          text: `Use nessie_query in "context" mode to research: "${topic}". ` +
+            'Synthesize the findings and cite the anchored source documents.',
+        },
+      }],
+    }),
   );
 
   return server;
 }
 
-/**
- * Validate API key or OAuth token from request headers.
- * Returns auth info if valid, null if unauthorized.
- */
+// ── Auth ───────────────────────────────────────────────────────────────
+
+const AUTH_TIMEOUT_MS = 5_000;
+
+function authFetch(url: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+  return fetch(url, { ...init, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 async function validateAuth(
   request: Request,
   env: Env,
 ): Promise<{ userId: string; tier: string } | null> {
-  // Check X-API-Key header
   const apiKey = request.headers.get('x-api-key');
-  if (apiKey) {
-    // Validate against Supabase api_keys table (HMAC-SHA256 hashed)
-    try {
-      const response = await fetch(
-        `${env.SUPABASE_URL}/rest/v1/rpc/validate_api_key`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-            Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
-          },
-          body: JSON.stringify({ p_api_key: apiKey }),
-        },
-      );
-
-      if (response.ok) {
-        const data = await response.json() as { user_id: string; tier: string } | null;
-        if (data) {
-          return { userId: data.user_id, tier: data.tier };
-        }
-      }
-    } catch {
-      // Fall through to unauthorized
-    }
-  }
-
-  // Check Bearer token (OAuth)
   const authHeader = request.headers.get('authorization');
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    try {
-      const response = await fetch(
-        `${env.SUPABASE_URL}/auth/v1/user`,
-        {
-          headers: {
-            apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-            Authorization: `Bearer ${token}`,
-          },
-        },
-      );
 
-      if (response.ok) {
-        const user = await response.json() as { id: string };
-        return { userId: user.id, tier: 'authenticated' };
-      }
-    } catch {
-      // Fall through to unauthorized
-    }
+  if (apiKey && authHeader?.startsWith('Bearer ')) {
+    const [apiKeyResult, bearerResult] = await Promise.allSettled([
+      validateApiKey(apiKey, env),
+      validateBearer(authHeader.slice(7), env),
+    ]);
+    if (apiKeyResult.status === 'fulfilled' && apiKeyResult.value) return apiKeyResult.value;
+    if (bearerResult.status === 'fulfilled' && bearerResult.value) return bearerResult.value;
+    return null;
   }
 
+  if (apiKey) return validateApiKey(apiKey, env);
+  if (authHeader?.startsWith('Bearer ')) return validateBearer(authHeader.slice(7), env);
   return null;
 }
 
-/**
- * Handle MCP requests at /mcp endpoint.
- */
-export async function handleMcpRequest(
-  request: Request,
+async function validateApiKey(
+  apiKey: string,
   env: Env,
-): Promise<Response> {
-  // Determine allowed CORS origin from request
+): Promise<{ userId: string; tier: string } | null> {
+  try {
+    const response = await authFetch(`${env.SUPABASE_URL}/rest/v1/rpc/validate_api_key`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      },
+      body: JSON.stringify({ p_api_key: apiKey }),
+    });
+    if (response.ok) {
+      const data = await response.json() as { user_id: string; tier: string } | null;
+      if (data) return { userId: data.user_id, tier: data.tier };
+    }
+  } catch {
+    // Fall through
+  }
+  return null;
+}
+
+async function validateBearer(
+  token: string,
+  env: Env,
+): Promise<{ userId: string; tier: string } | null> {
+  try {
+    const response = await authFetch(`${env.SUPABASE_URL}/auth/v1/user`, {
+      headers: {
+        apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (response.ok) {
+      const user = await response.json() as { id: string };
+      return { userId: user.id, tier: 'authenticated' };
+    }
+  } catch {
+    // Fall through
+  }
+  return null;
+}
+
+// ── Well-known endpoints ────────────────────────────────────────────────
+
+/**
+ * OAuth Protected Resource Metadata (RFC 9728).
+ * Required for MCP connector discovery.
+ */
+function handleProtectedResourceMetadata(baseUrl: string): Response {
+  return new Response(JSON.stringify({
+    resource: `${baseUrl}/mcp`,
+    authorization_servers: [`${baseUrl}/auth`],
+    scopes_supported: ['mcp:verify', 'mcp:search', 'mcp:anchor'],
+    bearer_methods_supported: ['header'],
+    resource_documentation: 'https://app.arkova.io/docs/mcp',
+  }), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=3600',
+    },
+  });
+}
+
+// ── Request handler ─────────────────────────────────────────────────────
+
+function getCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get('Origin') ?? '';
   const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://arkova-carson.vercel.app,https://app.arkova.ai')
     .split(',')
     .map((o) => o.trim())
     .filter((o) => o.length > 0);
-  const corsOrigin = allowedOrigins.includes(requestOrigin)
+  return allowedOrigins.includes(requestOrigin)
     ? requestOrigin
     : (allowedOrigins[0] ?? 'https://app.arkova.ai');
+}
+
+/**
+ * Handle MCP requests at /mcp endpoint.
+ * Also serves well-known metadata for connector discovery.
+ */
+export async function handleMcpRequest(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const corsOrigin = getCorsOrigin(request, env);
+
+  // OAuth Protected Resource Metadata
+  if (url.pathname === '/mcp/.well-known/oauth-protected-resource') {
+    const baseUrl = `${url.protocol}//${url.host}`;
+    return handleProtectedResourceMetadata(baseUrl);
+  }
 
   // CORS preflight
   if (request.method === 'OPTIONS') {
@@ -218,6 +377,7 @@ export async function handleMcpRequest(
         status: 401,
         headers: {
           'Content-Type': 'application/json',
+          'WWW-Authenticate': `Bearer realm="arkova-mcp", resource_metadata="${url.protocol}//${url.host}/mcp/.well-known/oauth-protected-resource"`,
           'Access-Control-Allow-Origin': corsOrigin,
         },
       },
@@ -240,16 +400,14 @@ export async function handleMcpRequest(
 
     await mcpServer.connect(transport);
 
-    // Handle the request
     const response = await transport.handleRequest(request, {
       authInfo: {
         token: auth.userId,
         clientId: auth.tier,
-        scopes: ['verify', 'search'],
+        scopes: ['mcp:verify', 'mcp:search', 'mcp:anchor'],
       },
     });
 
-    // Add CORS headers to response
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', corsOrigin);
 
@@ -270,4 +428,5 @@ export async function handleMcpRequest(
   }
 }
 
+export { SERVER_NAME, SERVER_VERSION };
 export default { handleMcpRequest };
