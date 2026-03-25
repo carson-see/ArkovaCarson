@@ -15,6 +15,8 @@ import { logger } from '../utils/logger.js';
 import { rateLimit } from '../utils/rateLimit.js';
 import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
+import { verifyAuthToken } from '../auth.js';
+import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
@@ -49,9 +51,10 @@ cronRouter.use(cronJobsLimiter);
 /**
  * Verify cron job authentication (AUTH-01 hardening).
  *
- * Supports two auth methods:
+ * Supports three auth methods:
  * 1. CRON_SECRET header — constant-time comparison
  * 2. OIDC Bearer token — Google-signed JWT verified via JWKS
+ * 3. Platform admin Bearer token — Supabase JWT for admin dashboard triggers
  *
  * Non-production: open for local development.
  */
@@ -73,12 +76,23 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
     return false;
   }
 
-  // Method 2: OIDC Bearer token from Cloud Scheduler
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) return false;
   const token = authHeader.slice(7).trim();
   if (!token) return false;
 
+  // Method 2: Platform admin Bearer token (for dashboard pipeline triggers)
+  try {
+    const userId = await verifyAuthToken(token, config, logger);
+    if (userId) {
+      const isAdmin = await isPlatformAdmin(userId);
+      if (isAdmin) return true;
+    }
+  } catch {
+    // Fall through to OIDC check
+  }
+
+  // Method 3: OIDC Bearer token from Cloud Scheduler
   try {
     const { createRemoteJWKSet, jwtVerify } = await import('jose');
     const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));

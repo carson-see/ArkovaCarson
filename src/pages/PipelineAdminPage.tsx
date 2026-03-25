@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { WORKER_URL } from '@/lib/workerClient';
+import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -200,13 +200,8 @@ export function PipelineAdminPage() {
   const triggerJob = useCallback(async (jobPath: string, _label: string) => {
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
     try {
-      const workerUrl = WORKER_URL;
-      const response = await fetch(`${workerUrl}/jobs/${jobPath}`, {
+      const response = await workerFetch(`/jobs/${jobPath}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Cron-Secret': import.meta.env.VITE_CRON_SECRET ?? '',
-        },
       });
       if (response.ok) {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
