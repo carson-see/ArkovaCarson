@@ -514,7 +514,7 @@ export function PipelineAdminPage() {
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              Jobs run on the worker at {WORKER_URL}. Requires CRON_SECRET.
+              Jobs run on the worker. Requires CRON_SECRET.
             </p>
           </CardContent>
         </Card>

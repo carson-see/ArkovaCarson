@@ -15,6 +15,7 @@
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://arkova-worker-270018525501.us-central1.run.app/api/:path*" },
+    { "source": "/jobs/:path*", "destination": "https://arkova-worker-270018525501.us-central1.run.app/jobs/:path*" },
     { "source": "/((?!api|assets|favicon|robots|sitemap|llms|og-image).*)", "destination": "/index.html" }
   ]
 }

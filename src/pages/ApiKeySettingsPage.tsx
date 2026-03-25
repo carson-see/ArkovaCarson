@@ -19,7 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
 import { DEVELOPER_PAGE_LABELS as L } from '@/lib/copy';
-import { WORKER_URL } from '@/lib/workerClient';
+import { PUBLIC_API_URL } from '@/lib/workerClient';
 
 export function ApiKeySettingsPage() {
   const { user, signOut } = useAuth();
@@ -52,7 +52,7 @@ export function ApiKeySettingsPage() {
           </CardHeader>
           <CardContent className="flex flex-wrap items-center gap-3">
             <Button asChild>
-              <a href={`${WORKER_URL}/api/docs`} target="_blank" rel="noopener noreferrer">
+              <a href={`${PUBLIC_API_URL}/api/docs`} target="_blank" rel="noopener noreferrer">
                 <ExternalLink className="mr-2 h-4 w-4" />
                 {L.API_DOCS_CARD_BUTTON}
               </a>

@@ -12,6 +12,9 @@ import { supabase } from './supabase';
 
 export const WORKER_URL = import.meta.env.VITE_WORKER_URL ?? (import.meta.env.PROD ? '' : 'http://localhost:3001');
 
+/** Full public URL for display in docs, curl examples, etc. */
+export const PUBLIC_API_URL = import.meta.env.VITE_WORKER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+
 const WORKER_UNAVAILABLE_MESSAGE =
   'Unable to connect to the server. Please check your connection and try again.';
 

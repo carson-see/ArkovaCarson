@@ -11,14 +11,14 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
-import { WORKER_URL } from '@/lib/workerClient';
+import { PUBLIC_API_URL } from '@/lib/workerClient';
 
-const API_DOCS_URL = `${WORKER_URL}/api/docs`;
-const OPENAPI_SPEC_URL = `${WORKER_URL}/api/docs/spec.json`;
+const API_DOCS_URL = `${PUBLIC_API_URL}/api/docs`;
+const OPENAPI_SPEC_URL = `${PUBLIC_API_URL}/api/docs/spec.json`;
 
 const CURL_LINES = [
   { num: '1', parts: [{ text: 'curl', cls: 'text-[#a8e8ff]' }, { text: ' -X POST', cls: 'text-[#dce3ed]' }] },
-  { num: '2', parts: [{ text: `  ${WORKER_URL}/api/v1/verify`, cls: 'text-[#bbc9cf]' }] },
+  { num: '2', parts: [{ text: `  ${PUBLIC_API_URL}/api/v1/verify`, cls: 'text-[#bbc9cf]' }] },
   { num: '3', parts: [{ text: '  -H "Authorization: Bearer ', cls: 'text-[#bbc9cf]' }, { text: 'YOUR_API_KEY', cls: 'text-[#00d4ff]' }, { text: '"', cls: 'text-[#bbc9cf]' }] },
   { num: '4', parts: [{ text: '  -H "Content-Type: application/json"', cls: 'text-[#bbc9cf]' }] },
   { num: '5', parts: [{ text: "  -d '{", cls: 'text-[#bbc9cf]' }] },
@@ -28,7 +28,7 @@ const CURL_LINES = [
 ];
 
 const CURL_RAW = `curl -X POST \\
-  ${WORKER_URL}/api/v1/verify \\
+  ${PUBLIC_API_URL}/api/v1/verify \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
