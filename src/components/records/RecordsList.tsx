@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { isSafeUrl } from '@/lib/urlValidator';
 
 export interface Record {
   id: string;
@@ -291,7 +292,7 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
                 {pipelineSource === 'edgar' ? 'SEC EDGAR' : pipelineSource}
               </span>
             )}
-            {sourceUrl && (
+            {sourceUrl && isSafeUrl(sourceUrl) && (
               <a
                 href={sourceUrl}
                 target="_blank"

@@ -9,6 +9,7 @@
  */
 
 import { cn } from '@/lib/utils';
+import { sanitizeHref } from '@/lib/urlValidator';
 import type { TemplateFieldDefinition } from '@/components/credentials/TemplateSchemaBuilder';
 
 interface MetadataDisplayProps {
@@ -118,7 +119,7 @@ function renderValue(
   if (fieldType === 'url' || (fieldType === null && isUrlValue(strValue))) {
     return (
       <a
-        href={strValue}
+        href={sanitizeHref(strValue)}
         target="_blank"
         rel="noopener noreferrer"
         className="font-mono text-sm text-primary hover:underline break-all"
