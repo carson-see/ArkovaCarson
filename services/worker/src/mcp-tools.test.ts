@@ -2,13 +2,20 @@
  * MCP Tools Handler Tests (P8-S19 + PH1-SDK-03)
  *
  * Tests for the MCP tool handler functions defined in services/edge/src/mcp-tools.ts.
- * Since the edge service doesn't have vitest, we test the handlers here by reimporting
- * the pure handler functions directly. The handlers use only fetch() — no edge-specific deps.
+ * Imports the actual handlers — no inline reimplementations.
  *
  * No real API calls — mocks fetch globally.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  handleNessieQuery,
+  handleAnchorDocument,
+  handleVerifyDocument,
+  handleVerifyCredential,
+  handleSearchCredentials,
+  TOOL_DEFINITIONS,
+} from '../../edge/src/mcp-tools';
 
 const CONFIG = {
   supabaseUrl: 'https://test.supabase.co',
@@ -26,135 +33,93 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-// ── Inline handler implementations for testing ──────────────────────────
-// These mirror the handlers in services/edge/src/mcp-tools.ts exactly.
-// We test the behavioral contract, not the import path.
+// ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
-interface ToolResult {
-  content: { type: 'text'; text: string }[];
-  isError?: boolean;
-  [key: string]: unknown;
-}
+describe('TOOL_DEFINITIONS', () => {
+  it('exports 5 tool definitions', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(5);
+  });
 
-async function handleNessieQuery(
-  input: { query: string; mode?: string; limit?: number },
-  config: typeof CONFIG,
-): Promise<ToolResult> {
-  if (!input.query || input.query.trim().length === 0) {
-    return { content: [{ type: 'text', text: 'Error: query is required' }], isError: true };
-  }
-  try {
-    const response = await fetch(
-      `${config.supabaseUrl}/rest/v1/rpc/search_public_record_embeddings`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: config.supabaseKey,
-          Authorization: `Bearer ${config.supabaseKey}`,
-        },
-        body: JSON.stringify({
-          p_query: input.query,
-          p_mode: input.mode ?? 'retrieval',
-          p_limit: Math.min(input.limit ?? 10, 50),
-        }),
-      },
-    );
-    if (!response.ok) {
-      return { content: [{ type: 'text', text: `Nessie query failed: HTTP ${response.status}` }], isError: true };
+  it('all tools have name, description, and inputSchema', () => {
+    for (const tool of TOOL_DEFINITIONS) {
+      expect(tool.name).toBeTruthy();
+      expect(tool.description).toBeTruthy();
+      expect(tool.inputSchema.type).toBe('object');
+      expect(tool.inputSchema.required.length).toBeGreaterThan(0);
     }
-    const data = await response.json();
-    return { content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] };
-  } catch (error) {
-    return { content: [{ type: 'text', text: `Nessie query failed: ${error instanceof Error ? error.message : 'Unknown error'}` }], isError: true };
-  }
-}
+  });
+});
 
-async function handleAnchorDocument(
-  input: { content_hash: string; record_type?: string; source?: string },
-  config: typeof CONFIG,
-): Promise<ToolResult> {
-  if (!input.content_hash || input.content_hash.trim().length === 0) {
-    return { content: [{ type: 'text', text: 'Error: content_hash is required' }], isError: true };
-  }
-  try {
-    const response = await fetch(`${config.supabaseUrl}/rest/v1/public_records`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        apikey: config.supabaseKey,
-        Authorization: `Bearer ${config.supabaseKey}`,
-        Prefer: 'return=representation',
-      },
-      body: JSON.stringify({
-        content_hash: input.content_hash,
-        record_type: input.record_type ?? 'document',
-        source: input.source ?? 'mcp',
-        source_id: input.content_hash,
-        metadata: {},
+// ── handleVerifyCredential ────────────────────────────────────────────
+
+describe('handleVerifyCredential', () => {
+  it('returns error if public_id is empty', async () => {
+    const result = await handleVerifyCredential({ public_id: '' }, CONFIG);
+    expect(result.isError).toBe(true);
+  });
+
+  it('returns verified result for SECURED anchor', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        org_name: 'Test Org',
+        credential_type: 'DEGREE',
+        created_at: '2026-01-01',
       }),
     });
-    if (!response.ok) {
-      const errorText = await response.text();
-      return { content: [{ type: 'text', text: `Anchor submission failed: ${errorText}` }], isError: true };
-    }
-    const records = await response.json() as Array<Record<string, unknown>>;
-    const record = Array.isArray(records) ? records[0] : records;
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({ status: 'submitted', record_id: record?.id, content_hash: input.content_hash }),
-      }],
-    };
-  } catch (error) {
-    return { content: [{ type: 'text', text: `Anchor submission failed: ${error instanceof Error ? error.message : 'Unknown error'}` }], isError: true };
-  }
-}
 
-async function handleVerifyDocument(
-  input: { content_hash: string },
-  config: typeof CONFIG,
-): Promise<ToolResult> {
-  if (!input.content_hash || input.content_hash.trim().length === 0) {
-    return { content: [{ type: 'text', text: 'Error: content_hash is required' }], isError: true };
-  }
-  try {
-    const response = await fetch(
-      `${config.supabaseUrl}/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          apikey: config.supabaseKey,
-          Authorization: `Bearer ${config.supabaseKey}`,
-        },
-      },
-    );
-    if (!response.ok) {
-      return { content: [{ type: 'text', text: `Document lookup failed: HTTP ${response.status}` }], isError: true };
-    }
-    const records = await response.json() as Array<Record<string, unknown>>;
-    if (!Array.isArray(records) || records.length === 0) {
-      return { content: [{ type: 'text', text: JSON.stringify({ verified: false, message: 'No anchored document found.' }) }] };
-    }
-    const record = records[0];
-    const meta = (record.metadata as Record<string, unknown>) ?? {};
-    const isAnchored = !!record.anchor_id;
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          verified: isAnchored,
-          status: isAnchored ? 'ANCHORED' : 'PENDING',
-          anchor_proof: isAnchored ? { chain_tx_id: (meta.chain_tx_id as string) ?? null } : null,
-        }),
-      }],
-    };
-  } catch (error) {
-    return { content: [{ type: 'text', text: `Verification failed: ${error instanceof Error ? error.message : 'Unknown error'}` }], isError: true };
-  }
-}
+    const result = await handleVerifyCredential({ public_id: 'ARK-2026-001' }, CONFIG);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+    expect(parsed.status).toBe('ACTIVE');
+  });
 
-// ── Tests ────────────────────────────────────────────────────────────────
+  it('returns not found for failed lookup', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+    const result = await handleVerifyCredential({ public_id: 'ARK-MISSING' }, CONFIG);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+  });
+});
+
+// ── handleSearchCredentials ───────────────────────────────────────────
+
+describe('handleSearchCredentials', () => {
+  it('returns error if query is empty', async () => {
+    const result = await handleSearchCredentials({ query: '' }, CONFIG);
+    expect(result.isError).toBe(true);
+  });
+
+  it('returns empty results array when no matches', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([]),
+    });
+    const result = await handleSearchCredentials({ query: 'nonexistent' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(0);
+    expect(parsed.results).toEqual([]);
+  });
+
+  it('maps results correctly', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([
+        { public_id: 'ARK-001', title: 'Test', credential_type: 'DEGREE', status: 'SECURED', created_at: '2026-01-01' },
+      ]),
+    });
+    const result = await handleSearchCredentials({ query: 'test', max_results: 5 }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(1);
+    expect(parsed.results[0].rank).toBe(1);
+    expect(parsed.results[0].status).toBe('ACTIVE');
+  });
+});
+
+// ── handleNessieQuery ─────────────────────────────────────────────────
 
 describe('handleNessieQuery (PH1-SDK-03)', () => {
   it('returns error if query is empty', async () => {
@@ -179,12 +144,45 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
     const result = await handleNessieQuery({ query: 'test' }, CONFIG);
     expect(result.isError).toBe(true);
   });
+
+  it('passes mode and limit to RPC', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([]),
+    });
+
+    await handleNessieQuery({ query: 'test', mode: 'context', limit: 5 }, CONFIG);
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.p_mode).toBe('context');
+    expect(body.p_limit).toBe(5);
+  });
+
+  it('caps limit at 50', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([]),
+    });
+
+    await handleNessieQuery({ query: 'test', limit: 999 }, CONFIG);
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.p_limit).toBe(50);
+  });
 });
 
+// ── handleAnchorDocument ──────────────────────────────────────────────
+
 describe('handleAnchorDocument (PH1-SDK-03)', () => {
+  const validHash = 'a'.repeat(64);
+
   it('returns error if content_hash is empty', async () => {
     const result = await handleAnchorDocument({ content_hash: '' }, CONFIG);
     expect(result.isError).toBe(true);
+  });
+
+  it('rejects non-SHA-256 content_hash', async () => {
+    const result = await handleAnchorDocument({ content_hash: 'not-a-hash' }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('SHA-256');
   });
 
   it('submits anchor request successfully', async () => {
@@ -194,13 +192,14 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     });
 
     const result = await handleAnchorDocument(
-      { content_hash: 'sha256-abc', record_type: 'patent_grant', source: 'uspto' },
+      { content_hash: validHash, record_type: 'patent_grant', source: 'uspto' },
       CONFIG,
     );
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.status).toBe('submitted');
-    expect(parsed.content_hash).toBe('sha256-abc');
+    expect(parsed.content_hash).toBe(validHash);
+    expect(parsed.public_id).toBe('ARK-2026-999');
   });
 
   it('handles API error', async () => {
@@ -208,15 +207,25 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
       ok: false,
       text: async () => 'duplicate key',
     });
-    const result = await handleAnchorDocument({ content_hash: 'sha256-abc' }, CONFIG);
+    const result = await handleAnchorDocument({ content_hash: validHash }, CONFIG);
     expect(result.isError).toBe(true);
   });
 });
 
+// ── handleVerifyDocument ──────────────────────────────────────────────
+
 describe('handleVerifyDocument (PH1-SDK-03)', () => {
+  const validHash = 'b'.repeat(64);
+
   it('returns error if content_hash is empty', async () => {
     const result = await handleVerifyDocument({ content_hash: '' }, CONFIG);
     expect(result.isError).toBe(true);
+  });
+
+  it('rejects non-SHA-256 content_hash', async () => {
+    const result = await handleVerifyDocument({ content_hash: 'xyz' }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('SHA-256');
   });
 
   it('returns verified=false when no record found', async () => {
@@ -224,7 +233,7 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
       ok: true,
       json: async () => ([]),
     });
-    const result = await handleVerifyDocument({ content_hash: 'nonexistent' }, CONFIG);
+    const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
   });
@@ -238,13 +247,13 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
         source_url: 'https://sec.gov/filing/123',
         record_type: '10-K',
         title: 'Apple Annual Report',
-        content_hash: 'sha256-abc',
+        content_hash: validHash,
         metadata: { chain_tx_id: 'tx-123', merkle_root: 'root-abc' },
         anchor_id: 'anchor-1',
       }]),
     });
 
-    const result = await handleVerifyDocument({ content_hash: 'sha256-abc' }, CONFIG);
+    const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(true);
     expect(parsed.status).toBe('ANCHORED');
@@ -257,16 +266,43 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
       json: async () => ([{
         id: 'rec-2',
         source: 'mcp',
-        content_hash: 'sha256-def',
+        content_hash: validHash,
         metadata: {},
         anchor_id: null,
       }]),
     });
 
-    const result = await handleVerifyDocument({ content_hash: 'sha256-def' }, CONFIG);
+    const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
     expect(parsed.status).toBe('PENDING');
     expect(parsed.anchor_proof).toBeNull();
+  });
+});
+
+// ── Timeout handling ──────────────────────────────────────────────────
+
+describe('timeout handling', () => {
+  it('reports timeout on AbortError', async () => {
+    const abortError = new DOMException('The operation was aborted', 'AbortError');
+    mockFetch.mockRejectedValueOnce(abortError);
+
+    const result = await handleVerifyCredential({ public_id: 'ARK-001' }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('timed out');
+  });
+});
+
+// ── Fetch includes AbortSignal ────────────────────────────────────────
+
+describe('fetch signal', () => {
+  it('passes AbortSignal to fetch calls', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'SECURED', created_at: '2026-01-01' }),
+    });
+
+    await handleVerifyCredential({ public_id: 'ARK-001' }, CONFIG);
+    expect(mockFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal);
   });
 });
