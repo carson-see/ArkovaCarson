@@ -33,6 +33,10 @@ import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPa
 
 export const cronRouter = Router();
 
+// CORS for browser-based admin triggers (PipelineAdminPage)
+import { corsMiddleware } from './middleware.js';
+cronRouter.use(corsMiddleware);
+
 // Dedicated rate limiter for cron endpoints
 const cronJobsLimiter = rateLimit({
   windowMs: 60000,

@@ -61,7 +61,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
                 the page or returning to the dashboard.
               </p>
             </div>
-            {process.env.NODE_ENV === 'development' && this.state.error && (
+            {import.meta.env.DEV && this.state.error && (
               <pre className="w-full overflow-auto rounded-lg bg-muted p-4 text-left text-xs text-muted-foreground">
                 {this.state.error.message}
               </pre>
