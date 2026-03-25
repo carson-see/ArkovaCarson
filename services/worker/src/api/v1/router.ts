@@ -18,6 +18,7 @@ import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth, requireScope } from '../../middleware/apiKeyAuth.js';
 import { usageTracking } from '../../middleware/usageTracking.js';
 import { verifyRouter } from './verify.js';
+import { verifyProofRouter } from './verify-proof.js';
 import { batchRouter } from './batch.js';
 import { jobsRouter } from './jobs.js';
 import { keysRouter } from './keys.js';
@@ -156,6 +157,9 @@ router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);
+
+// Merkle proof endpoint — public, no payment required (BTC-003)
+router.use('/verify', verifyProofRouter);
 
 // Public verification — no auth required (API key optional for tracking)
 // x402 payment gate: returns 402 if no API key and no payment header
