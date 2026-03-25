@@ -20,8 +20,14 @@ import { getInitializedChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { MerkleProofEntry } from '../utils/merkle.js';
 
-/** Max anchors per batch transaction (user uploads) */
-export const BATCH_SIZE = 100;
+/**
+ * Max anchors per batch transaction — configurable via BATCH_ANCHOR_MAX_SIZE env (BTC-001).
+ * Default: 100. Range: 1–10,000.
+ */
+export const BATCH_SIZE = Math.min(
+  Math.max(parseInt(process.env.BATCH_ANCHOR_MAX_SIZE ?? '100', 10) || 100, 1),
+  10000,
+);
 
 /**
  * INEFF-2: Minimum anchors required for batch processing.

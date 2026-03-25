@@ -117,6 +117,14 @@ const ConfigSchema = z.object({
   /** x402 network identifier (default: Base Sepolia testnet) */
   x402Network: z.string().default('eip155:84532'),
 
+  // Batch Anchoring (BTC-001)
+  /** Batch anchor processing interval in minutes (default: 10) */
+  batchAnchorIntervalMinutes: z.coerce.number().min(1).max(60).default(10),
+  /** Maximum anchors per batch transaction (default: 100, max: 10000) */
+  batchAnchorMaxSize: z.coerce.number().min(1).max(10000).default(100),
+  /** Maximum fee rate (sat/vB) for batch anchoring — queue if exceeded (BTC-002) */
+  maxFeeThresholdSatPerVbyte: z.coerce.number().min(1).default(50),
+
   // Nessie Training Pipeline (PH1-DATA)
   /** SEC EDGAR User-Agent (required by SEC) */
   edgarUserAgent: z.string().optional(),
@@ -190,6 +198,9 @@ function loadConfig(): Config {
     x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
     arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
     x402Network: process.env.X402_NETWORK,
+    batchAnchorIntervalMinutes: process.env.BATCH_ANCHOR_INTERVAL_MINUTES,
+    batchAnchorMaxSize: process.env.BATCH_ANCHOR_MAX_SIZE,
+    maxFeeThresholdSatPerVbyte: process.env.MAX_FEE_THRESHOLD_SAT_PER_VBYTE,
     edgarUserAgent: process.env.EDGAR_USER_AGENT,
     trainingDataOutputPath: process.env.TRAINING_DATA_OUTPUT_PATH,
     resendApiKey: process.env.RESEND_API_KEY,
