@@ -1,31 +1,24 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.arkova/verification",
+  "name": "io.github.carson-see/arkova-verification",
   "title": "Arkova Verification",
-  "description": "Privacy-first document verification anchored to the public ledger. Verify credentials, search 29,000+ anchored records, query SEC filings and patents via RAG, and anchor document fingerprints — all without documents ever leaving the user's device.",
+  "description": "Privacy-first document verification anchored to the public ledger.",
   "version": "1.0.0",
   "repository": {
     "url": "https://github.com/carson-see/ArkovaCarson",
     "source": "github"
   },
-  "packages": [
+  "remoteEndpoints": [
     {
-      "registryType": "npm",
-      "identifier": "arkova-edge",
-      "version": "1.0.0",
       "transport": {
         "type": "streamable-http",
         "url": "https://edge.arkova.ai/mcp"
       },
-      "environmentVariables": [
-        {
-          "name": "ARKOVA_API_KEY",
-          "description": "Your Arkova API key. Get one at https://app.arkova.io/settings/api-keys",
-          "isRequired": true,
-          "isSecret": true,
-          "format": "string"
-        }
-      ]
+      "authentication": {
+        "type": "api_key",
+        "headerName": "X-API-Key",
+        "instructions": "Get your API key at https://app.arkova.io/settings/api-keys"
+      }
     }
   ],
   "tools": [
