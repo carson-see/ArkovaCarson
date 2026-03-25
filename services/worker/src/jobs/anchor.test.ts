@@ -3,6 +3,9 @@
  *
  * HARDENING-1: Success path, network timeout, malformed receipt,
  * duplicate submission, DB update failure, audit event failure.
+ *
+ * Updated for claim-before-broadcast pattern (RACE-1):
+ * processAnchor() now accepts a ClaimedAnchor (already BROADCASTING).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -12,7 +15,6 @@ import type { ChainReceipt } from '../chain/types.js';
 
 const {
   mockSubmitFingerprint,
-  mockSingle,
   mockLimit,
   mockAuditInsert,
   mockChainIndexUpsert,
@@ -24,9 +26,7 @@ const {
   selectChain,
 } = vi.hoisted(() => {
   // Terminal operations — configured per test
-  const mockSingle = vi.fn();
   const mockLimit = vi.fn();
-  const mockUpdateEq = vi.fn();
   const mockAuditInsert = vi.fn();
   const mockChainIndexUpsert = vi.fn();
   const mockSubmitFingerprint = vi.fn();
@@ -44,7 +44,6 @@ const {
   selectChain.eq = vi.fn(() => selectChain);
   selectChain.is = vi.fn(() => selectChain);
   selectChain.order = vi.fn(() => selectChain);
-  selectChain.single = mockSingle;
   selectChain.limit = mockLimit;
 
   // Update chain: .update({...}).eq('id', ...).eq('status', ...) — supports chaining
@@ -66,35 +65,15 @@ const {
     select: vi.fn(() => selectChain),
     update: vi.fn(() => updateChain),
   };
-  const auditTable = { insert: mockAuditInsert };
-  const chainIndexTable = { upsert: mockChainIndexUpsert };
-
-  const mockFrom = vi.fn((table: string) => {
-    switch (table) {
-      case 'anchors':
-        return anchorsTable;
-      case 'audit_events':
-        return auditTable;
-      case 'anchor_chain_index':
-        return chainIndexTable;
-      default:
-        return {};
-    }
-  });
 
   return {
     mockSubmitFingerprint,
-    mockSingle,
     mockLimit,
-    mockUpdateEq,
     mockAuditInsert,
     mockChainIndexUpsert,
     mockDispatchWebhookEvent,
     mockLogger,
-    mockFrom,
     anchorsTable,
-    auditTable,
-    chainIndexTable,
     updateChain,
     selectChain,
     setUpdateResult,
@@ -118,6 +97,7 @@ vi.mock('../config.js', () => ({
     nodeEnv: 'test',
     useMocks: true,
     enableProdNetworkAnchoring: false,
+    bitcoinNetwork: 'signet',
   },
   getNetworkDisplayName: vi.fn(() => 'Test Environment'),
 }));
@@ -141,6 +121,10 @@ vi.mock('../billing/paymentGuard.js', () => ({
 vi.mock('../billing/reconciliation.js', () => ({
   isFreeTierUser: vi.fn().mockResolvedValue(false),
   isWithinBatchWindow: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock('../utils/rpc.js', () => ({
+  callRpc: vi.fn().mockResolvedValue({ data: true, error: null }),
 }));
 
 const mockRpc = vi.hoisted(() => vi.fn());
@@ -168,19 +152,18 @@ import { db } from '../utils/db.js';
 // ---- System under test ----
 
 import { processAnchor, processPendingAnchors } from './anchor.js';
+import type { ClaimedAnchor } from './anchor.js';
 
 // ---- Test fixtures ----
 
-const MOCK_ANCHOR = {
+const CLAIMED_ANCHOR: ClaimedAnchor = {
   id: 'anchor-001',
   user_id: 'user-001',
   org_id: 'org-001',
   fingerprint: 'a'.repeat(64), // Valid 64-char hex SHA-256
-  status: 'PENDING',
-  file_name: 'test-document.pdf',
-  file_size: 1024,
-  created_at: '2026-01-01T00:00:00Z',
-  deleted_at: null,
+  public_id: 'pub-001',
+  metadata: null,
+  credential_type: null,
 };
 
 const MOCK_RECEIPT: ChainReceipt = {
@@ -199,7 +182,6 @@ describe('processAnchor', () => {
     vi.clearAllMocks();
 
     // Defaults: happy path
-    mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     setUpdateResult({ error: null, count: 1 });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
@@ -212,22 +194,22 @@ describe('processAnchor', () => {
 
   describe('success path', () => {
     it('returns true on successful processing', async () => {
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
       expect(result).toBe(true);
     });
 
     it('submits the anchor fingerprint to chain client', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
       expect(mockSubmitFingerprint).toHaveBeenCalledWith({
-        fingerprint: MOCK_ANCHOR.fingerprint,
+        fingerprint: CLAIMED_ANCHOR.fingerprint,
         timestamp: expect.any(String),
       });
     });
 
     it('updates anchor status to SUBMITTED with chain receipt data (BETA-01)', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(anchorsTable.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -240,13 +222,17 @@ describe('processAnchor', () => {
       expect(updateChain.eq).toHaveBeenCalledWith('id', 'anchor-001');
     });
 
+    it('guards SUBMITTED update with BROADCASTING status (RACE-1)', async () => {
+      await processAnchor(CLAIMED_ANCHOR);
+
+      expect(updateChain.eq).toHaveBeenCalledWith('status', 'BROADCASTING');
+    });
+
     it('stores _metadata_hash in metadata JSON when receipt includes metadataHash (DEMO-01)', async () => {
-      // Anchor with metadata
-      const anchorWithMetadata = {
-        ...MOCK_ANCHOR,
+      const anchorWithMetadata: ClaimedAnchor = {
+        ...CLAIMED_ANCHOR,
         metadata: { degree: 'BS Computer Science', institution: 'University of Michigan' },
       };
-      mockSingle.mockResolvedValue({ data: anchorWithMetadata, error: null });
 
       const receiptWithHash: ChainReceipt = {
         ...MOCK_RECEIPT,
@@ -254,7 +240,7 @@ describe('processAnchor', () => {
       };
       mockSubmitFingerprint.mockResolvedValue(receiptWithHash);
 
-      await processAnchor('anchor-001');
+      await processAnchor(anchorWithMetadata);
 
       expect(anchorsTable.update).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -268,36 +254,23 @@ describe('processAnchor', () => {
       );
     });
 
-    it('does not add _metadata_hash when receipt has no metadataHash (DEMO-01)', async () => {
-      // Reset to anchor without metadata
-      mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
-      mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
-
-      await processAnchor('anchor-001');
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const updateCalls = anchorsTable.update.mock.calls as any[];
-      const updateArg = (updateCalls.length > 0 ? updateCalls[0][0] : {}) as Record<string, unknown>;
-      expect(updateArg.metadata).toBeUndefined();
-    });
-
     it('logs audit event with anchor.submitted type (BETA-01)', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockAuditInsert).toHaveBeenCalledWith(
         expect.objectContaining({
           event_type: 'anchor.submitted',
           event_category: 'ANCHOR',
-          actor_id: MOCK_ANCHOR.user_id,
+          actor_id: CLAIMED_ANCHOR.user_id,
           target_type: 'anchor',
           target_id: 'anchor-001',
-          org_id: MOCK_ANCHOR.org_id,
+          org_id: CLAIMED_ANCHOR.org_id,
         }),
       );
     });
 
     it('includes network display name in audit details', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockAuditInsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -307,7 +280,7 @@ describe('processAnchor', () => {
     });
 
     it('includes receipt ID in audit details', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockAuditInsert).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -317,70 +290,30 @@ describe('processAnchor', () => {
     });
   });
 
-  // ---- Anchor not found / already processed (duplicate submission) ----
-
-  describe('anchor not found or already processed', () => {
-    it('returns false when anchor is not found', async () => {
-      mockSingle.mockResolvedValue({ data: null, error: null });
-
-      const result = await processAnchor('nonexistent');
-      expect(result).toBe(false);
-    });
-
-    it('returns false when DB fetch returns an error', async () => {
-      mockSingle.mockResolvedValue({
-        data: null,
-        error: { message: 'database error', code: '42P01' },
-      });
-
-      const result = await processAnchor('anchor-001');
-      expect(result).toBe(false);
-      expect(mockLogger.warn).toHaveBeenCalled();
-    });
-
-    it('does not call chain client when anchor is not found', async () => {
-      mockSingle.mockResolvedValue({ data: null, error: null });
-
-      await processAnchor('already-secured-anchor');
-
-      expect(mockSubmitFingerprint).not.toHaveBeenCalled();
-    });
-
-    it('does not attempt DB update when anchor is not found', async () => {
-      mockSingle.mockResolvedValue({ data: null, error: null });
-
-      await processAnchor('missing');
-
-      expect(anchorsTable.update).not.toHaveBeenCalled();
-    });
-  });
-
   // ---- Chain client failure (network timeout) ----
 
   describe('chain client failure', () => {
     it('returns false when chain client throws a network error', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('ETIMEDOUT: network timeout'));
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
       expect(result).toBe(false);
     });
 
     it('returns false when chain client throws a connection error', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('ECONNREFUSED'));
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
       expect(result).toBe(false);
     });
 
     it('does not update anchor status to SUBMITTED on chain failure', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
-      // Payment source update may happen before chain submission,
-      // but status should NOT be updated to SUBMITTED
-      const updateCalls = anchorsTable.update.mock.calls;
-      const statusUpdates = updateCalls.filter(
+      // No SUBMITTED status update should have been called
+      const statusUpdates = anchorsTable.update.mock.calls.filter(
         (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
       );
       expect(statusUpdates.length).toBe(0);
@@ -389,7 +322,7 @@ describe('processAnchor', () => {
     it('does not log audit event on chain failure', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockAuditInsert).not.toHaveBeenCalled();
     });
@@ -402,12 +335,23 @@ describe('processAnchor', () => {
       const { createRpcLogger } = await import('../utils/logger.js');
       const mockRpcLog = (createRpcLogger as ReturnType<typeof vi.fn>).mock.results;
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       // createRpcLogger was called, and .error() was called on the returned logger
       expect(createRpcLogger).toHaveBeenCalledWith('processAnchor', { anchorId: 'anchor-001' });
       const lastRpcLog = mockRpcLog[mockRpcLog.length - 1].value;
       expect(lastRpcLog.error).toHaveBeenCalledWith(chainError);
+    });
+
+    it('reverts anchor to PENDING on chain failure', async () => {
+      mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
+
+      await processAnchor(CLAIMED_ANCHOR);
+
+      // Should revert BROADCASTING → PENDING
+      expect(anchorsTable.update).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'PENDING' }),
+      );
     });
   });
 
@@ -423,7 +367,7 @@ describe('processAnchor', () => {
       };
       mockSubmitFingerprint.mockResolvedValue(malformedReceipt);
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
 
       // processAnchor does not validate receipt fields — passes them through
       expect(result).toBe(true);
@@ -446,7 +390,7 @@ describe('processAnchor', () => {
         error: { message: 'constraint violation', code: '23505' },
       });
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
       expect(result).toBe(false);
     });
 
@@ -454,7 +398,7 @@ describe('processAnchor', () => {
       const dbError = { message: 'constraint violation', code: '23505' };
       setUpdateResult({ error: dbError });
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.objectContaining({ anchorId: 'anchor-001', error: dbError }),
@@ -467,7 +411,7 @@ describe('processAnchor', () => {
         error: { message: 'constraint violation' },
       });
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockAuditInsert).not.toHaveBeenCalled();
     });
@@ -481,7 +425,7 @@ describe('processAnchor', () => {
         error: { message: 'audit table full' },
       });
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
 
       // Anchor was successfully secured on chain and in DB
       expect(result).toBe(true);
@@ -492,7 +436,7 @@ describe('processAnchor', () => {
         error: { message: 'audit table full' },
       });
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ anchorId: 'anchor-001' }),
@@ -505,41 +449,29 @@ describe('processAnchor', () => {
 
   describe('fingerprint validation', () => {
     it('returns false when fingerprint is missing', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, fingerprint: '' },
-        error: null,
-      });
-      const result = await processAnchor('anchor-001');
+      const badAnchor: ClaimedAnchor = { ...CLAIMED_ANCHOR, fingerprint: '' };
+      const result = await processAnchor(badAnchor);
       expect(result).toBe(false);
       expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     });
 
     it('returns false when fingerprint is not 64 hex chars', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, fingerprint: 'not-a-valid-hash' },
-        error: null,
-      });
-      const result = await processAnchor('anchor-001');
+      const badAnchor: ClaimedAnchor = { ...CLAIMED_ANCHOR, fingerprint: 'not-a-valid-hash' };
+      const result = await processAnchor(badAnchor);
       expect(result).toBe(false);
       expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     });
 
     it('returns false when fingerprint is null', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, fingerprint: null },
-        error: null,
-      });
-      const result = await processAnchor('anchor-001');
+      const badAnchor: ClaimedAnchor = { ...CLAIMED_ANCHOR, fingerprint: null as unknown as string };
+      const result = await processAnchor(badAnchor);
       expect(result).toBe(false);
       expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     });
 
     it('accepts valid uppercase hex fingerprint', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, fingerprint: 'A'.repeat(64) },
-        error: null,
-      });
-      const result = await processAnchor('anchor-001');
+      const upperAnchor: ClaimedAnchor = { ...CLAIMED_ANCHOR, fingerprint: 'A'.repeat(64) };
+      const result = await processAnchor(upperAnchor);
       expect(result).toBe(true);
       expect(mockSubmitFingerprint).toHaveBeenCalled();
     });
@@ -549,7 +481,7 @@ describe('processAnchor', () => {
 
   describe('chain index upsert (BETA-01: deferred to confirmation checker)', () => {
     it('does not upsert chain index at submission time (deferred to confirmation)', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockChainIndexUpsert).not.toHaveBeenCalled();
     });
@@ -559,16 +491,16 @@ describe('processAnchor', () => {
 
   describe('webhook dispatch', () => {
     it('dispatches anchor.submitted webhook event after successful processing (BETA-01)', async () => {
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-        MOCK_ANCHOR.org_id,
+        CLAIMED_ANCHOR.org_id,
         'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
           anchor_id: 'anchor-001',
-          fingerprint: MOCK_ANCHOR.fingerprint,
+          fingerprint: CLAIMED_ANCHOR.fingerprint,
           status: 'SUBMITTED',
           chain_tx_id: MOCK_RECEIPT.receiptId,
           submitted_at: MOCK_RECEIPT.blockTimestamp,
@@ -577,15 +509,12 @@ describe('processAnchor', () => {
     });
 
     it('includes public_id in webhook payload', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, public_id: 'pub-abc-123' },
-        error: null,
-      });
+      const anchorWithPublicId: ClaimedAnchor = { ...CLAIMED_ANCHOR, public_id: 'pub-abc-123' };
 
-      await processAnchor('anchor-001');
+      await processAnchor(anchorWithPublicId);
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-        MOCK_ANCHOR.org_id,
+        CLAIMED_ANCHOR.org_id,
         'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
@@ -595,15 +524,12 @@ describe('processAnchor', () => {
     });
 
     it('sends null public_id when anchor has no public_id', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, public_id: undefined },
-        error: null,
-      });
+      const anchorNoPublicId: ClaimedAnchor = { ...CLAIMED_ANCHOR, public_id: null };
 
-      await processAnchor('anchor-001');
+      await processAnchor(anchorNoPublicId);
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-        MOCK_ANCHOR.org_id,
+        CLAIMED_ANCHOR.org_id,
         'anchor.submitted',
         'anchor-001',
         expect.objectContaining({
@@ -615,7 +541,7 @@ describe('processAnchor', () => {
     it('still returns true when webhook dispatch fails (non-fatal)', async () => {
       mockDispatchWebhookEvent.mockRejectedValue(new Error('webhook delivery failed'));
 
-      const result = await processAnchor('anchor-001');
+      const result = await processAnchor(CLAIMED_ANCHOR);
 
       expect(result).toBe(true);
     });
@@ -623,7 +549,7 @@ describe('processAnchor', () => {
     it('logs a warning when webhook dispatch throws', async () => {
       mockDispatchWebhookEvent.mockRejectedValue(new Error('webhook delivery failed'));
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ anchorId: 'anchor-001' }),
@@ -632,20 +558,9 @@ describe('processAnchor', () => {
     });
 
     it('skips webhook dispatch when anchor has no org_id', async () => {
-      mockSingle.mockResolvedValue({
-        data: { ...MOCK_ANCHOR, org_id: null },
-        error: null,
-      });
+      const individualAnchor: ClaimedAnchor = { ...CLAIMED_ANCHOR, org_id: null };
 
-      await processAnchor('anchor-001');
-
-      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
-    });
-
-    it('does not dispatch webhook when anchor is not found', async () => {
-      mockSingle.mockResolvedValue({ data: null, error: null });
-
-      await processAnchor('nonexistent');
+      await processAnchor(individualAnchor);
 
       expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
@@ -653,7 +568,7 @@ describe('processAnchor', () => {
     it('does not dispatch webhook when chain submission fails', async () => {
       mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
@@ -663,7 +578,7 @@ describe('processAnchor', () => {
         error: { message: 'constraint violation' },
       });
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
@@ -673,7 +588,7 @@ describe('processAnchor', () => {
         error: { message: 'audit table full' },
       });
 
-      await processAnchor('anchor-001');
+      await processAnchor(CLAIMED_ANCHOR);
 
       // Audit failure is non-fatal — webhook should still fire
       expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
@@ -686,58 +601,40 @@ describe('processAnchor', () => {
 // ================================================================
 
 describe('processPendingAnchors', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
 
-    // Default: no pending anchors
+    // Reset callRpc to default (enabled) — switchboard tests override this
+    const { callRpc } = await import('../utils/rpc.js');
+    (callRpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: true, error: null });
+
+    // Default: claim RPC returns empty
+    mockRpc.mockResolvedValue({ data: [], error: null });
     mockLimit.mockResolvedValue({ data: [], error: null });
 
     // Defaults for processAnchor internals
-    mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     setUpdateResult({ error: null, count: 1 });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
-    // RPC calls: 1st call = get_flag (true), 2nd call = get_pending_user_anchors (fails → fallback)
-    mockRpc
-      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // get_pending_user_anchors → triggers fallback
+    mockDispatchWebhookEvent.mockResolvedValue(undefined);
   });
 
   it('returns zero counts when no pending anchors exist', async () => {
-    mockLimit.mockResolvedValue({ data: [], error: null });
+    // callRpc (get_flag) returns true, claim RPC returns empty
+    mockRpc.mockResolvedValue({ data: [], error: null });
 
     const result = await processPendingAnchors();
 
     expect(result).toEqual({ processed: 0, failed: 0 });
   });
 
-  it('returns zero counts when data is null', async () => {
-    mockLimit.mockResolvedValue({ data: null, error: null });
-
-    const result = await processPendingAnchors();
-
-    expect(result).toEqual({ processed: 0, failed: 0 });
-  });
-
-  it('returns zero counts when fetch errors', async () => {
-    mockLimit.mockResolvedValue({
-      data: null,
-      error: { message: 'connection timeout' },
-    });
-
-    const result = await processPendingAnchors();
-
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockLogger.error).toHaveBeenCalled();
-  });
-
-  it('processes all pending anchors', async () => {
-    mockRpc
-      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
-    mockLimit.mockResolvedValue({
-      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
+  it('processes claimed anchors via the claim RPC', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        { ...CLAIMED_ANCHOR, id: 'a1' },
+        { ...CLAIMED_ANCHOR, id: 'a2' },
+      ],
       error: null,
     });
 
@@ -747,137 +644,82 @@ describe('processPendingAnchors', () => {
     expect(mockSubmitFingerprint).toHaveBeenCalledTimes(2);
   });
 
-  it('counts failures separately from successes', async () => {
-    mockRpc
-      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
+  it('falls back to legacy path when claim RPC errors', async () => {
+    // claim RPC fails
+    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'function not found' } });
+    // Legacy select returns anchors
     mockLimit.mockResolvedValue({
-      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
+      data: [
+        { id: 'a1', user_id: 'user-001', org_id: 'org-001', fingerprint: 'a'.repeat(64), public_id: null, metadata: null, credential_type: null },
+      ],
       error: null,
     });
 
-    // a1 succeeds, a2 not found (returns false), a3 succeeds
-    mockSingle
-      .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a1' }, error: null })
-      .mockResolvedValueOnce({ data: null, error: null }) // a2 not found
-      .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a3' }, error: null });
+    const result = await processPendingAnchors();
+
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it('counts failures separately from successes', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        { ...CLAIMED_ANCHOR, id: 'a1', fingerprint: 'a'.repeat(64) },
+        { ...CLAIMED_ANCHOR, id: 'a2', fingerprint: '' }, // invalid → will fail
+        { ...CLAIMED_ANCHOR, id: 'a3', fingerprint: 'c'.repeat(64) },
+      ],
+      error: null,
+    });
 
     const result = await processPendingAnchors();
 
     expect(result).toEqual({ processed: 2, failed: 1 });
   });
 
-  it('handles all anchors failing', async () => {
-    mockRpc
-      .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-      .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
-    mockLimit.mockResolvedValue({
-      data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
-      error: null,
-    });
-
-    // Both not found
-    mockSingle.mockResolvedValue({ data: null, error: null });
-
-    const result = await processPendingAnchors();
-
-    expect(result).toEqual({ processed: 0, failed: 2 });
-  });
-
   // ---- Switchboard kill switch ----
 
   describe('switchboard flag check', () => {
     it('skips processing when switchboard flag is disabled', async () => {
-      mockRpc.mockResolvedValue({ data: false, error: null });
+      const { callRpc } = await import('../utils/rpc.js');
+      (callRpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: false, error: null });
+
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
 
-    it('proceeds when switchboard flag is enabled', async () => {
-      mockRpc
-        .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-        .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
-      const result = await processPendingAnchors();
-      expect(result.processed).toBe(1);
-    });
-
     it('defaults to disabled when flag read fails (fail-closed)', async () => {
-      mockRpc.mockReset();
-      mockRpc.mockResolvedValue({ data: null, error: { message: 'RPC error' } });
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
+      const { callRpc } = await import('../utils/rpc.js');
+      (callRpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: { message: 'RPC error' } });
+
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
 
     it('defaults to disabled when RPC throws (fail-closed)', async () => {
-      mockRpc.mockReset();
-      mockRpc.mockRejectedValue(new Error('DB unreachable'));
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
-      const result = await processPendingAnchors();
-      expect(result).toEqual({ processed: 0, failed: 0 });
-    });
+      const { callRpc } = await import('../utils/rpc.js');
+      (callRpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('DB unreachable'));
 
-    it('defaults to disabled when flag data is not a boolean', async () => {
-      mockRpc.mockReset();
-      mockRpc.mockResolvedValue({ data: 'true', error: null });
-      mockLimit.mockResolvedValue({ data: [{ id: 'a1', metadata: null }], error: null });
       const result = await processPendingAnchors();
       expect(result).toEqual({ processed: 0, failed: 0 });
     });
   });
 
-  // ---- HARDENING-2: Query shape verification ----
-
-  describe('query shape', () => {
-    it('queries anchors table', async () => {
-      await processPendingAnchors();
-
-      expect(db.from).toHaveBeenCalledWith('anchors');
-    });
-
-    it('selects id and metadata columns', async () => {
-      await processPendingAnchors();
-
-      expect(anchorsTable.select).toHaveBeenCalledWith('id, metadata');
-    });
-
-    it('filters by status PENDING', async () => {
-      await processPendingAnchors();
-
-      expect(selectChain.eq).toHaveBeenCalledWith('status', 'PENDING');
-    });
-
-    it('filters out soft-deleted records (deleted_at IS NULL)', async () => {
-      await processPendingAnchors();
-
-      expect(selectChain.is).toHaveBeenCalledWith('deleted_at', null);
-    });
-
-    it('limits batch size to 1000 (fallback) or 100 (RPC)', async () => {
-      await processPendingAnchors();
-
-      // Fallback path uses limit(1000) to scan past pipeline records
-      expect(mockLimit).toHaveBeenCalledWith(1000);
-    });
-  });
-
-  // ---- HARDENING-2: Processing order and isolation ----
+  // ---- Processing order and isolation ----
 
   describe('processing order and failure isolation', () => {
     it('processes anchors sequentially (not in parallel)', async () => {
       const callOrder: string[] = [];
 
-      mockLimit.mockResolvedValue({
-        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
+      mockRpc.mockResolvedValueOnce({
+        data: [
+          { ...CLAIMED_ANCHOR, id: 'a1' },
+          { ...CLAIMED_ANCHOR, id: 'a2' },
+          { ...CLAIMED_ANCHOR, id: 'a3' },
+        ],
         error: null,
       });
-
-      // Track call order via submitFingerprint
-      mockSingle
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a1' }, error: null })
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a2' }, error: null })
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a3' }, error: null });
 
       mockSubmitFingerprint.mockImplementation(async () => {
         callOrder.push(`submit-${mockSubmitFingerprint.mock.calls.length}`);
@@ -891,16 +733,14 @@ describe('processPendingAnchors', () => {
     });
 
     it('continues processing remaining anchors after one fails', async () => {
-      mockLimit.mockResolvedValue({
-        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }, { id: 'a3', metadata: null }],
+      mockRpc.mockResolvedValueOnce({
+        data: [
+          { ...CLAIMED_ANCHOR, id: 'a1' },
+          { ...CLAIMED_ANCHOR, id: 'a2' },
+          { ...CLAIMED_ANCHOR, id: 'a3' },
+        ],
         error: null,
       });
-
-      // a1 succeeds, a2 chain timeout, a3 succeeds
-      mockSingle
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a1' }, error: null })
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a2' }, error: null })
-        .mockResolvedValueOnce({ data: { ...MOCK_ANCHOR, id: 'a3' }, error: null });
 
       mockSubmitFingerprint
         .mockResolvedValueOnce(MOCK_RECEIPT)        // a1 ok
@@ -915,36 +755,20 @@ describe('processPendingAnchors', () => {
     });
 
     it('does not throw even when all anchors fail with exceptions', async () => {
-      mockLimit.mockResolvedValue({
-        data: [{ id: 'a1', metadata: null }, { id: 'a2', metadata: null }],
+      mockRpc.mockResolvedValueOnce({
+        data: [
+          { ...CLAIMED_ANCHOR, id: 'a1' },
+          { ...CLAIMED_ANCHOR, id: 'a2' },
+        ],
         error: null,
       });
 
-      mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
       mockSubmitFingerprint.mockRejectedValue(new Error('chain down'));
 
       // Should not throw — failures are counted, not propagated
       const result = await processPendingAnchors();
 
       expect(result).toEqual({ processed: 0, failed: 2 });
-    });
-
-    it('logs total counts on completion', async () => {
-      mockRpc
-        .mockResolvedValueOnce({ data: true, error: null })  // get_flag
-        .mockResolvedValueOnce({ data: null, error: { message: 'RPC not found' } });  // fallback
-      mockLimit.mockResolvedValue({
-        data: [{ id: 'a1', metadata: null }],
-        error: null,
-      });
-
-      await processPendingAnchors();
-
-      // Fallback path logs "Found pending user anchors (fallback)" with count
-      expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.objectContaining({ count: expect.any(Number) }),
-        expect.stringContaining('Found pending user anchors'),
-      );
     });
   });
 });

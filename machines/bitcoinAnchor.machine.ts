@@ -35,12 +35,13 @@ export const bitcoinAnchorMachine = defineMachine({
   variables: {
     // Core anchor lifecycle status
     // PENDING = just created, awaiting chain submission
+    // BROADCASTING = worker has claimed anchor, broadcast in progress (transient)
     // SUBMITTED = worker has broadcast to mempool (tx unconfirmed)
     // SECURED = chain_tx_id confirmed on-chain (check-confirmations cron)
     // REVOKED = org admin revoked (terminal)
     status: mapVar(
       "Anchors",
-      enumType("PENDING", "SUBMITTED", "SECURED", "REVOKED"),
+      enumType("PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED"),
       lit("PENDING")
     ),
 
@@ -74,18 +75,32 @@ export const bitcoinAnchorMachine = defineMachine({
   },
 
   actions: {
-    // Worker broadcasts a PENDING anchor to the mempool.
-    // Maps to: processAnchor() in jobs/anchor.ts, processBatchAnchors() in jobs/batch-anchor.ts
-    // Result: PENDING → SUBMITTED, chain_tx_id set, fingerprint locked
-    workerBroadcast: {
+    // Worker claims a PENDING anchor before broadcasting.
+    // Maps to: claim_pending_anchors() RPC (atomic FOR UPDATE SKIP LOCKED)
+    // Result: PENDING → BROADCASTING, fingerprint locked, credential_type locked
+    workerClaim: {
       params: { a: "Anchors" },
       guard: eq(index(status, param("a")), lit("PENDING")),
       updates: [
-        setMap("status", param("a"), lit("SUBMITTED")),
+        setMap("status", param("a"), lit("BROADCASTING")),
         setMap("actor", param("a"), lit("worker")),
-        setMap("chainTxId", param("a"), lit("has_tx")),
         setMap("fingerprintLocked", param("a"), lit(true)),
         setMap("credentialTypeLocked", param("a"), lit(true))
+      ]
+    },
+
+    // Worker successfully broadcasts a BROADCASTING anchor to the mempool.
+    // Maps to: processAnchor() in jobs/anchor.ts after chain submit succeeds
+    // Result: BROADCASTING → SUBMITTED, chain_tx_id set
+    workerBroadcast: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker"))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED")),
+        setMap("chainTxId", param("a"), lit("has_tx"))
       ]
     },
 
@@ -105,8 +120,24 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Chain submission fails — anchor returns to PENDING for retry.
-    // Maps to: processAnchor() error path, or tx dropped from mempool
+    // Broadcast fails — anchor returns to PENDING for retry.
+    // Maps to: processAnchor() error path when chain submit throws
+    broadcastFail: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("BROADCASTING")),
+        eq(index(actor, param("a")), lit("worker"))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("PENDING")),
+        setMap("actor", param("a"), lit("client")),
+        setMap("fingerprintLocked", param("a"), lit(false)),
+        setMap("credentialTypeLocked", param("a"), lit(false))
+      ]
+    },
+
+    // Chain submission fails after broadcast — tx dropped from mempool.
+    // Maps to: recover_stuck_broadcasts() RPC or chain-maintenance reorg detection
     chainSubmitFail: {
       params: { a: "Anchors" },
       guard: and(
@@ -178,6 +209,17 @@ export const bitcoinAnchorMachine = defineMachine({
         or(
           not(eq(index(status, param("a")), lit("SUBMITTED"))),
           eq(index(chainTxId, param("a")), lit("has_tx"))
+        )
+      )
+    },
+
+    // INV-1c: BROADCASTING anchors must NOT have chain_tx_id (not yet broadcast)
+    broadcastingNoChainTx: {
+      description: "A BROADCASTING anchor has not yet received a chain_tx_id",
+      formula: forall("Anchors", "a",
+        or(
+          not(eq(index(status, param("a")), lit("BROADCASTING"))),
+          eq(index(chainTxId, param("a")), lit(null))
         )
       )
     },

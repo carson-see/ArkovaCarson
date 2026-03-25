@@ -18,6 +18,7 @@ import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -32,6 +33,23 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   const monitoredWebhookRetries = withCronMonitoring(
     'webhook-retries', '*/2 * * * *', processWebhookRetries,
   );
+
+  // RACE-1: Recover stuck BROADCASTING anchors every 2 minutes.
+  // Runs in all environments — if a worker crashes mid-broadcast, this resets
+  // the anchor to PENDING so it can be re-processed.
+  cron.schedule('*/2 * * * *', async () => {
+    try {
+      const result = await trackOperation(recoverStuckBroadcasts());
+      if (result.recovered > 0) {
+        logger.warn(
+          { recovered: result.recovered },
+          'Recovered stuck BROADCASTING anchors',
+        );
+      }
+    } catch (error) {
+      logger.error({ error }, 'Broadcast recovery cron failed');
+    }
+  });
 
   // Process pending anchors every minute — only in non-production
   if (chainInitialized && config.nodeEnv !== 'production') {

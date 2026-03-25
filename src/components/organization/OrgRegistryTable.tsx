@@ -78,6 +78,11 @@ const statusConfig = {
     variant: 'warning' as const,
     icon: Clock,
   },
+  BROADCASTING: {
+    label: 'Pending',
+    variant: 'warning' as const,
+    icon: Clock,
+  },
   SECURED: {
     label: 'Secured',
     variant: 'success' as const,
@@ -277,7 +282,7 @@ export function OrgRegistryTable({
               <Filter className="mr-2 h-4 w-4" />
               <SelectValue placeholder="Status" />
             </SelectTrigger>
-            <SelectContent>
+            <SelectContent className="z-40">
               <SelectItem value="ALL">All Status</SelectItem>
               <SelectItem value="PENDING">Pending</SelectItem>
               <SelectItem value="SECURED">Secured</SelectItem>

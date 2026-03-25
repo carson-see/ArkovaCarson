@@ -2489,7 +2489,7 @@ export type Database = {
     }
     Enums: {
       ai_report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
-      anchor_status: "PENDING" | "SECURED" | "REVOKED" | "EXPIRED" | "SUBMITTED"
+      anchor_status: "PENDING" | "BROADCASTING" | "SECURED" | "REVOKED" | "EXPIRED" | "SUBMITTED"
       api_key_rate_limit_tier: "free" | "paid" | "custom"
       attestation_status:
         | "DRAFT"
@@ -2683,7 +2683,7 @@ export const Constants = {
   public: {
     Enums: {
       ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
-      anchor_status: ["PENDING", "SECURED", "REVOKED", "EXPIRED", "SUBMITTED"],
+      anchor_status: ["PENDING", "BROADCASTING", "SECURED", "REVOKED", "EXPIRED", "SUBMITTED"],
       api_key_rate_limit_tier: ["free", "paid", "custom"],
       attestation_status: [
         "DRAFT",

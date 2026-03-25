@@ -2,6 +2,7 @@
  * Batch Anchor Processing Tests (MVP-23)
  *
  * Tests for processBatchAnchors() using mocked DB and chain client.
+ * Updated for claim-before-broadcast pattern (RACE-1).
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -11,20 +12,12 @@ import type { ChainReceipt } from '../chain/types.js';
 
 const {
   mockSubmitFingerprint,
-  mockAnchorsSelect,
   mockAnchorsUpdate,
   mockLogger,
   setUpdateResult,
   setUpdateResultQueue,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
-
-  // Select chain: .select().eq().is().order().limit()
-  const selectChain: Record<string, unknown> = {};
-  selectChain.eq = vi.fn(() => selectChain);
-  selectChain.is = vi.fn(() => selectChain);
-  selectChain.order = vi.fn(() => selectChain);
-  selectChain.limit = vi.fn();
 
   // RACE-1: Update chain supports .eq() chaining + thenable
   // Supports both fixed results and per-call result queues
@@ -44,7 +37,6 @@ const {
     updateResults = [...results];
   };
 
-  const mockAnchorsSelect = vi.fn(() => selectChain);
   const mockAnchorsUpdate = vi.fn(() => updateChain);
 
   const mockLogger = {
@@ -56,10 +48,8 @@ const {
 
   return {
     mockSubmitFingerprint,
-    mockAnchorsSelect,
     mockAnchorsUpdate,
     mockLogger,
-    selectChain,
     setUpdateResult,
     setUpdateResultQueue,
   };
@@ -82,31 +72,35 @@ vi.mock('../chain/client.js', () => ({
   getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
 }));
 
-vi.mock('../utils/db.js', () => ({
-  db: {
-    from: vi.fn((table: string) => {
-      if (table === 'anchors') {
-        return {
-          select: mockAnchorsSelect,
-          update: mockAnchorsUpdate,
-        };
-      }
-      return {};
-    }),
-  },
-}));
+const mockDbRpc = vi.hoisted(() => vi.fn());
+
+vi.mock('../utils/db.js', () => {
+  // Legacy select chain for fallback path
+  const selectChain: Record<string, unknown> = {};
+  selectChain.eq = vi.fn(() => selectChain);
+  selectChain.is = vi.fn(() => selectChain);
+  selectChain.order = vi.fn(() => selectChain);
+  selectChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+
+  return {
+    db: {
+      rpc: mockDbRpc,
+      from: vi.fn((table: string) => {
+        if (table === 'anchors') {
+          return {
+            select: vi.fn(() => selectChain),
+            update: mockAnchorsUpdate,
+          };
+        }
+        return {};
+      }),
+    },
+  };
+});
 
 // ---- System under test ----
 
 import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE } from './batch-anchor.js';
-
-// ---- Helpers ----
-
-// Access the select chain's limit mock (terminal operation for fetch query)
-function getSelectLimitMock() {
-  const chain = mockAnchorsSelect();
-  return (chain as Record<string, ReturnType<typeof vi.fn>>).limit;
-}
 
 // ---- Fixtures ----
 
@@ -117,24 +111,20 @@ const MOCK_RECEIPT: ChainReceipt = {
   confirmations: 6,
 };
 
-const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32) };
-const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32) };
-const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32) };
+const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32), metadata: null };
+const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32), metadata: null };
+const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32), metadata: null };
 
 // ================================================================
 // processBatchAnchors
 // ================================================================
 
 describe('processBatchAnchors', () => {
-  let limitMock: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
     vi.clearAllMocks();
 
-    limitMock = getSelectLimitMock();
-
-    // Defaults
-    limitMock.mockResolvedValue({ data: [], error: null });
+    // Default: RPC returns empty (no pending anchors)
+    mockDbRpc.mockResolvedValue({ data: [], error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     setUpdateResult({ error: null, count: 1 });
   });
@@ -142,7 +132,7 @@ describe('processBatchAnchors', () => {
   // ---- No pending anchors ----
 
   it('returns 0 processed when no pending anchors exist', async () => {
-    limitMock.mockResolvedValue({ data: [], error: null });
+    mockDbRpc.mockResolvedValue({ data: [], error: null });
 
     const result = await processBatchAnchors();
 
@@ -152,37 +142,40 @@ describe('processBatchAnchors', () => {
     expect(result.txId).toBeNull();
   });
 
-  it('returns 0 processed when fetch returns null data', async () => {
-    limitMock.mockResolvedValue({ data: null, error: null });
+  it('returns 0 processed when RPC returns null data', async () => {
+    mockDbRpc.mockResolvedValue({ data: null, error: null });
 
     const result = await processBatchAnchors();
 
     expect(result.processed).toBe(0);
   });
 
-  it('returns 0 processed when fetch returns an error', async () => {
-    limitMock.mockResolvedValue({
+  it('falls back to legacy path when RPC returns an error', async () => {
+    mockDbRpc.mockResolvedValue({
       data: null,
-      error: { message: 'connection timeout' },
+      error: { message: 'function not found' },
     });
 
     const result = await processBatchAnchors();
 
+    // Legacy path also returns 0 since select mock returns empty
     expect(result.processed).toBe(0);
-    expect(mockLogger.error).toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('falling back to legacy'),
+    );
   });
 
-  // ---- Not enough for batch ----
+  // ---- Single anchor batch ----
 
   it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A],
       error: null,
     });
 
     const result = await processBatchAnchors();
 
-    // With INEFF-2 fix, even single anchors are batch-processed
     expect(result.processed).toBe(1);
     expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
   });
@@ -190,7 +183,7 @@ describe('processBatchAnchors', () => {
   // ---- Successful batch processing ----
 
   it('processes batch of 3 anchors: builds tree, publishes root, updates all', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B, ANCHOR_C],
       error: null,
     });
@@ -204,7 +197,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('submits the Merkle root (not individual fingerprints) to chain', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -222,7 +215,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('updates each anchor with chain receipt data', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -244,7 +237,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('stores Merkle proof in metadata for each anchor', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -262,7 +255,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('marks all anchors as SUBMITTED after successful publish', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B, ANCHOR_C],
       error: null,
     });
@@ -280,7 +273,7 @@ describe('processBatchAnchors', () => {
   // ---- Chain publish failure ----
 
   it('returns 0 processed when chain submission fails', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -294,8 +287,8 @@ describe('processBatchAnchors', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
-  it('does not update any anchors when chain submission fails', async () => {
-    limitMock.mockResolvedValue({
+  it('does not update anchors to SUBMITTED when chain submission fails', async () => {
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -303,13 +296,17 @@ describe('processBatchAnchors', () => {
 
     await processBatchAnchors();
 
-    expect(mockAnchorsUpdate).not.toHaveBeenCalled();
+    // No SUBMITTED updates — only revert calls (BROADCASTING → PENDING)
+    const submittedUpdates = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
+    );
+    expect(submittedUpdates.length).toBe(0);
   });
 
   // ---- Partial DB update failure ----
 
   it('continues updating remaining anchors when one update fails', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B, ANCHOR_C],
       error: null,
     });
@@ -334,7 +331,7 @@ describe('processBatchAnchors', () => {
   // ---- Batch ID generation ----
 
   it('generates batch ID with timestamp and count', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });
@@ -357,7 +354,7 @@ describe('processBatchAnchors', () => {
   // ---- Logging ----
 
   it('logs completion info with batch details', async () => {
-    limitMock.mockResolvedValue({
+    mockDbRpc.mockResolvedValue({
       data: [ANCHOR_A, ANCHOR_B],
       error: null,
     });

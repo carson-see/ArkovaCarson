@@ -15,7 +15,6 @@ import type { ChainReceipt } from '../chain/types.js';
 
 const {
   mockSubmitFingerprint,
-  mockSingle,
   mockAuditInsert,
   mockDispatchWebhookEvent,
   mockLogger,
@@ -23,7 +22,6 @@ const {
   selectChain,
   setUpdateResult,
 } = vi.hoisted(() => {
-  const mockSingle = vi.fn();
   const mockAuditInsert = vi.fn();
   const mockSubmitFingerprint = vi.fn();
   const mockDispatchWebhookEvent = vi.fn();
@@ -38,7 +36,7 @@ const {
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
   selectChain.is = vi.fn(() => selectChain);
-  selectChain.single = mockSingle;
+  selectChain.single = vi.fn().mockResolvedValue({ data: null, error: null });
   selectChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
 
   // Update chain: thenable, supports chaining .eq().eq().is()
@@ -60,7 +58,6 @@ const {
 
   return {
     mockSubmitFingerprint,
-    mockSingle,
     mockAuditInsert,
     mockDispatchWebhookEvent,
     mockLogger,
@@ -141,28 +138,32 @@ vi.mock('../utils/db.js', () => ({
 // ---- System under test ----
 
 import { processAnchor } from './anchor.js';
+import type { ClaimedAnchor } from './anchor.js';
 import { processRevocation } from './revocation.js';
 
 // ---- Fixtures ----
 
-const MOCK_ANCHOR = {
+const CLAIMED_ANCHOR: ClaimedAnchor = {
   id: 'anchor-001',
   user_id: 'user-001',
   org_id: 'org-001',
   fingerprint: 'a'.repeat(64),
-  status: 'PENDING',
-  metadata: null,
-  deleted_at: null,
-  chain_tx_id: null,
   public_id: 'pub-001',
+  metadata: null,
+  credential_type: null,
 };
 
 const MOCK_REVOKED_ANCHOR = {
-  ...MOCK_ANCHOR,
   id: 'anchor-revoked',
+  user_id: 'user-001',
+  org_id: 'org-001',
+  fingerprint: 'a'.repeat(64),
   status: 'REVOKED',
+  metadata: null,
+  deleted_at: null,
   chain_tx_id: 'original_tx_abc',
   revocation_tx_id: null,
+  public_id: 'pub-001',
 };
 
 const MOCK_RECEIPT: ChainReceipt = {
@@ -174,33 +175,35 @@ const MOCK_RECEIPT: ChainReceipt = {
 
 // ================================================================
 // RACE-1: Status guard prevents double-broadcast
+// processAnchor now takes a ClaimedAnchor (already BROADCASTING).
+// The status guard checks .eq('status', 'BROADCASTING') on the
+// SUBMITTED update. If another worker changed the status, count=0.
 // ================================================================
 
 describe('RACE-1: Anchor status guard on UPDATE', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     mockAuditInsert.mockResolvedValue({ error: null });
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
     setUpdateResult({ error: null, count: 1 });
   });
 
-  it('returns false when anchor already claimed by another worker (count=0)', async () => {
+  it('returns false when anchor status changed unexpectedly (count=0)', async () => {
     setUpdateResult({ error: null, count: 0 });
 
-    const result = await processAnchor('anchor-001');
+    const result = await processAnchor(CLAIMED_ANCHOR);
     expect(result).toBe(false);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ anchorId: 'anchor-001' }),
-      expect.stringContaining('already claimed'),
+      expect.stringContaining('no longer in BROADCASTING'),
     );
   });
 
   it('succeeds when count > 0 (no concurrent contention)', async () => {
     setUpdateResult({ error: null, count: 1 });
 
-    const result = await processAnchor('anchor-001');
+    const result = await processAnchor(CLAIMED_ANCHOR);
     expect(result).toBe(true);
   });
 });
@@ -212,7 +215,6 @@ describe('RACE-1: Anchor status guard on UPDATE', () => {
 describe('RACE-2: Validate broadcast response', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSingle.mockResolvedValue({ data: MOCK_ANCHOR, error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
     setUpdateResult({ error: null, count: 1 });
   });
@@ -220,9 +222,9 @@ describe('RACE-2: Validate broadcast response', () => {
   it('returns false when chain client returns null receipt', async () => {
     mockSubmitFingerprint.mockResolvedValue(null);
 
-    const result = await processAnchor('anchor-001');
+    const result = await processAnchor(CLAIMED_ANCHOR);
     expect(result).toBe(false);
-    // Payment source update may happen before chain, but no SUBMITTED status update
+    // No SUBMITTED status update should have been called
     const statusUpdates = anchorsTable.update.mock.calls.filter(
       (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
     );
@@ -235,9 +237,8 @@ describe('RACE-2: Validate broadcast response', () => {
       receiptId: '',
     });
 
-    const result = await processAnchor('anchor-001');
+    const result = await processAnchor(CLAIMED_ANCHOR);
     expect(result).toBe(false);
-    // Payment source update may happen before chain, but no SUBMITTED status update
     const statusUpdates = anchorsTable.update.mock.calls.filter(
       (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'SUBMITTED',
     );
@@ -247,7 +248,7 @@ describe('RACE-2: Validate broadcast response', () => {
   it('logs error with receipt details when broadcast is rejected', async () => {
     mockSubmitFingerprint.mockResolvedValue({ receiptId: null });
 
-    await processAnchor('anchor-001');
+    await processAnchor(CLAIMED_ANCHOR);
 
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ anchorId: 'anchor-001' }),

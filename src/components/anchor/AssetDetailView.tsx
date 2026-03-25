@@ -20,6 +20,7 @@ import {
   Hash,
   Share2,
   ExternalLink,
+  GitBranch,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
@@ -35,7 +36,7 @@ import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS } from '@/lib/copy';
 import {
   Tooltip,
   TooltipContent,
@@ -69,7 +70,7 @@ interface AnchorRecord {
   publicId?: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
+  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
   createdAt: string;
   securedAt?: string;
   issuedAt?: string;
@@ -88,6 +89,12 @@ interface AnchorRecord {
   chainBlockHeight?: number | null;
   /** Immutable description set at creation (BETA-12) */
   description?: string | null;
+  /** Version number in lineage chain (1 = original) */
+  versionNumber?: number;
+  /** Parent anchor ID for lineage navigation */
+  parentAnchorId?: string | null;
+  /** Lineage chain: all versions of this credential */
+  lineage?: { id: string; versionNumber: number; status: string; createdAt: string; filename: string }[];
 }
 
 interface AssetDetailViewProps {
@@ -101,6 +108,12 @@ type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
 
 const statusConfig = {
   PENDING: {
+    label: 'Pending',
+    variant: 'warning' as const,
+    icon: Clock,
+    color: 'text-yellow-600',
+  },
+  BROADCASTING: {
     label: 'Pending',
     variant: 'warning' as const,
     icon: Clock,
@@ -502,6 +515,57 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           />
         </CardContent>
       </Card>
+
+      {/* Version History / Lineage (P4-TS-06) */}
+      {(anchor.versionNumber ?? 1) > 1 || (anchor.lineage && anchor.lineage.length > 1) ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <GitBranch className="h-4 w-4" />
+              {VERSION_HISTORY_LABELS.TITLE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {(anchor.lineage ?? [{ id: anchor.id, versionNumber: anchor.versionNumber ?? 1, status: anchor.status, createdAt: anchor.createdAt, filename: anchor.filename }]).map((version) => {
+                const isCurrent = version.id === anchor.id;
+                const vStatus = statusConfig[version.status as keyof typeof statusConfig];
+                const VIcon = vStatus?.icon ?? Clock;
+                return (
+                  <div
+                    key={version.id}
+                    className={`flex items-center gap-3 rounded-lg px-4 py-3 transition-colors ${isCurrent ? 'bg-primary/5 border border-primary/20' : 'bg-muted/50 hover:bg-muted cursor-pointer'}`}
+                    onClick={!isCurrent ? () => window.location.assign(`/records/${version.id}`) : undefined}
+                    role={!isCurrent ? 'link' : undefined}
+                  >
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full shrink-0 ${isCurrent ? 'bg-primary/10' : 'bg-muted'}`}>
+                      <span className="text-xs font-bold">{version.versionNumber}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {VERSION_HISTORY_LABELS.VERSION_PREFIX} {version.versionNumber}
+                        {isCurrent && (
+                          <Badge variant="outline" className="ml-2 text-[10px]">{VERSION_HISTORY_LABELS.CURRENT}</Badge>
+                        )}
+                        {version.versionNumber === 1 && (
+                          <span className="ml-2 text-xs text-muted-foreground">{VERSION_HISTORY_LABELS.ORIGINAL}</span>
+                        )}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {version.filename} — {new Date(version.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <Badge variant={vStatus?.variant ?? 'outline'} className="shrink-0">
+                      <VIcon className="mr-1 h-3 w-3" />
+                      {vStatus?.label ?? version.status}
+                    </Badge>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {/* QR Code — only for SECURED anchors with a public_id */}
       {anchor.publicId && anchor.status === 'SECURED' && (

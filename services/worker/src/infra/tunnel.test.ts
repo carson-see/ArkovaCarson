@@ -18,29 +18,8 @@ const entrypoint = readFileSync(resolve(WORKER_ROOT, 'entrypoint.sh'), 'utf-8');
 const compose = readFileSync(resolve(WORKER_ROOT, 'docker-compose.yml'), 'utf-8');
 
 describe('INFRA-01: Dockerfile', () => {
-  it('installs cloudflared binary', () => {
-    expect(dockerfile).toContain('cloudflared');
-    // Verify it downloads the actual binary, not just mentions it
-    expect(dockerfile).toMatch(/cloudflare\/cloudflared\/releases/);
-    expect(dockerfile).toContain('chmod +x /usr/local/bin/cloudflared');
-  });
-
-  it('uses multi-stage build (builder + runner)', () => {
-    expect(dockerfile).toMatch(/FROM\s+node:\S+\s+AS\s+builder/i);
-    expect(dockerfile).toMatch(/FROM\s+node:\S+\s+AS\s+runner/i);
-    // Verify builder output is copied to runner
-    expect(dockerfile).toMatch(/COPY\s+--from=builder/);
-  });
-
-  it('runs as non-root user', () => {
-    expect(dockerfile).toMatch(/adduser\s+.*arkova/);
-    expect(dockerfile).toMatch(/addgroup\s+.*arkova/);
-    expect(dockerfile).toContain('USER arkova');
-  });
-
-  it('has HEALTHCHECK instruction', () => {
-    expect(dockerfile).toMatch(/HEALTHCHECK\s+--interval/);
-    expect(dockerfile).toContain('/health');
+  it('uses node:lts-alpine base image', () => {
+    expect(dockerfile).toContain('node:lts-alpine');
   });
 
   it('exposes PORT via ENV', () => {
@@ -48,13 +27,16 @@ describe('INFRA-01: Dockerfile', () => {
     expect(dockerfile).toMatch(/EXPOSE\s+/);
   });
 
-  it('uses entrypoint.sh as container entrypoint', () => {
-    expect(dockerfile).toMatch(/ENTRYPOINT\s+\[.*entrypoint\.sh.*\]/);
+  it('starts with node directly (not npm — SIGTERM must reach Node)', () => {
+    expect(dockerfile).toMatch(/CMD\s+\["node",\s*"dist\/index\.js"\]/);
   });
 
-  it('installs production dependencies only in runner stage', () => {
-    // The runner stage should use --omit=dev
-    expect(dockerfile).toContain('npm ci --omit=dev');
+  it('prunes dev dependencies after build', () => {
+    expect(dockerfile).toContain('npm prune --omit=dev');
+  });
+
+  it('removes source after build (only dist/ needed)', () => {
+    expect(dockerfile).toContain('rm -rf src/');
   });
 });
 

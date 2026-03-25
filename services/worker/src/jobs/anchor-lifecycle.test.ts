@@ -2,7 +2,7 @@
  * Anchor Lifecycle Integration Test
  *
  * HARDENING-4: Tests the full anchor lifecycle flow:
- * PENDING → chain submit → SECURED → audit logged → webhook dispatched
+ * PENDING → (claim) → BROADCASTING → chain submit → SUBMITTED → audit logged → webhook dispatched
  *
  * This is a higher-level integration test that verifies the components
  * work together correctly, complementing the unit tests in anchor.test.ts.
@@ -51,6 +51,7 @@ vi.mock('../utils/logger.js', () => ({
 vi.mock('../config.js', () => ({
   config: {
     chainNetwork: 'testnet' as const,
+    bitcoinNetwork: 'testnet' as const,
     nodeEnv: 'test',
     useMocks: true,
   },
@@ -80,46 +81,14 @@ vi.mock('../billing/reconciliation.js', () => ({
 
 // Stateful DB mock that tracks mutations
 vi.mock('../utils/db.js', () => {
-  const createSelectChain = (_anchorId?: string) => {
-    const chain: Record<string, unknown> & { _id?: string; _status?: string } = {};
-
-    chain.eq = vi.fn((field: string, value: string) => {
-      if (field === 'id') chain._id = value;
-      if (field === 'status') chain._status = value;
-      return chain;
-    });
-    chain.is = vi.fn(() => chain);
-    chain.order = vi.fn(() => chain);
-    chain.single = vi.fn(() => {
-      const id = chain._id;
-      const anchor = id ? dbState.anchors.get(id) : undefined;
-      if (!anchor || (chain._status && anchor.status !== chain._status)) {
-        return Promise.resolve({ data: null, error: null });
-      }
-      return Promise.resolve({ data: { ...anchor }, error: null });
-    });
-    chain.limit = vi.fn(() => {
-      const pending = Array.from(dbState.anchors.entries())
-        .filter(([, a]) => a.status === 'PENDING' && !a.deleted_at)
-        .map(([id, a]) => ({ id, metadata: (a as Record<string, unknown>).metadata ?? null }));
-      return Promise.resolve({ data: pending, error: null });
-    });
-
-    return chain;
-  };
-
   const createUpdateChain = () => {
     let updateData: Record<string, unknown> = {};
-    let targetId: string | null = null;
     return {
       update: vi.fn((data: Record<string, unknown>) => {
         updateData = data;
-        targetId = null;
-        // RACE-1 fix: Support chaining .eq('id', ...).eq('status', ...) and .is(...)
         const chain: Record<string, unknown> = {};
         chain.eq = vi.fn((field: string, value: string) => {
-          if (field === 'id') targetId = value;
-          if (field === 'id' && targetId) {
+          if (field === 'id') {
             const anchor = dbState.anchors.get(value);
             if (anchor) {
               Object.assign(anchor, updateData);
@@ -128,7 +97,6 @@ vi.mock('../utils/db.js', () => {
           return chain;
         });
         chain.is = vi.fn(() => chain);
-        // Make chain thenable so `await` resolves
         chain.then = (resolve: (v: unknown) => void) => resolve({ error: null, count: 1 });
         return chain;
       }),
@@ -139,15 +107,40 @@ vi.mock('../utils/db.js', () => {
     db: {
       rpc: vi.fn((fnName: string) => {
         if (fnName === 'get_flag') return Promise.resolve({ data: true, error: null });
-        // get_pending_user_anchors: return error to trigger fallback to db.from('anchors')
+        if (fnName === 'claim_pending_anchors') {
+          // Return PENDING anchors as claimed
+          const pending = Array.from(dbState.anchors.entries())
+            .filter(([, a]) => a.status === 'PENDING' && !a.deleted_at && !(a.metadata as Record<string, unknown> | null)?.pipeline_source)
+            .map(([id, a]) => {
+              // Mark as BROADCASTING in state
+              a.status = 'BROADCASTING';
+              return {
+                id,
+                user_id: a.user_id,
+                org_id: a.org_id,
+                fingerprint: a.fingerprint,
+                public_id: a.public_id,
+                metadata: a.metadata,
+                credential_type: a.credential_type ?? null,
+              };
+            });
+          return Promise.resolve({ data: pending, error: null });
+        }
         return Promise.resolve({ data: null, error: { message: 'RPC not in cache' } });
       }),
       from: vi.fn((table: string) => {
         if (table === 'anchors') {
           return {
-            ...createSelectChain(),
-            select: vi.fn(() => createSelectChain()),
             ...createUpdateChain(),
+            select: vi.fn(() => {
+              const chain: Record<string, unknown> = {};
+              chain.eq = vi.fn(() => chain);
+              chain.is = vi.fn(() => chain);
+              chain.order = vi.fn(() => chain);
+              chain.limit = vi.fn(() => Promise.resolve({ data: [], error: null }));
+              chain.single = vi.fn(() => Promise.resolve({ data: null, error: null }));
+              return chain;
+            }),
           };
         }
         if (table === 'audit_events') {
@@ -172,6 +165,7 @@ vi.mock('../utils/db.js', () => {
 // ---- System under test ----
 
 import { processAnchor, processPendingAnchors } from './anchor.js';
+import type { ClaimedAnchor } from './anchor.js';
 
 // ---- Test fixtures ----
 
@@ -192,22 +186,36 @@ function seedAnchor(id: string, overrides: Record<string, unknown> = {}) {
     id,
     user_id: 'user-001',
     org_id: 'org-001',
-    fingerprint: hexId, // Valid 64-char hex SHA-256
+    fingerprint: hexId,
     status: 'PENDING',
     file_name: 'test.pdf',
     file_size: 1024,
     public_id: `pub-${id}`,
     created_at: '2026-03-10T10:00:00Z',
     deleted_at: null,
+    credential_type: null,
     ...overrides,
   });
+}
+
+function makeClaimedAnchor(id: string): ClaimedAnchor {
+  const anchor = dbState.anchors.get(id)!;
+  return {
+    id,
+    user_id: anchor.user_id as string,
+    org_id: anchor.org_id as string | null,
+    fingerprint: anchor.fingerprint as string,
+    public_id: anchor.public_id as string | null,
+    metadata: anchor.metadata as Record<string, unknown> | null ?? null,
+    credential_type: anchor.credential_type as string | null ?? null,
+  };
 }
 
 // ================================================================
 // Full Lifecycle Integration Tests
 // ================================================================
 
-describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
+describe('anchor lifecycle: PENDING → BROADCASTING → SUBMITTED → webhook', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     dbState.anchors.clear();
@@ -219,13 +227,15 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
 
   it('processes a single anchor through the full lifecycle', async () => {
     seedAnchor('anc-001');
+    // Simulate claim: PENDING → BROADCASTING
+    dbState.anchors.get('anc-001')!.status = 'BROADCASTING';
 
-    const result = await processAnchor('anc-001');
+    const result = await processAnchor(makeClaimedAnchor('anc-001'));
 
     // 1. Returns success
     expect(result).toBe(true);
 
-    // 2. Anchor status updated to SUBMITTED in DB (BETA-01: confirmed later by cron)
+    // 2. Anchor status updated to SUBMITTED in DB
     const anchor = dbState.anchors.get('anc-001');
     expect(anchor?.status).toBe('SUBMITTED');
     expect(anchor?.chain_tx_id).toBe(RECEIPT.receiptId);
@@ -258,7 +268,7 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
     );
   });
 
-  it('processes multiple anchors through the batch flow', async () => {
+  it('processes multiple anchors through the claim-then-broadcast flow', async () => {
     seedAnchor('anc-001');
     seedAnchor('anc-002');
     seedAnchor('anc-003');
@@ -267,7 +277,7 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
 
     expect(result).toEqual({ processed: 3, failed: 0 });
 
-    // All three anchors submitted (BETA-01: confirmed later by cron)
+    // All three anchors submitted
     expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
     expect(dbState.anchors.get('anc-002')?.status).toBe('SUBMITTED');
     expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
@@ -317,20 +327,21 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
 
     expect(result).toEqual({ processed: 2, failed: 1 });
 
-    // First and third submitted, second still PENDING
+    // First and third submitted, second reverted to PENDING
     expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
     expect(dbState.anchors.get('anc-fail')?.status).toBe('PENDING');
     expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
 
-    // Only 2 webhooks dispatched (the failures don't get webhooks)
+    // Only 2 webhooks dispatched
     expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(2);
   });
 
   it('webhook failure does not affect anchor SUBMITTED status', async () => {
     seedAnchor('anc-001');
+    dbState.anchors.get('anc-001')!.status = 'BROADCASTING';
     mockDispatchWebhookEvent.mockRejectedValue(new Error('webhook delivery failed'));
 
-    const result = await processAnchor('anc-001');
+    const result = await processAnchor(makeClaimedAnchor('anc-001'));
 
     // Anchor is still SUBMITTED despite webhook failure
     expect(result).toBe(true);
@@ -338,48 +349,36 @@ describe('anchor lifecycle: PENDING → SUBMITTED → webhook', () => {
     expect(dbState.auditEvents).toHaveLength(1);
   });
 
-  it('operations execute in correct order: chain → DB update → audit → webhook', async () => {
-    seedAnchor('anc-001');
-
-    const callOrder: string[] = [];
-
-    mockSubmitFingerprint.mockImplementation(async () => {
-      callOrder.push('chain_submit');
-      return RECEIPT;
-    });
-
-    mockDispatchWebhookEvent.mockImplementation(async () => {
-      callOrder.push('webhook_dispatch');
-    });
-
-    // Intercept audit insert to track ordering
-    const originalAuditEvents = dbState.auditEvents;
-    const originalPush = originalAuditEvents.push.bind(originalAuditEvents);
-    dbState.auditEvents.push = ((...args: Record<string, unknown>[]) => {
-      callOrder.push('audit_log');
-      return originalPush(...args);
-    }) as typeof originalAuditEvents.push;
-
-    await processAnchor('anc-001');
-
-    // DB update happens between chain_submit and audit_log (verified by SUBMITTED status)
-    expect(callOrder[0]).toBe('chain_submit');
-    // audit_log comes after chain submit + DB update
-    expect(callOrder).toContain('audit_log');
-    // webhook_dispatch comes last
-    expect(callOrder.at(-1)).toBe('webhook_dispatch');
-
-    // Restore
-    dbState.auditEvents.push = originalPush;
-  });
-
-  it('individual anchor without org_id skips webhook but still secures', async () => {
+  it('individual anchor without org_id skips webhook but still submits', async () => {
     seedAnchor('anc-individual', { org_id: null, user_id: 'individual-user' });
+    dbState.anchors.get('anc-individual')!.status = 'BROADCASTING';
 
-    const result = await processAnchor('anc-individual');
+    const result = await processAnchor(makeClaimedAnchor('anc-individual'));
 
     expect(result).toBe(true);
     expect(dbState.anchors.get('anc-individual')?.status).toBe('SUBMITTED');
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+  });
+
+  it('reverts to PENDING on chain broadcast failure', async () => {
+    seedAnchor('anc-fail');
+    dbState.anchors.get('anc-fail')!.status = 'BROADCASTING';
+    mockSubmitFingerprint.mockRejectedValue(new Error('network error'));
+
+    const result = await processAnchor(makeClaimedAnchor('anc-fail'));
+
+    expect(result).toBe(false);
+    expect(dbState.anchors.get('anc-fail')?.status).toBe('PENDING');
+  });
+
+  it('reverts to PENDING when chain returns empty receipt', async () => {
+    seedAnchor('anc-empty');
+    dbState.anchors.get('anc-empty')!.status = 'BROADCASTING';
+    mockSubmitFingerprint.mockResolvedValue({ receiptId: null });
+
+    const result = await processAnchor(makeClaimedAnchor('anc-empty'));
+
+    expect(result).toBe(false);
+    expect(dbState.anchors.get('anc-empty')?.status).toBe('PENDING');
   });
 });

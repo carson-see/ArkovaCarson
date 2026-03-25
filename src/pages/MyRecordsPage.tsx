@@ -55,6 +55,7 @@ import type { Record } from '@/components/records';
 
 const statusConfig = {
   PENDING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
+  BROADCASTING: { label: 'Pending', variant: 'warning' as const, icon: Clock },
   SUBMITTED: { label: 'Awaiting Confirmation', variant: 'secondary' as const, icon: Loader2 },
   SECURED: { label: 'Secured', variant: 'success' as const, icon: CheckCircle },
   REVOKED: { label: 'Revoked', variant: 'secondary' as const, icon: XCircle },
