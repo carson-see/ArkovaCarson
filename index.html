@@ -6,6 +6,20 @@
     <meta name="description" content="Arkova — Secure document verification platform. Anchor credentials to an immutable record and verify them instantly." />
     <meta name="theme-color" content="#00d4ff" />
 
+    <!-- SEC-008: Content Security Policy (dev fallback — production CSP in vercel.json) -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+      script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval';
+      style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+      font-src 'self' https://fonts.gstatic.com;
+      img-src 'self' data: blob: https:;
+      connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.sentry.io https://*.stripe.com https://*.run.app https://*.railway.app https://*.arkova.ai http://localhost:* ws://localhost:*;
+      frame-src 'self' https://*.stripe.com;
+      worker-src 'self' blob:;
+      object-src 'none';
+      frame-ancestors 'none';
+      base-uri 'self'" />
+
     <!-- Google Fonts: Inter + Space Grotesk (Synthetic Sentinel design system) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
