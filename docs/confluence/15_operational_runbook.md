@@ -1,5 +1,5 @@
 # Operational Runbook — Production Launch
-_Last updated: 2026-03-16 | Stories: P7-TS-05, MVP-01_
+_Last updated: 2026-03-24 | Stories: P7-TS-05, MVP-01_
 
 ## Overview
 
@@ -63,9 +63,11 @@ Follow `docs/confluence/14_kms_operations.md` for detailed instructions.
 
 **Code status:** COMPLETE (Dockerfile, .env.example, deploy workflow, health check endpoint)
 
+**Deployment targets:** GCP Cloud Run (primary) or Railway (alternative — see Section 7).
+
 ### 2.1 Cloud Run Environment Variables
 
-Set these in GCP Cloud Run configuration (or via `gcloud run services update`):
+Set these in GCP Cloud Run configuration (or via `gcloud run services update`). For Railway, set via `railway variables set`:
 
 | Variable | Source | Notes |
 |----------|--------|-------|
@@ -134,11 +136,13 @@ curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
 
 **Status as of 2026-03-16:** Health endpoint verified and returning 200 OK. All secrets mounted via GCP Secret Manager.
 
-## 3. OPS-01: Apply Migrations 0059–0065 to Production Supabase
+## 3. OPS-01: Apply Migrations 0059–0109 to Production Supabase
 
 **Priority:** CRITICAL — blocks all P8 AI features, GDPR deletion, and security hardening in production.
 
-**Migrations pending:**
+**Migration status:** 109 total migrations (0001-0109, with 0033+0078 skipped, 0068 split into 0068a/0068b). Migrations 0001-0107 applied to production.
+
+**Migrations pending (sample of key ranges):**
 
 | # | File | Description | Dependencies |
 |---|------|-------------|--------------|
@@ -149,6 +153,12 @@ curl https://arkova-worker-kvojbeutfa-uc.a.run.app/health
 | 0063 | `0063_security_sprint2.sql` | CSP headers, rate limit tables, additional hardening | None |
 | 0064 | `0064_p8_phase2_ai_intelligence.sql` | AI feedback, integrity scoring, review queue tables | 0060 |
 | 0065 | `0065_account_deletion.sql` | Account deletion flow + cascade policies | 0061 |
+| 0090 | `0090_prompt_version_tracking.sql` | AI prompt version tracking table + RLS | None |
+| 0091 | `0091_ai_eval_golden_dataset.sql` | Golden dataset + scoring tables for AI eval | None |
+| 0092-0097 | Various | AI infrastructure, fraud audit, batch anchoring support | Varies |
+| 0098 | `0098_orphan_anchor_check.sql` | Orphan anchor detection + cleanup RPC | None |
+| 0099-0107 | Various | x402 payments, CLE verification, Nessie RAG, attestations | Varies |
+| 0108-0109 | Uncommitted | New work in progress | Varies |
 
 **Steps:**
 
@@ -302,7 +312,90 @@ vercel --prod
 - Upload manually via `sentry-cli releases files <release> upload-sourcemaps ./dist`
 - Add `@sentry/esbuild-plugin` to the worker build if using esbuild
 
-## 7. Other Pre-Launch Manual Steps
+## 7. Railway Deployment (Alternative to Cloud Run)
+
+A `railway.json` configuration exists in `services/worker/` for deploying the worker to Railway as an alternative to GCP Cloud Run.
+
+### Railway Setup
+
+```bash
+# Install Railway CLI
+npm install -g @railway/cli
+
+# Login and link project
+railway login
+cd services/worker
+railway link
+
+# Deploy
+railway up
+```
+
+### Railway Environment Variables
+
+Set the same environment variables listed in Section 2.1 via the Railway dashboard or CLI:
+
+```bash
+railway variables set SUPABASE_URL=https://vzwyaatejekddvltxyye.supabase.co
+railway variables set BITCOIN_NETWORK=testnet4
+# ... (all other variables from Section 2.1)
+```
+
+### Railway vs. Cloud Run
+
+| Feature | Cloud Run | Railway |
+|---------|-----------|---------|
+| Auto-scaling | Yes (0 to N) | Yes (1 to N) |
+| Cron scheduling | Cloud Scheduler (external) | Built-in cron support |
+| Secret management | GCP Secret Manager | Railway variables (encrypted) |
+| Region | us-central1 | US-West (default) |
+| Cost | Pay-per-request | Usage-based |
+
+> **Note:** Railway is suitable for staging/preview environments and as a backup deployment target. Production currently targets Cloud Run.
+
+## 8. Fee Spike Monitoring Procedure
+
+### When to Investigate
+
+- Worker logs `fee_spike_skipped` events
+- Anchors remain in `PENDING` status longer than 30 minutes
+- `MAX_FEE_SAT_PER_VBYTE` threshold is being hit repeatedly
+
+### Monitoring Steps
+
+1. **Check current fee rates:**
+   ```bash
+   curl https://mempool.space/api/v1/fees/recommended
+   ```
+
+2. **Check worker audit events:**
+   ```sql
+   SELECT * FROM audit_events
+   WHERE event_type = 'fee_spike_skipped'
+   ORDER BY created_at DESC LIMIT 20;
+   ```
+
+3. **Check stuck transactions:**
+   ```sql
+   SELECT id, chain_tx_id, status, updated_at
+   FROM anchors
+   WHERE status = 'SUBMITTED'
+   AND updated_at < now() - interval '60 minutes';
+   ```
+
+4. **Adjust fee threshold if needed:**
+   ```bash
+   # Temporarily raise the max fee (Cloud Run)
+   gcloud run services update arkova-worker \
+     --update-env-vars MAX_FEE_SAT_PER_VBYTE=100
+
+   # Or on Railway
+   railway variables set MAX_FEE_SAT_PER_VBYTE=100
+   ```
+
+5. **After fee spike subsides:** Reset `MAX_FEE_SAT_PER_VBYTE` to default (50).
+
+## 9. Other Pre-Launch Manual Steps
 
 | Task | Description | Who | Status |
 |------|-------------|-----|--------|
@@ -349,3 +442,4 @@ Domains are added to Vercel but DNS records need to be set at the registrar (Nam
 | 2026-03-16 | Vercel: VITE_APP_URL set, domains added (app.arkova.ai, arkova.ai, www.arkova.ai). DNS instructions added (Section 3.1). |
 | 2026-03-16 | Bitcoin Testnet 4 migration: added Section 1.3 (Testnet 4 setup), renamed Section 1.3 → 1.4 (Signet legacy). Default network changed from signet to testnet4. |
 | 2026-03-16 | Added OPS-01 through OPS-04 sections with exact commands: migration apply, demo seed strip, Sentry DSN setup, source map upload. |
+| 2026-03-24 | Updated migration tracking to 109 migrations (0090-0109 range added). Added Railway deployment instructions (Section 7). Added fee spike monitoring procedure (Section 8). Updated Cloud Run references to include Railway as deployment target. |

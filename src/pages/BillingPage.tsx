@@ -28,7 +28,7 @@ export function BillingPage() {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL ?? WORKER_URL;
+      const workerUrl = WORKER_URL;
       const response = await fetch(`${workerUrl}/api/billing/status`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });

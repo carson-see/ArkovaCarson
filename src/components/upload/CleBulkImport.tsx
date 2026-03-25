@@ -114,7 +114,7 @@ export function CleBulkImport({ onComplete, onCancel }: Readonly<CleBulkImportPr
       return;
     }
 
-    const workerUrl = import.meta.env.VITE_WORKER_URL ?? WORKER_URL;
+    const workerUrl = WORKER_URL;
     let submitted = 0;
     let failed = 0;
     const importErrors: Array<{ row: number; error: string }> = [];

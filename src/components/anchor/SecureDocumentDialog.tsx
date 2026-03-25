@@ -127,7 +127,7 @@ export function SecureDocumentDialog({
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setError('Authentication required'); setStep('error'); return; }
 
-      const workerUrl = import.meta.env.VITE_WORKER_URL ?? WORKER_URL;
+      const workerUrl = WORKER_URL;
       const response = await fetch(`${workerUrl}/api/v1/attestations`, {
         method: 'POST',
         headers: {

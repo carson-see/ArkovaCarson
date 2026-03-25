@@ -1,5 +1,5 @@
 # Webhooks
-_Last updated: 2026-03-10 5:20 PM EST | Story: P7-TS-09, P7-TS-10_
+_Last updated: 2026-03-24 | Story: P7-TS-09, P7-TS-10, DH-04, DH-12_
 
 ## Overview
 
@@ -100,6 +100,8 @@ Organization customers can configure webhooks to receive anchor status updates. 
 | `anchor.secured` | Anchor ID, chain receipt, timestamp |
 | `anchor.revoked` | Anchor ID, revocation reason |
 | `anchor.verified` | Anchor ID, verification result |
+| `attestation.created` | Attestation ID, anchor ID, attester |
+| `attestation.revoked` | Attestation ID, revocation reason |
 
 ### Delivery
 
@@ -259,6 +261,42 @@ All webhook activity is logged:
 - `webhook.delivery_failed`
 - `webhook.disabled`
 
+## Circuit Breaker (DH-04)
+
+Outbound webhook delivery uses a circuit breaker pattern to protect against cascading failures when a customer endpoint is consistently failing:
+
+- **Closed** (normal): Deliveries proceed. Failures tracked.
+- **Open** (tripped): After consecutive failures exceed threshold, all deliveries to that endpoint are short-circuited. Endpoint marked inactive.
+- **Half-open** (recovery): After cooldown period, a single probe delivery is attempted. Success resets to Closed; failure returns to Open.
+
+This prevents the webhook retry queue from being saturated by a single failing endpoint.
+
+## Dead Letter Queue (DH-12)
+
+After all retry attempts are exhausted (5 attempts with exponential backoff), failed webhook deliveries are moved to a dead letter queue rather than being silently dropped:
+
+- Dead-lettered events are retained for 30 days
+- Organization admins can view dead-lettered events in `/settings/webhooks`
+- Dead-lettered events can be manually retried via admin action
+- Logged as `webhook.dead_lettered` audit event
+
+## SSRF Protection
+
+Outbound webhook URLs are validated to prevent Server-Side Request Forgery:
+
+- Only HTTPS URLs allowed (existing CHECK constraint on `webhook_endpoints.url`)
+- Private/internal IP ranges blocked (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 169.254.0.0/16)
+- DNS resolution validated before delivery — resolved IP checked against blocklist
+- `localhost`, `*.internal`, and cloud metadata endpoints blocked
+
+## Feature Flag
+
+Outbound webhooks are gated by the `ENABLE_OUTBOUND_WEBHOOKS` switchboard flag (currently **disabled**). When disabled:
+
+- Webhook endpoint configuration UI is hidden
+- `dispatchWebhookEvent()` returns immediately without delivery
+- Existing endpoint configurations are preserved but inactive
+
 ## Related Documentation
 
 - [08_payments_entitlements.md](./08_payments_entitlements.md) — Payment system and billing_events schema
@@ -271,3 +309,4 @@ All webhook activity is logged:
 |------|-------|--------|
 | 2026-03-10 | Audit | Rewrote: fixed "Ralph" branding, corrected table names (webhook_endpoints, webhook_delivery_logs), removed nonexistent stripe_webhook_events, added billing_events for idempotency, documented implementation status and known gaps |
 | 2026-03-10 5:20 PM EST | HARDENING-4 | Delivery engine status → Complete. Webhook dispatch wired in anchor.ts. processWebhookRetries added to cron schedule. Removed "Known gap" about unconnected lifecycle. |
+| 2026-03-24 | Doc refresh | Added circuit breaker (DH-04), dead letter queue (DH-12), SSRF protection, ENABLE_OUTBOUND_WEBHOOKS flag, attestation.created/revoked event types. |

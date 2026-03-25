@@ -1,11 +1,13 @@
 # AWS KMS Operations — Bitcoin Treasury Signing
-_Last updated: 2026-03-12 | Story: DH-03 (unblocked by this document)_
+_Last updated: 2026-03-24 | Story: DH-03 (unblocked by this document), MVP-29_
 
 ## Overview
 
 Arkova uses AWS KMS for mainnet Bitcoin transaction signing. The `KmsSigningProvider` in `services/worker/src/chain/signing-provider.ts` wraps an asymmetric KMS key (ECC_SECG_P256K1 / secp256k1) to sign OP_RETURN anchor transactions.
 
 Signet and testnet use `WifSigningProvider` (ECPair from environment variable). KMS is **mainnet only**.
+
+**Provider options:** AWS KMS (primary) or GCP Cloud KMS (MVP-29 alternative). Both support secp256k1 asymmetric signing. The provider is selected based on environment configuration.
 
 ## Architecture
 
@@ -268,8 +270,91 @@ Recommended CloudWatch alarms:
 | `services/worker/src/chain/client.ts` | `initChainClient()` factory — creates KMS provider when `BITCOIN_NETWORK=mainnet` |
 | `services/worker/src/chain/signet.ts` | `BitcoinChainClient` — uses any `SigningProvider` for tx signing |
 
+## GCP Cloud KMS Provider (MVP-29)
+
+As an alternative to AWS KMS, Arkova supports GCP Cloud KMS for environments already running on Google Cloud (e.g., Cloud Run worker deployment).
+
+### GCP Key Setup
+
+```bash
+# Create a keyring
+gcloud kms keyrings create arkova-treasury \
+  --location=us-central1 \
+  --project=arkova1
+
+# Create an asymmetric signing key (secp256k1)
+gcloud kms keys create mainnet-signer \
+  --keyring=arkova-treasury \
+  --location=us-central1 \
+  --purpose=asymmetric-signing \
+  --default-algorithm=ec-sign-secp256k1-sha256 \
+  --project=arkova1
+```
+
+### GCP Environment Variables
+
+```bash
+GCP_KMS_KEY_NAME=projects/arkova1/locations/us-central1/keyRings/arkova-treasury/cryptoKeys/mainnet-signer/cryptoKeyVersions/1
+KMS_PROVIDER=gcp    # "aws" (default) or "gcp"
+```
+
+### GCP IAM
+
+The Cloud Run service account needs `roles/cloudkms.signerVerifier` on the key resource.
+
+## Fee Monitoring (PERF-7)
+
+### MAX_FEE_SAT_PER_VBYTE
+
+The worker enforces a maximum fee rate to prevent overpaying during fee spikes:
+
+```bash
+MAX_FEE_SAT_PER_VBYTE=50    # default: 50 sat/vByte
+```
+
+If the current mempool fee rate exceeds this threshold, the worker will:
+1. Log a warning with the current vs. max fee rate
+2. Skip the anchor batch and retry on the next cron cycle
+3. Emit a `fee_spike_skipped` audit event
+
+### Fee Rate Source
+
+Fee estimates are fetched from the Mempool.space API (`/api/v1/fees/recommended`). The worker uses `halfHourFee` for standard anchoring priority.
+
+## Stuck Transaction Detection & Rebroadcast
+
+### Detection
+
+A cron job (`/cron/check-stuck-txs`) identifies transactions that have been in `SUBMITTED` status for longer than the expected confirmation window (default: 6 blocks / ~60 minutes).
+
+### Rebroadcast Strategy
+
+1. **After 60 minutes:** Rebroadcast the original transaction via Mempool.space API
+2. **After 120 minutes:** If still unconfirmed, log a `stuck_tx_alert` audit event for manual review
+3. **RBF (Replace-By-Fee):** Not currently implemented. Stuck transactions are rebroadcast as-is.
+
+### Environment Variables
+
+```bash
+STUCK_TX_THRESHOLD_MINUTES=60      # default: 60
+STUCK_TX_REBROADCAST_ENABLED=true  # default: true
+```
+
+## Mainnet Readiness Status
+
+| Requirement | Status | Notes |
+|-------------|--------|-------|
+| AWS KMS signing provider | **Complete** | `KmsSigningProvider` tested (39 tests, 98%+ coverage) |
+| GCP Cloud KMS provider | **Complete** | MVP-29, alternative for GCP-hosted deployments |
+| Fee monitoring (MAX_FEE_SAT_PER_VBYTE) | **Complete** | PERF-7, prevents overpaying during fee spikes |
+| Stuck TX detection | **Complete** | Cron-based detection + rebroadcast |
+| Treasury funding | **Pending** | Requires ops to fund mainnet address |
+| KMS key provisioning | **Pending** | Requires ops to create production key |
+| Switchboard flag (`ENABLE_PROD_NETWORK_ANCHORING`) | **Ready** | Flag exists, currently `false` |
+
 ## Change Log
 
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-12 | DH-03 | Initial document — key provisioning, IAM, rotation, DR |
+| 2026-03-24 | MVP-29, PERF-7 | Added GCP Cloud KMS provider option. Added fee monitoring (MAX_FEE_SAT_PER_VBYTE). Added stuck TX detection and rebroadcast. Added mainnet readiness status table. |

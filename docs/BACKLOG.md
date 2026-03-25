@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-23 (Session 13: 29K+ public records, 1,572+ SECURED anchors, 2,148 tests, 91 migrations, AI eval F1=82.1%, Phase 1.5 15/16 complete) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-23 (Session 13: 29K+ public records, 1,572+ SECURED anchors, 2,236 tests, 109 migrations, AI eval F1=82.1%, Phase 1.5 15/16 complete) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -319,7 +319,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~PH1-SDK-03~~ | ~~MCP server enhancement (nessie tools)~~ | P1 | **COMPLETE** | S4 | PH1-INT-02 |
 | ~~PH1-DATA-05~~ | ~~Pipeline monitoring dashboard~~ | P1 | **COMPLETE** | S4 | PH1-DATA-01 |
 | ~~PH1-PAY-03~~ | ~~Payment analytics & revenue tracking~~ | P1 | **COMPLETE** | S4 | PH1-PAY-01 |
-| PH1-SDK-02 | Python SDK (arkova-python) | P2 | NOT STARTED | S5 | PH1-PAY-01 |
+| ~~PH1-SDK-02~~ | ~~Python SDK (arkova-python)~~ | P2 | **COMPLETE** | S5 | PH1-PAY-01 |
 
 **PR #127 merged 2026-03-22:** Sprints 1-4 complete (12/15 stories). PRs #125, #126 superseded and closed.
 **Remaining:** PH1-PAY-02 (facilitator deploy), PH1-SDK-02 (Python SDK)

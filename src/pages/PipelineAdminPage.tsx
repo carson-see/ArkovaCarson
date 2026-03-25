@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { WORKER_URL } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -199,7 +200,7 @@ export function PipelineAdminPage() {
   const triggerJob = useCallback(async (jobPath: string, _label: string) => {
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
     try {
-      const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'https://arkova-worker-270018525501.us-central1.run.app';
+      const workerUrl = WORKER_URL;
       const response = await fetch(`${workerUrl}/jobs/${jobPath}`, {
         method: 'POST',
         headers: {
@@ -513,7 +514,7 @@ export function PipelineAdminPage() {
               })}
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              Jobs run on the worker at {import.meta.env.VITE_WORKER_URL ?? 'arkova-worker (Cloud Run)'}. Requires CRON_SECRET.
+              Jobs run on the worker at {WORKER_URL}. Requires CRON_SECRET.
             </p>
           </CardContent>
         </Card>

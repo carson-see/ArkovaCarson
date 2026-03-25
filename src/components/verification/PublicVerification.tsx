@@ -23,6 +23,7 @@ import {
   Check,
   Ban,
   Clock,
+  Flag,
 } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
@@ -484,6 +485,13 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         <div className="pt-4 text-center text-xs text-muted-foreground border-t">
           <p>Verification ID: {data.public_id}</p>
           <p className="mt-1">{PUBLIC_VERIFICATION_LABELS.SECURED_BY}</p>
+          <a
+            href={`mailto:support@arkova.ai?subject=${encodeURIComponent(PUBLIC_VERIFICATION_LABELS.REPORT_ISSUE_SUBJECT + ': ' + data.public_id)}`}
+            className="inline-flex items-center gap-1 mt-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <Flag className="h-3 w-3" />
+            {PUBLIC_VERIFICATION_LABELS.REPORT_ISSUE}
+          </a>
         </div>
       </CardContent>
 
@@ -597,7 +605,7 @@ function InfoRow({
         {Icon && <Icon className="h-3.5 w-3.5" />}
         {label}
       </span>
-      <span className={`text-sm text-right break-all ${
+      <span className={`text-sm text-right break-words ${
         ({ warning: 'text-yellow-600', destructive: 'text-destructive' } as Record<string, string>)[variant ?? ''] ?? ''
       }`}>
         {value}

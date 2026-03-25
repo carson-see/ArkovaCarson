@@ -27,6 +27,7 @@ type AnchorRow = Database['public']['Tables']['anchors']['Row'];
 
 /** Map a Supabase anchor row to the UI Record interface. */
 function mapAnchorToRecord(anchor: AnchorRow): Record {
+  const meta = anchor.metadata as { issuer?: string; [k: string]: unknown } | null;
   return {
     id: anchor.id,
     filename: anchor.filename,
@@ -37,6 +38,10 @@ function mapAnchorToRecord(anchor: AnchorRow): Record {
     fileSize: anchor.file_size ?? 0,
     credentialType: anchor.credential_type ?? undefined,
     chainTxId: anchor.chain_tx_id ?? undefined,
+    chainBlockHeight: anchor.chain_block_height ?? undefined,
+    publicId: anchor.public_id ?? undefined,
+    metadata: meta ?? undefined,
+    issuerName: meta?.issuer ?? undefined,
   };
 }
 

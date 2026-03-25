@@ -29,6 +29,9 @@ const anchorColumns = [
   { header: 'Filename', accessor: 'filename' as const },
   { header: 'Fingerprint', accessor: 'fingerprint' as const },
   { header: 'Status', accessor: 'status' as const },
+  { header: 'Credential Type', accessor: (row: Anchor) => row.credential_type ?? '' },
+  { header: 'Label', accessor: (row: Anchor) => row.label ?? '' },
+  { header: 'Public ID', accessor: (row: Anchor) => row.public_id ?? '' },
   { header: 'File Size (bytes)', accessor: 'file_size' as const },
   { header: 'MIME Type', accessor: 'file_mime' as const },
   {
@@ -40,8 +43,17 @@ const anchorColumns = [
     accessor: (row: Anchor) => formatDateForCsv(row.updated_at),
   },
   {
-    header: 'Chain Timestamp',
+    header: 'Network Observed Time',
     accessor: (row: Anchor) => formatDateForCsv(row.chain_timestamp),
+  },
+  {
+    header: 'Revoked At',
+    accessor: (row: Anchor) => formatDateForCsv(row.revoked_at),
+  },
+  { header: 'Revocation Reason', accessor: (row: Anchor) => row.revocation_reason ?? '' },
+  {
+    header: 'Expires At',
+    accessor: (row: Anchor) => formatDateForCsv(row.expires_at),
   },
   { header: 'Legal Hold', accessor: (row: Anchor) => row.legal_hold ? 'Yes' : 'No' },
 ];

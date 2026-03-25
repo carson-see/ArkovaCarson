@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { WORKER_URL } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -189,7 +190,7 @@ export function AttestationsPage() {
     setRevoking(true);
     setRevokeError(null);
     try {
-      const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'https://arkova-worker-270018525501.us-central1.run.app';
+      const workerUrl = WORKER_URL;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setRevokeError('Authentication required'); setRevoking(false); return; }
 
@@ -259,7 +260,7 @@ export function AttestationsPage() {
     setSubmitting(true);
 
     try {
-      const workerUrl = import.meta.env.VITE_WORKER_URL ?? 'https://arkova-worker-270018525501.us-central1.run.app';
+      const workerUrl = WORKER_URL;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setFormError('Authentication required'); setSubmitting(false); return; }
 

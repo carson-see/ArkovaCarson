@@ -1,5 +1,5 @@
 # Proof Packages
-_Last updated: 2026-03-10 8:00 PM EST | Story: P7-TS-07, P7-TS-08_
+_Last updated: 2026-03-24 | Story: P7-TS-07, P7-TS-08_
 
 ## Overview
 
@@ -63,6 +63,37 @@ proof_package_{public_id}.zip
 ```
 
 This is not implemented. No ZIP library is installed. The ZIP format is a target for post-launch improvement.
+
+## Batch Anchoring & Merkle Proof Inclusion
+
+When batch anchoring is enabled (`ENABLE_BATCH_ANCHORING` flag), multiple anchor fingerprints are combined into a Merkle tree. The single Merkle root is written on-chain in an OP_RETURN output, along with a `metadata_hash` (8-byte truncated SHA-256) for compact identification.
+
+### OP_RETURN Format
+
+```
+OP_RETURN <merkle_root_32bytes> <metadata_hash_8bytes>
+```
+
+- **Merkle root** — 32-byte SHA-256 root of all fingerprints in the batch
+- **metadata_hash** — 8-byte truncated SHA-256 of the batch metadata (batch ID, timestamp, anchor count)
+
+### Merkle Proof in Proof Packages
+
+When an anchor was part of a batch, the JSON proof package includes a `merkle_proof` field:
+
+```json
+{
+  "batch": {
+    "batch_id": "batch_abc123",
+    "merkle_root": "a1b2c3...",
+    "metadata_hash": "d4e5f6g7",
+    "proof": ["<sibling_hash_1>", "<sibling_hash_2>", "..."],
+    "leaf_index": 3
+  }
+}
+```
+
+Recipients can independently reconstruct the Merkle root from their fingerprint + the proof path and compare it against the on-chain OP_RETURN value.
 
 ## Verification Instructions
 
@@ -146,3 +177,4 @@ Per Constitution Section 1.3, proof packages use approved terminology:
 | 2026-03-10 | Audit | Rewrote: documented actual implementation (PDF works, ZIP is planned not built), removed fictional ZIP generation code, added implementation status table |
 | 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-5 references as resolved (commit a38b485). JSON proof download now working. |
 | 2026-03-10 ~7:15 PM EST | PR-HARDENING-1 | `proofPackage.ts` went from 0% to 100% test coverage — 33 tests in `src/lib/proofPackage.test.ts` covering schema validation, package generation for all anchor states, validation function, filename generation, and browser download with DOM mocks. `validators.ts` functions coverage fixed from 71% to 100% with 10 new tests. |
+| 2026-03-24 | Doc update | Added Batch Anchoring & Merkle Proof Inclusion section. Documented OP_RETURN format with metadata_hash (8-byte truncated SHA-256). Added Merkle proof fields in JSON proof package schema. |

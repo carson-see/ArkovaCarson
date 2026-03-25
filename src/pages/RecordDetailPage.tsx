@@ -7,12 +7,14 @@
  * @see P4-TS-03 — Wire AssetDetailView to /records/:id route + real Supabase query
  */
 
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Loader2, AlertCircle, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchor } from '@/hooks/useAnchor';
+import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { AssetDetailView } from '@/components/anchor';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,69 @@ export function RecordDetailPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { anchor, loading: anchorLoading, error } = useAnchor(id);
+
+  // Fetch version lineage when anchor has parent or version > 1
+  const [lineage, setLineage] = useState<{ id: string; versionNumber: number; status: string; createdAt: string; filename: string }[]>([]);
+  useEffect(() => {
+    if (!anchor) return;
+    const hasLineage = anchor.version_number > 1 || anchor.parent_anchor_id;
+    if (!hasLineage) { setLineage([]); return; }
+
+    // Walk up to find root, then fetch all descendants
+    async function fetchLineage() {
+      // Find root: walk parent chain up
+      let rootId = anchor!.id;
+      let parentId = anchor!.parent_anchor_id;
+      const visited = new Set<string>([rootId]);
+
+      while (parentId) {
+        if (visited.has(parentId)) break;
+        visited.add(parentId);
+        const { data: parent } = await supabase
+          .from('anchors')
+          .select('id, parent_anchor_id')
+          .eq('id', parentId)
+          .is('deleted_at', null)
+          .single();
+        if (!parent) break;
+        rootId = parent.id;
+        parentId = parent.parent_anchor_id;
+      }
+
+      // Now collect all versions: root + descendants via parent_anchor_id chain
+      const versions: { id: string; versionNumber: number; status: string; createdAt: string; filename: string }[] = [];
+
+      // Fetch root
+      const { data: root } = await supabase
+        .from('anchors')
+        .select('id, version_number, status, created_at, filename')
+        .eq('id', rootId)
+        .is('deleted_at', null)
+        .single();
+      if (root) {
+        versions.push({ id: root.id, versionNumber: root.version_number, status: root.status, createdAt: root.created_at, filename: root.filename });
+      }
+
+      // Fetch children iteratively
+      let currentParent = rootId;
+      for (let i = 0; i < 50; i++) { // safety limit
+        const { data: children } = await supabase
+          .from('anchors')
+          .select('id, version_number, status, created_at, filename')
+          .eq('parent_anchor_id', currentParent)
+          .is('deleted_at', null)
+          .order('version_number', { ascending: true })
+          .limit(1);
+        if (!children || children.length === 0) break;
+        const child = children[0];
+        versions.push({ id: child.id, versionNumber: child.version_number, status: child.status, createdAt: child.created_at, filename: child.filename });
+        currentParent = child.id;
+      }
+
+      setLineage(versions);
+    }
+    fetchLineage();
+  }, [anchor]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -106,6 +171,9 @@ export function RecordDetailPage() {
           description: anchor.description ?? undefined,
           orgId: anchor.org_id ?? undefined,
           issuerName: (anchor.metadata as Record<string, unknown> | null)?.issuer as string | undefined,
+          versionNumber: anchor.version_number,
+          parentAnchorId: anchor.parent_anchor_id ?? undefined,
+          lineage: lineage.length > 1 ? lineage : undefined,
         }}
         onBack={handleBack}
         onDownloadProof={() => {

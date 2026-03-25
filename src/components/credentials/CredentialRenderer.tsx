@@ -307,7 +307,7 @@ export function CredentialRenderer({
               <p className="text-[10px] uppercase tracking-widest text-[#859398] mb-1">
                 {config.label}
               </p>
-              <h3 className="font-bold text-lg text-[#dce3ed] truncate">
+              <h3 className="font-bold text-lg text-[#dce3ed] break-words">
                 {template?.name ?? credentialLabel ?? LABELS.DOCUMENT_RECORD}
               </h3>
               {credentialLabel && template?.name && (

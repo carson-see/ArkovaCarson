@@ -1,5 +1,5 @@
 # Retention & Legal Hold
-_Last updated: 2026-03-10 | Story: P1-TS-01 (migration 0004)_
+_Last updated: 2026-03-24 | Story: P1-TS-01 (migration 0004)_
 
 ## Overview
 
@@ -216,8 +216,32 @@ UTC ensures consistent, auditable timestamps across timezones.
 - [03_security_rls.md](./03_security_rls.md) — RLS policies protecting `legal_hold` field
 - [04_audit_events.md](./04_audit_events.md) — Audit logging for hold changes
 
+## GDPR Erasure & Account Deletion
+
+### GDPR Erasure RPCs (migration 0061)
+
+Migration 0061 added database functions supporting GDPR right-to-erasure requests. These RPCs allow authorized deletion of user personal data while preserving anonymized anchor records (fingerprints are hashes, not personal data).
+
+### Account Deletion (migration 0065)
+
+Migration 0065 added account deletion support, enabling users to request full account removal. The deletion process:
+
+1. Soft-deletes the user profile
+2. Removes personal data (name, email) from `profiles`
+3. Preserves anchor fingerprints (non-personal, on-chain permanence applies)
+4. Logs deletion event to `audit_events`
+
+### Data Retention Cron
+
+A scheduled worker job handles expired retention periods and cleanup of soft-deleted records past their retention window.
+
+## Unified Credits Table
+
+Migration 0100+ introduced a unified credits system (`unified_credits` table) that consolidates billing and usage tracking. Retention policies apply to credit transaction records per the same rules as anchor records — `retention_until` and `legal_hold` are respected before any purge operations.
+
 ## Change Log
 
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line, implementation status table, related docs, and change log. Verified CHECK constraint and indexes match migration 0004. |
+| 2026-03-24 | Doc refresh | Added GDPR erasure RPCs (migration 0061), account deletion (migration 0065), data retention cron, and unified credits table sections. |

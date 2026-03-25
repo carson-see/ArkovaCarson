@@ -132,7 +132,7 @@ arkova/
 │           └── mcp-tools.ts       # verify_credential + search_credentials tools
 ├── supabase/
 │   ├── config.toml                # Supabase local config
-│   ├── migrations/                # 91 SQL migrations (0001-0092, gaps at 0033+0078, 0068 split into 0068a/0068b)
+│   ├── migrations/                # 109 SQL migrations (0001-0109, gaps at 0033+0078, 0068 split into 0068a/0068b)
 │   └── seed.sql                   # Demo data (UMich Registrar, Midwest Medical, individual)
 ├── tests/
 │   └── rls/                       # RLS integration test helpers
@@ -160,7 +160,7 @@ Key principles:
 
 See [02_data_model.md](./02_data_model.md) for the complete data model.
 
-### Table Inventory (32+ tables across 91 migrations)
+### Table Inventory (38+ tables across 109 migrations)
 
 | Table | Migration | Purpose |
 |-------|-----------|---------|

@@ -519,6 +519,8 @@ export const PUBLIC_VERIFICATION_LABELS = {
   SECURED_BY: 'Secured by Arkova',
   COPY_FINGERPRINT_ARIA: 'Copy document fingerprint',
   COPY_RECEIPT_ARIA: 'Copy network receipt',
+  REPORT_ISSUE: 'Report an Issue',
+  REPORT_ISSUE_SUBJECT: 'Issue with credential',
 } as const;
 
 // =============================================================================
@@ -1220,6 +1222,32 @@ export const SYSTEM_HEALTH_LABELS = {
   CONNECTION_ERROR: 'Unable to connect to the server. Please check your connection and try again.',
   WORKER_HINT: 'Ensure the worker service is running and accessible.',
   WORKER_OFFLINE: 'Worker offline',
+} as const;
+
+// =============================================================================
+// VERSION HISTORY / LINEAGE
+// =============================================================================
+
+export const VERSION_HISTORY_LABELS = {
+  TITLE: 'Version History',
+  VERSION_PREFIX: 'Version',
+  CURRENT: 'Current',
+  ORIGINAL: 'Original',
+  UPDATED_VERSION: 'Updated Version',
+  NO_HISTORY: 'This is the original version of this record.',
+  VIEW_VERSION: 'View Version',
+} as const;
+
+// =============================================================================
+// ORG LOGO
+// =============================================================================
+
+export const ORG_LOGO_LABELS = {
+  UPLOAD_LOGO: 'Upload Logo',
+  CHANGE_LOGO: 'Change Logo',
+  LOGO_HINT: 'PNG or JPG, max 2 MB',
+  UPLOAD_FAILED: 'Failed to upload logo. Please try again.',
+  UPLOAD_SUCCESS: 'Logo updated successfully.',
 } as const;
 
 export const TERM_REPLACEMENTS: Record<string, string> = {

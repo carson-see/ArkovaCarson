@@ -108,6 +108,7 @@ export function IssueCredentialForm({
   const [credentialType, setCredentialType] = useState<CredentialType | ''>('');
   const [label, setLabel] = useState('');
   const [issuedAt, setIssuedAt] = useState('');
+  const [expiresAt, setExpiresAt] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({});
@@ -226,6 +227,7 @@ export function IssueCredentialForm({
     setCredentialType('');
     setLabel('');
     setIssuedAt('');
+    setExpiresAt('');
     setRecipientEmail('');
     setMetadataValues({});
     setMetadataErrors({});
@@ -321,6 +323,7 @@ export function IssueCredentialForm({
         .insert({
           ...validated,
           user_id: user.id,
+          ...(expiresAt ? { expires_at: `${expiresAt}T23:59:59Z` } : {}),
         })
         .select('id, public_id')
         .single();
@@ -377,6 +380,7 @@ export function IssueCredentialForm({
     profile,
     credentialType,
     label,
+    expiresAt,
     recipientEmail,
     onSuccess,
     validateMetadata,
@@ -540,6 +544,25 @@ export function IssueCredentialForm({
                   onChange={(e) => setIssuedAt(e.target.value)}
                   disabled={creating}
                 />
+              </div>
+
+              {/* Expiration date (optional) */}
+              <div className="space-y-2">
+                <Label htmlFor="expires-at">{FORM_LABELS.EXPIRES_AT}
+                  <span className="text-muted-foreground text-xs ml-1">(optional)</span>
+                </Label>
+                <Input
+                  id="expires-at"
+                  type="date"
+                  value={expiresAt}
+                  onChange={(e) => setExpiresAt(e.target.value)}
+                  disabled={creating}
+                />
+                {expiresAt && new Date(expiresAt) < new Date(new Date().toISOString().split('T')[0]) && (
+                  <p className="text-xs text-warning-foreground bg-warning/10 rounded px-2 py-1">
+                    This expiration date is in the past. The credential will be immediately expired.
+                  </p>
+                )}
               </div>
 
               {/* Recipient email (UF-05 → feeds into UF-03) */}

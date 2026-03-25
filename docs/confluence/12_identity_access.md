@@ -1,5 +1,5 @@
 # Identity & Access Control
-_Last updated: 2026-03-10 | Story: P2-TS-03 through P2-TS-0X_
+_Last updated: 2026-03-24 | Story: P2-TS-03 through P2-TS-0X_
 
 ## Overview
 
@@ -252,6 +252,22 @@ Enforced by `protect_privileged_profile_fields()` trigger (migration 0008, updat
 | useProfile hook | **Complete** | No unit test |
 | useOnboarding hook | **Complete** | Unit test exists |
 
+## API Endpoints (Verification & Intelligence)
+
+The following endpoints extend the identity and access surface for attestation, entity verification, compliance, and AI-powered queries. All require authentication unless noted.
+
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| `POST` | `/attestations` | Create a new attestation record | Authenticated |
+| `GET` | `/attestations` | List attestations (org-scoped) | Authenticated |
+| `PATCH` | `/attestations/:id` | Update attestation metadata | Authenticated (owner/ORG_ADMIN) |
+| `POST` | `/verify/entity` | Verify an entity against known records | Authenticated |
+| `POST` | `/compliance/check` | Run compliance check against entity/attestation | Authenticated |
+| `POST` | `/cle` | CLE verification — validate continuing legal education credits | Authenticated |
+| `POST` | `/nessie/query` | Nessie RAG query — AI-powered search over credential corpus | Authenticated |
+
+**Total API endpoint count:** 20+ (including existing auth, anchor, webhook, cron, health, and verification API endpoints).
+
 ## Related Documentation
 
 - [02_data_model.md](./02_data_model.md) — Profile and Organization tables
@@ -264,3 +280,4 @@ Enforced by `protect_privileged_profile_fields()` trigger (migration 0008, updat
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added ORG_MEMBER role (migration 0022). Annotated flow diagram with CRIT-4 status. Expanded `update_profile_onboarding` docs with full signature, return value, and behavior from migration 0015. Added `public_id` to privileged fields (migration 0035). Corrected test file table — `useAuth.test.ts` and `useProfile.test.ts` do not exist. Marked Google OAuth as not configured. Added implementation status table. |
 | 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-4 references as resolved (commit a38b485). Flow diagram updated with correct page components. Onboarding route wiring marked Complete. |
+| 2026-03-24 | Doc update | Added API Endpoints section: attestation CRUD (POST/GET/PATCH /attestations), entity verification (/verify/entity), compliance check (/compliance/check), CLE verification (/cle), Nessie RAG query (/nessie/query). Updated endpoint count to 20+. |

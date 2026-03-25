@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Building2, Settings, Plus, Upload, UserPlus,
   ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
-  Globe, MapPin, Calendar,
+  Globe, MapPin, Calendar, Camera,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -37,7 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import type { Database } from '@/types/database.types';
 
@@ -80,6 +80,9 @@ export function OrgProfilePage() {
   const [orgFoundedDate, setOrgFoundedDate] = useState('');
   const [orgSettingsInit, setOrgSettingsInit] = useState(false);
   const [orgSaved, setOrgSaved] = useState(false);
+
+  // Logo upload state
+  const [logoUploading, setLogoUploading] = useState(false);
 
   // Fetch user's role in this org
   useEffect(() => {
@@ -132,8 +135,56 @@ export function OrgProfilePage() {
     setOrgSettingsInit(true);
   }
 
+  // Logo upload handler
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !orgId) return;
+
+    // Validate file
+    const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
+    const ALLOWED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      toast.error('Please upload a PNG, JPG, or WebP image.');
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      toast.error('Logo must be under 2 MB.');
+      return;
+    }
+
+    setLogoUploading(true);
+    const ext = file.name.split('.').pop() ?? 'png';
+    const path = `${orgId}/logo.${ext}`;
+
+    // Upload to storage (upsert to overwrite existing)
+    const { error: uploadError } = await supabase.storage
+      .from('org-logos')
+      .upload(path, file, { upsert: true, contentType: file.type });
+
+    if (uploadError) {
+      toast.error(ORG_LOGO_LABELS.UPLOAD_FAILED);
+      setLogoUploading(false);
+      return;
+    }
+
+    // Get public URL
+    const { data: urlData } = supabase.storage.from('org-logos').getPublicUrl(path);
+    const logoUrl = urlData?.publicUrl;
+
+    if (logoUrl) {
+      // Update org record with logo_url
+      await updateOrganization({ logo_url: logoUrl });
+      toast.success(ORG_LOGO_LABELS.UPLOAD_SUCCESS);
+    }
+
+    setLogoUploading(false);
+    // Reset the input so re-selecting the same file triggers onChange
+    e.target.value = '';
+  };
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
+  const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
   const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
 
@@ -225,8 +276,33 @@ export function OrgProfilePage() {
         <CardContent className="relative pt-0 pb-0">
           {/* Org logo overlapping banner */}
           <div className="-mt-14 mb-3 flex items-end justify-between">
-            <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl">
-              <Building2 className="h-14 w-14 text-primary" />
+            <div className="relative group">
+              <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl overflow-hidden">
+                {orgLogoUrl ? (
+                  <img src={orgLogoUrl} alt={organization?.display_name ?? 'Organization logo'} className="h-full w-full object-cover" />
+                ) : (
+                  <Building2 className="h-14 w-14 text-primary" />
+                )}
+              </div>
+              {isAdmin && (
+                <label
+                  className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                  aria-label={orgLogoUrl ? ORG_LOGO_LABELS.CHANGE_LOGO : ORG_LOGO_LABELS.UPLOAD_LOGO}
+                >
+                  {logoUploading ? (
+                    <Loader2 className="h-6 w-6 animate-spin text-white" />
+                  ) : (
+                    <Camera className="h-6 w-6 text-white" />
+                  )}
+                  <input
+                    type="file"
+                    className="sr-only"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleLogoUpload}
+                    disabled={logoUploading}
+                  />
+                </label>
+              )}
             </div>
             {/* Action buttons (top right) */}
             <div className="flex gap-2 pb-2">
@@ -323,8 +399,9 @@ export function OrgProfilePage() {
                   {ORG_PAGE_LABELS.BULK_UPLOAD}
                 </Button>
                 <Button size="sm" onClick={() => setIssueDialogOpen(true)}>
-                  <Plus className="mr-2 h-4 w-4" />
-                  {ORG_PAGE_LABELS.ISSUE_CREDENTIAL}
+                  <Plus className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
+                  <span className="sm:hidden">Issue</span>
                 </Button>
               </div>
             )}

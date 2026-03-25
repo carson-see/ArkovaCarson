@@ -1,5 +1,5 @@
 # Seed Data & Click-Through Guide
-_Last updated: 2026-03-10 | Story: Demo Quality_
+_Last updated: 2026-03-24 | Story: Demo Quality_
 
 ## Overview
 
@@ -158,7 +158,7 @@ JOIN organizations o ON m.org_id = o.id;
 
 -- Switchboard flags (re-seeded after TRUNCATE CASCADE)
 SELECT id, value FROM switchboard_flags ORDER BY id;
--- Expected: 5 flags
+-- Expected: 10+ flags (includes ENABLE_X402_PAYMENTS and other feature gates)
 ```
 
 ## Reset Procedure
@@ -169,9 +169,10 @@ supabase db reset
 
 # This will:
 # 1. Drop all tables
-# 2. Run all 48 migrations in order (0001-0048, 0033 skipped)
+# 2. Run all 109 migrations in order (0001-0109, 0033+0078 skipped)
 # 3. Run seed.sql (truncates + re-inserts demo data)
 # 4. Re-seeds switchboard flags (cleared by TRUNCATE CASCADE)
+# 5. Post-reset: manually apply ALTER TYPE for SUBMITTED status (see CLAUDE.md §4)
 ```
 
 ## Extending Seed Data
@@ -215,6 +216,16 @@ export PGPASSWORD=postgres
 psql -h localhost -p 54322 -U postgres -d postgres -c "SELECT * FROM anchors;"
 ```
 
+## Current Seed Summary
+
+| Entity | Count | Notes |
+|--------|-------|-------|
+| Plans | 4 | free, individual, professional, organization |
+| Switchboard flags | 10+ | Includes `ENABLE_X402_PAYMENTS`, `ENABLE_AI_EXTRACTION`, `ENABLE_VERIFICATION_API`, etc. |
+| Platform admins | 2 | `admin@umich-demo.arkova.io`, `admin@midwest-medical.arkova.io` |
+| Demo anchors | 11 | 8 original + 3 attestation demo anchors (migration 0105) |
+| Demo organizations | 2 | UMich Registrar, Midwest Medical Board |
+
 ## Related Documentation
 
 - [02_data_model.md](./02_data_model.md) — Table definitions
@@ -225,3 +236,4 @@ psql -h localhost -p 54322 -U postgres -d postgres -c "SELECT * FROM anchors;"
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Full rewrite: fixed "Ralph" branding, updated demo users/orgs/anchors to match current seed.sql (4 users, 2 orgs, 8 anchors with credential_type and metadata). Removed reference to nonexistent `scripts/verify-seed.sql`. Added credential lifecycle and public verification scenarios. |
+| 2026-03-24 | Doc refresh | Updated migration count (48 → 109). Updated switchboard flags count (5 → 10+, includes ENABLE_X402_PAYMENTS). Noted 4 plans, 2 platform admins, 11 demo anchors in current seed. Added post-reset step note. |

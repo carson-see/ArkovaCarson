@@ -1,5 +1,5 @@
 # Production Switchboard
-_Last updated: 2026-03-21 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20)_
+_Last updated: 2026-03-24 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20)_
 
 ## Overview
 
@@ -7,7 +7,7 @@ The Arkova Switchboard provides server-side feature flags for controlling produc
 
 ## Available Flags
 
-Five flags are seeded in migration 0021 and re-seeded by `seed.sql`:
+Flags are seeded in migration 0021 and re-seeded by `seed.sql`. Additional flags have been added in later migrations and via application code:
 
 | Flag ID | Default | Description | Dangerous |
 |---------|---------|-------------|-----------|
@@ -16,8 +16,17 @@ Five flags are seeded in migration 0021 and re-seeded by `seed.sql`:
 | `ENABLE_NEW_CHECKOUTS` | `true` | Allow new checkout sessions | No |
 | `ENABLE_REPORTS` | `true` | Enable report generation | No |
 | `MAINTENANCE_MODE` | `false` | Put the app in maintenance mode | Yes |
+| `ENABLE_VERIFICATION_API` | `false` | Enable Phase 1.5 Verification API (`/api/v1/*`) | No |
+| `ENABLE_AI_EXTRACTION` | `false` | Enable client-side AI metadata extraction | No |
+| `ENABLE_AI_FALLBACK` | `false` | Enable Cloudflare AI fallback provider | No |
+| `ENABLE_X402_PAYMENTS` | `false` | Enable x402 protocol payments (USDC micropayments) | Yes |
+| `ENABLE_BATCH_ANCHORING` | `false` | Enable Merkle-tree batch anchoring (multiple anchors per TX) | Yes |
 
-> **Note:** CLAUDE.md Constitution 1.9 references `ENABLE_VERIFICATION_API` for the Phase 1.5 Verification API. This flag is **not yet in the database** — it will be added when P4.5 work begins. Until then, the flag does not exist in `switchboard_flags`.
+> **Note:** Total flag count: 10+. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI, x402, batch anchoring).
+
+### flagRegistry Unified Initialization
+
+All flags are registered via `flagRegistry` at application startup, which provides a single initialization point for declaring flag defaults, descriptions, and dangerous markers. This ensures consistency between the database seed values and runtime flag checks. See `src/lib/switchboard.ts` for the registry implementation.
 
 ## Database Schema (migration 0021)
 
@@ -196,11 +205,11 @@ ORDER BY changed_at DESC;
 
 ## Seed Data
 
-The 5 flags are seeded in both migration 0021 (initial insert) and `seed.sql` (re-inserted after TRUNCATE CASCADE during `supabase db reset`). Verification query:
+The original 5 flags are seeded in migration 0021 (initial insert) and `seed.sql` (re-inserted after TRUNCATE CASCADE during `supabase db reset`). Additional flags are registered by `flagRegistry` at startup. Verification query:
 
 ```sql
 SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
--- Expected: 5 rows
+-- Expected: 10+ rows
 ```
 
 ## Implementation Status
@@ -212,9 +221,12 @@ SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
 | `get_flag()` RPC | **Complete** | Migration 0021, SECURITY DEFINER |
 | `log_switchboard_flag_change()` trigger | **Complete** | Migration 0021, auto-logs changes |
 | RLS policies (read-only for authenticated) | **Complete** | Migration 0021 |
-| 5 initial flags seeded | **Complete** | Migration 0021 + seed.sql |
+| 10+ flags seeded/registered | **Complete** | Migration 0021 + seed.sql + flagRegistry |
 | Client-side `switchboard.ts` helpers | **Complete** | `src/lib/switchboard.ts` |
-| `ENABLE_VERIFICATION_API` flag | **Not Started** | Referenced in Constitution 1.9, not yet in DB. Deferred to P4.5. |
+| `ENABLE_VERIFICATION_API` flag | **Complete** | P4.5 Verification API shipped |
+| `ENABLE_X402_PAYMENTS` flag | **Complete** | x402 protocol payment gating |
+| `ENABLE_BATCH_ANCHORING` flag | **Complete** | Merkle-tree batch anchoring gating |
+| `flagRegistry` unified init | **Complete** | Single initialization point for all flags |
 | Admin UI for flag management | **Not Started** | Flags currently managed via SQL only |
 
 ## Security
@@ -236,3 +248,4 @@ SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added migration references throughout. Documented `get_flag()` function signature and `log_switchboard_flag_change()` trigger details from migration 0021. Added RLS policy details and grant statements. Noted `ENABLE_VERIFICATION_API` is referenced in Constitution 1.9 but not yet in database. Added seed data section, implementation status table, and change log. |
+| 2026-03-24 | Doc update | Added ENABLE_X402_PAYMENTS, ENABLE_BATCH_ANCHORING, ENABLE_VERIFICATION_API, ENABLE_AI_EXTRACTION, ENABLE_AI_FALLBACK flags. Updated flag count from 5 to 10+. Added flagRegistry unified initialization note. Updated implementation status table. |

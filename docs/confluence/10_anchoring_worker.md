@@ -1,5 +1,5 @@
 # Anchoring Worker
-_Last updated: 2026-03-12 | Story: P7-TS-05, P7-TS-10, P7-TS-11, P7-TS-12, P7-TS-13, CRIT-2_
+_Last updated: 2026-03-24 | Story: P7-TS-05, P7-TS-10, P7-TS-11, P7-TS-12, P7-TS-13, CRIT-2_
 
 ## Overview
 
@@ -126,6 +126,9 @@ Report processing job (`jobs/report.ts`) generates reports requested via the `re
 | `processPendingAnchors` | Every minute | Process PENDING anchors → chain → SECURED → audit → webhook |
 | `processWebhookRetries` | Every 2 minutes | Retry failed webhook deliveries with exponential backoff |
 | `resetMonthlyCounts` | 1st of month | Reset anchor quotas |
+| `processAttestationAnchoring` | Every 2 minutes | Anchor attestation records to chain (migration 0105) |
+| `monitorFees` | Every 10 minutes | Monitor chain fee rates, alert if above threshold |
+| `detectStuckTransactions` | Every 5 minutes | Detect and flag transactions stuck in mempool beyond timeout |
 
 ## Configuration
 
@@ -340,6 +343,55 @@ const mockChain = {
 };
 ```
 
+## Merkle Batch Optimization
+
+### Overview
+
+For pipeline/bulk operations, the worker uses Merkle tree batching to dramatically reduce on-chain transaction costs while maintaining individual anchor verifiability.
+
+### Performance
+
+- **Throughput:** ~110x improvement over individual anchoring
+- **Batch size:** Up to 2,000 anchors per batch (pipeline mode)
+- **Mechanism:** Fingerprints are leaf nodes in a Merkle tree; only the Merkle root is anchored on-chain via OP_RETURN
+- **Verification:** Individual anchors are verified by providing the Merkle proof path from the leaf to the anchored root
+
+### How It Works
+
+1. Worker collects PENDING anchors eligible for batching
+2. Constructs a Merkle tree from fingerprint leaf nodes
+3. Submits single OP_RETURN transaction with `ARKV` prefix + Merkle root hash
+4. Updates all batch members with shared `chain_tx_id` and individual `merkle_proof` paths
+5. Each anchor stores its Merkle proof for independent verification
+
+## Fee Monitoring & Stuck TX Detection
+
+### Fee Monitoring
+
+The `monitorFees` job periodically checks current chain fee rates and:
+
+- Logs current fee rate vs configured rate
+- Alerts if mempool fee rate exceeds a configurable threshold (prevents overspend)
+- Pauses non-urgent anchoring if fees spike above 10x the static rate
+
+### Stuck Transaction Detection
+
+The `detectStuckTransactions` job identifies transactions that have been broadcast but not confirmed within a timeout window:
+
+- Queries anchors in `SUBMITTED` status older than the configured timeout (default: 60 minutes)
+- Flags stuck transactions for manual review or automatic fee-bumping (RBF)
+- Logs `chain.tx_stuck` audit event for operational visibility
+
+## Attestation Anchoring
+
+Migration 0105 added attestation anchoring support. The `processAttestationAnchoring` job:
+
+1. Queries attestation records pending chain anchoring
+2. Batches attestation fingerprints using Merkle tree optimization
+3. Submits batch root to chain
+4. Updates attestation records with chain proof data
+5. Dispatches `attestation.created` webhook events to relevant organizations
+
 ## Related Documentation
 
 - [08_payments_entitlements.md](./08_payments_entitlements.md) — Payment system
@@ -358,3 +410,4 @@ const mockChain = {
 | 2026-03-12 ~1:00 AM EST | P7-TS-12 | Added UTXO provider (utxo-provider.ts: RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Integrated into SignetChainClient + getChainClient(). Updated directory, implementation status, coverage. Fixed signet.test.ts failures (ESM compat + PSBT validation). 363 worker tests total. |
 | 2026-03-12 ~2:00 AM EST | Signet E2E | Updated test counts (369 worker tests, 153 chain tests). Signet treasury funded (500,636 sats), awaiting UTXO confirmation for first real OP_RETURN broadcast. |
 | 2026-03-12 ~3:00 AM EST | CRIT-2 | CRIT-2 CODE COMPLETE. Added signing-provider.ts (WIF + KMS), fee-estimator.ts (static + mempool), SupabaseChainIndexLookup (P7-TS-13). Refactored signet.ts → BitcoinChainClient with provider abstractions. Rewrote client.ts to async factory (initChainClient/getInitializedChainClient). Migration 0050 (anchor_chain_index table). Updated ChainClient/ChainReceipt interfaces. 408 worker tests. Remaining: operational (Signet E2E broadcast, AWS KMS key provisioning, mainnet treasury funding). |
+| 2026-03-24 | Doc refresh | Added Merkle batch optimization (110x throughput, 2000/batch), fee monitoring + stuck TX detection jobs, attestation anchoring job (migration 0105). Updated migration count to 109. Added 3 new scheduled jobs. |

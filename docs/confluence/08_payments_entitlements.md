@@ -1,5 +1,5 @@
 # Payments & Entitlements
-_Last updated: 2026-03-10 | Story: P7-TS-01, P7-TS-02, P7-TS-03_
+_Last updated: 2026-03-24 | Story: P7-TS-01, P7-TS-02, P7-TS-03, PH1-PAY-01_
 
 ## Overview
 
@@ -161,6 +161,47 @@ All payment events are logged to `billing_events`:
 - `payment.invoice_paid`
 - `payment.invoice_failed`
 
+## x402 Payment Protocol (PH1-PAY-01)
+
+### Overview
+
+Arkova supports the x402 payment protocol for pay-per-call API access using USDC on Base L2. This provides an alternative to Stripe subscription billing for programmatic API consumers.
+
+### Architecture
+
+- **Protocol:** x402 (HTTP 402 Payment Required)
+- **Currency:** USDC on Base L2
+- **Priced endpoints:** 8 endpoints currently configured for x402 billing
+- **Switchboard flag:** `ENABLE_X402_PAYMENTS` (must be enabled in switchboard_flags)
+- **Story:** PH1-PAY-01 (complete), PH1-PAY-02 (self-hosted facilitator — partial)
+
+### Flow
+
+1. Client calls a priced API endpoint without payment
+2. Server responds with HTTP 402 + x402 payment details (amount, USDC address, network)
+3. Client submits USDC payment on Base L2
+4. Client retries request with payment proof header
+5. Server verifies payment and processes request
+
+### Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| x402 middleware | Complete | PH1-PAY-01 |
+| 8 priced endpoints | Complete | Verification, batch, anchoring endpoints |
+| Self-hosted facilitator | Partial | PH1-PAY-02 — flag enabled, needs USDC address + facilitator deploy |
+
+## Unified Credits System (migration 0100+)
+
+Migrations 0100+ introduced a unified credits system that consolidates usage tracking across Stripe subscriptions and x402 payments. The `unified_credits` table provides a single ledger for:
+
+- Subscription-granted monthly credits
+- x402 purchased credits
+- Per-anchor debit entries
+- Quota enforcement (migration 0093 — quota enforcement fixes)
+
+This replaces the earlier per-table usage counting approach and enables cross-payment-method credit fungibility.
+
 ## Related Documentation
 
 - [09_webhooks.md](./09_webhooks.md) — Webhook implementation
@@ -172,3 +213,4 @@ All payment events are logged to `billing_events`:
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit | Rewrote: removed specific dollar amounts, fixed table references to match migration 0016 (plans/subscriptions/entitlements/billing_events), removed fake stripe_customer_id/stripe_subscription_id/anchor_count_this_month from profiles, documented implementation status |
+| 2026-03-24 | Doc refresh | Added x402 payment protocol section (PH1-PAY-01, USDC on Base L2, 8 priced endpoints). Added unified credits system (migration 0100+). |

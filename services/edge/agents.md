@@ -1,33 +1,48 @@
 # agents.md — services/edge
-_Last updated: 2026-03-21_
+_Last updated: 2026-03-24_
 
 ## What This Folder Contains
 
-Cloudflare Worker scripts for peripheral edge tasks. These are **separate from** the Express worker in `services/worker/` and handle only:
+Cloudflare Workers deployment at `edge.arkova.ai`. Handles MCP server, AI fallback, domain crawling, and report generation. Deployed via `wrangler`.
 
-- **Report generation** (`src/report-generator.ts`) — PDF reports stored in R2 (INFRA-03)
-- **Batch queue consumer** (`src/batch-queue.ts`) — Dequeues batch anchor jobs (INFRA-04)
-- **AI fallback** (`src/ai-fallback.ts`) — Workers AI fallback when Gemini is unavailable (INFRA-05)
-- **Cloudflare Crawler** (`src/cloudflare-crawler.ts`) — University directory ingestion (P8-S7)
-- **MCP Server** (`src/mcp-server.ts`) — Remote MCP server for agentic verification (P8-S19)
-- **MCP Tools** (`src/mcp-tools.ts`) — Tool definitions for verify + search
+## Endpoints
 
-## Current State
+- **MCP server** — Streamable HTTP transport
+- **AI fallback** — Nemotron via Workers AI, gated by `ENABLE_AI_FALLBACK` (default: `false`)
+- **Domain crawler** — with SSRF protection (private IP range blocking)
+- **Report generation** — on-demand report endpoint
 
-**All INFRA stories COMPLETE.** Edge workers have real application logic (batch queue, R2 storage, AI fallback, MCP server, crawler). ADR-002 approved.
+## Auth & Security
+
+- All internal routes require `X-Cron-Secret` header
+- Secret comparison uses constant-time algorithm to prevent timing attacks
+- No public ports — ingress via Cloudflare only
 
 ## Do / Don't Rules
 
-- **DO** keep edge workers lightweight — peripheral tasks only
-- **DO** use Supabase service role key (from Cloudflare Secrets) for data access
+- **DO** gate AI fallback behind `ENABLE_AI_FALLBACK` switchboard flag
+- **DO** validate and sanitize all crawler target URLs (SSRF protection)
+- **DO** use `wrangler` for all deployments
+- **DON'T** process documents server-side (Constitution 1.6 — client-side only)
+- **DON'T** expose `X-Cron-Secret` in logs or error responses
+- **DON'T** use `replicate` in production — QA only
+- **DON'T** bypass SSRF protections for internal/private IP ranges
 - **DON'T** move core anchor processing, Stripe webhooks, or cron jobs here
-- **DON'T** import or reference `services/worker/` code — these are independent
-- **DON'T** store document bytes or raw OCR text (Constitution 1.6)
 - **DON'T** call `@cloudflare/ai` as primary provider — fallback only (Constitution 1.1)
 
 ## Dependencies
 
-- `wrangler` (dev dep, root package.json)
-- `@cloudflare/ai` (dev dep — deprecated, will use native bindings)
-- ADR-002: `docs/confluence/15_zero_trust_edge_architecture.md`
-- INFRA-02 through INFRA-05 story cards: `docs/stories/13_infrastructure_edge.md`
+- `@cloudflare/ai` — Workers AI inference (Nemotron fallback)
+- `wrangler` — deploy tooling
+- Supabase JS client — database reads
+
+## Key Patterns
+
+**Constant-time secret comparison:**
+```typescript
+const encoder = new TextEncoder();
+const a = encoder.encode(provided);
+const b = encoder.encode(expected);
+if (a.byteLength !== b.byteLength) return false;
+return crypto.subtle.timingSafeEqual(a, b);
+```
