@@ -12,6 +12,7 @@
 
 import { extractText, type OCRResult, type OCRProgress } from './ocrWorker';
 import { stripPII, type StrippingReport } from './piiStripper';
+import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStripper';
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
 
@@ -52,6 +53,8 @@ export async function runExtraction(
   options?: {
     recipientNames?: string[];
     issuerHint?: string;
+    /** Use NER-based PII detection (default: true) */
+    enableNER?: boolean;
   },
 ): Promise<ExtractionOutput | null> {
   try {
@@ -78,10 +81,26 @@ export async function runExtraction(
     }
 
     // Step 2: PII Stripping (client-side)
+    // Use NER-enhanced stripping when enabled (default), fall back to regex-only
     onProgress?.({ stage: 'stripping', progress: 45, message: 'Removing personal information...' });
-    const strippingReport = stripPII(ocrResult.text, {
-      recipientNames: options?.recipientNames,
-    });
+    let strippingReport: StrippingReport | EnhancedStrippingReport;
+    const useNER = options?.enableNER !== false;
+    if (useNER) {
+      strippingReport = await stripPIIEnhanced(ocrResult.text, {
+        recipientNames: options?.recipientNames,
+        enableNER: true,
+        onNERProgress: (nerProgress) => {
+          const pct = nerProgress.stage === 'loading'
+            ? 45 + Math.round(nerProgress.progress * 0.05) // 45-50%
+            : 50 + Math.round((nerProgress.progress / 100) * 5); // 50-55%
+          onProgress?.({ stage: 'stripping', progress: pct, message: nerProgress.message });
+        },
+      });
+    } else {
+      strippingReport = stripPII(ocrResult.text, {
+        recipientNames: options?.recipientNames,
+      });
+    }
 
     // Step 3: Call extraction API (server-side, PII-stripped only)
     onProgress?.({ stage: 'extracting', progress: 55, message: 'Analyzing credential...' });
