@@ -30,6 +30,7 @@ import { processPublicRecordAnchoring } from '../jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from '../jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
 import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
+import { fetchAcncCharities } from '../jobs/acncFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 
@@ -254,6 +255,16 @@ cronRouter.post('/fetch-dapip', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DAPIP fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-acnc', async (_req, res) => {
+  try {
+    const result = await fetchAcncCharities(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'ACNC fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
