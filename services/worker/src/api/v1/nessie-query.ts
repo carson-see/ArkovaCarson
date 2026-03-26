@@ -14,8 +14,8 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createAIProvider } from '../../ai/factory.js';
+import { createAIProvider, getProviderName } from '../../ai/factory.js';
+import type { TogetherProvider } from '../../ai/together.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -387,36 +387,51 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Gemini RAG Generation (PH1-INT-03)
+// RAG Generation via AI Provider Factory (PH1-INT-03)
 // ---------------------------------------------------------------------------
 
 async function generateVerifiedContext(
   query: string,
   documents: NessieResult[],
 ): Promise<NessieContextResponse> {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) {
-    throw new Error('GEMINI_API_KEY required for verified context mode');
-  }
-
-  const gemini = new GoogleGenerativeAI(geminiKey);
-  const modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
-  const model = gemini.getGenerativeModel({
-    model: modelName,
-    systemInstruction: NESSIE_RAG_SYSTEM_PROMPT,
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0.2, // Low temp for factual answers
-    },
-  });
-
+  const aiProvider = createAIProvider();
+  const providerName = getProviderName();
   const prompt = buildRAGPrompt(query, documents);
-  const response = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-  });
 
-  const text = response.response.text();
-  const usage = response.response.usageMetadata;
+  let text: string;
+  let tokensUsed: number | undefined;
+  let modelName: string;
+
+  if (providerName === 'together') {
+    // Together AI provider has a dedicated RAG method
+    const togetherProvider = aiProvider as TogetherProvider;
+    const result = await togetherProvider.generateRAGResponse(NESSIE_RAG_SYSTEM_PROMPT, prompt);
+    text = result.text;
+    tokensUsed = result.tokensUsed;
+    modelName = process.env.TOGETHER_MODEL ?? 'meta-llama/Llama-3.1-8B-Instruct';
+  } else {
+    // Fallback: Use Gemini SDK directly for other providers
+    const { GoogleGenerativeAI: GenAI } = await import('@google/generative-ai');
+    const geminiKey = process.env.GEMINI_API_KEY;
+    if (!geminiKey) {
+      throw new Error('GEMINI_API_KEY required for verified context mode (no RAG-capable provider configured)');
+    }
+    const gemini = new GenAI(geminiKey);
+    modelName = process.env.GEMINI_MODEL ?? 'gemini-2.0-flash';
+    const model = gemini.getGenerativeModel({
+      model: modelName,
+      systemInstruction: NESSIE_RAG_SYSTEM_PROMPT,
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.2,
+      },
+    });
+    const response = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    });
+    text = response.response.text();
+    tokensUsed = response.response.usageMetadata?.totalTokenCount;
+  }
 
   const parsed = JSON.parse(text) as {
     answer: string;
@@ -452,7 +467,7 @@ async function generateVerifiedContext(
     confidence: Math.min(1, Math.max(0, parsed.confidence ?? 0)),
     model: modelName,
     query,
-    tokens_used: usage?.totalTokenCount,
+    tokens_used: tokensUsed,
   };
 }
 
