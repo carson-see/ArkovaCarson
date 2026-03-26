@@ -32,7 +32,8 @@ type AIFlagKey = keyof typeof aiFlags;
 
 /**
  * Read an AI feature flag with TTL caching.
- * Falls back to false (disabled) if the flag can't be read.
+ * Falls back to env var when DB flag can't be read (stabilizes gates
+ * against transient DB issues). Env vars are set in Cloud Run deploy.
  */
 async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
   const now = Date.now();
@@ -42,6 +43,9 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
     return cached.value;
   }
 
+  // Env var fallback: if DB query fails, check env (set in Cloud Run deploy)
+  const envFallback = process.env[flagKey] === 'true';
+
   try {
     const { data, error } = await db
       .from('switchboard_flags')
@@ -50,18 +54,18 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
       .single() as { data: { enabled: boolean } | null; error: unknown };
 
     if (error || !data) {
-      logger.warn({ error, flagKey }, `Failed to read ${flagKey} flag, defaulting to false`);
-      aiFlags[flagKey] = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
-      return false;
+      logger.warn({ error, flagKey, envFallback }, `Failed to read ${flagKey} flag from DB, falling back to env`);
+      aiFlags[flagKey] = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
+      return envFallback;
     }
 
     const enabled = data.enabled === true;
     aiFlags[flagKey] = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {
-    logger.error({ error: err, flagKey }, `Error reading ${flagKey} switchboard flag`);
-    aiFlags[flagKey] = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
-    return false;
+    logger.error({ error: err, flagKey, envFallback }, `Error reading ${flagKey} switchboard flag, falling back to env`);
+    aiFlags[flagKey] = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
+    return envFallback;
   }
 }
 

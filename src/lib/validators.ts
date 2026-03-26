@@ -59,6 +59,9 @@ export const CREDENTIAL_TYPES = [
   'PATENT',
   'REGULATION',
   'PUBLICATION',
+  'CHARITY',
+  'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY',
   'OTHER',
 ] as const;
 

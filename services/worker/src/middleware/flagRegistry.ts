@@ -60,7 +60,7 @@ class FeatureFlagRegistry {
       lastChecked: Date.now(),
     });
 
-    // Load DB-backed flags
+    // Load DB-backed flags (with env var fallback for stability)
     try {
       const { data, error } = await db
         .from('switchboard_flags')
@@ -68,24 +68,28 @@ class FeatureFlagRegistry {
         .in('flag_key', [...DB_FLAGS]);
 
       if (error) {
-        logger.warn({ error }, 'Failed to load switchboard flags — defaulting all DB flags to false');
+        logger.warn({ error }, 'Failed to load switchboard flags — falling back to env vars');
         for (const key of DB_FLAGS) {
-          this.flags.set(key, { value: false, source: 'db', lastChecked: Date.now() });
+          const envFallback = process.env[key] === 'true';
+          this.flags.set(key, { value: envFallback, source: 'env', lastChecked: Date.now() });
         }
       } else {
         const dbFlagMap = new Map((data ?? []).map((r: any) => [r.flag_key, r.enabled === true]));
         for (const key of DB_FLAGS) {
+          // If flag not in DB, fall back to env var
+          const envFallback = process.env[key] === 'true';
           this.flags.set(key, {
-            value: dbFlagMap.get(key) ?? false,
-            source: 'db',
+            value: dbFlagMap.has(key) ? (dbFlagMap.get(key) ?? false) : envFallback,
+            source: dbFlagMap.has(key) ? 'db' : 'env',
             lastChecked: Date.now(),
           });
         }
       }
     } catch (err) {
-      logger.error({ error: err }, 'Error loading switchboard flags');
+      logger.error({ error: err }, 'Error loading switchboard flags — falling back to env vars');
       for (const key of DB_FLAGS) {
-        this.flags.set(key, { value: false, source: 'db', lastChecked: Date.now() });
+        const envFallback = process.env[key] === 'true';
+        this.flags.set(key, { value: envFallback, source: 'env', lastChecked: Date.now() });
       }
     }
 

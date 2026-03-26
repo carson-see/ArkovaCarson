@@ -66,6 +66,9 @@ export const CREDENTIAL_TYPE_LABELS = {
   PATENT: 'Patent',
   REGULATION: 'Regulation',
   PUBLICATION: 'Publication',
+  CHARITY: 'Charity',
+  FINANCIAL_ADVISOR: 'Financial Advisor',
+  BUSINESS_ENTITY: 'Business Entity',
   OTHER: 'Other',
 } as const;
 
@@ -85,6 +88,9 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   PATENT: 'Intellectual property patent',
   REGULATION: 'Government regulation or notice',
   PUBLICATION: 'Academic publication or research paper',
+  CHARITY: 'Registered charity or nonprofit organization',
+  FINANCIAL_ADVISOR: 'Financial advisor registration or license',
+  BUSINESS_ENTITY: 'Business registration or entity record',
   OTHER: 'Unclassified document',
 } as const;
 

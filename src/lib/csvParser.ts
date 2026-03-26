@@ -7,12 +7,26 @@
 import { z } from 'zod';
 
 // Valid credential type values (matches credential_type enum in DB)
+// Keep in sync with validators.ts CREDENTIAL_TYPES and copy.ts CREDENTIAL_TYPE_LABELS
 export const VALID_CREDENTIAL_TYPES = [
   'DEGREE',
   'LICENSE',
   'CERTIFICATE',
   'TRANSCRIPT',
   'PROFESSIONAL',
+  'CLE',
+  'BADGE',
+  'ATTESTATION',
+  'FINANCIAL',
+  'LEGAL',
+  'INSURANCE',
+  'SEC_FILING',
+  'PATENT',
+  'REGULATION',
+  'PUBLICATION',
+  'CHARITY',
+  'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY',
   'OTHER',
 ] as const;
 
