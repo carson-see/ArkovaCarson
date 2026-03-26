@@ -57,8 +57,10 @@ async function main(): Promise<void> {
 
   const supabase = createClient(SUPABASE_URL!, SUPABASE_SERVICE_ROLE_KEY!);
 
-  // Fetch anchors with AI extraction metadata (PII-stripped only)
-  console.log('Fetching anchors with extracted metadata...');
+  // Fetch SECURED anchors with metadata (extraction results stored in metadata JSONB).
+  // The AI extraction pipeline stores results in anchors.metadata on the client side.
+  // We reconstruct training text from metadata fields + description/label/filename.
+  console.log('Fetching SECURED anchors with metadata...');
 
   let allRecords: RawTrainingRecord[] = [];
   let page = 0;
@@ -68,10 +70,10 @@ async function main(): Promise<void> {
   while (hasMore) {
     const { data, error } = await supabase
       .from('anchors')
-      .select('id, fingerprint, extracted_fields, credential_type, stripped_text')
-      .not('extracted_fields', 'is', null)
-      .not('stripped_text', 'is', null)
+      .select('id, fingerprint, credential_type, metadata, description, label, filename')
+      .not('metadata', 'is', null)
       .not('credential_type', 'is', null)
+      .eq('status', 'SECURED')
       .range(page * pageSize, (page + 1) * pageSize - 1);
 
     if (error) {
@@ -85,11 +87,31 @@ async function main(): Promise<void> {
     }
 
     for (const row of data) {
+      const metadata = row.metadata as Record<string, unknown> | null;
+      if (!metadata || Object.keys(metadata).length === 0) continue;
+
+      // Build text from available fields (description, label, metadata values)
+      const textParts: string[] = [];
+      if (row.description) textParts.push(row.description as string);
+      if (row.label) textParts.push(`Label: ${row.label}`);
+      if (row.filename) textParts.push(`Filename: ${row.filename}`);
+
+      // Add metadata key-value pairs as text representation
+      for (const [key, value] of Object.entries(metadata)) {
+        if (key.startsWith('_')) continue; // Skip internal fields
+        if (value && typeof value === 'string' && value.length > 0) {
+          textParts.push(`${key}: ${value}`);
+        }
+      }
+
+      const text = textParts.join('\n');
+      if (text.length < 20) continue; // Skip near-empty records
+
       allRecords.push({
         id: row.id,
-        text: row.stripped_text as string,
+        text,
         credentialType: row.credential_type as string,
-        extractedFields: row.extracted_fields as Record<string, unknown>,
+        extractedFields: metadata,
         fingerprint: row.fingerprint,
       });
     }
