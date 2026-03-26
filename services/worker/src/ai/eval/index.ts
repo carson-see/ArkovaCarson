@@ -48,3 +48,12 @@ export {
   calibrateConfidence,
 } from './calibration.js';
 export type { CalibrationResult, CalibrationBucket } from './calibration.js';
+
+export {
+  FRAUD_EVAL_DATASET,
+  getCleanEntries,
+  getTamperedEntries,
+  getEntriesByTamperingCategory,
+  getFraudEntriesByType,
+} from './fraud-eval-dataset.js';
+export type { FraudEvalEntry } from './fraud-eval-dataset.js';
