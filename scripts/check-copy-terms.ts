@@ -46,6 +46,7 @@ const EXCLUDE_PATTERNS = [
   '**/node_modules/**',
   '**/dist/**',
   'src/components/ui/**', // UI primitives don't contain user-facing copy
+  'src/components/admin/treasury/**', // Internal ops dashboard — uses technical terms by design
 ];
 
 interface Violation {

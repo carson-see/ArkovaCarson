@@ -244,18 +244,6 @@ export async function createChainClient(): Promise<ChainClient> {
   // ── Mainnet ───────────────────────────────────────────────────────
 
   if (config.bitcoinNetwork === 'mainnet') {
-    const useGcpKms = config.kmsProvider === 'gcp';
-
-    // Validate that the required KMS key config is present
-    if (useGcpKms && !config.gcpKmsKeyResourceName) {
-      logger.error('GCP_KMS_KEY_RESOURCE_NAME required for mainnet chain client (KMS_PROVIDER=gcp) — falling back to mock');
-      return new MockChainClient();
-    }
-    if (!useGcpKms && !config.bitcoinKmsKeyId) {
-      logger.error('BITCOIN_KMS_KEY_ID required for mainnet chain client — falling back to mock');
-      return new MockChainClient();
-    }
-
     // Validate provider config
     if (config.bitcoinUtxoProvider === 'rpc' && !config.bitcoinRpcUrl) {
       logger.error('BITCOIN_RPC_URL required for RPC UTXO provider — falling back to mock');
@@ -270,32 +258,58 @@ export async function createChainClient(): Promise<ChainClient> {
       network: config.bitcoinNetwork,
     });
 
-    const signingProvider = useGcpKms
-      ? await createSigningProvider({
-          type: 'gcp-kms',
-          gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
-          gcpKmsProjectId: config.gcpKmsProjectId,
-        })
-      : await createSigningProvider({
-          type: 'kms',
-          kmsKeyId: config.bitcoinKmsKeyId,
-          kmsRegion: config.bitcoinKmsRegion,
-        });
+    // Signing: WIF takes precedence (current), KMS for future upgrade
+    let signingProvider;
+    let signingLabel: string;
+
+    if (config.bitcoinTreasuryWif) {
+      // WIF signing — current production method
+      signingProvider = await createSigningProvider({
+        type: 'wif',
+        wif: config.bitcoinTreasuryWif,
+        network: bitcoin.networks.bitcoin, // IMPORTANT: mainnet network
+      });
+      signingLabel = 'WIF';
+    } else {
+      // KMS signing — future upgrade path
+      const useGcpKms = config.kmsProvider === 'gcp';
+
+      if (useGcpKms && !config.gcpKmsKeyResourceName) {
+        logger.error('GCP_KMS_KEY_RESOURCE_NAME required for mainnet chain client (KMS_PROVIDER=gcp) — falling back to mock');
+        return new MockChainClient();
+      }
+      if (!useGcpKms && !config.bitcoinKmsKeyId) {
+        logger.error('BITCOIN_KMS_KEY_ID required for mainnet chain client — falling back to mock');
+        return new MockChainClient();
+      }
+
+      signingProvider = useGcpKms
+        ? await createSigningProvider({
+            type: 'gcp-kms',
+            gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
+            gcpKmsProjectId: config.gcpKmsProjectId,
+          })
+        : await createSigningProvider({
+            type: 'kms',
+            kmsKeyId: config.bitcoinKmsKeyId,
+            kmsRegion: config.bitcoinKmsRegion,
+          });
+      signingLabel = useGcpKms ? 'GCP KMS' : 'AWS KMS';
+    }
 
     const feeEstimator = createFeeEstimator({
       strategy: config.bitcoinFeeStrategy ?? 'mempool',
       fallbackRate: config.bitcoinFallbackFeeRate,
     });
 
-    const kmsLabel = useGcpKms ? 'GCP KMS' : 'AWS KMS';
     logger.info(
       {
         network: 'mainnet',
-        kmsProvider: kmsLabel,
+        signing: signingLabel,
         utxoProvider: utxoProvider.name,
         feeEstimator: feeEstimator.name,
       },
-      `Using BitcoinChainClient (Mainnet + ${kmsLabel})`,
+      `Using BitcoinChainClient (Mainnet + ${signingLabel})`,
     );
 
     return new BitcoinChainClient({

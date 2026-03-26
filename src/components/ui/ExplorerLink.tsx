@@ -17,7 +17,7 @@ const EXPLORER_URLS: Record<string, string> = {
 };
 
 function getExplorerBaseUrl(): string {
-  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'signet';
+  const network = import.meta.env.VITE_BITCOIN_NETWORK ?? 'mainnet';
   return EXPLORER_URLS[network] ?? EXPLORER_URLS.signet;
 }
 

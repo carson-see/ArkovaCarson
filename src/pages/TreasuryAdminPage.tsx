@@ -2,8 +2,8 @@
  * Treasury Admin Dashboard
  *
  * Internal-only ops page for Arkova platform administrators.
- * Shows real wallet balance, UTXO count, fee estimates, network info,
- * and anchor processing stats via the worker API.
+ * Shows live BTC balance from mempool.space, anchor stats from Supabase,
+ * recent network receipts, fee rates + averages, and cost estimates.
  *
  * CRITICAL: This page is ONLY accessible to select Arkova organization members.
  * Third-party org admins and external users must NEVER see treasury data.
@@ -12,22 +12,13 @@
  * @see GAP-01
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import {
-  RefreshCw,
-  Clock,
-  CheckCircle,
-  Lock,
-  Activity,
-  Server,
-  AlertTriangle,
-  FileText,
-  Zap,
-} from 'lucide-react';
+import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { useTreasuryStatus } from '@/hooks/useTreasuryStatus';
+import { useTreasuryBalance } from '@/hooks/useTreasuryBalance';
+import { useAnchorStats } from '@/hooks/useAnchorStats';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,63 +26,27 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { TREASURY_LABELS } from '@/lib/copy';
-import { supabase } from '@/lib/supabase';
-
 import { isPlatformAdmin } from '@/lib/platform';
-
-interface RecentAnchor {
-  id: string;
-  public_id: string | null;
-  filename: string;
-  status: string;
-  created_at: string;
-  credential_type: string | null;
-}
+import { supabase } from '@/lib/supabase';
+import { BalanceCard, AnchorStats as AnchorStatsPanel, ReceiptTable, NetworkInfo } from '@/components/admin/treasury';
 
 export function TreasuryAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { status: treasuryStatus, loading: treasuryLoading, error: treasuryError, fetchStatus, lastFetchedAt } = useTreasuryStatus();
+  const { balance, receipts, feeRates, loading: balanceLoading, error: balanceError, refresh: refreshBalance } = useTreasuryBalance();
+  const { stats: anchorStats, loading: statsLoading, refresh: refreshStats } = useAnchorStats();
 
-  const [recentAnchors, setRecentAnchors] = useState<RecentAnchor[]>([]);
-  const [anchorsLoading, setAnchorsLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const isAdmin = isPlatformAdmin(user?.email);
 
-  const fetchRecentAnchors = useCallback(async () => {
-    try {
-      const { data: recent } = await supabase
-        .from('anchors')
-        .select('id, public_id, filename, status, created_at, credential_type')
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(10);
-
-      setRecentAnchors(recent ?? []);
-    } catch {
-      // Anchor fetch failed — leave empty
-    } finally {
-      setAnchorsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (isAdmin) {
-      fetchStatus();
-      fetchRecentAnchors();
-    } else {
-      setAnchorsLoading(false);
-    }
-  }, [isAdmin, fetchStatus, fetchRecentAnchors]);
-
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    Promise.all([fetchStatus(), fetchRecentAnchors()]).finally(() => {
+    Promise.all([refreshBalance(), refreshStats()]).finally(() => {
       setRefreshing(false);
     });
-  }, [fetchStatus, fetchRecentAnchors]);
+  }, [refreshBalance, refreshStats]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -115,11 +70,7 @@ export function TreasuryAdminPage() {
     );
   }
 
-  const loading = treasuryLoading || anchorsLoading;
-  const wallet = treasuryStatus?.wallet;
-  const network = treasuryStatus?.network;
-  const fees = treasuryStatus?.fees;
-  const anchorStats = treasuryStatus?.recentAnchors;
+  const loading = balanceLoading || statsLoading;
 
   return (
     <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
@@ -131,11 +82,6 @@ export function TreasuryAdminPage() {
           </h1>
           <p className="text-muted-foreground mt-1">
             {TREASURY_LABELS.PAGE_SUBTITLE}
-            {lastFetchedAt && (
-              <span className="ml-2 text-xs text-muted-foreground/60">
-                · Updated {new Date(lastFetchedAt).toLocaleTimeString()}
-              </span>
-            )}
           </p>
         </div>
         <Button
@@ -150,173 +96,22 @@ export function TreasuryAdminPage() {
       </div>
 
       {/* Error banner */}
-      {treasuryError && (
+      {balanceError && (
         <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700">
           <AlertTriangle className="inline h-4 w-4 mr-2" />
-          {treasuryError}
+          {balanceError}
         </div>
       )}
 
-      {/* Anchor Processing Stats */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-8">
-        <TreasuryStatCard
-          label={TREASURY_LABELS.TOTAL_ANCHORS}
-          value={anchorStats ? anchorStats.totalSecured + anchorStats.totalPending : undefined}
-          icon={FileText}
-          loading={loading}
-          variant="primary"
-        />
-        <TreasuryStatCard
-          label={TREASURY_LABELS.PENDING_ANCHORS}
-          value={anchorStats?.totalPending}
-          icon={Clock}
-          loading={loading}
-          variant="warning"
-        />
-        <TreasuryStatCard
-          label={TREASURY_LABELS.SECURED_ANCHORS}
-          value={anchorStats?.totalSecured}
-          icon={CheckCircle}
-          loading={loading}
-          variant="success"
-        />
-        <TreasuryStatCard
-          label={TREASURY_LABELS.LAST_24H}
-          value={anchorStats?.last24hCount}
-          icon={Activity}
-          loading={loading}
-          variant="primary"
-        />
+      {/* Balance + Anchor Stats */}
+      <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
+        <BalanceCard balance={balance} loading={loading} />
+        <AnchorStatsPanel stats={anchorStats} loading={loading} />
       </div>
 
-      {/* Treasury Vault + Network Status */}
-      <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
-        {/* Vault Card */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              {TREASURY_LABELS.VAULT_SECTION}
-            </CardTitle>
-            <Lock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_NETWORK}</span>
-                <Badge variant="secondary" className="font-mono text-xs">
-                  {/* eslint-disable-next-line -- lint:copy exempt: internal network name check */}
-                  {network?.name === 'signet' || network?.name === 'testnet' || network?.name === 'testnet4' ? 'Test Environment' : 'Production Network'}
-                </Badge>
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_ADDRESS}</span>
-                {loading ? (
-                  <Skeleton className="h-4 w-40" />
-                ) : wallet ? (
-                  <span className="font-mono text-xs truncate max-w-[200px]" title={wallet.address}>
-                    {wallet.address}
-                  </span>
-                ) : (
-                  <span className="font-mono text-sm text-muted-foreground italic">—</span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.VAULT_BALANCE}</span>
-                {loading ? (
-                  <Skeleton className="h-4 w-20" />
-                ) : wallet ? (
-                  <span className="font-mono text-sm font-semibold">
-                    {wallet.balanceSats.toLocaleString()} sats
-                  </span>
-                ) : (
-                  <span className="font-mono text-sm text-muted-foreground italic">
-                    {TREASURY_LABELS.API_UNAVAILABLE}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.UTXO_COUNT}</span>
-                {loading ? (
-                  <Skeleton className="h-4 w-12" />
-                ) : wallet ? (
-                  <span className="font-mono text-sm">{wallet.utxoCount}</span>
-                ) : (
-                  <span className="font-mono text-sm text-muted-foreground italic">—</span>
-                )}
-              </div>
-              {!wallet && !loading && (
-                <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
-                  {treasuryStatus?.error ?? TREASURY_LABELS.VAULT_NOT_CONFIGURED}
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Network + Fee Card */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              {TREASURY_LABELS.NETWORK_STATUS}
-            </CardTitle>
-            <Server className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.WORKER_STATUS}</span>
-                {loading ? (
-                  <Skeleton className="h-5 w-20" />
-                ) : treasuryStatus ? (
-                  <Badge variant="outline" className="text-xs bg-green-500/10 text-green-700 border-green-500/30">
-                    <Activity className="mr-1 h-3 w-3" />
-                    {TREASURY_LABELS.CONNECTED}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="text-xs">
-                    {TREASURY_LABELS.UNKNOWN}
-                  </Badge>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.BLOCK_HEIGHT}</span>
-                {loading ? (
-                  <Skeleton className="h-4 w-20" />
-                ) : network ? (
-                  <span className="font-mono text-xs">{network.blockHeight.toLocaleString()}</span>
-                ) : (
-                  <span className="font-mono text-xs text-muted-foreground">—</span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{TREASURY_LABELS.FEE_RATE}</span>
-                {loading ? (
-                  <Skeleton className="h-4 w-16" />
-                ) : fees ? (
-                  <span className="font-mono text-xs flex items-center gap-1">
-                    <Zap className="h-3 w-3 text-amber-500" />
-                    {fees.currentRateSatPerVbyte} sat/vB
-                  </span>
-                ) : (
-                  <span className="font-mono text-xs text-muted-foreground">—</span>
-                )}
-              </div>
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Last Secured Anchor</span>
-                <span className="font-mono text-xs">
-                  {anchorStats?.lastSecuredAt
-                    ? new Date(anchorStats.lastSecuredAt).toLocaleString()
-                    : '—'}
-                </span>
-              </div>
-              {fees && (
-                <p className="text-xs text-muted-foreground border-t pt-3 mt-2">
-                  Fee estimated via {fees.estimatorName}. Network: {network?.name ?? 'unknown'}.
-                </p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      {/* Network Info + Fee Rates */}
+      <div className="mb-8">
+        <NetworkInfo feeRates={feeRates} balance={balance} loading={loading} />
       </div>
 
       {/* x402 USDC Revenue (PH1-PAY-02) */}
@@ -330,100 +125,10 @@ export function TreasuryAdminPage() {
         </CardContent>
       </Card>
 
-      {/* Recent Anchors */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm font-medium">
-            {TREASURY_LABELS.RECENT_ANCHORS}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          {anchorsLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <div key={`skeleton-${i}`} className="flex items-center justify-between">
-                  <Skeleton className="h-4 w-48" />
-                  <Skeleton className="h-5 w-16 rounded-full" />
-                </div>
-              ))}
-            </div>
-          ) : recentAnchors.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-6">
-              No anchors found.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {recentAnchors.map((anchor) => (
-                <div
-                  key={anchor.id}
-                  className="flex items-center justify-between rounded-lg border px-3 py-2 text-sm"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{anchor.filename}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {anchor.credential_type ?? 'Document'} · {new Date(anchor.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <AnchorStatusBadge status={anchor.status} />
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Recent Network Receipts */}
+      <ReceiptTable receipts={receipts} loading={loading} />
     </AppShell>
   );
-}
-
-interface TreasuryStatCardProps {
-  label: string;
-  value: number | undefined;
-  icon: React.ElementType;
-  loading: boolean;
-  variant: 'primary' | 'success' | 'warning' | 'muted';
-}
-
-function TreasuryStatCard({ label, value, icon: Icon, loading, variant }: Readonly<TreasuryStatCardProps>) {
-  const iconColorMap = {
-    primary: 'text-primary',
-    success: 'text-green-600',
-    warning: 'text-amber-600',
-    muted: 'text-muted-foreground',
-  };
-
-  return (
-    <Card className="shadow-card-rest hover:shadow-card-hover transition-shadow hover:-translate-y-0.5">
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            {label}
-          </p>
-          <Icon className={`h-4 w-4 ${iconColorMap[variant]}`} />
-        </div>
-        {loading ? (
-          <Skeleton className="h-8 w-16" />
-        ) : (
-          <p className="text-2xl font-semibold">{value ?? 0}</p>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function AnchorStatusBadge({ status }: Readonly<{ status: string }>) {
-  switch (status) {
-    case 'SECURED':
-      return <Badge className="bg-green-500/10 text-green-700 border-green-500/30">Secured</Badge>;
-    case 'PENDING':
-      return <Badge className="bg-amber-500/10 text-amber-700 border-amber-500/30">Pending</Badge>;
-    case 'REVOKED':
-      return <Badge variant="secondary">Revoked</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
-  }
 }
 
 /** x402 payment stats from x402_payments table */
@@ -443,7 +148,6 @@ function X402PaymentStats() {
           recent: data.recent_payments ?? [],
         });
       } else {
-        // RPC function may not exist — fall back to zero state instead of hanging
         setStats({ total: 0, revenue: 0, recent: [] });
       }
     }).catch(() => {

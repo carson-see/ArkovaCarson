@@ -13,11 +13,11 @@ export function isPlatformAdmin(email: string | null | undefined): boolean {
   return PLATFORM_ADMIN_EMAILS.includes(email as typeof PLATFORM_ADMIN_EMAILS[number]);
 }
 
-/** Signet treasury address for mempool explorer links */
-export const TREASURY_ADDRESS = 'tb1ql90xtpfzpyc03d2dghggqfdksfxe6ucjufah0r';
+/** Mainnet treasury address for mempool explorer links */
+export const TREASURY_ADDRESS = 'bc1qtm2kk33k6ht4agt48kh7rfkmmhfkapqn4zwerc';
 
 /** Mempool explorer base URL for the current network */
-export const MEMPOOL_BASE_URL = 'https://mempool.space/signet';
+export const MEMPOOL_BASE_URL = 'https://mempool.space';
 
 /** Build a mempool transaction URL */
 export function mempoolTxUrl(txId: string): string {

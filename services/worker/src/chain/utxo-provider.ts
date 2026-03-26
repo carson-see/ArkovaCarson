@@ -439,9 +439,71 @@ export class MempoolUtxoProvider implements UtxoProvider {
   }
 }
 
+// ─── GetBlock Hybrid Provider ────────────────────────────────────────────
+// Uses mempool.space for UTXO listing (read-only public data) but routes
+// broadcasting and RPC queries through a dedicated GetBlock Bitcoin Core node.
+// This ensures transaction broadcasting goes through our own node rather than
+// public mempool.space infrastructure.
+
+export class GetBlockHybridProvider implements UtxoProvider {
+  readonly name = 'GetBlock Hybrid (RPC broadcast + Mempool UTXO)';
+  private readonly mempool: MempoolUtxoProvider;
+  private readonly rpcUrl: string;
+  private readonly rpcAuth?: string;
+
+  constructor(config: { rpcUrl: string; rpcAuth?: string; mempoolBaseUrl?: string }) {
+    this.rpcUrl = config.rpcUrl;
+    this.rpcAuth = config.rpcAuth;
+    this.mempool = new MempoolUtxoProvider({ baseUrl: config.mempoolBaseUrl ?? MEMPOOL_URLS.mainnet });
+  }
+
+  /** Delegate UTXO listing to mempool.space (read-only, public data) */
+  async listUnspent(address: string): Promise<Utxo[]> {
+    return this.mempool.listUnspent(address);
+  }
+
+  /** Broadcast through dedicated GetBlock RPC node */
+  async broadcastTx(txHex: string): Promise<BroadcastResult> {
+    return retryWithBackoff(async () => {
+      try {
+        const txid = (await rpcCall(this.rpcUrl, 'sendrawtransaction', [txHex], this.rpcAuth)) as string;
+        return { txid };
+      } catch (error) {
+        if (error instanceof Error && isDuplicateTxError(error.message)) {
+          logger.info({ operation: 'GetBlockHybridProvider.broadcastTx' }, 'Transaction already in mempool/chain — treating as success');
+          return { txid: '' };
+        }
+        throw error;
+      }
+    }, { name: 'GetBlockHybridProvider.broadcastTx' });
+  }
+
+  /** Use RPC for blockchain info */
+  async getBlockchainInfo(): Promise<BlockchainInfo> {
+    return retryWithBackoff(async () => {
+      const info = (await rpcCall(this.rpcUrl, 'getblockchaininfo', [], this.rpcAuth)) as { chain: string; blocks: number };
+      return { chain: info.chain, blocks: info.blocks };
+    }, { name: 'GetBlockHybridProvider.getBlockchainInfo' });
+  }
+
+  /** Use RPC for raw transaction lookup */
+  async getRawTransaction(txid: string): Promise<RawTransaction> {
+    return retryWithBackoff(async () => {
+      return (await rpcCall(this.rpcUrl, 'getrawtransaction', [txid, true], this.rpcAuth)) as RawTransaction;
+    }, { name: 'GetBlockHybridProvider.getRawTransaction' });
+  }
+
+  /** Use RPC for block header lookup */
+  async getBlockHeader(blockhash: string): Promise<BlockHeader> {
+    return retryWithBackoff(async () => {
+      return (await rpcCall(this.rpcUrl, 'getblockheader', [blockhash], this.rpcAuth)) as BlockHeader;
+    }, { name: 'GetBlockHybridProvider.getBlockHeader' });
+  }
+}
+
 // ─── Factory ────────────────────────────────────────────────────────────
 
-export type UtxoProviderType = 'rpc' | 'mempool';
+export type UtxoProviderType = 'rpc' | 'mempool' | 'getblock';
 
 export interface UtxoProviderFactoryConfig {
   type: UtxoProviderType;
@@ -456,6 +518,12 @@ export function createUtxoProvider(factoryConfig: UtxoProviderFactoryConfig): Ut
     if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for RPC UTXO provider');
     logger.info({ provider: 'rpc', rpcUrl: factoryConfig.rpcUrl }, 'Creating RPC UTXO provider');
     return new RpcUtxoProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth });
+  }
+  if (factoryConfig.type === 'getblock') {
+    if (!factoryConfig.rpcUrl) throw new Error('BITCOIN_RPC_URL is required for GetBlock hybrid provider');
+    const mempoolBaseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'mainnet'] ?? MEMPOOL_URLS.mainnet;
+    logger.info({ provider: 'getblock', rpcUrl: factoryConfig.rpcUrl, mempoolBaseUrl }, 'Creating GetBlock hybrid UTXO provider');
+    return new GetBlockHybridProvider({ rpcUrl: factoryConfig.rpcUrl, rpcAuth: factoryConfig.rpcAuth, mempoolBaseUrl });
   }
   if (factoryConfig.type === 'mempool') {
     const baseUrl = factoryConfig.mempoolApiUrl ?? MEMPOOL_URLS[factoryConfig.network ?? 'testnet4'] ?? MEMPOOL_URLS.testnet4;

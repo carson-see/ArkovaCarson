@@ -38,41 +38,48 @@ vi.mock('@/hooks/useOrganization', () => ({
   }),
 }));
 
-vi.mock('@/hooks/useTreasuryStatus', () => ({
-  useTreasuryStatus: () => ({
-    status: null,
+vi.mock('@/hooks/useTreasuryBalance', () => ({
+  useTreasuryBalance: () => ({
+    balance: null,
+    receipts: [],
+    feeRates: null,
     loading: false,
     error: null,
-    fetchStatus: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock('@/hooks/useAnchorStats', () => ({
+  useAnchorStats: () => ({
+    stats: null,
+    loading: false,
+    refresh: vi.fn(),
   }),
 }));
 
 // Mock supabase — factory must not reference outer variables (hoisting)
 vi.mock('@/lib/supabase', () => {
-  const mockResolve = { count: 5, error: null };
-  const mockIs = vi.fn().mockResolvedValue(mockResolve);
   return {
     supabase: {
       from: vi.fn().mockReturnValue({
         select: vi.fn().mockReturnValue({
-          is: mockIs,
+          is: vi.fn().mockResolvedValue({ count: 0, error: null }),
           eq: vi.fn().mockReturnValue({
-            is: mockIs,
+            is: vi.fn().mockResolvedValue({ count: 0, error: null }),
           }),
           order: vi.fn().mockReturnValue({
             limit: vi.fn().mockResolvedValue({ data: [], error: null }),
           }),
+          not: vi.fn().mockReturnValue({
+            is: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
         }),
       }),
-      // Session 14: TreasuryAdminPage uses supabase.rpc('get_treasury_stats') and 'get_pipeline_stats'
       rpc: vi.fn().mockResolvedValue({
         data: {
           total_payments: 0,
           total_revenue_usd: 0,
           recent_payments: [],
-          total_records: 0,
-          pending_records: 0,
-          secured_records: 0,
         },
         error: null,
       }),
@@ -104,22 +111,24 @@ describe('TreasuryAdminPage', () => {
     expect(screen.getByText('Anchoring Infrastructure')).toBeInTheDocument();
   });
 
-  it('renders anchor stat cards', () => {
+  it('renders balance card', () => {
     renderPage();
-    expect(screen.getByText('Total Anchors')).toBeInTheDocument();
-    expect(screen.getByText('Pending')).toBeInTheDocument();
-    expect(screen.getByText('Secured')).toBeInTheDocument();
-    expect(screen.getByText('Last 24 Hours')).toBeInTheDocument();
+    expect(screen.getByText('Fee Account Balance')).toBeInTheDocument();
   });
 
-  it('renders treasury vault section', () => {
+  it('renders anchor statistics panel', () => {
     renderPage();
-    expect(screen.getByText('Anchoring Account')).toBeInTheDocument();
+    expect(screen.getByText('Anchor Statistics')).toBeInTheDocument();
   });
 
   it('renders network status section', () => {
     renderPage();
     expect(screen.getByText('Network Status')).toBeInTheDocument();
+  });
+
+  it('renders receipt table', () => {
+    renderPage();
+    expect(screen.getByText('Recent Network Receipts')).toBeInTheDocument();
   });
 
   it('renders refresh button', () => {
@@ -133,8 +142,8 @@ describe('TreasuryAdminPage', () => {
     expect(screen.getByText(/access denied/i)).toBeInTheDocument();
   });
 
-  it('shows recent anchors section', () => {
+  it('renders x402 payment section', () => {
     renderPage();
-    expect(screen.getByText('Recent Anchors')).toBeInTheDocument();
+    expect(screen.getByText('x402 Payment Revenue')).toBeInTheDocument();
   });
 });
