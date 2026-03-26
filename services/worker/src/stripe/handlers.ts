@@ -395,9 +395,10 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
 
   // Log audit event
   await db.from('audit_events').insert({
-    user_id: userId,
+    actor_id: userId,
     event_type: 'IDENTITY_VERIFIED',
-    metadata: { session_id: session.id },
+    event_category: 'ADMIN',
+    details: `Identity verified via Stripe session ${session.id}`,
   });
 
   logger.info({ userId }, 'Identity verification completed successfully');
