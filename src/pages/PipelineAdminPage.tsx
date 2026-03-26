@@ -28,6 +28,8 @@ import {
   Copy,
   Check,
   Link2,
+  Building2,
+  Heart,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -153,7 +155,7 @@ export function PipelineAdminPage() {
         });
       } else {
         // Fallback: individual count queries per known source
-        for (const src of ['edgar', 'federal_register', 'dapip', 'openalex', 'uspto']) {
+        for (const src of ['edgar', 'federal_register', 'dapip', 'openalex', 'uspto', 'acnc']) {
           const { count } = await dbAny
             .from('public_records')
             .select('*', { count: 'exact', head: true })
@@ -205,11 +207,13 @@ export function PipelineAdminPage() {
       });
       if (response.ok) {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
-        // Refresh stats after a job completes
+        // Refresh stats after a job completes — immediate, 3s, and 8s for DB propagation
+        fetchStats();
+        setTimeout(() => fetchStats(), 3000);
         setTimeout(() => {
           fetchStats();
           setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
-        }, 2000);
+        }, 8000);
       } else {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
         setTimeout(() => setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' })), 5000);
@@ -368,6 +372,8 @@ export function PipelineAdminPage() {
       case 'uspto': return <Scale className="h-4 w-4" />;
       case 'federal_register': return <BookOpen className="h-4 w-4" />;
       case 'openalex': return <GraduationCap className="h-4 w-4" />;
+      case 'dapip': return <Building2 className="h-4 w-4" />;
+      case 'acnc': return <Heart className="h-4 w-4" />;
       default: return <Database className="h-4 w-4" />;
     }
   };
@@ -378,6 +384,8 @@ export function PipelineAdminPage() {
       case 'uspto': return PIPELINE_LABELS.SOURCE_USPTO;
       case 'federal_register': return PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER;
       case 'openalex': return 'OpenAlex Academic';
+      case 'dapip': return 'DAPIP Education';
+      case 'acnc': return 'ACNC Charities';
       case 'mcp': return PIPELINE_LABELS.SOURCE_MCP;
       default: return source;
     }
@@ -451,7 +459,14 @@ export function PipelineAdminPage() {
                 {Object.entries(stats?.bySource ?? {})
                   .sort(([, a], [, b]) => b - a)
                   .map(([source, count]) => (
-                    <div key={source} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
+                    <div
+                      key={source}
+                      className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 cursor-pointer hover:bg-[#00d4ff]/5 rounded px-2 -mx-2 transition-colors"
+                      onClick={() => {
+                        handleFilterChange('source', source);
+                        document.getElementById('pipeline-records-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                    >
                       <div className="flex items-center gap-3">
                         {sourceIcon(source)}
                         <span className="text-sm font-medium">{sourceLabel(source)}</span>
@@ -483,6 +498,8 @@ export function PipelineAdminPage() {
                 { path: 'fetch-uspto', label: 'Run USPTO Fetch', icon: <Scale className="h-4 w-4" /> },
                 { path: 'fetch-federal-register', label: 'Run Fed Register Fetch', icon: <BookOpen className="h-4 w-4" /> },
                 { path: 'fetch-openalex', label: 'Run OpenAlex Fetch', icon: <GraduationCap className="h-4 w-4" /> },
+                { path: 'fetch-dapip', label: 'Run DAPIP Fetch', icon: <Building2 className="h-4 w-4" /> },
+                { path: 'fetch-acnc', label: 'Run ACNC Fetch', icon: <Heart className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
                 { path: 'anchor-public-records', label: 'Run Anchoring', icon: <Shield className="h-4 w-4" /> },
               ] as const).map(({ path, label, icon }) => {
@@ -558,7 +575,7 @@ export function PipelineAdminPage() {
         </Card>
 
         {/* Records Browser */}
-        <Card className="border-[#00d4ff]/10 bg-transparent">
+        <Card id="pipeline-records-browser" className="border-[#00d4ff]/10 bg-transparent">
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
@@ -595,6 +612,8 @@ export function PipelineAdminPage() {
                   <SelectItem value="uspto">{PIPELINE_LABELS.SOURCE_USPTO}</SelectItem>
                   <SelectItem value="federal_register">{PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER}</SelectItem>
                   <SelectItem value="openalex">{PIPELINE_LABELS.SOURCE_OPENALEX}</SelectItem>
+                  <SelectItem value="dapip">DAPIP Education</SelectItem>
+                  <SelectItem value="acnc">ACNC Charities</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={filters.recordType} onValueChange={(v) => handleFilterChange('recordType', v)}>
