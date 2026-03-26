@@ -999,6 +999,32 @@ export const INTEGRITY_DETAIL_LABELS = {
 } as const;
 
 // =============================================================================
+// VISUAL FRAUD DETECTION (Phase 5)
+// =============================================================================
+
+export const FRAUD_DETECTION_LABELS = {
+  TITLE: 'Document Risk Assessment',
+  SUBTITLE: 'Visual analysis of document authenticity indicators.',
+  ANALYZE_BUTTON: 'Analyze Document',
+  ANALYZING: 'Analyzing document...',
+  RISK_LOW: 'Low Risk',
+  RISK_MEDIUM: 'Medium Risk',
+  RISK_HIGH: 'High Risk',
+  RISK_CRITICAL: 'Critical Risk',
+  NO_ANALYSIS: 'No risk assessment available',
+  SIGNALS_TITLE: 'Detection Signals',
+  RECOMMENDATIONS_TITLE: 'Recommendations',
+  CATEGORY_FONT: 'Font Analysis',
+  CATEGORY_LAYOUT: 'Layout Analysis',
+  CATEGORY_MANIPULATION: 'Image Manipulation',
+  CATEGORY_METADATA: 'Metadata Consistency',
+  CATEGORY_SECURITY: 'Security Features',
+  SEVERITY_INFO: 'Info',
+  SEVERITY_WARNING: 'Warning',
+  SEVERITY_CRITICAL: 'Critical',
+} as const;
+
+// =============================================================================
 // ERROR BOUNDARY (AUDIT-07)
 // =============================================================================
 

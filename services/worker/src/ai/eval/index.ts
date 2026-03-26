@@ -24,6 +24,7 @@ export {
 
 export { GOLDEN_DATASET_EXTENDED } from './golden-dataset-extended.js';
 export { GOLDEN_DATASET_PHASE2 } from './golden-dataset-phase2.js';
+export { GOLDEN_DATASET_PHASE5 } from './golden-dataset-phase5.js';
 
 export {
   compareField,
@@ -51,3 +52,12 @@ export {
   calibrateConfidence,
 } from './calibration.js';
 export type { CalibrationResult, CalibrationBucket, TypeCalibrationResult } from './calibration.js';
+
+export {
+  FRAUD_EVAL_DATASET,
+  getCleanEntries,
+  getTamperedEntries,
+  getEntriesByTamperingCategory,
+  getFraudEntriesByType,
+} from './fraud-eval-dataset.js';
+export type { FraudEvalEntry } from './fraud-eval-dataset.js';

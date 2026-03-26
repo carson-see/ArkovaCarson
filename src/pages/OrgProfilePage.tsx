@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Building2, Settings, Plus, Upload, UserPlus,
+  Building2, Settings, Plus, Upload, UserPlus, Users,
   ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
   Globe, MapPin, Calendar, Camera,
 } from 'lucide-react';
@@ -22,7 +22,7 @@ import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useInviteMember } from '@/hooks/useInviteMember';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
-import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal } from '@/components/organization';
+import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
 import { BulkUploadWizard } from '@/components/upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,6 +63,7 @@ export function OrgProfilePage() {
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -212,8 +213,14 @@ export function OrgProfilePage() {
 
   const handleInvite = useCallback(async (email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
     if (!orgId) return;
-    await inviteMember(email, role, orgId);
-  }, [inviteMember, orgId]);
+    await inviteMember({
+      email,
+      role,
+      orgId,
+      orgName: organization?.display_name ?? 'Your Organization',
+      inviterName: profile?.full_name ?? undefined,
+    });
+  }, [inviteMember, orgId, organization?.display_name, profile?.full_name]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
     const { error } = await supabase
@@ -424,10 +431,16 @@ export function OrgProfilePage() {
               )}
             </h2>
             {isAdmin && (
-              <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
-                <UserPlus className="mr-2 h-4 w-4" />
-                {ORG_PAGE_LABELS.INVITE_MEMBER}
-              </Button>
+              <div className="flex gap-2">
+                <Button size="sm" variant="outline" onClick={() => setAddMemberOpen(true)}>
+                  <Users className="mr-2 h-4 w-4" />
+                  Add Member
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setInviteOpen(true)}>
+                  <UserPlus className="mr-2 h-4 w-4" />
+                  {ORG_PAGE_LABELS.INVITE_MEMBER}
+                </Button>
+              </div>
             )}
           </div>
           <MembersTable
@@ -620,6 +633,15 @@ export function OrgProfilePage() {
         onOpenChange={setInviteOpen}
         onInvite={handleInvite}
       />
+
+      {orgId && (
+        <AddExistingMemberModal
+          open={addMemberOpen}
+          onOpenChange={setAddMemberOpen}
+          orgId={orgId}
+          onMemberAdded={() => setRefreshKey((k) => k + 1)}
+        />
+      )}
 
       <RevokeDialog
         open={!!revokeTarget}

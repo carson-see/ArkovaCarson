@@ -6,20 +6,37 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoist the mock function
 const mockRpc = vi.hoisted(() => vi.fn());
+const mockGetSession = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     rpc: mockRpc,
+    auth: {
+      getSession: mockGetSession,
+    },
   },
 }));
+
+// Mock fetch for worker email endpoint
+const mockFetch = vi.hoisted(() => vi.fn());
+vi.stubGlobal('fetch', mockFetch);
 
 // Import after mocks
 import { renderHook, act } from '@testing-library/react';
 import { useInviteMember } from './useInviteMember';
 
+const defaultOptions = {
+  email: 'test@example.com',
+  role: 'INDIVIDUAL' as const,
+  orgId: 'org-123',
+  orgName: 'Test Org',
+};
+
 describe('useInviteMember', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
   });
 
   it('should successfully invite a member', async () => {
@@ -29,7 +46,7 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember('test@example.com', 'INDIVIDUAL', 'org-123');
+      success = await result.current.inviteMember(defaultOptions);
     });
 
     expect(success!).toBe(true);
@@ -39,6 +56,26 @@ describe('useInviteMember', () => {
       org_id: 'org-123',
     });
     expect(result.current.error).toBeNull();
+  });
+
+  it('should send invitation email after successful RPC', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, inviterName: 'Carson' });
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/send-invitation-email'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer test-token',
+        }),
+      }),
+    );
   });
 
   it('should handle already a member error', async () => {
@@ -51,7 +88,7 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember('test@example.com', 'INDIVIDUAL', 'org-123');
+      success = await result.current.inviteMember(defaultOptions);
     });
 
     expect(success!).toBe(false);
@@ -68,7 +105,7 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember('test@example.com', 'ORG_ADMIN', 'org-123');
+      success = await result.current.inviteMember({ ...defaultOptions, role: 'ORG_ADMIN' });
     });
 
     expect(success!).toBe(false);
@@ -85,11 +122,26 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember('bad-email', 'INDIVIDUAL', 'org-123');
+      success = await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
     });
 
     expect(success!).toBe(false);
     expect(result.current.error).toContain('valid email');
+  });
+
+  it('should succeed even if email send fails (non-blocking)', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember(defaultOptions);
+    });
+
+    // Invitation should still succeed even though email failed
+    expect(success!).toBe(true);
   });
 
   it('should clear error when clearError is called', async () => {
@@ -101,7 +153,7 @@ describe('useInviteMember', () => {
     const { result } = renderHook(() => useInviteMember());
 
     await act(async () => {
-      await result.current.inviteMember('test@example.com', 'INDIVIDUAL', 'org-123');
+      await result.current.inviteMember(defaultOptions);
     });
 
     expect(result.current.error).not.toBeNull();

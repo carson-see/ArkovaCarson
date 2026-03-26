@@ -5,6 +5,7 @@
  *
  * Provider routing:
  *   'gemini'     → GeminiADKProvider (default when GEMINI_API_KEY set)
+ *   'together'   → TogetherProvider (Nessie fine-tuned Llama 3.1 8B)
  *   'cloudflare' → CloudflareFallbackProvider (ENABLE_AI_FALLBACK must be true)
  *   'openai'     → Not yet implemented (Phase 1.5+)
  *   'anthropic'  → Not yet implemented (Phase 1.5+)
@@ -18,9 +19,11 @@ import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
 import { ReplicateProvider } from './replicate.js';
 import { GeminiProvider } from './gemini.js';
+import { TogetherProvider } from './together.js';
 
-// Cached singleton so circuit breaker state persists across requests
+// Cached singletons so circuit breaker state persists across requests
 let geminiInstance: GeminiProvider | null = null;
+let togetherInstance: TogetherProvider | null = null;
 
 /**
  * Get the provider name that will be used based on current env.
@@ -64,6 +67,12 @@ export function createAIProvider(): IAIProvider {
       }
       return geminiInstance;
 
+    case 'together':
+      if (!togetherInstance) {
+        togetherInstance = new TogetherProvider();
+      }
+      return togetherInstance;
+
     case 'replicate': {
       // Production check is in ReplicateProvider constructor (Constitution 1.1)
       return new ReplicateProvider();
@@ -76,11 +85,12 @@ export function createAIProvider(): IAIProvider {
       throw new Error('Anthropic provider not yet implemented (Phase 1.5+)');
 
     default:
-      throw new Error(`Unknown AI provider: "${providerName}". Valid: gemini, cloudflare, replicate, openai, anthropic, mock`);
+      throw new Error(`Unknown AI provider: "${providerName}". Valid: gemini, together, cloudflare, replicate, openai, anthropic, mock`);
   }
 }
 
 /** Reset cached provider instances (for testing only). */
 export function resetProviderCache(): void {
   geminiInstance = null;
+  togetherInstance = null;
 }

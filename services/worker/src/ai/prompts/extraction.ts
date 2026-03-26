@@ -410,7 +410,39 @@ Output: {"credentialType":"PATENT","issuerName":"United States Patent and Tradem
 
 Example 56 — Journal Article (PUBLICATION, not OTHER):
 Input: "Journal of the American Medical Association (JAMA). Original Investigation. Title: Long-term Outcomes of Novel Immunotherapy Approaches in Non-Small Cell Lung Cancer. Authors: [NAME_REDACTED], [NAME_REDACTED], et al. Published Online: October 5, 2025. DOI: 10.1001/jama.2025.xxxxx. Volume 334, Issue 14, Pages 1201-1215."
-Output: {"credentialType":"PUBLICATION","issuerName":"Journal of the American Medical Association","issuedDate":"2025-10-05","fieldOfStudy":"Oncology","fraudSignals":[],"confidence":0.90}`;
+Output: {"credentialType":"PUBLICATION","issuerName":"Journal of the American Medical Association","issuedDate":"2025-10-05","fieldOfStudy":"Oncology","fraudSignals":[],"confidence":0.90}
+
+Example 57 — SEC Filing (SEC_FILING, not FINANCIAL):
+Input: "UNITED STATES SECURITIES AND EXCHANGE COMMISSION. Washington, D.C. 20549. FORM 10-K. Annual Report Pursuant to Section 13 or 15(d) of the Securities Exchange Act of 1934. For the fiscal year ended December 31, 2025. Commission file number: 001-12345. [COMPANY_REDACTED]. State of incorporation: Delaware."
+Output: {"credentialType":"SEC_FILING","issuerName":"United States Securities and Exchange Commission","issuedDate":"2025-12-31","jurisdiction":"United States","fraudSignals":[],"confidence":0.90}
+
+Example 58 — SEC Quarterly Filing (10-Q):
+Input: "UNITED STATES SECURITIES AND EXCHANGE COMMISSION. FORM 10-Q. Quarterly Report. For the quarterly period ended September 30, 2025. [COMPANY_REDACTED]. Commission File Number 000-56789. Filed: November 14, 2025."
+Output: {"credentialType":"SEC_FILING","issuerName":"United States Securities and Exchange Commission","issuedDate":"2025-11-14","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}
+
+Example 59 — Federal Register Notice (REGULATION):
+Input: "Federal Register / Vol. 91, No. 42 / Wednesday, March 5, 2026 / Rules and Regulations. DEPARTMENT OF HEALTH AND HUMAN SERVICES. Centers for Medicare & Medicaid Services. 42 CFR Parts 482 and 485. Medicare and Medicaid Programs; Hospital and Critical Access Hospital Changes. AGENCY: CMS, HHS. ACTION: Final rule. EFFECTIVE DATE: May 5, 2026."
+Output: {"credentialType":"REGULATION","issuerName":"Centers for Medicare & Medicaid Services","issuedDate":"2026-03-05","fieldOfStudy":"Healthcare Regulation","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}
+
+Example 60 — State Regulatory Order (REGULATION):
+Input: "STATE OF CALIFORNIA. PUBLIC UTILITIES COMMISSION. Decision 26-02-015. Decision Adopting Updated Building Electrification Standards. Filed: February 12, 2026. Effective: March 1, 2026. Commissioner: [NAME_REDACTED]."
+Output: {"credentialType":"REGULATION","issuerName":"California Public Utilities Commission","issuedDate":"2026-02-12","jurisdiction":"California, USA","fieldOfStudy":"Building Electrification","fraudSignals":[],"confidence":0.85}
+
+Example 61 — Tax Form (FINANCIAL, with specific fields):
+Input: "Department of the Treasury. Internal Revenue Service. Form 1099-MISC. Miscellaneous Information. TAX YEAR 2025. PAYER: [COMPANY_REDACTED]. PAYER TIN: [REDACTED]. RECIPIENT: [NAME_REDACTED]. RECIPIENT TIN: [REDACTED]. 7 Nonemployee compensation: $145,000.00."
+Output: {"credentialType":"FINANCIAL","issuerName":"[COMPANY_REDACTED]","issuedDate":"2025-12-31","jurisdiction":"United States","fieldOfStudy":"Tax Documentation","fraudSignals":[],"confidence":0.85}
+
+Example 62 — Audit Report (FINANCIAL, with accreditingBody):
+Input: "Independent Auditors' Report. To the Board of Directors and Shareholders of [COMPANY_REDACTED]. We have audited the accompanying consolidated financial statements of [COMPANY_REDACTED] as of and for the year ended December 31, 2025. In our opinion, the financial statements present fairly, in all material respects. PricewaterhouseCoopers LLP. March 15, 2026."
+Output: {"credentialType":"FINANCIAL","issuerName":"[COMPANY_REDACTED]","issuedDate":"2025-12-31","accreditingBody":"PricewaterhouseCoopers LLP","fraudSignals":[],"confidence":0.82}
+
+Example 63 — Conference Paper (PUBLICATION):
+Input: "Proceedings of the 42nd International Conference on Machine Learning (ICML 2025). Paper ID: 8901. Title: Efficient Sparse Attention Mechanisms for Long-Context Language Models. Authors: [NAME_REDACTED] and [NAME_REDACTED]. Accepted: May 2025. Pages 4521-4535."
+Output: {"credentialType":"PUBLICATION","issuerName":"International Conference on Machine Learning","issuedDate":"2025-05-01","fieldOfStudy":"Machine Learning","fraudSignals":[],"confidence":0.88}
+
+Example 64 — Surety Bond (INSURANCE):
+Input: "SURETY BOND. Bond Number: SB-2026-445566. Principal: [NAME_REDACTED]. Surety: Hartford Fire Insurance Company. Obligee: State of Florida, Department of Financial Services. Penal Sum: $25,000. Effective Date: January 1, 2026. Expiration Date: January 1, 2027."
+Output: {"credentialType":"INSURANCE","issuerName":"Hartford Fire Insurance Company","issuedDate":"2026-01-01","expiryDate":"2027-01-01","licenseNumber":"SB-2026-445566","jurisdiction":"Florida, USA","fraudSignals":[],"confidence":0.90}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.
@@ -445,6 +477,14 @@ export function buildExtractionPrompt(
 
   if (credentialType === 'CLE') {
     prompt += `This is a CLE (Continuing Legal Education) document. Extract CLE-specific fields: creditHours, creditType, barNumber format, activityNumber, providerName, approvedBy.\n`;
+  } else if (credentialType === 'SEC_FILING') {
+    prompt += `This is an SEC filing document. Look for form type (10-K, 10-Q, 8-K, DEF 14A, S-1), commission file number, fiscal period, and filing date. The issuerName should be "United States Securities and Exchange Commission". Use the filing date or period end date as issuedDate.\n`;
+  } else if (credentialType === 'REGULATION') {
+    prompt += `This is a regulatory document. Look for the issuing agency (not the parent department), effective dates, CFR references, and jurisdiction. Federal Register notices, state regulatory orders, and compliance directives all qualify.\n`;
+  } else if (credentialType === 'FINANCIAL') {
+    prompt += `This is a financial document. Look for the entity name, fiscal period end date, auditor/preparer (as accreditingBody if applicable), and document type (audit report, tax form, financial statement). Use fiscal year end or filing date as issuedDate.\n`;
+  } else if (credentialType === 'PUBLICATION') {
+    prompt += `This is an academic publication. Look for the journal/conference name (as issuerName), publication date, DOI, and research field. Map the research topic to a broad fieldOfStudy.\n`;
   }
 
   // JSON.stringify encodes the text as an inert data payload, preventing prompt injection

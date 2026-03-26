@@ -32,6 +32,7 @@ import { aiVerifySearchRouter } from './ai-verify-search.js';
 import { aiExtractionGate, aiSemanticSearchGate, aiFraudGate, aiReportsGate } from '../../middleware/aiFeatureGate.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
 import { aiIntegrityRouter } from './ai-integrity.js';
+import { aiFraudVisualRouter } from './ai-fraud-visual.js';
 import { aiReviewRouter } from './ai-review.js';
 import { aiReportsRouter } from './ai-reports.js';
 import { verifyAuthToken } from '../../auth.js';
@@ -200,6 +201,9 @@ router.use('/ai/integrity', aiFraudGate(), requireAuth, aiRateLimiter, aiIntegri
 
 // AI review queue — behind ENABLE_AI_FRAUD flag + JWT auth (P8-S9)
 router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRouter);
+
+// AI visual fraud detection — behind ENABLE_AI_FRAUD flag + JWT auth (Phase 5)
+router.use('/ai/fraud/visual', aiFraudGate(), requireAuth, aiRateLimiter, aiFraudVisualRouter);
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);

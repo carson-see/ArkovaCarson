@@ -12,15 +12,17 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { createAIProvider, getProviderName } from './factory.js';
+import { createAIProvider, getProviderName, resetProviderCache } from './factory.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
+import { TogetherProvider } from './together.js';
 
 describe('createAIProvider factory', () => {
   const originalEnv = { ...process.env };
 
   afterEach(() => {
     process.env = { ...originalEnv };
+    resetProviderCache();
   });
 
   it('returns MockAIProvider when AI_PROVIDER=mock', () => {
@@ -49,6 +51,22 @@ describe('createAIProvider factory', () => {
     process.env.AI_PROVIDER = 'cloudflare';
     process.env.ENABLE_AI_FALLBACK = 'false';
     expect(() => createAIProvider()).toThrow('ENABLE_AI_FALLBACK');
+  });
+
+  it('returns TogetherProvider when AI_PROVIDER=together', () => {
+    process.env.AI_PROVIDER = 'together';
+    process.env.TOGETHER_API_KEY = 'test-key-123';
+    const provider = createAIProvider();
+    expect(provider).toBeInstanceOf(TogetherProvider);
+    expect(provider.name).toBe('together');
+  });
+
+  it('caches TogetherProvider singleton', () => {
+    process.env.AI_PROVIDER = 'together';
+    process.env.TOGETHER_API_KEY = 'test-key-123';
+    const p1 = createAIProvider();
+    const p2 = createAIProvider();
+    expect(p1).toBe(p2);
   });
 
   it('throws for unknown provider names', () => {
