@@ -219,6 +219,110 @@ export function calibrateConfidence(rawConfidence: number): number {
   return rawConfidence;
 }
 
+/** Per-type calibration analysis result */
+export interface TypeCalibrationResult {
+  credentialType: string;
+  count: number;
+  meanConfidence: number;
+  meanAccuracy: number;
+  gap: number;
+  pearsonR: number;
+}
+
+/**
+ * Analyze calibration broken down by credential type.
+ * Useful for identifying types where the model is systematically off.
+ */
+export function analyzeCalibrationByType(
+  entries: EntryEvalResult[],
+): TypeCalibrationResult[] {
+  const byType = new Map<string, EntryEvalResult[]>();
+  for (const e of entries) {
+    const type = e.credentialType;
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type)!.push(e);
+  }
+
+  const results: TypeCalibrationResult[] = [];
+  for (const [type, typeEntries] of byType) {
+    if (typeEntries.length < 2) continue; // need ≥2 for correlation
+
+    const confs = typeEntries.map(e => e.reportedConfidence);
+    const accs = typeEntries.map(e => e.actualAccuracy);
+    const meanConf = confs.reduce((a, b) => a + b, 0) / confs.length;
+    const meanAcc = accs.reduce((a, b) => a + b, 0) / accs.length;
+    const r = pearsonCorrelation(confs, accs);
+
+    results.push({
+      credentialType: type,
+      count: typeEntries.length,
+      meanConfidence: meanConf,
+      meanAccuracy: meanAcc,
+      gap: meanConf - meanAcc,
+      pearsonR: r,
+    });
+  }
+
+  return results.sort((a, b) => a.gap - b.gap);
+}
+
+/**
+ * Derive optimal calibration knots from eval data.
+ *
+ * Groups entries into confidence buckets, computes mean actual accuracy
+ * per bucket, and returns knots for piecewise linear interpolation.
+ *
+ * @param entries - Eval results with confidence and accuracy
+ * @param numBuckets - Number of buckets (default 7 to match existing knot count)
+ * @returns Array of [rawConfidence, calibratedConfidence] knots
+ */
+export function deriveCalibrationKnots(
+  entries: EntryEvalResult[],
+  numBuckets = 7,
+): [number, number][] {
+  if (entries.length < numBuckets) {
+    return CALIBRATION_KNOTS; // Not enough data, return current knots
+  }
+
+  // Sort by reported confidence
+  const sorted = [...entries].sort((a, b) => a.reportedConfidence - b.reportedConfidence);
+
+  const bucketSize = Math.floor(sorted.length / numBuckets);
+  const knots: [number, number][] = [];
+
+  for (let i = 0; i < numBuckets; i++) {
+    const start = i * bucketSize;
+    const end = i === numBuckets - 1 ? sorted.length : (i + 1) * bucketSize;
+    const bucket = sorted.slice(start, end);
+
+    const meanConf = bucket.reduce((s, e) => s + e.reportedConfidence, 0) / bucket.length;
+    const meanAcc = bucket.reduce((s, e) => s + e.actualAccuracy, 0) / bucket.length;
+
+    knots.push([
+      Math.round(meanConf * 100) / 100,
+      Math.round(meanAcc * 100) / 100,
+    ]);
+  }
+
+  // Ensure monotonicity — calibrated values should be non-decreasing
+  for (let i = 1; i < knots.length; i++) {
+    if (knots[i][1] < knots[i - 1][1]) {
+      knots[i][1] = knots[i - 1][1];
+    }
+  }
+
+  // Ensure first knot starts at 0 and last at 1
+  knots[0][0] = 0;
+  knots[knots.length - 1][0] = 1;
+
+  return knots;
+}
+
+/** Export current knots for testing */
+export function getCurrentCalibrationKnots(): [number, number][] {
+  return [...CALIBRATION_KNOTS];
+}
+
 /**
  * Format calibration report as markdown.
  */
