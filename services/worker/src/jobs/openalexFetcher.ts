@@ -291,3 +291,208 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
 
   return { inserted: totalInserted, skipped: totalSkipped, errors: totalErrors };
 }
+
+// ─── BULK OPENALEX INGESTION ─────────────────────────────────────────────────
+// Lowers citation threshold, expands work types, uses batch upserts.
+// OpenAlex has 474M works — even a fraction yields massive coverage.
+
+/** Max records per batch insert */
+const BULK_INSERT_BATCH = 500;
+
+/** Max pages for bulk run (200 × 500 = 100K records per invocation) */
+const BULK_MAX_PAGES = 500;
+
+/**
+ * Bulk OpenAlex ingestion — fetches scholarly works with minimal filters.
+ *
+ * @param minCitations — minimum cited_by_count (default 0 for maximum coverage)
+ * @param workTypes — work types to include (default: article, review, book-chapter, preprint)
+ * @param startDate — earliest publication date
+ * @param maxPages — max pages to fetch this invocation
+ */
+export async function fetchOpenAlexBulk(
+  supabase: SupabaseClient,
+  options: {
+    minCitations?: number;
+    workTypes?: string[];
+    startDate?: string;
+    endDate?: string;
+    maxPages?: number;
+    resumeCursor?: string;
+  } = {},
+): Promise<{
+  inserted: number;
+  skipped: number;
+  errors: number;
+  pagesProcessed: number;
+  lastCursor: string | null;
+}> {
+  const { data: enabled } = await supabase.rpc('get_flag', {
+    p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+  });
+  if (!enabled) {
+    logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping bulk OpenAlex');
+    return { inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0, lastCursor: null };
+  }
+
+  const minCitations = options.minCitations ?? 0;
+  const workTypes = options.workTypes ?? ['article', 'review', 'book-chapter', 'preprint', 'dissertation'];
+  const startDate = options.startDate ?? '2000-01-01';
+  const endDate = options.endDate ?? new Date().toISOString().slice(0, 10);
+  const maxPages = options.maxPages ?? BULK_MAX_PAGES;
+
+  let totalInserted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+  let cursor = options.resumeCursor ?? '*';
+  let lastCursor: string | null = null;
+
+  const typeFilter = workTypes.join('|');
+  const filter = `from_publication_date:${startDate},to_publication_date:${endDate},cited_by_count:>${minCitations},type:${typeFilter}`;
+
+  logger.info({ filter, maxPages, startDate, endDate }, 'Starting bulk OpenAlex ingestion');
+
+  for (let pageCount = 0; pageCount < maxPages; pageCount++) {
+    const params = new URLSearchParams({
+      'filter': filter,
+      'per_page': String(PER_PAGE),
+      'cursor': cursor,
+      'sort': 'publication_date:desc',
+      'select': 'id,doi,title,display_name,publication_date,publication_year,type,cited_by_count,is_retracted,primary_location,authorships,concepts,open_access,abstract_inverted_index',
+      'mailto': POLITE_EMAIL,
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(`${OPENALEX_API_URL}?${params.toString()}`, {
+        headers: {
+          'User-Agent': `Arkova/1.0 (mailto:${POLITE_EMAIL})`,
+          Accept: 'application/json',
+        },
+      });
+    } catch (err) {
+      logger.error({ error: err, page: pageCount }, 'Bulk OpenAlex API request failed');
+      totalErrors++;
+      break;
+    }
+
+    if (response.status === 429) {
+      logger.warn('Bulk OpenAlex rate limited — backing off 5s');
+      await delay(5_000);
+      continue;
+    }
+
+    if (!response.ok) {
+      logger.error({ status: response.status, page: pageCount }, 'Bulk OpenAlex API error');
+      totalErrors++;
+      break;
+    }
+
+    let result: OpenAlexResponse;
+    try {
+      result = (await response.json()) as OpenAlexResponse;
+    } catch {
+      logger.error({ page: pageCount }, 'Failed to parse bulk OpenAlex response');
+      totalErrors++;
+      break;
+    }
+
+    const works = result.results ?? [];
+    if (works.length === 0) break;
+
+    const nextCursor = result.meta?.next_cursor ?? null;
+    lastCursor = nextCursor;
+
+    if (pageCount % 50 === 0) {
+      logger.info({ page: pageCount, count: works.length, total: result.meta?.count }, 'Bulk OpenAlex progress');
+    }
+
+    // Build batch
+    const records: Array<{
+      source: string;
+      source_id: string;
+      source_url: string;
+      record_type: string;
+      title: string;
+      content_hash: string;
+      metadata: Record<string, unknown>;
+    }> = [];
+
+    for (const work of works) {
+      const openalexId = work.id.split('/').pop() ?? work.id;
+      const doi = work.doi?.replace('https://doi.org/', '') ?? null;
+      const title = work.display_name ?? work.title ?? 'Untitled';
+      const abstract = reconstructAbstract(work.abstract_inverted_index);
+
+      const contentForHash = JSON.stringify({
+        openalex_id: openalexId,
+        doi,
+        title,
+        publication_date: work.publication_date,
+      });
+
+      const authors = work.authorships?.slice(0, 10).map((a) => ({
+        name: a.author.display_name,
+        orcid: a.author.orcid ?? null,
+        institutions: a.institutions?.map((i) => i.display_name) ?? [],
+      })) ?? [];
+
+      const concepts = work.concepts?.slice(0, 5).map((c) => c.display_name) ?? [];
+      const journal = work.primary_location?.source?.display_name ?? null;
+
+      const sourceUrl = doi
+        ? `https://doi.org/${doi}`
+        : work.open_access?.oa_url ?? `https://openalex.org/${openalexId}`;
+
+      records.push({
+        source: 'openalex',
+        source_id: openalexId,
+        source_url: sourceUrl,
+        record_type: work.type ?? 'article',
+        title,
+        content_hash: computeContentHash(contentForHash),
+        metadata: {
+          doi,
+          publication_date: work.publication_date,
+          publication_year: work.publication_year,
+          cited_by_count: work.cited_by_count,
+          is_retracted: work.is_retracted,
+          authors,
+          concepts,
+          journal,
+          is_open_access: work.open_access?.is_oa ?? false,
+          abstract: abstract?.slice(0, 2000) ?? null,
+        },
+      });
+    }
+
+    // Batch upsert
+    for (let i = 0; i < records.length; i += BULK_INSERT_BATCH) {
+      const batch = records.slice(i, i + BULK_INSERT_BATCH);
+      const { error: insertError, count } = await supabase
+        .from('public_records')
+        .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true, count: 'exact' });
+
+      if (insertError) {
+        logger.error({ error: insertError, batchSize: batch.length }, 'Bulk OpenAlex batch insert failed');
+        totalErrors += batch.length;
+      } else {
+        const insertedCount = count ?? batch.length;
+        totalInserted += insertedCount;
+        totalSkipped += batch.length - insertedCount;
+      }
+    }
+
+    if (!nextCursor || works.length < PER_PAGE) break;
+    cursor = nextCursor;
+
+    await delay(OPENALEX_RATE_LIMIT_MS);
+  }
+
+  logger.info(
+    { totalInserted, totalSkipped, totalErrors, lastCursor },
+    'Bulk OpenAlex ingestion complete',
+  );
+
+  return { inserted: totalInserted, skipped: totalSkipped, errors: totalErrors, pagesProcessed: maxPages, lastCursor };
+}

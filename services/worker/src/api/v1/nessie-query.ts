@@ -130,6 +130,7 @@ SOURCE AUTHORITY (prefer higher-authority sources when multiple documents cover 
 - DAPIP (Dept of Education): Highest authority for educational institution data
 - USPTO: Highest authority for patent/trademark data
 - OpenAlex: Academic abstracts — useful for research context, but cite the underlying paper, not the abstract alone
+- CourtListener: Court opinions and case law — highest authority for legal precedent and judicial decisions
 
 Respond in valid JSON with this schema:
 {
@@ -137,7 +138,7 @@ Respond in valid JSON with this schema:
   "citations": [
     {
       "record_id": "the record ID",
-      "source": "edgar|uspto|federal_register|dapip|openalex",
+      "source": "edgar|uspto|federal_register|dapip|openalex|courtlistener",
       "source_url": "original URL",
       "title": "document title",
       "relevance_score": 0.0-1.0,
@@ -337,6 +338,7 @@ router.get('/', async (req: Request, res: Response) => {
     const sourceWeight: Record<string, number> = {
       edgar: 1.15,
       federal_register: 1.12,
+      courtlistener: 1.12,
       dapip: 1.10,
       uspto: 1.10,
       openalex: 1.0,

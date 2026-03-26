@@ -22,10 +22,11 @@ import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
-import { fetchEdgarFilings, fetchEdgarHistoricalBackfill } from '../jobs/edgarFetcher.js';
+import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
-import { fetchOpenAlexWorks } from '../jobs/openalexFetcher.js';
+import { fetchOpenAlexWorks, fetchOpenAlexBulk } from '../jobs/openalexFetcher.js';
+import { fetchCourtOpinions } from '../jobs/courtlistenerFetcher.js';
 import { processPublicRecordAnchoring } from '../jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from '../jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
@@ -229,6 +230,38 @@ cronRouter.post('/fetch-openalex', async (_req, res) => {
   }
 });
 
+cronRouter.post('/openalex-bulk', async (req, res) => {
+  try {
+    const startDate = String(req.query.startDate ?? req.body?.startDate ?? '2000-01-01');
+    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
+    const minCitations = parseInt(String(req.query.minCitations ?? req.body?.minCitations ?? '0'), 10);
+    const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '500'), 10);
+    const resumeCursor = req.body?.resumeCursor;
+
+    const result = await fetchOpenAlexBulk(db, { startDate, endDate, minCitations, maxPages, resumeCursor });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Bulk OpenAlex ingestion failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-courtlistener', async (req, res) => {
+  try {
+    const startDate = String(req.query.startDate ?? req.body?.startDate ?? '1950-01-01');
+    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
+    const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '500'), 10);
+    const courtFilter = req.body?.courtFilter;
+    const statusFilter = req.body?.statusFilter ?? 'Published';
+
+    const result = await fetchCourtOpinions(db, { startDate, endDate, maxPages, courtFilter, statusFilter });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'CourtListener fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 cronRouter.post('/embed-public-records', async (_req, res) => {
   try {
     const result = await embedPublicRecords();
@@ -256,6 +289,21 @@ cronRouter.post('/edgar-backfill', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'EDGAR historical backfill failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/edgar-bulk', async (req, res) => {
+  try {
+    const startYear = parseInt(String(req.query.startYear ?? req.body?.startYear ?? '1993'), 10);
+    const endYear = parseInt(String(req.query.endYear ?? req.body?.endYear ?? new Date().getFullYear()), 10);
+    const maxQueries = parseInt(String(req.query.maxQueries ?? req.body?.maxQueries ?? '200'), 10);
+    const formTypes = req.body?.formTypes; // optional array override
+
+    const result = await fetchEdgarBulk(db, { startYear, endYear, maxQueriesPerInvocation: maxQueries, formTypes });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Bulk EDGAR ingestion failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

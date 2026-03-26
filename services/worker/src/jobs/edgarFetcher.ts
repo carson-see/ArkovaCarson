@@ -31,8 +31,36 @@ const EDGAR_SUBMISSIONS_URL = 'https://data.sec.gov/submissions';
 /** Number of filings to fetch per API call */
 const BATCH_SIZE = 200;
 
-/** Filing types to ingest */
+/** Filing types to ingest (standard cron) */
 const FILING_TYPES = ['10-K', '10-Q', '8-K', '20-F', '6-K', 'S-1', 'DEF 14A'];
+
+/** Expanded form types for bulk ingestion — covers virtually all SEC filing categories */
+const BULK_FILING_TYPES = [
+  // Annual & Quarterly
+  '10-K', '10-Q', '10-K/A', '10-Q/A',
+  // Current Reports
+  '8-K', '8-K/A',
+  // Foreign Private Issuers
+  '20-F', '20-F/A', '6-K', '6-K/A',
+  // Registration Statements
+  'S-1', 'S-1/A', 'S-3', 'S-3/A', 'S-4', 'S-4/A', 'S-8', 'S-11',
+  // Proxy Statements
+  'DEF 14A', 'DEFA14A', 'DEFC14A', 'PRE 14A',
+  // Insider Trading
+  '4', '3', '5',
+  // Ownership & Tender
+  'SC 13D', 'SC 13D/A', 'SC 13G', 'SC 13G/A', 'SC TO-T', 'SC 14D9',
+  // Fund Filings
+  'N-CSR', 'N-CSRS', 'N-Q', '485BPOS', '497',
+  // Shelf Registrations & Prospectuses
+  '424B2', '424B3', '424B4', '424B5', 'FWP',
+  // Exempt Offerings
+  'D', 'D/A',
+  // Annual Reports (foreign)
+  '40-F', '40-F/A',
+  // Special Purpose
+  'CB', 'F-1', 'F-3', 'F-4',
+];
 
 interface EdgarFiling {
   accessionNumber: string;
@@ -656,4 +684,289 @@ export async function fetchEdgarHistoricalBackfill(
     totalBatches,
     companiesProcessed: batchCIKs.length,
   };
+}
+
+// ─── BULK EDGAR INGESTION ────────────────────────────────────────────────────
+// Year-sharded EFTS queries with batch upserts for 2M+ target.
+// Bypasses the 10K EFTS result cap by querying each form type per year (or month
+// for high-volume types like 8-K, 4, D).
+
+/** Form types that exceed 10K filings/year — need monthly sharding */
+const HIGH_VOLUME_FORMS = new Set(['8-K', '8-K/A', '4', '3', '5', 'D', 'D/A']);
+
+/** Max records per batch insert (Supabase/PostgREST limit) */
+const BULK_INSERT_BATCH = 500;
+
+interface BulkIngestionResult {
+  inserted: number;
+  skipped: number;
+  errors: number;
+  queriesRun: number;
+  formType: string;
+  yearRange: string;
+}
+
+/**
+ * Bulk EDGAR ingestion via EFTS with year-sharding.
+ *
+ * For each form type × year (or month), queries EFTS up to 10K results,
+ * then batch-upserts into public_records with ON CONFLICT DO NOTHING.
+ *
+ * @param formTypes — which form types to ingest (defaults to BULK_FILING_TYPES)
+ * @param startYear — earliest year (defaults to 1993, EDGAR inception)
+ * @param endYear — latest year (defaults to current year)
+ * @param maxQueriesPerInvocation — throttle to stay within Cloud Run timeout (~8 min)
+ */
+export async function fetchEdgarBulk(
+  supabase: SupabaseClient,
+  options: {
+    formTypes?: string[];
+    startYear?: number;
+    endYear?: number;
+    maxQueriesPerInvocation?: number;
+  } = {},
+): Promise<{
+  inserted: number;
+  skipped: number;
+  errors: number;
+  queriesRun: number;
+  formTypesProcessed: string[];
+}> {
+  // Check switchboard flag
+  const { data: enabled } = await supabase.rpc('get_flag', {
+    p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+  });
+  if (!enabled) {
+    logger.info('ENABLE_PUBLIC_RECORDS_INGESTION is disabled — skipping bulk EDGAR');
+    return { inserted: 0, skipped: 0, errors: 0, queriesRun: 0, formTypesProcessed: [] };
+  }
+
+  const formTypes = options.formTypes ?? BULK_FILING_TYPES;
+  const currentYear = new Date().getFullYear();
+  const startYear = options.startYear ?? 1993;
+  const endYear = options.endYear ?? currentYear;
+  const maxQueries = options.maxQueriesPerInvocation ?? 200; // ~200 queries × 150ms ≈ 30s of API time
+
+  let totalInserted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+  let queriesRun = 0;
+  const processedTypes: Set<string> = new Set();
+
+  logger.info({
+    formTypes: formTypes.length,
+    startYear,
+    endYear,
+    maxQueries,
+  }, 'Starting bulk EDGAR ingestion');
+
+  for (const formType of formTypes) {
+    if (queriesRun >= maxQueries) {
+      logger.info({ queriesRun, maxQueries }, 'Bulk EDGAR: hit query limit, stopping');
+      break;
+    }
+
+    const isHighVolume = HIGH_VOLUME_FORMS.has(formType);
+
+    for (let year = endYear; year >= startYear; year--) {
+      if (queriesRun >= maxQueries) break;
+
+      if (isHighVolume) {
+        // Monthly shards for high-volume forms
+        for (let month = 12; month >= 1; month--) {
+          if (queriesRun >= maxQueries) break;
+          const startdt = `${year}-${String(month).padStart(2, '0')}-01`;
+          const enddt = month === 12
+            ? `${year + 1}-01-01`
+            : `${year}-${String(month + 1).padStart(2, '0')}-01`;
+
+          const result = await fetchEftsShard(supabase, formType, startdt, enddt);
+          totalInserted += result.inserted;
+          totalSkipped += result.skipped;
+          totalErrors += result.errors;
+          queriesRun += result.queriesRun;
+          processedTypes.add(formType);
+        }
+      } else {
+        // Yearly shard for normal-volume forms
+        const startdt = `${year}-01-01`;
+        const enddt = `${year + 1}-01-01`;
+
+        const result = await fetchEftsShard(supabase, formType, startdt, enddt);
+        totalInserted += result.inserted;
+        totalSkipped += result.skipped;
+        totalErrors += result.errors;
+        queriesRun += result.queriesRun;
+        processedTypes.add(formType);
+      }
+    }
+  }
+
+  logger.info({
+    totalInserted,
+    totalSkipped,
+    totalErrors,
+    queriesRun,
+    formTypesProcessed: [...processedTypes],
+  }, 'Bulk EDGAR ingestion complete');
+
+  return {
+    inserted: totalInserted,
+    skipped: totalSkipped,
+    errors: totalErrors,
+    queriesRun,
+    formTypesProcessed: [...processedTypes],
+  };
+}
+
+/**
+ * Fetch a single EFTS shard (one form type × one date range).
+ * Paginates through up to 10K results and batch-upserts.
+ */
+async function fetchEftsShard(
+  supabase: SupabaseClient,
+  formType: string,
+  startdt: string,
+  enddt: string,
+): Promise<BulkIngestionResult> {
+  let inserted = 0;
+  let skipped = 0;
+  let errors = 0;
+  let queriesRun = 0;
+  let from = 0;
+  let hasMore = true;
+
+  while (hasMore) {
+    const params = new URLSearchParams({
+      forms: formType,
+      dateRange: 'custom',
+      startdt,
+      enddt,
+      from: String(from),
+    });
+
+    let response: Response;
+    try {
+      response = await fetch(`${EDGAR_EFTS_URL}?${params.toString()}`, {
+        headers: {
+          'User-Agent': getEdgarUserAgent(),
+          Accept: 'application/json',
+        },
+      });
+      queriesRun++;
+    } catch (err) {
+      logger.error({ error: err, formType, startdt, enddt, from }, 'Bulk EDGAR EFTS request failed');
+      errors++;
+      break;
+    }
+
+    if (response.status === 429) {
+      logger.warn({ formType, startdt }, 'Bulk EDGAR rate limited — backing off 10s');
+      await delay(10_000);
+      continue; // Retry same request
+    }
+
+    if (!response.ok) {
+      logger.warn({ status: response.status, formType, startdt, enddt }, 'Bulk EDGAR EFTS error — skipping shard');
+      errors++;
+      break;
+    }
+
+    let result: EdgarSearchResult;
+    try {
+      result = (await response.json()) as EdgarSearchResult;
+    } catch {
+      logger.error({ formType, startdt, from }, 'Failed to parse bulk EDGAR response');
+      errors++;
+      break;
+    }
+
+    const hits = result.hits?.hits ?? [];
+    if (hits.length === 0) {
+      hasMore = false;
+      break;
+    }
+
+    const totalHits = result.hits?.total?.value ?? 0;
+
+    // Build batch of records
+    const records: Array<{
+      source: string;
+      source_id: string;
+      source_url: string;
+      record_type: string;
+      title: string;
+      content_hash: string;
+      metadata: Record<string, unknown>;
+    }> = [];
+
+    for (const hit of hits) {
+      const src = hit._source;
+      const entityName = src.entity_name
+        || (src.display_names?.[0]?.split(/\s{2,}/)?.[0]?.trim())
+        || 'Unknown Entity';
+      const formTypeValue = src.form_type || formType;
+      const fileDate = src.file_date || '';
+      const cik = src.ciks?.[0] ?? '';
+
+      const contentForHash = JSON.stringify({
+        accession: hit._id,
+        form_type: formTypeValue,
+        entity_name: entityName,
+        file_date: fileDate,
+      });
+
+      const accessionClean = hit._id.replace(/-/g, '');
+
+      records.push({
+        source: 'edgar',
+        source_id: hit._id,
+        source_url: `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '')}/${accessionClean}/${hit._id}-index.htm`,
+        record_type: 'sec_filing',
+        title: `${entityName} — ${formTypeValue} (${fileDate})`,
+        content_hash: computeContentHash(contentForHash),
+        metadata: {
+          form_type: formTypeValue,
+          entity_name: entityName,
+          filing_date: fileDate,
+          period_of_report: src.period_of_report ?? null,
+          tickers: src.tickers ?? [],
+          ciks: src.ciks ?? [],
+          display_names: src.display_names ?? [],
+          file_description: src.file_description ?? null,
+        },
+      });
+    }
+
+    // Batch upsert — ON CONFLICT (source, source_id) DO NOTHING
+    for (let i = 0; i < records.length; i += BULK_INSERT_BATCH) {
+      const batch = records.slice(i, i + BULK_INSERT_BATCH);
+      const { error: insertError, count } = await supabase
+        .from('public_records')
+        .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true, count: 'exact' });
+
+      if (insertError) {
+        logger.error({ error: insertError, formType, startdt, batchSize: batch.length }, 'Bulk EDGAR batch insert failed');
+        errors += batch.length;
+      } else {
+        const insertedCount = count ?? batch.length;
+        inserted += insertedCount;
+        skipped += batch.length - insertedCount;
+      }
+    }
+
+    if (from === 0 && totalHits > 0) {
+      logger.info({ formType, startdt, enddt, totalHits, batchInserted: records.length }, 'Bulk EDGAR shard started');
+    }
+
+    from += hits.length;
+    if (from >= totalHits || from >= 9800 || hits.length < BATCH_SIZE) {
+      hasMore = false;
+    }
+
+    // Rate limit compliance
+    await delay(EDGAR_RATE_LIMIT_MS);
+  }
+
+  return { inserted, skipped, errors, queriesRun, formType, yearRange: `${startdt}→${enddt}` };
 }

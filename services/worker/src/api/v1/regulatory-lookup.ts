@@ -21,7 +21,7 @@ const router = Router();
 
 const RegulatoryLookupSchema = z.object({
   q: z.string().min(1, 'Query is required').max(500),
-  source: z.enum(['edgar', 'federal_register', 'uspto', 'openalex', 'all']).default('all'),
+  source: z.enum(['edgar', 'federal_register', 'uspto', 'openalex', 'courtlistener', 'all']).default('all'),
   type: z.string().max(100).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0),
