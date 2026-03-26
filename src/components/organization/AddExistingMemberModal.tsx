@@ -26,7 +26,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
+
+const addMemberSchema = z.object({
+  userId: z.string().uuid(),
+  orgId: z.string().uuid(),
+  role: z.enum(['INDIVIDUAL', 'ORG_ADMIN']),
+});
 
 type MemberRole = 'INDIVIDUAL' | 'ORG_ADMIN';
 
@@ -132,46 +139,33 @@ export function AddExistingMemberModal({
   const handleAdd = useCallback(async () => {
     if (!foundUser) return;
 
+    // Validate inputs with Zod before calling RPC
+    const parsed = addMemberSchema.safeParse({
+      userId: foundUser.id,
+      orgId,
+      role,
+    });
+
+    if (!parsed.success) {
+      setError('Invalid input. Please check the form and try again.');
+      return;
+    }
+
     setAdding(true);
     setError(null);
 
     try {
-      // Add user to organization via RPC
+      // Add user to organization via SECURITY DEFINER RPC — no direct insert fallback
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: addError } = await (supabase.rpc as any)('add_org_member', {
-        p_user_id: foundUser.id,
-        p_org_id: orgId,
-        p_role: role,
+        p_user_id: parsed.data.userId,
+        p_org_id: parsed.data.orgId,
+        p_role: parsed.data.role,
       });
 
       if (addError) {
-        // If the RPC doesn't exist, fall back to direct insert
-        if (addError.message?.includes('function') && addError.message?.includes('does not exist')) {
-          // Direct insert fallback
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error: insertError } = await (supabase as any)
-            .from('org_memberships')
-            .insert({
-              user_id: foundUser.id,
-              org_id: orgId,
-              role,
-            });
-
-          if (insertError) {
-            setError(insertError.message || 'Failed to add member.');
-            return;
-          }
-
-          // Also update the user's profile org_id if not set
-          await supabase
-            .from('profiles')
-            .update({ org_id: orgId, role })
-            .eq('id', foundUser.id)
-            .is('org_id', null);
-        } else {
-          setError(addError.message || 'Failed to add member.');
-          return;
-        }
+        setError(addError.message || 'Failed to add member.');
+        return;
       }
 
       setSuccess(true);
