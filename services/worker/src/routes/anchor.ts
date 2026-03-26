@@ -10,12 +10,15 @@
 import { Router } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { config } from '../config.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { verifyAnchorByFingerprint } from '../api/verify-anchor.js';
 import { createPendingRecipient } from '../api/recipients.js';
 import { handleAccountDelete } from '../api/account-delete.js';
+import { sendEmail } from '../email/sender.js';
+import { buildInvitationEmail } from '../email/templates.js';
 
 export const anchorRouter = Router();
 
@@ -109,6 +112,79 @@ anchorRouter.post('/recipients', rateLimiters.checkout, async (req, res) => {
   } catch (error) {
     logger.error({ error }, 'Recipient creation failed');
     sendError(res, 500, 'internal_error', 'Failed to create recipient');
+  }
+});
+
+/**
+ * POST /api/send-invitation-email
+ * Sends an invitation email to a newly invited org member.
+ * Called by frontend after invite_member RPC succeeds.
+ * Requires authenticated org admin.
+ */
+anchorRouter.post('/send-invitation-email', rateLimiters.checkout, async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    sendError(res, 401, 'authentication_required', 'Authentication required');
+    return;
+  }
+
+  const { email, orgId, orgName, role, inviterName } = req.body as {
+    email?: string;
+    orgId?: string;
+    orgName?: string;
+    role?: string;
+    inviterName?: string;
+  };
+
+  if (!email || !orgId || !orgName) {
+    sendError(res, 400, 'invalid_request', 'email, orgId, and orgName are required');
+    return;
+  }
+
+  try {
+    // Verify the caller is an org admin
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: membership } = await (db as any)
+      .from('org_memberships')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('org_id', orgId)
+      .single();
+
+    if (!membership || membership.role !== 'ORG_ADMIN') {
+      sendError(res, 403, 'forbidden', 'Only organization admins can send invitation emails');
+      return;
+    }
+
+    // Build the invite URL — links to the app's signup/login page with invitation context
+    const frontendUrl = config.frontendUrl || 'https://arkova-26.vercel.app';
+    const inviteUrl = `${frontendUrl}/login?invite=true&org=${encodeURIComponent(orgId)}`;
+
+    const { subject, html } = buildInvitationEmail({
+      recipientEmail: email,
+      organizationName: orgName,
+      inviterName,
+      role: role ?? 'INDIVIDUAL',
+      inviteUrl,
+    });
+
+    const result = await sendEmail({
+      to: email,
+      subject,
+      html,
+      emailType: 'invitation',
+      actorId: userId,
+      orgId,
+    });
+
+    if (result.success) {
+      res.json({ sent: true, messageId: result.messageId });
+    } else {
+      sendError(res, 500, 'email_failed', result.error ?? 'Failed to send invitation email');
+    }
+  } catch (error) {
+    logger.error({ error }, 'Invitation email send failed');
+    sendError(res, 500, 'internal_error', 'Failed to send invitation email');
   }
 });
 

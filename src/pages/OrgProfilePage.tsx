@@ -212,8 +212,14 @@ export function OrgProfilePage() {
 
   const handleInvite = useCallback(async (email: string, role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
     if (!orgId) return;
-    await inviteMember(email, role, orgId);
-  }, [inviteMember, orgId]);
+    await inviteMember({
+      email,
+      role,
+      orgId,
+      orgName: organization?.display_name ?? 'Your Organization',
+      inviterName: profile?.full_name ?? undefined,
+    });
+  }, [inviteMember, orgId, organization?.display_name, profile?.full_name]);
 
   const handleChangeRole = useCallback(async (member: { id: string; fullName: string | null; email: string }, newRole: 'ORG_ADMIN' | 'INDIVIDUAL') => {
     const { error } = await supabase

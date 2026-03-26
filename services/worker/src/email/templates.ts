@@ -73,6 +73,14 @@ export interface RevocationEmailData {
   organizationName?: string;
 }
 
+export interface InvitationEmailData {
+  recipientEmail: string;
+  organizationName: string;
+  inviterName?: string;
+  role: string;
+  inviteUrl: string;
+}
+
 // ─── Template Builders ───────────────────────────────────────────────────────
 
 /**
@@ -127,6 +135,32 @@ export function buildRevocationEmail(data: RevocationEmailData): { subject: stri
     <p>The credential <strong>${esc(data.credentialLabel)}</strong>${data.organizationName ? ` from ${esc(data.organizationName)}` : ''} has been revoked.</p>
     ${data.revocationReason ? `<p><strong>Reason:</strong> ${esc(data.revocationReason)}</p>` : ''}
     <p style="${STYLES.muted}">This credential will no longer pass verification checks. If you believe this was done in error, please contact the issuing organization.</p>
+  `);
+
+  return { subject, html };
+}
+
+/**
+ * Invitation email — sent when an org admin invites someone to join.
+ */
+export function buildInvitationEmail(data: InvitationEmailData): { subject: string; html: string } {
+  const subject = `You've been invited to join ${esc(data.organizationName)} on Arkova`;
+
+  const roleLabel = data.role === 'ORG_ADMIN' ? 'an administrator' : 'a member';
+  const inviterLine = data.inviterName
+    ? `<strong>${esc(data.inviterName)}</strong> has invited you`
+    : 'You have been invited';
+
+  const html = wrapTemplate(`
+    <h2 style="color: #0f172a; margin-bottom: 16px;">Organization Invitation</h2>
+    <p>${inviterLine} to join <strong>${esc(data.organizationName)}</strong> as ${roleLabel} on Arkova.</p>
+    <p>Arkova is a trusted credential infrastructure platform for securing and verifying important documents.</p>
+    <div style="text-align: center; margin: 32px 0;">
+      <a href="${esc(data.inviteUrl)}" style="${STYLES.button}">Accept Invitation</a>
+    </div>
+    <p style="${STYLES.muted}">This invitation expires in 7 days. If you didn't expect this email, you can safely ignore it.</p>
+    <p style="${STYLES.muted}">Link not working? Copy and paste this URL into your browser:<br/>
+    <span style="word-break: break-all; font-size: 12px;">${esc(data.inviteUrl)}</span></p>
   `);
 
   return { subject, html };
