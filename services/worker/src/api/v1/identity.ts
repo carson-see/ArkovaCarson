@@ -13,7 +13,7 @@ import { Router, Request, Response } from 'express';
 import { stripe } from '../../stripe/client.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-import { supabaseAdmin } from '../../supabase.js';
+import { db } from '../../utils/db.js';
 
 export const identityRouter = Router();
 
@@ -32,7 +32,7 @@ identityRouter.post('/session', async (req: Request, res: Response) => {
     }
 
     // Check if user already has a pending or verified session
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('identity_verification_status, identity_verification_session_id')
       .eq('id', userId)
@@ -86,7 +86,7 @@ identityRouter.post('/session', async (req: Request, res: Response) => {
     });
 
     // Update profile with the new session ID
-    const { error: updateError } = await supabaseAdmin
+    const { error: updateError } = await db
       .from('profiles')
       .update({
         identity_verification_session_id: session.id,
@@ -125,7 +125,7 @@ identityRouter.get('/status', async (req: Request, res: Response) => {
       return;
     }
 
-    const { data: profile, error } = await supabaseAdmin
+    const { data: profile, error } = await db
       .from('profiles')
       .select('identity_verification_status, identity_verified_at')
       .eq('id', userId)

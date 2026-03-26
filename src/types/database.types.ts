@@ -127,6 +127,7 @@ export type Database = {
           org_id: string | null
           prompt_version: string | null
           provider: string
+          result_json: Json | null
           success: boolean
           tokens_used: number | null
           user_id: string | null
@@ -143,6 +144,7 @@ export type Database = {
           org_id?: string | null
           prompt_version?: string | null
           provider: string
+          result_json?: Json | null
           success?: boolean
           tokens_used?: number | null
           user_id?: string | null
@@ -159,6 +161,7 @@ export type Database = {
           org_id?: string | null
           prompt_version?: string | null
           provider?: string
+          result_json?: Json | null
           success?: boolean
           tokens_used?: number | null
           user_id?: string | null
@@ -378,6 +381,8 @@ export type Database = {
           metadata: Json | null
           org_id: string | null
           parent_anchor_id: string | null
+          payment_source_id: string | null
+          payment_source_type: string | null
           public_id: string | null
           recipient_email: string | null
           retention_until: string | null
@@ -413,6 +418,8 @@ export type Database = {
           metadata?: Json | null
           org_id?: string | null
           parent_anchor_id?: string | null
+          payment_source_id?: string | null
+          payment_source_type?: string | null
           public_id?: string | null
           recipient_email?: string | null
           retention_until?: string | null
@@ -448,6 +455,8 @@ export type Database = {
           metadata?: Json | null
           org_id?: string | null
           parent_anchor_id?: string | null
+          payment_source_id?: string | null
+          payment_source_type?: string | null
           public_id?: string | null
           recipient_email?: string | null
           retention_until?: string | null
@@ -790,6 +799,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      audit_events_archive: {
+        Row: {
+          actor_email: string | null
+          actor_id: string | null
+          actor_ip: unknown
+          actor_user_agent: string | null
+          created_at: string
+          details: string | null
+          event_category: string
+          event_type: string
+          id: string
+          org_id: string | null
+          target_id: string | null
+          target_type: string | null
+        }
+        Insert: {
+          actor_email?: string | null
+          actor_id?: string | null
+          actor_ip?: unknown
+          actor_user_agent?: string | null
+          created_at?: string
+          details?: string | null
+          event_category: string
+          event_type: string
+          id?: string
+          org_id?: string | null
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Update: {
+          actor_email?: string | null
+          actor_id?: string | null
+          actor_ip?: unknown
+          actor_user_agent?: string | null
+          created_at?: string
+          details?: string | null
+          event_category?: string
+          event_type?: string
+          id?: string
+          org_id?: string | null
+          target_id?: string | null
+          target_type?: string | null
+        }
+        Relationships: []
       }
       batch_verification_jobs: {
         Row: {
@@ -1203,6 +1257,54 @@ export type Database = {
           },
         ]
       }
+      financial_reports: {
+        Row: {
+          avg_cost_per_anchor_usd: number | null
+          bitcoin_fee_sats: number | null
+          bitcoin_fee_usd: number | null
+          created_at: string
+          details: Json | null
+          gross_margin_pct: number | null
+          gross_margin_usd: number | null
+          id: string
+          report_month: string
+          stripe_revenue_usd: number | null
+          total_anchors: number | null
+          total_revenue_usd: number | null
+          x402_revenue_usd: number | null
+        }
+        Insert: {
+          avg_cost_per_anchor_usd?: number | null
+          bitcoin_fee_sats?: number | null
+          bitcoin_fee_usd?: number | null
+          created_at?: string
+          details?: Json | null
+          gross_margin_pct?: number | null
+          gross_margin_usd?: number | null
+          id?: string
+          report_month: string
+          stripe_revenue_usd?: number | null
+          total_anchors?: number | null
+          total_revenue_usd?: number | null
+          x402_revenue_usd?: number | null
+        }
+        Update: {
+          avg_cost_per_anchor_usd?: number | null
+          bitcoin_fee_sats?: number | null
+          bitcoin_fee_usd?: number | null
+          created_at?: string
+          details?: Json | null
+          gross_margin_pct?: number | null
+          gross_margin_usd?: number | null
+          id?: string
+          report_month?: string
+          stripe_revenue_usd?: number | null
+          total_anchors?: number | null
+          total_revenue_usd?: number | null
+          x402_revenue_usd?: number | null
+        }
+        Relationships: []
+      }
       institution_ground_truth: {
         Row: {
           confidence_score: number | null
@@ -1487,6 +1589,53 @@ export type Database = {
         }
         Relationships: []
       }
+      payment_grace_periods: {
+        Row: {
+          created_at: string
+          downgraded_at: string | null
+          grace_end: string
+          grace_start: string
+          id: string
+          notification_sent: boolean
+          status: string
+          stripe_subscription_id: string | null
+          subscription_id: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          downgraded_at?: string | null
+          grace_end?: string
+          grace_start?: string
+          id?: string
+          notification_sent?: boolean
+          status?: string
+          stripe_subscription_id?: string | null
+          subscription_id?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          downgraded_at?: string | null
+          grace_end?: string
+          grace_start?: string
+          id?: string
+          notification_sent?: boolean
+          status?: string
+          stripe_subscription_id?: string | null
+          subscription_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payment_grace_periods_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "subscriptions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plans: {
         Row: {
           billing_period: string
@@ -1539,12 +1688,17 @@ export type Database = {
           email: string
           full_name: string | null
           id: string
+          identity_verification_session_id: string | null
+          identity_verification_status: string | null
+          identity_verified_at: string | null
+          is_platform_admin: boolean
           is_public_profile: boolean
           is_verified: boolean
           manual_review_completed_at: string | null
           manual_review_completed_by: string | null
           manual_review_reason: string | null
           org_id: string | null
+          phone_number: string | null
           public_id: string | null
           requires_manual_review: boolean
           role: Database["public"]["Enums"]["user_role"] | null
@@ -1562,12 +1716,17 @@ export type Database = {
           email: string
           full_name?: string | null
           id: string
+          identity_verification_session_id?: string | null
+          identity_verification_status?: string | null
+          identity_verified_at?: string | null
+          is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
           org_id?: string | null
+          phone_number?: string | null
           public_id?: string | null
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
@@ -1585,12 +1744,17 @@ export type Database = {
           email?: string
           full_name?: string | null
           id?: string
+          identity_verification_session_id?: string | null
+          identity_verification_status?: string | null
+          identity_verified_at?: string | null
+          is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
           org_id?: string | null
+          phone_number?: string | null
           public_id?: string | null
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
@@ -1653,6 +1817,7 @@ export type Database = {
           source_id: string
           source_url: string | null
           title: string | null
+          training_exported: boolean | null
           updated_at: string
         }
         Insert: {
@@ -1666,6 +1831,7 @@ export type Database = {
           source_id: string
           source_url?: string | null
           title?: string | null
+          training_exported?: boolean | null
           updated_at?: string
         }
         Update: {
@@ -1679,6 +1845,7 @@ export type Database = {
           source_id?: string
           source_url?: string | null
           title?: string | null
+          training_exported?: boolean | null
           updated_at?: string
         }
         Relationships: [
@@ -1690,6 +1857,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      reconciliation_reports: {
+        Row: {
+          created_at: string
+          discrepancies: Json | null
+          id: string
+          report_month: string
+          report_type: string
+          summary: string | null
+          total_anchors: number | null
+          total_cost_usd: number | null
+          total_revenue_usd: number | null
+        }
+        Insert: {
+          created_at?: string
+          discrepancies?: Json | null
+          id?: string
+          report_month: string
+          report_type: string
+          summary?: string | null
+          total_anchors?: number | null
+          total_cost_usd?: number | null
+          total_revenue_usd?: number | null
+        }
+        Update: {
+          created_at?: string
+          discrepancies?: Json | null
+          id?: string
+          report_month?: string
+          report_type?: string
+          summary?: string | null
+          total_anchors?: number | null
+          total_cost_usd?: number | null
+          total_revenue_usd?: number | null
+        }
+        Relationships: []
       }
       report_artifacts: {
         Row: {
@@ -1986,6 +2189,50 @@ export type Database = {
         }
         Relationships: []
       }
+      unified_credits: {
+        Row: {
+          billing_cycle_start: string
+          carry_over: number
+          created_at: string
+          id: string
+          monthly_allocation: number
+          org_id: string | null
+          updated_at: string
+          used_this_month: number
+          user_id: string | null
+        }
+        Insert: {
+          billing_cycle_start?: string
+          carry_over?: number
+          created_at?: string
+          id?: string
+          monthly_allocation?: number
+          org_id?: string | null
+          updated_at?: string
+          used_this_month?: number
+          user_id?: string | null
+        }
+        Update: {
+          billing_cycle_start?: string
+          carry_over?: number
+          created_at?: string
+          id?: string
+          monthly_allocation?: number
+          org_id?: string | null
+          updated_at?: string
+          used_this_month?: number
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unified_credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       verification_events: {
         Row: {
           anchor_id: string | null
@@ -2251,7 +2498,21 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      payment_ledger: {
+        Row: {
+          amount_usd: number | null
+          currency: string | null
+          details: Json | null
+          event_at: string | null
+          event_type: string | null
+          external_id: string | null
+          ledger_id: string | null
+          org_id: string | null
+          source: string | null
+          user_id: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       activate_user: {
@@ -2260,6 +2521,10 @@ export type Database = {
       }
       allocate_monthly_credits: { Args: never; Returns: number }
       anonymize_user_data: { Args: { p_user_id: string }; Returns: Json }
+      archive_old_audit_events: {
+        Args: { retention_days?: number }
+        Returns: number
+      }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
       check_ai_credits: {
         Args: { p_org_id?: string; p_user_id?: string }
@@ -2271,11 +2536,47 @@ export type Database = {
         }[]
       }
       check_anchor_quota: { Args: never; Returns: number }
+      check_orphaned_anchors: {
+        Args: never
+        Returns: {
+          anchor_id: string
+          created_at: string
+          fingerprint: string
+          status: string
+          user_id: string
+        }[]
+      }
+      check_unified_credits: {
+        Args: { p_org_id?: string; p_user_id?: string }
+        Returns: {
+          has_credits: boolean
+          monthly_allocation: number
+          remaining: number
+          used_this_month: number
+        }[]
+      }
       claim_anchoring_job: {
         Args: { p_lock_duration_seconds?: number; p_worker_id: string }
         Returns: string
       }
+      claim_pending_anchors: {
+        Args: {
+          p_exclude_pipeline?: boolean
+          p_limit?: number
+          p_worker_id?: string
+        }
+        Returns: {
+          credential_type: string
+          fingerprint: string
+          id: string
+          metadata: Json
+          org_id: string
+          public_id: string
+          user_id: string
+        }[]
+      }
       cleanup_expired_data: { Args: never; Returns: Json }
+      cleanup_orphaned_anchors: { Args: never; Returns: number }
       complete_anchoring_job: {
         Args: { p_error?: string; p_job_id: string; p_success: boolean }
         Returns: boolean
@@ -2307,6 +2608,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: Json
+      }
+      deduct_unified_credits: {
+        Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
+        Returns: boolean
       }
       delete_own_account: { Args: never; Returns: Json }
       delete_webhook_endpoint: {
@@ -2413,6 +2718,15 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      recover_stuck_broadcasts: {
+        Args: { p_stale_minutes?: number }
+        Returns: {
+          anchor_fingerprint: string
+          anchor_id: string
+          claimed_by: string
+          stuck_since: string
+        }[]
+      }
       release_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
       revoke_anchor:
         | { Args: { anchor_id: string }; Returns: undefined }
@@ -2431,6 +2745,14 @@ export type Database = {
         Returns: {
           anchor_id: string
           similarity: number
+        }[]
+      }
+      search_issuer_ground_truth: {
+        Args: { p_issuer_name: string }
+        Returns: {
+          id: string
+          match_strategy: string
+          name: string
         }[]
       }
       search_public_credential_embeddings: {
@@ -2489,7 +2811,13 @@ export type Database = {
     }
     Enums: {
       ai_report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
-      anchor_status: "PENDING" | "BROADCASTING" | "SECURED" | "REVOKED" | "EXPIRED" | "SUBMITTED"
+      anchor_status:
+        | "PENDING"
+        | "SECURED"
+        | "REVOKED"
+        | "EXPIRED"
+        | "SUBMITTED"
+        | "BROADCASTING"
       api_key_rate_limit_tier: "free" | "paid" | "custom"
       attestation_status:
         | "DRAFT"
@@ -2686,7 +3014,14 @@ export const Constants = {
   public: {
     Enums: {
       ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
-      anchor_status: ["PENDING", "BROADCASTING", "SECURED", "REVOKED", "EXPIRED", "SUBMITTED"],
+      anchor_status: [
+        "PENDING",
+        "SECURED",
+        "REVOKED",
+        "EXPIRED",
+        "SUBMITTED",
+        "BROADCASTING",
+      ],
       api_key_rate_limit_tier: ["free", "paid", "custom"],
       attestation_status: [
         "DRAFT",
@@ -2731,6 +3066,9 @@ export const Constants = {
         "FINANCIAL",
         "LEGAL",
         "INSURANCE",
+        "CHARITY",
+        "FINANCIAL_ADVISOR",
+        "BUSINESS_ENTITY",
       ],
       credit_transaction_type: [
         "ALLOCATION",
@@ -2762,3 +3100,4 @@ export const Constants = {
     },
   },
 } as const
+
