@@ -42,3 +42,14 @@ CF_AI_MODEL = "@cf/nvidia/nemotron"
 # ── Secrets (set via `wrangler secret put`) ────────────────────────────
 # SUPABASE_URL
 # SUPABASE_SERVICE_ROLE_KEY
+# BASE_RPC_URL                    # Base L2 RPC endpoint (e.g., Alchemy, Infura)
+
+# ── x402 Payment Facilitator ──────────────────────────────────────────
+# Route: /x402/verify — verifies USDC transfers on BASE chain
+# Set these secrets for production:
+#   wrangler secret put BASE_RPC_URL
+#   wrangler secret put ARKOVA_USDC_ADDRESS
+#   wrangler secret put USDC_CONTRACT_ADDRESS
+#
+# Base Mainnet USDC: 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913
+# Base Sepolia USDC: 0x036cbd53842c5426634e7929541ec2318f3dcf7e
