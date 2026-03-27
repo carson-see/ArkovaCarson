@@ -132,3 +132,74 @@ export function useIssuerRegistry(): UseIssuerRegistryReturn {
 
   return { registry, loading, error, fetchRegistry };
 }
+
+// ── Public Org Profile ──────────────────────────────────────────────────────
+
+export interface CredentialBreakdown {
+  type: string | null;
+  count: number;
+}
+
+export interface OrgProfile {
+  org_id: string;
+  display_name: string;
+  domain: string | null;
+  description: string | null;
+  org_type: string | null;
+  website_url: string | null;
+  linkedin_url: string | null;
+  logo_url: string | null;
+  location: string | null;
+  founded_date: string | null;
+  created_at: string;
+  total_credentials: number;
+  secured_credentials: number;
+  credential_breakdown: CredentialBreakdown[];
+}
+
+interface UseOrgProfileReturn {
+  profile: OrgProfile | null;
+  loading: boolean;
+  error: string | null;
+  fetchProfile: (orgId: string) => Promise<void>;
+}
+
+export function useOrgProfile(): UseOrgProfileReturn {
+  const [profile, setProfile] = useState<OrgProfile | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchProfile = useCallback(async (orgId: string) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase.rpc as any)(
+        'get_public_org_profile',
+        { p_org_id: orgId }
+      );
+
+      if (rpcError) {
+        setError(rpcError.message);
+        return;
+      }
+
+      // RPC returns SETOF jsonb — unwrap from function name key
+      const result = Array.isArray(data) ? data[0]?.get_public_org_profile ?? data[0] : data;
+
+      if (result?.error) {
+        setError(result.error as string);
+        return;
+      }
+
+      setProfile(result as OrgProfile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { profile, loading, error, fetchProfile };
+}

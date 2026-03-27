@@ -1,128 +1,322 @@
 /**
- * Issuer Registry Page
+ * Issuer Registry Page — Public Organization Profile
  *
- * Public page at /issuer/:orgId showing an org's verified credentials.
- * No auth required. Only shows data for orgs with public profiles.
+ * LinkedIn/Crunchbase-inspired company profile page at /issuer/:orgId.
+ * No auth required. Shows org details, credential stats, and recent records.
  *
  * @see UF-02
  */
 
 import { useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Building2, ArrowLeft, Loader2, Award } from 'lucide-react';
+import {
+  Building2, ArrowLeft, Loader2, Shield, Globe, MapPin, Calendar,
+  ExternalLink, Award, FileText, Scale, Landmark, BookOpen, Briefcase,
+  CheckCircle2,
+} from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
-import { useIssuerRegistry } from '@/hooks/usePublicSearch';
-import { SEARCH_LABELS } from '@/lib/copy';
+import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
+import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
+import { isSearchSubdomain } from '@/App';
+
+/** Map credential types to icons */
+function credentialIcon(type: string | null) {
+  switch (type) {
+    case 'PUBLICATION': return <BookOpen className="h-4 w-4" />;
+    case 'SEC_FILING': return <Landmark className="h-4 w-4" />;
+    case 'LEGAL': return <Scale className="h-4 w-4" />;
+    case 'PROFESSIONAL': return <Briefcase className="h-4 w-4" />;
+    case 'CERTIFICATE': return <Award className="h-4 w-4" />;
+    default: return <FileText className="h-4 w-4" />;
+  }
+}
+
+function formatNumber(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+function formatOrgType(type: string | null): string {
+  if (!type) return 'Organization';
+  return type.charAt(0).toUpperCase() + type.slice(1);
+}
 
 export function IssuerRegistryPage() {
   const { orgId } = useParams<{ orgId: string }>();
-  const { registry, loading, error, fetchRegistry } = useIssuerRegistry();
+  const { profile, loading: profileLoading, error: profileError, fetchProfile } = useOrgProfile();
+  const { registry, loading: registryLoading, fetchRegistry } = useIssuerRegistry();
+  const standalone = isSearchSubdomain();
 
   useEffect(() => {
     if (orgId) {
+      fetchProfile(orgId);
       fetchRegistry(orgId);
     }
-  }, [orgId, fetchRegistry]);
+  }, [orgId, fetchProfile, fetchRegistry]);
 
-  if (loading) {
+  const loading = profileLoading || registryLoading;
+
+  if (loading && !profile) {
     return (
-      <div className="min-h-screen bg-mesh-gradient">
-        <div className="bg-dot-pattern min-h-screen flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-[#00d4ff]" />
+      </div>
+    );
+  }
+
+  if (profileError || !profile) {
+    return (
+      <div className="min-h-screen bg-background">
+        <div className="container max-w-4xl mx-auto px-4 py-12">
+          <Card className="bg-transparent border-[#3c494e]/30">
+            <CardContent className="py-12 text-center">
+              <Building2 className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">
+                {profileError ?? 'Organization not found'}
+              </p>
+              <Link to={ROUTES.SEARCH} className="mt-4 inline-block">
+                <Button variant="outline" size="sm">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to Search
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
   }
 
-  if (error || !registry) {
-    return (
-      <div className="min-h-screen bg-mesh-gradient">
-        <div className="bg-dot-pattern min-h-screen">
-          <div className="container max-w-3xl mx-auto px-4 py-12">
-            <Card className="glass-card">
-              <CardContent className="py-12 text-center">
-                <Building2 className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
-                <p className="text-sm font-medium text-muted-foreground">
-                  {error ?? SEARCH_LABELS.NO_RESULTS}
+  const securedPct = profile.total_credentials > 0
+    ? Math.round((profile.secured_credentials / profile.total_credentials) * 100)
+    : 0;
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="container max-w-4xl mx-auto px-4 py-8">
+        {/* Back nav */}
+        <Link
+          to={ROUTES.SEARCH}
+          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back to Search
+        </Link>
+
+        {/* ── Hero Header ─────────────────────────────────────────────── */}
+        <div className="rounded-2xl border border-[#00d4ff]/10 bg-gradient-to-br from-[#0d141b] to-[#111a24] p-8 mb-6">
+          <div className="flex items-start gap-6">
+            {/* Logo */}
+            <div className="shrink-0">
+              {profile.logo_url ? (
+                <img
+                  src={profile.logo_url}
+                  alt={profile.display_name}
+                  className="h-20 w-20 rounded-2xl object-contain bg-[#192028] p-2"
+                />
+              ) : (
+                <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-[#192028]">
+                  <Building2 className="h-10 w-10 text-[#00d4ff]" />
+                </div>
+              )}
+            </div>
+
+            {/* Name + meta */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-3 mb-1">
+                <h1 className="text-3xl font-black tracking-tight truncate">
+                  {profile.display_name}
+                </h1>
+                {profile.secured_credentials > 0 && (
+                  <Badge className="bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/20 gap-1 shrink-0">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Verified Issuer
+                  </Badge>
+                )}
+              </div>
+
+              {profile.description && (
+                <p className="text-[#bbc9cf] text-sm mb-3 line-clamp-2">
+                  {profile.description}
                 </p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {SEARCH_LABELS.NO_RESULTS_DESC}
-                </p>
-                <Link to={ROUTES.SEARCH} className="mt-4 inline-block">
-                  <Button variant="outline" size="sm">
-                    <ArrowLeft className="mr-2 h-4 w-4" />
-                    {SEARCH_LABELS.PAGE_TITLE}
-                  </Button>
-                </Link>
+              )}
+
+              {/* Meta row */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                {profile.org_type && (
+                  <span className="inline-flex items-center gap-1">
+                    <Building2 className="h-3 w-3" />
+                    {formatOrgType(profile.org_type)}
+                  </span>
+                )}
+                {profile.location && (
+                  <span className="inline-flex items-center gap-1">
+                    <MapPin className="h-3 w-3" />
+                    {profile.location}
+                  </span>
+                )}
+                {profile.founded_date && (
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    Founded {new Date(profile.founded_date).getFullYear()}
+                  </span>
+                )}
+                {profile.domain && (
+                  <span className="inline-flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    {profile.domain}
+                  </span>
+                )}
+              </div>
+
+              {/* Links */}
+              <div className="flex gap-2 mt-4">
+                {profile.website_url && (
+                  <a
+                    href={profile.website_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-[#00d4ff] hover:text-[#00d4ff]/80 border border-[#00d4ff]/20 rounded-full px-3 py-1 hover:bg-[#00d4ff]/5 transition-colors"
+                  >
+                    <Globe className="h-3 w-3" />
+                    Website
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                )}
+                {profile.linkedin_url && (
+                  <a
+                    href={profile.linkedin_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
+                  >
+                    LinkedIn
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Stats Cards ─────────────────────────────────────────────── */}
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <Card className="bg-transparent border-[#3c494e]/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-black text-[#00d4ff]">
+                {formatNumber(profile.total_credentials)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Total Records</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-transparent border-[#3c494e]/30">
+            <CardContent className="p-4 text-center">
+              <p className="text-2xl font-black text-green-400">
+                {formatNumber(profile.secured_credentials)}
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">Secured on Bitcoin</p>
+            </CardContent>
+          </Card>
+          <Card className="bg-transparent border-[#3c494e]/30">
+            <CardContent className="p-4 text-center">
+              <div className="flex items-center justify-center gap-1.5">
+                <Shield className="h-5 w-5 text-[#00d4ff]" />
+                <p className="text-2xl font-black">{securedPct}%</p>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Verification Rate</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ── Credential Breakdown ─────────────────────────────────────── */}
+        {profile.credential_breakdown.length > 0 && (
+          <div className="mb-6">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+              Record Types
+            </h2>
+            <Card className="bg-transparent border-[#3c494e]/30">
+              <CardContent className="p-4">
+                <div className="space-y-3">
+                  {profile.credential_breakdown
+                    .filter(b => b.type)
+                    .slice(0, 6)
+                    .map((b) => {
+                      const pct = profile.total_credentials > 0
+                        ? (b.count / profile.total_credentials) * 100
+                        : 0;
+                      const label = b.type
+                        ? CREDENTIAL_TYPE_LABELS[b.type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? b.type
+                        : 'Other';
+                      return (
+                        <div key={b.type} className="flex items-center gap-3">
+                          <div className="flex items-center gap-2 w-40 shrink-0">
+                            <span className="text-muted-foreground">{credentialIcon(b.type)}</span>
+                            <span className="text-xs truncate">{label}</span>
+                          </div>
+                          <div className="flex-1 h-2 bg-[#192028] rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-[#00d4ff] rounded-full transition-all duration-500"
+                              style={{ width: `${Math.max(pct, 1)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-muted-foreground w-16 text-right shrink-0">
+                            {formatNumber(b.count)}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
               </CardContent>
             </Card>
           </div>
-        </div>
-      </div>
-    );
-  }
+        )}
 
-  return (
-    <div className="min-h-screen bg-mesh-gradient">
-      <div className="bg-dot-pattern min-h-screen">
-        <div className="container max-w-3xl mx-auto px-4 py-12">
-          {/* Back link */}
-          <Link to={ROUTES.SEARCH} className="inline-block mb-6">
-            <Button variant="ghost" size="sm">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              {SEARCH_LABELS.PAGE_TITLE}
-            </Button>
-          </Link>
-
-          {/* Issuer header */}
-          <div className="glass-card rounded-xl p-6 mb-8 shadow-card-rest animate-in-view">
-            <div className="flex items-center gap-4">
-              <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5 shrink-0">
-                <Building2 className="h-7 w-7 text-primary" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-2xl font-semibold tracking-tight truncate">
-                  {registry.org_name}
-                </h1>
-                {registry.org_domain && (
-                  <p className="text-sm text-muted-foreground">{registry.org_domain}</p>
-                )}
-              </div>
-              <Badge variant="secondary" className="ml-auto gap-1 shrink-0">
-                <Award className="h-3.5 w-3.5" />
-                {SEARCH_LABELS.CREDENTIALS_COUNT.replace('{count}', String(registry.total))}
-              </Badge>
-            </div>
-          </div>
-
-          {/* Credentials list */}
-          <h2 className="text-lg font-semibold mb-4 animate-in-view stagger-1">
-            {SEARCH_LABELS.ISSUER_REGISTRY_TITLE}
+        {/* ── Recent Credentials ───────────────────────────────────────── */}
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
+            Recent Records
           </h2>
 
-          {registry.anchors.length > 0 ? (
-            <div className="space-y-3">
-              {registry.anchors.map((anchor, i) => (
-                <div key={anchor.public_id} className={`stagger-${Math.min(i + 2, 8)}`}>
-                  <CredentialCard anchor={anchor} />
-                </div>
+          {registry && registry.anchors.length > 0 ? (
+            <div className="space-y-2">
+              {registry.anchors.map((anchor) => (
+                <CredentialCard key={anchor.public_id} anchor={anchor} />
               ))}
             </div>
+          ) : registryLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
           ) : (
-            <Card className="glass-card">
-              <CardContent className="py-12 text-center">
-                <Award className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
-                <p className="text-sm text-muted-foreground">
-                  {SEARCH_LABELS.NO_RESULTS}
-                </p>
+            <Card className="bg-transparent border-[#3c494e]/30">
+              <CardContent className="py-8 text-center">
+                <p className="text-sm text-muted-foreground">No public records yet</p>
               </CardContent>
             </Card>
           )}
         </div>
+
+        {/* ── Footer (standalone) ──────────────────────────────────────── */}
+        {standalone && (
+          <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
+            <p className="text-xs text-muted-foreground mb-3">
+              Powered by Arkova — document integrity anchored on Bitcoin
+            </p>
+            <div className="flex justify-center gap-4 text-xs">
+              <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">
+                arkova.ai <ExternalLink className="h-3 w-3" />
+              </a>
+              <Link to={ROUTES.ABOUT} className="text-muted-foreground hover:text-foreground">About</Link>
+              <Link to={ROUTES.PRIVACY} className="text-muted-foreground hover:text-foreground">Privacy</Link>
+              <Link to={ROUTES.TERMS} className="text-muted-foreground hover:text-foreground">Terms</Link>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

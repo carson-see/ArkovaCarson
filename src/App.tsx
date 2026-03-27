@@ -141,6 +141,7 @@ export function App() {
         {searchOnly ? (
         <Routes>
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY} element={<RouteErrorBoundary section="PublicVerify"><PublicVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY_FORM} element={<RouteErrorBoundary section="PublicVerify"><PublicVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ABOUT} element={<AboutPage />} />
