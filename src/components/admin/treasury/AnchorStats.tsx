@@ -31,8 +31,6 @@ const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; co
 
 export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
   const anchored = stats?.byStatus['SECURED'] ?? 0;
-  const inMempool = stats?.byStatus['SUBMITTED'] ?? 0;
-  const queued = stats?.byStatus['PENDING'] ?? 0;
 
   return (
     <Card>

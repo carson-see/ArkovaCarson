@@ -2,7 +2,7 @@
  * ML Runtime Detection Tests (Phase 4)
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   detectMLRuntime,
   resetMLRuntimeCache,

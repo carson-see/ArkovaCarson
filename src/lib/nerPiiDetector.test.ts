@@ -5,7 +5,7 @@
  * Mocks @huggingface/transformers since we can't load models in CI.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { redactNEREntities, type NEREntity } from './nerPiiDetector';
 
 // We test the exported pure functions directly.

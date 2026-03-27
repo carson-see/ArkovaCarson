@@ -26,13 +26,14 @@ import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from 
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
 import { fetchOpenAlexWorks, fetchOpenAlexBulk } from '../jobs/openalexFetcher.js';
-import { fetchCourtOpinions } from '../jobs/courtlistenerFetcher.js';
+import { fetchCourtOpinions, fetchStateCourts } from '../jobs/courtlistenerFetcher.js';
 import { processPublicRecordAnchoring } from '../jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from '../jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
 import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { fetchAcncCharities } from '../jobs/acncFetcher.js';
+import { fetchStateBills, fetchMultipleStateBills } from '../jobs/openStatesFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -260,6 +261,47 @@ cronRouter.post('/fetch-courtlistener', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'CourtListener fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-state-courts', async (req, res) => {
+  try {
+    const stateCode = String(req.query.state ?? req.body?.state ?? 'CA').toUpperCase();
+    const startDate = String(req.query.startDate ?? req.body?.startDate ?? '2000-01-01');
+    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
+    const maxPagesPerCourt = parseInt(String(req.query.maxPagesPerCourt ?? req.body?.maxPagesPerCourt ?? '200'), 10);
+
+    const result = await fetchStateCourts(db, stateCode, { startDate, endDate, maxPagesPerCourt });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'State court fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-state-bills', async (req, res) => {
+  try {
+    const stateCode = String(req.query.state ?? req.body?.state ?? 'CA').toUpperCase();
+    const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '300'), 10);
+
+    const result = await fetchStateBills(db, { stateCode, maxPages });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'State bills fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-all-state-bills', async (req, res) => {
+  try {
+    const states = (req.body?.states as string[] | undefined) ?? ['CA', 'NY', 'TX'];
+    const maxPagesPerState = parseInt(String(req.query.maxPagesPerState ?? req.body?.maxPagesPerState ?? '300'), 10);
+
+    const result = await fetchMultipleStateBills(db, states, { maxPagesPerState });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Multi-state bills fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

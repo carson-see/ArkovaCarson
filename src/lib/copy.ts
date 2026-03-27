@@ -1196,6 +1196,17 @@ export const PIPELINE_LABELS = {
   RECORDS_SHOWING: 'Showing',
   RECORDS_OF: 'of',
   RECORDS_LOAD_MORE: 'Load More',
+  ANCHORS_BY_TYPE_TITLE: 'Anchors by Credential Type',
+  TYPE_PUBLICATION: 'Publications',
+  TYPE_SEC_FILING: 'SEC Filings',
+  TYPE_PROFESSIONAL: 'Professional',
+  TYPE_OTHER: 'Other',
+  TYPE_LEGAL: 'Legal',
+  TYPE_CHARITY: 'Charity',
+  TYPE_CERTIFICATE: 'Certificates',
+  TYPE_DEGREE: 'Degrees',
+  TYPE_LICENSE: 'Licenses',
+  TYPE_TRANSCRIPT: 'Transcripts',
 } as const;
 
 // =============================================================================

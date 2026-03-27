@@ -31,6 +31,7 @@ import {
   Layers,
   Building2,
   Heart,
+  Landmark,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -68,6 +69,7 @@ interface PipelineStats {
   pendingRecords: number;
   embeddedRecords: number;
   bySource: Record<string, number>;
+  byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }>;
   recentErrors: number;
 }
 
@@ -165,17 +167,46 @@ export function PipelineAdminPage() {
         }
       }
 
+      // Anchor counts by credential_type and status
+      const byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }> = {};
+      const { data: ctRows } = await dbAny.rpc('get_anchor_type_counts').catch(() => ({ data: null }));
+      if (ctRows && Array.isArray(ctRows)) {
+        for (const row of ctRows as Array<{ credential_type: string | null; status: string; count: number }>) {
+          const ct = row.credential_type ?? 'UNKNOWN';
+          if (!byCredentialType[ct]) byCredentialType[ct] = { total: 0, secured: 0, submitted: 0, pending: 0, broadcasting: 0 };
+          byCredentialType[ct].total += Number(row.count);
+          const s = row.status?.toLowerCase() as 'secured' | 'submitted' | 'pending' | 'broadcasting';
+          if (s in byCredentialType[ct]) byCredentialType[ct][s] += Number(row.count);
+        }
+      } else {
+        // Fallback: direct query (may be slow on large tables)
+        const { data: anchorRows } = await dbAny
+          .from('anchors')
+          .select('credential_type, status')
+          .limit(100000);
+        if (anchorRows && Array.isArray(anchorRows)) {
+          for (const row of anchorRows as Array<{ credential_type: string | null; status: string }>) {
+            const ct = row.credential_type ?? 'UNKNOWN';
+            if (!byCredentialType[ct]) byCredentialType[ct] = { total: 0, secured: 0, submitted: 0, pending: 0, broadcasting: 0 };
+            byCredentialType[ct].total += 1;
+            const s = row.status?.toLowerCase() as 'secured' | 'submitted' | 'pending' | 'broadcasting';
+            if (s in byCredentialType[ct]) byCredentialType[ct][s] += 1;
+          }
+        }
+      }
+
       setStats({
         totalRecords: totalRecords ?? 0,
         anchoredRecords: anchoredRecords ?? 0,
         pendingRecords: pendingRecords ?? 0,
         embeddedRecords: embeddedRecords ?? 0,
         bySource,
+        byCredentialType,
         recentErrors: 0,
       });
     } catch {
       // Stats fetch failed — set empty state so UI doesn't hang on skeleton
-      setStats({ totalRecords: 0, anchoredRecords: 0, pendingRecords: 0, embeddedRecords: 0, bySource: {}, recentErrors: 0 });
+      setStats({ totalRecords: 0, anchoredRecords: 0, pendingRecords: 0, embeddedRecords: 0, bySource: {}, byCredentialType: {}, recentErrors: 0  });
     } finally {
       setLoading(false);
     }
@@ -375,6 +406,8 @@ export function PipelineAdminPage() {
       case 'openalex': return <GraduationCap className="h-4 w-4" />;
       case 'dapip': return <Building2 className="h-4 w-4" />;
       case 'acnc': return <Heart className="h-4 w-4" />;
+      case 'courtlistener': return <Scale className="h-4 w-4" />;
+      case 'openstates': return <Landmark className="h-4 w-4" />;
       default: return <Database className="h-4 w-4" />;
     }
   };
@@ -387,6 +420,8 @@ export function PipelineAdminPage() {
       case 'openalex': return 'OpenAlex Academic';
       case 'dapip': return 'DAPIP Education';
       case 'acnc': return 'ACNC Charities';
+      case 'courtlistener': return 'CourtListener Legal';
+      case 'openstates': return 'Open States Legislation';
       case 'mcp': return PIPELINE_LABELS.SOURCE_MCP;
       default: return source;
     }
@@ -487,6 +522,80 @@ export function PipelineAdminPage() {
           </CardContent>
         </Card>
 
+        {/* Anchors by Credential Type */}
+        <Card className="border-[#00d4ff]/10 bg-transparent">
+          <CardHeader>
+            <CardTitle className="text-base">{PIPELINE_LABELS.ANCHORS_BY_TYPE_TITLE}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="space-y-3">
+                {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(stats?.byCredentialType ?? {})
+                  .sort(([, a], [, b]) => b.total - a.total)
+                  .map(([ct, counts]) => {
+                    const label = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS] ?? ct.replace(/_/g, ' ');
+                    const securedPct = counts.total > 0 ? Math.round((counts.secured / counts.total) * 100) : 0;
+                    return (
+                      <div
+                        key={ct}
+                        className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 cursor-pointer hover:bg-[#00d4ff]/5 rounded px-2 -mx-2 transition-colors"
+                        onClick={() => {
+                          handleFilterChange('recordType', ct.toLowerCase());
+                          document.getElementById('pipeline-records-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        }}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Shield className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="text-sm font-medium">{label}</span>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="flex items-center gap-1.5 text-xs">
+                            <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px] font-mono">
+                              {counts.secured.toLocaleString()}
+                            </Badge>
+                            {counts.broadcasting > 0 && (
+                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px] font-mono" title="Broadcasting">
+                                {counts.broadcasting.toLocaleString()}
+                              </Badge>
+                            )}
+                            {counts.submitted > 0 && (
+                              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px] font-mono" title="Submitted">
+                                {counts.submitted.toLocaleString()}
+                              </Badge>
+                            )}
+                            {counts.pending > 0 && (
+                              <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px] font-mono">
+                                {counts.pending.toLocaleString()}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="w-20 bg-muted rounded-full h-1.5 hidden sm:block">
+                            <div
+                              className="bg-emerald-400 h-1.5 rounded-full transition-all"
+                              style={{ width: `${securedPct}%` }}
+                            />
+                          </div>
+                          <Badge variant="secondary" className="font-mono text-[10px] w-16 justify-center">
+                            {counts.total.toLocaleString()}
+                          </Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                {Object.keys(stats?.byCredentialType ?? {}).length === 0 && (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    No anchor data available.
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         {/* Pipeline Controls */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
           <CardHeader>
@@ -501,6 +610,11 @@ export function PipelineAdminPage() {
                 { path: 'fetch-openalex', label: 'Run OpenAlex Fetch', icon: <GraduationCap className="h-4 w-4" /> },
                 { path: 'fetch-dapip', label: 'Run DAPIP Fetch', icon: <Building2 className="h-4 w-4" /> },
                 { path: 'fetch-acnc', label: 'Run ACNC Fetch', icon: <Heart className="h-4 w-4" /> },
+                { path: 'fetch-courtlistener', label: 'Run CourtListener Fetch', icon: <Scale className="h-4 w-4" /> },
+                { path: 'fetch-state-courts?state=CA', label: 'Fetch CA Courts', icon: <Landmark className="h-4 w-4" /> },
+                { path: 'fetch-state-courts?state=NY', label: 'Fetch NY Courts', icon: <Landmark className="h-4 w-4" /> },
+                { path: 'fetch-state-courts?state=TX', label: 'Fetch TX Courts', icon: <Landmark className="h-4 w-4" /> },
+                { path: 'fetch-all-state-bills', label: 'Fetch State Bills (CA/NY/TX)', icon: <FileText className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
                 { path: 'anchor-public-records', label: 'Run Anchoring', icon: <Shield className="h-4 w-4" /> },
                 { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },
@@ -616,6 +730,8 @@ export function PipelineAdminPage() {
                   <SelectItem value="openalex">{PIPELINE_LABELS.SOURCE_OPENALEX}</SelectItem>
                   <SelectItem value="dapip">DAPIP Education</SelectItem>
                   <SelectItem value="acnc">ACNC Charities</SelectItem>
+                  <SelectItem value="courtlistener">CourtListener Legal</SelectItem>
+                  <SelectItem value="openstates">Open States Legislation</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={filters.recordType} onValueChange={(v) => handleFilterChange('recordType', v)}>

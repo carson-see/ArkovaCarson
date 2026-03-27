@@ -38,9 +38,9 @@ export function useAnchorStats() {
       });
 
       // Use RPC for accurate TX stats (PostgREST caps rows at 1000, breaking client-side distinct counts)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const [countsResult, txStatsResult] = await Promise.all([
         Promise.all(countPromises),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any).rpc('get_anchor_tx_stats'),
       ]);
 

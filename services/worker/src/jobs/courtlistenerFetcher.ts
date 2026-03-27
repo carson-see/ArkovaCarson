@@ -104,9 +104,23 @@ function getCourtLabel(courtId: string): string {
     ca7: 'Seventh Circuit', ca8: 'Eighth Circuit', ca9: 'Ninth Circuit',
     ca10: 'Tenth Circuit', ca11: 'Eleventh Circuit', cadc: 'D.C. Circuit',
     cafc: 'Federal Circuit',
-    // Major state supreme courts
-    cal: 'California Supreme Court', nyappdiv: 'New York Appellate Division',
-    nysupct: 'New York Supreme Court', tex: 'Texas Supreme Court',
+    // California courts
+    cal: 'California Supreme Court',
+    calctapp: 'California Court of Appeal',
+    calag: 'California Attorney General',
+    // New York courts
+    ny: 'New York Court of Appeals',
+    nyappdiv: 'New York Appellate Division',
+    nysupct: 'New York Supreme Court',
+    nyappterm: 'New York Appellate Term',
+    nyfamct: 'New York Family Court',
+    nysurct: 'New York Surrogate\'s Court',
+    // Texas courts
+    tex: 'Texas Supreme Court',
+    texcrimapp: 'Texas Court of Criminal Appeals',
+    texapp: 'Texas Court of Appeals',
+    texag: 'Texas Attorney General',
+    // Other major state supreme courts
     fla: 'Florida Supreme Court', ill: 'Illinois Supreme Court',
     pa: 'Pennsylvania Supreme Court', ohio: 'Ohio Supreme Court',
     mass: 'Massachusetts Supreme Judicial Court',
@@ -120,6 +134,25 @@ function getCourtLabel(courtId: string): string {
   };
   return courts[courtId] ?? courtId;
 }
+
+/**
+ * State court ID groups for targeted state-level ingestion.
+ * CourtListener court IDs from courtlistener.com/api/rest/v4/courts/
+ */
+export const STATE_COURT_IDS: Record<string, { label: string; courtIds: string[] }> = {
+  CA: {
+    label: 'California',
+    courtIds: ['cal', 'calctapp', 'calag'],
+  },
+  NY: {
+    label: 'New York',
+    courtIds: ['ny', 'nyappdiv', 'nysupct', 'nyappterm', 'nyfamct', 'nysurct'],
+  },
+  TX: {
+    label: 'Texas',
+    courtIds: ['tex', 'texcrimapp', 'texapp', 'texag'],
+  },
+};
 
 /**
  * Format citation for display.
@@ -343,4 +376,65 @@ export async function fetchCourtOpinions(
   );
 
   return { inserted: totalInserted, skipped: totalSkipped, errors: totalErrors, pagesProcessed: pagesActuallyProcessed };
+}
+
+/**
+ * Fetch court opinions for a specific state (CA, NY, TX).
+ * Iterates over all court IDs for the state and aggregates results.
+ */
+export async function fetchStateCourts(
+  supabase: SupabaseClient,
+  stateCode: string,
+  options: {
+    startDate?: string;
+    endDate?: string;
+    maxPagesPerCourt?: number;
+  } = {},
+): Promise<{
+  state: string;
+  inserted: number;
+  skipped: number;
+  errors: number;
+  pagesProcessed: number;
+  courtResults: Array<{ courtId: string; inserted: number; skipped: number; errors: number }>;
+}> {
+  const stateConfig = STATE_COURT_IDS[stateCode.toUpperCase()];
+  if (!stateConfig) {
+    logger.error({ stateCode }, 'Unknown state code for court fetching');
+    return { state: stateCode, inserted: 0, skipped: 0, errors: 0, pagesProcessed: 0, courtResults: [] };
+  }
+
+  logger.info({ state: stateCode, courts: stateConfig.courtIds }, `Starting ${stateConfig.label} state court fetch`);
+
+  let totalInserted = 0;
+  let totalSkipped = 0;
+  let totalErrors = 0;
+  let totalPages = 0;
+  const courtResults: Array<{ courtId: string; inserted: number; skipped: number; errors: number }> = [];
+
+  for (const courtId of stateConfig.courtIds) {
+    logger.info({ courtId, state: stateCode }, `Fetching ${courtId} opinions`);
+    const result = await fetchCourtOpinions(supabase, {
+      startDate: options.startDate ?? '2000-01-01',
+      endDate: options.endDate,
+      maxPages: options.maxPagesPerCourt ?? 200,
+      courtFilter: courtId,
+      statusFilter: 'Published',
+    });
+
+    totalInserted += result.inserted;
+    totalSkipped += result.skipped;
+    totalErrors += result.errors;
+    totalPages += result.pagesProcessed;
+    courtResults.push({ courtId, inserted: result.inserted, skipped: result.skipped, errors: result.errors });
+
+    logger.info({ courtId, ...result }, `Completed ${courtId}`);
+  }
+
+  logger.info(
+    { state: stateCode, totalInserted, totalSkipped, totalErrors, totalPages },
+    `${stateConfig.label} state court fetch complete`,
+  );
+
+  return { state: stateCode, inserted: totalInserted, skipped: totalSkipped, errors: totalErrors, pagesProcessed: totalPages, courtResults };
 }
