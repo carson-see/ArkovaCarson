@@ -22,10 +22,10 @@ import { createAIProvider } from '../ai/factory.js';
 import { sendEmail, buildAnchorSecuredEmail } from '../email/index.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
-const MAX_TX_CHECKS_PER_RUN = 50;
+const MAX_TX_CHECKS_PER_RUN = 100;
 
 /** Concurrency for parallel mempool.space API calls */
-const MEMPOOL_CONCURRENCY = 5;
+const MEMPOOL_CONCURRENCY = 10;
 
 /** In-process mutex — prevents concurrent confirmation check runs */
 let confirmationCheckRunning = false;
@@ -330,7 +330,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     .not('chain_tx_id', 'is', null)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
-    .limit(5000);
+    .limit(50000);
 
   if (error) {
     logger.error({ error }, 'Failed to fetch SUBMITTED anchors');
@@ -391,35 +391,70 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           return 0;
         }
 
-        // PERF-2: Promote ALL anchors sharing this tx_id in parallel batches
         const groupAnchors = txGroups.get(txId) || [];
+        const blockHeight = txData.status.block_height ?? 0;
+        const blockTimestamp = txData.status.block_time
+          ? new Date(txData.status.block_time * 1000).toISOString()
+          : new Date().toISOString();
+
+        // CRIT-1: Check if sufficient confirmations reached
+        const minConfirmations = getMinConfirmations();
+        let confirmations = 1;
+        if (blockHeight > 0 && currentTipHeight > 0) {
+          confirmations = currentTipHeight - blockHeight + 1;
+        }
+
+        if (confirmations < minConfirmations) {
+          logger.debug(
+            { txId, confirmations, required: minConfirmations, groupSize: groupAnchors.length },
+            `TX confirmed but waiting for ${minConfirmations} confirmations (${confirmations}/${minConfirmations})`,
+          );
+          return 0;
+        }
+
+        // PERF-2: Bulk promote ALL anchors sharing this tx_id
+        const anchorIds = groupAnchors.map((a) => a.id);
+        const BULK_BATCH = 1000;
         let groupConfirmed = 0;
 
-        // Process in parallel batches of 50 to avoid overwhelming DB
-        const CONFIRM_BATCH_SIZE = 50;
-        for (let j = 0; j < groupAnchors.length; j += CONFIRM_BATCH_SIZE) {
-          const confirmBatch = groupAnchors.slice(j, j + CONFIRM_BATCH_SIZE);
-          const confirmResults = await Promise.allSettled(
-            confirmBatch.map((anchor) =>
-              checkAnchorConfirmation({
-                id: anchor.id,
-                chain_tx_id: anchor.chain_tx_id!,
-                user_id: anchor.user_id,
-                org_id: anchor.org_id,
-                fingerprint: anchor.fingerprint,
-                public_id: anchor.public_id,
-              }, currentTipHeight),
-            ),
-          );
-          for (const result of confirmResults) {
-            if (result.status === 'fulfilled' && result.value) groupConfirmed++;
+        for (let j = 0; j < anchorIds.length; j += BULK_BATCH) {
+          const idBatch = anchorIds.slice(j, j + BULK_BATCH);
+          const { error: bulkErr, count } = await db
+            .from('anchors')
+            .update({
+              status: 'SECURED',
+              chain_block_height: blockHeight,
+              chain_timestamp: blockTimestamp,
+            })
+            .in('id', idBatch)
+            .eq('status', 'SUBMITTED');
+
+          if (bulkErr) {
+            logger.error({ txId, batchStart: j, error: bulkErr }, 'Bulk SECURED update failed');
+          } else {
+            groupConfirmed += count ?? idBatch.length;
           }
         }
 
+        // Batch audit events (one insert with array)
         if (groupConfirmed > 0) {
+          const auditRows = groupAnchors.slice(0, groupConfirmed).map((a) => ({
+            event_type: 'anchor.secured',
+            event_category: 'ANCHOR',
+            actor_id: a.user_id,
+            target_type: 'anchor',
+            target_id: a.id,
+            org_id: a.org_id,
+            details: `Confirmed at block ${blockHeight} (tx: ${txId})`,
+          }));
+          // Insert audit events in batches of 500
+          for (let j = 0; j < auditRows.length; j += 500) {
+            await db.from('audit_events').insert(auditRows.slice(j, j + 500)).catch(() => {});
+          }
+
           logger.info(
-            { txId, groupSize: groupAnchors.length, confirmed: groupConfirmed },
-            'Confirmed anchor group (shared tx)',
+            { txId, groupSize: groupAnchors.length, confirmed: groupConfirmed, blockHeight, confirmations },
+            'Bulk confirmed anchor group (shared tx)',
           );
         }
 
