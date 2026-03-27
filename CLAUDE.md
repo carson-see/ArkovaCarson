@@ -379,8 +379,8 @@ SENTRY_SAMPLE_RATE=0.1
 # AI
 ENABLE_AI_FALLBACK=false
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.0-flash
-GEMINI_EMBEDDING_MODEL=text-embedding-004
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 AI_PROVIDER=mock                    # gemini | cloudflare | replicate | mock
 REPLICATE_API_TOKEN=                # QA only
 ENABLE_SYNTHETIC_DATA=false

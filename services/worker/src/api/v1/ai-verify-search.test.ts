@@ -12,7 +12,7 @@ vi.mock('../../ai/factory.js', () => ({
     name: 'mock',
     generateEmbedding: vi.fn().mockResolvedValue({
       embedding: new Array(768).fill(0.1),
-      model: 'text-embedding-004',
+      model: 'gemini-embedding-001',
     }),
   }),
 }));

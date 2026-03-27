@@ -110,7 +110,7 @@ Be conservative — only flag genuine indicators. Do not flag normal document va
 // DETECTOR
 // =============================================================================
 
-const VISION_MODEL = 'gemini-2.0-flash-001'; // Flash supports vision and is cost-efficient
+const VISION_MODEL = 'gemini-2.5-flash'; // Flash supports vision and is cost-efficient
 
 /**
  * Analyze a document image for visual fraud indicators.

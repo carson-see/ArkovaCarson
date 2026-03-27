@@ -119,7 +119,7 @@ describe('POST /api/v1/ai/fraud/visual', () => {
       ],
       summary: 'Document appears authentic with no significant fraud indicators.',
       recommendations: ['No action needed'],
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       processingTimeMs: 1200,
     };
 
@@ -141,7 +141,7 @@ describe('POST /api/v1/ai/fraud/visual', () => {
       signals: mockResult.signals,
       summary: mockResult.summary,
       recommendations: mockResult.recommendations,
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       processingTimeMs: 1200,
     });
   });
@@ -170,7 +170,7 @@ describe('POST /api/v1/ai/fraud/visual', () => {
       signals: [],
       summary: 'Clean',
       recommendations: [],
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       processingTimeMs: 800,
     };
     vi.mocked(analyzeDocumentImage).mockResolvedValue(mockResult);
