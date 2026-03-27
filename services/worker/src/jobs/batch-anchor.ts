@@ -42,32 +42,59 @@ export interface BatchAnchorResult {
 }
 
 /**
+ * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
+ * We claim in chunks of this size and accumulate up to BATCH_SIZE.
+ */
+const POSTGREST_ROW_LIMIT = 1000;
+
+/**
  * Process pending anchors as a batch using a Merkle tree.
  *
  * Uses claim-before-broadcast pattern:
- * 1. Atomically claim PENDING → BROADCASTING via RPC
+ * 1. Atomically claim PENDING → BROADCASTING via RPC (chunked to avoid PostgREST 1000-row cap)
  * 2. Build Merkle tree from claimed anchors
  * 3. Publish Merkle root to chain
  * 4. Update each anchor: BROADCASTING → SUBMITTED with tx ID + proof
  */
 export async function processBatchAnchors(): Promise<BatchAnchorResult> {
-  // Phase 1: Atomically claim anchors via RPC
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: claimedAnchors, error: claimError } = await (db.rpc as any)('claim_pending_anchors', {
-    p_worker_id: `batch-${process.pid}`,
-    p_limit: BATCH_SIZE,
-    p_exclude_pipeline: false, // Batch processing handles all anchors including pipeline
-  });
+  // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
+  const allClaimed: Array<{ id: string; fingerprint: string; metadata: unknown; user_id?: string; org_id?: string; public_id?: string; credential_type?: string }> = [];
+  let remaining = BATCH_SIZE;
 
-  if (claimError) {
-    // Fallback: legacy claim without RPC
-    logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
-    return legacyProcessBatchAnchors();
+  while (remaining > 0) {
+    const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: chunk, error: claimError } = await (db.rpc as any)('claim_pending_anchors', {
+      p_worker_id: `batch-${process.pid}`,
+      p_limit: chunkSize,
+      p_exclude_pipeline: false,
+    });
+
+    if (claimError) {
+      if (allClaimed.length === 0) {
+        logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
+        return legacyProcessBatchAnchors();
+      }
+      // Partial claim succeeded — proceed with what we have
+      logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
+      break;
+    }
+
+    if (!chunk || !Array.isArray(chunk) || chunk.length === 0) break;
+    allClaimed.push(...chunk);
+    remaining -= chunk.length;
+
+    // If we got fewer than requested, no more PENDING anchors
+    if (chunk.length < chunkSize) break;
   }
 
-  if (!claimedAnchors || !Array.isArray(claimedAnchors) || claimedAnchors.length < MIN_BATCH_SIZE) {
+  const claimedAnchors = allClaimed;
+
+  if (claimedAnchors.length < MIN_BATCH_SIZE) {
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
+
+  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE }, 'Claimed anchors for batch processing');
 
   const fingerprints = claimedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
 
