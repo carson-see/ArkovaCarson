@@ -2,7 +2,7 @@
  * Public Record Batch Embedder Job (PH1-INT-01)
  *
  * Generates vector embeddings for public records that don't yet have them.
- * Uses the existing AI provider abstraction (Gemini text-embedding-004).
+ * Uses the existing AI provider abstraction (Gemini gemini-embedding-001).
  *
  * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
  * Processes in batches of 500 records per run.

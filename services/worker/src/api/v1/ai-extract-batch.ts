@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
+import { calibrateConfidence } from '../../ai/eval/calibration.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -147,7 +148,10 @@ router.post('/', async (req: Request, res: Response) => {
           const durationMs = Date.now() - startMs;
           successCount++;
 
-          // Log usage event (non-blocking)
+          // AI-EVAL-02: Apply confidence calibration (parity with single extraction endpoint)
+          const calibrated = calibrateConfidence(result.confidence);
+
+          // Log usage event (non-blocking) — store calibrated confidence for consistency
           logAIUsageEvent({
             orgId,
             userId,
@@ -156,7 +160,7 @@ router.post('/', async (req: Request, res: Response) => {
             tokensUsed: result.tokensUsed,
             creditsConsumed: 1,
             fingerprint: row.fingerprint,
-            confidence: result.confidence,
+            confidence: calibrated,
             durationMs,
             success: true,
             promptVersion: getExtractionPromptVersion(),
@@ -166,7 +170,7 @@ router.post('/', async (req: Request, res: Response) => {
             index: i,
             success: true,
             fields: result.fields as Record<string, string>,
-            confidence: result.confidence,
+            confidence: calibrated,
             provider: result.provider,
           };
         } catch (err) {

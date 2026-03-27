@@ -102,34 +102,35 @@ describe('analyzeCalibration', () => {
 
 describe('calibrateConfidence', () => {
   it('maps raw 0.0 to floor value', () => {
-    expect(calibrateConfidence(0.0)).toBeCloseTo(0.65, 2);
+    // New knots: floor = 0.76 (1030-entry dataset)
+    expect(calibrateConfidence(0.0)).toBeCloseTo(0.76, 2);
   });
 
-  it('maps raw 0.80 to ~0.94', () => {
-    expect(calibrateConfidence(0.80)).toBeCloseTo(0.94, 2);
+  it('maps raw 0.80 to ~0.92', () => {
+    expect(calibrateConfidence(0.80)).toBeCloseTo(0.92, 2);
   });
 
-  it('maps raw 0.90 to ~0.95', () => {
-    expect(calibrateConfidence(0.90)).toBeCloseTo(0.95, 2);
+  it('maps raw 0.90 to ~0.92 (ceiling)', () => {
+    expect(calibrateConfidence(0.90)).toBeCloseTo(0.92, 2);
   });
 
-  it('caps at 0.95 for raw 1.0', () => {
-    expect(calibrateConfidence(1.0)).toBeCloseTo(0.95, 2);
+  it('caps at 0.92 for raw 1.0', () => {
+    expect(calibrateConfidence(1.0)).toBeCloseTo(0.92, 2);
   });
 
-  it('interpolates between knots (raw 0.75 between 0.70→0.92 and 0.80→0.94)', () => {
-    const result = calibrateConfidence(0.75);
-    expect(result).toBeGreaterThan(0.92);
-    expect(result).toBeLessThan(0.94);
-    expect(result).toBeCloseTo(0.93, 2);
+  it('interpolates between knots (raw 0.78 between 0.76→0.84 and 0.80→0.92)', () => {
+    const result = calibrateConfidence(0.78);
+    expect(result).toBeGreaterThan(0.84);
+    expect(result).toBeLessThan(0.92);
+    expect(result).toBeCloseTo(0.88, 2);
   });
 
   it('maps negative values to floor', () => {
-    expect(calibrateConfidence(-0.5)).toBeCloseTo(0.65, 2);
+    expect(calibrateConfidence(-0.5)).toBeCloseTo(0.76, 2);
   });
 
   it('maps values > 1 to cap', () => {
-    expect(calibrateConfidence(1.5)).toBeCloseTo(0.95, 2);
+    expect(calibrateConfidence(1.5)).toBeCloseTo(0.92, 2);
   });
 
   it('is monotonically non-decreasing', () => {

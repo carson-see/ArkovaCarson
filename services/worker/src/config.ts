@@ -84,11 +84,11 @@ const ConfigSchema = z.object({
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
   geminiApiKey: z.string().optional(),
-  /** Gemini model for extraction (default: gemini-2.0-flash) */
+  /** Gemini model for extraction (default: gemini-2.5-flash) */
   geminiModel: z.string().optional(),
-  /** Gemini embedding model (default: text-embedding-004) */
+  /** Gemini embedding model (default: gemini-embedding-001) */
   geminiEmbeddingModel: z.string().optional(),
-  /** AI provider selection: gemini, cloudflare, replicate, mock */
+  /** AI provider selection: gemini, nessie, together, cloudflare, replicate, mock */
   aiProvider: z.string().optional(),
 
   // Cron job authentication (AUTH-01)

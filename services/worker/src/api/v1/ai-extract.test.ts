@@ -185,14 +185,14 @@ describe('AI Extraction Endpoint', () => {
     (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
 
     await handler!(req, res);
-    // Confidence is now calibrated: raw 0.92 maps to 0.95 via calibration knots
+    // Confidence is now calibrated: raw 0.92 maps to 0.92 via calibration knots (1030-entry recalibration)
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         fields: expect.objectContaining({
           credentialType: 'DEGREE',
           issuerName: 'University of Michigan',
         }),
-        confidence: 0.95,
+        confidence: 0.92,
         provider: 'gemini',
         creditsRemaining: 489, // 490 - 1 credit deducted
       }),
@@ -236,9 +236,9 @@ describe('AI Extraction Endpoint', () => {
     });
 
     // Model reports 0.75 confidence — calibration should map this upward
-    // 0.75 is between knots [0.70, 0.92] and [0.80, 0.94]
-    // t = (0.75 - 0.70) / (0.80 - 0.70) = 0.5
-    // calibrated = 0.92 + 0.5 * (0.94 - 0.92) = 0.93
+    // 0.75 is between knots [0.70, 0.80] and [0.76, 0.84]
+    // t = (0.75 - 0.70) / (0.76 - 0.70) = 0.833
+    // calibrated = 0.80 + 0.833 * (0.84 - 0.80) = 0.833
     (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
       extractMetadata: vi.fn().mockResolvedValue({
         fields: { credentialType: 'CERTIFICATE', issuerName: 'AWS' },
@@ -255,8 +255,8 @@ describe('AI Extraction Endpoint', () => {
     const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     // Calibrated confidence should differ from raw 0.75
     expect(responseJson.confidence).not.toBe(0.75);
-    // Should be calibrated to 0.93 (piecewise linear interpolation)
-    expect(responseJson.confidence).toBeCloseTo(0.93, 2);
+    // Should be calibrated to ~0.83 (piecewise linear interpolation, 1030-entry knots)
+    expect(responseJson.confidence).toBeCloseTo(0.83, 2);
   });
 
   it('returns 503 on circuit breaker open', async () => {

@@ -168,26 +168,30 @@ export function analyzeCalibration(
 // ACTIVE CALIBRATION LAYER
 // ============================================================================
 // Empirical mapping from model-reported confidence → calibrated confidence.
-// Derived from 310-entry eval dataset (2026-03-24).
+// Derived from 1,030-entry eval dataset (2026-03-27, prompt version bd61bf6a).
+// Previous: 310-entry dataset (2026-03-24). Recalibrated with 3.3x more data.
+//
+// Key finding: model is systematically underconfident (reports 75%, actual 84%).
+// Calibration maps upward, especially in the 0-70% raw range.
 //
 // Mapping table (piecewise linear interpolation):
-//   reported 0.00 → calibrated 0.65 (model reports 0 but gets ~67% accuracy)
-//   reported 0.20 → calibrated 0.75 (model reports 20% but gets ~92% accuracy)
-//   reported 0.60 → calibrated 0.85 (model reports 60% but gets ~92% accuracy)
-//   reported 0.70 → calibrated 0.92 (model reports 70% but gets ~95% accuracy)
-//   reported 0.80 → calibrated 0.94 (model reports 80% but gets ~94% accuracy)
-//   reported 0.90 → calibrated 0.95 (model reports 90% but gets ~94% accuracy)
-//   reported 1.00 → calibrated 0.95 (cap — model rarely reaches 100% accuracy)
+//   reported 0.00 → calibrated 0.76 (model reports 0 but gets ~76% accuracy)
+//   reported 0.50 → calibrated 0.76 (flat region — low-conf entries still ~76% accurate)
+//   reported 0.70 → calibrated 0.80 (transition zone begins)
+//   reported 0.76 → calibrated 0.84 (mid-confidence = 84% actual accuracy)
+//   reported 0.80 → calibrated 0.92 (high-confidence zone)
+//   reported 0.90 → calibrated 0.92 (ceiling — model rarely exceeds 92% accuracy)
+//   reported 1.00 → calibrated 0.92 (cap at empirical ceiling)
 
 /** Calibration knots: [rawConfidence, calibratedConfidence] */
 const CALIBRATION_KNOTS: [number, number][] = [
-  [0.00, 0.65],
-  [0.20, 0.75],
-  [0.60, 0.85],
-  [0.70, 0.92],
-  [0.80, 0.94],
-  [0.90, 0.95],
-  [1.00, 0.95],
+  [0.00, 0.76],
+  [0.50, 0.76],
+  [0.70, 0.80],
+  [0.76, 0.84],
+  [0.80, 0.92],
+  [0.90, 0.92],
+  [1.00, 0.92],
 ];
 
 /**

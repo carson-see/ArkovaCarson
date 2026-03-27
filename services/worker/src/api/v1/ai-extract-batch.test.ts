@@ -50,8 +50,13 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('../../ai/eval/calibration.js', () => ({
+  calibrateConfidence: vi.fn((raw: number) => raw + 0.05), // simple offset for testing
+}));
+
 import { aiBatchExtractRouter } from './ai-extract-batch.js';
 import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
+import { calibrateConfidence } from '../../ai/eval/calibration.js';
 
 function createApp() {
   const app = express();
@@ -154,6 +159,22 @@ describe('POST /api/v1/ai/extract-batch', () => {
     expect(res.body.results[0].fields).toBeDefined();
     expect(res.body.results[0].confidence).toBeDefined();
     expect(res.body.creditsRemaining).toBeDefined();
+  });
+
+  it('applies confidence calibration to batch results (AI-EVAL-02)', async () => {
+    const app = createApp();
+    const res = await request(app)
+      .post('/')
+      .send({
+        rows: [
+          { text: 'Bachelor of Science from MIT, 2024', credentialType: 'DEGREE' },
+        ],
+      });
+
+    expect(res.status).toBe(200);
+    // Mock provider returns confidence 0.85, calibration mock adds 0.05 → 0.90
+    expect(res.body.results[0].confidence).toBe(0.9);
+    expect(calibrateConfidence).toHaveBeenCalledWith(0.85);
   });
 
   it('handles partial failures gracefully', async () => {
