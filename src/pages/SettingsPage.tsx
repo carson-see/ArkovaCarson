@@ -27,11 +27,12 @@ import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE
 import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
+import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
 
 export function SettingsPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { profile, loading: profileLoading, updating, updateProfile } = useProfile();
+  const { profile, loading: profileLoading, updating, updateProfile, refreshProfile } = useProfile();
 
   const [fullName, setFullName] = useState('');
   const [bio, setBio] = useState('');
@@ -161,6 +162,9 @@ export function SettingsPage() {
             <CardTitle className="flex items-center gap-2">
               <User className="h-5 w-5" />
               Profile
+              {profileAny?.identity_verification_status === 'verified' && (
+                <UserVerifiedBadge />
+              )}
             </CardTitle>
             <CardDescription>
               Your account information
@@ -453,6 +457,7 @@ export function SettingsPage() {
         <IdentityVerification
           status={profileAny?.identity_verification_status ?? 'unstarted'}
           verifiedAt={profileAny?.identity_verified_at ?? null}
+          onVerified={refreshProfile}
         />
 
         {/* Two-Factor Authentication */}

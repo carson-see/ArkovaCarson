@@ -37,6 +37,7 @@ interface OnboardingActions {
     legalName: string;
     displayName: string;
     domain: string | null;
+    einTaxId?: string | null;
   }) => Promise<OnboardingResult | null>;
   lookupOrgByEmail: (email: string) => Promise<OrgMatch | null>;
   joinOrgByDomain: (orgId: string) => Promise<OnboardingResult | null>;
@@ -83,6 +84,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
       legalName: string;
       displayName: string;
       domain: string | null;
+      einTaxId?: string | null;
     }): Promise<OnboardingResult | null> => {
       setLoading(true);
       setError(null);
@@ -108,6 +110,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
               legal_name: data.legalName || data.displayName,
               display_name: data.displayName,
               domain: data.domain,
+              ...(data.einTaxId ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' } : {}),
             })
             .select('id')
             .single();
@@ -159,6 +162,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
               legal_name: data.legalName || data.displayName,
               display_name: data.displayName,
               domain: data.domain,
+              ...(data.einTaxId ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' } : {}),
             })
             .select('id')
             .single();

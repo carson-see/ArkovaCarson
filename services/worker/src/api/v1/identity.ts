@@ -2,8 +2,9 @@
  * Identity Verification API (IDT WS1)
  *
  * Endpoints for Stripe Identity KYC verification:
- *   POST /api/v1/identity/session — Create a verification session
- *   GET  /api/v1/identity/status  — Get current verification status
+ *   POST /api/v1/identity/session    — Create a verification session
+ *   GET  /api/v1/identity/status     — Get current verification status
+ *   POST /api/v1/identity/dev-verify — Dev-only: bypass KYC for testing
  *
  * Constitution 1.4: Never expose Stripe session secrets or PII in logs.
  * Constitution 1.6: Document content never leaves user device — KYC is identity-only.
@@ -14,6 +15,8 @@ import { stripe } from '../../stripe/client.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { db } from '../../utils/db.js';
+
+const isDev = config.nodeEnv === 'development' || config.nodeEnv === 'test';
 
 export const identityRouter = Router();
 
@@ -142,6 +145,72 @@ identityRouter.get('/status', async (req: Request, res: Response) => {
     });
   } catch (error) {
     logger.error({ error }, 'Failed to fetch identity verification status');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+/**
+ * POST /api/v1/identity/dev-verify
+ *
+ * Development/testing only: bypass Stripe Identity and auto-verify the user.
+ * Blocked in production. Uses service_role to update verification fields.
+ */
+identityRouter.post('/dev-verify', async (req: Request, res: Response) => {
+  if (!isDev) {
+    res.status(403).json({ error: 'Dev-verify is not available in production' });
+    return;
+  }
+
+  try {
+    const userId = (req as unknown as { userId?: string }).userId;
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('identity_verification_status')
+      .eq('id', userId)
+      .single();
+
+    if (profileError) {
+      res.status(500).json({ error: 'Failed to fetch profile' });
+      return;
+    }
+
+    if (profile.identity_verification_status === 'verified') {
+      res.status(400).json({ error: 'Identity already verified' });
+      return;
+    }
+
+    // Bypass KYC via SECURITY DEFINER RPC (bypasses trigger)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: rpcError } = await (db.rpc as any)('dev_bypass_kyc', { p_user_id: userId });
+
+    if (rpcError) {
+      logger.error({ error: rpcError }, 'Failed to dev-verify user');
+      res.status(500).json({ error: 'Failed to verify identity' });
+      return;
+    }
+
+    // Log audit event
+    await db.from('audit_events').insert({
+      actor_id: userId,
+      event_type: 'IDENTITY_VERIFIED',
+      event_category: 'ADMIN',
+      details: 'Identity verified via dev bypass (testing only)',
+    });
+
+    logger.info({ userId }, 'Identity dev-verified (testing bypass)');
+
+    res.json({
+      status: 'verified',
+      verifiedAt: new Date().toISOString(),
+      provider: 'dev_bypass',
+    });
+  } catch (error) {
+    logger.error({ error }, 'Failed to dev-verify identity');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

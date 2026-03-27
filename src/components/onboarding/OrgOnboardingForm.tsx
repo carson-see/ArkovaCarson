@@ -1,16 +1,18 @@
 /**
- * Organization Onboarding Form
+ * Organization Onboarding Form (IDT WS4 enhanced)
  *
  * KYB-lite form for organization setup.
- * Captures legal name, display name, and domain.
+ * Captures legal name, display name, domain, and optional EIN/Tax ID.
+ * EIN triggers verified org path; domain enables email verification later.
  */
 
 import { useState, FormEvent } from 'react';
-import { Building2, Globe, AlertCircle, Loader2 } from 'lucide-react';
+import { Building2, Globe, AlertCircle, Loader2, Hash, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Separator } from '@/components/ui/separator';
 import {
   Card,
   CardContent,
@@ -24,6 +26,7 @@ interface OrgOnboardingFormProps {
     legalName: string;
     displayName: string;
     domain: string | null;
+    einTaxId: string | null;
   }) => void;
   loading?: boolean;
   error?: string | null;
@@ -37,6 +40,7 @@ export function OrgOnboardingForm({
   const [legalName, setLegalName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [domain, setDomain] = useState('');
+  const [einTaxId, setEinTaxId] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
 
   const handleSubmit = (e: FormEvent) => {
@@ -57,11 +61,18 @@ export function OrgOnboardingForm({
       }
     }
 
+    // EIN validation if provided
+    if (einTaxId.trim() && einTaxId.trim().length < 5) {
+      setValidationError('EIN/Tax ID must be at least 5 characters');
+      return;
+    }
+
     const effectiveDisplay = displayName.trim() || legalName.trim();
     onSubmit({
       legalName: legalName.trim() || effectiveDisplay,
       displayName: effectiveDisplay,
       domain: domain.trim().toLowerCase() || null,
+      einTaxId: einTaxId.trim() || null,
     });
   };
 
@@ -135,7 +146,36 @@ export function OrgOnboardingForm({
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Used for email domain verification (optional)
+              Used for email domain verification and auto-joining members
+            </p>
+          </div>
+
+          <Separator />
+
+          {/* EIN / Tax ID for verified org path */}
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="einTaxId">EIN / Tax ID</Label>
+              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded flex items-center gap-1">
+                <ShieldCheck className="h-3 w-3" />
+                For verified badge
+              </span>
+            </div>
+            <div className="relative">
+              <Hash className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                id="einTaxId"
+                type="text"
+                value={einTaxId}
+                onChange={(e) => setEinTaxId(e.target.value)}
+                placeholder="XX-XXXXXXX (optional)"
+                disabled={loading}
+                className="pl-10"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Provide your EIN or tax identification number to earn a verified organization badge.
+              You can also add this later in organization settings.
             </p>
           </div>
 

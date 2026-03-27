@@ -2,7 +2,8 @@
  * Identity Verification Card (IDT WS1)
  *
  * Allows users to verify their identity via Stripe Identity.
- * Shows verification status and provides "Verify Identity" button.
+ * In development, the "Get Verified" button auto-verifies via dev bypass.
+ * Shows a checkmark when verified (like X/Twitter).
  *
  * @see IDT-03
  */
@@ -15,11 +16,15 @@ import { Badge } from '@/components/ui/badge';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 
+const isDev = import.meta.env.DEV;
+
 interface IdentityVerificationProps {
   /** Current verification status from profile */
   status: 'unstarted' | 'pending' | 'verified' | 'requires_input' | 'canceled';
   /** When the identity was verified */
   verifiedAt: string | null;
+  /** Callback after verification status changes */
+  onVerified?: () => void;
 }
 
 const STATUS_CONFIG = {
@@ -60,7 +65,7 @@ const STATUS_CONFIG = {
   },
 } as const;
 
-export function IdentityVerification({ status, verifiedAt }: IdentityVerificationProps) {
+export function IdentityVerification({ status, verifiedAt, onVerified }: IdentityVerificationProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,7 +74,7 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
 
   const canStartVerification = status === 'unstarted' || status === 'requires_input' || status === 'canceled';
 
-  const handleStartVerification = useCallback(async () => {
+  const handleVerify = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -80,6 +85,27 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
         return;
       }
 
+      // In dev mode, use the dev-verify bypass (no Stripe needed)
+      if (isDev) {
+        const response = await fetch(`${WORKER_URL}/api/v1/identity/dev-verify`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`,
+          },
+        });
+
+        if (!response.ok) {
+          const data = await response.json() as { error?: string };
+          setError(data.error ?? 'Verification failed');
+          return;
+        }
+
+        onVerified?.();
+        return;
+      }
+
+      // Production: use Stripe Identity
       const response = await fetch(`${WORKER_URL}/api/v1/identity/session`, {
         method: 'POST',
         headers: {
@@ -97,8 +123,6 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
       const data = await response.json() as { clientSecret: string };
 
       // Load Stripe Identity modal
-      // The @stripe/stripe-js loadStripe function is already used for checkout.
-      // For Identity, we use the VerificationSession client_secret to redirect.
       const stripeJs = await import('@stripe/stripe-js');
       const stripe = await stripeJs.loadStripe(
         import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY ?? '',
@@ -112,15 +136,15 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
       const result = await stripe.verifyIdentity(data.clientSecret);
       if (result.error) {
         setError(result.error.message ?? 'Verification failed');
+      } else {
+        onVerified?.();
       }
-      // On success, the webhook will update the profile status.
-      // User can refresh or the page will poll.
     } catch {
       setError('An unexpected error occurred');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onVerified]);
 
   return (
     <Card>
@@ -128,13 +152,16 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
         <CardTitle className="flex items-center gap-2">
           <ShieldCheck className="h-5 w-5" />
           Identity Verification
+          {status === 'verified' && (
+            <CheckCircle className="h-5 w-5 text-emerald-500" />
+          )}
         </CardTitle>
         <CardDescription>
           Verify your identity to increase trust in your credentials
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-3">
             <StatusIcon className={`h-5 w-5 ${config.className}`} />
             <div>
@@ -155,12 +182,12 @@ export function IdentityVerification({ status, verifiedAt }: IdentityVerificatio
 
           {canStartVerification && (
             <Button
-              onClick={handleStartVerification}
+              onClick={handleVerify}
               disabled={loading}
               size="sm"
             >
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {status === 'unstarted' ? 'Verify Identity' : 'Retry Verification'}
+              {status === 'unstarted' ? 'Get Verified' : 'Retry Verification'}
             </Button>
           )}
         </div>

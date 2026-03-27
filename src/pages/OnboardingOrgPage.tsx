@@ -24,6 +24,7 @@ export function OnboardingOrgPage() {
     legalName: string;
     displayName: string;
     domain: string | null;
+    einTaxId: string | null;
   }) => {
     const result = await createOrg(data);
     if (result) {

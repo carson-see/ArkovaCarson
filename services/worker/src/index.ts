@@ -28,6 +28,9 @@ import { billingRouter } from './routes/billing.js';
 import { anchorRouter } from './routes/anchor.js';
 import { adminRouter } from './routes/admin.js';
 import { cronRouter } from './routes/cron.js';
+import { identityRouter } from './api/v1/identity.js';
+import { orgVerificationRouter } from './api/v1/orgVerification.js';
+import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
@@ -150,6 +153,10 @@ app.use('/api/docs', docsRouter);
 app.get('/.well-known/openapi.json', (_req, res) => {
   res.redirect(301, '/api/docs/spec.json');
 });
+
+// Identity & org verification — internal (frontend-facing), not behind feature gate
+app.use('/api/v1/identity', corsMiddleware, requireAuthMw, identityRouter);
+app.use('/api/v1/org', corsMiddleware, requireAuthMw, orgVerificationRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);

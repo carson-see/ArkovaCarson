@@ -39,6 +39,8 @@ import {
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
 import { ORG_PAGE_LABELS, ORG_LOGO_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
+import { OrgVerification } from '@/components/org/OrgVerification';
+import { OrgVerifiedBadge } from '@/components/shared/VerifiedBadge';
 import type { Database } from '@/types/database.types';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
@@ -334,10 +336,7 @@ export function OrgProfilePage() {
               {organization?.display_name ?? 'Organization'}
             </h1>
             {organization?.verification_status === 'VERIFIED' && (
-              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
-                <Check className="mr-1 h-3 w-3" />
-                Verified
-              </Badge>
+              <OrgVerifiedBadge />
             )}
           </div>
 
@@ -598,6 +597,17 @@ export function OrgProfilePage() {
                   'Save Settings'
                 ))}
               </Button>
+
+              {/* Organization Verification (IDT WS4) */}
+              <div className="mt-8">
+                <OrgVerification
+                  verificationStatus={organization?.verification_status ?? 'UNVERIFIED'}
+                  domain={organization?.domain}
+                  domainVerified={(organization as Record<string, unknown>)?.domain_verified as boolean | undefined}
+                  hasEin={!!(organization as Record<string, unknown>)?.ein_tax_id}
+                  onVerified={() => window.location.reload()}
+                />
+              </div>
             </div>
           </TabsContent>
         )}

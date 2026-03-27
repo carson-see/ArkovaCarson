@@ -7,47 +7,30 @@
 
 import { CheckCircle, ShieldCheck, Building2, Link2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
 
 /** Individual verified badge — shown next to user names */
 export function UserVerifiedBadge({ className }: { className?: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge
-          className={`bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1 ${className ?? ''}`}
-        >
-          <CheckCircle className="h-3 w-3" />
-          Verified
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>Identity verified via government ID and liveness check</p>
-      </TooltipContent>
-    </Tooltip>
+    <Badge
+      className={`bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1 ${className ?? ''}`}
+      title="Identity verified via government ID and liveness check"
+    >
+      <CheckCircle className="h-3 w-3" />
+      Verified
+    </Badge>
   );
 }
 
 /** Organization verified badge — shown next to org names */
 export function OrgVerifiedBadge({ className }: { className?: string }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge
-          className={`bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1 ${className ?? ''}`}
-        >
-          <ShieldCheck className="h-3 w-3" />
-          Verified Organization
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>EIN/Tax ID confirmed, domain verified</p>
-      </TooltipContent>
-    </Tooltip>
+    <Badge
+      className={`bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1 ${className ?? ''}`}
+      title="EIN/Tax ID confirmed, domain verified"
+    >
+      <ShieldCheck className="h-3 w-3" />
+      Verified Organization
+    </Badge>
   );
 }
 
@@ -60,19 +43,13 @@ export function AffiliatedBadge({
   className?: string;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge
-          className={`bg-blue-500/10 text-blue-400 border-blue-500/20 text-xs gap-1 ${className ?? ''}`}
-        >
-          <Link2 className="h-3 w-3" />
-          Affiliated
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent>
-        <p>Affiliated with {parentName}</p>
-      </TooltipContent>
-    </Tooltip>
+    <Badge
+      className={`bg-blue-500/10 text-blue-400 border-blue-500/20 text-xs gap-1 ${className ?? ''}`}
+      title={`Affiliated with ${parentName}`}
+    >
+      <Link2 className="h-3 w-3" />
+      Affiliated
+    </Badge>
   );
 }
 
