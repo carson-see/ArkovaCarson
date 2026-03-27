@@ -414,7 +414,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
 
         // PERF-2: Bulk promote ALL anchors sharing this tx_id
         const anchorIds = groupAnchors.map((a) => a.id);
-        const BULK_BATCH = 1000;
+        const BULK_BATCH = 10000;
         let groupConfirmed = 0;
 
         for (let j = 0; j < anchorIds.length; j += BULK_BATCH) {
