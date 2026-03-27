@@ -181,12 +181,16 @@ export async function fetchCourtOpinions(
 
     let response: Response;
     try {
-      response = await fetch(nextUrl, {
-        headers: {
-          Accept: 'application/json',
-          'User-Agent': 'Arkova/1.0 (contact@arkova.io)',
-        },
-      });
+      const headers: Record<string, string> = {
+        Accept: 'application/json',
+        'User-Agent': 'Arkova/1.0 (contact@arkova.io)',
+      };
+      // CourtListener v4 API requires authentication
+      const clToken = process.env.COURTLISTENER_API_TOKEN;
+      if (clToken) {
+        headers.Authorization = `Token ${clToken}`;
+      }
+      response = await fetch(nextUrl, { headers });
     } catch (err) {
       logger.error({ error: err, page }, 'CourtListener API request failed');
       totalErrors++;
