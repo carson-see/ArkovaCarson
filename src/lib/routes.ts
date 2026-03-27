@@ -71,7 +71,6 @@ export const ROUTES = {
   ADMIN_SUBSCRIPTIONS: '/admin/subscriptions',
   ADMIN_ORGANIZATIONS: '/admin/organizations',
   ADMIN_USER_DETAIL: '/admin/users/:id',
-  ADMIN_AI_METRICS: '/admin/ai-metrics',
 
   // Billing routes
   BILLING: '/billing',
