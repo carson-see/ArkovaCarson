@@ -212,7 +212,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Generate query embedding
     const aiProvider = createAIProvider();
-    const embeddingResult = await aiProvider.generateEmbedding(q);
+    const embeddingResult = await aiProvider.generateEmbedding(q, 'RETRIEVAL_QUERY');
     if (!embeddingResult.embedding || embeddingResult.embedding.length === 0) {
       res.status(500).json({ error: 'Failed to generate query embedding' });
       return;

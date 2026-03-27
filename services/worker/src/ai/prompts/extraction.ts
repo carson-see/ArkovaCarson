@@ -179,22 +179,29 @@ FIELDS TO EXTRACT:
 - jurisdiction: Geographic jurisdiction (e.g., "California, USA" or "United Kingdom")
 - recipientIdentifier: A redacted or hashed identifier for the recipient (if visible)
 
-CLE-SPECIFIC FIELDS (extract when credentialType is CLE):
+CLE-SPECIFIC FIELDS (extract ONLY when credentialType is CLE — NEVER for other types):
 - creditHours: Total number of CLE credit hours (numeric, e.g., 3.0)
 - creditType: Type of CLE credit (e.g., "Ethics", "General", "Professional Responsibility", "Elimination of Bias", "Substance Abuse")
 - barNumber: Bar number format (redacted value acceptable, note format like "State-XXXXXX")
 - activityNumber: CLE activity or course ID assigned by the provider
-- providerName: Name of the CLE course provider (may differ from accrediting body)
-- approvedBy: Which state bar(s) approved this CLE activity
+- providerName: Name of the CLE course provider (may differ from accrediting body). OMIT for all non-CLE credentials.
+- approvedBy: Which state bar(s) approved this CLE activity. OMIT for all non-CLE credentials.
+IMPORTANT: providerName and approvedBy are EXCLUSIVELY for CLE documents. If credentialType is NOT "CLE", you MUST NOT include providerName or approvedBy in the output. These fields do not apply to DEGREE, CERTIFICATE, LICENSE, PROFESSIONAL, or any other type.
 
-FRAUD SIGNAL FLAGS (include "fraudSignals" array if any apply):
-- "DUPLICATE_FINGERPRINT": Set if the text mentions this document was previously submitted or is a known duplicate
-- "EXPIRED_ISSUER": Set if the issuing institution is known to be defunct, closed, unaccredited, or a diploma mill. Watch for: "Universal Life Church", "no coursework required", "instant delivery", institutions with no verifiable existence.
-- "SUSPICIOUS_DATES": Set if dates are internally inconsistent (e.g., issued after expiry, issued date in the future relative to 2026, credential issued and expiring on the same day, credential older than 50 years). An expired credential is NOT suspicious — only inconsistent dates are.
-- "MISSING_ACCREDITATION": Set ONLY for DEGREE credentials from institutions where accreditation cannot be identified AND the institution name is suspicious or unrecognizable. Do NOT set for professional licenses, certificates, or badges — these don't always require accreditation.
-- "FORMAT_ANOMALY": Set if the document structure is fundamentally atypical: content is mostly emoji/symbols, appears to be CSV/spreadsheet data, has no identifiable institution or issuer name, is a random collection of text with no credential structure, or claims a degree type without any educational institution.
-- "JURISDICTION_MISMATCH": Set if the jurisdiction doesn't match typical patterns for the credential type
-IMPORTANT: Most legitimate credentials should have fraudSignals: []. Only flag genuine red flags. An expired credential or one with a few missing fields is NOT fraud. Be conservative — false positives on fraud signals are worse than false negatives.
+FRAUD SIGNAL FLAGS (include "fraudSignals" array ONLY when you have EXPLICIT EVIDENCE):
+
+CRITICAL RULE: fraudSignals MUST be an empty array [] for ~90% of documents. You are currently MASSIVELY over-flagging fraud. A fraud signal means "this document contains explicit evidence of forgery or deception." Missing fields, expired credentials, unusual institutions, or unfamiliar formats are NOT fraud.
+
+ONLY set a flag when the document TEXT contains an EXPLICIT contradiction or red flag. Do NOT infer fraud from absence of information.
+
+- "DUPLICATE_FINGERPRINT": Set ONLY if the text explicitly states this is a duplicate or resubmission.
+- "EXPIRED_ISSUER": Set ONLY if you have HIGH CERTAINTY the institution is a known diploma mill or fraud operation (e.g., "Universal Life Church" + "no coursework required" + "instant delivery"). An unfamiliar institution name alone is NEVER sufficient — many legitimate institutions are small or regional.
+- "SUSPICIOUS_DATES": Set ONLY for EXPLICIT date contradictions visible in the text: issued date is AFTER expiry date, or issued date is in the future (after 2026). Do NOT flag: expired credentials, old credentials (even 50+ years), same-day issue/expiry for workshops, or credentials with missing dates.
+- "MISSING_ACCREDITATION": Set ONLY for DEGREE credentials where the institution name contains obvious fraud indicators (e.g., "buy degree online", "no coursework", "life experience degree"). An unrecognized university name alone is NEVER sufficient.
+- "FORMAT_ANOMALY": Set ONLY when the content is fundamentally NOT a credential: emoji-only, CSV/spreadsheet data, random text with zero credential structure, or a degree claim with literally no institution mentioned anywhere.
+- "JURISDICTION_MISMATCH": Set ONLY when the SAME document contains two EXPLICITLY contradictory jurisdictions (e.g., "California Board" + "Licensed in Ontario, Canada"). A credential from an unfamiliar jurisdiction is NOT a mismatch.
+
+WHEN IN DOUBT, DO NOT FLAG. An empty fraudSignals array is always the safer choice. False positives destroy user trust.
 
 FEW-SHOT EXAMPLES:
 
@@ -496,7 +503,33 @@ Output: {"credentialType":"DEGREE","degreeLevel":"Doctorate","fieldOfStudy":"Adv
 
 Example 75 — Two fraud signals together (SUSPICIOUS_DATES + JURISDICTION_MISMATCH):
 Input: "Tokyo Metropolitan Government. Bureau of Social Welfare. Licensed Clinical Psychologist. [NAME_REDACTED]. License No. CP-2024-1234. Issued: 2024-06-01. Jurisdiction: State of Texas, USA."
-Output: {"credentialType":"LICENSE","issuerName":"Tokyo Metropolitan Government, Bureau of Social Welfare","issuedDate":"2024-06-01","fieldOfStudy":"Clinical Psychology","licenseNumber":"CP-2024-1234","jurisdiction":"Tokyo, Japan","fraudSignals":["JURISDICTION_MISMATCH"],"confidence":0.45}`;
+Output: {"credentialType":"LICENSE","issuerName":"Tokyo Metropolitan Government, Bureau of Social Welfare","issuedDate":"2024-06-01","fieldOfStudy":"Clinical Psychology","licenseNumber":"CP-2024-1234","jurisdiction":"Tokyo, Japan","fraudSignals":["JURISDICTION_MISMATCH"],"confidence":0.45}
+
+NEGATIVE EXAMPLES — These show what NOT to flag as fraud (empty fraudSignals is correct):
+
+Example 76 — Unfamiliar but legitimate small institution (NO fraud signals):
+Input: "Maharishi International University. Master of Science in Computer Science. [NAME_REDACTED]. Conferred December 2024. Fairfield, Iowa."
+Output: {"credentialType":"DEGREE","issuerName":"Maharishi International University","issuedDate":"2024-12-01","fieldOfStudy":"Computer Science","degreeLevel":"Master","jurisdiction":"Iowa, USA","fraudSignals":[],"confidence":0.85}
+
+Example 77 — Old credential from 1975 (NO fraud signals — old is not suspicious):
+Input: "State University of New York at Buffalo. Bachelor of Arts. English Literature. [NAME_REDACTED]. Conferred June 1975."
+Output: {"credentialType":"DEGREE","issuerName":"State University of New York at Buffalo","issuedDate":"1975-06-01","fieldOfStudy":"English Literature","degreeLevel":"Bachelor","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.80}
+
+Example 78 — Certificate with missing fields (NO fraud — just incomplete):
+Input: "Certificate of Completion. Cybersecurity Fundamentals. [NAME_REDACTED]. 2025."
+Output: {"credentialType":"CERTIFICATE","issuedDate":"2025-01-01","fieldOfStudy":"Cybersecurity","fraudSignals":[],"confidence":0.30}
+
+Example 79 — License from foreign country you don't recognize (NO fraud):
+Input: "Colegio de Ingenieros de Venezuela. Ingeniero Civil. [NAME_REDACTED]. Registro No. CIV-45678. Fecha: 15 de marzo de 2024."
+Output: {"credentialType":"LICENSE","issuerName":"Colegio de Ingenieros de Venezuela","issuedDate":"2024-03-15","fieldOfStudy":"Civil Engineering","licenseNumber":"CIV-45678","jurisdiction":"Venezuela","fraudSignals":[],"confidence":0.85}
+
+Example 80 — Non-CLE certificate (NO providerName or approvedBy):
+Input: "Project Management Institute. PMP Certification. [NAME_REDACTED]. Certified: 2025-01-15. Expires: 2028-01-15."
+Output: {"credentialType":"CERTIFICATE","issuerName":"Project Management Institute","issuedDate":"2025-01-15","expiryDate":"2028-01-15","fieldOfStudy":"Project Management","accreditingBody":"Project Management Institute","fraudSignals":[],"confidence":0.92}
+
+Example 81 — Professional license (NO providerName or approvedBy — these are CLE-only):
+Input: "New York State Education Department. Licensed Clinical Social Worker. [NAME_REDACTED]. License No. [REDACTED]. Issued: April 2024. Expires: March 2027."
+Output: {"credentialType":"LICENSE","issuerName":"New York State Education Department","issuedDate":"2024-04-01","expiryDate":"2027-03-31","fieldOfStudy":"Clinical Social Work","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.82}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.

@@ -60,7 +60,7 @@ export class ReplicateProvider implements IAIProvider {
     };
   }
 
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, _taskType?: import('./types.js').EmbeddingTaskType): Promise<EmbeddingResult> {
     // Generate a deterministic pseudo-embedding for testing
     const seed = Array.from(text).reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
     const embedding = Array.from({ length: 768 }, (_, i) =>

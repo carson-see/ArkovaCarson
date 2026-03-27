@@ -75,7 +75,7 @@ router.get('/', async (req: Request, res: Response) => {
     // Generate embedding for the search query
     const startMs = Date.now();
     const provider = createAIProvider();
-    const queryEmbedding = await provider.generateEmbedding(q);
+    const queryEmbedding = await provider.generateEmbedding(q, 'RETRIEVAL_QUERY');
 
     // Search via RPC (new RPC not yet in generated types — uses callRpc helper)
     const { data: matches, error: searchError } = await callRpc<Array<{ anchor_id: string; similarity: number }>>(

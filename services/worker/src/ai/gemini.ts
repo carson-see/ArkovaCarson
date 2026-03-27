@@ -17,6 +17,7 @@ import type {
   ExtractionRequest,
   ExtractionResult,
   EmbeddingResult,
+  EmbeddingTaskType,
   ProviderHealth,
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
@@ -163,7 +164,7 @@ export class GeminiProvider implements IAIProvider {
     return runEnsembleExtraction(this, request);
   }
 
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, taskType?: EmbeddingTaskType): Promise<EmbeddingResult> {
     this.checkCircuit();
 
     const result = await this.withRetry(async () => {
@@ -171,6 +172,14 @@ export class GeminiProvider implements IAIProvider {
       // CRIT-2 fix: Log full error server-side, return generic message to caller.
       const apiKey = process.env.GEMINI_API_KEY;
       const model = this.embeddingModelName;
+      const body: Record<string, unknown> = {
+        model: `models/${model}`,
+        content: { parts: [{ text }] },
+        outputDimensionality: 768,
+      };
+      if (taskType) {
+        body.taskType = taskType;
+      }
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
         {
@@ -179,11 +188,7 @@ export class GeminiProvider implements IAIProvider {
             'Content-Type': 'application/json',
             'x-goog-api-key': apiKey!,
           },
-          body: JSON.stringify({
-            model: `models/${model}`,
-            content: { parts: [{ text }] },
-            outputDimensionality: 768,
-          }),
+          body: JSON.stringify(body),
         },
       );
 

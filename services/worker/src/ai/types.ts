@@ -52,6 +52,16 @@ export interface ExtractionResult {
   tokensUsed?: number;
 }
 
+/** Gemini embedding task types — optimizes the embedding space for the use case. */
+export type EmbeddingTaskType =
+  | 'RETRIEVAL_DOCUMENT'
+  | 'RETRIEVAL_QUERY'
+  | 'SEMANTIC_SIMILARITY'
+  | 'CLASSIFICATION'
+  | 'CLUSTERING'
+  | 'QUESTION_ANSWERING'
+  | 'FACT_VERIFICATION';
+
 /** Result of an embedding generation call. */
 export interface EmbeddingResult {
   embedding: number[]; // 768-dimensional vector
@@ -86,8 +96,9 @@ export interface IAIProvider {
   /**
    * Generate a 768-dimensional embedding vector for semantic search.
    * Used for institution ground truth matching and credential similarity.
+   * Optional taskType optimizes the embedding space for the specific use case.
    */
-  generateEmbedding(text: string): Promise<EmbeddingResult>;
+  generateEmbedding(text: string, taskType?: EmbeddingTaskType): Promise<EmbeddingResult>;
 
   /** Check provider availability and latency. */
   healthCheck(): Promise<ProviderHealth>;

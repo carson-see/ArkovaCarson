@@ -105,7 +105,7 @@ export async function embedPublicRecords(
     try {
       const text = buildPublicRecordEmbeddingText(record);
 
-      const embeddingResult = await aiProvider.generateEmbedding(text);
+      const embeddingResult = await aiProvider.generateEmbedding(text, 'RETRIEVAL_DOCUMENT');
       if (!embeddingResult.embedding || embeddingResult.embedding.length === 0) {
         result.failed++;
         result.errors.push({ recordId: record.id, error: 'Empty embedding returned' });

@@ -36,7 +36,7 @@ export class CloudflareFallbackProvider implements IAIProvider {
     };
   }
 
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, _taskType?: import('./types.js').EmbeddingTaskType): Promise<EmbeddingResult> {
     // Deterministic fallback embedding (hash-based)
     // Real embeddings come from Workers AI in edge worker
     const embedding = new Array(768).fill(0).map((_, i) => {

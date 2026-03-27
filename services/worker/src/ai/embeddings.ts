@@ -11,7 +11,7 @@
  * and searched via `search_credential_embeddings` RPC using cosine similarity.
  */
 
-import type { IAIProvider, EmbeddingResult } from './types.js';
+import type { IAIProvider, EmbeddingResult, EmbeddingTaskType } from './types.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from './cost-tracker.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -91,12 +91,15 @@ export function buildEmbeddingText(metadata: EmbeddingMetadata): string {
 
 /**
  * Generate an embedding vector for the given text using the AI provider.
+ * taskType optimizes the embedding space — use RETRIEVAL_DOCUMENT for storage,
+ * RETRIEVAL_QUERY for search queries, SEMANTIC_SIMILARITY for matching.
  */
 export async function generateEmbedding(
   provider: IAIProvider,
   text: string,
+  taskType?: EmbeddingTaskType,
 ): Promise<EmbeddingResult> {
-  return provider.generateEmbedding(text);
+  return provider.generateEmbedding(text, taskType);
 }
 
 /**
@@ -119,7 +122,7 @@ export async function generateAndStoreEmbedding(
   const startMs = Date.now();
 
   try {
-    const result = await provider.generateEmbedding(text);
+    const result = await provider.generateEmbedding(text, 'RETRIEVAL_DOCUMENT');
     const durationMs = Date.now() - startMs;
 
     // Compute source text hash for deduplication

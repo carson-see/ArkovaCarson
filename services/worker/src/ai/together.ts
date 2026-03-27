@@ -124,7 +124,7 @@ export class TogetherProvider implements IAIProvider {
     };
   }
 
-  async generateEmbedding(text: string): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, _taskType?: import('./types.js').EmbeddingTaskType): Promise<EmbeddingResult> {
     this.checkCircuit();
 
     const result = await this.withRetry(async () => {
