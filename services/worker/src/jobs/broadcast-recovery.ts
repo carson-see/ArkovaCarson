@@ -80,7 +80,7 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
     .is('chain_tx_id', null)
     .is('deleted_at', null)
     .lt('updated_at', threshold)
-    .limit(100);
+    .limit(10000);
 
   if (fetchError || !stuck || stuck.length === 0) {
     return { recovered: 0, anchors: [] };

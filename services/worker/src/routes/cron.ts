@@ -34,6 +34,7 @@ import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { fetchAcncCharities } from '../jobs/acncFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 
@@ -335,6 +336,16 @@ cronRouter.post('/anchor-attestations', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Attestation anchoring failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/recover-broadcasts', async (_req, res) => {
+  try {
+    const result = await recoverStuckBroadcasts();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Broadcast recovery failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
