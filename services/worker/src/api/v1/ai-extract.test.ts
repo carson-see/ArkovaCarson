@@ -22,6 +22,7 @@ vi.mock('../../utils/logger.js', () => ({
 
 vi.mock('../../ai/factory.js', () => ({
   createAIProvider: vi.fn(),
+  createExtractionProvider: vi.fn(),
 }));
 
 vi.mock('../../ai/cost-tracker.js', () => ({
@@ -31,7 +32,7 @@ vi.mock('../../ai/cost-tracker.js', () => ({
 }));
 
 import { db } from '../../utils/db.js';
-import { createAIProvider } from '../../ai/factory.js';
+import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
 import { Request, Response } from 'express';
 import { aiExtractRouter } from './ai-extract.js';
@@ -168,7 +169,7 @@ describe('AI Extraction Endpoint', () => {
       hasCredits: true,
     });
 
-    (createAIProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
       extractMetadata: vi.fn().mockResolvedValue({
         fields: {
           credentialType: 'DEGREE',
@@ -238,7 +239,7 @@ describe('AI Extraction Endpoint', () => {
     // 0.75 is between knots [0.70, 0.92] and [0.80, 0.94]
     // t = (0.75 - 0.70) / (0.80 - 0.70) = 0.5
     // calibrated = 0.92 + 0.5 * (0.94 - 0.92) = 0.93
-    (createAIProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
       extractMetadata: vi.fn().mockResolvedValue({
         fields: { credentialType: 'CERTIFICATE', issuerName: 'AWS' },
         confidence: 0.75,
@@ -294,7 +295,7 @@ describe('AI Extraction Endpoint', () => {
       hasCredits: true,
     });
 
-    (createAIProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
       extractMetadata: vi.fn().mockRejectedValue(new Error('circuit breaker open')),
     });
 
@@ -338,7 +339,7 @@ describe('AI Extraction Endpoint', () => {
       hasCredits: true,
     });
 
-    (createAIProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
       extractMetadata: vi.fn().mockRejectedValue(new Error('unexpected error')),
     });
 

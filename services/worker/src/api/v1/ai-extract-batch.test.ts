@@ -10,15 +10,17 @@ import express from 'express';
 import request from 'supertest';
 
 // Mock dependencies
+const mockExtractionProvider = {
+  extractMetadata: vi.fn().mockResolvedValue({
+    fields: { credentialType: 'DEGREE', issuerName: 'MIT' },
+    confidence: 0.85,
+    provider: 'mock',
+    tokensUsed: 100,
+  }),
+};
 vi.mock('../../ai/factory.js', () => ({
-  createAIProvider: vi.fn(() => ({
-    extractMetadata: vi.fn().mockResolvedValue({
-      fields: { credentialType: 'DEGREE', issuerName: 'MIT' },
-      confidence: 0.85,
-      provider: 'mock',
-      tokensUsed: 100,
-    }),
-  })),
+  createAIProvider: vi.fn(() => mockExtractionProvider),
+  createExtractionProvider: vi.fn(() => mockExtractionProvider),
 }));
 
 vi.mock('../../ai/cost-tracker.js', () => ({
@@ -155,9 +157,9 @@ describe('POST /api/v1/ai/extract-batch', () => {
   });
 
   it('handles partial failures gracefully', async () => {
-    const { createAIProvider } = await import('../../ai/factory.js');
+    const { createExtractionProvider } = await import('../../ai/factory.js');
     let callCount = 0;
-    vi.mocked(createAIProvider).mockReturnValue({
+    vi.mocked(createExtractionProvider).mockReturnValue({
       extractMetadata: vi.fn().mockImplementation(() => {
         callCount++;
         if (callCount === 2) throw new Error('AI provider timeout');

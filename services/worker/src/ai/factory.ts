@@ -98,6 +98,45 @@ export function createAIProvider(): IAIProvider {
   }
 }
 
+/** Document source categories for two-model routing. */
+export type DocumentSource = 'user_upload' | 'pipeline' | 'institutional';
+
+/**
+ * Create an AI provider for extraction, routing based on document source.
+ *
+ * Two-model routing strategy:
+ *   - user_upload  → Gemini (best general-purpose extraction)
+ *   - pipeline     → Nessie if available, else Gemini (fine-tuned for bulk docs)
+ *   - institutional → Nessie if available, else Gemini
+ *
+ * Only activates when both GEMINI_API_KEY and RUNPOD_API_KEY are configured.
+ * Falls back to single-provider mode (AI_PROVIDER) when only one is available.
+ */
+export function createExtractionProvider(source: DocumentSource = 'user_upload'): IAIProvider {
+  const hasNessie = !!(process.env.RUNPOD_API_KEY && process.env.RUNPOD_ENDPOINT_ID);
+  const hasGemini = !!process.env.GEMINI_API_KEY;
+
+  // If dual-model routing isn't possible, use the default provider
+  if (!hasNessie || !hasGemini) {
+    return createAIProvider();
+  }
+
+  // Route based on document source
+  if (source === 'user_upload') {
+    // User uploads → Gemini (better at diverse, messy, one-off documents)
+    if (!geminiInstance) {
+      geminiInstance = new GeminiProvider();
+    }
+    return geminiInstance;
+  }
+
+  // Pipeline/institutional → Nessie (fine-tuned for structured, bulk documents)
+  if (!nessieInstance) {
+    nessieInstance = new NessieProvider();
+  }
+  return nessieInstance;
+}
+
 /**
  * Create an AI provider specifically for embedding generation.
  * Falls back to Gemini when the active provider doesn't support embeddings

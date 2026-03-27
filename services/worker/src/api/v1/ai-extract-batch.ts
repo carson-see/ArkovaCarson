@@ -13,7 +13,7 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { createAIProvider } from '../../ai/factory.js';
+import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { db } from '../../utils/db.js';
@@ -123,8 +123,9 @@ router.post('/', async (req: Request, res: Response) => {
       logger.error({ orgId, userId, rowCount }, 'Batch AI credit deduction failed — proceeding');
     }
 
-    // Process rows with concurrency limit (3 parallel to avoid flooding Gemini)
-    const provider = createAIProvider();
+    // Process rows with concurrency limit (3 parallel to avoid flooding provider)
+    // Batch extract is typically pipeline/institutional data → route to Nessie
+    const provider = createExtractionProvider('pipeline');
     let successCount = 0;
 
     const results = await parallelMap<typeof rows[0], BatchResult>(

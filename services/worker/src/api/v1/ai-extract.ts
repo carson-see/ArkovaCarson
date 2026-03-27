@@ -12,7 +12,7 @@
 
 import { Router, Request, Response } from 'express';
 import { ExtractionRequestSchema } from '../../ai/schemas.js';
-import { createAIProvider } from '../../ai/factory.js';
+import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidence } from '../../ai/eval/calibration.js';
@@ -103,7 +103,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Call AI provider
     const startMs = Date.now();
-    const provider = createAIProvider();
+    const provider = createExtractionProvider('user_upload');
     let result;
     try {
       result = await provider.extractMetadata({
