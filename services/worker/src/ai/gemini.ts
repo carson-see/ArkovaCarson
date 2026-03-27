@@ -24,7 +24,7 @@ import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
-import { runCrossFieldChecks } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
 import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
 
@@ -122,6 +122,13 @@ export class GeminiProvider implements IAIProvider {
       1,
       Math.max(0, result.confidence + groundingReport.confidenceAdjustment),
     );
+
+    // Strip CLE-only fields from non-CLE results (hard guardrail against hallucination)
+    const strippedFields = sanitizeCLEFields(result.fields);
+    if (strippedFields.length > 0) {
+      logger.info({ strippedFields, credentialType: result.fields.credentialType },
+        'Sanitized CLE-only fields from non-CLE extraction');
+    }
 
     // Cross-field consistency fraud checks
     const crossFieldReport = runCrossFieldChecks(result.fields);

@@ -169,12 +169,12 @@ function checkDateLogic(fields: ExtractedFields, result: CrossFieldCheckResult):
     }
   }
 
-  // Credential older than 80 years
+  // Credential older than 80 years — log as warning only, NOT fraud
+  // Old credentials are legitimate (people archive decades-old degrees)
   if (issuedDate) {
     const eightyYearsAgo = new Date(now);
     eightyYearsAgo.setFullYear(eightyYearsAgo.getFullYear() - 80);
     if (issuedDate < eightyYearsAgo) {
-      result.additionalFraudSignals.push('SUSPICIOUS_DATES');
       result.warnings.push('Credential issued more than 80 years ago — flag for review');
     }
   }
@@ -191,15 +191,16 @@ function checkDateLogic(fields: ExtractedFields, result: CrossFieldCheckResult):
     }
   }
 
-  // Same-day issue and expiry
+  // Same-day issue and expiry — only flag for multi-year credentials, NOT workshops
   if (issuedDate && expiryDate) {
     const sameDay =
       issuedDate.getFullYear() === expiryDate.getFullYear() &&
       issuedDate.getMonth() === expiryDate.getMonth() &&
       issuedDate.getDate() === expiryDate.getDate();
     if (sameDay) {
-      result.additionalFraudSignals.push('SUSPICIOUS_DATES');
-      result.confidenceAdjustment -= 0.10;
+      // Same-day is normal for workshops, one-day events, and CLE courses
+      // Only log as warning, not fraud signal
+      result.warnings.push('Same-day issue and expiry — may be a workshop or event');
     }
   }
 }
@@ -313,4 +314,43 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
   result.confidenceAdjustment = Math.max(-0.40, result.confidenceAdjustment);
 
   return result;
+}
+
+// =============================================================================
+// CLE-ONLY FIELD SANITIZER
+// =============================================================================
+
+/**
+ * CLE-only fields that MUST be stripped from non-CLE extraction results.
+ * This is a hard guardrail against model hallucination — the model sometimes
+ * includes barNumber, providerName, or approvedBy on non-CLE credentials.
+ */
+const CLE_ONLY_FIELDS = [
+  'barNumber',
+  'providerName',
+  'approvedBy',
+  'creditHours',
+  'creditType',
+  'activityNumber',
+] as const;
+
+/**
+ * Strip CLE-only fields from non-CLE extraction results.
+ * Call this AFTER extraction, BEFORE storing results.
+ *
+ * @param fields - Extracted fields (mutated in place)
+ * @returns List of fields that were stripped (for logging)
+ */
+export function sanitizeCLEFields(fields: ExtractedFields): string[] {
+  const type = fields.credentialType?.toUpperCase();
+  if (type === 'CLE') return []; // CLE documents keep all fields
+
+  const stripped: string[] = [];
+  for (const field of CLE_ONLY_FIELDS) {
+    if (field in fields && (fields as Record<string, unknown>)[field] !== undefined) {
+      stripped.push(field);
+      delete (fields as Record<string, unknown>)[field];
+    }
+  }
+  return stripped;
 }

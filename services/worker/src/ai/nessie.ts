@@ -30,7 +30,7 @@ import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
-import { runCrossFieldChecks } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // Higher base delay for serverless cold starts
@@ -118,6 +118,13 @@ export class NessieProvider implements IAIProvider {
       1,
       Math.max(0, result.confidence + groundingReport.confidenceAdjustment),
     );
+
+    // Strip CLE-only fields from non-CLE results (hard guardrail)
+    const strippedFields = sanitizeCLEFields(result.fields);
+    if (strippedFields.length > 0) {
+      logger.info({ strippedFields, credentialType: result.fields.credentialType },
+        'Nessie: Sanitized CLE-only fields from non-CLE extraction');
+    }
 
     // Cross-field consistency fraud checks
     const crossFieldReport = runCrossFieldChecks(result.fields);

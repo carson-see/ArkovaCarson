@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runCrossFieldChecks } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
 import type { ExtractedFields } from './types.js';
 
 describe('crossFieldFraudChecks', () => {
@@ -32,12 +32,12 @@ describe('crossFieldFraudChecks', () => {
       expect(result.confidenceAdjustment).toBeLessThanOrEqual(-0.15);
     });
 
-    it('flags credential older than 80 years', () => {
+    it('warns but does NOT flag credential older than 80 years as fraud', () => {
       const fields: ExtractedFields = {
         issuedDate: '1940-01-01',
       };
       const result = runCrossFieldChecks(fields);
-      expect(result.additionalFraudSignals).toContain('SUSPICIOUS_DATES');
+      expect(result.additionalFraudSignals).not.toContain('SUSPICIOUS_DATES');
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('80 years')]),
       );
@@ -56,13 +56,16 @@ describe('crossFieldFraudChecks', () => {
       );
     });
 
-    it('flags same-day issue and expiry', () => {
+    it('warns but does NOT flag same-day issue and expiry as fraud (workshops)', () => {
       const fields: ExtractedFields = {
         issuedDate: '2025-03-15',
         expiryDate: '2025-03-15',
       };
       const result = runCrossFieldChecks(fields);
-      expect(result.additionalFraudSignals).toContain('SUSPICIOUS_DATES');
+      expect(result.additionalFraudSignals).not.toContain('SUSPICIOUS_DATES');
+      expect(result.warnings).toEqual(
+        expect.arrayContaining([expect.stringContaining('workshop')]),
+      );
     });
 
     it('does not flag valid date ranges', () => {
@@ -258,11 +261,12 @@ describe('crossFieldFraudChecks', () => {
     });
 
     it('deduplicates fraud signals', () => {
-      // Both "issued after expiry" and "same day" would produce SUSPICIOUS_DATES
+      // Both "issued after expiry" and "future date" can produce SUSPICIOUS_DATES
       // but they should be deduplicated
+      const futureYear = new Date().getFullYear() + 6;
       const fields: ExtractedFields = {
-        issuedDate: '2025-03-15',
-        expiryDate: '2025-03-15',
+        issuedDate: `${futureYear}-06-01`,
+        expiryDate: '2020-01-01',
       };
       const result = runCrossFieldChecks(fields);
       const suspiciousCount = result.additionalFraudSignals.filter(
@@ -277,5 +281,92 @@ describe('crossFieldFraudChecks', () => {
       expect(result.additionalFraudSignals).toHaveLength(0);
       expect(result.confidenceAdjustment).toBe(0);
     });
+  });
+});
+
+// =============================================================================
+// SANITIZE CLE FIELDS
+// =============================================================================
+
+describe('sanitizeCLEFields', () => {
+  it('strips barNumber from non-CLE LICENSE extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'LICENSE',
+      issuerName: 'Supreme Court of Illinois',
+      barNumber: '6789012',
+      jurisdiction: 'Illinois, USA',
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toContain('barNumber');
+    expect(fields.barNumber).toBeUndefined();
+    expect(fields.issuerName).toBe('Supreme Court of Illinois');
+  });
+
+  it('strips providerName and approvedBy from CERTIFICATE extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'CompTIA',
+      providerName: 'CompTIA',
+      approvedBy: 'CompTIA',
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toContain('providerName');
+    expect(stripped).toContain('approvedBy');
+    expect((fields as Record<string, unknown>).providerName).toBeUndefined();
+    expect((fields as Record<string, unknown>).approvedBy).toBeUndefined();
+  });
+
+  it('strips all CLE-only fields from DEGREE extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'DEGREE',
+      issuerName: 'MIT',
+      barNumber: '12345',
+      creditHours: 3.0,
+      creditType: 'Ethics',
+      activityNumber: 'CLE-123',
+      providerName: 'Law Academy',
+      approvedBy: 'State Bar',
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toHaveLength(6);
+    expect(fields.issuerName).toBe('MIT');
+    expect(fields.credentialType).toBe('DEGREE');
+  });
+
+  it('preserves all CLE-only fields for CLE type', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'CLE',
+      issuerName: 'State Bar CLE',
+      barNumber: '12345',
+      creditHours: 3.0,
+      creditType: 'Ethics',
+      providerName: 'Law Academy',
+      approvedBy: 'California State Bar',
+      activityNumber: 'CLE-2026-001',
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toHaveLength(0);
+    expect(fields.barNumber).toBe('12345');
+    expect(fields.creditHours).toBe(3.0);
+  });
+
+  it('returns empty array when no CLE-only fields present', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'LICENSE',
+      issuerName: 'State Board',
+      jurisdiction: 'Texas, USA',
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toHaveLength(0);
+  });
+
+  it('handles case-insensitive CLE type', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'cle',
+      barNumber: '12345',
+      creditHours: 2.0,
+    };
+    const stripped = sanitizeCLEFields(fields);
+    expect(stripped).toHaveLength(0);
   });
 });

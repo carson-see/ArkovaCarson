@@ -182,11 +182,12 @@ FIELDS TO EXTRACT:
 CLE-SPECIFIC FIELDS (extract ONLY when credentialType is CLE — NEVER for other types):
 - creditHours: Total number of CLE credit hours (numeric, e.g., 3.0)
 - creditType: Type of CLE credit (e.g., "Ethics", "General", "Professional Responsibility", "Elimination of Bias", "Substance Abuse")
-- barNumber: Bar number format (redacted value acceptable, note format like "State-XXXXXX")
+- barNumber: Bar number format (redacted value acceptable, note format like "State-XXXXXX"). ONLY extract for CLE documents. NEVER extract barNumber for LICENSE, PROFESSIONAL, DEGREE, CERTIFICATE, or any non-CLE type — even if the text mentions a bar number. For non-CLE bar admissions, the bar number is PII and should not be extracted.
 - activityNumber: CLE activity or course ID assigned by the provider
 - providerName: Name of the CLE course provider (may differ from accrediting body). OMIT for all non-CLE credentials.
 - approvedBy: Which state bar(s) approved this CLE activity. OMIT for all non-CLE credentials.
-IMPORTANT: providerName and approvedBy are EXCLUSIVELY for CLE documents. If credentialType is NOT "CLE", you MUST NOT include providerName or approvedBy in the output. These fields do not apply to DEGREE, CERTIFICATE, LICENSE, PROFESSIONAL, or any other type.
+
+HARD RULE — CLE-ONLY FIELDS: barNumber, providerName, approvedBy, creditHours, creditType, and activityNumber are EXCLUSIVELY for CLE documents. If credentialType is NOT "CLE", you MUST NOT include ANY of these fields in the output. This applies to DEGREE, CERTIFICATE, LICENSE, PROFESSIONAL, ATTESTATION, and ALL other types. Violating this rule produces incorrect data.
 
 FRAUD SIGNAL FLAGS (include "fraudSignals" array ONLY when you have EXPLICIT EVIDENCE):
 
@@ -365,9 +366,9 @@ Example 40 — CSV/bulk data (not a credential — FORMAT_ANOMALY):
 Input: "recipient_name,recipient_email,credential_type,issued_date,description. [NAME_REDACTED],[EMAIL_REDACTED],DEGREE,2025-05-03,Bachelor of Science"
 Output: {"credentialType":"OTHER","fraudSignals":["FORMAT_ANOMALY"],"confidence":0.05}
 
-Example 41 — Same-day expiry (SUSPICIOUS_DATES):
+Example 41 — Same-day expiry workshop (NO fraud — workshops can be single-day):
 Input: "Quick Cert Co. Certificate: [NAME_REDACTED]. Issued: January 1, 2026. Expires: January 1, 2026. Course: One-Day Workshop."
-Output: {"credentialType":"CERTIFICATE","issuerName":"Quick Cert Co","issuedDate":"2026-01-01","expiryDate":"2026-01-01","fraudSignals":["SUSPICIOUS_DATES"],"confidence":0.65}
+Output: {"credentialType":"CERTIFICATE","issuerName":"Quick Cert Co","issuedDate":"2026-01-01","expiryDate":"2026-01-01","fieldOfStudy":"Workshop","fraudSignals":[],"confidence":0.70}
 
 Example 42 — Non-English (German — translate fieldOfStudy):
 Input: "Technische Universität München. Bachelorzeugnis. [NAME_REDACTED]. Studiengang: Informatik. Abschluss: Bachelor of Science. Datum: 15. Juli 2024."
@@ -481,9 +482,9 @@ Example 69 — Anachronistic elements (institution name changed years ago):
 Input: "Polytechnic of Central London. Bachelor of Science in Computing. [NAME_REDACTED]. Conferred: June 2024. Registrar: [NAME_REDACTED]."
 Output: {"credentialType":"DEGREE","issuerName":"Polytechnic of Central London","issuedDate":"2024-06-01","fieldOfStudy":"Computing","degreeLevel":"Bachelor","jurisdiction":"United Kingdom","fraudSignals":["SUSPICIOUS_DATES","EXPIRED_ISSUER"],"confidence":0.35}
 
-Example 70 — Credential older than 50 years (flag SUSPICIOUS_DATES):
+Example 70 — Credential older than 50 years (NO fraud — old is NOT suspicious):
 Input: "University of Chicago. Bachelor of Arts. Economics. [NAME_REDACTED]. Conferred June 1968."
-Output: {"credentialType":"DEGREE","issuerName":"University of Chicago","issuedDate":"1968-06-01","fieldOfStudy":"Economics","degreeLevel":"Bachelor","jurisdiction":"Illinois, USA","fraudSignals":["SUSPICIOUS_DATES"],"confidence":0.55}
+Output: {"credentialType":"DEGREE","issuerName":"University of Chicago","issuedDate":"1968-06-01","fieldOfStudy":"Economics","degreeLevel":"Bachelor","jurisdiction":"Illinois, USA","fraudSignals":[],"confidence":0.75}
 
 Example 71 — Jurisdiction mismatch (US state board, non-US jurisdiction claim):
 Input: "California Board of Registered Nursing. Licensed in the Province of Ontario, Canada. [NAME_REDACTED]. License No. RN-445566. Issued: January 2025."
@@ -529,7 +530,19 @@ Output: {"credentialType":"CERTIFICATE","issuerName":"Project Management Institu
 
 Example 81 — Professional license (NO providerName or approvedBy — these are CLE-only):
 Input: "New York State Education Department. Licensed Clinical Social Worker. [NAME_REDACTED]. License No. [REDACTED]. Issued: April 2024. Expires: March 2027."
-Output: {"credentialType":"LICENSE","issuerName":"New York State Education Department","issuedDate":"2024-04-01","expiryDate":"2027-03-31","fieldOfStudy":"Clinical Social Work","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.82}`;
+Output: {"credentialType":"LICENSE","issuerName":"New York State Education Department","issuedDate":"2024-04-01","expiryDate":"2027-03-31","fieldOfStudy":"Clinical Social Work","jurisdiction":"New York, USA","fraudSignals":[],"confidence":0.82}
+
+Example 82 — Bar admission license (NO barNumber — barNumber is CLE-only):
+Input: "Supreme Court of Illinois. [NAME_REDACTED] is admitted to practice law. Bar ID: 6789012. Admission Date: January 2024."
+Output: {"credentialType":"LICENSE","issuerName":"Supreme Court of Illinois","issuedDate":"2024-01-01","fieldOfStudy":"Law","jurisdiction":"Illinois, USA","fraudSignals":[],"confidence":0.83}
+
+Example 83 — Attorney license with bar number visible (still NO barNumber field — CLE-only):
+Input: "State Bar of Georgia. [NAME_REDACTED]. Member No. 123456. Status: Active. Admitted: May 2020. Annual dues paid through 2026."
+Output: {"credentialType":"LICENSE","issuerName":"State Bar of Georgia","issuedDate":"2020-05-01","fieldOfStudy":"Law","jurisdiction":"Georgia, USA","fraudSignals":[],"confidence":0.85}
+
+Example 84 — Professional membership with provider-like org (NO providerName — CLE-only):
+Input: "American Bar Association. [NAME_REDACTED]. Member since 2022. Section: Litigation. Membership ID: [REDACTED]."
+Output: {"credentialType":"PROFESSIONAL","issuerName":"American Bar Association","issuedDate":"2022-01-01","fieldOfStudy":"Litigation","fraudSignals":[],"confidence":0.80}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.
