@@ -362,12 +362,10 @@ export class MempoolUtxoProvider implements UtxoProvider {
       const response = await fetch(url, { signal: createTimeoutSignal() });
       if (!response.ok) throw new HttpError(`Mempool API GET ${url} failed: HTTP ${response.status}`, response.status);
       const mempoolUtxos = (await response.json()) as Array<{ txid: string; vout: number; value: number; status: { confirmed: boolean; block_height?: number } }>;
-      // On non-mainnet networks, include unconfirmed UTXOs (e.g., change from pending txs)
-      // to avoid blocking on Signet/testnet block times. Mainnet requires confirmed only.
-      const isMainnet = this.baseUrl.includes('mempool.space') && !this.baseUrl.includes('/signet') && !this.baseUrl.includes('/testnet');
-      const spendable = isMainnet
-        ? mempoolUtxos.filter((u) => u.status.confirmed)
-        : mempoolUtxos; // signet/testnet: spend unconfirmed change too
+      // Include all UTXOs (confirmed + unconfirmed) on all networks.
+      // Our own change outputs are safe to spend unconfirmed (child-pays-for-parent).
+      // This prevents the treasury from getting stuck waiting for confirmations between batches.
+      const spendable = mempoolUtxos;
       if (spendable.length === 0) return [];
       // P2WPKH signing uses witnessUtxo (script + value), not rawTxHex.
       // Skip the extra HTTP call per UTXO — rawTxHex is only needed for legacy P2PKH (nonWitnessUtxo).

@@ -115,15 +115,16 @@ describe('MempoolUtxoProvider', () => {
     const utxos = await provider.listUnspent('tb1qtest');
     expect(utxos).toHaveLength(1);
   });
-  it('returns only confirmed UTXOs on mainnet', async () => {
+  it('returns all UTXOs including unconfirmed on mainnet', async () => {
     const mainnetProvider = new MempoolUtxoProvider({ baseUrl: 'https://mempool.space/api' });
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([
       { txid: 'aaa', vout: 0, value: 50000, status: { confirmed: true, block_height: 100 } },
       { txid: 'bbb', vout: 1, value: 30000, status: { confirmed: false } },
     ]) });
     const utxos = await mainnetProvider.listUnspent('bc1qtest');
-    expect(utxos).toHaveLength(1);
+    expect(utxos).toHaveLength(2);
     expect(utxos[0].txid).toBe('aaa');
+    expect(utxos[1].txid).toBe('bbb');
   });
   it('throws on HTTP error', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
