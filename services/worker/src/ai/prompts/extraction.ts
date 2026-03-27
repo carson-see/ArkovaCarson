@@ -151,7 +151,7 @@ FIELDOFSTUDY NORMALIZATION (applies to ALL credential types):
 - OMIT fieldOfStudy ONLY when the document is truly generic with no subject matter (e.g., "Certificate" with no topic, pure financial/insurance documents, generic contracts).
 
 FIELDS TO EXTRACT:
-- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | ATTESTATION | FINANCIAL | LEGAL | INSURANCE | RESUME | MEDICAL | MILITARY | IDENTITY | OTHER
+- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | ATTESTATION | FINANCIAL | LEGAL | INSURANCE | RESUME | MEDICAL | MILITARY | IDENTITY | SEC_FILING | PATENT | REGULATION | PUBLICATION | OTHER
   CLASSIFICATION RULES (choose the MOST SPECIFIC type):
   - DEGREE: diplomas, bachelor's/master's/doctoral degrees, associate degrees, honorary degrees from universities
   - CERTIFICATE: professional certifications (AWS, CompTIA, PMP, etc.), course completion certificates, trade/vocational certs (OSHA, EPA), training program completions
@@ -168,6 +168,10 @@ FIELDS TO EXTRACT:
   - FINANCIAL: pay stubs, W-2/1099 tax forms, bank statements, income verification, financial aid documents, tax returns, audit reports
   - LEGAL: contracts, service agreements, NDAs, court orders, settlement agreements, powers of attorney, deeds, custody agreements, divorce decrees
   - INSURANCE: certificates of insurance (COI), health insurance cards, policy declarations, bonds, surety bonds
+  - SEC_FILING: SEC forms (10-K, 10-Q, 8-K, DEF 14A, S-1, 20-F), annual/quarterly reports filed with the Securities and Exchange Commission, proxy statements, registration statements
+  - PATENT: patent grants, patent applications, patent office correspondence (USPTO, EPO, WIPO), provisional applications, patent certificates, notices of allowance
+  - REGULATION: federal/state regulations, Federal Register notices, CFR sections, regulatory orders, compliance directives, agency rules, proposed rulemakings, state administrative code
+  - PUBLICATION: peer-reviewed journal articles, conference papers, academic publications, research papers, preprints, book chapters, theses/dissertations (when presented as a publication rather than a degree)
   - OTHER: ONLY use when no other type fits. If you can identify the document purpose at all, use a specific type above
 - issuerName: Full official name of the issuing institution/organization
 - issuedDate: When issued (YYYY-MM-DD)
@@ -542,7 +546,39 @@ Output: {"credentialType":"LICENSE","issuerName":"State Bar of Georgia","issuedD
 
 Example 84 — Professional membership with provider-like org (NO providerName — CLE-only):
 Input: "American Bar Association. [NAME_REDACTED]. Member since 2022. Section: Litigation. Membership ID: [REDACTED]."
-Output: {"credentialType":"PROFESSIONAL","issuerName":"American Bar Association","issuedDate":"2022-01-01","fieldOfStudy":"Litigation","fraudSignals":[],"confidence":0.80}`;
+Output: {"credentialType":"PROFESSIONAL","issuerName":"American Bar Association","issuedDate":"2022-01-01","fieldOfStudy":"Litigation","fraudSignals":[],"confidence":0.80}
+
+Example 85 — SEC Filing (10-K annual report):
+Input: "UNITED STATES SECURITIES AND EXCHANGE COMMISSION. Washington, D.C. 20549. FORM 10-K. ANNUAL REPORT PURSUANT TO SECTION 13 OR 15(d). For the fiscal year ended December 31, 2025. Commission file number: 001-12345. [COMPANY_REDACTED]. State of incorporation: Delaware."
+Output: {"credentialType":"SEC_FILING","issuerName":"United States Securities and Exchange Commission","issuedDate":"2025-12-31","fieldOfStudy":"Annual Report (10-K)","jurisdiction":"Delaware, USA","fraudSignals":[],"confidence":0.90}
+
+Example 86 — SEC Filing (8-K current report):
+Input: "FORM 8-K. CURRENT REPORT. Pursuant to Section 13 or 15(d). Date of Report: March 15, 2026. Commission File Number: 000-67890. [COMPANY_REDACTED]. Date of earliest event reported: March 14, 2026."
+Output: {"credentialType":"SEC_FILING","issuerName":"United States Securities and Exchange Commission","issuedDate":"2026-03-15","fieldOfStudy":"Current Report (8-K)","fraudSignals":[],"confidence":0.88}
+
+Example 87 — Patent grant (USPTO):
+Input: "United States Patent. Patent No.: US 11,234,567 B2. Date of Patent: Jun. 15, 2025. [NAME_REDACTED]. Title: Method and System for Distributed Consensus Verification. Assignee: [COMPANY_REDACTED]. Filed: Mar. 10, 2023."
+Output: {"credentialType":"PATENT","issuerName":"United States Patent and Trademark Office","issuedDate":"2025-06-15","fieldOfStudy":"Distributed Computing","licenseNumber":"US 11,234,567 B2","jurisdiction":"United States","fraudSignals":[],"confidence":0.92}
+
+Example 88 — Patent application (international):
+Input: "European Patent Office. Application No. EP 24 123 456.7. Filing Date: 12 February 2024. Title: Biodegradable Polymer Composite for Medical Implants. Applicant: [COMPANY_REDACTED]. Designated Contracting States: AT BE CH DE ES FR GB IT NL."
+Output: {"credentialType":"PATENT","issuerName":"European Patent Office","issuedDate":"2024-02-12","fieldOfStudy":"Biomedical Materials","licenseNumber":"EP 24 123 456.7","jurisdiction":"European Union","fraudSignals":[],"confidence":0.88}
+
+Example 89 — Federal regulation (Federal Register):
+Input: "Federal Register / Vol. 91, No. 45. Environmental Protection Agency. 40 CFR Part 63. National Emission Standards for Hazardous Air Pollutants. Final Rule. Effective Date: July 1, 2026. EPA-HQ-OAR-2024-0123."
+Output: {"credentialType":"REGULATION","issuerName":"Environmental Protection Agency","issuedDate":"2026-07-01","fieldOfStudy":"Air Quality Regulation","licenseNumber":"40 CFR Part 63","jurisdiction":"United States","fraudSignals":[],"confidence":0.88}
+
+Example 90 — State regulation:
+Input: "California Code of Regulations. Title 22. Division 4. Department of Health Care Access and Information. Section 97215. Hospital Financial Transparency Requirements. Effective: January 1, 2026."
+Output: {"credentialType":"REGULATION","issuerName":"California Department of Health Care Access and Information","issuedDate":"2026-01-01","fieldOfStudy":"Healthcare Regulation","jurisdiction":"California, USA","fraudSignals":[],"confidence":0.85}
+
+Example 91 — Peer-reviewed journal article (PUBLICATION):
+Input: "Nature Medicine. Vol 32, pp 1234-1245 (2026). CRISPR-Based Therapeutic Approaches for Sickle Cell Disease: A Phase III Clinical Trial. [NAME_REDACTED] et al. Received: October 2025. Accepted: January 2026. Published: February 15, 2026. DOI: 10.1038/s41591-026-0123-4."
+Output: {"credentialType":"PUBLICATION","issuerName":"Nature Medicine","issuedDate":"2026-02-15","fieldOfStudy":"Gene Therapy","licenseNumber":"10.1038/s41591-026-0123-4","fraudSignals":[],"confidence":0.90}
+
+Example 92 — Conference paper (PUBLICATION):
+Input: "Proceedings of the 2025 ACM Conference on Computer and Communications Security (CCS '25). [NAME_REDACTED], [NAME_REDACTED]. Zero-Knowledge Proof Systems for Supply Chain Verification. November 2025. Pages 2345-2358. Denver, Colorado, USA."
+Output: {"credentialType":"PUBLICATION","issuerName":"ACM Conference on Computer and Communications Security","issuedDate":"2025-11-01","fieldOfStudy":"Cryptography","jurisdiction":"Colorado, USA","fraudSignals":[],"confidence":0.87}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.
@@ -584,7 +620,9 @@ export function buildExtractionPrompt(
   } else if (credentialType === 'FINANCIAL') {
     prompt += `This is a financial document. Look for the entity name, fiscal period end date, auditor/preparer (as accreditingBody if applicable), and document type (audit report, tax form, financial statement). Use fiscal year end or filing date as issuedDate.\n`;
   } else if (credentialType === 'PUBLICATION') {
-    prompt += `This is an academic publication. Look for the journal/conference name (as issuerName), publication date, DOI, and research field. Map the research topic to a broad fieldOfStudy.\n`;
+    prompt += `This is an academic publication. Look for the journal/conference name (as issuerName), publication date, DOI (as licenseNumber), and research field. Map the research topic to a broad fieldOfStudy.\n`;
+  } else if (credentialType === 'PATENT') {
+    prompt += `This is a patent document. Look for the patent office (USPTO, EPO, WIPO) as issuerName, patent/application number as licenseNumber, filing or grant date as issuedDate, and technical field. Map the invention domain to a broad fieldOfStudy.\n`;
   }
 
   // JSON.stringify encodes the text as an inert data payload, preventing prompt injection
