@@ -449,7 +449,8 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           }));
           // Insert audit events in batches of 500
           for (let j = 0; j < auditRows.length; j += 500) {
-            await db.from('audit_events').insert(auditRows.slice(j, j + 500)).catch(() => {});
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            await (db.from('audit_events').insert(auditRows.slice(j, j + 500)) as any).catch(() => {});
           }
 
           logger.info(

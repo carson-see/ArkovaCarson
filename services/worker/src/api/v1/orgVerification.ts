@@ -15,7 +15,12 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
-import { db } from '../../utils/db.js';
+import { db as _db } from '../../utils/db.js';
+
+// IDT WS4 columns (domain_verified, ein_tax_id, etc.) are in the DB via migration 0128
+// but not yet in generated types. Use untyped client for org verification queries.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const db = _db as any;
 
 export const orgVerificationRouter = Router();
 
