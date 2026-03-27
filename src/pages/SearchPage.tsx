@@ -19,6 +19,7 @@ import {
   ArrowLeft, Upload, FileSearch, Building, Hash, ExternalLink,
 } from 'lucide-react';
 import { isSearchSubdomain } from '@/App';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
@@ -148,7 +149,13 @@ export function SearchPage() {
         return;
       }
 
-      setPersonResults((data as PersonResult[]) ?? []);
+      // RPC returns SETOF jsonb — results are nested under function name key
+      const rows = (data as Record<string, unknown>[]) ?? [];
+      const unwrapped = rows.map((row) => {
+        const inner = row.search_public_credentials ?? row;
+        return inner as PersonResult;
+      });
+      setPersonResults(unwrapped);
     } catch {
       setPersonError('Search failed. Please try again.');
     } finally {
@@ -263,9 +270,7 @@ export function SearchPage() {
         {/* Header */}
         <div className="text-center mb-10 animate-in-view">
           <div className="flex justify-center mb-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#192028]">
-              <Shield className="h-8 w-8 text-[#00d4ff]" />
-            </div>
+            <ArkovaLogo size={64} />
           </div>
           <h1 className="text-4xl font-black tracking-tighter">
             {standalone ? 'Arkova Search' : SEARCH_LABELS.PAGE_TITLE}
