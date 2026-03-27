@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - 'services/worker/**'
-      - '.github/workflows/worker-deploy.yml'
+      - '.github/workflows/deploy-worker.yml'
   workflow_dispatch:
 
 concurrency:
