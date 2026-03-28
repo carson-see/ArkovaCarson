@@ -266,13 +266,13 @@ describe('useEntitlements', () => {
 
   // DH-10: Realtime subscription
   describe('DH-10: realtime subscription', () => {
-    it('subscribes to subscriptions and anchors changes when user is present', async () => {
+    it('subscribes to subscription changes when user is present', async () => {
       setupMocks({ count: 0 });
 
       renderHook(() => useEntitlements());
 
       await waitFor(() => {
-        expect(mockChannel.on).toHaveBeenCalledTimes(2);
+        expect(mockChannel.on).toHaveBeenCalledTimes(1);
         expect(mockChannel.subscribe).toHaveBeenCalled();
       });
 
@@ -282,16 +282,6 @@ describe('useEntitlements', () => {
           event: '*',
           schema: 'public',
           table: 'subscriptions',
-        }),
-        expect.any(Function),
-      );
-
-      expect(mockChannel.on).toHaveBeenCalledWith(
-        'postgres_changes',
-        expect.objectContaining({
-          event: 'INSERT',
-          schema: 'public',
-          table: 'anchors',
         }),
         expect.any(Function),
       );

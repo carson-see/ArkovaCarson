@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   Building2, Settings, Plus, Upload, UserPlus, Users,
   ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
-  Globe, MapPin, Calendar, Camera,
+  Globe, MapPin, Calendar, Camera, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -37,10 +37,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { OrgVerification } from '@/components/org/OrgVerification';
-import { OrgVerifiedBadge } from '@/components/shared/VerifiedBadge';
+import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
+import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
+import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
+import { WORKER_URL } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
@@ -68,6 +71,8 @@ export function OrgProfilePage() {
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [affiliationDialogOpen, setAffiliationDialogOpen] = useState(false);
+  const [subOrgRefreshKey, setSubOrgRefreshKey] = useState(0);
 
   // Org records count
   const [recordsCount, setRecordsCount] = useState<number | null>(null);
@@ -86,6 +91,9 @@ export function OrgProfilePage() {
 
   // Logo upload state
   const [logoUploading, setLogoUploading] = useState(false);
+
+  // Sub-org affiliation state
+  const [parentOrgName, setParentOrgName] = useState<string | null>(null);
 
   // Fetch user's role in this org
   useEffect(() => {
@@ -124,6 +132,31 @@ export function OrgProfilePage() {
     }
     fetchRecordsCount();
   }, [orgId, refreshKey]);
+
+  // Fetch parent org name for child orgs
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const orgAny = organization as any;
+  const parentOrgId = orgAny?.parent_org_id as string | null;
+  const parentApprovalStatus = orgAny?.parent_approval_status as string | null;
+  const isChildOrg = !!parentOrgId;
+  const isVerifiedOrg = organization?.verification_status === 'VERIFIED';
+
+  useEffect(() => {
+    async function fetchParentOrgName() {
+      if (!parentOrgId) {
+        setParentOrgName(null);
+        return;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data } = await (supabase as any)
+        .from('organizations')
+        .select('display_name')
+        .eq('id', parentOrgId)
+        .single();
+      setParentOrgName(data?.display_name ?? null);
+    }
+    fetchParentOrgName();
+  }, [parentOrgId]);
 
   // Initialize settings fields when org loads
   if (organization && !orgSettingsInit) {
@@ -609,6 +642,95 @@ export function OrgProfilePage() {
                 />
               </div>
             </div>
+
+            {/* Sub-Organization Affiliation (IDT-11) */}
+            <div className="mt-8">
+              <h3 className="text-lg font-semibold flex items-center gap-2 mb-4">
+                <Link2 className="h-5 w-5" />
+                {SUB_ORG_LABELS.SECTION_TITLE}
+              </h3>
+
+              {/* Child org view: show parent affiliation status */}
+              {isChildOrg && (
+                <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
+                  {parentApprovalStatus === 'APPROVED' && parentOrgName && (
+                    <div className="flex items-center gap-3">
+                      <AffiliatedBadge parentName={parentOrgName} />
+                      <span className="text-sm text-muted-foreground">
+                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgName}</strong>
+                      </span>
+                    </div>
+                  )}
+                  {parentApprovalStatus === 'PENDING' && parentOrgName && (
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
+                          {SUB_ORG_LABELS.STATUS_PENDING}
+                        </Badge>
+                        <span className="text-sm text-muted-foreground">
+                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgName}</strong>
+                        </span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-red-400 border-red-500/20 hover:bg-red-500/10"
+                        onClick={async () => {
+                          try {
+                            const { data: { session } } = await supabase.auth.getSession();
+                            if (!session?.access_token) return;
+                            const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/cancel`, {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${session.access_token}`,
+                              },
+                            });
+                            if (response.ok) {
+                              toast.success(SUB_ORG_LABELS.CANCEL_SUCCESS);
+                              window.location.reload();
+                            }
+                          } catch {
+                            // Handle silently
+                          }
+                        }}
+                      >
+                        {SUB_ORG_LABELS.CANCEL_REQUEST}
+                      </Button>
+                    </div>
+                  )}
+                  {parentApprovalStatus === 'REVOKED' && parentOrgName && (
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
+                        {SUB_ORG_LABELS.STATUS_REVOKED}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">
+                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgName}</strong>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Request affiliation button (for non-child orgs or revoked) */}
+              {!isChildOrg && (
+                <div className="mb-6">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAffiliationDialogOpen(true)}
+                  >
+                    <Link2 className="mr-2 h-4 w-4" />
+                    {SUB_ORG_LABELS.REQUEST_AFFILIATION}
+                  </Button>
+                </div>
+              )}
+
+              {/* Parent org view: manage sub-orgs (only for verified orgs or orgs with existing sub-orgs) */}
+              {(isVerifiedOrg || !isChildOrg) && orgId && (
+                <ManageSubOrgs key={subOrgRefreshKey} orgId={orgId} />
+              )}
+            </div>
           </TabsContent>
         )}
         </Tabs>
@@ -659,6 +781,18 @@ export function OrgProfilePage() {
         recordName={revokeTarget?.filename ?? ''}
         onConfirm={handleConfirmRevoke}
       />
+
+      {orgId && (
+        <RequestAffiliationDialog
+          open={affiliationDialogOpen}
+          onOpenChange={setAffiliationDialogOpen}
+          currentOrgId={orgId}
+          onRequested={() => {
+            setSubOrgRefreshKey((k) => k + 1);
+            window.location.reload();
+          }}
+        />
+      )}
     </AppShell>
   );
 }

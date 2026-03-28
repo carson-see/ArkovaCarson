@@ -77,14 +77,14 @@ export function useAnchors(): UseAnchorsReturn {
     setError(null);
 
     // Select only needed columns and exclude pipeline anchors server-side.
-    // Limit to 500 most recent user records for performance (was fetching 862K+ rows).
+    // Limit to 100 most recent user records for performance (was fetching 500+).
     const { data, error: fetchError } = await supabase
       .from('anchors')
       .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
       .is('deleted_at', null)
       .or('metadata.is.null,metadata->>pipeline_source.is.null')
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(100);
 
     if (fetchError) {
       setError(fetchError.message);
@@ -165,21 +165,28 @@ export function useAnchors(): UseAnchorsReturn {
   );
 
   // Realtime subscription for anchor changes (BETA-01)
+  // Filtered by user_id to reduce traffic (H3) + reconnect handler (C4)
   useEffect(() => {
     if (!user) return;
 
     const channel = supabase
-      .channel('anchors-list')
+      .channel(`anchors-${user.id}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'anchors',
+          filter: `user_id=eq.${user.id}`,
         },
         handleRealtimePayload,
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Refetch on reconnect to catch any missed updates (C4)
+        if (status === 'SUBSCRIBED' && channelRef.current) {
+          fetchAnchors();
+        }
+      });
 
     channelRef.current = channel;
 
@@ -189,7 +196,7 @@ export function useAnchors(): UseAnchorsReturn {
         channelRef.current = null;
       }
     };
-  }, [user, handleRealtimePayload]);
+  }, [user, handleRealtimePayload, fetchAnchors]);
 
   const refreshAnchors = useCallback(async () => {
     await fetchAnchors();

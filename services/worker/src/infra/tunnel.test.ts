@@ -28,15 +28,17 @@ describe('INFRA-01: Dockerfile', () => {
   });
 
   it('starts with node directly (not npm — SIGTERM must reach Node)', () => {
-    expect(dockerfile).toMatch(/CMD\s+\["node",\s*"dist\/index\.js"\]/);
+    expect(dockerfile).toMatch(/CMD\s+\["node",.*"dist\/index\.js"\]/);
   });
 
-  it('prunes dev dependencies after build', () => {
-    expect(dockerfile).toContain('npm prune --omit=dev');
+  it('excludes dev dependencies in production stage', () => {
+    // Multi-stage: production stage uses npm ci --omit=dev
+    expect(dockerfile).toMatch(/npm ci --omit=dev|npm prune --omit=dev/);
   });
 
-  it('removes source after build (only dist/ needed)', () => {
-    expect(dockerfile).toContain('rm -rf src/');
+  it('uses multi-stage build (source not in production image)', () => {
+    // Multi-stage: only dist/ is copied from builder stage
+    expect(dockerfile).toMatch(/COPY --from=builder.*dist/);
   });
 });
 

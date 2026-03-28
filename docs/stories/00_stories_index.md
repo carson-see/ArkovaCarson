@@ -39,7 +39,8 @@ For a new developer joining the project, read in this order:
 | GEO | GEO & SEO Optimization | 12 | 6 | 2 | 4 | [15_geo_seo.md](./15_geo_seo.md) |
 | BETA | Beta Readiness | 13 | 13 | 0 | 0 | [16_beta_readiness.md](./16_beta_readiness.md) |
 | PH1.5 | Phase 1.5 Foundation | 16 | 15 | 1 | 0 | [17_phase1_5_foundation.md](./17_phase1_5_foundation.md) |
-| **Total** | | **192** | **180** | **3** | **9** | |
+| ATT | ATS & Background Checks | 8 | 0 | 0 | 8 | [18_ats_background_checks.md](./18_ats_background_checks.md) |
+| **Total** | | **200** | **180** | **3** | **17** | |
 
 ### All Stories by ID
 

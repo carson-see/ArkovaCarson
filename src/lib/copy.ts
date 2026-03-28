@@ -152,6 +152,7 @@ export const NAV_LABELS = {
   HELP: 'Help',
   SEARCH: 'Search',
   TREASURY: 'Treasury',
+  COMPLIANCE: 'Compliance',
 } as const;
 
 export const DOCUMENTS_PAGE_LABELS = {
@@ -949,6 +950,42 @@ export const REVIEW_QUEUE_LABELS = {
 } as const;
 
 // =============================================================================
+// COMPLIANCE DASHBOARD
+// =============================================================================
+
+export const COMPLIANCE_LABELS = {
+  PAGE_TITLE: 'Compliance Intelligence',
+  PAGE_SUBTITLE: 'Monitor credential health, expiring credentials, and review activity across your organization.',
+  CARD_ACTIVE: 'Active Credentials',
+  CARD_EXPIRING: 'Expiring Soon',
+  CARD_REVOKED: 'Recently Revoked',
+  CARD_ANCHORED: 'Anchored Rate',
+  SECTION_EXPIRING: 'Expiring Credentials',
+  SECTION_ACTIVITY: 'Recent Activity',
+  SECTION_REVIEW: 'Review Summary',
+  EMPTY_EXPIRING: 'All credentials current',
+  EMPTY_EXPIRING_DESC: 'No credentials are expiring in the next 30 days.',
+  EMPTY_ACTIVITY: 'No recent activity',
+  EMPTY_ACTIVITY_DESC: 'Credential activity will appear here as events occur.',
+  COL_SUBJECT: 'Subject',
+  COL_TYPE: 'Type',
+  COL_ATTESTER: 'Attester',
+  COL_EXPIRES: 'Expires',
+  COL_DAYS_LEFT: 'Days Left',
+  COL_STATUS: 'Status',
+  COL_ACTION: 'Action',
+  ACTION_VIEW: 'View',
+  ACTION_RENEW: 'Renew',
+  REVIEW_PENDING: 'Items Pending Review',
+  REVIEW_LINK: 'View Review Queue',
+  WITHIN_30_DAYS: 'within 30 days',
+  EVENT_CREATED: 'Credential created',
+  EVENT_REVOKED: 'Credential revoked',
+  EVENT_EXPIRED: 'Credential expired',
+  EVENT_ACTIVE: 'Credential activated',
+} as const;
+
+// =============================================================================
 // AI REPORTS (P8-S16)
 // =============================================================================
 
@@ -1287,6 +1324,42 @@ export const VERSION_HISTORY_LABELS = {
   UPDATED_VERSION: 'Updated Version',
   NO_HISTORY: 'This is the original version of this record.',
   VIEW_VERSION: 'View Version',
+} as const;
+
+// =============================================================================
+// SUB-ORG AFFILIATION (IDT-11)
+// =============================================================================
+
+export const SUB_ORG_LABELS = {
+  SECTION_TITLE: 'Affiliated Organizations',
+  MANAGE_TITLE: 'Manage Affiliated Organizations',
+  MANAGE_DESCRIPTION: 'Approve or revoke affiliation requests from other organizations.',
+  COUNT_LABEL: 'affiliated organizations',
+  MAX_SUB_ORGS_LABEL: 'Maximum Affiliates',
+  MAX_SUB_ORGS_HINT: 'Set the maximum number of organizations that can affiliate with yours.',
+  APPROVE: 'Approve',
+  REVOKE: 'Revoke',
+  STATUS_PENDING: 'Pending Approval',
+  STATUS_APPROVED: 'Approved',
+  STATUS_REVOKED: 'Revoked',
+  EMPTY_STATE: 'No affiliated organizations yet.',
+  EMPTY_STATE_CHILD: 'Your organization is not affiliated with a parent organization.',
+  REQUEST_AFFILIATION: 'Request Affiliation',
+  REQUEST_DIALOG_TITLE: 'Request Organization Affiliation',
+  REQUEST_DIALOG_DESCRIPTION: 'Search for a verified organization to request affiliation with.',
+  SEARCH_PLACEHOLDER: 'Search verified organizations...',
+  AFFILIATED_WITH: 'Affiliated with',
+  PENDING_APPROVAL: 'Pending approval from',
+  REVOKED_BY: 'Affiliation revoked by',
+  APPROVE_SUCCESS: 'Organization approved as affiliate.',
+  APPROVE_FAILED: 'Failed to approve organization.',
+  REVOKE_SUCCESS: 'Organization affiliation revoked.',
+  REVOKE_FAILED: 'Failed to revoke affiliation.',
+  REQUEST_SUCCESS: 'Affiliation request sent successfully.',
+  REQUEST_FAILED: 'Failed to send affiliation request.',
+  CANCEL_REQUEST: 'Cancel Request',
+  CANCEL_SUCCESS: 'Affiliation request cancelled.',
+  NO_RESULTS: 'No verified organizations found.',
 } as const;
 
 // =============================================================================

@@ -60,9 +60,10 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Billing & Plans')).toBeNull();
   });
 
-  it('renders Developers link in sidebar', () => {
+  it('does not render Developers or Compliance in main sidebar (moved to admin/dropdown)', () => {
     renderSidebar();
-    expect(screen.getByText('Developers')).toBeDefined();
+    expect(screen.queryByText('Developers')).toBeNull();
+    expect(screen.queryByText('Compliance')).toBeNull();
   });
 
   it('does not render My Records, My Credentials, or Attestations as separate items', () => {

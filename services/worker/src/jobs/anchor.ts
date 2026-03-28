@@ -14,7 +14,7 @@
  * Stories: CRIT-2, P7-TS-05, P7-TS-13, BETA-01, RACE-1
  */
 
-import { db } from '../utils/db.js';
+import { db, withDbTimeout } from '../utils/db.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 import { getChainClientAsync } from '../chain/client.js';
@@ -371,12 +371,21 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
   }
 
   // Phase 1: Atomically claim anchors via RPC (PENDING → BROADCASTING)
+  // Wrapped in 30s timeout to prevent cron job from hanging if PostgREST is slow
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: claimedAnchors, error: claimError } = await (db.rpc as any)('claim_pending_anchors', {
-    p_worker_id: `worker-${process.pid}`,
-    p_limit: 50,
-    p_exclude_pipeline: true,
-  });
+  let claimResult: { data: any; error: any };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    claimResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
+      p_worker_id: `worker-${process.pid}`,
+      p_limit: 50,
+      p_exclude_pipeline: true,
+    }), 30_000);
+  } catch (timeoutErr) {
+    logger.error({ error: timeoutErr }, 'claim_pending_anchors timed out after 30s');
+    return { processed: 0, failed: 0 };
+  }
+  const { data: claimedAnchors, error: claimError } = claimResult;
 
   if (claimError) {
     // Fallback: if RPC doesn't exist yet (pre-migration), use legacy path

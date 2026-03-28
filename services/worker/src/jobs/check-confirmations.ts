@@ -462,7 +462,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   confirmationCheckRunning = false;
 
   logger.info(
-    { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: anchors.length },
+    { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: txRows.length },
     'Confirmation check complete',
   );
   return { checked, confirmed };

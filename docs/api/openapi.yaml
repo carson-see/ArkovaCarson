@@ -313,6 +313,367 @@ paths:
         "200":
           description: Usage statistics
 
+  /attestations:
+    post:
+      operationId: createAttestation
+      summary: Create a new attestation
+      description: |
+        Creates a formal attestation linking an attester to a subject with structured claims.
+        The attestation is fingerprinted and queued for Bitcoin anchoring.
+      tags: [Attestations]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttestationRequest"
+            example:
+              attestation_type: VERIFICATION
+              attester_name: "Acme University Registrar"
+              attester_type: INSTITUTION
+              attester_title: "Office of the Registrar"
+              subject_type: credential
+              subject_identifier: "ARK-2026-DEG-001"
+              claims:
+                - claim: "Degree conferred on 2025-06-15"
+                  evidence: "Registrar record #R-44821"
+                - claim: "GPA verified above 3.5 threshold"
+              summary: "Degree conferral verified by issuing institution"
+              jurisdiction: "US-CA"
+              expires_at: "2027-06-15T00:00:00Z"
+      responses:
+        "201":
+          description: Attestation created and queued for anchoring
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateAttestationResponse"
+              example:
+                public_id: "ATT-2026-VER-00042"
+                attestation_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                status: "PENDING"
+                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ATT-2026-VER-00042"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "claims must contain at least one entry"
+        "401":
+          description: Missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "unauthorized"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+    get:
+      operationId: listAttestations
+      summary: List and filter attestations
+      description: |
+        Returns a paginated list of attestations. Supports filtering by status,
+        attestation type, and subject identifier. Public endpoint — no auth required.
+      tags: [Attestations]
+      security: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, SECURED, REVOKED, EXPIRED]
+          description: Filter by attestation status
+        - name: attestation_type
+          in: query
+          schema:
+            type: string
+            enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
+          description: Filter by attestation type
+        - name: subject_identifier
+          in: query
+          schema:
+            type: string
+          description: Filter by subject public ID
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Pagination cursor from previous response
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 25
+            minimum: 1
+            maximum: 100
+          description: Number of results per page
+      responses:
+        "200":
+          description: Paginated list of attestations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationListResponse"
+              example:
+                data:
+                  - public_id: "ATT-2026-VER-00042"
+                    attestation_type: VERIFICATION
+                    status: SECURED
+                    attester_name: "Acme University Registrar"
+                    subject_type: credential
+                    subject_identifier: "ARK-2026-DEG-001"
+                    summary: "Degree conferral verified by issuing institution"
+                    created_at: "2026-03-28T12:00:00Z"
+                    anchored_at: "2026-03-28T12:15:00Z"
+                next_cursor: "eyJpZCI6NDJ9"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /attestations/{publicId}:
+    get:
+      operationId: getAttestation
+      summary: Verify an attestation by public ID
+      description: |
+        Returns full attestation details including subject, attester, claims,
+        chain proof, and lifecycle dates. Public endpoint — no auth required.
+      tags: [Attestations]
+      security: []
+      parameters:
+        - name: publicId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: ATT-2026-VER-00042
+          description: The attestation's public identifier
+      responses:
+        "200":
+          description: Full attestation details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttestationDetail"
+              example:
+                public_id: "ATT-2026-VER-00042"
+                attestation_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                attestation_type: VERIFICATION
+                status: SECURED
+                fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                subject:
+                  type: credential
+                  identifier: "ARK-2026-DEG-001"
+                attester:
+                  name: "Acme University Registrar"
+                  type: INSTITUTION
+                  title: "Office of the Registrar"
+                claims:
+                  - claim: "Degree conferred on 2025-06-15"
+                    evidence: "Registrar record #R-44821"
+                  - claim: "GPA verified above 3.5 threshold"
+                summary: "Degree conferral verified by issuing institution"
+                jurisdiction: "US-CA"
+                chain_proof:
+                  tx_id: "abc123def456..."
+                  block_height: 890123
+                  merkle_root: "f4a3b2c1..."
+                  explorer_url: "https://mempool.space/tx/abc123def456..."
+                created_at: "2026-03-28T12:00:00Z"
+                anchored_at: "2026-03-28T12:15:00Z"
+                expires_at: "2027-06-15T00:00:00Z"
+                revoked_at: null
+        "404":
+          description: Attestation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "attestation not found"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /attestations/{publicId}/revoke:
+    patch:
+      operationId: revokeAttestation
+      summary: Revoke an attestation
+      description: |
+        Revokes an attestation. Only the original attester (authenticated via JWT)
+        may revoke. Revocation is permanent and anchored on-chain.
+      tags: [Attestations]
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: publicId
+          in: path
+          required: true
+          schema:
+            type: string
+            example: ATT-2026-VER-00042
+          description: The attestation's public identifier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  minLength: 3
+                  description: Human-readable reason for revocation
+            example:
+              reason: "Degree was rescinded due to academic integrity violation"
+      responses:
+        "200":
+          description: Attestation revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevokeAttestationResponse"
+              example:
+                public_id: "ATT-2026-VER-00042"
+                status: "REVOKED"
+                revoked_at: "2026-03-28T14:30:00Z"
+        "400":
+          description: Validation error (reason too short)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "reason must be at least 3 characters"
+        "401":
+          description: Missing or invalid JWT
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the original attester
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "only the original attester may revoke this attestation"
+        "404":
+          description: Attestation not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Attestation already revoked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "attestation is already revoked"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /attestations/batch-verify:
+    post:
+      operationId: batchVerifyAttestations
+      summary: Batch verify multiple attestations
+      description: |
+        Verify up to 100 attestations in a single request. Returns individual
+        verification status for each public ID plus an aggregate summary.
+      tags: [Attestations]
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchVerifyAttestationsRequest"
+            example:
+              public_ids:
+                - "ATT-2026-VER-00042"
+                - "ATT-2026-END-00099"
+                - "ATT-2026-AUD-00007"
+      responses:
+        "200":
+          description: Batch verification results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchVerifyAttestationsResponse"
+              example:
+                results:
+                  - public_id: "ATT-2026-VER-00042"
+                    status: SECURED
+                    attestation_type: VERIFICATION
+                    attester_name: "Acme University Registrar"
+                    anchored_at: "2026-03-28T12:15:00Z"
+                  - public_id: "ATT-2026-END-00099"
+                    status: EXPIRED
+                    attestation_type: ENDORSEMENT
+                    attester_name: "State Bar of California"
+                    anchored_at: "2025-01-10T08:00:00Z"
+                    expires_at: "2026-01-10T08:00:00Z"
+                  - public_id: "ATT-2026-AUD-00007"
+                    error: "not_found"
+                summary:
+                  total: 3
+                  verified: 1
+                  not_found: 1
+                  expired: 1
+                  revoked: 0
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                verified: false
+                error: "public_ids must contain between 1 and 100 entries"
+        "401":
+          description: Missing or invalid API key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
   /jobs/{jobId}:
     get:
       operationId: getJobStatus
@@ -489,6 +850,272 @@ components:
           type: string
         tokensUsed:
           type: integer
+
+    CreateAttestationRequest:
+      type: object
+      required: [attestation_type, attester_name, attester_type, subject_type, subject_identifier, claims]
+      properties:
+        attestation_type:
+          type: string
+          enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
+          description: Category of attestation
+        attester_name:
+          type: string
+          description: Name of the attesting party
+        attester_type:
+          type: string
+          enum: [INSTITUTION, CORPORATION, INDIVIDUAL, REGULATORY, THIRD_PARTY]
+          description: Type of attesting entity
+        attester_title:
+          type: string
+          description: Optional title or role of the attester
+        subject_type:
+          type: string
+          enum: [credential, entity, process, asset]
+          description: What the attestation is about
+        subject_identifier:
+          type: string
+          description: Public ID of the subject being attested to
+        claims:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [claim]
+            properties:
+              claim:
+                type: string
+                description: The assertion being made
+              evidence:
+                type: string
+                description: Optional supporting evidence reference
+          description: One or more structured claims
+        summary:
+          type: string
+          description: Optional human-readable summary
+        jurisdiction:
+          type: string
+          description: Optional jurisdiction code (e.g., US-CA). Omitted when null.
+        expires_at:
+          type: string
+          format: date-time
+          description: Optional ISO 8601 expiration timestamp
+
+    CreateAttestationResponse:
+      type: object
+      required: [public_id, attestation_id, fingerprint, status, verify_url]
+      properties:
+        public_id:
+          type: string
+          description: Public identifier for the attestation
+        attestation_id:
+          type: string
+          format: uuid
+          description: Internal attestation UUID
+        fingerprint:
+          type: string
+          description: SHA-256 fingerprint of the attestation content
+        status:
+          type: string
+          enum: [PENDING]
+          description: Initial status (always PENDING)
+        verify_url:
+          type: string
+          format: uri
+          description: Direct URL to verify this attestation
+
+    AttestationDetail:
+      type: object
+      required: [public_id, attestation_id, attestation_type, status, fingerprint, subject, attester, claims, created_at]
+      properties:
+        public_id:
+          type: string
+        attestation_id:
+          type: string
+          format: uuid
+        attestation_type:
+          type: string
+          enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
+        status:
+          type: string
+          enum: [PENDING, SECURED, REVOKED, EXPIRED]
+        fingerprint:
+          type: string
+        subject:
+          type: object
+          required: [type, identifier]
+          properties:
+            type:
+              type: string
+              enum: [credential, entity, process, asset]
+            identifier:
+              type: string
+        attester:
+          type: object
+          required: [name, type]
+          properties:
+            name:
+              type: string
+            type:
+              type: string
+              enum: [INSTITUTION, CORPORATION, INDIVIDUAL, REGULATORY, THIRD_PARTY]
+            title:
+              type: string
+        claims:
+          type: array
+          items:
+            type: object
+            required: [claim]
+            properties:
+              claim:
+                type: string
+              evidence:
+                type: string
+        summary:
+          type: string
+        jurisdiction:
+          type: string
+          description: Omitted when null (frozen schema)
+        chain_proof:
+          type: object
+          nullable: true
+          description: Present only when status is SECURED
+          properties:
+            tx_id:
+              type: string
+            block_height:
+              type: integer
+            merkle_root:
+              type: string
+            explorer_url:
+              type: string
+              format: uri
+        created_at:
+          type: string
+          format: date-time
+        anchored_at:
+          type: string
+          format: date-time
+          nullable: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AttestationListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            required: [public_id, attestation_type, status, attester_name, subject_type, subject_identifier, created_at]
+            properties:
+              public_id:
+                type: string
+              attestation_type:
+                type: string
+                enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
+              status:
+                type: string
+                enum: [PENDING, SECURED, REVOKED, EXPIRED]
+              attester_name:
+                type: string
+              subject_type:
+                type: string
+                enum: [credential, entity, process, asset]
+              subject_identifier:
+                type: string
+              summary:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              anchored_at:
+                type: string
+                format: date-time
+                nullable: true
+        next_cursor:
+          type: string
+          nullable: true
+          description: Cursor for next page, null if no more results
+
+    RevokeAttestationResponse:
+      type: object
+      required: [public_id, status, revoked_at]
+      properties:
+        public_id:
+          type: string
+        status:
+          type: string
+          enum: [REVOKED]
+        revoked_at:
+          type: string
+          format: date-time
+
+    BatchVerifyAttestationsRequest:
+      type: object
+      required: [public_ids]
+      properties:
+        public_ids:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          maxItems: 100
+          description: List of attestation public IDs to verify
+
+    BatchVerifyAttestationsResponse:
+      type: object
+      required: [results, summary]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [public_id]
+            properties:
+              public_id:
+                type: string
+              status:
+                type: string
+                enum: [PENDING, SECURED, REVOKED, EXPIRED]
+              attestation_type:
+                type: string
+                enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
+              attester_name:
+                type: string
+              anchored_at:
+                type: string
+                format: date-time
+                nullable: true
+              expires_at:
+                type: string
+                format: date-time
+                nullable: true
+              error:
+                type: string
+                description: Present when attestation could not be found
+        summary:
+          type: object
+          required: [total, verified, not_found, expired, revoked]
+          properties:
+            total:
+              type: integer
+            verified:
+              type: integer
+              description: Count of SECURED attestations
+            not_found:
+              type: integer
+            expired:
+              type: integer
+            revoked:
+              type: integer
 
     ErrorResponse:
       type: object

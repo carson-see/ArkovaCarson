@@ -57,9 +57,8 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
     onSignOut();
   };
 
-  const handleSecureSuccess = useCallback(async () => {
-    await refreshAnchors();
-  }, [refreshAnchors]);
+  // Realtime subscription in useAnchors handles INSERT — no manual refresh needed
+  const handleSecureSuccess = useCallback(() => {}, []);
 
   const handleViewRecord = useCallback((record: Record) => {
     onViewAssetDetail?.(record.id);

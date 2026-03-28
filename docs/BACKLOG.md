@@ -18,6 +18,7 @@ _Last updated: 2026-03-23 (Session 13: 29K+ public records, 1,572+ SECURED ancho
 | UX Overhaul (Sessions 9-10) | 7 | 7 | 0 | No (all complete) |
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
+| ATS & Background Checks | 8 | 0 | 8 | No (post-launch) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs | 29 | 29 | 0 | No |
@@ -233,6 +234,26 @@ _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integ
 | ID | Description | Remaining |
 |----|-------------|-----------|
 | INFRA-07 | Sentry integration | Source map upload + DSN env vars in production |
+
+### ATS & Background Check Integration — 8 not started
+_Story doc: [18_ats_background_checks.md](stories/18_ats_background_checks.md) | Research: background check industry ($14.7B market), attestation standards (W3C VC 2.0), credential fraud (70% resume lies)_
+
+| # | ID | Priority | Description | Dependencies | Effort |
+|---|-----|----------|-------------|-------------|--------|
+| 1 | ATT-01 | HIGH | Employment verification attestation workflow (HR creates tamper-proof employment attestations) | Existing attestation infra | Large |
+| 2 | ATT-02 | HIGH | Education verification attestation workflow (universities issue verifiable degrees) | Existing attestation infra | Large |
+| 3 | ATT-03 | HIGH | Batch attestation verification API (`POST /api/v1/attestations/batch-verify`, max 100) | ATT-01 or ATT-02 | Medium |
+| 4 | ATT-04 | MEDIUM | ATS webhook integration (Greenhouse, Lever, generic inbound webhooks trigger verification) | ATT-03 | Large |
+| 5 | ATT-05 | MEDIUM | Candidate credential portfolio (shareable bundle of verified credentials, single URL) | ATT-01, ATT-02 | Medium |
+| 6 | ATT-06 | MEDIUM | Evidence upload UI (attach supporting docs to attestations, client-side fingerprinting) | None (table exists) | Small |
+| 7 | ATT-07 | HIGH | Attestation OpenAPI documentation (all endpoints in openapi.yaml) | None | Small |
+| 8 | ATT-08 | LOW | Expiry monitoring and re-verification alerts (webhook events + email + dashboard) | ATT-01, ATT-02 | Medium |
+
+**Implementation phases:**
+1. **Foundation:** ATT-07 (document existing), ATT-06 (evidence UI)
+2. **Workflows:** ATT-01 (employment), ATT-02 (education)
+3. **Scale:** ATT-03 (batch API), ATT-05 (portfolios)
+4. **Integration:** ATT-04 (ATS webhooks), ATT-08 (monitoring)
 
 ---
 

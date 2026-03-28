@@ -64,6 +64,13 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { supabase } from '@/lib/supabase';
+import { EmploymentVerificationForm } from '@/components/attestation/EmploymentVerificationForm';
+import { EducationVerificationForm } from '@/components/attestation/EducationVerificationForm';
+import { EvidenceUpload } from '@/components/attestation/EvidenceUpload';
+import type { EvidenceItem } from '@/components/attestation/EvidenceUpload';
+import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard';
+import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
+import { CreatePortfolioDialog } from '@/components/portfolio';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -145,9 +152,19 @@ export function AttestationsPage() {
   const [expiresAt, setExpiresAt] = useState('');
   const [claims, setClaims] = useState<ClaimInput[]>([{ claim: '', evidence: '' }]);
 
+  // Form template state
+  const [formMode, setFormMode] = useState<'template' | 'custom' | 'employment' | 'education'>('template');
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+
   // Detail state
   const [selectedAttestation, setSelectedAttestation] = useState<Attestation | null>(null);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  // Portfolio dialog state
+  const [showPortfolioDialog, setShowPortfolioDialog] = useState(false);
+
+  // Bulk issuance wizard state
+  const [showBulkWizard, setShowBulkWizard] = useState(false);
 
   // Revoke state
   const [revokeTarget, setRevokeTarget] = useState<Attestation | null>(null);
@@ -246,6 +263,60 @@ export function AttestationsPage() {
     setExpiresAt('');
     setClaims([{ claim: '', evidence: '' }]);
     setFormError(null);
+    setFormMode('template');
+    setEvidenceItems([]);
+  };
+
+  const handleTemplateSubmit = async (data: {
+    attestation_type: string;
+    attester_name: string;
+    attester_type: string;
+    subject_type: string;
+    subject_identifier: string;
+    claims: Array<{ claim: string; evidence?: string }>;
+    summary: string;
+    metadata: Record<string, unknown>;
+  }) => {
+    setFormError(null);
+    setSubmitting(true);
+    try {
+      const workerUrl = WORKER_URL;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setFormError('Authentication required'); setSubmitting(false); return; }
+
+      const response = await fetch(`${workerUrl}/api/v1/attestations`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          attestation_type: data.attestation_type,
+          attester_name: data.attester_name,
+          attester_type: data.attester_type,
+          subject_type: data.subject_type,
+          subject_identifier: data.subject_identifier,
+          claims: data.claims,
+          summary: data.summary,
+          evidence_fingerprint: evidenceItems.length > 0 ? evidenceItems[0].fingerprint : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: 'Failed to create attestation' }));
+        setFormError(err.error || 'Failed to create attestation');
+        setSubmitting(false);
+        return;
+      }
+
+      resetForm();
+      setShowForm(false);
+      await fetchAttestations();
+    } catch {
+      setFormError('Network error');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -315,16 +386,32 @@ export function AttestationsPage() {
               Create and manage immutable attestations anchored to the network
             </p>
           </div>
-          <Button
-            onClick={() => { setShowForm(!showForm); if (!showForm) resetForm(); }}
-            className={showForm ? 'bg-muted text-muted-foreground hover:bg-muted/80' : ''}
-          >
-            {showForm ? (
-              <><X className="mr-2 h-4 w-4" /> Cancel</>
-            ) : (
-              <><Plus className="mr-2 h-4 w-4" /> New Attestation</>
-            )}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-[#00d4ff]/20"
+              onClick={() => setShowPortfolioDialog(true)}
+            >
+              <Briefcase className="mr-2 h-4 w-4" /> Create Portfolio
+            </Button>
+            <Button
+              variant="outline"
+              className="border-[#00d4ff]/20"
+              onClick={() => setShowBulkWizard(true)}
+            >
+              <FileSpreadsheet className="mr-2 h-4 w-4" /> Bulk Issue
+            </Button>
+            <Button
+              onClick={() => { setShowForm(!showForm); if (!showForm) resetForm(); }}
+              className={showForm ? 'bg-muted text-muted-foreground hover:bg-muted/80' : ''}
+            >
+              {showForm ? (
+                <><X className="mr-2 h-4 w-4" /> Cancel</>
+              ) : (
+                <><Plus className="mr-2 h-4 w-4" /> New Attestation</>
+              )}
+            </Button>
+          </div>
         </div>
 
         {/* Create Form */}
@@ -343,174 +430,239 @@ export function AttestationsPage() {
                 </div>
               )}
 
-              {/* Attestation Type */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Attestation Type</Label>
-                  <Select value={attestationType} onValueChange={setAttestationType}>
-                    <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ATTESTATION_TYPES.map((t) => (
-                        <SelectItem key={t.value} value={t.value}>
-                          <span className="font-medium">{t.label}</span>
-                          <span className="text-xs text-muted-foreground ml-2">— {t.desc}</span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+              {/* Template Selection */}
+              {formMode === 'template' && (
+                <div className="space-y-4">
+                  <p className="text-sm text-muted-foreground">Choose a template or create a custom attestation</p>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <button
+                      className="rounded-lg border border-[#00d4ff]/20 p-4 text-left hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5 transition-colors"
+                      onClick={() => setFormMode('employment')}
+                    >
+                      <Briefcase className="h-5 w-5 text-[#00d4ff] mb-2" />
+                      <div className="font-medium text-sm">Employment Verification</div>
+                      <p className="text-xs text-muted-foreground mt-1">Verify employment dates, title, and status</p>
+                    </button>
+                    <button
+                      className="rounded-lg border border-[#00d4ff]/20 p-4 text-left hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5 transition-colors"
+                      onClick={() => setFormMode('education')}
+                    >
+                      <GraduationCap className="h-5 w-5 text-[#00d4ff] mb-2" />
+                      <div className="font-medium text-sm">Education Credential</div>
+                      <p className="text-xs text-muted-foreground mt-1">Issue tamper-proof degree or certification</p>
+                    </button>
+                    <button
+                      className="rounded-lg border border-border/50 p-4 text-left hover:border-[#00d4ff]/20 hover:bg-[#00d4ff]/5 transition-colors"
+                      onClick={() => setFormMode('custom')}
+                    >
+                      <FileCheck className="h-5 w-5 text-muted-foreground mb-2" />
+                      <div className="font-medium text-sm">Custom Attestation</div>
+                      <p className="text-xs text-muted-foreground mt-1">Create any type of attestation</p>
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div className="space-y-2">
-                  <Label>Subject Type</Label>
-                  <Select value={subjectType} onValueChange={setSubjectType}>
-                    <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="credential">Credential</SelectItem>
-                      <SelectItem value="entity">Entity / Organization</SelectItem>
-                      <SelectItem value="process">Process / Procedure</SelectItem>
-                      <SelectItem value="asset">Asset / Document</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              {/* Subject */}
-              <div className="space-y-2">
-                <Label>Subject *</Label>
-                <Input
-                  placeholder={subjectType === 'credential' ? 'e.g., Bachelor of Science in Computer Science' :
-                    subjectType === 'entity' ? 'e.g., Acme Corporation, University of Michigan' :
-                    subjectType === 'process' ? 'e.g., SOC 2 Type II Audit, ISO 27001 Certification' :
-                    'e.g., Patent Application #12345, Financial Statement Q4 2026'}
-                  value={subjectIdentifier}
-                  onChange={(e) => setSubjectIdentifier(e.target.value)}
-                  className="bg-transparent border-[#00d4ff]/20"
+              {/* Employment Template */}
+              {formMode === 'employment' && (
+                <EmploymentVerificationForm
+                  orgName={profile?.full_name ?? ''}
+                  onSubmit={handleTemplateSubmit}
+                  onCancel={() => setFormMode('template')}
+                  submitting={submitting}
                 />
-                <p className="text-xs text-muted-foreground">
-                  What is being attested — a unique attestation ID will be auto-generated (e.g., ARK-UMI-VER-A3F2B1)
-                </p>
-              </div>
+              )}
 
-              {/* Attester Info */}
-              <div className="grid gap-4 sm:grid-cols-3">
-                <div className="space-y-2">
-                  <Label>Attester Name *</Label>
-                  <Input
-                    placeholder="Your name or organization"
-                    value={attesterName}
-                    onChange={(e) => setAttesterName(e.target.value)}
-                    className="bg-transparent border-[#00d4ff]/20"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Attester Type</Label>
-                  <Select value={attesterType} onValueChange={setAttesterType}>
-                    <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ATTESTER_TYPES.map((t) => (
-                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Title / Role</Label>
-                  <Input
-                    placeholder="e.g., General Counsel, CPA"
-                    value={attesterTitle}
-                    onChange={(e) => setAttesterTitle(e.target.value)}
-                    className="bg-transparent border-[#00d4ff]/20"
-                  />
-                </div>
-              </div>
+              {/* Education Template */}
+              {formMode === 'education' && (
+                <EducationVerificationForm
+                  orgName={profile?.full_name ?? ''}
+                  onSubmit={handleTemplateSubmit}
+                  onCancel={() => setFormMode('template')}
+                  submitting={submitting}
+                />
+              )}
 
-              {/* Claims */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Claims *</Label>
-                  <Button variant="outline" size="sm" onClick={addClaim} className="border-[#00d4ff]/20 text-xs">
-                    <Plus className="h-3 w-3 mr-1" /> Add Claim
-                  </Button>
-                </div>
-                {claims.map((claim, i) => (
-                  <div key={i} className="flex gap-2">
-                    <div className="flex-1 space-y-1">
+              {/* Custom Form (original) */}
+              {formMode === 'custom' && (
+                <>
+                  {/* Attestation Type */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Attestation Type</Label>
+                      <Select value={attestationType} onValueChange={setAttestationType}>
+                        <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ATTESTATION_TYPES.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>
+                              <span className="font-medium">{t.label}</span>
+                              <span className="text-xs text-muted-foreground ml-2">{t.desc}</span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Subject Type</Label>
+                      <Select value={subjectType} onValueChange={setSubjectType}>
+                        <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="credential">Credential</SelectItem>
+                          <SelectItem value="entity">Entity / Organization</SelectItem>
+                          <SelectItem value="process">Process / Procedure</SelectItem>
+                          <SelectItem value="asset">Asset / Document</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  {/* Subject */}
+                  <div className="space-y-2">
+                    <Label>Subject *</Label>
+                    <Input
+                      placeholder={subjectType === 'credential' ? 'e.g., Bachelor of Science in Computer Science' :
+                        subjectType === 'entity' ? 'e.g., Acme Corporation, University of Michigan' :
+                        subjectType === 'process' ? 'e.g., SOC 2 Type II Audit, ISO 27001 Certification' :
+                        'e.g., Patent Application #12345, Financial Statement Q4 2026'}
+                      value={subjectIdentifier}
+                      onChange={(e) => setSubjectIdentifier(e.target.value)}
+                      className="bg-transparent border-[#00d4ff]/20"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      What is being attested (auto-generates ID like ARK-UMI-VER-A3F2B1)
+                    </p>
+                  </div>
+
+                  {/* Attester Info */}
+                  <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label>Attester Name *</Label>
                       <Input
-                        placeholder="Claim statement (e.g., 'This document has been independently verified')"
-                        value={claim.claim}
-                        onChange={(e) => updateClaim(i, 'claim', e.target.value)}
+                        placeholder="Your name or organization"
+                        value={attesterName}
+                        onChange={(e) => setAttesterName(e.target.value)}
                         className="bg-transparent border-[#00d4ff]/20"
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Attester Type</Label>
+                      <Select value={attesterType} onValueChange={setAttesterType}>
+                        <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ATTESTER_TYPES.map((t) => (
+                            <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Title / Role</Label>
                       <Input
-                        placeholder="Supporting evidence (optional)"
-                        value={claim.evidence}
-                        onChange={(e) => updateClaim(i, 'evidence', e.target.value)}
-                        className="bg-transparent border-[#00d4ff]/20 text-xs"
+                        placeholder="e.g., General Counsel, CPA"
+                        value={attesterTitle}
+                        onChange={(e) => setAttesterTitle(e.target.value)}
+                        className="bg-transparent border-[#00d4ff]/20"
                       />
                     </div>
-                    {claims.length > 1 && (
-                      <Button variant="ghost" size="sm" onClick={() => removeClaim(i)} className="text-muted-foreground h-8 w-8 p-0 mt-1">
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    )}
                   </div>
-                ))}
-              </div>
 
-              {/* Summary + Jurisdiction */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Summary</Label>
-                  <Input
-                    placeholder="Brief description of this attestation"
-                    value={summary}
-                    onChange={(e) => setSummary(e.target.value)}
-                    className="bg-transparent border-[#00d4ff]/20"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Jurisdiction</Label>
-                  <Input
-                    placeholder="e.g., US, EU, UK"
-                    value={jurisdiction}
-                    onChange={(e) => setJurisdiction(e.target.value)}
-                    className="bg-transparent border-[#00d4ff]/20"
-                  />
-                </div>
-              </div>
+                  {/* Claims */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label>Claims *</Label>
+                      <Button variant="outline" size="sm" onClick={addClaim} className="border-[#00d4ff]/20 text-xs">
+                        <Plus className="h-3 w-3 mr-1" /> Add Claim
+                      </Button>
+                    </div>
+                    {claims.map((claim, i) => (
+                      <div key={i} className="flex gap-2">
+                        <div className="flex-1 space-y-1">
+                          <Input
+                            placeholder="Claim statement"
+                            value={claim.claim}
+                            onChange={(e) => updateClaim(i, 'claim', e.target.value)}
+                            className="bg-transparent border-[#00d4ff]/20"
+                          />
+                          <Input
+                            placeholder="Supporting evidence (optional)"
+                            value={claim.evidence}
+                            onChange={(e) => updateClaim(i, 'evidence', e.target.value)}
+                            className="bg-transparent border-[#00d4ff]/20 text-xs"
+                          />
+                        </div>
+                        {claims.length > 1 && (
+                          <Button variant="ghost" size="sm" onClick={() => removeClaim(i)} className="text-muted-foreground h-8 w-8 p-0 mt-1">
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
 
-              {/* Expiry */}
-              <div className="w-full sm:w-1/3">
-                <div className="space-y-2">
-                  <Label>Expires At (optional)</Label>
-                  <Input
-                    type="datetime-local"
-                    value={expiresAt}
-                    onChange={(e) => setExpiresAt(e.target.value)}
-                    className="bg-transparent border-[#00d4ff]/20"
-                  />
-                </div>
-              </div>
+                  {/* Summary + Jurisdiction */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Summary</Label>
+                      <Input
+                        placeholder="Brief description of this attestation"
+                        value={summary}
+                        onChange={(e) => setSummary(e.target.value)}
+                        className="bg-transparent border-[#00d4ff]/20"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Jurisdiction</Label>
+                      <Input
+                        placeholder="e.g., US, EU, UK"
+                        value={jurisdiction}
+                        onChange={(e) => setJurisdiction(e.target.value)}
+                        className="bg-transparent border-[#00d4ff]/20"
+                      />
+                    </div>
+                  </div>
 
-              {/* Submit */}
-              <div className="flex justify-end gap-3 pt-2">
-                <Button variant="outline" onClick={() => { setShowForm(false); resetForm(); }} className="border-[#00d4ff]/20">
-                  Cancel
-                </Button>
-                <Button onClick={handleSubmit} disabled={submitting}>
-                  {submitting ? (
-                    <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...</>
-                  ) : (
-                    <><Shield className="mr-2 h-4 w-4" /> Create Attestation</>
-                  )}
-                </Button>
-              </div>
+                  {/* Expiry */}
+                  <div className="w-full sm:w-1/3">
+                    <div className="space-y-2">
+                      <Label>Expires At (optional)</Label>
+                      <Input
+                        type="datetime-local"
+                        value={expiresAt}
+                        onChange={(e) => setExpiresAt(e.target.value)}
+                        className="bg-transparent border-[#00d4ff]/20"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Evidence Upload */}
+                  <EvidenceUpload
+                    items={evidenceItems}
+                    onChange={setEvidenceItems}
+                    disabled={submitting}
+                  />
+
+                  {/* Submit */}
+                  <div className="flex justify-end gap-3 pt-2">
+                    <Button variant="outline" onClick={() => setFormMode('template')} className="border-[#00d4ff]/20">
+                      Back
+                    </Button>
+                    <Button onClick={handleSubmit} disabled={submitting}>
+                      {submitting ? (
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...</>
+                      ) : (
+                        <><Shield className="mr-2 h-4 w-4" /> Create Attestation</>
+                      )}
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         )}
@@ -795,6 +947,25 @@ export function AttestationsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Portfolio Creation Dialog */}
+      <CreatePortfolioDialog
+        open={showPortfolioDialog}
+        onOpenChange={setShowPortfolioDialog}
+        onCreated={() => {
+          // Portfolio created — dialog handles its own success state
+        }}
+      />
+
+      {/* Bulk Issuance Wizard */}
+      <BulkIssuanceWizard
+        open={showBulkWizard}
+        onOpenChange={(open) => {
+          setShowBulkWizard(open);
+          if (!open) fetchAttestations();
+        }}
+        orgName={profile?.full_name ?? 'Arkova'}
+      />
     </AppShell>
   );
 }

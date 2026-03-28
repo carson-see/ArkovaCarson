@@ -42,10 +42,26 @@ export type FlagId = keyof typeof FLAGS;
 // Track which flags have already logged an error to avoid console spam
 const _flagErrorLogged = new Set<string>();
 
+// In-memory flag cache with TTL to avoid RPC on every call
+const FLAG_CACHE_TTL_MS = 30_000; // 30 seconds
+const _flagCache = new Map<string, { value: boolean; expires: number }>();
+
+/** @internal Test-only helper to reset cache between tests */
+export function _clearCacheForTest(): void {
+  _flagCache.clear();
+  _flagErrorLogged.clear();
+}
+
 /**
- * Get a flag value from the server
+ * Get a flag value from the server (cached for 30s to avoid RPC per call)
  */
 export async function getFlag(flagId: FlagId): Promise<boolean> {
+  // Check cache first
+  const cached = _flagCache.get(flagId);
+  if (cached && Date.now() < cached.expires) {
+    return cached.value;
+  }
+
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase.rpc as any)('get_flag', {
@@ -58,14 +74,20 @@ export async function getFlag(flagId: FlagId): Promise<boolean> {
         _flagErrorLogged.add(flagId);
         console.warn(`Switchboard: flag ${flagId} unavailable, using default (${FLAGS[flagId]})`);
       }
-      return FLAGS[flagId]; // Return default on error
+      const defaultVal = FLAGS[flagId];
+      _flagCache.set(flagId, { value: defaultVal, expires: Date.now() + FLAG_CACHE_TTL_MS });
+      return defaultVal;
     }
 
     // Clear error state on success (flag became available)
     _flagErrorLogged.delete(flagId);
-    return data as boolean;
+    const val = data as boolean;
+    _flagCache.set(flagId, { value: val, expires: Date.now() + FLAG_CACHE_TTL_MS });
+    return val;
   } catch {
-    return FLAGS[flagId]; // Return default on error
+    const defaultVal = FLAGS[flagId];
+    _flagCache.set(flagId, { value: defaultVal, expires: Date.now() + FLAG_CACHE_TTL_MS });
+    return defaultVal;
   }
 }
 
@@ -190,6 +212,8 @@ export function subscribeFlagChanges(
         if (!newRow?.flag_key || typeof newRow.enabled !== 'boolean') return;
         // Only process known flags
         if (!(newRow.flag_key in FLAGS)) return;
+        // Invalidate cache on realtime update
+        _flagCache.set(newRow.flag_key, { value: newRow.enabled, expires: Date.now() + FLAG_CACHE_TTL_MS });
         onFlagChange(newRow.flag_key as FlagId, newRow.enabled);
       },
     )

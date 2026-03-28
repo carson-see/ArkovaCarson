@@ -30,6 +30,7 @@ import { fetchCourtOpinions, fetchStateCourts } from '../jobs/courtlistenerFetch
 import { processPublicRecordAnchoring } from '../jobs/publicRecordAnchor.js';
 import { embedPublicRecords } from '../jobs/publicRecordEmbedder.js';
 import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
+import { checkAttestationExpiry } from '../jobs/attestationExpiry.js';
 import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { fetchAcncCharities } from '../jobs/acncFetcher.js';
@@ -501,6 +502,17 @@ cronRouter.get('/migration-status', async (_req, res) => {
     res.json(status);
   } catch (error) {
     logger.error({ error }, 'Migration status check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Attestation Expiry Monitoring (ATT-08) ───
+cronRouter.post('/check-attestation-expiry', async (_req, res) => {
+  try {
+    const result = await checkAttestationExpiry();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Attestation expiry check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

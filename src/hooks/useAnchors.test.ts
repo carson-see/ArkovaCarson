@@ -75,7 +75,11 @@ describe('useAnchors', () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         is: vi.fn().mockReturnValue({
-          order: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+          or: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+            }),
+          }),
         }),
       }),
     });
@@ -88,7 +92,7 @@ describe('useAnchors', () => {
     });
 
     expect(result.current.records).toHaveLength(1);
-    expect(result.current.records[0]).toEqual({
+    expect(result.current.records[0]).toMatchObject({
       id: 'anchor-1',
       filename: 'test.pdf',
       fingerprint: 'abc123',
@@ -104,9 +108,13 @@ describe('useAnchors', () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         is: vi.fn().mockReturnValue({
-          order: vi.fn().mockResolvedValue({
-            data: null,
-            error: { message: 'RLS policy violation' },
+          or: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: null,
+                error: { message: 'RLS policy violation' },
+              }),
+            }),
           }),
         }),
       }),
@@ -140,7 +148,11 @@ describe('useAnchors', () => {
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         is: vi.fn().mockReturnValue({
-          order: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+          or: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+            }),
+          }),
         }),
       }),
     });

@@ -257,6 +257,7 @@ export function SecureDocumentDialog({
       setStep('extraction-failed');
       return;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm defined after this callback; circular dep is intentional
   }, [fileData, selectedTemplate, autoSelectTemplate]);
 
   // Handle proceeding from upload step — always run AI extraction
@@ -270,6 +271,7 @@ export function SecureDocumentDialog({
       await autoSelectTemplate('OTHER');
       handleConfirm([]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm/autoSelectTemplate defined after; circular dep is intentional
   }, [fileData, aiEnabled, handleStartExtraction]);
 
   // AI field callbacks
@@ -327,7 +329,8 @@ export function SecureDocumentDialog({
         ...(description.trim() ? { description: description.trim() } : {}),
       });
 
-      const { data: inserted, error: insertError } = await supabase
+      // Timeout prevents the modal from hanging indefinitely if Supabase is slow
+      const insertPromise = supabase
         .from('anchors')
         .insert({
           ...validated,
@@ -336,6 +339,15 @@ export function SecureDocumentDialog({
         })
         .select('id, public_id')
         .single();
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out. Please try again.')), 30_000),
+      );
+
+      const { data: inserted, error: insertError } = await Promise.race([
+        insertPromise,
+        timeoutPromise,
+      ]);
 
       if (insertError) throw insertError;
 

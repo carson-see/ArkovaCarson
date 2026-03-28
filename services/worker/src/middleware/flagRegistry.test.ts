@@ -18,11 +18,11 @@ vi.mock('../utils/db.js', () => ({
       select: vi.fn().mockReturnValue({
         in: vi.fn().mockResolvedValue({
           data: [
-            { id: 'ENABLE_VERIFICATION_API', value: true },
-            { id: 'ENABLE_AI_EXTRACTION', value: false },
-            { id: 'ENABLE_SEMANTIC_SEARCH', value: true },
-            { id: 'ENABLE_AI_FRAUD', value: false },
-            { id: 'ENABLE_AI_REPORTS', value: false },
+            { flag_key: 'ENABLE_VERIFICATION_API', enabled: true },
+            { flag_key: 'ENABLE_AI_EXTRACTION', enabled: false },
+            { flag_key: 'ENABLE_SEMANTIC_SEARCH', enabled: true },
+            { flag_key: 'ENABLE_AI_FRAUD', enabled: false },
+            { flag_key: 'ENABLE_AI_REPORTS', enabled: false },
           ],
           error: null,
         }),

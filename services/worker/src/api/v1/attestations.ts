@@ -402,6 +402,304 @@ router.get('/', async (req: Request, res: Response) => {
   }
 });
 
+// ─── POST /api/v1/attestations/batch-create ──────────────────
+
+const BatchCreateSchema = z.object({
+  attestations: z.array(CreateAttestationSchema).min(1).max(100),
+});
+
+router.post('/batch-create', async (req: Request, res: Response) => {
+  const userId = await requireAuth(req, res);
+  if (!userId) return;
+
+  const parsed = BatchCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'validation_error',
+      details: parsed.error.issues.map((i) => ({
+        field: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+    return;
+  }
+
+  const items = parsed.data.attestations;
+
+  try {
+    // Look up attester's org + org_prefix (once for the whole batch)
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('org_id')
+      .eq('id', userId)
+      .single();
+
+    if (profileError) {
+      logger.warn({ error: profileError, userId }, 'Profile lookup failed, defaulting to IND prefix');
+    }
+
+    let orgPrefix = 'IND';
+    if (profile?.org_id) {
+      const { data: org } = await dbAny
+        .from('organizations')
+        .select('org_prefix')
+        .eq('id', profile.org_id)
+        .single();
+      if (org?.org_prefix) {
+        orgPrefix = org.org_prefix;
+      }
+    }
+
+    interface BatchResult {
+      index: number;
+      public_id?: string;
+      status?: string;
+      fingerprint?: string;
+      error?: string;
+    }
+
+    const results: BatchResult[] = [];
+    let created = 0;
+    let failed = 0;
+
+    // Process each attestation individually (with retry for public_id collisions)
+    for (let idx = 0; idx < items.length; idx++) {
+      const data = items[idx];
+      const typeCode = ATTESTATION_TYPE_CODES[data.attestation_type] ?? 'ATT';
+      const issuedAt = new Date().toISOString();
+
+      const attestationContent = JSON.stringify({
+        subject_identifier: data.subject_identifier,
+        attestation_type: data.attestation_type,
+        attester_name: data.attester_name,
+        claims: data.claims,
+        issued_at: issuedAt,
+      });
+      const fingerprint = createHash('sha256').update(attestationContent).digest('hex');
+
+      const MAX_RETRIES = 3;
+      let attestation = null;
+      let insertError = null;
+
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const uniquePart = randomUUID().slice(0, 6).toUpperCase();
+        const publicId = `ARK-${orgPrefix}-${typeCode}-${uniquePart}`;
+
+        const result = await dbAny
+          .from('attestations')
+          .insert({
+            public_id: publicId,
+            anchor_id: data.anchor_id ?? null,
+            subject_type: data.subject_type,
+            subject_identifier: data.subject_identifier,
+            attester_org_id: profile?.org_id ?? null,
+            attester_user_id: userId,
+            attester_name: data.attester_name,
+            attester_type: data.attester_type,
+            attester_title: data.attester_title ?? null,
+            attestation_type: data.attestation_type,
+            claims: data.claims,
+            summary: data.summary ?? null,
+            jurisdiction: data.jurisdiction ?? null,
+            evidence_fingerprint: data.evidence_fingerprint ?? null,
+            fingerprint,
+            status: 'PENDING',
+            expires_at: data.expires_at ?? null,
+            metadata: data.metadata ?? {},
+          })
+          .select('id, public_id, attestation_type, status, fingerprint, created_at')
+          .single();
+
+        if (!result.error) {
+          attestation = result.data;
+          insertError = null;
+          break;
+        }
+
+        if (result.error?.code === '23505') {
+          logger.warn({ attempt, publicId }, 'Batch attestation public_id collision, retrying');
+          continue;
+        }
+
+        insertError = result.error;
+        break;
+      }
+
+      if (insertError || !attestation) {
+        failed++;
+        results.push({
+          index: idx,
+          error: insertError?.message ?? 'Failed to create attestation',
+        });
+      } else {
+        created++;
+        results.push({
+          index: idx,
+          public_id: attestation.public_id,
+          status: attestation.status,
+          fingerprint: attestation.fingerprint,
+        });
+      }
+    }
+
+    logger.info({ total: items.length, created, failed, userId }, 'Batch attestation create complete');
+
+    res.status(201).json({
+      results,
+      summary: {
+        total: items.length,
+        created,
+        failed,
+      },
+    });
+  } catch (error) {
+    logger.error({ error }, 'Batch attestation creation failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── POST /api/v1/attestations/batch-verify (ATT-03) ────────
+
+const BatchVerifySchema = z.object({
+  public_ids: z.array(z.string().min(3)).min(1).max(100),
+});
+
+interface BatchAttestationResult {
+  public_id: string;
+  found: boolean;
+  status?: string;
+  attestation_type?: string;
+  subject_identifier?: string;
+  attester?: { name: string; type: string } | null;
+  issued_at?: string | null;
+  expires_at?: string | null;
+  chain_proof?: {
+    tx_id: string;
+    block_height: number | null;
+    timestamp: string | null;
+    explorer_url: string | null;
+  } | null;
+}
+
+router.post('/batch-verify', async (req: Request, res: Response) => {
+  // Require API key authentication
+  if (!req.apiKey) {
+    res.status(401).json({
+      error: 'authentication_required',
+      message: 'API key required for batch attestation verification',
+    });
+    return;
+  }
+
+  // Validate request body
+  const parsed = BatchVerifySchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: 'validation_error',
+      message: parsed.error.issues[0]?.message ?? 'Invalid request body',
+      details: parsed.error.issues.map((i) => ({
+        field: i.path.join('.'),
+        message: i.message,
+      })),
+    });
+    return;
+  }
+
+  const { public_ids } = parsed.data;
+
+  try {
+    // Single DB call to fetch all attestations
+    const { data: attestations, error } = await dbAny
+      .from('attestations')
+      .select('public_id, attestation_type, status, subject_identifier, attester_name, attester_type, issued_at, expires_at, chain_tx_id, chain_block_height, chain_timestamp')
+      .in('public_id', public_ids);
+
+    if (error) {
+      logger.error({ error }, 'Batch attestation verification query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    // Index results by public_id for O(1) lookup
+    const attestationMap = new Map<string, Record<string, unknown>>();
+    for (const att of (attestations ?? [])) {
+      attestationMap.set(att.public_id as string, att);
+    }
+
+    // Build explorer URL helper
+    const network = config.bitcoinNetwork;
+    const baseMap: Record<string, string> = {
+      signet: 'https://mempool.space/signet',
+      testnet: 'https://mempool.space/testnet',
+      mainnet: 'https://mempool.space',
+    };
+
+    const now = new Date();
+    let verified = 0;
+    let notFound = 0;
+    let expired = 0;
+    let revoked = 0;
+
+    const results: BatchAttestationResult[] = public_ids.map((pid) => {
+      const att = attestationMap.get(pid);
+      if (!att) {
+        notFound++;
+        return { public_id: pid, found: false };
+      }
+
+      // Compute effective status (handle expired)
+      const isExpired = att.expires_at && new Date(att.expires_at as string) < now;
+      const effectiveStatus = isExpired && att.status === 'ACTIVE' ? 'EXPIRED' : (att.status as string);
+
+      // Tally summary counters
+      if (effectiveStatus === 'EXPIRED') expired++;
+      else if (effectiveStatus === 'REVOKED') revoked++;
+      else if (effectiveStatus === 'ACTIVE') verified++;
+
+      // Build chain proof if anchored
+      let chainProof: BatchAttestationResult['chain_proof'] = null;
+      if (att.chain_tx_id) {
+        const explorerUrl = `${baseMap[network] ?? baseMap.signet}/tx/${att.chain_tx_id}`;
+        chainProof = {
+          tx_id: att.chain_tx_id as string,
+          block_height: att.chain_block_height as number | null,
+          timestamp: att.chain_timestamp as string | null,
+          explorer_url: explorerUrl,
+        };
+      }
+
+      return {
+        public_id: pid,
+        found: true,
+        status: effectiveStatus,
+        attestation_type: att.attestation_type as string,
+        subject_identifier: att.subject_identifier as string,
+        attester: {
+          name: att.attester_name as string,
+          type: att.attester_type as string,
+        },
+        issued_at: att.issued_at as string | null,
+        expires_at: att.expires_at as string | null,
+        chain_proof: chainProof,
+      };
+    });
+
+    res.json({
+      results,
+      summary: {
+        total: public_ids.length,
+        verified,
+        not_found: notFound,
+        expired,
+        revoked,
+      },
+    });
+  } catch (error) {
+    logger.error({ error }, 'Batch attestation verification failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ─── PATCH /api/v1/attestations/:publicId/revoke ───────────
 
 router.patch('/:publicId/revoke', async (req: Request, res: Response) => {

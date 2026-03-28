@@ -30,6 +30,7 @@ import { adminRouter } from './routes/admin.js';
 import { cronRouter } from './routes/cron.js';
 import { identityRouter } from './api/v1/identity.js';
 import { orgVerificationRouter } from './api/v1/orgVerification.js';
+import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
@@ -157,6 +158,7 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // Identity & org verification — internal (frontend-facing), not behind feature gate
 app.use('/api/v1/identity', corsMiddleware, rateLimiters.api, requireAuthMw, identityRouter);
 app.use('/api/v1/org', corsMiddleware, rateLimiters.api, requireAuthMw, orgVerificationRouter);
+app.use('/api/v1/org/sub-orgs', corsMiddleware, rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);

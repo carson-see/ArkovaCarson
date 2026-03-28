@@ -49,6 +49,7 @@ import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { webhooksRouter } from './webhooks.js';
+import { atsWebhookRouter } from './webhooks/ats.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -209,6 +210,9 @@ router.use('/ai/fraud/visual', aiFraudGate(), requireAuth, aiRateLimiter, aiFrau
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
 
+// ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
+router.use('/webhooks/ats', atsWebhookRouter);
+
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 router.use('/webhooks', webhooksRouter);
 
@@ -217,6 +221,10 @@ router.use('/webhooks', webhooksRouter);
 router.use('/anchor', anchorSubmitRouter);
 
 // ─── Attestations — Phase II ───
+// Batch attestation create — auth required, batch rate limit (10 req/min)
+router.post('/attestations/batch-create', batchRateLimiter);
+// Batch attestation verify — API key required, batch rate limit (10 req/min)
+router.post('/attestations/batch-verify', requireScope('verify:batch'), batchRateLimiter);
 // Create, verify, list, revoke attestations
 router.use('/attestations', attestationsRouter);
 

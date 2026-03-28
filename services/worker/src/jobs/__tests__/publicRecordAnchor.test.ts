@@ -151,8 +151,6 @@ describe('publicRecordAnchor', () => {
   });
 
   it('processes batch when enough records exist', async () => {
-    mockRpc.mockResolvedValue({ data: true });
-
     const records = Array.from({ length: 20 }, (_, i) => ({
       id: `record-${i}`,
       content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
@@ -163,6 +161,12 @@ describe('publicRecordAnchor', () => {
       record_type: '10-K',
       title: `Test Filing ${i}`,
     }));
+
+    // First RPC call = get_flag (returns true), subsequent = batch_insert_anchors (returns anchor array)
+    const anchorResults = records.map((r, i) => ({ id: `anchor-uuid-${i}`, fingerprint: r.content_hash }));
+    mockRpc
+      .mockResolvedValueOnce({ data: true })  // get_flag
+      .mockResolvedValueOnce({ data: anchorResults });  // batch_insert_anchors
 
     const mockSupa = createMockSupabase(records);
 

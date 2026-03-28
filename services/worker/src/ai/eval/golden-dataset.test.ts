@@ -13,6 +13,7 @@ import {
 } from './golden-dataset.js';
 import { GOLDEN_DATASET_PHASE5 } from './golden-dataset-phase5.js';
 import { GOLDEN_DATASET_PHASE6 } from './golden-dataset-phase6.js';
+import { GOLDEN_DATASET_PHASE7 } from './golden-dataset-phase7.js';
 import { EXTRACTION_SYSTEM_PROMPT } from '../prompts/extraction.js';
 
 /** Credential types that Gemini classifies (user-uploaded documents) */
@@ -29,8 +30,8 @@ const ALL_CREDENTIAL_TYPES = [
 ] as const;
 
 describe('Golden Dataset Integrity', () => {
-  it('has at least 1000 total entries', () => {
-    expect(FULL_GOLDEN_DATASET.length).toBeGreaterThanOrEqual(1000);
+  it('has at least 1150 total entries', () => {
+    expect(FULL_GOLDEN_DATASET.length).toBeGreaterThanOrEqual(1150);
   });
 
   it('phase5 adds 200 entries', () => {
@@ -39,6 +40,10 @@ describe('Golden Dataset Integrity', () => {
 
   it('phase6 adds 80 entries (user-document types)', () => {
     expect(GOLDEN_DATASET_PHASE6.length).toBe(80);
+  });
+
+  it('phase7 adds 150 entries (low-F1 credential types)', () => {
+    expect(GOLDEN_DATASET_PHASE7.length).toBe(150);
   });
 
   it('all entries have unique IDs', () => {
@@ -168,9 +173,9 @@ describe('Prompt Coverage', () => {
     expect(EXTRACTION_SYSTEM_PROMPT).toContain('Birth Certificate');
   });
 
-  it('extraction prompt has at least 60 few-shot examples', () => {
+  it('extraction prompt has at least 110 few-shot examples', () => {
     const exampleMatches = EXTRACTION_SYSTEM_PROMPT.match(/Example \d+/g);
     expect(exampleMatches).toBeTruthy();
-    expect(exampleMatches!.length).toBeGreaterThanOrEqual(60);
+    expect(exampleMatches!.length).toBeGreaterThanOrEqual(110);
   });
 });
