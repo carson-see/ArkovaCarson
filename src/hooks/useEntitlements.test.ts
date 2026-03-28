@@ -264,30 +264,21 @@ describe('useEntitlements', () => {
     expect(result.current.recordsUsed).toBe(2);
   });
 
-  // DH-10: Realtime subscription
-  describe('DH-10: realtime subscription', () => {
-    it('subscribes to subscription changes when user is present', async () => {
+  // H5: Realtime subscription removed — plan changes are rare during beta.
+  // Use refresh() to manually re-fetch when needed (e.g., after checkout).
+  describe('H5: no realtime subscription (removed for perf)', () => {
+    it('does not subscribe to subscription changes', async () => {
       setupMocks({ count: 0 });
 
       renderHook(() => useEntitlements());
 
       await waitFor(() => {
-        expect(mockChannel.on).toHaveBeenCalledTimes(1);
-        expect(mockChannel.subscribe).toHaveBeenCalled();
+        expect(mockChannel.on).not.toHaveBeenCalled();
+        expect(mockChannel.subscribe).not.toHaveBeenCalled();
       });
-
-      expect(mockChannel.on).toHaveBeenCalledWith(
-        'postgres_changes',
-        expect.objectContaining({
-          event: '*',
-          schema: 'public',
-          table: 'subscriptions',
-        }),
-        expect.any(Function),
-      );
     });
 
-    it('does not subscribe when user is null', async () => {
+    it('does not create channel when user is null', async () => {
       mockUser.current = null;
       mockChannel.on.mockClear();
       mockChannel.subscribe.mockClear();
@@ -297,20 +288,6 @@ describe('useEntitlements', () => {
       await waitFor(() => {
         expect(mockChannel.on).not.toHaveBeenCalled();
       });
-    });
-
-    it('cleans up channel on unmount', async () => {
-      setupMocks({ count: 0 });
-
-      const { unmount } = renderHook(() => useEntitlements());
-
-      await waitFor(() => {
-        expect(mockChannel.subscribe).toHaveBeenCalled();
-      });
-
-      unmount();
-
-      expect(mockRemoveChannel).toHaveBeenCalledWith(mockChannel);
     });
   });
 });

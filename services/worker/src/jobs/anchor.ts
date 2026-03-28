@@ -378,7 +378,7 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     claimResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
       p_worker_id: `worker-${process.pid}`,
-      p_limit: 50,
+      p_limit: 100, // M3: increased from 50 to clear backlogs faster (6K/hr vs 3K/hr)
       p_exclude_pipeline: true,
     }), 30_000);
   } catch (timeoutErr) {

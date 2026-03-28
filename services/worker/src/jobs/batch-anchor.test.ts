@@ -294,22 +294,26 @@ describe('processBatchAnchors', () => {
 
   // ---- Partial DB update failure ----
 
-  it('falls back to individual updates when submit_batch_anchors RPC fails', async () => {
+  it('reverts to PENDING when submit_batch_anchors RPC fails (M1)', async () => {
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: null, error: { message: 'function not found' } }); // submit_batch_anchors fails
 
-    // Individual updates succeed (fallback path)
-    setUpdateResult({ error: null, count: 1 });
-
     const result = await processBatchAnchors();
 
-    expect(result.processed).toBe(3);
-    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(3);
+    // M1: Reverts all to PENDING instead of N+1 individual SUBMITTED updates
+    expect(result.processed).toBe(0);
+    expect(result.merkleRoot).toBeTruthy(); // root was computed before failure
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('submit_batch_anchors RPC failed'),
     );
+    // Revert updates: one per anchor (BROADCASTING → PENDING)
+    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(3);
+    const revertCalls = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'PENDING',
+    );
+    expect(revertCalls.length).toBe(3);
   });
 
   // ---- Batch ID generation ----

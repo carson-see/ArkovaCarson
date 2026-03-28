@@ -154,31 +154,13 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
   });
 
   if (bulkError) {
-    // Fallback: try individual updates if RPC fails
-    logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed — falling back to individual updates');
-    let fallbackCount = 0;
+    // M1: Revert to PENDING instead of N+1 individual updates.
+    // Let the recovery cron re-process these on the next run.
+    logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed — reverting claimed anchors to PENDING');
     for (const anchor of claimedAnchors) {
-      const { error: updateError } = await db
-        .from('anchors')
-        .update({
-          status: 'SUBMITTED' as const,
-          chain_tx_id: receipt.receiptId,
-          chain_block_height: receipt.blockHeight,
-          chain_timestamp: receipt.blockTimestamp,
-          metadata: JSON.parse(JSON.stringify({
-            ...(typeof anchor.metadata === 'object' && anchor.metadata !== null ? anchor.metadata : {}),
-            merkle_root: tree.root,
-            batch_id: batchId,
-          })),
-        })
-        .eq('id', anchor.id)
-        .eq('status', 'BROADCASTING');
-
-      if (!updateError) fallbackCount++;
+      await revertBatchAnchorToPending(anchor.id);
     }
-
-    logger.info({ batchId, count: fallbackCount, total: claimedAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Batch anchor processing complete (fallback)');
-    return { processed: fallbackCount, batchId, merkleRoot: tree.root, txId: receipt.receiptId };
+    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: receipt.receiptId };
   }
 
   const processed = typeof updatedCount === 'number' ? updatedCount : (claimedAnchors.length);
