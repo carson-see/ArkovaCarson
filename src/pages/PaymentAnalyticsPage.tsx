@@ -61,10 +61,12 @@ export function PaymentAnalyticsPage() {
       const dbAny = supabase as any;
 
       // All payments (x402_payments from migration 0080)
+      // Capped at 1000 most recent to prevent unbounded memory usage
       const { data: payments } = await dbAny
         .from('x402_payments')
         .select('id, amount_usd, payer_address, payee_address, network, created_at, verification_request_id')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(1000);
 
       const allPayments = payments ?? [];
 

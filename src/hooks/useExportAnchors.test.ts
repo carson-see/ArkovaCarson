@@ -9,6 +9,7 @@ const mockSelect = vi.hoisted(() => vi.fn());
 const mockEq = vi.hoisted(() => vi.fn());
 const mockIs = vi.hoisted(() => vi.fn());
 const mockOrder = vi.hoisted(() => vi.fn());
+const mockLimit = vi.hoisted(() => vi.fn());
 const mockDownloadCsv = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
@@ -59,10 +60,13 @@ describe('useExportAnchors', () => {
     mockIs.mockReturnValue({
       order: mockOrder,
     });
+    mockOrder.mockReturnValue({
+      limit: mockLimit,
+    });
   });
 
   it('should export anchors successfully', async () => {
-    mockOrder.mockResolvedValue({ data: mockAnchorData, error: null });
+    mockLimit.mockResolvedValue({ data: mockAnchorData, error: null });
 
     const { result } = renderHook(() => useExportAnchors());
 
@@ -77,7 +81,7 @@ describe('useExportAnchors', () => {
   });
 
   it('should handle fetch error', async () => {
-    mockOrder.mockResolvedValue({
+    mockLimit.mockResolvedValue({
       data: null,
       error: { message: 'Database error' },
     });
@@ -95,7 +99,7 @@ describe('useExportAnchors', () => {
   });
 
   it('should handle empty data', async () => {
-    mockOrder.mockResolvedValue({ data: [], error: null });
+    mockLimit.mockResolvedValue({ data: [], error: null });
 
     const { result } = renderHook(() => useExportAnchors());
 
@@ -110,7 +114,7 @@ describe('useExportAnchors', () => {
   });
 
   it('should clear error', async () => {
-    mockOrder.mockResolvedValue({
+    mockLimit.mockResolvedValue({
       data: null,
       error: { message: 'Some error' },
     });

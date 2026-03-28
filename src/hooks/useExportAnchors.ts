@@ -60,12 +60,14 @@ const anchorColumns = [
 
 export function useExportAnchors(): UseExportAnchorsReturn {
   const exportImpl = useCallback(async (orgId: string): Promise<boolean> => {
+    // Capped at 5000 rows to prevent browser OOM on large orgs
     const { data, error: fetchError } = await supabase
       .from('anchors')
       .select('*')
       .eq('org_id', orgId)
       .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(5000);
 
     if (fetchError) {
       throw new Error(fetchError.message || 'Failed to fetch records for export.');

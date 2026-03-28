@@ -39,6 +39,9 @@ export interface BatchResponse {
   total: number;
 }
 
+/** Per-batch org name cache to avoid N+1 queries (100 items = 100 org lookups → 1) */
+const orgNameCache = new Map<string, string | null>();
+
 /** Default DB-backed lookup (same as verify.ts) */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
@@ -65,12 +68,17 @@ const defaultLookup: PublicIdLookup = {
 
     let orgName: string | null = null;
     if (data.org_id) {
-      const { data: org } = await db
-        .from('organizations')
-        .select('display_name')
-        .eq('id', data.org_id)
-        .single();
-      orgName = org?.display_name ?? null;
+      if (orgNameCache.has(data.org_id)) {
+        orgName = orgNameCache.get(data.org_id) ?? null;
+      } else {
+        const { data: org } = await db
+          .from('organizations')
+          .select('display_name')
+          .eq('id', data.org_id)
+          .single();
+        orgName = org?.display_name ?? null;
+        orgNameCache.set(data.org_id, orgName);
+      }
     }
 
     return {
