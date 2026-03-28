@@ -146,6 +146,8 @@ vi.mock('../utils/db.js', () => ({
     }),
     rpc: mockRpc,
   },
+  // Pass-through in tests — no actual timeout
+  withDbTimeout: vi.fn((fn: () => Promise<unknown>) => fn()),
 }));
 
 import { db as _db } from '../utils/db.js';

@@ -97,6 +97,8 @@ vi.mock('../utils/db.js', () => {
         return {};
       }),
     },
+    // Pass-through in tests — no actual timeout
+    withDbTimeout: vi.fn((fn: () => Promise<unknown>) => fn()),
   };
 });
 

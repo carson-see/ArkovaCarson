@@ -14,7 +14,7 @@
  *   - 1.9: ENABLE_BATCH_ANCHORING gates batch processing
  */
 
-import { db } from '../utils/db.js';
+import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
@@ -63,12 +63,24 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
 
   while (remaining > 0) {
     const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
+    // Wrapped in 30s timeout to prevent batch job from hanging
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: chunk, error: claimError } = await (db.rpc as any)('claim_pending_anchors', {
-      p_worker_id: `batch-${process.pid}`,
-      p_limit: chunkSize,
-      p_exclude_pipeline: false,
-    });
+    let chunkResult: { data: any; error: any };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      chunkResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
+        p_worker_id: `batch-${process.pid}`,
+        p_limit: chunkSize,
+        p_exclude_pipeline: false,
+      }), 30_000);
+    } catch (timeoutErr) {
+      logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
+      if (allClaimed.length === 0) {
+        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+      }
+      break; // Proceed with what we have
+    }
+    const { data: chunk, error: claimError } = chunkResult;
 
     if (claimError) {
       if (allClaimed.length === 0) {

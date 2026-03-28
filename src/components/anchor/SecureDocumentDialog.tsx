@@ -329,7 +329,8 @@ export function SecureDocumentDialog({
         ...(description.trim() ? { description: description.trim() } : {}),
       });
 
-      const { data: inserted, error: insertError } = await supabase
+      // Timeout prevents the modal from hanging indefinitely if Supabase is slow
+      const insertPromise = supabase
         .from('anchors')
         .insert({
           ...validated,
@@ -338,6 +339,15 @@ export function SecureDocumentDialog({
         })
         .select('id, public_id')
         .single();
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Request timed out. Please try again.')), 30_000),
+      );
+
+      const { data: inserted, error: insertError } = await Promise.race([
+        insertPromise,
+        timeoutPromise,
+      ]);
 
       if (insertError) throw insertError;
 
