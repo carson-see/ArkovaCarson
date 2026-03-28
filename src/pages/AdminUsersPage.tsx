@@ -41,6 +41,7 @@ interface AdminUser {
   role: string;
   org_id: string | null;
   org_name: string | null;
+  is_platform_admin: boolean;
   created_at: string;
 }
 
@@ -201,6 +202,7 @@ export function AdminUsersPage() {
                       <th className="pb-2 pr-4">Email</th>
                       <th className="pb-2 pr-4">Name</th>
                       <th className="pb-2 pr-4">Role</th>
+                      <th className="pb-2 pr-4">Admin</th>
                       <th className="pb-2 pr-4">Organization</th>
                       <th className="pb-2">Joined</th>
                     </tr>
@@ -212,6 +214,11 @@ export function AdminUsersPage() {
                         <td className="py-3 pr-4">{u.full_name ?? '—'}</td>
                         <td className="py-3 pr-4">
                           <RoleBadge role={u.role} />
+                        </td>
+                        <td className="py-3 pr-4">
+                          {u.is_platform_admin && (
+                            <Badge className="bg-purple-500/10 text-purple-700 border-purple-500/30 text-[10px]">Admin</Badge>
+                          )}
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground">
                           {u.org_name ?? '—'}

@@ -2,10 +2,11 @@
  * Admin User Detail Page
  *
  * Platform admin page showing individual user profile, records, and subscription info.
+ * Includes management actions: promote admin, change role, set organization.
  * Accessed via /admin/users/:id from the AdminUsersPage user list.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -17,7 +18,12 @@ import {
   FileText,
   CreditCard,
   AlertTriangle,
+  ShieldCheck,
+  ShieldOff,
+  UserCog,
+  Loader2,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
@@ -25,6 +31,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
 import { workerFetch } from '@/lib/workerClient';
 import { isPlatformAdmin } from '@/lib/platform';
@@ -35,6 +48,7 @@ interface UserProfile {
   full_name: string | null;
   role: string;
   org_id: string | null;
+  is_platform_admin: boolean;
   created_at: string;
   updated_at: string | null;
 }
@@ -55,6 +69,11 @@ interface UserSubscription {
   current_period_end: string | null;
 }
 
+interface OrgOption {
+  id: string;
+  display_name: string;
+}
+
 function RoleBadge({ role }: Readonly<{ role: string }>) {
   switch (role) {
     case 'ORG_ADMIN':
@@ -64,7 +83,7 @@ function RoleBadge({ role }: Readonly<{ role: string }>) {
     case 'INDIVIDUAL':
       return <Badge variant="outline">Individual</Badge>;
     default:
-      return <Badge variant="outline">{role}</Badge>;
+      return <Badge variant="outline">{role ?? 'None'}</Badge>;
   }
 }
 
@@ -89,40 +108,76 @@ export function AdminUserDetailPage() {
   const [orgName, setOrgName] = useState<string | null>(null);
   const [records, setRecords] = useState<UserRecord[]>([]);
   const [subscription, setSubscription] = useState<UserSubscription | null>(null);
+  const [organizations, setOrganizations] = useState<OrgOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const isAdmin = isPlatformAdmin(authUser?.email);
 
-  useEffect(() => {
+  const fetchUserDetail = useCallback(async () => {
     if (!isAdmin || !id) return;
-
     setLoading(true);
     setError(null);
-
-    const fetchUserDetail = async () => {
-      try {
-        const res = await workerFetch(`/api/admin/users/${encodeURIComponent(id)}`);
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({ error: 'Failed to load user' }));
-          setError(body.error ?? 'User not found');
-          setLoading(false);
-          return;
-        }
-        const data = await res.json();
-        setUserProfile(data.user);
-        setOrgName(data.user.org_name ?? null);
-        setRecords(data.records ?? []);
-        setSubscription(data.subscription ?? null);
-      } catch {
-        setError('Failed to load user details');
-      } finally {
+    try {
+      const res = await workerFetch(`/api/admin/users/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: 'Failed to load user' }));
+        setError(body.error ?? 'User not found');
         setLoading(false);
+        return;
       }
-    };
-
-    fetchUserDetail();
+      const data = await res.json();
+      setUserProfile(data.user);
+      setOrgName(data.user.org_name ?? null);
+      setRecords(data.records ?? []);
+      setSubscription(data.subscription ?? null);
+    } catch {
+      setError('Failed to load user details');
+    } finally {
+      setLoading(false);
+    }
   }, [isAdmin, id]);
+
+  useEffect(() => {
+    fetchUserDetail();
+  }, [fetchUserDetail]);
+
+  // Fetch org list for assignment dropdown
+  useEffect(() => {
+    if (!isAdmin) return;
+    workerFetch('/api/admin/organizations?limit=100')
+      .then(r => r.json())
+      .then(data => setOrganizations((data.organizations ?? []).map((o: OrgOption) => ({ id: o.id, display_name: o.display_name }))))
+      .catch(() => {/* ignore */});
+  }, [isAdmin]);
+
+  const handleAction = useCallback(async (
+    endpoint: string,
+    body: Record<string, unknown>,
+    successMsg: string,
+  ) => {
+    if (!id) return;
+    setActionLoading(endpoint);
+    try {
+      const res = await workerFetch(`/api/admin/users/${encodeURIComponent(id)}/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error ?? 'Action failed');
+        return;
+      }
+      toast.success(successMsg);
+      await fetchUserDetail();
+    } catch {
+      toast.error('Action failed');
+    } finally {
+      setActionLoading(null);
+    }
+  }, [id, fetchUserDetail]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -138,9 +193,6 @@ export function AdminUserDetailPage() {
           </div>
           <h2 className="text-xl font-semibold mb-2">Access Restricted</h2>
           <p className="text-sm text-muted-foreground mb-2">This page is only available to platform administrators.</p>
-          <p className="text-xs text-muted-foreground mb-6">
-            If you believe you should have access, contact your organization admin or reach out to support.
-          </p>
           <Button variant="outline" onClick={() => navigate(ROUTES.DASHBOARD)}>Back to Dashboard</Button>
         </div>
       </AppShell>
@@ -222,15 +274,105 @@ export function AdminUserDetailPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Platform Admin</p>
+                    <Badge variant={userProfile.is_platform_admin ? 'default' : 'outline'}>
+                      {userProfile.is_platform_admin ? 'Yes' : 'No'}
+                    </Badge>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
                   <Calendar className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <p className="text-xs text-muted-foreground">Joined</p>
                     <p className="text-sm">{new Date(userProfile.created_at).toLocaleDateString('en-US', { dateStyle: 'medium' })}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-mono text-muted-foreground break-all">{userProfile.id}</span>
+              </div>
+              <div className="pt-2">
+                <span className="text-xs font-mono text-muted-foreground break-all">{userProfile.id}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Admin Actions Card */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <UserCog className="h-4 w-4" />
+                Admin Actions
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Platform Admin Toggle */}
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div>
+                  <p className="text-sm font-medium">Platform Admin</p>
+                  <p className="text-xs text-muted-foreground">
+                    {userProfile.is_platform_admin
+                      ? 'This user has full platform admin access.'
+                      : 'Grant full platform admin access to this user.'}
+                  </p>
                 </div>
+                <Button
+                  variant={userProfile.is_platform_admin ? 'destructive' : 'default'}
+                  size="sm"
+                  disabled={actionLoading === 'promote-admin' || userProfile.id === authUser?.id}
+                  onClick={() => handleAction('promote-admin', { is_platform_admin: !userProfile.is_platform_admin }, userProfile.is_platform_admin ? 'Admin access removed' : 'Admin access granted')}
+                >
+                  {actionLoading === 'promote-admin' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  {userProfile.is_platform_admin ? (
+                    <><ShieldOff className="mr-2 h-4 w-4" />Remove Admin</>
+                  ) : (
+                    <><ShieldCheck className="mr-2 h-4 w-4" />Make Admin</>
+                  )}
+                </Button>
+              </div>
+
+              {/* Role Change */}
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div>
+                  <p className="text-sm font-medium">User Role</p>
+                  <p className="text-xs text-muted-foreground">Change the user's account type.</p>
+                </div>
+                <Select
+                  value={userProfile.role ?? 'INDIVIDUAL'}
+                  onValueChange={(role) => handleAction('change-role', { role }, `Role changed to ${role}`)}
+                  disabled={actionLoading === 'change-role'}
+                >
+                  <SelectTrigger className="w-[160px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="INDIVIDUAL">Individual</SelectItem>
+                    <SelectItem value="ORG_ADMIN">Org Admin</SelectItem>
+                    <SelectItem value="ORG_MEMBER">Org Member</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Organization Assignment */}
+              <div className="flex items-center justify-between p-3 rounded-lg border">
+                <div>
+                  <p className="text-sm font-medium">Organization</p>
+                  <p className="text-xs text-muted-foreground">Assign to an organization.</p>
+                </div>
+                <Select
+                  value={userProfile.org_id ?? 'none'}
+                  onValueChange={(orgId) => handleAction('set-org', { org_id: orgId === 'none' ? null : orgId, org_role: 'member' }, orgId === 'none' ? 'Removed from organization' : 'Organization updated')}
+                  disabled={actionLoading === 'set-org'}
+                >
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue placeholder="No organization" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No organization</SelectItem>
+                    {organizations.map((org) => (
+                      <SelectItem key={org.id} value={org.id}>{org.display_name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>

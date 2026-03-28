@@ -753,12 +753,26 @@ export async function fetchEdgarBulk(
   let queriesRun = 0;
   const processedTypes: Set<string> = new Set();
 
+  // Auto-resume: find years already fully ingested per form type to skip them
+  // Query: count filings per form_type per year for the edgar source
+  const { data: existingCounts } = await supabase.rpc('get_edgar_shard_counts');
+  const shardCounts = new Map<string, number>();
+  if (existingCounts && Array.isArray(existingCounts)) {
+    for (const row of existingCounts as Array<{ form_type: string; filing_year: number; cnt: number }>) {
+      shardCounts.set(`${row.form_type}:${row.filing_year}`, row.cnt);
+    }
+  }
+
+  // Minimum records to consider a shard "done" — skip if already has this many
+  const SHARD_SKIP_THRESHOLD = 50;
+
   logger.info({
     formTypes: formTypes.length,
     startYear,
     endYear,
     maxQueries,
-  }, 'Starting bulk EDGAR ingestion');
+    existingShards: shardCounts.size,
+  }, 'Starting bulk EDGAR ingestion (with shard-skip resume)');
 
   for (const formType of formTypes) {
     if (queriesRun >= maxQueries) {
@@ -770,6 +784,12 @@ export async function fetchEdgarBulk(
 
     for (let year = endYear; year >= startYear; year--) {
       if (queriesRun >= maxQueries) break;
+
+      // Skip shards that already have enough records (auto-resume)
+      const existingCount = shardCounts.get(`${formType}:${year}`) ?? 0;
+      if (existingCount >= SHARD_SKIP_THRESHOLD) {
+        continue; // Already ingested this shard
+      }
 
       if (isHighVolume) {
         // Monthly shards for high-volume forms

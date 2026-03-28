@@ -15,6 +15,7 @@ import { handleTreasuryStatus } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
 
 export const adminRouter = Router();
 
@@ -112,6 +113,41 @@ adminRouter.get('/admin/subscriptions', async (req, res) => {
     await handleAdminSubscriptions(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Admin subscriptions request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Admin Actions (POST) ───
+
+adminRouter.post('/admin/users/:id/promote-admin', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handlePromoteAdmin(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Promote admin request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/users/:id/change-role', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleChangeRole(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Change role request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/users/:id/set-org', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleSetOrg(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Set org request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

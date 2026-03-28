@@ -362,9 +362,13 @@ export function SecureDocumentDialog({
         const zodErr = err as import('zod').ZodError;
         setError(zodErr.issues.map((i) => i.message).join('; '));
       } else {
-        setError(
-          err instanceof Error ? err.message : 'Failed to secure document. Please try again.'
-        );
+        const msg = err instanceof Error ? err.message : String(err);
+        // Detect duplicate fingerprint constraint violation
+        if (msg.includes('idx_anchors_user_fingerprint_unique') || msg.includes('duplicate key')) {
+          setError('This document has already been secured. Each document can only be anchored once.');
+        } else {
+          setError(msg || 'Failed to secure document. Please try again.');
+        }
       }
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');

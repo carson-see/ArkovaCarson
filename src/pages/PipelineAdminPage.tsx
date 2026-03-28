@@ -310,13 +310,21 @@ export function PipelineAdminPage() {
   useEffect(() => {
     if (!isAdmin) return;
     (async () => {
-      const { data } = await dbAny
-        .from('public_records')
-        .select('record_type')
-        .limit(1000);
-      if (data) {
-        const types = [...new Set((data as Array<{ record_type: string }>).map((r) => r.record_type))].sort();
+      // Use RPC or distinct query to get record types without fetching 1000 rows
+      const { data } = await dbAny.rpc('get_distinct_record_types').catch(() => ({ data: null }));
+      if (data && Array.isArray(data)) {
+        const types = (data as Array<{ record_type: string }>).map((r) => r.record_type).sort();
         setAvailableTypes(types);
+      } else {
+        // Fallback: fetch minimal data to extract types
+        const { data: fallbackData } = await dbAny
+          .from('public_records')
+          .select('record_type')
+          .limit(1000);
+        if (fallbackData) {
+          const types = [...new Set((fallbackData as Array<{ record_type: string }>).map((r) => r.record_type))].sort();
+          setAvailableTypes(types);
+        }
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps

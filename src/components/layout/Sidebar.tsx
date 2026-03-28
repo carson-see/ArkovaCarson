@@ -31,6 +31,9 @@ import {
   ChevronDown,
   ChevronUp,
   Code2,
+  Users,
+  FileCheck,
+  ToggleRight,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
@@ -64,11 +67,14 @@ import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
 
 const adminNavItems: NavItem[] = [
   { label: 'Overview', icon: BarChart3, to: ROUTES.ADMIN_OVERVIEW },
-  { label: 'System Health', icon: Activity, to: ROUTES.ADMIN_HEALTH },
+  { label: 'Users', icon: Users, to: ROUTES.ADMIN_USERS },
+  { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
+  { label: 'Records', icon: FileCheck, to: ROUTES.ADMIN_RECORDS },
   { label: NAV_LABELS.TREASURY, icon: Landmark, to: ROUTES.ADMIN_TREASURY },
   { label: 'Pipeline', icon: Database, to: ROUTES.ADMIN_PIPELINE },
-  { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
+  { label: 'System Health', icon: Activity, to: ROUTES.ADMIN_HEALTH },
   { label: 'Payments', icon: DollarSign, to: ROUTES.ADMIN_PAYMENTS },
+  { label: 'Controls', icon: ToggleRight, to: ROUTES.ADMIN_CONTROLS },
 ];
 
 // ---------------------------------------------------------------------------

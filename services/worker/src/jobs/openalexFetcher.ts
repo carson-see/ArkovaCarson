@@ -299,8 +299,8 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
 /** Max records per batch insert */
 const BULK_INSERT_BATCH = 500;
 
-/** Max pages for bulk run (200 × 500 = 100K records per invocation) */
-const BULK_MAX_PAGES = 500;
+/** Max pages for bulk run (200 × 1000 = 200K records per invocation) */
+const BULK_MAX_PAGES = 1000;
 
 /**
  * Bulk OpenAlex ingestion — fetches scholarly works with minimal filters.
@@ -338,8 +338,26 @@ export async function fetchOpenAlexBulk(
   const minCitations = options.minCitations ?? 0;
   const workTypes = options.workTypes ?? ['article', 'review', 'book-chapter', 'preprint', 'dissertation'];
   const startDate = options.startDate ?? '2000-01-01';
-  const endDate = options.endDate ?? new Date().toISOString().slice(0, 10);
   const maxPages = options.maxPages ?? BULK_MAX_PAGES;
+
+  // Auto-resume: find the earliest publication_date we already have
+  // Since we sort by publication_date:desc (newest first), resume endDate to ONE DAY BEFORE
+  // our min date to avoid re-fetching thousands of already-ingested papers at the boundary
+  let endDate = options.endDate ?? new Date().toISOString().slice(0, 10);
+  if (!options.endDate && !options.resumeCursor) {
+    const { data: dateRange } = await supabase.rpc('get_source_date_range', {
+      p_source: 'openalex',
+      p_date_field: 'publication_date',
+    });
+    const minDate = (dateRange as { min_date: string | null } | null)?.min_date;
+    if (minDate && minDate > startDate) {
+      // Subtract one day to skip past already-ingested boundary
+      const d = new Date(minDate);
+      d.setDate(d.getDate() - 1);
+      endDate = d.toISOString().slice(0, 10);
+      logger.info({ resumeEndDate: endDate, originalMinDate: minDate }, 'OpenAlex date-based resume — fetching older works');
+    }
+  }
 
   let totalInserted = 0;
   let totalSkipped = 0;

@@ -237,7 +237,9 @@ cronRouter.post('/fetch-openalex', async (_req, res) => {
 cronRouter.post('/openalex-bulk', async (req, res) => {
   try {
     const startDate = String(req.query.startDate ?? req.body?.startDate ?? '2000-01-01');
-    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
+    // Only pass endDate if explicitly provided — otherwise let auto-resume pick the date
+    const explicitEndDate = req.query.endDate ?? req.body?.endDate;
+    const endDate = explicitEndDate ? String(explicitEndDate) : undefined;
     const minCitations = parseInt(String(req.query.minCitations ?? req.body?.minCitations ?? '0'), 10);
     const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '500'), 10);
     const resumeCursor = req.body?.resumeCursor;
@@ -253,7 +255,9 @@ cronRouter.post('/openalex-bulk', async (req, res) => {
 cronRouter.post('/fetch-courtlistener', async (req, res) => {
   try {
     const startDate = String(req.query.startDate ?? req.body?.startDate ?? '1950-01-01');
-    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
+    // Only pass endDate if explicitly provided — otherwise let auto-resume pick the date
+    const explicitEndDate = req.query.endDate ?? req.body?.endDate;
+    const endDate = explicitEndDate ? String(explicitEndDate) : undefined;
     const maxPages = parseInt(String(req.query.maxPages ?? req.body?.maxPages ?? '500'), 10);
     const courtFilter = req.body?.courtFilter;
     const statusFilter = req.body?.statusFilter ?? 'Published';
@@ -269,9 +273,11 @@ cronRouter.post('/fetch-courtlistener', async (req, res) => {
 cronRouter.post('/fetch-state-courts', async (req, res) => {
   try {
     const stateCode = String(req.query.state ?? req.body?.state ?? 'CA').toUpperCase();
-    const startDate = String(req.query.startDate ?? req.body?.startDate ?? '2000-01-01');
-    const endDate = String(req.query.endDate ?? req.body?.endDate ?? new Date().toISOString().slice(0, 10));
-    const maxPagesPerCourt = parseInt(String(req.query.maxPagesPerCourt ?? req.body?.maxPagesPerCourt ?? '200'), 10);
+    const startDate = String(req.query.startDate ?? req.body?.startDate ?? '1950-01-01');
+    // Only pass endDate if explicitly provided — otherwise let auto-resume pick the date
+    const explicitEndDate = req.query.endDate ?? req.body?.endDate;
+    const endDate = explicitEndDate ? String(explicitEndDate) : undefined;
+    const maxPagesPerCourt = parseInt(String(req.query.maxPagesPerCourt ?? req.body?.maxPagesPerCourt ?? '500'), 10);
 
     const result = await fetchStateCourts(db, stateCode, { startDate, endDate, maxPagesPerCourt });
     res.json(result);

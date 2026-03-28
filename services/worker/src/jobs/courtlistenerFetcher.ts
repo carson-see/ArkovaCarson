@@ -26,8 +26,8 @@ const CL_RATE_LIMIT_MS = 250;
 /** Results per page (max 20 for CourtListener) */
 const PER_PAGE = 20;
 
-/** Max pages per bulk run */
-const BULK_MAX_PAGES = 500;
+/** Max pages per bulk run (20 × 2000 = 40K records per invocation) */
+const BULK_MAX_PAGES = 2000;
 
 /** Max records per batch insert */
 const BULK_INSERT_BATCH = 500;
@@ -209,33 +209,39 @@ export async function fetchCourtOpinions(
   let pagesActuallyProcessed = 0;
   let nextUrl: string | null = null;
 
-  // Auto-resume: if no offsetPage given, calculate from existing record count
-  let autoOffset = options.offsetPage ?? 0;
+  // Auto-resume: find the earliest date_filed we already have and resume from there
+  // Since we fetch newest-first (-date_filed), resume endDate to ONE DAY BEFORE our min date
+  // to avoid re-fetching hundreds of already-ingested cases at the boundary date
+  let resumeEndDate = endDate;
   if (!options.offsetPage) {
-    const { count: existingCount } = await supabase
-      .from('public_records')
-      .select('id', { count: 'exact', head: true })
-      .eq('source', 'courtlistener');
-    if (existingCount && existingCount > 0) {
-      autoOffset = Math.floor(existingCount / PER_PAGE);
-      logger.info({ existingCount, autoOffset }, 'CourtListener auto-resume from existing records');
+    const { data: dateRange } = await supabase.rpc('get_source_date_range', {
+      p_source: 'courtlistener',
+      p_date_field: 'date_filed',
+    });
+    const minDate = (dateRange as { min_date: string | null } | null)?.min_date;
+    if (minDate && minDate > startDate) {
+      // Subtract one day to skip past already-ingested boundary
+      const d = new Date(minDate);
+      d.setDate(d.getDate() - 1);
+      resumeEndDate = d.toISOString().slice(0, 10);
+      logger.info({ resumeEndDate, originalMinDate: minDate, count: (dateRange as { count: number })?.count }, 'CourtListener date-based resume — fetching older cases');
     }
   }
 
   // Build initial URL
   const params = new URLSearchParams({
     date_filed__gte: startDate,
-    date_filed__lte: endDate,
+    date_filed__lte: resumeEndDate,
     order_by: '-date_filed',
     format: 'json',
   });
-  if (courtFilter) params.set('court__id', courtFilter);
+  if (courtFilter) params.set('docket__court__id', courtFilter);
   if (statusFilter) params.set('precedential_status', statusFilter);
-  if (autoOffset > 0) params.set('offset', String(autoOffset * PER_PAGE));
+  if (options.offsetPage && options.offsetPage > 0) params.set('offset', String(options.offsetPage * PER_PAGE));
 
   nextUrl = `${CL_API_URL}/clusters/?${params.toString()}`;
 
-  logger.info({ startDate, endDate, courtFilter, statusFilter, maxPages, autoOffset }, 'Starting CourtListener fetch');
+  logger.info({ startDate, endDate: resumeEndDate, courtFilter, statusFilter, maxPages }, 'Starting CourtListener fetch');
 
   for (let page = 0; page < maxPages; page++) {
     if (!nextUrl) break;

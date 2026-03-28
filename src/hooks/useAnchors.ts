@@ -25,8 +25,15 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 
 type AnchorRow = Database['public']['Tables']['anchors']['Row'];
 
+/** Subset of AnchorRow columns selected for performance (not select *). */
+type AnchorPartial = Pick<AnchorRow,
+  'id' | 'filename' | 'fingerprint' | 'status' | 'created_at' |
+  'chain_timestamp' | 'file_size' | 'credential_type' | 'chain_tx_id' |
+  'chain_block_height' | 'public_id' | 'metadata'
+>;
+
 /** Map a Supabase anchor row to the UI Record interface. */
-function mapAnchorToRecord(anchor: AnchorRow): Record {
+function mapAnchorToRecord(anchor: AnchorPartial): Record {
   const meta = anchor.metadata as { issuer?: string; [k: string]: unknown } | null;
   return {
     id: anchor.id,
@@ -69,24 +76,22 @@ export function useAnchors(): UseAnchorsReturn {
     setLoading(true);
     setError(null);
 
+    // Select only needed columns and exclude pipeline anchors server-side.
+    // Limit to 500 most recent user records for performance (was fetching 862K+ rows).
     const { data, error: fetchError } = await supabase
       .from('anchors')
-      .select('*')
+      .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
       .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+      .or('metadata.is.null,metadata->>pipeline_source.is.null')
+      .order('created_at', { ascending: false })
+      .limit(500);
 
     if (fetchError) {
       setError(fetchError.message);
       setRecords([]);
       toast.error(TOAST.RECORDS_FETCH_FAILED);
     } else {
-      // Exclude pipeline-generated anchors from personal dashboard
-      // Pipeline anchors have metadata.pipeline_source set (e.g., 'edgar', 'federal_register')
-      const userAnchors = (data ?? []).filter((a) => {
-        const meta = a.metadata as { pipeline_source?: string } | null;
-        return !meta?.pipeline_source;
-      });
-      setRecords(userAnchors.map(mapAnchorToRecord));
+      setRecords((data ?? []).map(mapAnchorToRecord));
     }
 
     setLoading(false);

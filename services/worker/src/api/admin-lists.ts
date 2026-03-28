@@ -60,7 +60,7 @@ export async function handleAdminUsers(
   try {
     let query = db
       .from('profiles')
-      .select('id, email, full_name, role, org_id, created_at, updated_at, deleted_at', { count: 'exact' })
+      .select('id, email, full_name, role, org_id, is_platform_admin, created_at, updated_at, deleted_at', { count: 'exact' })
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -126,7 +126,7 @@ export async function handleAdminUserDetail(
     // Fetch user profile
     const { data: profile, error: profileError } = await db
       .from('profiles')
-      .select('id, email, full_name, role, org_id, created_at, updated_at')
+      .select('id, email, full_name, role, org_id, is_platform_admin, created_at, updated_at')
       .eq('id', targetUserId)
       .is('deleted_at', null)
       .single();
