@@ -23,11 +23,13 @@ interface ReportData {
  */
 async function generateAnchorSummary(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
   // Fetch anchor statistics
+  // Capped at 10000 to prevent OOM on large accounts
   const { data: anchors } = await db
     .from('anchors')
     .select('id, status, created_at')
     .eq('user_id', userId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .limit(10000);
 
   const total = anchors?.length || 0;
   const secured = anchors?.filter((a) => a.status === 'SECURED').length || 0;
