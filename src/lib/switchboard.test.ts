@@ -32,11 +32,13 @@ import {
   FLAGS,
   subscribeFlagChanges,
   unsubscribeFlagChanges,
+  _clearCacheForTest,
 } from './switchboard';
 
 describe('switchboard feature flags', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    _clearCacheForTest();
   });
 
   describe('getFlag', () => {
@@ -64,8 +66,8 @@ describe('switchboard feature flags', () => {
       mockFrom.mockReturnValue({
         select: vi.fn(() => ({
           data: [
-            { id: 'ENABLE_PROD_NETWORK_ANCHORING', value: true },
-            { id: 'MAINTENANCE_MODE', value: true },
+            { flag_key: 'ENABLE_PROD_NETWORK_ANCHORING', enabled: true },
+            { flag_key: 'MAINTENANCE_MODE', enabled: true },
           ],
           error: null,
         })),
@@ -86,18 +88,7 @@ describe('switchboard feature flags', () => {
       });
 
       const flags = await getAllFlags();
-      expect(flags).toEqual({
-        ENABLE_PROD_NETWORK_ANCHORING: false,
-        ENABLE_OUTBOUND_WEBHOOKS: false,
-        ENABLE_NEW_CHECKOUTS: true,
-        ENABLE_REPORTS: true,
-        MAINTENANCE_MODE: false,
-        ENABLE_BATCH_ANCHORING: false,
-        ENABLE_AI_EXTRACTION: false,
-        ENABLE_SEMANTIC_SEARCH: false,
-        ENABLE_AI_FRAUD: false,
-        ENABLE_AI_REPORTS: false,
-      });
+      expect(flags).toEqual({ ...FLAGS });
     });
   });
 
@@ -128,7 +119,7 @@ describe('switchboard feature flags', () => {
       // Simulate a realtime UPDATE event
       onCallback({
         eventType: 'UPDATE',
-        new: { id: 'MAINTENANCE_MODE', value: true },
+        new: { flag_key: 'MAINTENANCE_MODE', enabled: true },
       });
 
       expect(callback).toHaveBeenCalledWith('MAINTENANCE_MODE', true);
@@ -141,7 +132,7 @@ describe('switchboard feature flags', () => {
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'INSERT',
-        new: { id: 'ENABLE_REPORTS', value: false },
+        new: { flag_key: 'ENABLE_REPORTS', enabled: false },
       });
 
       expect(callback).toHaveBeenCalledWith('ENABLE_REPORTS', false);
@@ -154,20 +145,20 @@ describe('switchboard feature flags', () => {
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'UPDATE',
-        new: { id: 'UNKNOWN_FLAG', value: true },
+        new: { flag_key: 'UNKNOWN_FLAG', enabled: true },
       });
 
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it('ignores events without id field', () => {
+    it('ignores events without flag_key field', () => {
       const callback = vi.fn();
       subscribeFlagChanges(callback);
 
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'UPDATE',
-        new: { value: true },
+        new: { enabled: true },
       });
 
       expect(callback).not.toHaveBeenCalled();

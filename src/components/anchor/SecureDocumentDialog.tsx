@@ -257,6 +257,7 @@ export function SecureDocumentDialog({
       setStep('extraction-failed');
       return;
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm defined after this callback; circular dep is intentional
   }, [fileData, selectedTemplate, autoSelectTemplate]);
 
   // Handle proceeding from upload step — always run AI extraction
@@ -270,6 +271,7 @@ export function SecureDocumentDialog({
       await autoSelectTemplate('OTHER');
       handleConfirm([]);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm/autoSelectTemplate defined after; circular dep is intentional
   }, [fileData, aiEnabled, handleStartExtraction]);
 
   // AI field callbacks

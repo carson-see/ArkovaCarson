@@ -7,7 +7,7 @@ describe('IdentityVerification', () => {
     render(<IdentityVerification status="unstarted" verifiedAt={null} />);
     expect(screen.getByText('Identity Verification')).toBeInTheDocument();
     expect(screen.getByText('Not Verified')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /verify identity/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /get verified/i })).toBeInTheDocument();
   });
 
   it('renders pending state without verify button', () => {

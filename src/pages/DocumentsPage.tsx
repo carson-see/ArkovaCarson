@@ -179,9 +179,8 @@ export function DocumentsPage() {
     navigate(ROUTES.LOGIN);
   };
 
-  const handleSecureSuccess = useCallback(async () => {
-    await refreshAnchors();
-  }, [refreshAnchors]);
+  // Realtime subscription in useAnchors handles INSERT — no manual refresh needed
+  const handleSecureSuccess = useCallback(() => {}, []);
 
   const handleRevokeRecord = useCallback(async (record: AnchorRecord) => {
     const success = await revokeAnchor(record.id);

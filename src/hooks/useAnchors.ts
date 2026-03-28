@@ -77,14 +77,14 @@ export function useAnchors(): UseAnchorsReturn {
     setError(null);
 
     // Select only needed columns and exclude pipeline anchors server-side.
-    // Limit to 500 most recent user records for performance (was fetching 862K+ rows).
+    // Limit to 100 most recent user records for performance (was fetching 500+).
     const { data, error: fetchError } = await supabase
       .from('anchors')
       .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
       .is('deleted_at', null)
       .or('metadata.is.null,metadata->>pipeline_source.is.null')
       .order('created_at', { ascending: false })
-      .limit(500);
+      .limit(100);
 
     if (fetchError) {
       setError(fetchError.message);

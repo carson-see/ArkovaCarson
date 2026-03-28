@@ -60,21 +60,38 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     setError(null);
 
     try {
-      // 1. Get user's subscription + plan in one query
-      const { data: subData, error: subError } = await supabase
-        .from('subscriptions')
-        .select('plan_id, current_period_start, status')
-        .eq('user_id', user.id)
-        .maybeSingle();
+      // 1. Fetch subscription + plans + anchor count in parallel
+      const monthStart = new Date();
+      monthStart.setDate(1);
+      monthStart.setHours(0, 0, 0, 0);
 
-      if (subError) throw subError;
+      const [subResult, freePlanResult, countResult] = await Promise.all([
+        supabase
+          .from('subscriptions')
+          .select('plan_id, current_period_start, status')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('plans')
+          .select('records_per_month, name')
+          .eq('id', 'free')
+          .single(),
+        supabase
+          .from('anchors')
+          .select('id', { count: 'exact', head: true })
+          .eq('user_id', user.id)
+          .gte('created_at', monthStart.toISOString()),
+      ]);
 
-      let _limit: number;
+      if (subResult.error) throw subResult.error;
+      if (freePlanResult.error) throw freePlanResult.error;
+      if (countResult.error) throw countResult.error;
+
+      const subData = subResult.data;
       let name: string;
-      let periodStart: string | null = null;
 
       if (subData?.plan_id && subData.status === 'active') {
-        // Fetch plan details
+        // Fetch active plan details (only when needed)
         const { data: planData, error: planError } = await supabase
           .from('plans')
           .select('records_per_month, name')
@@ -82,41 +99,12 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
           .single();
 
         if (planError) throw planError;
-
-        _limit =planData.records_per_month;
         name = planData.name;
-        periodStart = subData.current_period_start;
       } else {
-        // No active subscription — free tier
-        const { data: freePlan, error: freePlanError } = await supabase
-          .from('plans')
-          .select('records_per_month, name')
-          .eq('id', 'free')
-          .single();
-
-        if (freePlanError) throw freePlanError;
-        _limit =freePlan.records_per_month;
-        name = freePlan.name;
+        name = freePlanResult.data.name;
       }
 
-      // 2. Count anchors created in current period
-      let countQuery = supabase
-        .from('anchors')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', user.id);
-
-      if (periodStart) {
-        countQuery = countQuery.gte('created_at', periodStart);
-      } else {
-        // Free users: count from start of current calendar month
-        const monthStart = new Date();
-        monthStart.setDate(1);
-        monthStart.setHours(0, 0, 0, 0);
-        countQuery = countQuery.gte('created_at', monthStart.toISOString());
-      }
-
-      const { count, error: countError } = await countQuery;
-      if (countError) throw countError;
+      const count = countResult.count;
 
       // Beta: set unlimited for all users — credit/quota enforcement disabled
       setRecordsUsed(count ?? 0);
@@ -155,19 +143,6 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
         },
         () => {
           // Re-fetch entitlements when subscription changes
-          fetchEntitlements();
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'anchors',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          // Re-fetch when new anchors are created (quota decrement)
           fetchEntitlements();
         },
       )

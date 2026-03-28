@@ -71,9 +71,8 @@ export function DashboardPage() {
     navigate(ROUTES.LOGIN);
   };
 
-  const handleSecureSuccess = useCallback(async () => {
-    await refreshAnchors();
-  }, [refreshAnchors]);
+  // Realtime subscription in useAnchors handles INSERT — no manual refresh needed
+  const handleSecureSuccess = useCallback(() => {}, []);
 
   const handleViewRecord = useCallback((record: Record) => {
     navigate(recordDetailPath(record.id));
