@@ -165,21 +165,28 @@ export function useAnchors(): UseAnchorsReturn {
   );
 
   // Realtime subscription for anchor changes (BETA-01)
+  // Filtered by user_id to reduce traffic (H3) + reconnect handler (C4)
   useEffect(() => {
     if (!user) return;
 
     const channel = supabase
-      .channel('anchors-list')
+      .channel(`anchors-${user.id}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'anchors',
+          filter: `user_id=eq.${user.id}`,
         },
         handleRealtimePayload,
       )
-      .subscribe();
+      .subscribe((status) => {
+        // Refetch on reconnect to catch any missed updates (C4)
+        if (status === 'SUBSCRIBED' && channelRef.current) {
+          fetchAnchors();
+        }
+      });
 
     channelRef.current = channel;
 
@@ -189,7 +196,7 @@ export function useAnchors(): UseAnchorsReturn {
         channelRef.current = null;
       }
     };
-  }, [user, handleRealtimePayload]);
+  }, [user, handleRealtimePayload, fetchAnchors]);
 
   const refreshAnchors = useCallback(async () => {
     await fetchAnchors();
