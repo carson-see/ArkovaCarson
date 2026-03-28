@@ -59,7 +59,6 @@ const mainNavItems: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
   { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
   { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATIONS },
-  { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
   { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },
 ];
