@@ -127,31 +127,9 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     fetchEntitlements();
   }, [fetchEntitlements]);
 
-  // DH-10: Subscribe to billing_subscriptions changes for live quota updates
-  useEffect(() => {
-    if (!user) return;
-
-    const channel = supabase
-      .channel(`entitlements-${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'subscriptions',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          // Re-fetch entitlements when subscription changes
-          fetchEntitlements();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [user, fetchEntitlements]);
+  // H5: Removed realtime subscription on subscriptions table.
+  // Plan changes are rare (especially during beta with all quotas disabled).
+  // Use refresh() to manually re-fetch when needed (e.g., after checkout).
 
   const isUnlimited = recordsLimit === null;
   const remaining = isUnlimited ? null : Math.max(0, recordsLimit - recordsUsed);
