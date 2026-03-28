@@ -24,31 +24,22 @@ export function useAnchorStats() {
 
   const fetchStats = useCallback(async () => {
     try {
-      // Fetch counts by status
-      const statusCounts: Record<string, number> = {};
-      const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'] as const;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dbAny = supabase as any;
 
-      const countPromises = statuses.map(async (status) => {
-        const { count } = await supabase
-          .from('anchors')
-          .select('*', { count: 'exact', head: true })
-          .eq('status', status)
-          .is('deleted_at', null);
-        return { status, count: count ?? 0 };
-      });
-
-      // Use RPC for accurate TX stats (PostgREST caps rows at 1000, breaking client-side distinct counts)
-      const [countsResult, txStatsResult] = await Promise.all([
-        Promise.all(countPromises),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (supabase as any).rpc('get_anchor_tx_stats'),
+      // Use SECURITY DEFINER RPCs for accurate counts (bypasses RLS row limits)
+      const [statusResult, txStatsResult] = await Promise.all([
+        dbAny.rpc('get_anchor_status_counts'),
+        dbAny.rpc('get_anchor_tx_stats'),
       ]);
 
       if (!isMountedRef.current) return;
 
-      // Process status counts
-      for (const { status, count } of countsResult) {
-        statusCounts[status] = count;
+      // Process status counts from RPC
+      const statusCounts: Record<string, number> = {};
+      const statusData = statusResult.data ?? {};
+      for (const status of ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED']) {
+        statusCounts[status] = statusData[status] ?? 0;
       }
       const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
 

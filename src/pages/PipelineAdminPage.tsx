@@ -167,32 +167,21 @@ export function PipelineAdminPage() {
         }
       }
 
-      // Anchor counts by credential_type and status
+      // Anchor counts by credential_type and status (isolated — failure here won't kill the page)
       const byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }> = {};
-      const { data: ctRows } = await dbAny.rpc('get_anchor_type_counts').catch(() => ({ data: null }));
-      if (ctRows && Array.isArray(ctRows)) {
-        for (const row of ctRows as Array<{ credential_type: string | null; status: string; count: number }>) {
-          const ct = row.credential_type ?? 'UNKNOWN';
-          if (!byCredentialType[ct]) byCredentialType[ct] = { total: 0, secured: 0, submitted: 0, pending: 0, broadcasting: 0 };
-          byCredentialType[ct].total += Number(row.count);
-          const s = row.status?.toLowerCase() as 'secured' | 'submitted' | 'pending' | 'broadcasting';
-          if (s in byCredentialType[ct]) byCredentialType[ct][s] += Number(row.count);
-        }
-      } else {
-        // Fallback: direct query (may be slow on large tables)
-        const { data: anchorRows } = await dbAny
-          .from('anchors')
-          .select('credential_type, status')
-          .limit(100000);
-        if (anchorRows && Array.isArray(anchorRows)) {
-          for (const row of anchorRows as Array<{ credential_type: string | null; status: string }>) {
+      try {
+        const { data: ctRows } = await dbAny.rpc('get_anchor_type_counts');
+        if (ctRows && Array.isArray(ctRows)) {
+          for (const row of ctRows as Array<{ credential_type: string | null; status: string; count: number }>) {
             const ct = row.credential_type ?? 'UNKNOWN';
             if (!byCredentialType[ct]) byCredentialType[ct] = { total: 0, secured: 0, submitted: 0, pending: 0, broadcasting: 0 };
-            byCredentialType[ct].total += 1;
+            byCredentialType[ct].total += Number(row.count);
             const s = row.status?.toLowerCase() as 'secured' | 'submitted' | 'pending' | 'broadcasting';
-            if (s in byCredentialType[ct]) byCredentialType[ct][s] += 1;
+            if (s in byCredentialType[ct]) byCredentialType[ct][s] += Number(row.count);
           }
         }
+      } catch {
+        // Type counts are non-critical — don't let this fail the whole page
       }
 
       setStats({

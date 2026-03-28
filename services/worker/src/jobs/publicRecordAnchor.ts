@@ -29,7 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 /** Max records per batch — Merkle tree handles thousands efficiently.
  * Increased to 10,000 to maximize pipeline throughput for compliance data anchoring. */
-export const PUBLIC_RECORD_BATCH_SIZE = 10000;
+export const PUBLIC_RECORD_BATCH_SIZE = 2000;
 
 /** Minimum records to trigger a batch */
 export const MIN_BATCH_SIZE = 1;
