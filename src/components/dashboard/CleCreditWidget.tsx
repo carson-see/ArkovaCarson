@@ -52,13 +52,16 @@ export function CleCreditWidget() {
 
     async function fetchCleData() {
       // Check for CLE-type anchors
+      // H2: Limit to 500 CLE records — no user needs 500+ displayed
       const { data: anchors } = await supabase
         .from('anchors')
         .select('metadata, credential_type')
         .eq('user_id', user!.id)
         // CLE added in migration 0088 — cast until types regenerated
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .eq('credential_type', 'CLE' as any);
+        .eq('credential_type', 'CLE' as any)
+        .is('deleted_at', null)
+        .limit(500);
 
       if (!anchors || anchors.length === 0) {
         setHasCle(false);

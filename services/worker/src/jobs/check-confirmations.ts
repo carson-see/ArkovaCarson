@@ -321,8 +321,10 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   }
   confirmationCheckRunning = true;
 
-  // PERF: Fetch distinct tx_ids first (tiny result), then fetch anchors per-tx on confirm.
-  // Old approach fetched 50K anchors into memory just to find 100 unique tx_ids.
+  // PERF/C5: Fetch chain_tx_id column only, capped at 500 rows.
+  // With ~1K records/TX from Merkle batching, 500 rows covers plenty of unique tx_ids.
+  // We only need MAX_TX_CHECKS_PER_RUN (100) unique tx_ids per run.
+  // Previous: fetched 5000 rows into memory just to find ~100 unique tx_ids.
   const { data: txRows, error: txError } = await db
     .from('anchors')
     .select('chain_tx_id')
@@ -330,7 +332,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
     .not('chain_tx_id', 'is', null)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
-    .limit(5000);
+    .limit(500);
 
   if (txError) {
     logger.error({ error: txError }, 'Failed to fetch SUBMITTED anchor tx_ids');
