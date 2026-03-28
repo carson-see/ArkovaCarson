@@ -165,8 +165,11 @@ export function ComplianceDashboardPage() {
       const thirtyDaysFromNow = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-      // Fetch counts in parallel
-      const [activeRes, expiringRes, revokedRes, totalRes, anchoredRes] = await Promise.all([
+      // Fetch all data in parallel (was: 5 counts parallel + 3 sequential)
+      const [
+        activeRes, expiringRes, revokedRes, totalRes, anchoredRes,
+        expiringDetailRes, activityRes, reviewRes,
+      ] = await Promise.all([
         // Active count
         supabase
           .from('attestations')
@@ -200,6 +203,30 @@ export function ComplianceDashboardPage() {
           .select('*', { count: 'exact', head: true })
           .eq('attester_org_id', orgId)
           .not('chain_tx_id', 'is', null),
+        // Expiring attestations detail
+        supabase
+          .from('attestations')
+          .select('id, public_id, subject_identifier, attestation_type, attester_name, expires_at, status')
+          .eq('attester_org_id', orgId)
+          .eq('status', 'ACTIVE')
+          .not('expires_at', 'is', null)
+          .gte('expires_at', now)
+          .lte('expires_at', thirtyDaysFromNow)
+          .order('expires_at', { ascending: true })
+          .limit(20),
+        // Recent activity (last 20 attestation events)
+        supabase
+          .from('attestations')
+          .select('id, subject_identifier, status, updated_at, attestation_type')
+          .eq('attester_org_id', orgId)
+          .order('updated_at', { ascending: false })
+          .limit(20),
+        // Review queue count (pending items)
+        supabase
+          .from('review_queue_items')
+          .select('*', { count: 'exact', head: true })
+          .eq('org_id', orgId)
+          .eq('status', 'PENDING'),
       ]);
 
       setStats({
@@ -210,20 +237,8 @@ export function ComplianceDashboardPage() {
         anchoredCount: anchoredRes.count ?? 0,
       });
 
-      // Fetch expiring attestations detail
-      const { data: expiringData } = await supabase
-        .from('attestations')
-        .select('id, public_id, subject_identifier, attestation_type, attester_name, expires_at, status')
-        .eq('attester_org_id', orgId)
-        .eq('status', 'ACTIVE')
-        .not('expires_at', 'is', null)
-        .gte('expires_at', now)
-        .lte('expires_at', thirtyDaysFromNow)
-        .order('expires_at', { ascending: true })
-        .limit(20);
-
       setExpiring(
-        (expiringData ?? []).map((a) => ({
+        (expiringDetailRes.data ?? []).map((a) => ({
           id: a.id,
           public_id: a.public_id,
           subject_identifier: a.subject_identifier,
@@ -235,16 +250,8 @@ export function ComplianceDashboardPage() {
         }))
       );
 
-      // Fetch recent activity (last 20 attestation events)
-      const { data: activityData } = await supabase
-        .from('attestations')
-        .select('id, subject_identifier, status, updated_at, attestation_type')
-        .eq('attester_org_id', orgId)
-        .order('updated_at', { ascending: false })
-        .limit(20);
-
       setActivity(
-        (activityData ?? []).map((a) => {
+        (activityRes.data ?? []).map((a) => {
           const evt = eventDescription(a as Attestation);
           return {
             id: a.id,
@@ -256,14 +263,7 @@ export function ComplianceDashboardPage() {
         })
       );
 
-      // Fetch review queue count (pending items)
-      const { count: pendingReviewCount } = await supabase
-        .from('review_queue_items')
-        .select('*', { count: 'exact', head: true })
-        .eq('org_id', orgId)
-        .eq('status', 'PENDING');
-
-      setReviewCount(pendingReviewCount ?? 0);
+      setReviewCount(reviewRes.count ?? 0);
     } catch {
       // Silently handle - stats will show as 0
     } finally {
