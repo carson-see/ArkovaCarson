@@ -37,7 +37,8 @@ export function useOrgMembers(orgId: string | null | undefined): UseOrgMembersRe
       .from('profiles')
       .select('id, email, full_name, avatar_url, role, created_at')
       .eq('org_id', orgId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(500);
 
     if (fetchError) {
       setError(fetchError.message);

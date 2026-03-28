@@ -120,7 +120,8 @@ export function MemberDetailPage() {
       .eq('user_id', memberId)
       .eq('org_id', profile.org_id)
       .is('deleted_at', null)
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(200);
 
     setAnchors(anchorData ?? []);
     setLoading(false);

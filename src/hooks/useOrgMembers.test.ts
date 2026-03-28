@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 
 const mockOrder = vi.hoisted(() => vi.fn());
+const mockLimit = vi.hoisted(() => vi.fn());
 const mockEq = vi.hoisted(() => vi.fn());
 const mockSelect = vi.hoisted(() => vi.fn());
 const mockFrom = vi.hoisted(() => vi.fn());
@@ -26,6 +27,7 @@ describe('useOrgMembers', () => {
     mockFrom.mockReturnValue({ select: mockSelect });
     mockSelect.mockReturnValue({ eq: mockEq });
     mockEq.mockReturnValue({ order: mockOrder });
+    mockOrder.mockReturnValue({ limit: mockLimit });
   });
 
   it('returns empty members and stops loading when no orgId', async () => {
@@ -51,7 +53,7 @@ describe('useOrgMembers', () => {
       },
     ];
 
-    mockOrder.mockResolvedValue({ data: mockProfiles, error: null });
+    mockLimit.mockResolvedValue({ data: mockProfiles, error: null });
 
     const { result } = renderHook(() => useOrgMembers('org-1'));
 
@@ -72,7 +74,7 @@ describe('useOrgMembers', () => {
   });
 
   it('sets error when query fails', async () => {
-    mockOrder.mockResolvedValue({
+    mockLimit.mockResolvedValue({
       data: null,
       error: { message: 'Permission denied' },
     });
