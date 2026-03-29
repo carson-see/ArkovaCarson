@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Arkova Jira Board
+    url: https://blocdoc1.atlassian.net/jira/software/projects/AR/board
+    about: View and manage all project work items on our Jira board
