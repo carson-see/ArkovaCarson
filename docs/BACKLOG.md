@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-03-29 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825 tests, 139 migrations, AI eval F1=82.1%, golden dataset 1,330 entries, 130 few-shot examples, Phase 1.5 15/16 complete) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-03-30 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825 tests, 139 migrations, AI eval F1=82.1%, golden dataset 1,460 entries, 130 few-shot examples, Phase 1.5 15/16 complete, Nessie model eval complete) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -17,8 +17,9 @@ _Last updated: 2026-03-29 (320K+ public records, 166K+ SECURED anchors on mainne
 | AI Infrastructure (Session 12) | 6 | 6 | 0 | No (all complete) |
 | UX Overhaul (Sessions 9-10) | 7 | 7 | 0 | No (all complete) |
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
-| Compliance Mapping Layer (CML) | 5 | 4 | 1 | No (next sprint) |
+| Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
+| Nessie Model Training (NMT) | 6 | 0 | 6 | No (AI infra) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -30,7 +31,7 @@ _Last updated: 2026-03-29 (320K+ public records, 166K+ SECURED anchors on mainne
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **10** | |
+| **Total Open Items** | | | **12** | |
 
 ---
 
@@ -216,19 +217,25 @@ _All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071
 ### ~~P8 AI Intelligence — ALL COMPLETE (19/19)~~
 _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integrity scoring), P8-S9 (review queue), P8-S16 (AI reports). Completed via PR #80._
 
-### GEO & SEO — 5 not started
-| ID | Description | Priority |
-|----|-------------|----------|
-| ~~GEO-03~~ | ~~Publish /privacy and /terms on marketing site~~ | ~~CRITICAL~~ — **COMPLETE** (pages exist in arkova-marketing) |
-| GEO-08 | Content expansion — 5 core pages | HIGH |
-| GEO-09 | Community & brand presence launch | MEDIUM |
-| GEO-10 | IndexNow for Bing/Copilot | MEDIUM |
-| GEO-11 | YouTube explainers + VideoObject schema | MEDIUM |
+### GEO & SEO — 8 not started (5 NEW from 2026-03-29 audit)
+| ID | Description | Priority | Source |
+|----|-------------|----------|--------|
+| **GEO-13** | **On-page SEO critical fixes (title, H1, meta, keywords)** | **CRITICAL** | 2026-03-29 audit: keyword score 4/10 |
+| **GEO-14** | **Fix soft 404s (nonexistent URLs return 200 + homepage)** | **CRITICAL** | 2026-03-29 audit: verified via curl |
+| **GEO-15** | **Image alt text + product screenshots** | **HIGH** | 2026-03-29 audit: image score 3/10 |
+| **GEO-16** | **Add traction numbers / social proof to homepage** | **HIGH** | 2026-03-29 audit: 0 metrics shown |
+| **GEO-17** | **Internal linking + contextual cross-references** | **HIGH** | 2026-03-29 audit: 0 body links |
+| GEO-08 | Content expansion — 5 core pages | HIGH | Original |
+| GEO-09 | Community & brand presence launch | MEDIUM | Original |
+| GEO-10 | IndexNow for Bing/Copilot | MEDIUM | Original |
+| GEO-11 | YouTube explainers + VideoObject schema | MEDIUM | Original |
 
-### GEO & SEO — 2 partial
+### GEO & SEO — 1 partial
 | ID | Description | Remaining |
 |----|-------------|-----------|
 | GEO-02 | LinkedIn entity + sameAs | Wikidata entry (external) |
+| ~~GEO-03~~ | ~~Publish /privacy and /terms~~ | ~~**COMPLETE** — verified 200 status 2026-03-29~~ |
+| ~~GEO-04~~ | ~~About page + team bios~~ | ~~**COMPLETE** — team section + Person schema on homepage~~ |
 | ~~GEO-05~~ | ~~Enhanced schema~~ | ~~**COMPLETE** — speakable + AggregateOffer deployed~~ |
 | ~~GEO-12~~ | ~~Security headers~~ | ~~**COMPLETE** — vercel.json headers deployed~~ |
 
@@ -246,7 +253,7 @@ _Source: [Strategic Blueprint — The Immutable Compliance Fabric](https://docs.
 | 2 | ~~CML-02~~ | ~~HIGH~~ | ~~Regulatory control IDs in Bitcoin anchor metadata~~ | ~~CML-01~~ | ~~Large~~ — **COMPLETE** (migration 0137, worker complianceMapping.ts, anchor.ts + batch-anchor.ts, 10 tests) |
 | 3 | ~~CML-03~~ | ~~HIGH~~ | ~~Audit-ready PDF export for GRC platforms (Vanta, Drata, Anecdotes)~~ | ~~CML-01, CML-02~~ | ~~Large~~ — **COMPLETE** (audit-export.ts, PDF + CSV, single + batch, 12 tests) |
 | 4 | ~~CML-04~~ | ~~MEDIUM~~ | ~~Compliance dashboard & audit readiness scoring~~ | ~~CML-01~~ | ~~Medium~~ — **COMPLETE** (framework coverage, gap analysis, export panel) |
-| 5 | CML-05 | MEDIUM | GRC platform API integrations (Vanta, Drata, Anecdotes) | CML-03 | XL |
+| ~~5~~ | ~~CML-05~~ | ~~MEDIUM~~ | ~~GRC platform API integrations (Vanta, Drata, Anecdotes)~~ | ~~CML-03~~ | ~~XL~~ — **COMPLETE** (migration 0139, 3 adapters, 6 API endpoints, sync service, 27 tests) |
 
 **Strategic value:** Transforms Arkova from verification utility to enterprise compliance infrastructure. Targets CRO/GRC teams. Justifies premium Enterprise pricing tier.
 
@@ -389,6 +396,37 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 ---
 
+## TIER 0D: NESSIE MODEL TRAINING & EVALUATION (Session 19 — 2026-03-30)
+
+> Source: Model comparison eval (MLX 4-bit, 50 samples). Story doc: [21_nessie_model_training.md](stories/21_nessie_model_training.md)
+> Jira Epic: SCRUM-312 | Stories: SCRUM-334–339
+> Depends on: AI-EVAL-01, AI-EVAL-02, P8 AI Intelligence (all complete)
+> Blocked by: RunPod/Together AI GPU capacity (external)
+
+**Context:** Three fine-tuned Nessie models evaluated 2026-03-30 via local MLX 4-bit quantized inference. All scored below Gemini production baseline (82.1% F1). Gemini Golden fine-tuned model trained on Vertex AI but never evaluated — highest-priority target.
+
+| ID | Story | Priority | Status | Dependencies | Effort |
+|----|-------|----------|--------|-------------|--------|
+| **NMT-01** | **Gemini Golden fine-tuned eval** | **P0** | NOT STARTED | Vertex AI access | Small |
+| NMT-02 | JSON comment stripping in extraction parser | P1 | NOT STARTED | None | Small |
+| NMT-03 | Nessie confidence recalibration | P1 | NOT STARTED | NMT-01 analysis | Medium |
+| NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | NOT STARTED | RunPod/GPU capacity | Medium |
+| NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
+| NMT-06 | Nessie v4 training data improvements | P2 | NOT STARTED | NMT-01, NMT-03 | Large |
+
+**Eval Results (2026-03-30, MLX 4-bit quantized, 50 samples):**
+
+| Model | Macro F1 | Weighted F1 | Conf Corr | ECE |
+|-------|----------|-------------|-----------|-----|
+| Gemini (production) | **82.1%** | ~82% | 0.426 | ~10% |
+| Nessie v3 baseline | 56.4% | 58.4% | 0.214 | 44.6% |
+| Nessie reasoning v1 | 34.2% | **63.3%** | 0.223 | 57.1% |
+| Nessie DPO v1 | 30.7% | 57.8% | **0.337** | 52.5% |
+
+**Key issues:** All Nessie models overconfident (85-90% reported vs 34-46% actual), JSON comment parse failures in reasoning/DPO models, 4-bit quantization degrades quality (results are lower bound).
+
+---
+
 ## TIER 0C: UX OVERHAUL (Sessions 9-10 — 2026-03-23) — ALL COMPLETE
 
 > Source: Sessions 9-10 PRs #143-149. Full redesign of navigation and document management.
@@ -435,7 +473,7 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 |----|-------------|----------|-------|
 | ~~QA-PERF-5~~ | ~~Virtual scrolling for 500+ record lists~~ | ~~LOW~~ | **ALREADY HANDLED** — RecordsList has IntersectionObserver-based progressive virtualization (batch 50, threshold 100). OrgRegistryTable uses server-side pagination (10/page). No additional work needed. |
 
-### E2E Coverage Gaps — 6/9 COMPLETE (specs created 2026-03-28)
+### E2E Coverage Gaps — 9/9 COMPLETE
 | ID | Description | Priority | Status |
 |----|-------------|----------|--------|
 | ~~QA-E2E-01~~ | ~~Billing E2E suite (Stripe test mode)~~ | ~~HIGH~~ | **COMPLETE** — `e2e/billing.spec.ts` (16 tests: pricing tiers, checkout flow, plan badges, usage) |
@@ -444,9 +482,9 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 | ~~QA-E2E-04~~ | ~~Public search E2E~~ | ~~MEDIUM~~ | **COMPLETE** — `e2e/public-search.spec.ts` (9 tests: unauthenticated search, type tabs, verify links, perf) |
 | ~~QA-E2E-05~~ | ~~Proof download E2E (PDF + JSON)~~ | ~~MEDIUM~~ | **COMPLETE** — `e2e/proof-download.spec.ts` (4 tests: PDF/JSON download, structure validation, status visibility) |
 | ~~QA-E2E-06~~ | ~~Issue credential full submit E2E~~ | ~~MEDIUM~~ | **COMPLETE** — `e2e/secure-document.spec.ts` (6 tests: upload, multi-step wizard, success confirmation) |
-| QA-E2E-07 | Seed SECURED anchors fixture | LOW | Required for J1/J2 anchoring tests (signet UTXO unavailable in E2E) |
-| QA-E2E-08 | Cross-browser E2E (Firefox + Safari) | LOW | Chromium-only currently |
-| QA-E2E-09 | Mobile viewport E2E (375px) | LOW | Desktop-only currently |
+| ~~QA-E2E-07~~ | ~~Seed SECURED anchors fixture~~ | ~~LOW~~ | **COMPLETE** — `e2e/fixtures/seed-anchors.ts` (seedAnchors/cleanupSeedAnchors, 4 anchor states) |
+| ~~QA-E2E-08~~ | ~~Cross-browser E2E (Firefox + Safari)~~ | ~~LOW~~ | **COMPLETE** — playwright.config.ts: firefox, webkit, mobile-chrome, mobile-safari projects |
+| ~~QA-E2E-09~~ | ~~Mobile viewport E2E (375px)~~ | ~~LOW~~ | **COMPLETE** — `e2e/mobile-viewport.spec.ts` (12 tests: auth, dashboard, nav, search, record detail, touch targets) |
 
 ### Resilience — Chaos/Fault Testing — ALL COMPLETE (2026-03-29)
 | ID | Description | Priority | Status |
