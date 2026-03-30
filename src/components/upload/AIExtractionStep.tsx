@@ -98,14 +98,11 @@ export function AIExtractionStep({
 
       setProgress(30);
 
+      // 120s timeout for batch extraction (can process many rows)
       const response = await workerFetch('/api/v1/ai/extract-batch', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`,
-        },
         body: JSON.stringify({ rows: batchRows }),
-      });
+      }, 120_000);
 
       setProgress(80);
 
