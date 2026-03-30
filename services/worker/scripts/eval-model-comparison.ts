@@ -28,6 +28,7 @@ import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from '../src/ai/promp
 import { FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { runEval, formatEvalReport } from '../src/ai/eval/runner.js';
 import { analyzeCalibration } from '../src/ai/eval/calibration.js';
+import { stripJsonComments } from '../src/ai/strip-json-comments.js';
 
 /**
  * Minimal system prompt for fine-tuned models.
@@ -120,7 +121,8 @@ class LocalProvider implements IAIProvider {
 
     let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(text);
+      // NMT-02: Strip JS-style comments from reasoning/DPO model output
+      parsed = JSON.parse(stripJsonComments(text));
     } catch {
       console.log(`\n   [DEBUG] JSON parse failed. Raw: ${text.substring(0, 300)}`);
       throw new Error(`JSON parse failed`);

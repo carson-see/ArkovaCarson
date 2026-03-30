@@ -31,37 +31,71 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ## Stories
 
-### NMT-01: Gemini Golden Fine-Tuned Eval (P0 — HIGHEST PRIORITY)
+### NMT-01: Gemini Golden Fine-Tuned Eval (P0 — HIGHEST PRIORITY) — COMPLETE
 
 **Description:** Evaluate the Gemini Golden fine-tuned model against the full golden dataset using the production extraction prompt.
 
-**Context:** This is Arkova's first-to-market AI model. It was trained on Vertex AI (job `3860978631903805440`, model `projects/270018525501/locations/us-central1/models/9197017842648612864@1`) using 1,314 golden dataset examples (8 epochs). It should significantly beat the base Gemini 82.1% F1 since it was trained specifically on our credential types and field naming conventions.
+**Context:** This is Arkova's first-to-market AI model. It was trained on Vertex AI (job `3860978631903805440`, model `projects/270018525501/locations/us-central1/models/9197017842648612864@1`) using 1,314 golden dataset examples (8 epochs).
 
 **Acceptance Criteria:**
-- [ ] Run `runEval()` against Gemini Golden model using full production prompt
-- [ ] Compare against base Gemini baseline (82.1% F1)
-- [ ] Document per-credential-type improvements
-- [ ] Update `docs/eval/` with results
-- [ ] If F1 > 85%, recommend as new production default via `GEMINI_TUNED_MODEL` env var
+- [x] Run `runEval()` against Gemini Golden model using full production prompt
+- [x] Compare against base Gemini baseline (82.1% F1)
+- [x] Document per-credential-type improvements
+- [x] Update `docs/eval/` with results
+- [x] If F1 > 85%, recommend as new production default via `GEMINI_TUNED_MODEL` env var
+
+**Status:** COMPLETE (2026-03-30)
+
+**Results (100 samples, checkpoint 8/8):**
+
+| Metric | Base Gemini | Golden Tuned | Delta |
+|--------|-------------|-------------|-------|
+| Weighted F1 | 82.1% | **90.4%** | **+8.3pp** |
+| Macro F1 | 82.1% | 81.4% | -0.7pp |
+| Mean Actual Accuracy | ~82% | 86.4% | +4.4pp |
+| ECE | ~10% | 9.5% | -0.5pp |
+| Latency | ~3s | 5.4s | +2.4s |
+
+**Top improvements vs baseline:**
+- SEC_FILING: 36.8% → 90.9% (+54.1pp)
+- DEGREE: ~85% → 98.7%
+- LICENSE: ~85% → 98.8%
+- TRANSCRIPT: 100%, RESUME: 100%
+
+**Recommendation:** Deploy as production default. Set `GEMINI_TUNED_MODEL=projects/270018525501/locations/us-central1/endpoints/481340352117080064` in Cloud Run.
+
+**Code changes:**
+- Fixed `callTunedModel()` to support endpoint paths (model paths return 404)
+- Updated GEMINI_TUNED_MODEL docs to reference endpoint path
+- Eval reports: `docs/eval/eval-gemini-2026-03-30T06-51-14.{md,json}`
 
 **Effort:** Small (1 session)
 **Dependencies:** Vertex AI access, `GEMINI_TUNED_MODEL` env var already supported
 
 ---
 
-### NMT-02: JSON Comment Stripping in Extraction Parser (P1)
+### NMT-02: JSON Comment Stripping in Extraction Parser (P1) — COMPLETE
 
 **Description:** Nessie reasoning and DPO models output JavaScript-style comments (`// comment`) in their JSON responses, causing JSON.parse failures and lost eval data.
 
 **Acceptance Criteria:**
-- [ ] Add comment stripping to `extractMetadata()` JSON parsing in `eval-model-comparison.ts`
-- [ ] Also add to production `nessie.ts` provider JSON parsing
-- [ ] Strip single-line (`// ...`) and multi-line (`/* ... */`) comments before JSON.parse
-- [ ] Add tests for comment-in-JSON edge cases
-- [ ] Re-run eval to measure improvement from recovered parse failures
+- [x] Add comment stripping to `extractMetadata()` JSON parsing in `eval-model-comparison.ts`
+- [x] Also add to production `nessie.ts` provider JSON parsing
+- [x] Also added to `gemini.ts` for tuned model output
+- [x] Strip single-line (`// ...`) and multi-line (`/* ... */`) comments before JSON.parse
+- [x] Add tests for comment-in-JSON edge cases (10 tests)
+- [ ] Re-run eval to measure improvement from recovered parse failures (blocked on RunPod GPU)
+
+**Status:** COMPLETE (2026-03-30)
+
+**Implementation:**
+- New utility: `services/worker/src/ai/strip-json-comments.ts` — context-aware parser that preserves `//` and `/*` inside quoted strings
+- 10 unit tests covering: single-line, multi-line, mixed, string preservation, escaped quotes, empty input
+- Integrated into: `nessie.ts`, `gemini.ts`, `eval-model-comparison.ts`
+- All 2,056 worker tests pass
 
 **Effort:** Small
-**Files:** `services/worker/src/ai/nessie.ts`, `services/worker/scripts/eval-model-comparison.ts`
+**Files:** `services/worker/src/ai/strip-json-comments.ts`, `services/worker/src/ai/nessie.ts`, `services/worker/src/ai/gemini.ts`, `services/worker/scripts/eval-model-comparison.ts`
 
 ---
 

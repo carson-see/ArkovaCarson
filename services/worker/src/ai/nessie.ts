@@ -28,6 +28,7 @@ import type {
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
+import { stripJsonComments } from './strip-json-comments.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
@@ -119,7 +120,9 @@ export class NessieProvider implements IAIProvider {
         );
       }
 
-      const parsed = JSON.parse(text);
+      // NMT-02: Strip JS-style comments from Nessie reasoning/DPO model output
+      const cleanedText = stripJsonComments(text);
+      const parsed = JSON.parse(cleanedText);
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
       const { confidence: _, ...rawFields } = parsed;
       const validated = ExtractedFieldsSchema.safeParse(rawFields);
