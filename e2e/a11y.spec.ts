@@ -11,7 +11,7 @@ import AxeBuilder from '@axe-core/playwright';
 test.describe('Accessibility (WCAG 2.1 AA)', () => {
   test('login page has no critical a11y violations', async ({ page }) => {
     await page.goto('/login');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])
@@ -22,7 +22,7 @@ test.describe('Accessibility (WCAG 2.1 AA)', () => {
 
   test('public verification page has no critical a11y violations', async ({ page }) => {
     await page.goto('/verify');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])
@@ -33,7 +33,7 @@ test.describe('Accessibility (WCAG 2.1 AA)', () => {
 
   test('search page has no critical a11y violations', async ({ page }) => {
     await page.goto('/search');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const results = await new AxeBuilder({ page })
       .withTags(['wcag2a', 'wcag2aa'])
@@ -44,7 +44,7 @@ test.describe('Accessibility (WCAG 2.1 AA)', () => {
 
   test('dashboard has no critical a11y violations', async ({ individualPage }) => {
     await individualPage.goto('/dashboard');
-    await individualPage.waitForLoadState('networkidle');
+    await individualPage.waitForLoadState('domcontentloaded');
 
     const results = await new AxeBuilder({ page: individualPage })
       .withTags(['wcag2a', 'wcag2aa'])

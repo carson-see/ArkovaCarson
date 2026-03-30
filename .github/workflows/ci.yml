@@ -367,17 +367,23 @@ jobs:
         id: supabase-e2e-keys
         run: |
           E2E_URL=$(supabase status --output json | jq -r '.API_URL')
+          E2E_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
           E2E_SERVICE_KEY=$(supabase status --output json | jq -r '.SERVICE_ROLE_KEY')
+          echo "::add-mask::$E2E_ANON_KEY"
           echo "::add-mask::$E2E_SERVICE_KEY"
           echo "url=$E2E_URL" >> "$GITHUB_OUTPUT"
+          echo "anon_key=$E2E_ANON_KEY" >> "$GITHUB_OUTPUT"
           echo "service_key=$E2E_SERVICE_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Seed database
         run: supabase db reset
 
       - name: Run E2E tests
-        run: npm run test:e2e
+        run: npx playwright test --project=chromium
+        timeout-minutes: 10
         env:
+          VITE_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
+          VITE_SUPABASE_ANON_KEY: ${{ steps.supabase-e2e-keys.outputs.anon_key }}
           E2E_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
           E2E_SEED_PASSWORD: Demo1234!
