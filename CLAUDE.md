@@ -344,6 +344,8 @@ VITE_SUPABASE_ANON_KEY=
 # Supabase (worker only)
 SUPABASE_URL=
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_JWT_SECRET=                # optional — local JWT verification (eliminates auth network call)
+SUPABASE_POOLER_URL=                # optional — PgBouncer connection pooler URL
 
 # Stripe (worker only)
 STRIPE_SECRET_KEY=
@@ -354,6 +356,20 @@ BITCOIN_TREASURY_WIF=               # never logged (Constitution 1.4)
 BITCOIN_NETWORK=                    # "signet" | "testnet4" | "testnet" | "mainnet" (currently signet)
 BITCOIN_RPC_URL=                    # optional
 BITCOIN_RPC_AUTH=                   # optional
+BITCOIN_UTXO_PROVIDER=mempool      # "rpc" | "mempool" | "getblock"
+MEMPOOL_API_URL=                    # optional — mempool.space API URL override
+BITCOIN_FEE_STRATEGY=              # optional — "static" | "mempool"
+BITCOIN_STATIC_FEE_RATE=           # optional — sat/vB when strategy is "static"
+BITCOIN_FALLBACK_FEE_RATE=         # optional — fallback sat/vB
+BITCOIN_MAX_FEE_RATE=              # optional — max sat/vB, anchor queued if exceeded (PERF-7)
+FORCE_DYNAMIC_FEE_ESTIMATION=      # optional — force dynamic fees on signet/testnet (INEFF-5)
+
+# KMS signing (worker only)
+KMS_PROVIDER=                       # "aws" | "gcp" — required for mainnet
+BITCOIN_KMS_KEY_ID=                 # AWS KMS key ID
+BITCOIN_KMS_REGION=                 # AWS region for KMS key
+GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path
+GCP_KMS_PROJECT_ID=                 # optional — defaults to application default
 
 # Worker
 WORKER_PORT=3001
@@ -362,6 +378,10 @@ LOG_LEVEL=info
 FRONTEND_URL=http://localhost:5173
 USE_MOCKS=false
 ENABLE_PROD_NETWORK_ANCHORING=false
+BATCH_ANCHOR_INTERVAL_MINUTES=10    # batch processing interval
+BATCH_ANCHOR_MAX_SIZE=100           # max anchors per batch TX (max: 10000)
+MAX_FEE_THRESHOLD_SAT_PER_VBYTE=   # optional — batch anchor fee ceiling
+ANCHOR_CONFIDENCE_THRESHOLD=0.4     # confidence threshold for anchor decisions
 
 # Verification API (worker only)
 ENABLE_VERIFICATION_API=false
@@ -375,6 +395,27 @@ CRON_OIDC_AUDIENCE=
 # Cloudflare (edge workers)
 CLOUDFLARE_ACCOUNT_ID=
 CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_TUNNEL_TOKEN=            # never logged (INFRA-01, ADR-002)
+
+# x402 payments (worker only)
+X402_FACILITATOR_URL=               # x402 facilitator URL (PH1-PAY-01)
+ARKOVA_USDC_ADDRESS=                # USDC receiving address on Base
+X402_NETWORK=eip155:84532           # Base Sepolia default
+BASE_RPC_URL=                       # Base network RPC for payment verification
+
+# Email (worker only)
+RESEND_API_KEY=                     # Resend transactional email (BETA-03)
+EMAIL_FROM=noreply@arkova.ai        # verified sender address
+
+# Public record fetchers (worker only)
+EDGAR_USER_AGENT=                   # required by SEC for EDGAR API
+COURTLISTENER_API_TOKEN=            # CourtListener legal records API
+OPENSTATES_API_KEY=                 # OpenStates legislative data API
+SAM_GOV_API_KEY=                    # SAM.gov federal contractor records
+
+# Redis rate limiting (optional)
+UPSTASH_REDIS_REST_URL=             # Upstash Redis REST URL
+UPSTASH_REDIS_REST_TOKEN=           # Upstash Redis REST token
 
 # Sentry
 VITE_SENTRY_DSN=
@@ -387,15 +428,26 @@ GEMINI_API_KEY=
 GEMINI_MODEL=gemini-2.5-flash
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 AI_PROVIDER=mock                    # gemini | nessie | together | cloudflare | replicate | mock
+GEMINI_TUNED_MODEL=                 # optional — fine-tuned Gemini model path
 REPLICATE_API_TOKEN=                # QA only
+AI_BATCH_CONCURRENCY=3              # concurrent AI extraction requests (min: 1)
+CF_AI_MODEL=                        # Cloudflare AI model (default: @cf/nvidia/nemotron)
+
+# Together.ai (fallback LLM provider)
+TOGETHER_API_KEY=
+TOGETHER_MODEL=                     # default: meta-llama/Llama-3.1-8B-Instruct
+TOGETHER_EMBEDDING_MODEL=           # Together.ai embedding model
 
 # Nessie (RunPod vLLM — pipeline extraction)
 RUNPOD_API_KEY=
 RUNPOD_ENDPOINT_ID=                 # e.g., hmayoqhxvy5k5y
+NESSIE_MODEL=nessie-v2              # Nessie model name on RunPod vLLM
+NESSIE_DOMAIN_ROUTING=false         # enable domain-based Nessie routing
 ENABLE_SYNTHETIC_DATA=false
+TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for training data
 ```
 
 ---
 
-_Directive version: 2026-03-28 | 139 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | Golden dataset: 1,330 entries | 130 few-shot examples_
+_Directive version: 2026-03-29 | 139 migrations | 1,866+ tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | Golden dataset: 1,330 entries | 130 few-shot examples_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

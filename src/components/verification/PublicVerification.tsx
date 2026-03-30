@@ -45,6 +45,7 @@ import { logVerificationEvent } from '@/lib/logVerificationEvent';
 import { issuerRegistryPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
+import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 
 interface PublicAnchorData {
   public_id: string;
@@ -368,6 +369,20 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <RevocationDetails
               revocationReason={data.revocation_reason}
               revokedAt={data.revoked_at}
+            />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2D: Compliance Controls (CML-01)
+            ============================================================ */}
+        {data.status === 'SECURED' && (
+          <>
+            <Separator />
+            <ComplianceBadge
+              credentialType={data.credential_type}
+              isSecured={true}
+              compact={false}
             />
           </>
         )}

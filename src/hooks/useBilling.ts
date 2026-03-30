@@ -2,7 +2,7 @@
  * Billing Hook
  *
  * Fetches the current user's subscription and plan data from Supabase.
- * Provides billing state for BillingOverview and PricingPage.
+ * Provides billing state for BillingOverview.
  *
  * @see P7-TS-02
  */

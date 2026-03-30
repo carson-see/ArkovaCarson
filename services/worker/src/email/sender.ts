@@ -31,7 +31,7 @@ export interface SendEmailOptions {
   subject: string;
   html: string;
   /** Email type for audit logging */
-  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation';
+  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation' | 'domain_verification';
   /** Related anchor ID for audit trail */
   anchorId?: string;
   /** Actor user ID (who triggered the send) */

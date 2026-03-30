@@ -23,6 +23,7 @@ import {
   GitBranch,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { ComplianceBadge } from './ComplianceBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -427,15 +428,46 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             );
           })()}
 
+          {/* AI Tags — displayed as badges when present */}
+          {anchor.metadata?.ai_tags && Array.isArray(anchor.metadata.ai_tags) && (anchor.metadata.ai_tags as string[]).length > 0 && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Tags</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {(anchor.metadata.ai_tags as string[]).map(tag => (
+                    <Badge key={tag} variant="secondary" className="text-xs font-normal">
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+                {anchor.metadata.ai_summary && (
+                  <p className="text-xs text-muted-foreground mt-1">{String(anchor.metadata.ai_summary)}</p>
+                )}
+              </div>
+            </>
+          )}
+
+          {/* Compliance Controls (CML-01) */}
+          {anchor.status === 'SECURED' && (
+            <>
+              <Separator />
+              <ComplianceBadge
+                credentialType={anchor.credential_type}
+                isSecured={true}
+              />
+            </>
+          )}
+
           {/* METADATA — pipeline-style key-value pairs */}
-          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id'].includes(k)).length > 0 && (
+          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type'].includes(k)).length > 0 && (
             <>
               <Separator />
               <div className="space-y-3">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                 <div className="space-y-2">
                   {Object.entries(anchor.metadata)
-                    .filter(([k]) => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id'].includes(k))
+                    .filter(([k]) => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type'].includes(k))
                     .map(([key, value]) => (
                       <div key={key} className="flex gap-4">
                         <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>

@@ -25,6 +25,12 @@ const providerArg = args.includes('--provider')
 const outputDir = args.includes('--output')
   ? args[args.indexOf('--output') + 1]
   : resolve(process.cwd(), '../../docs/eval');
+const modelOverride = args.includes('--model')
+  ? args[args.indexOf('--model') + 1]
+  : undefined;
+const sampleSize = args.includes('--sample')
+  ? parseInt(args[args.indexOf('--sample') + 1], 10)
+  : 0; // 0 = full dataset
 
 async function main() {
   console.log(`\n🔬 AI Extraction Eval Framework (AI-EVAL-01)`);
@@ -52,17 +58,29 @@ async function main() {
       process.exit(1);
     }
     const { NessieProvider } = await import('../nessie.js');
-    provider = new NessieProvider();
+    provider = new NessieProvider(undefined, undefined, modelOverride);
+    if (modelOverride) {
+      console.log(`   Model override: ${modelOverride}`);
+    }
   } else {
     console.error(`ERROR: Unknown provider "${providerArg}". Use "mock", "gemini", or "nessie".`);
     process.exit(1);
   }
 
-  console.log(`Running eval against ${FULL_GOLDEN_DATASET.length} entries...`);
+  // Optionally sample the dataset for faster iteration
+  let evalEntries = FULL_GOLDEN_DATASET;
+  if (sampleSize > 0 && sampleSize < FULL_GOLDEN_DATASET.length) {
+    // Deterministic sample: pick every Nth entry for reproducibility
+    const step = Math.floor(FULL_GOLDEN_DATASET.length / sampleSize);
+    evalEntries = FULL_GOLDEN_DATASET.filter((_, i) => i % step === 0).slice(0, sampleSize);
+    console.log(`   Sampled ${evalEntries.length} of ${FULL_GOLDEN_DATASET.length} entries`);
+  }
+
+  console.log(`Running eval against ${evalEntries.length} entries...`);
 
   const result = await runEval({
     provider,
-    entries: FULL_GOLDEN_DATASET,
+    entries: evalEntries,
     concurrency: providerArg === 'gemini' ? 1 : 10, // Rate limit for real API (gemini-2.5-flash needs concurrency 1)
     onProgress: (completed, total) => {
       const pct = ((completed / total) * 100).toFixed(0);

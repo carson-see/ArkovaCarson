@@ -15,7 +15,7 @@ import express from 'express';
 import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
-import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState } from './utils/db.js';
+import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState, getConnectionInfo } from './utils/db.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
@@ -113,7 +113,7 @@ app.get('/health', async (req, res) => {
     uptime: Math.floor(process.uptime()),
     network: config.bitcoinNetwork,
     checks: detailed ? checks : compactChecks,
-    ...(detailed ? { info } : {}),
+    ...(detailed ? { info, connection: getConnectionInfo() } : {}),
   });
 });
 

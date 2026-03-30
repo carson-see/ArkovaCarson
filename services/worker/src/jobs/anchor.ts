@@ -22,6 +22,7 @@ import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { checkPaymentGuard } from '../billing/paymentGuard.js';
 import { isFreeTierUser, isWithinBatchWindow } from '../billing/reconciliation.js';
+import { getComplianceControlIds } from '../utils/complianceMapping.js';
 
 /** SHA-256 hex fingerprint pattern: exactly 64 lowercase hex characters */
 const FINGERPRINT_REGEX = /^[a-f0-9]{64}$/i;
@@ -200,6 +201,33 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     if (receipt.metadataHash) {
       chainMetadata._metadata_hash = receipt.metadataHash;
     }
+
+    // VAI-01: Look up extraction manifest hash and link to anchor
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: manifestData } = await (db as any)
+        .from('extraction_manifests')
+        .select('id, manifest_hash')
+        .eq('fingerprint', anchor.fingerprint)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (manifestData && manifestData.length > 0) {
+        chainMetadata._extraction_manifest_hash = manifestData[0].manifest_hash;
+        // Link manifest to this anchor (non-blocking)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (db as any).from('extraction_manifests')
+          .update({ anchor_id: anchorId })
+          .eq('id', manifestData[0].id)
+          .then(({ error: linkErr }: { error: unknown }) => {
+            if (linkErr) {
+              logger.warn({ error: linkErr, anchorId }, 'Failed to link extraction manifest to anchor');
+            }
+          });
+      }
+    } catch {
+      // Non-fatal — proceed with anchoring if manifest lookup fails
+    }
     // NET-4: Store raw TX hex for rebroadcast/RBF recovery
     if (receipt.rawTxHex) {
       chainMetadata._raw_tx_hex = receipt.rawTxHex;
@@ -212,6 +240,9 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     delete chainMetadata._claimed_by;
     delete chainMetadata._claimed_at;
     updatePayload.metadata = chainMetadata;
+
+    // CML-02: Auto-populate compliance controls based on credential type
+    updatePayload.compliance_controls = getComplianceControlIds(anchor.credential_type);
 
     const { error: updateError, count } = await db
       .from('anchors')
@@ -368,6 +399,20 @@ export async function processPendingAnchors(): Promise<{ processed: number; fail
   if (!enabled) {
     logger.info('Anchor processing disabled via switchboard flag');
     return { processed: 0, failed: 0 };
+  }
+
+  // Pre-flight: check treasury has funds before claiming anchors
+  try {
+    const chainClient = await getChainClientAsync();
+    if (chainClient.hasFunds) {
+      const funded = await chainClient.hasFunds();
+      if (!funded) {
+        logger.warn('Treasury empty — skipping anchor processing until funded');
+        return { processed: 0, failed: 0 };
+      }
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'Pre-flight UTXO check failed — proceeding cautiously');
   }
 
   // Phase 1: Atomically claim anchors via RPC (PENDING → BROADCASTING)

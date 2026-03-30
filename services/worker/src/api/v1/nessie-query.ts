@@ -18,6 +18,7 @@ import { createAIProvider, createEmbeddingProvider, getProviderName } from '../.
 import type { TogetherProvider } from '../../ai/together.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { monitorQuery } from '../../utils/queryMonitor.js';
 
 // Type helpers for tables not yet in generated types (migration 0080 pending)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -218,14 +219,17 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Search public_record_embeddings via RPC
-    const { data: matches, error: searchError } = await dbAny.rpc(
-      'search_public_record_embeddings',
-      {
-        p_query_embedding: embeddingResult.embedding,
-        p_match_threshold: threshold,
-        p_match_count: limit,
-      },
+    // QA-PERF-6: Monitor RAG search query performance
+    const { data: matches, error: searchError } = await monitorQuery(
+      'nessie-rag-search',
+      () => dbAny.rpc(
+        'search_public_record_embeddings',
+        {
+          p_query_embedding: embeddingResult.embedding,
+          p_match_threshold: threshold,
+          p_match_count: limit,
+        },
+      ),
     ) as { data: Array<{ public_record_id: string; similarity: number }> | null; error: unknown };
 
     if (searchError) {

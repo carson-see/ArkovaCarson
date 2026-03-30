@@ -10,9 +10,11 @@ export {
   buildActivationEmail,
   buildAnchorSecuredEmail,
   buildRevocationEmail,
+  buildDomainVerificationEmail,
 } from './templates.js';
 export type {
   ActivationEmailData,
   AnchorSecuredEmailData,
   RevocationEmailData,
+  DomainVerificationEmailData,
 } from './templates.js';

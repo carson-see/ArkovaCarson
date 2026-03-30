@@ -1,5 +1,5 @@
 # Production Switchboard
-_Last updated: 2026-03-24 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20)_
+_Last updated: 2026-03-29 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20), GAP-07 (3 AI flags added)_
 
 ## Overview
 
@@ -18,11 +18,14 @@ Flags are seeded in migration 0021 and re-seeded by `seed.sql`. Additional flags
 | `MAINTENANCE_MODE` | `false` | Put the app in maintenance mode | Yes |
 | `ENABLE_VERIFICATION_API` | `false` | Enable Phase 1.5 Verification API (`/api/v1/*`) | No |
 | `ENABLE_AI_EXTRACTION` | `false` | Enable client-side AI metadata extraction | No |
+| `ENABLE_SEMANTIC_SEARCH` | `false` | Enable AI-powered semantic search endpoints | No |
+| `ENABLE_AI_FRAUD` | `false` | Enable AI fraud detection (cross-field checks) | No |
+| `ENABLE_AI_REPORTS` | `false` | Enable AI-generated reports | No |
 | `ENABLE_AI_FALLBACK` | `false` | Enable Cloudflare AI fallback provider | No |
 | `ENABLE_X402_PAYMENTS` | `false` | Enable x402 protocol payments (USDC micropayments) | Yes |
 | `ENABLE_BATCH_ANCHORING` | `false` | Enable Merkle-tree batch anchoring (multiple anchors per TX) | Yes |
 
-> **Note:** Total flag count: 10+. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI, x402, batch anchoring).
+> **Note:** Total flag count: 13+. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI extraction/search/fraud/reports, x402, batch anchoring).
 
 ### flagRegistry Unified Initialization
 
@@ -172,6 +175,30 @@ The `ENABLE_NEW_CHECKOUTS` flag controls Stripe checkout:
 2. Worker checks flag before creating checkout sessions
 3. If `false`, existing subscriptions continue but no new purchases
 
+### Semantic Search
+
+The `ENABLE_SEMANTIC_SEARCH` flag controls AI-powered semantic search:
+
+1. Worker `aiSemanticSearchGate` middleware checks flag before processing search requests
+2. If `false`, returns 503 with "Semantic search is not currently enabled"
+3. If `true`, allows embedding-based search queries
+
+### AI Fraud Detection
+
+The `ENABLE_AI_FRAUD` flag controls AI fraud detection:
+
+1. Worker `aiFraudGate` middleware checks flag before processing fraud checks
+2. If `false`, returns 503 with "AI fraud detection is not currently enabled"
+3. If `true`, allows cross-field fraud detection analysis
+
+### AI Reports
+
+The `ENABLE_AI_REPORTS` flag controls AI-generated reports:
+
+1. Worker `aiReportsGate` middleware checks flag before generating reports
+2. If `false`, returns 503 with "AI reports is not currently enabled"
+3. If `true`, allows AI report generation
+
 ### Maintenance Mode
 
 The `MAINTENANCE_MODE` flag puts the app in read-only mode:
@@ -221,7 +248,7 @@ SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
 | `get_flag()` RPC | **Complete** | Migration 0021, SECURITY DEFINER |
 | `log_switchboard_flag_change()` trigger | **Complete** | Migration 0021, auto-logs changes |
 | RLS policies (read-only for authenticated) | **Complete** | Migration 0021 |
-| 10+ flags seeded/registered | **Complete** | Migration 0021 + seed.sql + flagRegistry |
+| 13+ flags seeded/registered | **Complete** | Migration 0021 + seed.sql + flagRegistry |
 | Client-side `switchboard.ts` helpers | **Complete** | `src/lib/switchboard.ts` |
 | `ENABLE_VERIFICATION_API` flag | **Complete** | P4.5 Verification API shipped |
 | `ENABLE_X402_PAYMENTS` flag | **Complete** | x402 protocol payment gating |
@@ -249,3 +276,4 @@ SELECT id, value, is_dangerous FROM switchboard_flags ORDER BY id;
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added migration references throughout. Documented `get_flag()` function signature and `log_switchboard_flag_change()` trigger details from migration 0021. Added RLS policy details and grant statements. Noted `ENABLE_VERIFICATION_API` is referenced in Constitution 1.9 but not yet in database. Added seed data section, implementation status table, and change log. |
 | 2026-03-24 | Doc update | Added ENABLE_X402_PAYMENTS, ENABLE_BATCH_ANCHORING, ENABLE_VERIFICATION_API, ENABLE_AI_EXTRACTION, ENABLE_AI_FALLBACK flags. Updated flag count from 5 to 10+. Added flagRegistry unified initialization note. Updated implementation status table. |
+| 2026-03-29 | GAP-07 | Added 3 missing AI flags: ENABLE_SEMANTIC_SEARCH, ENABLE_AI_FRAUD, ENABLE_AI_REPORTS. Added enforcement docs for each. Updated flag count to 13+. |

@@ -85,6 +85,10 @@ export class MockChainClient implements ChainClient {
   async healthCheck(): Promise<boolean> {
     return true;
   }
+
+  async hasFunds(): Promise<boolean> {
+    return true;
+  }
 }
 
 // Singleton instance

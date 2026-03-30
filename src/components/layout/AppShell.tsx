@@ -9,10 +9,11 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Menu } from 'lucide-react';
+import { Menu, ShieldCheck } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { Button } from '@/components/ui/button';
+import { useAuditorMode } from '@/hooks/useAuditorMode';
 import { ERROR_BOUNDARY_LABELS } from '@/lib/copy';
 
 interface AppShellProps {
@@ -38,6 +39,7 @@ export function AppShell({
   orgName,
 }: Readonly<AppShellProps>) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const { isAuditorMode } = useAuditorMode();
 
   const handleCloseMobile = useCallback(() => {
     setMobileOpen(false);
@@ -85,6 +87,15 @@ export function AppShell({
             />
           </div>
         </div>
+
+        {/* VAI-04: Auditor mode banner */}
+        {isAuditorMode && (
+          <div className="flex items-center gap-2 px-4 py-1.5 bg-[#00d4ff]/10 border-b border-[#00d4ff]/20 text-xs text-[#00d4ff]">
+            <ShieldCheck className="h-3.5 w-3.5" />
+            <span className="font-medium">Auditor Mode</span>
+            <span className="text-[#00d4ff]/60">— Read-only compliance view. Write actions are hidden.</span>
+          </div>
+        )}
 
         {/* Page content with atmospheric background */}
         <main id="main-content" className="flex-1 overflow-y-auto overflow-x-hidden bg-mesh-gradient">

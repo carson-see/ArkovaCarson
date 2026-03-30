@@ -42,6 +42,7 @@ import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
 import { Button } from '@/components/ui/button';
 import { useTheme, type Theme } from '@/hooks/useTheme';
+import { useAuditorMode } from '@/hooks/useAuditorMode';
 import {
   Tooltip,
   TooltipContent,
@@ -127,6 +128,47 @@ function ThemeToggle({ collapsed }: Readonly<{ collapsed: boolean }>) {
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent side="right">
           Theme: {THEME_LABEL[theme]}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return button;
+}
+
+// ---------------------------------------------------------------------------
+// Auditor Mode Toggle (VAI-04)
+// ---------------------------------------------------------------------------
+
+function AuditorModeToggle({ collapsed }: Readonly<{ collapsed: boolean }>) {
+  const { isAuditorMode, toggleAuditorMode } = useAuditorMode();
+
+  const button = (
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={toggleAuditorMode}
+      className={cn(
+        'w-full justify-center',
+        !collapsed && 'justify-start',
+        isAuditorMode && 'text-[#00d4ff] bg-[#00d4ff]/[0.06]',
+      )}
+      aria-label={isAuditorMode ? 'Auditor Mode: On. Click to disable.' : 'Auditor Mode: Off. Click to enable.'}
+    >
+      <ShieldCheck className="h-4 w-4 shrink-0" />
+      {!collapsed && <span className="ml-2">{isAuditorMode ? 'Auditor Mode' : 'Auditor Mode'}</span>}
+      {!collapsed && isAuditorMode && (
+        <span className="ml-auto text-[10px] font-mono text-[#00d4ff]">ON</span>
+      )}
+    </Button>
+  );
+
+  if (collapsed) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="right">
+          Auditor Mode: {isAuditorMode ? 'On' : 'Off'}
         </TooltipContent>
       </Tooltip>
     );
@@ -282,8 +324,9 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         </nav>
       </div>
 
-      {/* Theme Toggle + Collapse */}
+      {/* Auditor Mode + Theme Toggle + Collapse */}
       <div className="border-t border-white/[0.06] p-3 space-y-1">
+        <AuditorModeToggle collapsed={collapsed} />
         <ThemeToggle collapsed={collapsed} />
         {/* Collapse button — desktop only (mobile uses overlay) */}
         <div className="hidden md:block">

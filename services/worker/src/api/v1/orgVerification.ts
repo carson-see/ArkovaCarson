@@ -16,6 +16,8 @@ import crypto from 'crypto';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 import { db as _db } from '../../utils/db.js';
+import { sendEmail } from '../../email/sender.js';
+import { buildDomainVerificationEmail } from '../../email/templates.js';
 
 // IDT WS4 columns (domain_verified, ein_tax_id, etc.) are in the DB via migration 0128
 // but not yet in generated types. Use untyped client for org verification queries.
@@ -192,12 +194,29 @@ orgVerificationRouter.post('/verify-domain', async (req: Request, res: Response)
       return;
     }
 
-    // In production, send email to admin@domain
-    // TODO: Integrate email service (Resend/SendGrid) to send verification email
-    // For now, return success and note that email sending is pending
+    // Send verification email to admin@domain via Resend
+    const recipientEmail = `admin@${org.domain}`;
+    const { subject, html } = buildDomainVerificationEmail({
+      domain: org.domain,
+      verificationCode: code,
+    });
+
+    const emailResult = await sendEmail({
+      to: recipientEmail,
+      subject,
+      html,
+      emailType: 'domain_verification',
+      actorId: userId,
+      orgId,
+    });
+
+    if (!emailResult.success) {
+      logger.warn({ error: emailResult.error, orgId, domain: org.domain }, 'Failed to send domain verification email');
+    }
+
     res.json({
       status: 'pending',
-      message: `Verification email sent to admin@${org.domain}. Check your inbox.`,
+      message: `Verification email sent to ${recipientEmail}. Check your inbox.`,
       domain: org.domain,
     });
   } catch (error) {

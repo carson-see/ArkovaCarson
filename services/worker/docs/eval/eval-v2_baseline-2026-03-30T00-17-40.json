@@ -1,0 +1,798 @@
+{
+  "timestamp": "2026-03-30T00:17:40.756Z",
+  "provider": "v2_baseline",
+  "promptVersionHash": "39d44cf8e0b4",
+  "totalEntries": 5,
+  "entryResults": [
+    {
+      "entryId": "GD-001",
+      "credentialType": "DEGREE",
+      "category": "degree",
+      "tags": [
+        "clean",
+        "seed"
+      ],
+      "fieldResults": [
+        {
+          "field": "credentialType",
+          "expected": "DEGREE",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuerName",
+          "expected": "University of Michigan",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuedDate",
+          "expected": "2025-05-03",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fieldOfStudy",
+          "expected": "Computer Science",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "degreeLevel",
+          "expected": "Bachelor",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "jurisdiction",
+          "expected": "Michigan, USA",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fraudSignals",
+          "expected": [],
+          "correct": true,
+          "matchType": "missing_both"
+        }
+      ],
+      "reportedConfidence": 0,
+      "calibratedConfidence": 0.76,
+      "adjustedConfidence": 0.4755291360710195,
+      "actualAccuracy": 0.14285714285714285,
+      "latencyMs": 619,
+      "provider": "v2_baseline",
+      "tokensUsed": 0
+    },
+    {
+      "entryId": "GD-293",
+      "credentialType": "CERTIFICATE",
+      "category": "certificate",
+      "tags": [
+        "synthetic",
+        "fraud",
+        "future-date"
+      ],
+      "fieldResults": [
+        {
+          "field": "credentialType",
+          "expected": "CERTIFICATE",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuerName",
+          "expected": "Google",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuedDate",
+          "expected": "2035-06-15",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fieldOfStudy",
+          "expected": "Machine Learning",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "accreditingBody",
+          "expected": "Google",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fraudSignals",
+          "expected": [
+            "SUSPICIOUS_DATES"
+          ],
+          "correct": false,
+          "matchType": "false_negative"
+        }
+      ],
+      "reportedConfidence": 0,
+      "calibratedConfidence": 0.76,
+      "adjustedConfidence": 0.37601755263379294,
+      "actualAccuracy": 0,
+      "latencyMs": 318,
+      "provider": "v2_baseline",
+      "tokensUsed": 0
+    },
+    {
+      "entryId": "GD-585",
+      "credentialType": "FINANCIAL",
+      "category": "financial",
+      "tags": [
+        "synthetic",
+        "clean",
+        "utility"
+      ],
+      "fieldResults": [
+        {
+          "field": "credentialType",
+          "expected": "FINANCIAL",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuedDate",
+          "expected": "2026-03-01",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fraudSignals",
+          "expected": [],
+          "correct": true,
+          "matchType": "missing_both"
+        }
+      ],
+      "reportedConfidence": 0,
+      "calibratedConfidence": 0.76,
+      "adjustedConfidence": 0.439265463476934,
+      "actualAccuracy": 0.3333333333333333,
+      "latencyMs": 159,
+      "provider": "v2_baseline",
+      "tokensUsed": 0
+    },
+    {
+      "entryId": "GD-877",
+      "credentialType": "INSURANCE",
+      "category": "insurance",
+      "tags": [
+        "synthetic",
+        "clean",
+        "insurance",
+        "life"
+      ],
+      "fieldResults": [
+        {
+          "field": "credentialType",
+          "expected": "INSURANCE",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuerName",
+          "expected": "MetLife",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuedDate",
+          "expected": "2026-01-01",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "expiryDate",
+          "expected": "2046-01-01",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fieldOfStudy",
+          "expected": "Term Life",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "licenseNumber",
+          "expected": "LIFE-2026-10101",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fraudSignals",
+          "expected": [],
+          "correct": true,
+          "matchType": "missing_both"
+        }
+      ],
+      "reportedConfidence": 0,
+      "calibratedConfidence": 0.76,
+      "adjustedConfidence": 0.4166744925854006,
+      "actualAccuracy": 0.14285714285714285,
+      "latencyMs": 143,
+      "provider": "v2_baseline",
+      "tokensUsed": 0
+    },
+    {
+      "entryId": "GD-1169",
+      "credentialType": "PATENT",
+      "category": "patent",
+      "tags": [
+        "synthetic",
+        "patent",
+        "fraud",
+        "issuer-mismatch"
+      ],
+      "fieldResults": [
+        {
+          "field": "credentialType",
+          "expected": "PATENT",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuerName",
+          "expected": "Japan Patent Office",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "issuedDate",
+          "expected": "2026-02-28",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fieldOfStudy",
+          "expected": "Battery Technology",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "jurisdiction",
+          "expected": "Japan",
+          "correct": false,
+          "matchType": "false_negative"
+        },
+        {
+          "field": "fraudSignals",
+          "expected": [
+            "issuer_mismatch",
+            "suspicious_formatting"
+          ],
+          "correct": false,
+          "matchType": "false_negative"
+        }
+      ],
+      "reportedConfidence": 0,
+      "calibratedConfidence": 0.76,
+      "adjustedConfidence": 0.4396983544534297,
+      "actualAccuracy": 0,
+      "latencyMs": 170,
+      "provider": "v2_baseline",
+      "tokensUsed": 0
+    }
+  ],
+  "overall": {
+    "scope": "ALL",
+    "totalEntries": 5,
+    "fieldMetrics": [
+      {
+        "field": "credentialType",
+        "totalExpected": 5,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 5,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "issuerName",
+        "totalExpected": 4,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "issuedDate",
+        "totalExpected": 5,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 5,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "fieldOfStudy",
+        "totalExpected": 4,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "degreeLevel",
+        "totalExpected": 1,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "jurisdiction",
+        "totalExpected": 2,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 2,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "fraudSignals",
+        "totalExpected": 2,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 2,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "accreditingBody",
+        "totalExpected": 1,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "expiryDate",
+        "totalExpected": 1,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      {
+        "field": "licenseNumber",
+        "totalExpected": 1,
+        "totalExtracted": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      }
+    ],
+    "macroF1": 0,
+    "weightedF1": 0,
+    "meanReportedConfidence": 0,
+    "meanActualAccuracy": 0.12380952380952381,
+    "confidenceCorrelation": 0,
+    "calibratedCorrelation": 0,
+    "meanCalibratedConfidence": 0.76,
+    "meanLatencyMs": 281.8
+  },
+  "byCredentialType": [
+    {
+      "scope": "DEGREE",
+      "totalEntries": 1,
+      "fieldMetrics": [
+        {
+          "field": "credentialType",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuerName",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuedDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fieldOfStudy",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "degreeLevel",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "jurisdiction",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fraudSignals",
+          "totalExpected": 0,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      ],
+      "macroF1": 0,
+      "weightedF1": 0,
+      "meanReportedConfidence": 0,
+      "meanActualAccuracy": 0.14285714285714285,
+      "confidenceCorrelation": 0,
+      "calibratedCorrelation": 0,
+      "meanCalibratedConfidence": 0.76,
+      "meanLatencyMs": 619
+    },
+    {
+      "scope": "CERTIFICATE",
+      "totalEntries": 1,
+      "fieldMetrics": [
+        {
+          "field": "credentialType",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuerName",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuedDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fieldOfStudy",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "accreditingBody",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fraudSignals",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      ],
+      "macroF1": 0,
+      "weightedF1": 0,
+      "meanReportedConfidence": 0,
+      "meanActualAccuracy": 0,
+      "confidenceCorrelation": 0,
+      "calibratedCorrelation": 0,
+      "meanCalibratedConfidence": 0.76,
+      "meanLatencyMs": 318
+    },
+    {
+      "scope": "FINANCIAL",
+      "totalEntries": 1,
+      "fieldMetrics": [
+        {
+          "field": "credentialType",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuedDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fraudSignals",
+          "totalExpected": 0,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      ],
+      "macroF1": 0,
+      "weightedF1": 0,
+      "meanReportedConfidence": 0,
+      "meanActualAccuracy": 0.3333333333333333,
+      "confidenceCorrelation": 0,
+      "calibratedCorrelation": 0,
+      "meanCalibratedConfidence": 0.76,
+      "meanLatencyMs": 159
+    },
+    {
+      "scope": "INSURANCE",
+      "totalEntries": 1,
+      "fieldMetrics": [
+        {
+          "field": "credentialType",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuerName",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuedDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "expiryDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fieldOfStudy",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "licenseNumber",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fraudSignals",
+          "totalExpected": 0,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 0,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      ],
+      "macroF1": 0,
+      "weightedF1": 0,
+      "meanReportedConfidence": 0,
+      "meanActualAccuracy": 0.14285714285714285,
+      "confidenceCorrelation": 0,
+      "calibratedCorrelation": 0,
+      "meanCalibratedConfidence": 0.76,
+      "meanLatencyMs": 143
+    },
+    {
+      "scope": "PATENT",
+      "totalEntries": 1,
+      "fieldMetrics": [
+        {
+          "field": "credentialType",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuerName",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "issuedDate",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fieldOfStudy",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "jurisdiction",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        {
+          "field": "fraudSignals",
+          "totalExpected": 1,
+          "totalExtracted": 0,
+          "truePositives": 0,
+          "falsePositives": 0,
+          "falseNegatives": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        }
+      ],
+      "macroF1": 0,
+      "weightedF1": 0,
+      "meanReportedConfidence": 0,
+      "meanActualAccuracy": 0,
+      "confidenceCorrelation": 0,
+      "calibratedCorrelation": 0,
+      "meanCalibratedConfidence": 0.76,
+      "meanLatencyMs": 170
+    }
+  ]
+}

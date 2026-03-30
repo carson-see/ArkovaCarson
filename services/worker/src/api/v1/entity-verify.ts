@@ -13,6 +13,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { monitorQuery } from '../../utils/queryMonitor.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -57,7 +58,11 @@ router.get('/', async (req: Request, res: Response) => {
       query = query.eq('source_id', identifier);
     }
 
-    const { data: records, error: queryError } = await query;
+    // QA-PERF-6: Monitor entity verification query performance
+    const { data: records, error: queryError } = await monitorQuery(
+      'entity-verify',
+      () => query as Promise<{ data: Array<Record<string, unknown>> | null; error: unknown }>,
+    );
 
     if (queryError) {
       logger.error({ error: queryError }, 'entity-verify: query failed');
@@ -84,8 +89,9 @@ router.get('/', async (req: Request, res: Response) => {
     }
 
     // Look up anchor proofs for records that have anchors
-    const recordsWithAnchors = (records ?? []).filter((r: { anchor_id?: string }) => r.anchor_id);
-    const anchorIds = recordsWithAnchors.map((r: { anchor_id: string }) => r.anchor_id);
+    const recordsList = (records ?? []) as Array<Record<string, unknown>>;
+    const recordsWithAnchors = recordsList.filter((r) => r.anchor_id);
+    const anchorIds = recordsWithAnchors.map((r) => r.anchor_id as string);
 
     let anchorMap = new Map();
     if (anchorIds.length > 0) {
@@ -99,7 +105,7 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
-    const results = (records ?? []).map((r: Record<string, unknown>) => ({
+    const results = recordsList.map((r: Record<string, unknown>) => ({
       record_id: r.id,
       source: r.source,
       source_id: r.source_id,

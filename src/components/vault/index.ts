@@ -1,1 +1,1 @@
-export { VaultDashboard } from './VaultDashboard';
+// vault/ barrel — VaultDashboard removed (dead code, GAP-08)

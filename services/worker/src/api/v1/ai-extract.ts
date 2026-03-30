@@ -16,6 +16,8 @@ import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidence } from '../../ai/eval/calibration.js';
+import { buildExtractionManifest } from '../../ai/extraction-manifest.js';
+import { GeminiProvider } from '../../ai/gemini.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -143,6 +145,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Log usage event with result cache (EFF-1: enables cache-by-fingerprint)
     // Store calibrated confidence in the cache for consistency
+    const promptVersion = getExtractionPromptVersion();
     logAIUsageEvent({
       orgId,
       userId,
@@ -154,17 +157,69 @@ router.post('/', async (req: Request, res: Response) => {
       confidence: calibrated,
       durationMs,
       success: true,
-      promptVersion: getExtractionPromptVersion(),
+      promptVersion,
       resultJson: result.fields as Record<string, unknown>,
     }).catch(() => {
       // Swallow — logging should not fail the request
     });
+
+    // VAI-01: Build and store extraction manifest — cryptographic binding
+    const manifest = buildExtractionManifest({
+      fingerprint,
+      modelId: result.provider,
+      modelVersion: result.modelVersion ?? result.provider,
+      extractedFields: result.fields,
+      confidenceScores: {
+        overall: calibrated,
+      },
+      promptVersion,
+    });
+
+    // Non-blocking DB insert — manifest is audit trail, should not fail extraction
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (db as any).from('extraction_manifests').insert({
+      fingerprint: manifest.fingerprint,
+      model_id: manifest.modelId,
+      model_version: manifest.modelVersion,
+      extracted_fields: manifest.extractedFields,
+      confidence_scores: manifest.confidenceScores,
+      manifest_hash: manifest.manifestHash,
+      org_id: orgId ?? null,
+      user_id: userId,
+      extraction_timestamp: manifest.extractionTimestamp,
+      prompt_version: manifest.promptVersion ?? null,
+    }).then(({ error }: { error: unknown }) => {
+      if (error) {
+        logger.warn({ error, fingerprint }, 'Failed to store extraction manifest');
+      }
+    }).catch((err: unknown) => {
+      logger.warn({ error: err, fingerprint }, 'Failed to store extraction manifest');
+    });
+
+    // Auto-generate tags in parallel (non-blocking — best-effort enrichment)
+    let tags: string[] | undefined;
+    let documentType: string | undefined;
+    let category: string | undefined;
+    try {
+      const gemini = new GeminiProvider();
+      const tagsResult = await gemini.generateTags(result.fields as Record<string, unknown>);
+      tags = tagsResult.tags;
+      documentType = tagsResult.documentType;
+      category = tagsResult.category;
+    } catch (tagErr) {
+      // Tagging is best-effort — don't fail extraction
+      logger.warn({ error: tagErr }, 'Auto-tagging failed (non-fatal)');
+    }
 
     res.json({
       fields: result.fields,
       confidence: calibrated,
       provider: result.provider,
       creditsRemaining: creditBalance ? creditBalance.remaining - 1 : null,
+      tags,
+      documentType,
+      category,
+      manifestHash: manifest.manifestHash,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';

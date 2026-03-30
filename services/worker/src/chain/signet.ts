@@ -870,6 +870,32 @@ export class BitcoinChainClient implements ChainClient {
       return false;
     }
   }
+
+  /**
+   * Pre-flight check: verify treasury has available UTXOs before claiming anchors.
+   * Prevents the claim-fail-revert cycle when treasury is depleted.
+   */
+  async hasFunds(): Promise<boolean> {
+    try {
+      const utxos = await this.provider.listUnspent(this.address);
+      if (utxos.length === 0) {
+        logger.warn(
+          { address: this.address },
+          'Treasury has no UTXOs — batch processing will be skipped until funded',
+        );
+        return false;
+      }
+      const totalSats = utxos.reduce((sum, u) => sum + u.valueSats, 0);
+      logger.info(
+        { utxoCount: utxos.length, totalSats, address: this.address },
+        'Treasury pre-flight check passed',
+      );
+      return true;
+    } catch (error) {
+      logger.error({ error }, 'Treasury pre-flight UTXO check failed');
+      return false;
+    }
+  }
 }
 
 // ─── Backward-compatible alias ──────────────────────────────────────────

@@ -17,4 +17,4 @@ export { OnboardingOrgPage } from './OnboardingOrgPage';
 export { ReviewPendingPage } from './ReviewPendingPage';
 export { PipelineAdminPage } from './PipelineAdminPage';
 export { PaymentAnalyticsPage } from './PaymentAnalyticsPage';
-export { VaultDashboard } from '../components/vault';
+// VaultDashboard removed (dead code, GAP-08)

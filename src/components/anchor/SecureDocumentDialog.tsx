@@ -12,6 +12,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { useAuditorMode } from '@/hooks/useAuditorMode';
 import {
   Shield,
   CheckCircle,
@@ -45,7 +46,8 @@ import { AIFieldSuggestions } from './AIFieldSuggestions';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
-import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
+import { runExtraction, fetchTemplateReconstruction, type ExtractionField, type ExtractionProgress, type TemplateReconstructionResult } from '@/lib/aiExtraction';
+import { applyTemplate } from '@/lib/templateMapper';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -79,6 +81,9 @@ export function SecureDocumentDialog({
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
+
+  // VAI-04: Auditor mode — suppress dialog entirely
+  const { isAuditorMode } = useAuditorMode();
   const navigate = useNavigate();
 
   const [step, setStep] = useState<Step>('upload');
@@ -95,6 +100,9 @@ export function SecureDocumentDialog({
   const [extractedFields, setExtractedFields] = useState<ExtractionField[]>([]);
   const [overallConfidence, setOverallConfidence] = useState(0);
   const [creditsRemaining, setCreditsRemaining] = useState(0);
+
+  // Template reconstruction state (populated async after extraction)
+  const [templateResult, setTemplateResult] = useState<TemplateReconstructionResult | null>(null);
 
   // Check AI extraction flag on mount
   useEffect(() => {
@@ -230,22 +238,40 @@ export function SecureDocumentDialog({
     );
 
     if (result) {
-      // Auto-accept all high-confidence fields
-      const autoAccepted = result.fields.map(f =>
-        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
-      );
-      setExtractedFields(autoAccepted);
       setOverallConfidence(result.overallConfidence);
       setCreditsRemaining(result.creditsRemaining);
       setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
 
-      // Auto-detect document type, auto-select template, and auto-submit
+      // Auto-detect document type and auto-select template
       const typeField = result.fields.find(f => f.key === 'credentialType');
-      if (typeField && typeField.confidence >= 0.5) {
-        await autoSelectTemplate(typeField.value);
-      } else {
-        await autoSelectTemplate('OTHER');
-      }
+      const detectedType = (typeField && typeField.confidence >= 0.5) ? typeField.value : 'OTHER';
+      await autoSelectTemplate(detectedType);
+
+      // Fire off template reconstruction in parallel (non-blocking)
+      const fieldsObj = result.fields.reduce<Record<string, unknown>>((acc, f) => {
+        acc[f.key] = f.value;
+        return acc;
+      }, {});
+      fetchTemplateReconstruction(fieldsObj, result.overallConfidence)
+        .then(tr => { if (tr) setTemplateResult(tr); })
+        .catch(() => { /* template reconstruction is best-effort */ });
+
+      // Apply template field schema: reorder, label, validate
+      const tmplResult = await applyTemplate(
+        result.fields,
+        detectedType,
+        profile?.org_id,
+      );
+
+      // Merge mapped + unmapped fields (template-ordered first, extras after)
+      const orderedFields = [...tmplResult.mappedFields, ...tmplResult.unmappedFields];
+
+      // Auto-accept all high-confidence fields
+      const autoAccepted = orderedFields.map(f =>
+        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
+      );
+      setExtractedFields(autoAccepted);
+
       // One-click flow: skip confirm, go straight to anchoring
       // Pass fields directly to avoid stale closure (React state not yet updated)
       handleConfirm(autoAccepted);
@@ -329,25 +355,27 @@ export function SecureDocumentDialog({
         ...(description.trim() ? { description: description.trim() } : {}),
       });
 
-      // Timeout prevents the modal from hanging indefinitely if Supabase is slow
-      const insertPromise = supabase
+      // Merge AI tags from template reconstruction into metadata
+      const metadata: Record<string, unknown> = { ...acceptedFields };
+      if (templateResult?.tags && templateResult.tags.length > 0) {
+        metadata.ai_tags = templateResult.tags;
+      }
+      if (templateResult?.summary) {
+        metadata.ai_summary = templateResult.summary;
+      }
+      if (templateResult?.documentType) {
+        metadata.ai_document_type = templateResult.documentType;
+      }
+
+      const { data: inserted, error: insertError } = await supabase
         .from('anchors')
         .insert({
           ...validated,
           user_id: user.id,
-          ...(Object.keys(acceptedFields).length > 0 ? { metadata: acceptedFields } : {}),
+          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
         })
         .select('id, public_id')
         .single();
-
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Request timed out. Please try again.')), 30_000),
-      );
-
-      const { data: inserted, error: insertError } = await Promise.race([
-        insertPromise,
-        timeoutPromise,
-      ]);
 
       if (insertError) throw insertError;
 
@@ -385,7 +413,7 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, extractedFields, onSuccess]);
+  }, [fileData, user, profile, selectedTemplate, description, extractedFields, templateResult, onSuccess]);
 
   const handleClose = useCallback(() => {
     setStep('upload');
@@ -397,6 +425,7 @@ export function SecureDocumentDialog({
     setLinkCopied(false);
     setExtractedFields([]);
     setExtractionProgress(null);
+    setTemplateResult(null);
     setAttestationData(null);
     onOpenChange(false);
   }, [onOpenChange]);
@@ -410,6 +439,7 @@ export function SecureDocumentDialog({
     setCreatedAnchor(null);
     setExtractedFields([]);
     setExtractionProgress(null);
+    setTemplateResult(null);
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -426,6 +456,9 @@ export function SecureDocumentDialog({
     handleClose();
     navigate(recordDetailPath(createdAnchor.id));
   }, [createdAnchor, handleClose, navigate]);
+
+  // VAI-04: In auditor mode, don't render the dialog
+  if (isAuditorMode) return null;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -698,6 +731,27 @@ export function SecureDocumentDialog({
                   {ANCHORING_STATUS_LABELS.SUCCESS_PROCESSING}
                 </p>
               </div>
+
+              {/* AI-generated tags */}
+              {templateResult?.tags && templateResult.tags.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 justify-center">
+                  {templateResult.tags.map(tag => (
+                    <span
+                      key={tag}
+                      className="inline-flex items-center rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* AI summary */}
+              {templateResult?.summary && (
+                <p className="text-xs text-muted-foreground text-center px-4">
+                  {templateResult.summary}
+                </p>
+              )}
 
               {/* Confirmation progress notice */}
               <div className="flex items-start gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">

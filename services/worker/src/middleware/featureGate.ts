@@ -34,9 +34,9 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
   try {
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('enabled')
-      .eq('flag_key', 'ENABLE_VERIFICATION_API')
-      .single() as { data: { enabled: boolean } | null; error: unknown };
+      .select('value')
+      .eq('id', 'ENABLE_VERIFICATION_API')
+      .single() as { data: { value: boolean } | null; error: unknown };
 
     if (error || !data) {
       // Fall back to env var if DB flag not found
@@ -46,7 +46,7 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
       return envValue;
     }
 
-    const enabled = data.enabled === true;
+    const enabled = data.value === true;
     flagCache = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {

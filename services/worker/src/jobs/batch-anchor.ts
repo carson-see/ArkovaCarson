@@ -18,6 +18,7 @@ import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
+import { getComplianceControlIds } from '../utils/complianceMapping.js';
 
 /**
  * Max anchors per batch transaction — configurable via BATCH_ANCHOR_MAX_SIZE env (BTC-001).
@@ -57,6 +58,21 @@ const POSTGREST_ROW_LIMIT = 1000;
  * 4. Update each anchor: BROADCASTING → SUBMITTED with tx ID + proof
  */
 export async function processBatchAnchors(): Promise<BatchAnchorResult> {
+  // Phase 0: Pre-flight UTXO check — skip immediately if treasury is empty.
+  // This prevents the costly claim-fail-revert cycle that causes 504 timeouts.
+  try {
+    const chainClient = getChainClient();
+    if (chainClient.hasFunds) {
+      const funded = await chainClient.hasFunds();
+      if (!funded) {
+        logger.warn('Treasury empty — skipping batch anchor processing until funded');
+        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+      }
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'Pre-flight UTXO check failed — proceeding cautiously');
+  }
+
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
   const allClaimed: Array<{ id: string; fingerprint: string; metadata: unknown; user_id?: string; org_id?: string; public_id?: string; credential_type?: string }> = [];
   let remaining = BATCH_SIZE;
@@ -122,19 +138,14 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error({ error, merkleRoot: tree.root }, 'Batch anchor chain submission failed — reverting claims');
-    // Revert all claimed anchors back to PENDING
-    for (const anchor of claimedAnchors) {
-      await revertBatchAnchorToPending(anchor.id);
-    }
+    logger.error({ error, merkleRoot: tree.root, count: claimedAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
+    await bulkRevertToPending(claimedAnchors.map(a => a.id));
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
   if (!receipt || !receipt.receiptId) {
-    logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — reverting claims');
-    for (const anchor of claimedAnchors) {
-      await revertBatchAnchorToPending(anchor.id);
-    }
+    logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
+    await bulkRevertToPending(claimedAnchors.map(a => a.id));
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
@@ -156,14 +167,29 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
   if (bulkError) {
     // M1: Revert to PENDING instead of N+1 individual updates.
     // Let the recovery cron re-process these on the next run.
-    logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed — reverting claimed anchors to PENDING');
-    for (const anchor of claimedAnchors) {
-      await revertBatchAnchorToPending(anchor.id);
-    }
+    logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed — bulk reverting claimed anchors to PENDING');
+    await bulkRevertToPending(claimedAnchors.map(a => a.id));
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: receipt.receiptId };
   }
 
   const processed = typeof updatedCount === 'number' ? updatedCount : (claimedAnchors.length);
+
+  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
+  try {
+    const byType = new Map<string | null, string[]>();
+    for (const anchor of claimedAnchors) {
+      const ct = (anchor as { credential_type?: string | null }).credential_type ?? null;
+      if (!byType.has(ct)) byType.set(ct, []);
+      byType.get(ct)!.push(anchor.id);
+    }
+    for (const [credType, ids] of byType) {
+      const controls = getComplianceControlIds(credType);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (db as any).from('anchors').update({ compliance_controls: controls }).in('id', ids);
+    }
+  } catch (complianceErr) {
+    logger.warn({ error: complianceErr }, 'Non-fatal: failed to set compliance_controls on batch anchors');
+  }
 
   logger.info(
     {
@@ -195,6 +221,36 @@ async function revertBatchAnchorToPending(anchorId: string): Promise<void> {
   } catch (err) {
     logger.error({ anchorId, error: err }, 'Failed to revert batch anchor to PENDING');
   }
+}
+
+/**
+ * Bulk revert anchors from BROADCASTING to PENDING using batched IN queries.
+ * Much faster than individual updates — prevents 504 timeouts on large batches.
+ */
+async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < anchorIds.length; i += CHUNK_SIZE) {
+    const chunk = anchorIds.slice(i, i + CHUNK_SIZE);
+    try {
+      const { error } = await db
+        .from('anchors')
+        .update({ status: 'PENDING' })
+        .in('id', chunk)
+        .eq('status', 'BROADCASTING');
+      if (error) {
+        logger.error({ error, chunkStart: i, chunkSize: chunk.length }, 'Bulk revert chunk failed — falling back to individual');
+        for (const id of chunk) {
+          await revertBatchAnchorToPending(id);
+        }
+      }
+    } catch (err) {
+      logger.error({ error: err, chunkStart: i }, 'Bulk revert chunk threw — falling back to individual');
+      for (const id of chunk) {
+        await revertBatchAnchorToPending(id);
+      }
+    }
+  }
+  logger.info({ count: anchorIds.length }, 'Bulk reverted BROADCASTING → PENDING');
 }
 
 /**
@@ -267,6 +323,7 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
             merkle_root: tree.root,
             batch_id: batchId,
           })),
+          compliance_controls: getComplianceControlIds(anchor.credential_type),
         })
         .eq('id', anchor.id)
         .eq('status', 'PENDING');

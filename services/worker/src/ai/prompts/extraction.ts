@@ -946,6 +946,14 @@ export function buildExtractionPrompt(
     prompt += `This is an academic publication. Look for the journal/conference name (as issuerName), publication date, DOI (as licenseNumber), and research field. Map the research topic to a broad fieldOfStudy.\n`;
   } else if (credentialType === 'PATENT') {
     prompt += `This is a patent document. Look for the patent office (USPTO, EPO, WIPO) as issuerName, patent/application number as licenseNumber, filing or grant date as issuedDate, and technical field. Map the invention domain to a broad fieldOfStudy.\n`;
+  } else if (credentialType === 'INSURANCE') {
+    prompt += `This is an insurance document. Look for the insurance company (as issuerName), policy number (as licenseNumber if not redacted), effective date (as issuedDate), expiration date (as expiryDate), and coverage type (as fieldOfStudy — e.g., "Commercial General Liability", "Workers Compensation", "Professional Liability").\n`;
+  } else if (credentialType === 'ATTESTATION') {
+    prompt += `This is an attestation/verification document. Look for the organization that issued it (as issuerName), the date it was written (as issuedDate), and the field/domain being attested to (as fieldOfStudy). Common types: employment verification, education verification, letters of good standing, reference letters, sworn affidavits.\n`;
+  } else if (credentialType === 'BADGE') {
+    prompt += `This is a digital badge/micro-credential. Look for the issuing organization (as issuerName — e.g., "Amazon Web Services", "Google Cloud"), the skill topic (as fieldOfStudy), and the issue date. For vendor-issued badges, set accreditingBody to the same vendor.\n`;
+  } else if (credentialType === 'LEGAL') {
+    prompt += `This is a legal document. If it's case law (opinion, order, ruling), issuerName should be the COURT name. Look for case/docket numbers (as licenseNumber), decision date (as issuedDate), and legal area (as fieldOfStudy). If it's a contract/NDA, issuerName is the drafting party.\n`;
   }
 
   // JSON.stringify encodes the text as an inert data payload, preventing prompt injection

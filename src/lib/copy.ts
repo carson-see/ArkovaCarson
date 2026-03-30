@@ -983,6 +983,17 @@ export const COMPLIANCE_LABELS = {
   EVENT_REVOKED: 'Credential revoked',
   EVENT_EXPIRED: 'Credential expired',
   EVENT_ACTIVE: 'Credential activated',
+  SECTION_COVERAGE: 'Regulatory Framework Coverage',
+  SECTION_COVERAGE_DESC: 'Controls evidenced by your secured credentials.',
+  COVERAGE_SECURED: 'Secured Records',
+  COVERAGE_CONTROLS: 'Controls Evidenced',
+  COVERAGE_FRAMEWORKS: 'Frameworks Covered',
+  COVERAGE_EMPTY: 'No secured records yet',
+  COVERAGE_EMPTY_DESC: 'Framework coverage appears once credentials are anchored to the network.',
+  EXPORT_AUDIT: 'Export Audit Report',
+  EXPORT_AUDIT_DESC: 'Download a compliance-ready report for GRC platforms.',
+  EXPORT_PDF: 'Download PDF',
+  EXPORT_CSV: 'Download CSV',
 } as const;
 
 // =============================================================================

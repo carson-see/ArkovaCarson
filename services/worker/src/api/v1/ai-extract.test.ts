@@ -107,6 +107,14 @@ describe('AI Extraction Endpoint', () => {
               }),
             }),
           }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+          }),
         };
       }
       return {
@@ -152,6 +160,14 @@ describe('AI Extraction Endpoint', () => {
                 }),
               }),
             }),
+          }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
           }),
         };
       }
@@ -219,6 +235,14 @@ describe('AI Extraction Endpoint', () => {
               }),
             }),
           }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+          }),
         };
       }
       return {
@@ -279,6 +303,14 @@ describe('AI Extraction Endpoint', () => {
               }),
             }),
           }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+          }),
         };
       }
       return {
@@ -322,6 +354,14 @@ describe('AI Extraction Endpoint', () => {
                 }),
               }),
             }),
+          }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
           }),
         };
       }

@@ -35,6 +35,12 @@ import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { fetchAcncCharities } from '../jobs/acncFetcher.js';
 import { fetchStateBills, fetchMultipleStateBills } from '../jobs/openStatesFetcher.js';
+import { fetchCalBarAttorneys } from '../jobs/calbarFetcher.js';
+import { fetchFinraBrokers } from '../jobs/finraBrokerCheckFetcher.js';
+import { fetchSecIapdFirms } from '../jobs/secIapdFetcher.js';
+import { fetchNpiProviders } from '../jobs/npiFetcher.js';
+import { fetchSamEntities, fetchSamExclusions } from '../jobs/samGovFetcher.js';
+import { fetchFccLicenses } from '../jobs/fccUlsFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -513,6 +519,98 @@ cronRouter.post('/check-attestation-expiry', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Attestation expiry check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── California State Bar attorney ingestion ───
+cronRouter.post('/fetch-calbar', async (_req, res) => {
+  try {
+    const result = await fetchCalBarAttorneys(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'CalBar fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── FINRA BrokerCheck ingestion ───
+cronRouter.post('/fetch-finra', async (_req, res) => {
+  try {
+    const result = await fetchFinraBrokers(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'FINRA BrokerCheck fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SEC IAPD investment adviser ingestion ───
+cronRouter.post('/fetch-sec-iapd', async (_req, res) => {
+  try {
+    const result = await fetchSecIapdFirms(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'SEC IAPD fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPPES NPI Registry (healthcare providers) ───
+cronRouter.post('/fetch-npi', async (req, res) => {
+  try {
+    const states = req.body?.states as string[] | undefined;
+    const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
+    const result = await fetchNpiProviders(db, { states, maxPerRun });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'NPI Registry fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SAM.gov (federal contractor registrations) ───
+cronRouter.post('/fetch-sam-entities', async (req, res) => {
+  try {
+    const states = req.body?.states as string[] | undefined;
+    const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
+    const result = await fetchSamEntities(db, { states, maxPerRun });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'SAM.gov entity fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-sam-exclusions', async (_req, res) => {
+  try {
+    const result = await fetchSamExclusions(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'SAM.gov exclusions fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── FCC ULS (spectrum licenses) ───
+cronRouter.post('/fetch-fcc', async (req, res) => {
+  try {
+    const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
+    const result = await fetchFccLicenses(db, { maxPerRun });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'FCC ULS fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Materialized View Refresh ───
+cronRouter.post('/refresh-stats', async (_req, res) => {
+  try {
+    await callRpc(db, 'refresh_stats_materialized_views');
+    res.json({ status: 'refreshed' });
+  } catch (error) {
+    logger.error({ error }, 'Stats materialized view refresh failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

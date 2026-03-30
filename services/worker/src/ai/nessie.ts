@@ -32,6 +32,7 @@ import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
 import { computeAdjustedConfidence } from './confidence-model.js';
+import { routeToDomain, isDomainRoutingEnabled } from './nessie-domain-router.js';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // Higher base delay for serverless cold starts
@@ -47,7 +48,7 @@ interface CircuitState {
   isOpen: boolean;
 }
 
-const DEFAULT_NESSIE_MODEL = 'nessie-v2';
+const DEFAULT_NESSIE_MODEL = 'carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v3-22458d86';
 
 export class NessieProvider implements IAIProvider {
   readonly name = 'nessie';
@@ -86,14 +87,38 @@ export class NessieProvider implements IAIProvider {
       request.issuerHint,
     );
 
+    // Domain routing: select adapter based on credential type + text content
+    let modelOverride: string | undefined;
+    if (isDomainRoutingEnabled()) {
+      const adapter = routeToDomain(request.credentialType, request.strippedText);
+      modelOverride = adapter.modelId;
+      logger.info(
+        { domain: adapter.domain, modelId: adapter.modelId, credentialType: request.credentialType },
+        'Nessie: routed to domain adapter',
+      );
+    }
+
     const result = await this.withRetry(async () => {
       const response = await this.chatCompletion(
         EXTRACTION_SYSTEM_PROMPT,
         prompt,
-        { temperature: 0.1 },
+        { temperature: 0.1, model: modelOverride },
       );
 
-      const text = response.choices[0]?.message?.content ?? '';
+      let text = response.choices[0]?.message?.content ?? '';
+
+      // Support reasoning-augmented output: strip <reasoning>...</reasoning> tags
+      // if present (Nessie reasoning model wraps analysis before JSON)
+      const reasoningMatch = text.match(/<reasoning>([\s\S]*?)<\/reasoning>\s*/);
+      if (reasoningMatch) {
+        const reasoning = reasoningMatch[1].trim();
+        text = text.slice(reasoningMatch[0].length).trim();
+        logger.info(
+          { reasoningLength: reasoning.length },
+          'Nessie: extracted reasoning trace from response',
+        );
+      }
+
       const parsed = JSON.parse(text);
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
       const { confidence: _, ...rawFields } = parsed;
@@ -148,8 +173,8 @@ export class NessieProvider implements IAIProvider {
       );
     }
 
-    // Apply confidence meta-model: uses extraction features (field count, type,
-    // OCR noise, key fields) to produce a better-calibrated confidence score.
+    // Apply confidence meta-model v2: uses extraction features, grounding score,
+    // provider identity, and fraud signals for better-calibrated confidence.
     const finalFields = {
       ...result.fields,
       ...(mergedSignals.length > 0 ? { fraudSignals: mergedSignals } : {}),
@@ -158,6 +183,11 @@ export class NessieProvider implements IAIProvider {
       finalFields,
       adjustedConfidence,
       request.strippedText,
+      {
+        groundingScore: groundingReport.groundingScore,
+        provider: this.name,
+        fraudSignalCount: mergedSignals.length,
+      },
     );
     // Meta-model must never override fraud-signal penalties
     const finalConfidence = Math.min(metaModelConfidence, adjustedConfidence);
@@ -167,6 +197,7 @@ export class NessieProvider implements IAIProvider {
       confidence: finalConfidence,
       provider: this.name,
       tokensUsed: result.tokensUsed,
+      modelVersion: this.modelName,
     };
   }
 
@@ -218,12 +249,25 @@ export class NessieProvider implements IAIProvider {
   async generateRAGResponse(
     systemPrompt: string,
     userPrompt: string,
+    credentialType?: string,
   ): Promise<{ text: string; tokensUsed?: number }> {
     this.checkCircuit();
+
+    // Domain routing for RAG queries too
+    let modelOverride: string | undefined;
+    if (isDomainRoutingEnabled()) {
+      const adapter = routeToDomain(credentialType, userPrompt);
+      modelOverride = adapter.modelId;
+      logger.info(
+        { domain: adapter.domain, modelId: adapter.modelId },
+        'Nessie RAG: routed to domain adapter',
+      );
+    }
 
     const response = await this.withRetry(async () => {
       return this.chatCompletion(systemPrompt, userPrompt, {
         temperature: 0.2,
+        model: modelOverride,
       });
     });
 
@@ -241,6 +285,7 @@ export class NessieProvider implements IAIProvider {
     options: {
       temperature?: number;
       max_tokens?: number;
+      model?: string;
     } = {},
   ): Promise<RunPodChatResponse> {
     const controller = new AbortController();
@@ -254,7 +299,7 @@ export class NessieProvider implements IAIProvider {
           Authorization: `Bearer ${this.apiKey}`,
         },
         body: JSON.stringify({
-          model: this.modelName,
+          model: options.model ?? this.modelName,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },

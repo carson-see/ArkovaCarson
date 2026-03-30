@@ -1,11 +1,11 @@
 # Data Model
-_Last updated: 2026-03-24 | Migrations: 0001-0107 (gaps at 0033+0078, 0068 split into 0068a/0068b, 107 files). All applied to production._
+_Last updated: 2026-03-29 | Migrations: 0001-0136 (gaps at 0033+0078, 0068 split into 0068a/0068b, 139 files). All applied to production through 0135._
 
 ## Overview
 
 Arkova uses PostgreSQL via Supabase with a schema-first approach. All tables have Row Level Security (RLS) enabled via `FORCE ROW LEVEL SECURITY`. Data integrity is enforced through constraints, triggers, and Zod validators on all write paths.
 
-**Total tables:** 38+ across 107 migration files (versions 0001-0107). New tables since 0092: `audit_events_archive`, `payment_grace_periods`, `reconciliation_reports`, `financial_reports`, `unified_credits`. New view: `payment_ledger`.
+**Total tables:** 47+ across 139 migration files (versions 0001-0136). New tables since 0092: `audit_events_archive`, `payment_grace_periods`, `reconciliation_reports`, `financial_reports`, `unified_credits`, `merkle_batches`, `training_metrics`, `webhook_idempotency`, `credential_portfolios`, `ats_integrations`. New view: `payment_ledger`.
 
 > **Note:** Column-level documentation below covers tables through migration ~0051 in detail. Tables created in migrations 0053-0075 (including `credits`, `anchor_recipients`, `api_keys`, `batch_verification_jobs`, `ai_credits`, `ai_usage_events`, `credentials_embeddings`, `extraction_feedback`, `review_queue_items`, `ai_reports`) are documented at summary level in [01_architecture_overview.md](./01_architecture_overview.md). Full column-level docs for these tables is a backlog item.
 
@@ -527,9 +527,195 @@ npm run gen:types
 
 Creates `src/types/database.types.ts` — the authoritative UI contract. Regenerate after every schema change.
 
+## Tables Added in Migrations 0100-0136
+
+### payment_grace_periods (migration 0100)
+
+Tracks subscription grace periods during payment failures.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `user_id` | uuid | FK → profiles(id) | User in grace period |
+| `subscription_id` | uuid | FK → subscriptions(id) | Related subscription |
+| `stripe_subscription_id` | text | NOT NULL | Stripe subscription ID |
+| `grace_start` | timestamptz | NOT NULL | Grace period start |
+| `grace_end` | timestamptz | NOT NULL | Grace period end |
+| `status` | text | NOT NULL, default 'active' | 'active', 'resolved', 'downgraded' |
+| `notification_sent` | boolean | NOT NULL, default false | Whether notification sent |
+| `downgraded_at` | timestamptz | | When user was downgraded |
+| `created_at` | timestamptz | NOT NULL, default now() | Record creation time |
+
+### reconciliation_reports (migration 0100)
+
+Stores Stripe ↔ anchor reconciliation results.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `report_month` | text | NOT NULL | YYYY-MM format |
+| `report_type` | text | NOT NULL | 'reconciliation' |
+| `total_revenue_usd` | numeric | | Total revenue |
+| `total_cost_usd` | numeric | | Total cost (Bitcoin fees) |
+| `total_anchors` | integer | | Anchors in period |
+| `discrepancies` | jsonb | | Any mismatches found |
+| `summary` | jsonb | | Full report data |
+| `created_at` | timestamptz | NOT NULL, default now() | Report generation time |
+
+### financial_reports (migration 0100)
+
+Monthly financial summaries (revenue, costs, margins).
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `report_month` | text | NOT NULL | YYYY-MM format |
+| `stripe_revenue_usd` | numeric | | Stripe subscription revenue |
+| `x402_revenue_usd` | numeric | | x402 micropayment revenue |
+| `total_revenue_usd` | numeric | | Combined revenue |
+| `bitcoin_fee_sats` | bigint | | Total Bitcoin fees in sats |
+| `bitcoin_fee_usd` | numeric | | Total Bitcoin fees in USD |
+| `total_anchors` | integer | | Anchors processed |
+| `avg_cost_per_anchor_usd` | numeric | | Average cost per anchor |
+| `gross_margin_usd` | numeric | | Revenue minus costs |
+| `gross_margin_pct` | numeric | | Margin percentage |
+| `details` | jsonb | | Detailed breakdown |
+| `created_at` | timestamptz | NOT NULL, default now() | Report generation time |
+
+### unified_credits (migration 0100)
+
+Unified credit tracking per org/user.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `org_id` | uuid | FK → organizations(id) | Organization |
+| `user_id` | uuid | FK → profiles(id) | User |
+| `monthly_allocation` | integer | NOT NULL, default 0 | Credits per billing cycle |
+| `used_this_month` | integer | NOT NULL, default 0 | Credits consumed |
+| `carry_over` | integer | NOT NULL, default 0 | Unused credits carried |
+| `billing_cycle_start` | timestamptz | | Current cycle start |
+| `created_at` | timestamptz | NOT NULL, default now() | Record creation time |
+| `updated_at` | timestamptz | NOT NULL, default now() | Last update |
+
+### merkle_batches (migration 0113)
+
+Tracks Merkle-tree batch anchor transactions (BTC-001).
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `batch_id` | text | UNIQUE, NOT NULL | Human-readable batch identifier |
+| `merkle_root` | text | NOT NULL | Merkle root hash |
+| `tx_hash` | text | | Bitcoin transaction hash |
+| `leaf_count` | integer | NOT NULL | Number of anchors in batch |
+| `fee_sats` | bigint | | Transaction fee in satoshis |
+| `created_at` | timestamptz | NOT NULL, default now() | Batch creation time |
+| `confirmed_at` | timestamptz | | Chain confirmation time |
+
+### training_metrics (migration 0114)
+
+AI model training and evaluation metrics.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `metric_date` | date | NOT NULL | Date of metric |
+| `metric_type` | text | NOT NULL | e.g., 'f1_score', 'confidence_r' |
+| `value` | numeric | NOT NULL | Metric value |
+| `count` | integer | | Sample count |
+| `breakdown` | jsonb | | Per-type breakdown |
+| `created_at` | timestamptz | NOT NULL, default now() | Record creation time |
+
+### webhook_idempotency (migration 0116)
+
+Prevents duplicate webhook processing.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `idempotency_key` | text | PK | Unique event key |
+| `source` | text | NOT NULL | e.g., 'stripe', 'ats' |
+| `processed_at` | timestamptz | NOT NULL, default now() | When processed |
+| `response_status` | integer | | HTTP status returned |
+| `response_body` | jsonb | | Response details |
+| `created_at` | timestamptz | NOT NULL, default now() | Record creation time |
+
+### credential_portfolios (migration 0134)
+
+User-curated credential portfolios for sharing.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `public_id` | text | UNIQUE, NOT NULL | Public-facing portfolio ID |
+| `user_id` | uuid | FK → profiles(id), NOT NULL | Portfolio owner |
+| `title` | text | NOT NULL | Portfolio title |
+| `attestation_ids` | uuid[] | | Attestation references |
+| `anchor_ids` | uuid[] | | Anchor references |
+| `expires_at` | timestamptz | | Optional expiry |
+| `created_at` | timestamptz | NOT NULL, default now() | Creation time |
+| `updated_at` | timestamptz | NOT NULL, default now() | Last update |
+
+### ats_integrations (migration 0135)
+
+ATS (Applicant Tracking System) integration configurations.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| `id` | uuid | PK, default gen_random_uuid() | Primary key |
+| `org_id` | uuid | FK → organizations(id), NOT NULL | Organization |
+| `provider` | text | NOT NULL | 'greenhouse', 'lever', 'generic' |
+| `webhook_secret` | text | NOT NULL | HMAC secret for webhook verification |
+| `callback_url` | text | | Callback URL for results |
+| `field_mapping` | jsonb | | Custom field mappings |
+| `enabled` | boolean | NOT NULL, default true | Whether integration is active |
+| `created_at` | timestamptz | NOT NULL, default now() | Creation time |
+| `updated_at` | timestamptz | NOT NULL, default now() | Last update |
+
+## Columns Added to Existing Tables (Migrations 0100-0136)
+
+### anchors (migration 0100)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `payment_source_id` | text | Revenue attribution (Stripe payment intent, x402 payment) |
+| `payment_source_type` | text | Payment rail: 'stripe', 'x402', 'free' |
+
+### organizations (migration 0105, 0128)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `description` | text | Organization description |
+| `website_url` | text | Organization website |
+| `logo_url` | text | Organization logo URL |
+| `founded_date` | date | Founding date |
+| `org_type` | text | Organization type |
+| `linkedin_url` | text | LinkedIn company page URL |
+| `location` | text | Geographic location |
+| `ein_tax_id` | text | EIN/tax ID for trust verification |
+| `domain_verified` | boolean | Whether domain ownership is verified |
+| `domain_verification_method` | text | 'dns_txt' or 'email' |
+| `domain_verified_at` | timestamptz | When domain was verified |
+| `domain_verification_token` | text | Token for domain verification |
+| `domain_verification_token_expires_at` | timestamptz | Token expiry |
+| `parent_org_id` | uuid | Parent organization (sub-org hierarchy) |
+| `parent_approval_status` | text | 'pending', 'approved', 'rejected' |
+| `parent_approved_at` | timestamptz | When parent approved affiliation |
+| `max_sub_orgs` | integer | Maximum allowed sub-organizations |
+| `affiliation_fee_status` | text | Affiliation fee payment status |
+| `affiliation_grace_expires_at` | timestamptz | Grace period for affiliation fees |
+
+### profiles (migration 0129)
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `phone_verified_at` | timestamptz | When phone number was verified |
+| `kyc_provider` | text | KYC verification provider used |
+
 ## Change Log
 
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit | Complete rewrite: added 16 missing tables, added missing anchor columns (public_id, credential_type, metadata, parent_anchor_id, version_number, revocation_reason), added is_public_profile to profiles, documented all enums, updated ER diagram |
 | 2026-03-12 | INFRA-08 | Added institution_ground_truth table (migration 0051). Enabled pgvector + pg_trgm extensions. 21 tables total. |
+| 2026-03-29 | GAP-03 | Added 9 tables from migrations 0100-0136 (payment_grace_periods, reconciliation_reports, financial_reports, unified_credits, merkle_batches, training_metrics, webhook_idempotency, credential_portfolios, ats_integrations). Added 25 columns to existing tables (anchors, organizations, profiles). Updated total table count to 47+. |

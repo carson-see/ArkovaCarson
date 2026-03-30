@@ -25,6 +25,7 @@ export {
 export { GOLDEN_DATASET_EXTENDED } from './golden-dataset-extended.js';
 export { GOLDEN_DATASET_PHASE2 } from './golden-dataset-phase2.js';
 export { GOLDEN_DATASET_PHASE5 } from './golden-dataset-phase5.js';
+export { GOLDEN_DATASET_PHASE9 } from './golden-dataset-phase9.js';
 
 export {
   compareField,

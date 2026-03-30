@@ -37,6 +37,8 @@ export interface ExtractionOutput {
   creditsRemaining: number;
   ocrResult: OCRResult;
   strippingReport: StrippingReport;
+  /** VAI-01: Extraction manifest hash — cryptographic binding of AI output to source. */
+  manifestHash?: string;
 }
 
 /**
@@ -144,6 +146,7 @@ export async function runExtraction(
       confidence: number;
       provider: string;
       creditsRemaining: number;
+      manifestHash?: string;
     };
 
     // Convert to ExtractionField array
@@ -165,6 +168,7 @@ export async function runExtraction(
       creditsRemaining: result.creditsRemaining,
       ocrResult,
       strippingReport,
+      manifestHash: result.manifestHash,
     };
   } catch (err) {
     let message = 'Extraction failed';
@@ -174,6 +178,58 @@ export async function runExtraction(
       message = err.message;
     }
     onProgress?.({ stage: 'error', progress: 0, message });
+    return null;
+  }
+}
+
+// ─── Template Reconstruction ───
+
+export interface TemplateSection {
+  heading: string;
+  fields: Array<{
+    label: string;
+    value: string;
+    displayType: 'text' | 'date' | 'badge' | 'status';
+  }>;
+}
+
+export interface TemplateReconstructionResult {
+  templateType: 'formal' | 'compact' | 'table';
+  documentTitle: string;
+  sections: TemplateSection[];
+  tags: string[];
+  documentType: string;
+  summary: string;
+  verificationNotes: string | null;
+}
+
+/**
+ * Fetch template reconstruction from the worker.
+ * Runs AFTER extraction — takes extracted fields as input.
+ * Non-blocking: caller should fire-and-forget or await separately.
+ */
+export async function fetchTemplateReconstruction(
+  fields: Record<string, unknown>,
+  confidence: number,
+): Promise<TemplateReconstructionResult | null> {
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return null;
+
+    const response = await fetch(`${WORKER_URL}/api/v1/ai/template`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ fields, confidence }),
+    });
+
+    if (!response.ok) return null;
+
+    const result = await response.json() as TemplateReconstructionResult;
+    return result;
+  } catch {
     return null;
   }
 }

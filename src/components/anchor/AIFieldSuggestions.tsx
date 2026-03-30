@@ -34,9 +34,16 @@ const FIELD_LABELS: Record<string, string> = {
   expiryDate: 'Expiry Date',
   fieldOfStudy: 'Field of Study',
   degreeLevel: 'Degree Level',
-  licenseNumber: 'License Number',
+  licenseNumber: 'License / ID Number',
   accreditingBody: 'Accrediting Body',
   jurisdiction: 'Jurisdiction',
+  // CLE fields
+  creditHours: 'Credit Hours',
+  creditType: 'Credit Type',
+  barNumber: 'Bar Number',
+  activityNumber: 'Activity Number',
+  providerName: 'Provider',
+  approvedBy: 'Approved By',
 };
 
 function getConfidenceColor(confidence: number): string {

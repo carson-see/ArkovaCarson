@@ -49,9 +49,9 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
   try {
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('enabled')
-      .eq('flag_key', flagKey)
-      .single() as { data: { enabled: boolean } | null; error: unknown };
+      .select('value')
+      .eq('id', flagKey)
+      .single() as { data: { value: boolean } | null; error: unknown };
 
     if (error || !data) {
       logger.warn({ error, flagKey, envFallback }, `Failed to read ${flagKey} flag from DB, falling back to env`);
@@ -59,7 +59,7 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
       return envFallback;
     }
 
-    const enabled = data.enabled === true;
+    const enabled = data.value === true;
     aiFlags[flagKey] = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {

@@ -18,6 +18,7 @@ import { Toaster } from 'sonner';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile, ProfileProvider } from '@/hooks/useProfile';
+import { AuditorModeContext, useAuditorModeState } from '@/hooks/useAuditorMode';
 import { AuthGuard } from '@/components/auth/AuthGuard';
 import { RouteGuard } from '@/components/auth/RouteGuard';
 import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
@@ -132,11 +133,15 @@ export function App() {
   // Apply theme at app root so all routes (including public/auth) get dark mode
   useTheme();
 
+  // VAI-04: Auditor mode state
+  const auditorMode = useAuditorModeState();
+
   // On search.arkova.ai, only show search-related routes
   const searchOnly = isSearchSubdomain();
 
   return (
     <ErrorBoundary>
+      <AuditorModeContext.Provider value={auditorMode}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ProfileProvider>
         <Toaster position="top-right" richColors closeButton />
@@ -235,6 +240,7 @@ export function App() {
         </Suspense>
         </ProfileProvider>
       </BrowserRouter>
+      </AuditorModeContext.Provider>
     </ErrorBoundary>
   );
 }

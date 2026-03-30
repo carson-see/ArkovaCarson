@@ -38,11 +38,11 @@ function createMockReqRes() {
   return { req, res, next };
 }
 
-function mockFlagQuery(enabled: string | boolean | null, error: unknown = null) {
+function mockFlagQuery(flagValue: string | boolean | null, error: unknown = null) {
   const selectMock = vi.fn().mockReturnValue({
     eq: vi.fn().mockReturnValue({
       single: vi.fn().mockResolvedValue({
-        data: enabled !== null ? { enabled } : null,
+        data: flagValue !== null ? { value: flagValue } : null,
         error,
       }),
     }),

@@ -79,4 +79,11 @@ export interface ChainClient {
    * Check service health
    */
   healthCheck(): Promise<boolean>;
+
+  /**
+   * Pre-flight check: does the treasury have any UTXOs to fund a transaction?
+   * Returns false if treasury is empty — callers should skip batch processing.
+   * Optional: MockChainClient always returns true.
+   */
+  hasFunds?(): Promise<boolean>;
 }

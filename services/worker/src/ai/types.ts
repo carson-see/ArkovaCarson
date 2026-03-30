@@ -50,6 +50,8 @@ export interface ExtractionResult {
   confidence: number; // 0.0–1.0
   provider: string;
   tokensUsed?: number;
+  /** VAI-01: Model version identifier for extraction manifest provenance. */
+  modelVersion?: string;
 }
 
 /** Gemini embedding task types — optimizes the embedding space for the use case. */

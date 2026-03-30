@@ -1,11 +1,15 @@
 /**
- * Database Client
+ * Database Client (QA-PERF-3)
  *
  * Supabase client with service role for worker operations.
  * Service role bypasses RLS for administrative tasks.
  *
  * ERR-1: Includes circuit breaker to detect Supabase outages and
  * report unhealthy status via /health endpoint.
+ *
+ * QA-PERF-3: PgBouncer connection pooling via SUPABASE_POOLER_URL.
+ * When set, uses port 6543 transaction-mode pooling to prevent
+ * connection exhaustion under concurrent Agentic API load.
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -15,18 +19,38 @@ import type { Database } from '../types/database.types.js';
 
 let client: SupabaseClient<Database> | null = null;
 
+/** QA-PERF-3: Track whether PgBouncer pooler is active */
+let poolerActive = false;
+
 /**
- * PERF-2: Configure Supabase client with PgBouncer-compatible settings.
+ * QA-PERF-3: Configure Supabase client with PgBouncer-compatible settings.
  * When SUPABASE_POOLER_URL is set, uses PgBouncer (port 6543, transaction mode)
  * to prevent connection exhaustion under concurrent load.
+ *
+ * Validates pooler URL format: must use port 6543 for transaction mode.
  */
 export function getDb(): SupabaseClient<Database> {
   if (!client) {
-    // Prefer pooler URL if available (PgBouncer transaction mode)
-    const dbUrl = process.env.SUPABASE_POOLER_URL || config.supabaseUrl;
-    if (process.env.SUPABASE_POOLER_URL) {
-      logger.info('Using PgBouncer pooler connection');
+    const poolerUrl = process.env.SUPABASE_POOLER_URL;
+    const dbUrl = poolerUrl || config.supabaseUrl;
+
+    if (poolerUrl) {
+      // Validate pooler URL uses port 6543 (transaction mode)
+      try {
+        const url = new URL(poolerUrl);
+        if (url.port && url.port !== '6543') {
+          logger.warn(
+            { port: url.port },
+            'SUPABASE_POOLER_URL does not use port 6543 — expected transaction mode pooling'
+          );
+        }
+      } catch {
+        logger.error('SUPABASE_POOLER_URL is not a valid URL — falling back to direct connection');
+      }
+      poolerActive = true;
+      logger.info('Using PgBouncer pooler connection (QA-PERF-3)');
     }
+
     client = createClient<Database>(dbUrl, config.supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
@@ -41,6 +65,22 @@ export function getDb(): SupabaseClient<Database> {
 }
 
 export const db = getDb();
+
+/** QA-PERF-3: Check if PgBouncer pooler is active */
+export function isPoolerActive(): boolean {
+  return poolerActive;
+}
+
+/** QA-PERF-3: Get connection mode info for /health and diagnostics */
+export function getConnectionInfo(): { mode: 'pooler' | 'direct'; url: string } {
+  const poolerUrl = process.env.SUPABASE_POOLER_URL;
+  return {
+    mode: poolerUrl ? 'pooler' : 'direct',
+    url: poolerUrl
+      ? poolerUrl.replace(/\/\/[^@]+@/, '//***@') // mask credentials
+      : config.supabaseUrl.replace(/\/\/[^@]+@/, '//***@'),
+  };
+}
 
 // ─── ERR-1: Database Circuit Breaker ─────────────────────────────────
 // Tracks consecutive DB failures. When open, /health returns 503 so

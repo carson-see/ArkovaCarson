@@ -25,6 +25,7 @@ const {
   let defaultUpdateResult: Record<string, unknown> = { error: null, count: 1 };
   const updateChain: Record<string, unknown> = {};
   updateChain.eq = vi.fn(() => updateChain);
+  updateChain.in = vi.fn(() => updateChain);
   updateChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
     const result = updateResults.length > 0 ? updateResults.shift()! : defaultUpdateResult;
     return Promise.resolve(result).then(resolve, reject);
@@ -308,12 +309,12 @@ describe('processBatchAnchors', () => {
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('submit_batch_anchors RPC failed'),
     );
-    // Revert updates: one per anchor (BROADCASTING → PENDING)
-    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(3);
+    // Bulk revert: single .update({ status: 'PENDING' }).in().eq() call
+    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(1);
     const revertCalls = mockAnchorsUpdate.mock.calls.filter(
       (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'PENDING',
     );
-    expect(revertCalls.length).toBe(3);
+    expect(revertCalls.length).toBe(1);
   });
 
   // ---- Batch ID generation ----

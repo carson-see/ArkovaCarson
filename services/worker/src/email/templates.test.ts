@@ -7,6 +7,7 @@ import {
   buildActivationEmail,
   buildAnchorSecuredEmail,
   buildRevocationEmail,
+  buildDomainVerificationEmail,
 } from './templates.js';
 
 describe('buildActivationEmail', () => {
@@ -128,6 +129,65 @@ describe('buildRevocationEmail', () => {
     const banned = ['wallet', 'gas', 'hash', 'blockchain', 'bitcoin', 'crypto', 'transaction'];
     for (const term of banned) {
       expect(result.html.toLowerCase()).not.toContain(term);
+    }
+  });
+});
+
+describe('buildDomainVerificationEmail', () => {
+  const baseData = {
+    domain: 'example.com',
+    verificationCode: '123456',
+  };
+
+  it('returns subject and HTML', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    expect(result.subject).toContain('example.com');
+    expect(result.html).toContain('Verify Your Domain');
+  });
+
+  it('includes the verification code', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    expect(result.html).toContain('123456');
+  });
+
+  it('includes the domain name', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    expect(result.html).toContain('example.com');
+  });
+
+  it('includes organization name in subject when provided', () => {
+    const result = buildDomainVerificationEmail({
+      ...baseData,
+      organizationName: 'Acme Corp',
+    });
+    expect(result.subject).toContain('Acme Corp');
+  });
+
+  it('uses domain in subject when no organization name', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    expect(result.subject).toContain('example.com');
+  });
+
+  it('mentions 24 hour expiry', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    expect(result.html).toContain('24 hours');
+  });
+
+  it('escapes HTML in domain name', () => {
+    const result = buildDomainVerificationEmail({
+      ...baseData,
+      domain: '<script>alert("xss")</script>.com',
+    });
+    expect(result.html).not.toContain('<script>');
+    expect(result.html).toContain('&lt;script&gt;');
+  });
+
+  it('does not contain banned terminology', () => {
+    const result = buildDomainVerificationEmail(baseData);
+    const banned = ['wallet', 'gas', 'hash', 'blockchain', 'bitcoin', 'crypto', 'transaction'];
+    for (const term of banned) {
+      expect(result.html.toLowerCase()).not.toContain(term);
+      expect(result.subject.toLowerCase()).not.toContain(term);
     }
   });
 });

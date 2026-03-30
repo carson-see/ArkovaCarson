@@ -64,8 +64,8 @@ class FeatureFlagRegistry {
     try {
       const { data, error } = await db
         .from('switchboard_flags')
-        .select('flag_key, enabled')
-        .in('flag_key', [...DB_FLAGS]);
+        .select('id, value')
+        .in('id', [...DB_FLAGS]);
 
       if (error) {
         logger.warn({ error }, 'Failed to load switchboard flags — falling back to env vars');
@@ -75,7 +75,7 @@ class FeatureFlagRegistry {
         }
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dbFlagMap = new Map((data ?? []).map((r: any) => [r.flag_key, r.enabled === true]));
+        const dbFlagMap = new Map((data ?? []).map((r: any) => [r.id, r.value === true]));
         for (const key of DB_FLAGS) {
           // If flag not in DB, fall back to env var
           const envFallback = process.env[key] === 'true';
@@ -121,11 +121,11 @@ class FeatureFlagRegistry {
     try {
       const { data, error } = await db
         .from('switchboard_flags')
-        .select('enabled')
-        .eq('flag_key', name)
-        .single() as { data: { enabled: boolean } | null; error: unknown };
+        .select('value')
+        .eq('id', name)
+        .single() as { data: { value: boolean } | null; error: unknown };
 
-      const value = (!error && data) ? data.enabled === true : false;
+      const value = (!error && data) ? data.value === true : false;
       this.flags.set(name, { value, source: 'db', lastChecked: Date.now() });
       return value;
     } catch {

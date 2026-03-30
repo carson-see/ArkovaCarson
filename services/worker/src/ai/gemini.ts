@@ -22,6 +22,12 @@ import type {
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
+import {
+  TEMPLATE_RECONSTRUCTION_SYSTEM_PROMPT,
+  buildTemplateReconstructionPrompt,
+  TAGS_SYSTEM_PROMPT,
+  buildTagsPrompt,
+} from './prompts/template-reconstruction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
@@ -35,6 +41,12 @@ const DEFAULT_MODEL = 'gemini-2.5-flash';
 const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
+
+// Vertex AI tuned model config (Gemini Golden fine-tune)
+// Set GEMINI_TUNED_MODEL to the full Vertex AI model resource path to enable.
+// Example: projects/270018525501/locations/us-central1/models/9197017842648612864@1
+const VERTEX_AI_REGION = 'us-central1';
+const VERTEX_AI_API_BASE = `https://${VERTEX_AI_REGION}-aiplatform.googleapis.com/v1beta1`;
 
 // Circuit breaker state
 const CIRCUIT_BREAKER_THRESHOLD = 5;
@@ -52,6 +64,8 @@ export class GeminiProvider implements IAIProvider {
   private readonly apiKey: string;
   private readonly modelName: string;
   private readonly embeddingModelName: string;
+  /** Vertex AI tuned model resource path (e.g., projects/.../models/...) */
+  private readonly tunedModelPath: string | null;
   private circuit: CircuitState = {
     consecutiveFailures: 0,
     lastFailureAt: 0,
@@ -67,6 +81,14 @@ export class GeminiProvider implements IAIProvider {
     this.client = new GoogleGenerativeAI(key);
     this.modelName = model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
     this.embeddingModelName = embeddingModel ?? process.env.GEMINI_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+    this.tunedModelPath = process.env.GEMINI_TUNED_MODEL ?? null;
+
+    if (this.tunedModelPath) {
+      logger.info(
+        { tunedModel: this.tunedModelPath },
+        'GeminiProvider: using Vertex AI fine-tuned model for extraction',
+      );
+    }
   }
 
   async extractMetadata(request: ExtractionRequest): Promise<ExtractionResult> {
@@ -79,40 +101,53 @@ export class GeminiProvider implements IAIProvider {
     );
 
     const result = await this.withRetry(async () => {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
+      let text: string;
+      let tokensUsed: number | undefined;
 
-      try {
-        const model = this.client.getGenerativeModel({
-          model: this.modelName,
-          systemInstruction: EXTRACTION_SYSTEM_PROMPT,
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-          },
-        });
+      if (this.tunedModelPath) {
+        // Use Vertex AI fine-tuned model — trained on golden dataset
+        const tunedResult = await this.callTunedModel(EXTRACTION_SYSTEM_PROMPT, prompt);
+        text = tunedResult.text;
+        tokensUsed = tunedResult.tokensUsed;
+        logger.info({ tunedModel: this.tunedModelPath, tokensUsed }, 'Gemini: extraction via tuned model');
+      } else {
+        // Standard Gemini API path
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30_000);
 
-        const response = await model.generateContent(
-          { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-          { signal: controller.signal },
-        );
-        const text = response.response.text();
-        const usage = response.response.usageMetadata;
+        try {
+          const model = this.client.getGenerativeModel({
+            model: this.modelName,
+            systemInstruction: EXTRACTION_SYSTEM_PROMPT,
+            generationConfig: {
+              responseMimeType: 'application/json',
+              temperature: 0.1,
+            },
+          });
 
-        // Parse and validate inside retry so malformed output is retried
-        const parsed = JSON.parse(text);
-        const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
-        const { confidence: _, ...rawFields } = parsed;
-        const validated = ExtractedFieldsSchema.safeParse(rawFields);
-        if (!validated.success) {
-          logger.warn({ zodError: validated.error.message, model: this.modelName }, 'Extraction schema validation failed');
-          throw new Error('Extraction schema validation failed');
+          const response = await model.generateContent(
+            { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+            { signal: controller.signal },
+          );
+          text = response.response.text();
+          const usage = response.response.usageMetadata;
+          tokensUsed = usage?.totalTokenCount;
+        } finally {
+          clearTimeout(timeout);
         }
-
-        return { fields: validated.data, confidence, tokensUsed: usage?.totalTokenCount };
-      } finally {
-        clearTimeout(timeout);
       }
+
+      // Parse and validate (shared path for both tuned and standard)
+      const parsed = JSON.parse(text);
+      const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
+      const { confidence: _, ...rawFields } = parsed;
+      const validated = ExtractedFieldsSchema.safeParse(rawFields);
+      if (!validated.success) {
+        logger.warn({ zodError: validated.error.message, model: this.tunedModelPath ?? this.modelName }, 'Extraction schema validation failed');
+        throw new Error('Extraction schema validation failed');
+      }
+
+      return { fields: validated.data, confidence, tokensUsed };
     });
 
     // CRIT-5/GAP-3: Grounding verification — check extracted fields against source text
@@ -152,8 +187,8 @@ export class GeminiProvider implements IAIProvider {
       );
     }
 
-    // Apply confidence meta-model: uses extraction features (field count, type,
-    // OCR noise, key fields) to produce a better-calibrated confidence score.
+    // Apply confidence meta-model v2: uses extraction features, grounding score,
+    // provider identity, and fraud signals for better-calibrated confidence.
     const finalFields = {
       ...result.fields,
       ...(mergedSignals.length > 0 ? { fraudSignals: mergedSignals } : {}),
@@ -162,6 +197,11 @@ export class GeminiProvider implements IAIProvider {
       finalFields,
       adjustedConfidence,
       request.strippedText,
+      {
+        groundingScore: groundingReport.groundingScore,
+        provider: this.name,
+        fraudSignalCount: mergedSignals.length,
+      },
     );
     // Meta-model must never override fraud-signal penalties
     const finalConfidence = Math.min(metaModelConfidence, adjustedConfidence);
@@ -171,6 +211,7 @@ export class GeminiProvider implements IAIProvider {
       confidence: finalConfidence,
       provider: this.name,
       tokensUsed: result.tokensUsed,
+      modelVersion: this.tunedModelPath ?? this.modelName,
     };
   }
 
@@ -184,6 +225,81 @@ export class GeminiProvider implements IAIProvider {
    */
   async extractWithEnsemble(request: ExtractionRequest): Promise<EnsembleResult> {
     return runEnsembleExtraction(this, request);
+  }
+
+  /**
+   * Generate tags and document classification from extracted fields.
+   * Lightweight alternative to full template reconstruction.
+   */
+  async generateTags(
+    extractedFields: Record<string, unknown>,
+  ): Promise<TagsResult> {
+    this.checkCircuit();
+
+    const prompt = buildTagsPrompt(extractedFields);
+
+    const result = await this.withRetry(async () => {
+      const model = this.client.getGenerativeModel({
+        model: this.modelName,
+        systemInstruction: TAGS_SYSTEM_PROMPT,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+        },
+      });
+
+      const response = await model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        { signal: AbortSignal.timeout(15_000) },
+      );
+
+      const text = response.response.text();
+      return JSON.parse(text) as TagsResult;
+    });
+
+    return result;
+  }
+
+  /**
+   * Reconstruct a clean template representation from extracted metadata.
+   * Produces a structured template with sections, tags, and summary.
+   */
+  async reconstructTemplate(
+    extractedFields: Record<string, unknown>,
+    confidence: number,
+  ): Promise<TemplateReconstructionResult> {
+    this.checkCircuit();
+
+    const prompt = buildTemplateReconstructionPrompt(
+      extractedFields,
+      confidence,
+      this.name,
+    );
+
+    const result = await this.withRetry(async () => {
+      const model = this.client.getGenerativeModel({
+        model: this.modelName,
+        systemInstruction: TEMPLATE_RECONSTRUCTION_SYSTEM_PROMPT,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+          maxOutputTokens: 4096,
+        },
+      });
+
+      const response = await model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        { signal: AbortSignal.timeout(30_000) },
+      );
+
+      const text = response.response.text();
+      const parsed = JSON.parse(text) as TemplateReconstructionResult;
+      const usage = response.response.usageMetadata;
+      parsed.tokensUsed = usage?.totalTokenCount;
+      return parsed;
+    });
+
+    return result;
   }
 
   async generateEmbedding(text: string, taskType?: EmbeddingTaskType): Promise<EmbeddingResult> {
@@ -255,6 +371,81 @@ export class GeminiProvider implements IAIProvider {
     }
   }
 
+  /**
+   * Call the Vertex AI fine-tuned model for extraction.
+   * Uses Application Default Credentials (ADC) via gcloud access token
+   * or GCP metadata server (Cloud Run gets this automatically).
+   */
+  private async callTunedModel(
+    systemPrompt: string,
+    userPrompt: string,
+  ): Promise<{ text: string; tokensUsed?: number }> {
+    if (!this.tunedModelPath) {
+      throw new Error('No tuned model configured');
+    }
+
+    // Get access token — Cloud Run provides this via metadata server,
+    // local dev uses gcloud auth
+    let accessToken: string;
+    try {
+      // Try GCP metadata server first (Cloud Run / GCE)
+      const metaRes = await fetch(
+        'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+        { headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(2000) },
+      );
+      if (metaRes.ok) {
+        const data = (await metaRes.json()) as { access_token: string };
+        accessToken = data.access_token;
+      } else {
+        throw new Error('metadata server unavailable');
+      }
+    } catch {
+      // Fallback: use gcloud CLI (local dev)
+      const { execSync } = await import('node:child_process');
+      accessToken = execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
+    }
+
+    // Extract endpoint ID from model path for predict API
+    // Model path: projects/{project}/locations/{location}/models/{modelId}
+    // Endpoint: projects/{project}/locations/{location}/endpoints/{endpointId}
+    // For tuned models, use generateContent on the publishers endpoint
+    const url = `${VERTEX_AI_API_BASE}/${this.tunedModelPath}:generateContent`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: 'application/json',
+        },
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      logger.error(
+        { status: response.status, errBody, tunedModel: this.tunedModelPath },
+        'Vertex AI tuned model error',
+      );
+      throw new Error(`Vertex AI tuned model error (${response.status})`);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+      usageMetadata?: { totalTokenCount: number };
+    };
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    return { text, tokensUsed: data.usageMetadata?.totalTokenCount };
+  }
+
   private checkCircuit(): void {
     if (!this.circuit.isOpen) return;
 
@@ -319,4 +510,31 @@ export class GeminiProvider implements IAIProvider {
     this.recordFailure();
     throw lastError;
   }
+}
+
+// ─── Template Reconstruction Types ───
+
+export interface TemplateReconstructionResult {
+  templateType: 'formal' | 'compact' | 'table';
+  documentTitle: string;
+  sections: Array<{
+    heading: string;
+    fields: Array<{
+      label: string;
+      value: string;
+      displayType: 'text' | 'date' | 'badge' | 'status';
+    }>;
+  }>;
+  tags: string[];
+  documentType: string;
+  summary: string;
+  verificationNotes: string | null;
+  tokensUsed?: number;
+}
+
+export interface TagsResult {
+  tags: string[];
+  documentType: string;
+  category: string;
+  subcategory: string;
 }

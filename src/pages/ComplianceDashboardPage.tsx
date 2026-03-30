@@ -19,6 +19,8 @@ import {
   ArrowRight,
   FileCheck,
   Ban,
+  Download,
+  BarChart3,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -39,6 +41,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { ROUTES } from '@/lib/routes';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
 import { cn } from '@/lib/utils';
+import { COMPLIANCE_CONTROLS, getComplianceControls } from '@/lib/complianceMapping';
 import type { Database } from '@/types/database.types';
 
 type Attestation = Database['public']['Tables']['attestations']['Row'];
@@ -154,7 +157,9 @@ export function ComplianceDashboardPage() {
   const [expiring, setExpiring] = useState<ExpiringAttestation[]>([]);
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   const [reviewCount, setReviewCount] = useState<number>(0);
+  const [coverageData, setCoverageData] = useState<{ securedCount: number; controlIds: Set<string>; typeCounts: Map<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState<'pdf' | 'csv' | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!orgId) return;
@@ -168,7 +173,7 @@ export function ComplianceDashboardPage() {
       // Fetch all data in parallel (was: 5 counts parallel + 3 sequential)
       const [
         activeRes, expiringRes, revokedRes, totalRes, anchoredRes,
-        expiringDetailRes, activityRes, reviewRes,
+        expiringDetailRes, activityRes, reviewRes, securedAnchorsRes,
       ] = await Promise.all([
         // Active count
         supabase
@@ -227,6 +232,14 @@ export function ComplianceDashboardPage() {
           .select('*', { count: 'exact', head: true })
           .eq('org_id', orgId)
           .eq('status', 'PENDING'),
+        // Secured anchors with credential types for coverage analysis (CML-04)
+        // compliance_controls column from migration 0137 (not yet in generated types)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase.from('anchors') as any)
+          .select('credential_type, compliance_controls')
+          .eq('org_id', orgId)
+          .eq('status', 'SECURED')
+          .limit(500),
       ]);
 
       setStats({
@@ -264,6 +277,26 @@ export function ComplianceDashboardPage() {
       );
 
       setReviewCount(reviewRes.count ?? 0);
+
+      // CML-04: Compute framework coverage from secured anchors
+      const securedAnchors = securedAnchorsRes.data ?? [];
+      const allControlIds = new Set<string>();
+      const typeCounts = new Map<string, number>();
+      for (const anchor of securedAnchors) {
+        const ct = (anchor as { credential_type?: string | null }).credential_type ?? 'OTHER';
+        typeCounts.set(ct, (typeCounts.get(ct) ?? 0) + 1);
+        // Use stored controls if available, otherwise compute
+        const stored = (anchor as { compliance_controls?: string[] | null }).compliance_controls;
+        const controls = (stored && Array.isArray(stored) && stored.length > 0)
+          ? stored
+          : getComplianceControls(ct, true).map(c => c.id);
+        for (const id of controls) allControlIds.add(id);
+      }
+      setCoverageData({
+        securedCount: securedAnchors.length,
+        controlIds: allControlIds,
+        typeCounts,
+      });
     } catch {
       // Silently handle - stats will show as 0
     } finally {
@@ -278,6 +311,58 @@ export function ComplianceDashboardPage() {
   const anchoredRate = stats && stats.totalCount > 0
     ? Math.round((stats.anchoredCount / stats.totalCount) * 100)
     : 0;
+
+  // CML-04: Framework coverage computation
+  const allFrameworks = ['SOC 2', 'GDPR', 'ISO 27001', 'eIDAS', 'FERPA', 'HIPAA'] as const;
+  const coveredFrameworks = new Set<string>();
+  const coveredControls: Array<{ id: string; framework: string; label: string; description: string }> = [];
+  const missingControls: Array<{ id: string; framework: string; label: string; description: string }> = [];
+
+  if (coverageData) {
+    for (const [id, ctrl] of Object.entries(COMPLIANCE_CONTROLS)) {
+      if (coverageData.controlIds.has(id)) {
+        coveredFrameworks.add(ctrl.framework);
+        coveredControls.push({ id, framework: ctrl.framework, label: ctrl.label, description: ctrl.description });
+      } else {
+        missingControls.push({ id, framework: ctrl.framework, label: ctrl.label, description: ctrl.description });
+      }
+    }
+  }
+
+  // Export handler
+  async function handleExport(format: 'pdf' | 'csv') {
+    if (!user || exporting) return;
+    setExporting(format);
+    try {
+      const session = await supabase.auth.getSession();
+      const jwt = session.data.session?.access_token;
+      if (!jwt) return;
+
+      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+      const res = await fetch(`${workerUrl}/api/v1/audit-export/batch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${jwt}`,
+        },
+        body: JSON.stringify({ format, limit: 500 }),
+      });
+
+      if (!res.ok) throw new Error('Export failed');
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `arkova-audit-batch.${format}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Silently handle — user sees button reset
+    } finally {
+      setExporting(null);
+    }
+  }
 
   return (
     <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
@@ -324,7 +409,125 @@ export function ComplianceDashboardPage() {
           />
         </div>
 
-        {/* Section 2: Expiring Credentials */}
+        {/* Section 2: Regulatory Framework Coverage (CML-04) */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Coverage Overview */}
+          <Card className="bg-card border-border lg:col-span-2">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <BarChart3 className="h-5 w-5 text-[#00d4ff]" />
+                {COMPLIANCE_LABELS.SECTION_COVERAGE}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">{COMPLIANCE_LABELS.SECTION_COVERAGE_DESC}</p>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
+                </div>
+              ) : !coverageData || coverageData.securedCount === 0 ? (
+                <div className="text-center py-8">
+                  <ShieldCheck className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+                  <p className="text-sm font-medium text-foreground">{COMPLIANCE_LABELS.COVERAGE_EMPTY}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{COMPLIANCE_LABELS.COVERAGE_EMPTY_DESC}</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {/* Framework pills */}
+                  <div className="flex flex-wrap gap-2">
+                    {allFrameworks.map((fw) => {
+                      const covered = coveredFrameworks.has(fw);
+                      return (
+                        <Badge
+                          key={fw}
+                          variant={covered ? 'default' : 'outline'}
+                          className={cn(
+                            'text-xs px-3 py-1',
+                            covered && 'bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/30',
+                            !covered && 'text-muted-foreground opacity-50',
+                          )}
+                        >
+                          {covered && <CheckCircle className="h-3 w-3 mr-1" />}
+                          {fw}
+                        </Badge>
+                      );
+                    })}
+                  </div>
+
+                  {/* Coverage stats */}
+                  <div className="grid grid-cols-3 gap-4 pt-2">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-foreground">{coverageData.securedCount}</p>
+                      <p className="text-xs text-muted-foreground">{COMPLIANCE_LABELS.COVERAGE_SECURED}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-foreground">{coveredControls.length}</p>
+                      <p className="text-xs text-muted-foreground">{COMPLIANCE_LABELS.COVERAGE_CONTROLS}</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-[#00d4ff]">{coveredFrameworks.size}/{allFrameworks.length}</p>
+                      <p className="text-xs text-muted-foreground">{COMPLIANCE_LABELS.COVERAGE_FRAMEWORKS}</p>
+                    </div>
+                  </div>
+
+                  {/* Gap analysis — missing controls */}
+                  {missingControls.length > 0 && (
+                    <div className="pt-2 border-t border-border">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                        Gaps — Controls Not Yet Evidenced
+                      </p>
+                      <div className="space-y-1">
+                        {missingControls.map((ctrl) => (
+                          <div key={ctrl.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <AlertTriangle className="h-3 w-3 text-yellow-400 shrink-0" />
+                            <span className="font-medium">{ctrl.label}</span>
+                            <span className="hidden sm:inline">— {ctrl.description}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Export Panel */}
+          <Card className="bg-card border-border">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <Download className="h-5 w-5 text-[#00d4ff]" />
+                {COMPLIANCE_LABELS.EXPORT_AUDIT}
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">{COMPLIANCE_LABELS.EXPORT_AUDIT_DESC}</p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={exporting !== null || !coverageData || coverageData.securedCount === 0}
+                onClick={() => handleExport('pdf')}
+              >
+                {exporting === 'pdf' ? 'Generating...' : COMPLIANCE_LABELS.EXPORT_PDF}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                disabled={exporting !== null || !coverageData || coverageData.securedCount === 0}
+                onClick={() => handleExport('csv')}
+              >
+                {exporting === 'csv' ? 'Generating...' : COMPLIANCE_LABELS.EXPORT_CSV}
+              </Button>
+              <p className="text-xs text-muted-foreground text-center">
+                GRC-ready format for Vanta, Drata, Anecdotes
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Section 3: Expiring Credentials */}
         <Card className="bg-card border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-lg font-semibold flex items-center gap-2">

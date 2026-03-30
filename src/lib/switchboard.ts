@@ -99,7 +99,7 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase as any)
     .from('switchboard_flags')
-    .select('flag_key, enabled');
+    .select('id, value');
 
   if (error) {
     console.error('Failed to fetch flags:', error);
@@ -108,9 +108,9 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
 
   const flags: Record<FlagId, boolean> = { ...FLAGS };
 
-  for (const row of (data || []) as Array<{ flag_key: string; enabled: boolean }>) {
-    if (row.flag_key in flags) {
-      flags[row.flag_key as FlagId] = row.enabled;
+  for (const row of (data || []) as Array<{ id: string; value: boolean }>) {
+    if (row.id in flags) {
+      flags[row.id as FlagId] = row.value;
     }
   }
 
@@ -208,13 +208,13 @@ export function subscribeFlagChanges(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'switchboard_flags' },
       (payload) => {
-        const newRow = payload.new as { flag_key?: string; enabled?: boolean } | undefined;
-        if (!newRow?.flag_key || typeof newRow.enabled !== 'boolean') return;
+        const newRow = payload.new as { id?: string; value?: boolean } | undefined;
+        if (!newRow?.id || typeof newRow.value !== 'boolean') return;
         // Only process known flags
-        if (!(newRow.flag_key in FLAGS)) return;
+        if (!(newRow.id in FLAGS)) return;
         // Invalidate cache on realtime update
-        _flagCache.set(newRow.flag_key, { value: newRow.enabled, expires: Date.now() + FLAG_CACHE_TTL_MS });
-        onFlagChange(newRow.flag_key as FlagId, newRow.enabled);
+        _flagCache.set(newRow.id, { value: newRow.value, expires: Date.now() + FLAG_CACHE_TTL_MS });
+        onFlagChange(newRow.id as FlagId, newRow.value);
       },
     )
     .subscribe();

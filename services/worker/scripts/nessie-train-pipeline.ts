@@ -36,9 +36,12 @@ function getArg(name: string, defaultVal: string): string {
 const SKIP_EXPORT = getFlag('skip-export');
 const DRY_RUN = getFlag('dry-run');
 const FROM_GCP = getFlag('from-gcp');
-const EPOCHS = parseInt(getArg('epochs', '3'), 10);
-const LEARNING_RATE = parseFloat(getArg('learning-rate', '1e-5'));
+const AUGMENT = getFlag('augment');
+const EPOCHS = parseInt(getArg('epochs', '4'), 10);
+const LEARNING_RATE = parseFloat(getArg('learning-rate', '5e-6'));
 const BATCH_SIZE = parseInt(getArg('batch-size', '8'), 10);
+const WARMUP_RATIO = parseFloat(getArg('warmup-ratio', '0.1'));
+const LR_SCHEDULER = getArg('lr-scheduler', 'cosine');
 
 const TOGETHER_API_KEY = process.env.TOGETHER_API_KEY;
 const TOGETHER_BASE_URL = 'https://api.together.xyz/v1';
@@ -219,6 +222,69 @@ function formatAsConversation(record: PublicRecord): { messages: Array<{ role: s
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// --- Data augmentation ---
+
+/**
+ * Augment underrepresented credential types by paraphrasing existing examples.
+ * Shuffles field order and slightly varies prompt formatting to improve generalization.
+ */
+function augmentTrainingData(
+  lines: string[],
+  stats: Record<string, number>,
+  targetMin: number = 200,
+): { augmentedLines: string[]; augmentedCount: number } {
+  const underrepresented = Object.entries(stats).filter(([, count]) => count < targetMin);
+  if (underrepresented.length === 0) return { augmentedLines: [], augmentedCount: 0 };
+
+  const augmentedLines: string[] = [];
+  const linesByType = new Map<string, string[]>();
+
+  // Index lines by credential type
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      const assistantMsg = obj.messages?.find((m: { role: string }) => m.role === 'assistant')?.content;
+      if (assistantMsg) {
+        const parsed = JSON.parse(assistantMsg);
+        const ct = parsed.credentialType || 'OTHER';
+        if (!linesByType.has(ct)) linesByType.set(ct, []);
+        linesByType.get(ct)!.push(line);
+      }
+    } catch {
+      // Skip malformed
+    }
+  }
+
+  for (const [type, count] of underrepresented) {
+    const existing = linesByType.get(type) ?? [];
+    if (existing.length === 0) continue;
+
+    const needed = Math.min(targetMin - count, existing.length * 2); // Cap at 2x duplication
+    for (let i = 0; i < needed; i++) {
+      const source = existing[i % existing.length];
+      try {
+        const obj = JSON.parse(source);
+        // Vary prompt: add/remove "Please" prefix, change credential type hint casing
+        const userMsg = obj.messages.find((m: { role: string }) => m.role === 'user');
+        if (userMsg) {
+          const variants = [
+            (s: string) => s.replace('Extract metadata', 'Please extract metadata'),
+            (s: string) => s.replace('Credential type hint:', 'Document type:'),
+            (s: string) => s.replace('Return a JSON object', 'Output a JSON object'),
+          ];
+          const variant = variants[i % variants.length];
+          userMsg.content = variant(userMsg.content);
+        }
+        augmentedLines.push(JSON.stringify(obj));
+      } catch {
+        // Skip
+      }
+    }
+  }
+
+  return { augmentedLines, augmentedCount: augmentedLines.length };
 }
 
 // --- Pipeline steps ---
@@ -425,7 +491,7 @@ async function stepFineTune(): Promise<{ jobId: string; modelOutputName: string 
   const uploadData = await uploadRes.json() as { id: string; filename: string };
   console.log(`File uploaded: ${uploadData.id}`);
 
-  // Start fine-tune
+  // Start fine-tune with v3 config: warmup + cosine LR schedule
   const ftRes = await fetch(`${TOGETHER_BASE_URL}/fine-tunes`, {
     method: 'POST',
     headers: {
@@ -439,7 +505,9 @@ async function stepFineTune(): Promise<{ jobId: string; modelOutputName: string 
       n_checkpoints: Math.min(EPOCHS, 5),
       learning_rate: LEARNING_RATE,
       batch_size: BATCH_SIZE,
-      suffix: 'arkova-nessie',
+      warmup_ratio: WARMUP_RATIO,
+      lr_scheduler_type: LR_SCHEDULER,
+      suffix: 'arkova-nessie-v3',
     }),
   });
 
@@ -531,9 +599,11 @@ function stepReport(params: {
   console.log(`Output model ID:          ${params.modelOutputName}`);
   console.log(`Final status:             ${params.finalStatus}`);
   console.log(`Time elapsed:             ${elapsedMin} minutes`);
-  console.log(`\nHyperparameters:`);
+  console.log(`\nHyperparameters (v3):`);
   console.log(`  Epochs:        ${EPOCHS}`);
   console.log(`  Learning rate: ${LEARNING_RATE}`);
+  console.log(`  Warmup ratio:  ${WARMUP_RATIO}`);
+  console.log(`  LR scheduler:  ${LR_SCHEDULER}`);
   console.log(`  Batch size:    ${BATCH_SIZE}`);
   console.log(`  Base model:    ${BASE_MODEL}`);
 
@@ -565,8 +635,11 @@ async function main(): Promise<void> {
   console.log(`Date:       ${new Date().toISOString()}`);
   console.log(`Dry run:    ${DRY_RUN}`);
   console.log(`Skip export:${SKIP_EXPORT}`);
+  console.log(`Augment:    ${AUGMENT}`);
   console.log(`Epochs:     ${EPOCHS}`);
   console.log(`LR:         ${LEARNING_RATE}`);
+  console.log(`Warmup:     ${WARMUP_RATIO}`);
+  console.log(`Scheduler:  ${LR_SCHEDULER}`);
   console.log(`Batch size: ${BATCH_SIZE}`);
 
   // Step 1: Export
@@ -591,8 +664,22 @@ async function main(): Promise<void> {
   const validation = stepValidate(stats);
   stats = { ...stats }; // stats may have been updated by stepValidate
 
+  // Step 2.5: Augment underrepresented types (optional)
+  if (AUGMENT) {
+    console.log('\n--- Step 2.5: Data augmentation ---');
+    const lines = readFileSync(TRAINING_FILE, 'utf-8').trim().split('\n').filter(l => l.length > 0);
+    const { augmentedLines, augmentedCount } = augmentTrainingData(lines, stats);
+    if (augmentedCount > 0) {
+      appendFileSync(TRAINING_FILE, augmentedLines.join('\n') + '\n');
+      totalExported += augmentedCount;
+      console.log(`Augmented: +${augmentedCount} examples (total now ${totalExported})`);
+    } else {
+      console.log('No augmentation needed — all types above threshold');
+    }
+  }
+
   // Step 3: Split
-  const { trainCount, holdoutCount } = stepSplit(validation.totalExamples);
+  const { trainCount, holdoutCount } = stepSplit(AUGMENT ? totalExported : validation.totalExamples);
 
   // Step 4: Fine-tune
   const { jobId, modelOutputName } = await stepFineTune();

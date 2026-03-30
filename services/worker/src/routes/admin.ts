@@ -16,6 +16,9 @@ import { handlePlatformStats } from '../api/admin-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
+import { getQueryStats } from '../utils/queryMonitor.js';
+import { getConnectionInfo } from '../utils/db.js';
+import { getRateLimitStoreSize } from '../utils/rateLimit.js';
 
 export const adminRouter = Router();
 
@@ -148,6 +151,22 @@ adminRouter.post('/admin/users/:id/set-org', async (req, res) => {
     await handleSetOrg(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Set org request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── QA-PERF-6: Query Performance Stats ───
+adminRouter.get('/admin/query-stats', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    res.json({
+      queryStats: getQueryStats(),
+      connection: getConnectionInfo(),
+      rateLimitStoreSize: getRateLimitStoreSize(),
+    });
+  } catch (error) {
+    logger.error({ error }, 'Query stats request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

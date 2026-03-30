@@ -71,6 +71,12 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+// QA-PERF-6: passthrough mock — monitorQuery just delegates to the query fn
+vi.mock('../../utils/queryMonitor.js', () => ({
+  monitorQuery: async (_endpoint: string, queryFn: () => Promise<unknown>) => queryFn(),
+  recordQueryMetric: vi.fn(),
+}));
+
 import { Request, Response } from 'express';
 import { aiSearchRouter } from './ai-search.js';
 import { checkAICredits } from '../../ai/cost-tracker.js';

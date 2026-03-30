@@ -42,6 +42,7 @@ import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
+import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { attestationsRouter } from './attestations.js';
 import { entityVerifyRouter } from './entity-verify.js';
@@ -50,6 +51,9 @@ import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { webhooksRouter } from './webhooks.js';
 import { atsWebhookRouter } from './webhooks/ats.js';
+import { auditExportRouter } from './audit-export.js';
+import { aiProvenanceRouter } from './ai-provenance.js';
+import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -209,6 +213,18 @@ router.use('/ai/fraud/visual', aiFraudGate(), requireAuth, aiRateLimiter, aiFrau
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
+
+// VAI-01: AI provenance query — queryable Source → AI → Anchor chain
+router.use('/ai/provenance', requireAuth, aiRateLimiter, aiProvenanceRouter);
+
+// VAI-03: AI accountability report — one-click provenance export (PDF/JSON)
+router.use('/ai-accountability-report', requireAuth, aiRateLimiter, aiAccountabilityReportRouter);
+
+// AI template reconstruction & tagging — behind ENABLE_AI_EXTRACTION flag + JWT auth
+router.use('/ai', aiExtractionGate(), requireAuth, aiRateLimiter, aiTemplateRouter);
+
+// ─── Audit export — compliance PDF/CSV for GRC platforms (CML-03) ───
+router.use('/audit-export', requireAuth, auditExportRouter);
 
 // ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
 router.use('/webhooks/ats', atsWebhookRouter);

@@ -29,9 +29,12 @@ export interface CrossFieldCheckResult {
 
 /**
  * Known diploma mills and unaccredited degree factories.
+ * Comprehensive database compiled from DOE, CHEA, GAO investigations,
+ * and Oregon ODA unaccredited school list.
  * Lowercase for case-insensitive matching.
  */
 const KNOWN_DIPLOMA_MILLS: string[] = [
+  // Original 24
   'belford university',
   'belford high school',
   'ashwood university',
@@ -56,6 +59,51 @@ const KNOWN_DIPLOMA_MILLS: string[] = [
   'madison university',
   'hamilton university',
   'colombo american university',
+  // GAO investigation additions (2004 report + 2015 update)
+  'axact university',
+  'columbiana university',
+  'deansville institute of technology',
+  'dunham university',
+  'glendale university',
+  'greenleaf university',
+  'kennedy-western university',
+  'lacrosse university',
+  'nation university',
+  'northfield university',
+  'pacific western university',
+  'preston university',
+  'saint regis university',
+  'trinity southern university',
+  'university of berkley', // intentional misspelling by the mill
+  'western pacific university',
+  'warren national university',
+  'american coastline university',
+  // Oregon ODA unaccredited list
+  'adam smith university',
+  'american state university',
+  'barrington university',
+  'century university',
+  'columbia pacific university',
+  'columbus university',
+  'greenwich university',
+  'henley-putnam university', // not the legitimate one
+  'james monroe university',
+  'knightsbridge university',
+  'northfield university',
+  'pacific college',
+  'phoenix university', // not University of Phoenix
+  'stanford international university', // not Stanford
+  // International diploma mills
+  'irish international university',
+  'university of south wales online', // fake, not the legitimate USW
+  'commonwealth university london',
+  'european school of economics', // revoked accreditation
+  'global academy online',
+  'international university of management',
+  'metropolitan university of london', // fake
+  'oxford online academy', // not University of Oxford
+  'royal university of science and technology',
+  'cambridge international university', // fake
 ];
 
 /**
@@ -68,6 +116,15 @@ const SUSPICIOUS_ISSUER_PATTERNS: RegExp[] = [
   /instant\s+degree/i,
   /buy\s+degree/i,
   /accreditation\s+mill/i,
+  /life\s+experience\s+degree/i,
+  /verified\s+credentials\s+online/i,
+  /fast\s+track\s+degree/i,
+  /diploma\s+at\s+home/i,
+  /accredited\s+online\s+university/i,  // overly generic name
+  /global\s+online\s+university/i,
+  /international\s+open\s+university/i,  // common mill naming pattern
+  /free\s+degree/i,
+  /instant\s+certificate/i,
 ];
 
 // =============================================================================
@@ -285,6 +342,102 @@ function checkJurisdiction(fields: ExtractedFields, result: CrossFieldCheckResul
   }
 }
 
+/**
+ * Check license number format validity.
+ * Many fake credentials use placeholder or obviously invalid license numbers.
+ */
+function checkLicenseFormat(fields: ExtractedFields, result: CrossFieldCheckResult): void {
+  const type = fields.credentialType?.toUpperCase();
+  if (type !== 'LICENSE' && type !== 'PROFESSIONAL') return;
+
+  const licenseNumber = fields.licenseNumber;
+  if (!licenseNumber) return;
+
+  // Check for obvious placeholder patterns
+  const placeholderPatterns = [
+    /^[0]{5,}$/,                    // All zeros: 000000
+    /^1234/,                        // Sequential: 1234...
+    /^(XX|xx|NA|na|N\/A|TBD)/,     // Explicit placeholders
+    /^\[.*\]$/,                     // Bracketed: [REDACTED], [NUMBER]
+    /^test/i,                       // Test values
+    /^sample/i,                     // Sample values
+    /^example/i,                    // Example values
+  ];
+
+  if (placeholderPatterns.some(p => p.test(licenseNumber.trim()))) {
+    result.additionalFraudSignals.push('FORMAT_ANOMALY');
+    result.confidenceAdjustment -= 0.10;
+    result.warnings.push(`License number "${licenseNumber}" appears to be a placeholder`);
+  }
+
+  // Suspiciously short license numbers (< 3 chars)
+  if (licenseNumber.replace(/[\s-]/g, '').length < 3) {
+    result.warnings.push('License number unusually short — verify authenticity');
+  }
+}
+
+/**
+ * Check for degree level / credential type mismatches.
+ * E.g., a "PhD" from an institution that only grants certificates.
+ */
+function checkDegreeLevelConsistency(fields: ExtractedFields, result: CrossFieldCheckResult): void {
+  const type = fields.credentialType?.toUpperCase();
+  const degreeLevel = fields.degreeLevel?.toLowerCase();
+  const issuer = fields.issuerName?.toLowerCase() ?? '';
+
+  if (!degreeLevel) return;
+
+  // Doctorate from a "training center" or "academy" (typically non-degree-granting)
+  const nonDegreeIssuers = [
+    'training center', 'training centre', 'academy of',
+    'institute of technology', 'coding bootcamp', 'bootcamp',
+  ];
+
+  if (
+    (degreeLevel.includes('doctor') || degreeLevel.includes('phd')) &&
+    nonDegreeIssuers.some(p => issuer.includes(p))
+  ) {
+    result.additionalFraudSignals.push('FORMAT_ANOMALY');
+    result.confidenceAdjustment -= 0.10;
+    result.warnings.push(`Doctorate from non-degree-granting institution: "${fields.issuerName}"`);
+  }
+
+  // Master's or Doctorate with BADGE or CERTIFICATE type
+  if (
+    (degreeLevel.includes('master') || degreeLevel.includes('doctor') || degreeLevel.includes('phd')) &&
+    (type === 'BADGE' || type === 'CERTIFICATE')
+  ) {
+    result.additionalFraudSignals.push('FORMAT_ANOMALY');
+    result.confidenceAdjustment -= 0.05;
+    result.warnings.push(`Graduate-level degreeLevel with ${type} credentialType — possible misclassification`);
+  }
+}
+
+/**
+ * Check for accrediting body red flags.
+ * Some fake credentials cite non-existent accrediting bodies.
+ */
+function checkAccreditingBody(fields: ExtractedFields, result: CrossFieldCheckResult): void {
+  const body = fields.accreditingBody?.toLowerCase();
+  if (!body) return;
+
+  // Known fake accrediting bodies
+  const fakeAccreditors = [
+    'world association of universities and colleges',
+    'universal accreditation council',
+    'international accreditation association',
+    'world online accreditation',
+    'global accreditation body',
+    'international commission on higher education',
+  ];
+
+  if (fakeAccreditors.some(fake => body.includes(fake))) {
+    result.additionalFraudSignals.push('MISSING_ACCREDITATION');
+    result.confidenceAdjustment -= 0.20;
+    result.warnings.push(`Known fake accrediting body: "${fields.accreditingBody}"`);
+  }
+}
+
 // =============================================================================
 // MAIN EXPORT
 // =============================================================================
@@ -306,6 +459,9 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
   checkIssuerValidation(fields, result);
   checkTypeConsistency(fields, result);
   checkJurisdiction(fields, result);
+  checkLicenseFormat(fields, result);
+  checkDegreeLevelConsistency(fields, result);
+  checkAccreditingBody(fields, result);
 
   // Deduplicate fraud signals
   result.additionalFraudSignals = [...new Set(result.additionalFraudSignals)];

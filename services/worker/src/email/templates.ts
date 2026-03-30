@@ -81,6 +81,12 @@ export interface InvitationEmailData {
   inviteUrl: string;
 }
 
+export interface DomainVerificationEmailData {
+  domain: string;
+  verificationCode: string;
+  organizationName?: string;
+}
+
 // ─── Template Builders ───────────────────────────────────────────────────────
 
 /**
@@ -161,6 +167,30 @@ export function buildInvitationEmail(data: InvitationEmailData): { subject: stri
     <p style="${STYLES.muted}">This invitation expires in 7 days. If you didn't expect this email, you can safely ignore it.</p>
     <p style="${STYLES.muted}">Link not working? Copy and paste this URL into your browser:<br/>
     <span style="word-break: break-all; font-size: 12px;">${esc(data.inviteUrl)}</span></p>
+  `);
+
+  return { subject, html };
+}
+
+/**
+ * Domain verification email — sent when an org starts domain verification.
+ * Contains a 6-digit code to confirm domain ownership.
+ */
+export function buildDomainVerificationEmail(data: DomainVerificationEmailData): { subject: string; html: string } {
+  const orgLabel = data.organizationName ? esc(data.organizationName) : esc(data.domain);
+  const subject = `Verify domain ownership for ${orgLabel}`;
+
+  const html = wrapTemplate(`
+    <h2 style="color: #0f172a; margin-bottom: 16px;">Verify Your Domain</h2>
+    <p>Your organization is verifying ownership of <strong>${esc(data.domain)}</strong> on Arkova.</p>
+    <p>Use this verification code to confirm:</p>
+    <div style="text-align: center; margin: 32px 0;">
+      <div style="display: inline-block; padding: 16px 40px; background-color: #f1f5f9; border-radius: 12px; font-size: 36px; font-weight: 700; letter-spacing: 8px; font-family: 'Courier New', monospace; color: #0f172a;">
+        ${esc(data.verificationCode)}
+      </div>
+    </div>
+    <p style="${STYLES.muted}">Enter this code on the domain verification page in Arkova.</p>
+    <p style="${STYLES.muted}">This code expires in 24 hours. If you didn't request this, you can safely ignore this email.</p>
   `);
 
   return { subject, html };

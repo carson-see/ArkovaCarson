@@ -17,6 +17,7 @@ import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { callRpc } from '../../utils/rpc.js';
+import { monitorQuery } from '../../utils/queryMonitor.js';
 
 const router = Router();
 
@@ -77,16 +78,19 @@ router.get('/', async (req: Request, res: Response) => {
     const provider = createEmbeddingProvider();
     const queryEmbedding = await provider.generateEmbedding(q, 'RETRIEVAL_QUERY');
 
-    // Search via RPC (new RPC not yet in generated types — uses callRpc helper)
-    const { data: matches, error: searchError } = await callRpc<Array<{ anchor_id: string; similarity: number }>>(
-      db,
-      'search_credential_embeddings',
-      {
-        p_org_id: orgId,
-        p_query_embedding: queryEmbedding.embedding,
-        p_match_threshold: threshold,
-        p_match_count: limit,
-      },
+    // QA-PERF-6: Monitor semantic search query performance
+    const { data: matches, error: searchError } = await monitorQuery(
+      'semantic-search',
+      () => callRpc<Array<{ anchor_id: string; similarity: number }>>(
+        db,
+        'search_credential_embeddings',
+        {
+          p_org_id: orgId,
+          p_query_embedding: queryEmbedding.embedding,
+          p_match_threshold: threshold,
+          p_match_count: limit,
+        },
+      ),
     );
 
     if (searchError) {
