@@ -36,9 +36,10 @@ DELETE FROM anchor_chain_index WHERE TRUE;
 DELETE FROM merkle_batches WHERE TRUE;
 
 -- Step 5: Log migration event
-INSERT INTO audit_events (event_type, target_type, details)
+INSERT INTO audit_events (event_type, event_category, target_type, details)
 VALUES (
   'SYSTEM_MIGRATION',
+  'SYSTEM',
   'ANCHOR',
   jsonb_build_object(
     'migration', '0144_compensate_reset_signet_anchors',
