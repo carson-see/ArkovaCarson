@@ -1,6 +1,6 @@
--- Migration: 0130_get_anchor_type_counts_rpc.sql
--- Purpose: RPC function for PipelineAdminPage credential type breakdown
--- Returns anchor counts grouped by credential_type and status
+-- Compensating migration for deleted 0130_get_anchor_type_counts_rpc.sql
+-- (duplicate PK with 0130_batch_insert_anchors_rpc.sql)
+-- CREATE OR REPLACE is inherently idempotent.
 -- ROLLBACK: DROP FUNCTION IF EXISTS get_anchor_type_counts();
 
 CREATE OR REPLACE FUNCTION get_anchor_type_counts()
@@ -19,6 +19,5 @@ AS $$
   ORDER BY count(*) DESC;
 $$;
 
--- Grant to authenticated (admin check is in the frontend, RLS covers row access)
 GRANT EXECUTE ON FUNCTION get_anchor_type_counts() TO authenticated;
 GRANT EXECUTE ON FUNCTION get_anchor_type_counts() TO service_role;

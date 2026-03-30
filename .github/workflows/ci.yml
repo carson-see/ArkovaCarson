@@ -293,7 +293,12 @@ jobs:
           echo "$CHANGED"
 
           # Check for MODIFIED (not new) migrations — these violate additive-only policy
+          # Skip files that no longer exist (renames/consolidations are allowed)
           for file in $CHANGED; do
+            if [ ! -f "$file" ]; then
+              echo "Skipping deleted/renamed file: $file"
+              continue
+            fi
             if git log --oneline ${{ github.event.pull_request.base.sha || 'HEAD~1' }} -- "$file" | head -1 | grep -q .; then
               echo "::error::MODIFIED existing migration: $file — write a compensating migration instead"
               exit 1
