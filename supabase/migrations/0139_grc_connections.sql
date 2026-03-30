@@ -75,28 +75,28 @@ CREATE POLICY grc_connections_select ON grc_connections
   FOR SELECT TO authenticated
   USING (org_id IN (
     SELECT om.org_id FROM org_members om
-    WHERE om.user_id = auth.uid() AND om.role = 'ORG_ADMIN'
+    WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin')
   ));
 
 CREATE POLICY grc_connections_insert ON grc_connections
   FOR INSERT TO authenticated
   WITH CHECK (org_id IN (
     SELECT om.org_id FROM org_members om
-    WHERE om.user_id = auth.uid() AND om.role = 'ORG_ADMIN'
+    WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin')
   ));
 
 CREATE POLICY grc_connections_update ON grc_connections
   FOR UPDATE TO authenticated
   USING (org_id IN (
     SELECT om.org_id FROM org_members om
-    WHERE om.user_id = auth.uid() AND om.role = 'ORG_ADMIN'
+    WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin')
   ));
 
 CREATE POLICY grc_connections_delete ON grc_connections
   FOR DELETE TO authenticated
   USING (org_id IN (
     SELECT om.org_id FROM org_members om
-    WHERE om.user_id = auth.uid() AND om.role = 'ORG_ADMIN'
+    WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin')
   ));
 
 -- Sync logs visible to org admins
@@ -105,7 +105,7 @@ CREATE POLICY grc_sync_logs_select ON grc_sync_logs
   USING (connection_id IN (
     SELECT gc.id FROM grc_connections gc
     JOIN org_members om ON gc.org_id = om.org_id
-    WHERE om.user_id = auth.uid() AND om.role = 'ORG_ADMIN'
+    WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin')
   ));
 
 -- Service role can insert sync logs (worker-only)

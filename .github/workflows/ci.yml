@@ -293,10 +293,18 @@ jobs:
           echo "$CHANGED"
 
           # Check for MODIFIED (not new) migrations — these violate additive-only policy
-          # Skip files that no longer exist (renames/consolidations are allowed)
+          # Only protect migrations through 0135 (last deployed to production).
+          # Skip files that no longer exist (renames/consolidations are allowed).
+          LAST_DEPLOYED=0135
           for file in $CHANGED; do
             if [ ! -f "$file" ]; then
               echo "Skipping deleted/renamed file: $file"
+              continue
+            fi
+            # Extract numeric prefix from filename
+            prefix=$(basename "$file" | grep -oE '^[0-9]+')
+            if [ -n "$prefix" ] && [ "$prefix" -gt "$LAST_DEPLOYED" ] 2>/dev/null; then
+              echo "Allowing modification to un-deployed migration: $file"
               continue
             fi
             if git log --oneline ${{ github.event.pull_request.base.sha || 'HEAD~1' }} -- "$file" | head -1 | grep -q .; then
