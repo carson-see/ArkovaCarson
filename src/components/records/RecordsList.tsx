@@ -216,6 +216,41 @@ function CardCopyButton({ value }: { value: string }) {
   );
 }
 
+/**
+ * Build a one-line description for a record card.
+ * Priority: file_description → form_type + filing_date + period_of_report → issuer + issued_date
+ */
+function buildRecordDescription(record: Record): string | null {
+  const meta = record.metadata;
+  if (!meta) return null;
+
+  // Explicit human-readable description from the source (e.g. EDGAR file_description)
+  const fileDescription = meta.file_description as string | undefined;
+  if (fileDescription) return fileDescription;
+
+  const parts: string[] = [];
+
+  // SEC/public-record style: form type + filing date + optional period
+  const formType = meta.form_type as string | undefined;
+  const filingDate = meta.filing_date as string | undefined;
+  const periodOfReport = meta.period_of_report as string | undefined;
+
+  if (formType) parts.push(formType);
+  if (filingDate) parts.push(`Filed ${filingDate}`);
+  if (periodOfReport && periodOfReport !== filingDate) parts.push(`Period ending ${periodOfReport}`);
+
+  if (parts.length > 0) return parts.join(' · ');
+
+  // User credential style: issuer + issued date
+  const issuer = meta.issuer as string | undefined;
+  const issuedDate = (meta.issued_date ?? meta.date) as string | undefined;
+
+  if (issuer) parts.push(`Issued by ${issuer}`);
+  if (issuedDate) parts.push(issuedDate);
+
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 /** Build a rich title from metadata like "Entity Name — Form Type (Date)" */
 function buildRecordTitle(record: Record): string {
   const meta = record.metadata;
@@ -246,17 +281,21 @@ const STATUS_BADGE_CLASSES: { [key: string]: string } = {
   EXPIRED: 'bg-[#859398]/10 text-[#859398] border border-[#859398]/30',
 };
 
-/** Internal keys filtered from metadata display */
+/** Internal keys filtered from metadata display (shown elsewhere in the card) */
 const HIDDEN_META_KEYS = new Set([
   'pipeline_source', 'source_url', 'abstract', 'description', 'summary',
   'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id',
   '_confidence', '_prompt_version', 'chain_tx_id', 'recipient', 'jurisdiction',
+  // Shown in description line
+  'file_description', 'form_type', 'filing_date', 'period_of_report',
+  'entity_name', 'issuer', 'issued_date',
 ]);
 
 function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowProps>) {
   const status = statusConfig[record.status];
   const StatusIcon = status.icon;
   const title = buildRecordTitle(record);
+  const description = buildRecordDescription(record);
   const credentialLabel = record.credentialType
     ? CREDENTIAL_TYPE_LABELS[record.credentialType as keyof typeof CREDENTIAL_TYPE_LABELS] ?? record.credentialType
     : null;
@@ -281,6 +320,9 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
       <div className="px-5 pt-4 pb-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <h3 className="text-sm font-bold text-[#dce3ed] truncate">{title}</h3>
+          {description && (
+            <p className="text-xs text-[#859398] mt-0.5 truncate">{description}</p>
+          )}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             {credentialLabel && (
               <Badge className="bg-[#242b32] text-[#bbc9cf] border-[#3c494e]/30 text-[10px] font-mono">

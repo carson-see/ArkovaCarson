@@ -205,7 +205,7 @@ export function AdminRecordsPage() {
                         <Badge variant="outline" className="text-[10px]">
                           {formatCredentialType(r.credential_type)}
                         </Badge>
-                        <span className="font-mono truncate max-w-[120px]">{r.user_email ?? '—'}</span>
+                        <span className="font-mono truncate max-w-[120px]">{r.public_id ?? '—'}</span>
                       </div>
                       <span>{new Date(r.created_at).toLocaleDateString()}</span>
                     </div>
@@ -221,7 +221,7 @@ export function AdminRecordsPage() {
                       <th className="pb-2 pr-4">Document</th>
                       <th className="pb-2 pr-4">Status</th>
                       <th className="pb-2 pr-4">Type</th>
-                      <th className="pb-2 pr-4">Owner</th>
+                      <th className="pb-2 pr-4">Public ID</th>
                       <th className="pb-2">Created</th>
                     </tr>
                   </thead>
@@ -245,7 +245,7 @@ export function AdminRecordsPage() {
                           </Badge>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground text-xs font-mono">
-                          {r.user_email ?? '—'}
+                          {r.public_id ?? '—'}
                         </td>
                         <td className="py-3 text-muted-foreground text-xs">
                           {new Date(r.created_at).toLocaleDateString()}
