@@ -35,15 +35,14 @@ WHERE status != 'REVOKED'
 DELETE FROM anchor_chain_index WHERE TRUE;
 DELETE FROM merkle_batches WHERE TRUE;
 
--- Step 5: Log migration event (idempotent via unique check)
+-- Step 5: Log migration event
 INSERT INTO audit_events (event_type, target_type, details)
-SELECT 'SYSTEM_MIGRATION', 'ANCHOR', jsonb_build_object(
-  'migration', '0144_compensate_reset_signet_anchors',
-  'action', 'Reset all signet anchors to PENDING for mainnet re-anchoring',
-  'timestamp', now()::text
-)
-WHERE NOT EXISTS (
-  SELECT 1 FROM audit_events
-  WHERE event_type = 'SYSTEM_MIGRATION'
-  AND details->>'migration' IN ('0123_reset_signet_anchors_for_mainnet', '0144_compensate_reset_signet_anchors')
+VALUES (
+  'SYSTEM_MIGRATION',
+  'ANCHOR',
+  jsonb_build_object(
+    'migration', '0144_compensate_reset_signet_anchors',
+    'action', 'Reset all signet anchors to PENDING for mainnet re-anchoring',
+    'timestamp', now()::text
+  )::text
 );
