@@ -353,14 +353,19 @@ PRs #117-120 merged. Design system migration, MCP at edge.arkova.ai, 16 credenti
 
 ---
 
-## GEO & SEO Optimization (12 stories)
+## GEO & SEO Optimization (17 stories — 5 NEW from 2026-03-29 audit)
+
+### 2026-03-29 Audit Results
+- **On-page SEO score:** 57/100 (C+) — keyword usage 4/10, images 3/10, internal links 5/10
+- **Technical SEO:** Security headers excellent, soft 404s CRITICAL, caching weak
+- **New stories created:** GEO-13 through GEO-17 based on verified audit findings
 
 | Story | Priority | Description | Status |
 |-------|----------|-------------|--------|
 | GEO-01 | CRITICAL | SSR for marketing site | **COMPLETE** |
 | GEO-02 | CRITICAL | Fix LinkedIn entity collision | PARTIAL |
-| GEO-03 | CRITICAL | Publish /privacy and /terms | **COMPLETE** |
-| GEO-04 | HIGH | About page with team bios | NOT STARTED |
+| GEO-03 | CRITICAL | Publish /privacy and /terms | **COMPLETE** (verified 2026-03-29) |
+| GEO-04 | HIGH | About page with team bios | **COMPLETE** (team section on homepage) |
 | GEO-05 | HIGH | Enhanced schema | **COMPLETE** |
 | GEO-06 | HIGH | Deploy upgraded llms.txt | **COMPLETE** |
 | GEO-07 | HIGH | Fix broken og:image | **COMPLETE** |
@@ -369,6 +374,11 @@ PRs #117-120 merged. Design system migration, MCP at edge.arkova.ai, 16 credenti
 | GEO-10 | MEDIUM | IndexNow for Bing/Copilot | NOT STARTED |
 | GEO-11 | MEDIUM | YouTube explainers | NOT STARTED |
 | GEO-12 | MEDIUM | Security headers | **COMPLETE** |
+| **GEO-13** | **CRITICAL** | **On-page SEO fixes (title, H1, meta, keywords)** | **NOT STARTED** |
+| **GEO-14** | **CRITICAL** | **Fix soft 404s (200 status on nonexistent URLs)** | **NOT STARTED** |
+| **GEO-15** | **HIGH** | **Image alt text + product screenshots** | **NOT STARTED** |
+| **GEO-16** | **HIGH** | **Traction numbers + social proof on homepage** | **NOT STARTED** |
+| **GEO-17** | **HIGH** | **Internal linking + contextual cross-references** | **NOT STARTED** |
 
 ---
 

@@ -78,16 +78,20 @@ Compliance dashboard showing org-wide posture, control coverage heatmap, and "Au
 - Queries anchors with `compliance_controls` column for coverage computation
 
 ### CML-05: GRC Platform Integrations (Vanta, Drata, Anecdotes)
-**Jira:** SCRUM-269 | **Priority:** MEDIUM | **Effort:** XL | **Status:** NOT STARTED
+**Jira:** SCRUM-269 | **Priority:** MEDIUM | **Effort:** XL | **Status:** COMPLETE
 **Dependencies:** CML-03
 
-Direct API integrations with GRC platforms. Long-term roadmap item.
+Direct API integrations with GRC platforms for automated evidence delivery.
 
 **Deliverables:**
-- Vanta, Drata, Anecdotes API integrations
-- OAuth2 connection flows
-- Webhook-based push on SECURED status
-- Switchboard flag: `ENABLE_GRC_INTEGRATIONS`
+- `supabase/migrations/0139_grc_connections.sql` — `grc_connections` + `grc_sync_logs` tables, RLS, indexes, enums
+- `services/worker/src/integrations/grc/types.ts` — IGrcAdapter interface, evidence payload types
+- `services/worker/src/integrations/grc/adapters.ts` — VantaAdapter, DrataAdapter, AnecdotesAdapter (OAuth2 + evidence push)
+- `services/worker/src/integrations/grc/syncService.ts` — Sync orchestration on SECURED status
+- `services/worker/src/api/v1/grc.ts` — 6 endpoints (connect, callback, list, test, disconnect, sync-logs)
+- `services/worker/src/middleware/grcFeatureGate.ts` — ENABLE_GRC_INTEGRATIONS switchboard flag gate
+- `services/worker/src/integrations/grc/grc.test.ts` — 27 tests
+- Switchboard flag: `ENABLE_GRC_INTEGRATIONS` (default: false)
 
 ## Status Summary
 
@@ -97,7 +101,7 @@ Direct API integrations with GRC platforms. Long-term roadmap item.
 | CML-02 | COMPLETE | HIGH |
 | CML-03 | COMPLETE | HIGH |
 | CML-04 | COMPLETE | MEDIUM |
-| CML-05 | NOT STARTED | MEDIUM |
+| CML-05 | COMPLETE | MEDIUM |
 
 ## Change Log
 
@@ -108,3 +112,4 @@ Direct API integrations with GRC platforms. Long-term roadmap item.
 | 2026-03-29 | CML-02 COMPLETE: Migration 0137, worker-side mapping, anchor.ts + batch-anchor.ts integration (10 tests) |
 | 2026-03-29 | CML-03 COMPLETE: Audit export endpoint (PDF + CSV), single + batch, 12 tests |
 | 2026-03-29 | CML-04 COMPLETE: Dashboard enhanced with framework coverage, gap analysis, export panel |
+| 2026-03-29 | CML-05 COMPLETE: Migration 0139, 3 GRC adapters (Vanta/Drata/Anecdotes), 6 API endpoints, sync service, feature gate, 27 tests |

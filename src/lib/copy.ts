@@ -994,6 +994,18 @@ export const COMPLIANCE_LABELS = {
   EXPORT_AUDIT_DESC: 'Download a compliance-ready report for GRC platforms.',
   EXPORT_PDF: 'Download PDF',
   EXPORT_CSV: 'Download CSV',
+  // CML-05: GRC Platform Integrations
+  GRC_SECTION_TITLE: 'GRC Platform Connections',
+  GRC_SECTION_DESC: 'Connect compliance platforms for automated evidence delivery.',
+  GRC_CONNECT: 'Connect Platform',
+  GRC_DISCONNECT: 'Disconnect',
+  GRC_TEST: 'Test Connection',
+  GRC_SYNC_LOGS: 'Sync History',
+  GRC_STATUS_ACTIVE: 'Connected',
+  GRC_STATUS_INACTIVE: 'Disconnected',
+  GRC_LAST_SYNC: 'Last synced',
+  GRC_NO_CONNECTIONS: 'No platforms connected',
+  GRC_NO_CONNECTIONS_DESC: 'Connect Vanta, Drata, or Anecdotes to automatically push compliance evidence.',
 } as const;
 
 // =============================================================================
