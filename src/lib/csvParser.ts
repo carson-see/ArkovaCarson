@@ -36,6 +36,35 @@ export const VALID_CREDENTIAL_TYPES = [
 
 export type CredentialType = (typeof VALID_CREDENTIAL_TYPES)[number];
 
+/**
+ * Infer credential_type from filename extension when not explicitly provided.
+ * Falls back to 'OTHER' if no match.
+ */
+function inferCredentialTypeFromFilename(filename: string): CredentialType {
+  const lower = filename.toLowerCase();
+  const ext = lower.split('.').pop() ?? '';
+
+  const EXT_MAP: Record<string, CredentialType> = {
+    credential: 'PROFESSIONAL',
+    degree: 'DEGREE',
+    diploma: 'DEGREE',
+    license: 'LICENSE',
+    certificate: 'CERTIFICATE',
+    cert: 'CERTIFICATE',
+    transcript: 'TRANSCRIPT',
+    cle: 'CLE',
+    badge: 'BADGE',
+    attestation: 'ATTESTATION',
+    resume: 'RESUME',
+    cv: 'RESUME',
+    patent: 'PATENT',
+    publication: 'PUBLICATION',
+    insurance: 'INSURANCE',
+  };
+
+  return EXT_MAP[ext] ?? 'OTHER';
+}
+
 // Email validation regex (non-backtracking to avoid ReDoS)
 const EMAIL_REGEX = /^[^\s@]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
 
@@ -465,6 +494,11 @@ export function extractAnchorRecords(
           ? (upper as CredentialType)
           : 'OTHER';
       }
+    }
+
+    // Infer credential_type from filename when not explicitly mapped
+    if (!record.credentialType && record.filename) {
+      record.credentialType = inferCredentialTypeFromFilename(record.filename);
     }
 
     // Build metadata from ALL columns (not just a dedicated metadata column)
