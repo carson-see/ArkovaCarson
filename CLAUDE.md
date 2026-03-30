@@ -254,8 +254,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | GEO & SEO | 6/12 | 1 | 5 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 0/8 | 0 | 8 | 0% |
-| Nessie Model Training | 3/6 | 0 | 3 | 50% |
-| **Total** | **186/211** | **3/211** | **22/211** | **~88%** |
+| Nessie Model Training | 3/6 | 1 | 2 | 50% |
+| **Total** | **186/211** | **4/211** | **21/211** | **~88%** |
 
 ### Incomplete Stories
 
@@ -291,13 +291,13 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - ATT-01 through ATT-08. Employment/education verification workflows, batch API, ATS webhooks, credential portfolios.
 - See `docs/stories/18_ats_background_checks.md` and `docs/BACKLOG.md` for details
 
-**Nessie Model Training (3 not started, 3 complete):**
-- ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to production)
-- ~~NMT-02 (P1): JSON comment stripping~~ — **DONE** (`stripJsonComments()` + 10 tests)
-- ~~NMT-03 (P1): Nessie confidence recalibration~~ — **DONE** (8 calibration knots, maps 87%→41%, 9 tests)
-- NMT-04 (P1): Full-precision GPU eval at fp16/bf16 (blocked on RunPod capacity)
-- NMT-05 (P2): Upload model weights to HuggingFace (3 empty repos)
-- NMT-06 (P2): Nessie v4 training data improvements
+**Nessie Model Training (6 not started):**
+- ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to Cloud Run)
+- ~~NMT-02 (P1): JSON comment stripping~~ — **DONE** (stripJsonComments utility, 447 tests)
+- ~~NMT-03 (P1): Nessie confidence recalibration~~ — **DONE** (piecewise linear calibration, 8 knots, PR #225)
+- NMT-04 (P1): Full-precision GPU eval — **BLOCKED** on RunPod platform-wide GPU provisioning outage
+- NMT-05 (P2): Upload model weights to HuggingFace — not started
+- NMT-06 (P2): Nessie v4 training data improvements — **IN PROGRESS** (pipeline built, distilling 2K examples)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
 
 ### Remaining Production Blockers

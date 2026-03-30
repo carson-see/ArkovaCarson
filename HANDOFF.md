@@ -22,18 +22,20 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
-### Recent Changes (2026-03-30, Session 20 — Gemini Golden Deploy + NMT-03 Confidence Recalibration)
+### Recent Changes (2026-03-30, Session 20 — Nessie v4 Training Pipeline + Best Practices Audit)
 
-**Gemini Golden tuned model deployed to production. Nessie confidence recalibration complete.**
+**Built Nessie v4 training data pipeline based on comprehensive best-practices audit.**
 
 | Change | Detail |
 |--------|--------|
-| Gemini Golden deploy | `GEMINI_TUNED_MODEL=projects/270018525501/locations/us-central1/endpoints/481340352117080064` set in Cloud Run. Revision `arkova-worker-00217-p4n` serving 100%. Weighted F1: 90.4% (was 82.1%). |
-| NMT-03: Nessie calibration | Added `NESSIE_CALIBRATION_KNOTS` (8 knots) + `calibrateNessieConfidence()` in `calibration.ts`. Applied in `nessie.ts` before grounding/fraud pipeline. Maps 87% reported → ~41% calibrated. 9 new tests. |
-| Provider offset fix | `confidence-model.ts` `PROVIDER_OFFSETS.nessie` changed from +0.03 (wrong!) to -0.15. Nessie is overconfident, not underconfident. |
-| Jira sync | SCRUM-336 (NMT-03) → Done. SCRUM-312 (epic) → In Progress. SCRUM-337 (NMT-04) → Blocked. SCRUM-40/43 → To Do (were incorrectly In Progress). SCRUM-298 → To Do. |
-| Story docs | `docs/stories/21_nessie_model_training.md` updated: NMT-03 marked COMPLETE with implementation details. |
-| BACKLOG.md | NMT-03 marked complete, Gemini Golden deployment noted, NMT done count 2→3. |
+| Best practices audit | Cross-referenced "Nessie-Training-Best-Practices" document against codebase. Identified 10 gaps: LR 40x too low, circular training data, no general mix, no dedup, hardcoded confidence, no base model baseline, no prompt template verification. |
+| v4 data module | `src/ai/training/nessie-v4-data.ts` — realistic confidence scoring, deduplication, validation (rejects 0.92 hardcode), general data mixing, LoRA-correct hyperparameters. 50 tests. |
+| v4 pipeline script | `scripts/nessie-v4-pipeline.ts` — Gemini Golden distillation, ground truth validation, domain-specific system prompts (SEC/Legal/Regulatory/Academic), JSONL export, Together AI training submission. |
+| Domain system prompts | SEC specialist (filing types, CIK, EDGAR), Legal specialist (court hierarchy, citations, precedent), Regulatory specialist (CFR structure, rulemaking), Academic specialist (DOI, accreditation, retractions). |
+| NMT-03 complete | Nessie confidence recalibration: piecewise linear calibration layer, 8 empirical knots, provider offset fix. PR #225. |
+| NMT-04 blocked | RunPod GPU provisioning platform-wide outage: 5 GPU types, secure+community cloud, 3 Docker images, 2 serverless endpoints — all failed. Queued jobs purged. |
+| Gemini Golden deployed | Vertex AI fine-tuned model live in Cloud Run. 90.4% F1 vs 82.1% baseline. |
+| Pipeline running | Distilling 500 examples/domain × 4 domains from Gemini Golden with validation. |
 
 ### Recent Changes (2026-03-30, Session 19 — Nessie Model Comparison Eval)
 
