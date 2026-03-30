@@ -58,6 +58,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
     "@cloudflare/workers-types": "^4.20260317.1",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@playwright/test": "^1.58.2",
