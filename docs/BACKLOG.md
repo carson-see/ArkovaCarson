@@ -19,7 +19,7 @@ _Last updated: 2026-03-30 (320K+ public records, 166K+ SECURED anchors on mainne
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
-| Nessie Model Training (NMT) | 6 | 0 | 6 | No (AI infra) |
+| Nessie Model Training (NMT) | 6 | 2 | 4 | No (AI infra) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -407,23 +407,24 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 | ID | Story | Priority | Status | Dependencies | Effort |
 |----|-------|----------|--------|-------------|--------|
-| **NMT-01** | **Gemini Golden fine-tuned eval** | **P0** | NOT STARTED | Vertex AI access | Small |
-| NMT-02 | JSON comment stripping in extraction parser | P1 | NOT STARTED | None | Small |
+| ~~NMT-01~~ | ~~Gemini Golden fine-tuned eval~~ | ~~P0~~ | **COMPLETE** — Weighted F1=90.4% (+8.3pp vs baseline), recommend as prod default | Vertex AI access | Small |
+| ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
 | NMT-03 | Nessie confidence recalibration | P1 | NOT STARTED | NMT-01 analysis | Medium |
 | NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | NOT STARTED | RunPod/GPU capacity | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
 | NMT-06 | Nessie v4 training data improvements | P2 | NOT STARTED | NMT-01, NMT-03 | Large |
 
-**Eval Results (2026-03-30, MLX 4-bit quantized, 50 samples):**
+**Eval Results (2026-03-30):**
 
-| Model | Macro F1 | Weighted F1 | Conf Corr | ECE |
-|-------|----------|-------------|-----------|-----|
-| Gemini (production) | **82.1%** | ~82% | 0.426 | ~10% |
-| Nessie v3 baseline | 56.4% | 58.4% | 0.214 | 44.6% |
-| Nessie reasoning v1 | 34.2% | **63.3%** | 0.223 | 57.1% |
-| Nessie DPO v1 | 30.7% | 57.8% | **0.337** | 52.5% |
+| Model | Macro F1 | Weighted F1 | Conf Corr | ECE | Notes |
+|-------|----------|-------------|-----------|-----|-------|
+| **Gemini Golden (tuned)** | 81.4% | **90.4%** | 0.262 | **9.5%** | **NEW — recommend prod default** |
+| Gemini (production) | **82.1%** | ~82% | 0.426 | ~10% | Current baseline |
+| Nessie v3 baseline | 56.4% | 58.4% | 0.214 | 44.6% | MLX 4-bit, 50 samples |
+| Nessie reasoning v1 | 34.2% | 63.3% | 0.223 | 57.1% | MLX 4-bit, 50 samples |
+| Nessie DPO v1 | 30.7% | 57.8% | **0.337** | 52.5% | MLX 4-bit, 50 samples |
 
-**Key issues:** All Nessie models overconfident (85-90% reported vs 34-46% actual), JSON comment parse failures in reasoning/DPO models, 4-bit quantization degrades quality (results are lower bound).
+**Key findings:** Gemini Golden tuned model achieves 90.4% weighted F1 (+8.3pp). SEC_FILING improved from 36.8% to 90.9%. Nessie models overconfident, JSON comment parse failures fixed (NMT-02).
 
 ---
 
