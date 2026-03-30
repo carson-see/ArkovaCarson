@@ -15,3 +15,9 @@ export {
   createTestAnchor,
   deleteTestAnchor,
 } from './supabase';
+export {
+  seedAnchors,
+  cleanupSeedAnchors,
+  type SeedAnchorSet,
+  type SeedAnchor,
+} from './seed-anchors';

@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-20 (BETA-01 through BETA-13 marked COMPLETE after Sprint 1-3 merges)_
+_Last updated: 2026-03-30 (NMT-01 through NMT-06 added for Nessie Model Training)_
 
 ## Overview
 
@@ -40,7 +40,10 @@ For a new developer joining the project, read in this order:
 | BETA | Beta Readiness | 13 | 13 | 0 | 0 | [16_beta_readiness.md](./16_beta_readiness.md) |
 | PH1.5 | Phase 1.5 Foundation | 16 | 15 | 1 | 0 | [17_phase1_5_foundation.md](./17_phase1_5_foundation.md) |
 | ATT | ATS & Background Checks | 8 | 0 | 0 | 8 | [18_ats_background_checks.md](./18_ats_background_checks.md) |
-| **Total** | | **200** | **180** | **3** | **17** | |
+| CML | Compliance Mapping Layer | 5 | 5 | 0 | 0 | [19_compliance_mapping.md](./19_compliance_mapping.md) |
+| VAI | Verifiable AI | 5 | 3 | 0 | 2 | [20_verifiable_ai.md](./20_verifiable_ai.md) |
+| NMT | Nessie Model Training | 6 | 0 | 0 | 6 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
+| **Total** | | **211** | **183** | **3** | **25** | |
 
 ### All Stories by ID
 
@@ -205,6 +208,12 @@ For a new developer joining the project, read in this order:
 | BETA-11 | Mempool Explorer Link | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-12 | Immutable Description Field | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-13 | Realtime Anchor Status Subscriptions | COMPLETE | [BETA](./16_beta_readiness.md) | — |
+| NMT-01 | Gemini Golden Fine-Tuned Eval | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-02 | JSON Comment Stripping in Extraction Parser | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-03 | Nessie Confidence Recalibration | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-04 | Full-Precision GPU Eval | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-05 | Upload Model Weights to HuggingFace | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-06 | Nessie v4 Training Data Improvements | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
 
 ## Bug Cross-Reference
 

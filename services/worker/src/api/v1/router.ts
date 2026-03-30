@@ -54,6 +54,8 @@ import { atsWebhookRouter } from './webhooks/ats.js';
 import { auditExportRouter } from './audit-export.js';
 import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
+import { grcRouter } from './grc.js';
+import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -225,6 +227,9 @@ router.use('/ai', aiExtractionGate(), requireAuth, aiRateLimiter, aiTemplateRout
 
 // ─── Audit export — compliance PDF/CSV for GRC platforms (CML-03) ───
 router.use('/audit-export', requireAuth, auditExportRouter);
+
+// ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
+router.use('/grc', grcFeatureGate(), requireAuth, grcRouter);
 
 // ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
 router.use('/webhooks/ats', atsWebhookRouter);
