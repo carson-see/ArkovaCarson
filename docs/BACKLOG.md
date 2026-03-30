@@ -19,7 +19,7 @@ _Last updated: 2026-03-30 (320K+ public records, 166K+ SECURED anchors on mainne
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
-| Nessie Model Training (NMT) | 6 | 2 | 4 | No (AI infra) |
+| Nessie Model Training (NMT) | 6 | 3 | 3 | No (AI infra) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -409,7 +409,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 |----|-------|----------|--------|-------------|--------|
 | ~~NMT-01~~ | ~~Gemini Golden fine-tuned eval~~ | ~~P0~~ | **COMPLETE** — Weighted F1=90.4% (+8.3pp vs baseline), recommend as prod default | Vertex AI access | Small |
 | ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
-| NMT-03 | Nessie confidence recalibration | P1 | NOT STARTED | NMT-01 analysis | Medium |
+| ~~NMT-03~~ | ~~Nessie confidence recalibration~~ | ~~P1~~ | **COMPLETE** — Nessie-specific calibration knots (8 knots), `calibrateNessieConfidence()`, provider offset fixed +0.03→-0.15, 9 tests | NMT-01 analysis | Small |
 | NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | NOT STARTED | RunPod/GPU capacity | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
 | NMT-06 | Nessie v4 training data improvements | P2 | NOT STARTED | NMT-01, NMT-03 | Large |
@@ -424,7 +424,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | Nessie reasoning v1 | 34.2% | 63.3% | 0.223 | 57.1% | MLX 4-bit, 50 samples |
 | Nessie DPO v1 | 30.7% | 57.8% | **0.337** | 52.5% | MLX 4-bit, 50 samples |
 
-**Key findings:** Gemini Golden tuned model achieves 90.4% weighted F1 (+8.3pp). SEC_FILING improved from 36.8% to 90.9%. Nessie models overconfident, JSON comment parse failures fixed (NMT-02).
+**Key findings:** Gemini Golden tuned model achieves 90.4% weighted F1 (+8.3pp). SEC_FILING improved from 36.8% to 90.9%. Nessie models overconfident — fixed with NMT-03 calibration (maps 87% reported → ~41% calibrated). JSON comment parse failures fixed (NMT-02). Gemini Golden deployed to production (`GEMINI_TUNED_MODEL` env var set in Cloud Run, revision 00217).
 
 ---
 

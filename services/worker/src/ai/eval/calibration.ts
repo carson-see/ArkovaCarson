@@ -327,6 +327,77 @@ export function getCurrentCalibrationKnots(): [number, number][] {
   return [...CALIBRATION_KNOTS];
 }
 
+// ============================================================================
+// NESSIE-SPECIFIC CALIBRATION LAYER (NMT-03)
+// ============================================================================
+// Nessie models are severely overconfident: report 85-90% confidence with
+// 34-46% actual accuracy (ECE 44-57%). This is the opposite of Gemini's
+// underconfidence pattern.
+//
+// Derived from 50-sample eval on 3 Nessie models (2026-03-30, 4-bit quantized):
+//   v3 baseline:   Weighted F1=58.4%, ECE=44.6%, conf r=0.214
+//   reasoning v1:  Weighted F1=63.3%, ECE=57.1%, conf r=0.223
+//   DPO v1:        Weighted F1=57.8%, ECE=52.5%, conf r=0.337
+//
+// Key observation: models cluster confidence in 85-90% range regardless
+// of actual accuracy, so calibration must compress that narrow range
+// into a wider, more informative distribution.
+//
+// Mapping table (piecewise linear interpolation):
+//   reported 0.00 → calibrated 0.10 (extremely rare, very low quality)
+//   reported 0.50 → calibrated 0.15 (poor extractions)
+//   reported 0.70 → calibrated 0.22 (below typical Nessie range)
+//   reported 0.80 → calibrated 0.30 (low end of typical)
+//   reported 0.85 → calibrated 0.38 (common Nessie output)
+//   reported 0.90 → calibrated 0.45 (high Nessie output, matches eval data)
+//   reported 0.95 → calibrated 0.52 (very high, rare)
+//   reported 1.00 → calibrated 0.58 (cap at empirical ceiling)
+
+/** Nessie calibration knots: [rawConfidence, calibratedConfidence] */
+const NESSIE_CALIBRATION_KNOTS: [number, number][] = [
+  [0.00, 0.10],
+  [0.50, 0.15],
+  [0.70, 0.22],
+  [0.80, 0.30],
+  [0.85, 0.38],
+  [0.90, 0.45],
+  [0.95, 0.52],
+  [1.00, 0.58],
+];
+
+/**
+ * Apply post-hoc calibration to a raw Nessie model confidence score.
+ *
+ * Uses piecewise linear interpolation between empirically-derived knots.
+ * Nessie is severely overconfident (reports ~87%, actual ~40%), so this
+ * function maps raw scores DOWNWARD to better reflect actual accuracy.
+ *
+ * @param rawConfidence - Model-reported confidence (0.0–1.0)
+ * @returns Calibrated confidence (0.0–1.0)
+ */
+export function calibrateNessieConfidence(rawConfidence: number): number {
+  if (rawConfidence <= 0) return NESSIE_CALIBRATION_KNOTS[0][1];
+  if (rawConfidence >= 1) return NESSIE_CALIBRATION_KNOTS[NESSIE_CALIBRATION_KNOTS.length - 1][1];
+
+  // Find the two surrounding knots
+  for (let i = 0; i < NESSIE_CALIBRATION_KNOTS.length - 1; i++) {
+    const [x0, y0] = NESSIE_CALIBRATION_KNOTS[i];
+    const [x1, y1] = NESSIE_CALIBRATION_KNOTS[i + 1];
+    if (rawConfidence >= x0 && rawConfidence <= x1) {
+      const t = (rawConfidence - x0) / (x1 - x0);
+      return y0 + t * (y1 - y0);
+    }
+  }
+
+  // Fallback (shouldn't reach here)
+  return rawConfidence;
+}
+
+/** Export current Nessie knots for testing */
+export function getCurrentNessieCalibrationKnots(): [number, number][] {
+  return [...NESSIE_CALIBRATION_KNOTS];
+}
+
 /**
  * Format calibration report as markdown.
  */
