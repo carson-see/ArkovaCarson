@@ -65,6 +65,8 @@ export function useAnchors(): UseAnchorsReturn {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  /** Track whether initial fetch has completed to prevent double-fetch from realtime subscribe */
+  const initialFetchDone = useRef(false);
 
   const fetchAnchors = useCallback(async () => {
     if (!user) {
@@ -76,13 +78,13 @@ export function useAnchors(): UseAnchorsReturn {
     setLoading(true);
     setError(null);
 
-    // Select only needed columns. Limit to 200 to allow for pipeline filtering.
+    // Select only needed columns. Limit to 100 user-created records.
     const { data, error: fetchError } = await supabase
       .from('anchors')
       .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
-      .limit(200);
+      .limit(100);
 
     if (fetchError) {
       setError(fetchError.message);
@@ -94,14 +96,15 @@ export function useAnchors(): UseAnchorsReturn {
         const meta = a.metadata as { pipeline_source?: string } | null;
         return !meta?.pipeline_source;
       });
-      setRecords(userAnchors.slice(0, 100).map(mapAnchorToRecord));
+      setRecords(userAnchors.map(mapAnchorToRecord));
     }
 
     setLoading(false);
   }, [user]);
 
   useEffect(() => {
-    fetchAnchors();
+    initialFetchDone.current = false;
+    fetchAnchors().then(() => { initialFetchDone.current = true; });
   }, [fetchAnchors]);
 
   // Fire status-transition toast with optional mempool link
@@ -186,7 +189,8 @@ export function useAnchors(): UseAnchorsReturn {
       )
       .subscribe((status) => {
         // Refetch on reconnect to catch any missed updates (C4)
-        if (status === 'SUBSCRIBED' && channelRef.current) {
+        // Skip if this is the initial subscribe (initial fetch already in progress)
+        if (status === 'SUBSCRIBED' && channelRef.current && initialFetchDone.current) {
           fetchAnchors();
         }
       });

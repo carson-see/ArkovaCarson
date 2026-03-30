@@ -336,6 +336,14 @@ export function SecureDocumentDialog({
     setError(null);
 
     try {
+      // Pre-flight auth check — ensure session is valid before inserting
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) {
+        setError('Your session has expired. Please refresh the page and sign in again.');
+        setStep('error');
+        return;
+      }
+
       // Build metadata from AI-extracted fields (all non-rejected fields)
       // Use fieldsOverride when called directly from extraction (avoids stale state)
       const fieldsToUse = fieldsOverride ?? extractedFields;
@@ -403,7 +411,12 @@ export function SecureDocumentDialog({
         const zodErr = err as import('zod').ZodError;
         setError(zodErr.issues.map((i) => i.message).join('; '));
       } else {
-        const msg = err instanceof Error ? err.message : String(err);
+        // Extract message from Error instances, Supabase error objects, or unknown types
+        const msg = err instanceof Error
+          ? err.message
+          : (typeof err === 'object' && err !== null && 'message' in err)
+            ? String((err as { message: unknown }).message)
+            : 'Failed to secure document. Please try again.';
         // Detect duplicate fingerprint constraint violation
         if (msg.includes('idx_anchors_user_fingerprint_unique') || msg.includes('duplicate key')) {
           setError('This document has already been secured. Each document can only be anchored once.');
@@ -411,6 +424,7 @@ export function SecureDocumentDialog({
           setError(msg || 'Failed to secure document. Please try again.');
         }
       }
+      console.error('[SecureDocumentDialog] Securing failed:', err);
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
