@@ -228,7 +228,7 @@ async function insertBroker(
  * US state codes for alphabetical sweep through BrokerCheck.
  * Strategy: Search by state to enumerate all registered reps.
  */
-const US_STATES = [
+const _US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL',
   'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME',
   'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH',

@@ -153,7 +153,7 @@ async function insertFccLicense(
  * Each code represents a license service type.
  * Major categories with largest record counts listed first.
  */
-const FCC_SERVICE_CODES = [
+const _FCC_SERVICE_CODES = [
   'HA',  // Amateur - ~750K licenses
   'HV',  // Vanity Amateur
   'MG',  // Microwave (General)
@@ -181,7 +181,7 @@ const FCC_SERVICE_CODES = [
 /**
  * Two-letter state codes for name-based search sharding.
  */
-const US_STATES = [
+const _US_STATES = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'DC', 'FL',
   'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME',
   'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH',

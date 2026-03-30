@@ -168,7 +168,7 @@ async function insertProvider(
   const isOrganization = result.enumeration_type === 'NPI-2';
 
   const specialty = primaryTaxonomy?.desc ?? 'Unknown';
-  const location = practiceAddress
+  const _location = practiceAddress
     ? [practiceAddress.city, practiceAddress.state].filter(Boolean).join(', ')
     : null;
 

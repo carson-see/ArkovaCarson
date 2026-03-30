@@ -429,7 +429,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           })()}
 
           {/* AI Tags — displayed as badges when present */}
-          {anchor.metadata?.ai_tags && Array.isArray(anchor.metadata.ai_tags) && (anchor.metadata.ai_tags as string[]).length > 0 && (
+          {Array.isArray(anchor.metadata?.ai_tags) && (anchor.metadata!.ai_tags as string[]).length > 0 && (
             <>
               <Separator />
               <div className="space-y-2">
@@ -441,8 +441,8 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                     </Badge>
                   ))}
                 </div>
-                {anchor.metadata.ai_summary && (
-                  <p className="text-xs text-muted-foreground mt-1">{String(anchor.metadata.ai_summary)}</p>
+                {typeof anchor.metadata?.ai_summary === 'string' && anchor.metadata.ai_summary && (
+                  <p className="text-xs text-muted-foreground mt-1">{anchor.metadata.ai_summary}</p>
                 )}
               </div>
             </>
@@ -453,7 +453,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             <>
               <Separator />
               <ComplianceBadge
-                credentialType={anchor.credential_type}
+                credentialType={anchor.credentialType}
                 isSecured={true}
               />
             </>

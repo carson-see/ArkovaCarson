@@ -93,8 +93,10 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
     }),
   });
 
-  mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
-  mockSelectChain.range.mockResolvedValue({ data: records, error: null });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mockSelectChain.limit.mockResolvedValue({ data: records as any, error: null });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mockSelectChain.range.mockResolvedValue({ data: records as any, error: null });
 
   return {
     rpc: mockRpc,

@@ -12,6 +12,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import type { Json } from '@/types/database.types';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
 import {
   Shield,
@@ -356,7 +357,7 @@ export function SecureDocumentDialog({
       });
 
       // Merge AI tags from template reconstruction into metadata
-      const metadata: Record<string, unknown> = { ...acceptedFields };
+      const metadata: Record<string, Json | undefined> = { ...acceptedFields } as Record<string, Json | undefined>;
       if (templateResult?.tags && templateResult.tags.length > 0) {
         metadata.ai_tags = templateResult.tags;
       }

@@ -29,14 +29,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  * Public JSON endpoint — no API key required.
  * Returns attorney records by bar number range or name search.
  */
-const CALBAR_API_URL = 'https://members.calbar.ca.gov/search/MemberSearch.aspx';
-const CALBAR_PROFILE_URL = 'https://members.calbar.ca.gov/fal/MemberSearch/QuickSearch';
+const _CALBAR_API_URL = 'https://members.calbar.ca.gov/search/MemberSearch.aspx';
+const _CALBAR_PROFILE_URL = 'https://members.calbar.ca.gov/fal/MemberSearch/QuickSearch';
 
 /** Rate limit: ~2 req/sec to be respectful */
 const RATE_LIMIT_MS = 500;
 
 /** Batch size for bar number sequential scan */
-const BATCH_SIZE = 50;
+const _BATCH_SIZE = 50;
 
 /** Max attorneys per run — fits Cloud Run timeout */
 const MAX_PER_RUN = 5000;
@@ -56,7 +56,7 @@ interface CalBarAttorney {
   disciplineHistory?: string;
 }
 
-interface CalBarSearchResponse {
+interface _CalBarSearchResponse {
   // The API returns HTML or JSON depending on endpoint
   // We use the JSON-returning endpoint
   attorneys: CalBarAttorney[];
@@ -76,7 +76,7 @@ function delay(ms: number): Promise<void> {
  * Parse attorney data from CalBar API response.
  * The CalBar QuickSearch endpoint returns JSON with attorney details.
  */
-function parseAttorneyFromJson(data: Record<string, unknown>): CalBarAttorney | null {
+function _parseAttorneyFromJson(data: Record<string, unknown>): CalBarAttorney | null {
   const barNumber = String(data.number ?? data.barNumber ?? data.memberNumber ?? '').trim();
   if (!barNumber) return null;
 

@@ -45,7 +45,8 @@ export async function handlePromoteAdmin(
   try {
     // Must disable triggers to update protected fields
     // Use raw SQL via RPC since Supabase client can't disable triggers
-    const { error } = await db.rpc('admin_set_platform_admin', {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any).rpc('admin_set_platform_admin', {
       p_user_id: targetUserId,
       p_is_admin: is_platform_admin,
     });
@@ -87,7 +88,8 @@ export async function handleChangeRole(
   }
 
   try {
-    const { error } = await db.rpc('admin_change_user_role', {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any).rpc('admin_change_user_role', {
       p_user_id: targetUserId,
       p_new_role: role,
     });
@@ -135,7 +137,8 @@ export async function handleSetOrg(
   }
 
   try {
-    const { error } = await db.rpc('admin_set_user_org', {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any).rpc('admin_set_user_org', {
       p_user_id: targetUserId,
       p_org_id: org_id,
       p_org_role: org_role,

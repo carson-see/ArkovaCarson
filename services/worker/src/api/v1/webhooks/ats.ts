@@ -17,6 +17,7 @@ import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 
 const router = Router();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
 
 const SUPPORTED_PROVIDERS = ['greenhouse', 'lever', 'generic'] as const;
@@ -81,6 +82,7 @@ function verifySignature(provider: AtsProvider, payload: string, signature: stri
  */
 function extractCandidateInfo(
   provider: AtsProvider,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   body: any,
 ): { name?: string; email?: string; stage?: string } {
   if (provider === 'greenhouse') {
@@ -144,6 +146,7 @@ router.post('/:provider', async (req: Request, res: Response) => {
     }
 
     // Try to match signature against each integration's secret
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let matchedIntegration: any = null;
     for (const integration of integrations) {
       if (verifySignature(atsProvider, rawBody, signatureHeader, integration.webhook_secret)) {
@@ -166,6 +169,7 @@ router.post('/:provider', async (req: Request, res: Response) => {
     if (candidateInfo.name) searchTerms.push(candidateInfo.name);
     if (candidateInfo.email) searchTerms.push(candidateInfo.email);
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let attestations: any[] = [];
     if (searchTerms.length > 0) {
       // Search attestations by subject_identifier matching candidate info
@@ -182,6 +186,7 @@ router.post('/:provider', async (req: Request, res: Response) => {
 
     // Compute effective statuses (check expiry)
     const now = new Date();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const results = attestations.map((att: any) => {
       const isExpired = att.expires_at && new Date(att.expires_at) < now;
       const effectiveStatus = isExpired && att.status === 'ACTIVE' ? 'EXPIRED' : att.status;
@@ -215,8 +220,11 @@ router.post('/:provider', async (req: Request, res: Response) => {
       verification_results: results,
       summary: {
         total: results.length,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         active: results.filter((r: any) => r.status === 'ACTIVE').length,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         expired: results.filter((r: any) => r.status === 'EXPIRED').length,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         revoked: results.filter((r: any) => r.status === 'REVOKED').length,
       },
     });

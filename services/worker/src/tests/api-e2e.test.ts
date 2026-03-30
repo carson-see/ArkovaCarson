@@ -146,7 +146,7 @@ function computeApiKeyHash(rawKey: string): string {
 }
 
 const TEST_API_KEY = 'ak_test_' + crypto.randomBytes(32).toString('hex');
-const TEST_API_KEY_HASH = computeApiKeyHash(TEST_API_KEY);
+const _TEST_API_KEY_HASH = computeApiKeyHash(TEST_API_KEY);
 const TEST_KEY_ID = 'key-id-e2e-test-001';
 const TEST_ORG_ID = 'org-id-e2e-test-001';
 const TEST_USER_ID = 'test-user-id-12345';

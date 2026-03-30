@@ -31,7 +31,7 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
 
   try {
     const now = new Date();
-    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const _in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     // Find ACTIVE attestations expiring within 30 days

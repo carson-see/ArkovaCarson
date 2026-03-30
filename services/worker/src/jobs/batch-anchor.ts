@@ -260,7 +260,7 @@ async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
 async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
   const { data: pendingAnchors, error: fetchError } = await db
     .from('anchors')
-    .select('id, fingerprint, metadata')
+    .select('id, fingerprint, metadata, credential_type')
     .eq('status', 'PENDING')
     .is('chain_tx_id', null)
     .order('created_at', { ascending: true })

@@ -4,12 +4,11 @@
  * Tests for cryptographic binding of AI extraction output to source document hash.
  * Manifest = {source_hash, model_id, model_version, extraction_timestamp, extracted_fields, confidence_scores}
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   buildExtractionManifest,
   computeManifestHash,
   type ExtractionManifestInput,
-  type ExtractionManifest,
 } from './extraction-manifest.js';
 
 const SAMPLE_INPUT: ExtractionManifestInput = {

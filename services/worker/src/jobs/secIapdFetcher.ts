@@ -55,7 +55,7 @@ interface IapdAdviser {
   jurisdictions?: string[];
 }
 
-interface IapdSearchResult {
+interface _IapdSearchResult {
   Results: Array<{
     Brochures?: unknown[];
     CurrentEmployments?: Array<{

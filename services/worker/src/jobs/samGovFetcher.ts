@@ -149,7 +149,7 @@ async function insertSamEntity(
   }
 
   const name = entity.legalBusinessName ?? entity.dbaName ?? 'Unknown Entity';
-  const location = [entity.cityCode, entity.stateCode].filter(Boolean).join(', ');
+  const _location = [entity.cityCode, entity.stateCode].filter(Boolean).join(', ');
   const primaryNaics = entity.naicsList?.find(n => n.isPrimary);
 
   const contentForHash = JSON.stringify({

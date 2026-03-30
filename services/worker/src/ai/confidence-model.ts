@@ -152,7 +152,7 @@ export function estimateOcrNoise(text: string): number {
   noiseIndicators += Math.min(mixedCaseWords / 5, 0.3);
 
   // Excessive special characters (garbled OCR)
-  const specialChars = (text.match(/[^\w\s.,;:'"()\-\/]/g) || []).length;
+  const specialChars = (text.match(/[^\w\s.,;:'"()\-/]/g) || []).length;
   if (letters > 0) {
     const specialRatio = specialChars / letters;
     if (specialRatio > 0.15) noiseIndicators += 0.25;
