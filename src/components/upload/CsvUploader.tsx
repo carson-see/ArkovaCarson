@@ -58,8 +58,13 @@ export function CsvUploader({
           throw new Error('File size must be less than 10MB.');
         }
 
-        // Parse spreadsheet (CSV or Excel)
-        const parsed = await parseSpreadsheetFile(file);
+        // Parse spreadsheet with 30-second timeout to prevent infinite spinner
+        const parsed = await Promise.race([
+          parseSpreadsheetFile(file),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('File parsing timed out. Try a smaller file or different format.')), 30000)
+          ),
+        ]);
 
         if (parsed.rows.length === 0) {
           throw new Error('File is empty or has no data rows.');

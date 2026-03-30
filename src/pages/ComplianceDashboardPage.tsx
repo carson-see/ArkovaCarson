@@ -38,6 +38,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { isPlatformAdmin } from '@/lib/platform';
 import { ROUTES } from '@/lib/routes';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
 import { cn } from '@/lib/utils';
@@ -152,6 +153,9 @@ export function ComplianceDashboardPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const orgId = profile?.org_id;
+
+  // SN2: Restrict to ORG_ADMIN and platform admins
+  const isAdmin = profile?.role === 'ORG_ADMIN' || isPlatformAdmin(profile?.email);
 
   const [stats, setStats] = useState<HealthStats | null>(null);
   const [expiring, setExpiring] = useState<ExpiringAttestation[]>([]);
@@ -362,6 +366,22 @@ export function ComplianceDashboardPage() {
     } finally {
       setExporting(null);
     }
+  }
+
+  // SN2: Only ORG_ADMIN and platform admins can access
+  if (!profileLoading && !isAdmin) {
+    return (
+      <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
+          <ShieldCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
+          <h1 className="text-xl font-semibold text-foreground mb-2">Access Restricted</h1>
+          <p className="text-sm text-muted-foreground max-w-md">
+            The Compliance Intelligence dashboard is available to organization administrators.
+            Contact your admin for access.
+          </p>
+        </div>
+      </AppShell>
+    );
   }
 
   return (
