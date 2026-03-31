@@ -241,6 +241,11 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
           continue;
         }
 
+        // Original accession number (with dashes, e.g. "0000320193-23-000001")
+        // needed for the SEC.gov index filename — keep this separate from accession
+        // which strips dashes for the directory path component.
+        const accessionWithDashes = hit._id;
+
         // Extract entity name — EFTS _source may use entity_name directly
         // or only provide display_names array like "APPLE INC (AAPL) (CIK 0000320193)"
         const entityName = src.entity_name
@@ -265,7 +270,9 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
         const { error: insertError } = await supabase.from('public_records').insert({
           source: 'edgar',
           source_id: hit._id,
-          source_url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accession.replace(/-/g, '')}/${accession}-index.htm`,
+          // Directory uses CIK (no leading zeros) + accession without dashes.
+          // Filename uses the original accession WITH dashes per SEC.gov URL convention.
+          source_url: `https://www.sec.gov/Archives/edgar/data/${cik.replace(/^0+/, '') || cik}/${accession}/${accessionWithDashes}-index.htm`,
           record_type: 'sec_filing',
           title: `${entityName} — ${formTypeValue} (${fileDate})`,
           content_hash: computeContentHash(contentForHash),

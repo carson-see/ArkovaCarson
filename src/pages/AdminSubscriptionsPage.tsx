@@ -158,7 +158,7 @@ export function AdminSubscriptionsPage() {
                       <span className="text-sm font-medium">{s.user_name ?? '—'}</span>
                       <SubscriptionStatusBadge status={s.status} />
                     </div>
-                    <div className="text-xs text-muted-foreground font-mono mb-2">{s.user_email ?? '—'}</div>
+                    <div className="text-xs text-muted-foreground font-mono mb-2">{s.user_id.slice(0, 8) + '…'}</div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <Badge variant="secondary" className="capitalize text-[10px]">
                         {s.plans?.name ?? 'Unknown'}
@@ -190,7 +190,7 @@ export function AdminSubscriptionsPage() {
                       <tr key={s.id} className="border-b last:border-0 hover:bg-muted/50">
                         <td className="py-3 pr-4">
                           <div className="font-medium text-xs">{s.user_name ?? '—'}</div>
-                          <div className="text-xs text-muted-foreground font-mono">{s.user_email ?? '—'}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{s.user_id.slice(0, 8) + '…'}</div>
                         </td>
                         <td className="py-3 pr-4">
                           <Badge variant="secondary" className="capitalize">
