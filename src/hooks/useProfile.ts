@@ -98,9 +98,9 @@ function useProfileInternal(): ProfileState & ProfileActions {
       return '/auth';
     }
 
-    // Profile not loaded yet for authenticated user — treat as loading.
-    // Fixes SCRUM-350: prevents flash-redirect to onboarding when profile
-    // fetch hasn't completed yet after auth resolves.
+    // Fixes SCRUM-350: auth resolves before profile fetch completes,
+    // so we must treat null profile as "still loading" to avoid
+    // flash-redirecting to /onboarding/role for users who have a role.
     if (!profile) {
       return '/auth';
     }

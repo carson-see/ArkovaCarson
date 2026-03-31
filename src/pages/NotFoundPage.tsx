@@ -16,7 +16,7 @@ export function NotFoundPage() {
     meta.name = 'prerender-status-code';
     meta.content = '404';
     document.head.appendChild(meta);
-    return () => { document.head.removeChild(meta); };
+    return () => { meta.parentNode?.removeChild(meta); };
   }, []);
 
   return (
