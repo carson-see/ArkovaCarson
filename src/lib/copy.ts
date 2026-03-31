@@ -76,6 +76,14 @@ export const CREDENTIAL_TYPE_LABELS = {
   OTHER: 'Other',
 } as const;
 
+/** Map raw credential_type DB value to display label with fallback to title case. */
+export function formatCredentialType(raw: string | null | undefined): string {
+  if (!raw) return '—';
+  const upper = raw.replace(/-/g, '_').toUpperCase();
+  if (upper in CREDENTIAL_TYPE_LABELS) return CREDENTIAL_TYPE_LABELS[upper as keyof typeof CREDENTIAL_TYPE_LABELS];
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   DEGREE: 'Academic degree (e.g., Bachelor\'s, Master\'s, Doctorate)',
   LICENSE: 'Professional or occupational license',

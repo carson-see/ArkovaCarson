@@ -24,6 +24,13 @@ export function mempoolTxUrl(txId: string): string {
   return `${MEMPOOL_BASE_URL}/tx/${txId}`;
 }
 
+/** Map raw network name to Constitution 1.3 compliant display name */
+export function getNetworkDisplayName(network: string): string {
+  if (network === 'mainnet') return 'Production Network';
+  if (network === 'signet' || network === 'testnet' || network === 'testnet4') return 'Test Environment';
+  return network;
+}
+
 /** Build a mempool address URL */
 export function mempoolAddressUrl(address: string = TREASURY_ADDRESS): string {
   return `${MEMPOOL_BASE_URL}/address/${address}`;

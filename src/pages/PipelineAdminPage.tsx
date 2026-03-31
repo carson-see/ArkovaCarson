@@ -58,7 +58,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ROUTES } from '@/lib/routes';
-import { PIPELINE_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { PIPELINE_LABELS, formatCredentialType } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 
 import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform';
@@ -537,7 +537,7 @@ export function PipelineAdminPage() {
                 {Object.entries(stats?.byCredentialType ?? {})
                   .sort(([, a], [, b]) => b.total - a.total)
                   .map(([ct, counts]) => {
-                    const label = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS] ?? CREDENTIAL_TYPE_LABELS[ct as keyof typeof CREDENTIAL_TYPE_LABELS] ?? ct.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/\bUnknown\b/, 'Other');
+                    const label = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS] ?? formatCredentialType(ct);
                     const securedPct = counts.total > 0 ? Math.round((counts.secured / counts.total) * 100) : 0;
                     return (
                       <div

@@ -252,18 +252,15 @@ export function SearchPage() {
     e.target.value = '';
   }, [handleFileDrop]);
 
-  const handleExampleClick = useCallback(async (example: typeof EXAMPLE_QUERIES[0]) => {
+  const handleExampleClick = useCallback((example: typeof EXAMPLE_QUERIES[0]) => {
     setQuery(example.label);
     setSearchMode(example.mode);
-    // Auto-execute search (BUG-015)
     const trimmed = example.label.trim();
     if (!trimmed) return;
     setHasSearched(true);
     setSearchType('issuer');
-    await Promise.all([
-      searchIssuers(trimmed),
-      searchPerson(trimmed),
-    ]);
+    searchIssuers(trimmed);
+    if (example.mode !== 'issuers') searchPerson(trimmed);
   }, [searchIssuers, searchPerson]);
 
   const isSearching = searching || fpSearching || personSearching || verifyingFile;

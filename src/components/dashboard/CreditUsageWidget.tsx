@@ -33,7 +33,6 @@ export function CreditUsageWidget() {
     return null;
   }
 
-  // Beta: show unlimited credits, no limits (feedback: no credit/quota limits during beta)
   return (
     <Card>
       <CardHeader className="pb-2">
