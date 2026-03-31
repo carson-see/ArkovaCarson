@@ -4,12 +4,21 @@
  * Displayed for unknown routes instead of silently redirecting to dashboard.
  */
 
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Shield, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
 
 export function NotFoundPage() {
+  useEffect(() => {
+    const meta = document.createElement('meta');
+    meta.name = 'prerender-status-code';
+    meta.content = '404';
+    document.head.appendChild(meta);
+    return () => { meta.parentNode?.removeChild(meta); };
+  }, []);
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
       <div className="flex max-w-md flex-col items-center space-y-6 text-center">

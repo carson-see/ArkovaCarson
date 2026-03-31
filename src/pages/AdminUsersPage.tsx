@@ -265,6 +265,6 @@ function RoleBadge({ role }: Readonly<{ role: string }>) {
     case 'INDIVIDUAL':
       return <Badge variant="outline">Individual</Badge>;
     default:
-      return <Badge variant="outline">{role}</Badge>;
+      return <Badge variant="outline" className="text-muted-foreground">{role || 'Incomplete'}</Badge>;
   }
 }

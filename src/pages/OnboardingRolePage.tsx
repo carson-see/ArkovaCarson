@@ -14,7 +14,6 @@
 import { useState, useEffect } from 'react';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { RoleSelector } from '@/components/onboarding/RoleSelector';
-import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +21,6 @@ import { AlertCircle, Building2, Loader2, ArrowRight } from 'lucide-react';
 import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useOnboarding } from '@/hooks/useOnboarding';
-import { ONBOARDING_STEPS } from '@/lib/copy';
 
 export function OnboardingRolePage() {
   const { user } = useAuth();
@@ -94,9 +92,6 @@ export function OnboardingRolePage() {
   if (showOrgMatch && orgMatch?.found) {
     return (
       <AuthLayout title="Welcome to Arkova" description="We found your organization">
-        <div className="mb-8">
-          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
-        </div>
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />

@@ -22,6 +22,18 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-03-31, Session 22 — Nessie v5 Training + RunPod Deployment)
+
+**v5 training submitted to Together AI. v4 model transferring to RunPod for fp16 eval.**
+
+| Change | Detail |
+|--------|--------|
+| Golden dataset phase 10 | 125 targeted gap-closure entries (GD-1481 to GD-1605): 20 RESUME, 15 CLE, 15 FRAUD, 20 JURISDICTION, 15 ACCREDITATION, 10 PATENT, 10 MILITARY, 10 PUBLICATION, 10 LICENSE_NUMBER. Total: 1,605 entries. |
+| v5 export script | `scripts/nessie-v5-export.ts` — converts golden dataset + v4 data to Together AI JSONL. Condensed 1.5K-char system prompt (vs 100K production). 25% general data mix. |
+| v5 fine-tune submitted | Together AI job `ft-b8594db6-80f9` — RUNNING. 1,903 train + 211 val examples, 2 epochs, LR=2e-4, LoRA rank=16/alpha=32, batch_size=8, base: Llama 3.1 8B Instruct. |
+| RunPod v4 deployment | Pod `lt8z6j4si2q59h` (A6000 48GB, $0.33-0.49/hr). Model transfer via tar pipe: 1.6GB/15GB. HF upload running in parallel. |
+| v4 4-bit eval baseline | Weighted F1=67.3%, macro F1=54.4%, mean confidence 86.9% vs actual 66.6%. Weakest: RESUME 33%, PATENT 48%, MILITARY 50%. |
+
 ### Recent Changes (2026-03-31, Session 21 — UAT Systematic Sweep + Record Display Fixes)
 
 **Comprehensive UAT sweep resolving 20 frontend bugs + 3 backend migrations + AI training pipeline.**

@@ -337,6 +337,8 @@ export function DocumentsPage() {
           ) : activeTab === 'all' ? (
             <AllDocumentsList
               items={unifiedItems.filter(i => filterBySearch(i) && filterByStatus(i.status))}
+              allEmpty={unifiedItems.length === 0}
+              onSecure={() => setSecureDialogOpen(true)}
             />
           ) : activeTab === 'records' ? (
             <RecordsList
@@ -432,11 +434,26 @@ function TypeBadge({ type }: { type: 'record' | 'credential' | 'attestation' }) 
 // "All" tab — unified list sorted by date
 function AllDocumentsList({
   items,
+  allEmpty,
+  onSecure,
 }: {
   items: UnifiedDocumentItem[];
+  allEmpty: boolean;
+  onSecure: () => void;
 }) {
   if (items.length === 0) {
-    return <EmptyState title={DOCUMENTS_PAGE_LABELS.EMPTY_TITLE} description={DOCUMENTS_PAGE_LABELS.EMPTY_DESC} />;
+    return (
+      <EmptyState
+        title={allEmpty ? DOCUMENTS_PAGE_LABELS.EMPTY_TITLE : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? DOCUMENTS_PAGE_LABELS.EMPTY_DESC : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
+        action={allEmpty ? (
+          <Button onClick={onSecure}>
+            <Plus className="mr-2 h-4 w-4" />
+            {DOCUMENTS_PAGE_LABELS.SECURE_DOCUMENT}
+          </Button>
+        ) : undefined}
+      />
+    );
   }
 
   return (
@@ -489,8 +506,8 @@ function RecordsList({
   if (records.length === 0) {
     return (
       <EmptyState
-        title={allEmpty ? 'No records yet' : 'No matching records'}
-        description={allEmpty ? 'Secure your first document to create a permanent, tamper-proof record.' : 'Try adjusting your search or filter criteria.'}
+        title={allEmpty ? 'No records yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? 'Secure your first document to create a permanent, tamper-proof record.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
         action={allEmpty ? (
           <Button onClick={onSecure}>
             <Plus className="mr-2 h-4 w-4" />
@@ -587,8 +604,8 @@ function CredentialsList({
   if (credentials.length === 0) {
     return (
       <EmptyState
-        title={allEmpty ? 'No credentials yet' : 'No matching credentials'}
-        description={allEmpty ? 'When organizations issue credentials to your email address, they will appear here.' : 'Try adjusting your search or filter criteria.'}
+        title={allEmpty ? 'No credentials yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? 'When organizations issue credentials to your email address, they will appear here.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
       />
     );
   }
@@ -654,8 +671,8 @@ function AttestationsList({
   if (attestations.length === 0) {
     return (
       <EmptyState
-        title={allEmpty ? 'No attestations yet' : 'No matching attestations'}
-        description={allEmpty ? 'Create an attestation to verify, endorse, or audit a credential.' : 'Try adjusting your search or filter criteria.'}
+        title={allEmpty ? 'No attestations yet' : DOCUMENTS_PAGE_LABELS.NO_MATCHING}
+        description={allEmpty ? 'Create an attestation to verify, endorse, or audit a credential.' : DOCUMENTS_PAGE_LABELS.NO_MATCHING_DESC}
         action={allEmpty ? (
           <Button onClick={() => navigate(ROUTES.ATTESTATIONS)}>
             <Plus className="mr-2 h-4 w-4" />

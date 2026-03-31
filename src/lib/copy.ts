@@ -173,6 +173,8 @@ export const DOCUMENTS_PAGE_LABELS = {
   EMPTY_TITLE: 'No documents yet',
   EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
   SECURE_DOCUMENT: 'Secure Document',
+  NO_MATCHING: 'No matching documents',
+  NO_MATCHING_DESC: 'Try adjusting your search or filter criteria.',
 } as const;
 
 // =============================================================================
@@ -601,8 +603,8 @@ export const SEARCH_LABELS = {
   SEARCH_BY_FINGERPRINT: 'Fingerprint',
   FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
-  NO_RESULTS: 'No results found',
-  NO_RESULTS_DESC: 'Try a different search term or check the verification ID.',
+  NO_RESULTS: 'No credentials found',
+  NO_RESULTS_DESC: 'No public credentials match your search.',
   NO_ISSUERS: 'No issuers found',
   NO_ISSUERS_DESC: 'No public issuers match your search.',
   ISSUER_REGISTRY_TITLE: 'Issuer Registry',
@@ -766,7 +768,7 @@ export const NAV_POLISH_LABELS = {
   AUTH_REDIRECT_TOAST: 'Please sign in to access that page',
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
-  PUBLIC_PROFILE_DESC_ON: 'When enabled, your organization name appears in public search results and your credential registry is visible. Your email and internal data are never exposed.',
+  PUBLIC_PROFILE_DESC_ON: 'When enabled, your name appears in public search results and your credential registry is visible. Your email and internal data are never exposed.',
   PUBLIC_PROFILE_DESC_OFF: 'Your profile is not visible in public search results.',
 } as const;
 
