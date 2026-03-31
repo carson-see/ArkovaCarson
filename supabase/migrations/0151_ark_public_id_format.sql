@@ -63,7 +63,7 @@ BEGIN
     -- Determine category from pipeline_source in metadata first,
     -- then fall back to credential_type
     src := COALESCE(NEW.metadata->>'pipeline_source', '');
-    ct  := COALESCE(NEW.credential_type, '');
+    ct  := COALESCE(NEW.credential_type::text, '');
 
     IF src = 'edgar' OR ct = 'SEC_FILING' THEN
       category := 'SEC';
