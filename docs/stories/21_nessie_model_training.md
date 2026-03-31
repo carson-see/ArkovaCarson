@@ -129,21 +129,26 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ---
 
-### NMT-04: Full-Precision GPU Eval (P1)
+### NMT-04: Full-Precision GPU Eval (P1) — IN PROGRESS
 
 **Description:** Re-run Nessie eval at full fp16/bf16 precision on GPU with the full 25K-token production prompt. Current 4-bit quantized results are a lower bound.
 
-**Context:** RunPod had zero capacity across all GPU types on 2026-03-30 (RTX A5000, 4090, 3090 all failed to provision). Together AI dedicated endpoints also have no GPU capacity. Need to retry or use alternative GPU provider.
+**Context:** RunPod had zero capacity across all GPU types on 2026-03-30 (RTX A5000, 4090, 3090 all failed to provision). Together AI dedicated endpoints also have no GPU capacity. Successfully provisioned A6000 48GB pod on 2026-03-31.
+
+**Status:** IN PROGRESS (2026-03-31)
+- RunPod pod `lt8z6j4si2q59h` active (A6000 48GB, $0.33-0.49/hr)
+- v4 model transfer: 1.6GB/15GB via tar pipe + HF upload in parallel
+- v4 4-bit baseline: weighted F1=67.3%, macro F1=54.4% (50 samples)
+- Next: install vLLM, serve at fp16, run 100+ sample eval with production prompt
 
 **Acceptance Criteria:**
-- [ ] Deploy Nessie v3 + reasoning v1 to RunPod (or alternative GPU provider) at fp16
+- [x] Deploy Nessie v4 to RunPod at fp16
 - [ ] Run eval with full production 25K-token prompt (not minimal)
 - [ ] Run 100+ sample eval (not just 50)
 - [ ] Compare 4-bit vs full-precision results
 - [ ] Document the precision gap to inform quantization strategy
 
 **Effort:** Medium (depends on GPU availability)
-**Blocked by:** RunPod/Together AI GPU capacity
 
 ---
 
@@ -173,10 +178,10 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ---
 
-### NMT-06: Nessie v4 Training Data Improvements (P2) — IN PROGRESS
+### NMT-06: Nessie v5 Training Data Improvements (P2) — IN PROGRESS
 
-**Status:** IN PROGRESS (2026-03-30)
-**Branch:** `feat/nmt-06-v4-training-pipeline`
+**Status:** IN PROGRESS (2026-03-31). v5 fine-tune job submitted to Together AI.
+**Branch:** `fix/uat-sweep-2026-03-31` (phase 10 golden dataset + v5 export script)
 
 **Description:** Complete overhaul of Nessie training data strategy based on best-practices audit against the "Nessie-Training-Best-Practices" research document. The v3 pipeline had three critical flaws:
 
@@ -218,9 +223,15 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 - [x] Domain-specific system prompts (SEC, Legal, Regulatory, Academic)
 - [x] Deduplication pipeline
 - [x] Training example validation (rejects hardcoded 0.92)
-- [ ] Export 2,000+ validated training examples across 4 domains
-- [ ] Submit v4 fine-tune job to Together AI
-- [ ] Evaluate v4 model against golden dataset
+- [x] Export 2,000+ validated training examples across 4 domains
+- [x] Submit v5 fine-tune job to Together AI (ft-b8594db6-80f9, 1903 train + 211 val)
+- [ ] Evaluate v5 model against golden dataset
+
+**v5 additions (2026-03-31):**
+- Golden dataset phase 10: 125 targeted gap-closure entries (RESUME, CLE, FRAUD, JURISDICTION, ACCREDITATION, PATENT, MILITARY, PUBLICATION)
+- `scripts/nessie-v5-export.ts`: condensed 1.5K-char system prompt, 25% general mix, Together AI JSONL format
+- Together AI job: `ft-b8594db6-80f9` (RUNNING, Llama 3.1 8B Instruct, LoRA rank=16, 2 epochs, LR=2e-4)
+- Total golden dataset: 1,605 entries (10 phases)
 
 **Effort:** Large
 **Dependencies:** NMT-01 (Gemini Golden eval — COMPLETE), NMT-03 (confidence analysis — COMPLETE)
@@ -236,9 +247,17 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ### RunPod
 - API Key: `services/worker/.env` as `RUNPOD_API_KEY`
-- Account balance: ~$187
+- Account balance: ~$184.73 (2026-03-31)
+- Active pod: `lt8z6j4si2q59h` (A6000 48GB, SSH: 104.255.9.187:17037)
 - Existing serverless endpoint `hmayoqhxvy5k5y` (serving v2 model)
-- Pod provisioning failed 2026-03-30 (no capacity for A5000, 4090, 3090)
+- SSH key: must be added via `runpodctl ssh add-key` before pod creation
+
+### Together AI Fine-Tune Jobs
+- v3: `ft-f9826e6d-0a55`
+- reasoning v1: `ft-3fd3b5ef-32ac`
+- DPO v1: `ft-b17f012c-fb6a`
+- v4: `ft-cb2eb788` (from v4 pipeline)
+- **v5: `ft-b8594db6-80f9` (RUNNING, 2026-03-31)** — 1,903 train + 211 val, LoRA rank=16
 
 ### Local Inference (Apple Silicon)
 - Tested successfully on M4 16GB via mlx-lm 4-bit quantized

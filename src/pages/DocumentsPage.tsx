@@ -337,6 +337,8 @@ export function DocumentsPage() {
           ) : activeTab === 'all' ? (
             <AllDocumentsList
               items={unifiedItems.filter(i => filterBySearch(i) && filterByStatus(i.status))}
+              allEmpty={unifiedItems.length === 0}
+              onSecure={() => setSecureDialogOpen(true)}
             />
           ) : activeTab === 'records' ? (
             <RecordsList
@@ -432,11 +434,26 @@ function TypeBadge({ type }: { type: 'record' | 'credential' | 'attestation' }) 
 // "All" tab — unified list sorted by date
 function AllDocumentsList({
   items,
+  allEmpty,
+  onSecure,
 }: {
   items: UnifiedDocumentItem[];
+  allEmpty: boolean;
+  onSecure: () => void;
 }) {
   if (items.length === 0) {
-    return <EmptyState title={DOCUMENTS_PAGE_LABELS.EMPTY_TITLE} description={DOCUMENTS_PAGE_LABELS.EMPTY_DESC} />;
+    return (
+      <EmptyState
+        title={allEmpty ? DOCUMENTS_PAGE_LABELS.EMPTY_TITLE : 'No matching documents'}
+        description={allEmpty ? DOCUMENTS_PAGE_LABELS.EMPTY_DESC : 'Try adjusting your search or filter criteria.'}
+        action={allEmpty ? (
+          <Button onClick={onSecure}>
+            <Plus className="mr-2 h-4 w-4" />
+            {DOCUMENTS_PAGE_LABELS.SECURE_DOCUMENT}
+          </Button>
+        ) : undefined}
+      />
+    );
   }
 
   return (
