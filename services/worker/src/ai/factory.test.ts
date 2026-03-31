@@ -12,7 +12,10 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { createAIProvider, createEmbeddingProvider, getProviderName, resetProviderCache } from './factory.js';
+import {
+  createAIProvider, createEmbeddingProvider, createExtractionProvider,
+  getProviderName, resetProviderCache, shouldUseNessie, NESSIE_STRONG_TYPES,
+} from './factory.js';
 import { MockAIProvider } from './mock.js';
 import { CloudflareFallbackProvider } from './cloudflare-fallback.js';
 import { TogetherProvider } from './together.js';
@@ -134,5 +137,90 @@ describe('getProviderName', () => {
     delete process.env.AI_PROVIDER;
     delete process.env.GEMINI_API_KEY;
     expect(getProviderName()).toBe('mock');
+  });
+});
+
+describe('shouldUseNessie', () => {
+  it('returns true for Nessie-strong credential types', () => {
+    expect(shouldUseNessie('DEGREE')).toBe(true);
+    expect(shouldUseNessie('LICENSE')).toBe(true);
+    expect(shouldUseNessie('PATENT')).toBe(true);
+    expect(shouldUseNessie('PROFESSIONAL')).toBe(true);
+    expect(shouldUseNessie('INSURANCE')).toBe(true);
+    expect(shouldUseNessie('CERTIFICATE')).toBe(true);
+  });
+
+  it('returns false for Nessie-weak credential types', () => {
+    expect(shouldUseNessie('OTHER')).toBe(false);
+    expect(shouldUseNessie('MILITARY')).toBe(false);
+    expect(shouldUseNessie('MEDICAL')).toBe(false);
+    expect(shouldUseNessie('SEC_FILING')).toBe(false);
+    expect(shouldUseNessie('BADGE')).toBe(false);
+    expect(shouldUseNessie('ATTESTATION')).toBe(false);
+  });
+
+  it('handles case-insensitive input', () => {
+    expect(shouldUseNessie('degree')).toBe(true);
+    expect(shouldUseNessie('Degree')).toBe(true);
+    expect(shouldUseNessie('other')).toBe(false);
+  });
+
+  it('returns false for undefined/empty input', () => {
+    expect(shouldUseNessie(undefined)).toBe(false);
+    expect(shouldUseNessie('')).toBe(false);
+  });
+
+  it('covers all 11 strong types', () => {
+    expect(NESSIE_STRONG_TYPES.size).toBe(11);
+  });
+});
+
+describe('createExtractionProvider hybrid routing', () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    resetProviderCache();
+  });
+
+  it('returns Gemini for user_upload source', () => {
+    process.env.RUNPOD_API_KEY = 'test-key';
+    process.env.RUNPOD_ENDPOINT_ID = 'test-endpoint';
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    const provider = createExtractionProvider('user_upload');
+    expect(provider.name).toBe('gemini');
+  });
+
+  it('returns HybridProvider for pipeline source when both available', () => {
+    process.env.RUNPOD_API_KEY = 'test-key';
+    process.env.RUNPOD_ENDPOINT_ID = 'test-endpoint';
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    const provider = createExtractionProvider('pipeline');
+    expect(provider.name).toBe('hybrid');
+  });
+
+  it('returns HybridProvider for institutional source when both available', () => {
+    process.env.RUNPOD_API_KEY = 'test-key';
+    process.env.RUNPOD_ENDPOINT_ID = 'test-endpoint';
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    const provider = createExtractionProvider('institutional');
+    expect(provider.name).toBe('hybrid');
+  });
+
+  it('falls back to default provider when only Gemini available', () => {
+    delete process.env.RUNPOD_API_KEY;
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    process.env.AI_PROVIDER = 'gemini';
+    const provider = createExtractionProvider('pipeline');
+    expect(provider.name).toBe('gemini');
+  });
+
+  it('falls back to default provider when only Nessie available', () => {
+    process.env.RUNPOD_API_KEY = 'test-key';
+    process.env.RUNPOD_ENDPOINT_ID = 'test-endpoint';
+    delete process.env.GEMINI_API_KEY;
+    process.env.AI_PROVIDER = 'nessie';
+    const provider = createExtractionProvider('pipeline');
+    expect(provider.name).toBe('nessie');
   });
 });
