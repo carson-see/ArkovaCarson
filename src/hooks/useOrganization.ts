@@ -18,7 +18,8 @@ type Organization = Database['public']['Tables']['organizations']['Row'];
 /** All editable org profile fields */
 type EditableOrgFields = Partial<Pick<Organization,
   'display_name' | 'domain' | 'description' | 'website_url' |
-  'logo_url' | 'founded_date' | 'org_type' | 'linkedin_url' | 'location'
+  'logo_url' | 'founded_date' | 'org_type' | 'linkedin_url' |
+  'twitter_url' | 'industry_tag' | 'location'
 >>;
 
 interface UseOrganizationResult {

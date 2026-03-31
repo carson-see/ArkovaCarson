@@ -7,8 +7,14 @@
 import { Link } from 'react-router-dom';
 import { Shield, Mail, MessageSquare } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { usePageMeta } from '@/hooks/usePageMeta';
 
 export function ContactPage() {
+  usePageMeta({
+    title: 'Contact Arkova — Support & Enterprise Inquiries',
+    description: 'Get in touch with the Arkova team. General support, enterprise plans, API access, and custom integrations.',
+  });
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b">
@@ -72,13 +78,16 @@ export function ContactPage() {
         </div>
       </main>
       <footer className="border-t">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4 text-xs text-muted-foreground">
-          <span>&copy; {new Date().getFullYear()} Arkova</span>
-          <nav className="flex gap-4">
+        <div className="mx-auto max-w-3xl px-6 py-6">
+          <nav className="flex flex-wrap justify-center gap-4 text-xs text-muted-foreground mb-3" aria-label="Site navigation">
+            <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
+            <Link to="/search" className="hover:text-foreground transition-colors">Search Credentials</Link>
+            <Link to="/verify" className="hover:text-foreground transition-colors">Verify</Link>
+            <Link to="/developers" className="hover:text-foreground transition-colors">Developers</Link>
             <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
             <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
-            <Link to="/contact" className="hover:text-foreground transition-colors font-medium">Contact</Link>
           </nav>
+          <p className="text-center text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Arkova</p>
         </div>
       </footer>
     </div>

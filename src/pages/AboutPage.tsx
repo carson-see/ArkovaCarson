@@ -5,9 +5,9 @@
  * Includes Person JSON-LD schema with sameAs links for E-E-A-T signals.
  */
 
-import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, ExternalLink, Shield, Lightbulb, Globe } from 'lucide-react';
+import { usePageMeta } from '@/hooks/usePageMeta';
 
 const TEAM = [
   {
@@ -68,9 +68,10 @@ function PersonSchema({ name, role, sameAs }: { name: string; role: string; same
 }
 
 export function AboutPage() {
-  useEffect(() => {
-    document.title = 'About Arkova — Document Verification Infrastructure';
-  }, []);
+  usePageMeta({
+    title: 'About Arkova — Team, Mission & Document Verification Infrastructure',
+    description: 'Meet the Arkova team building trust infrastructure for credentials. Privacy-first document verification with AI-powered extraction and cryptographic anchoring.',
+  });
 
   return (
     <div className="min-h-screen bg-background">
@@ -104,6 +105,26 @@ export function AboutPage() {
             Arkova makes document authenticity provable. We anchor credential fingerprints to a public network, creating an immutable record that anyone can verify — without exposing the document itself.
           </p>
         </div>
+
+        {/* Traction — GEO-16: Social proof / metrics */}
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-16" aria-label="Platform metrics">
+          <div className="p-5 rounded-xl border bg-card text-center">
+            <p className="text-3xl font-bold text-primary">1.39M+</p>
+            <p className="text-xs text-muted-foreground mt-1">Credentials Secured</p>
+          </div>
+          <div className="p-5 rounded-xl border bg-card text-center">
+            <p className="text-3xl font-bold text-primary">320K+</p>
+            <p className="text-xs text-muted-foreground mt-1">Public Records Indexed</p>
+          </div>
+          <div className="p-5 rounded-xl border bg-card text-center">
+            <p className="text-3xl font-bold text-primary">21</p>
+            <p className="text-xs text-muted-foreground mt-1">Credential Types</p>
+          </div>
+          <div className="p-5 rounded-xl border bg-card text-center">
+            <p className="text-3xl font-bold text-primary">50+</p>
+            <p className="text-xs text-muted-foreground mt-1">Jurisdictions Supported</p>
+          </div>
+        </section>
 
         {/* Mission cards */}
         <div className="grid md:grid-cols-3 gap-6 mb-16">
@@ -198,6 +219,9 @@ export function AboutPage() {
             <a href="mailto:hello@arkova.ai" className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline">
               hello@arkova.ai
             </a>
+            <Link to="/contact" className="inline-flex items-center gap-2 text-sm font-medium text-primary hover:underline">
+              Contact Page
+            </Link>
             <a href="https://www.linkedin.com/company/arkovatech" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-primary transition-colors">
               LinkedIn <ExternalLink className="h-3 w-3" />
             </a>
@@ -207,6 +231,21 @@ export function AboutPage() {
           </div>
         </section>
       </main>
+
+      {/* GEO-17: Internal linking footer */}
+      <footer className="border-t mt-16">
+        <div className="mx-auto max-w-4xl px-6 py-8">
+          <nav className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground" aria-label="Site navigation">
+            <Link to="/search" className="hover:text-primary transition-colors">Search Credentials</Link>
+            <Link to="/verify" className="hover:text-primary transition-colors">Verify a Document</Link>
+            <Link to="/developers" className="hover:text-primary transition-colors">Developer API</Link>
+            <Link to="/contact" className="hover:text-primary transition-colors">Contact</Link>
+            <Link to="/privacy" className="hover:text-primary transition-colors">Privacy</Link>
+            <Link to="/terms" className="hover:text-primary transition-colors">Terms</Link>
+          </nav>
+          <p className="text-center text-xs text-muted-foreground mt-4">&copy; {new Date().getFullYear()} Arkova</p>
+        </div>
+      </footer>
     </div>
   );
 }

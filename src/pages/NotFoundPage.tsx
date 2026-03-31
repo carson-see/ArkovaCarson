@@ -9,14 +9,31 @@ import { Link } from 'react-router-dom';
 import { Shield, ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
+import { usePageMeta } from '@/hooks/usePageMeta';
 
 export function NotFoundPage() {
+  usePageMeta({
+    title: '404 — Page Not Found | Arkova',
+    description: 'The page you are looking for does not exist or has been moved.',
+  });
+
   useEffect(() => {
-    const meta = document.createElement('meta');
-    meta.name = 'prerender-status-code';
-    meta.content = '404';
-    document.head.appendChild(meta);
-    return () => { meta.parentNode?.removeChild(meta); };
+    // Signal 404 status to prerender/SSR crawlers
+    const statusMeta = document.createElement('meta');
+    statusMeta.name = 'prerender-status-code';
+    statusMeta.content = '404';
+    document.head.appendChild(statusMeta);
+
+    // Prevent search engines from indexing 404 pages (GEO-14: soft 404 fix)
+    const robotsMeta = document.createElement('meta');
+    robotsMeta.name = 'robots';
+    robotsMeta.content = 'noindex';
+    document.head.appendChild(robotsMeta);
+
+    return () => {
+      statusMeta.parentNode?.removeChild(statusMeta);
+      robotsMeta.parentNode?.removeChild(robotsMeta);
+    };
   }, []);
 
   return (
@@ -38,6 +55,12 @@ export function NotFoundPage() {
             Go to Dashboard
           </Link>
         </Button>
+        <nav className="flex flex-wrap justify-center gap-4 pt-4 text-sm text-muted-foreground" aria-label="Helpful links">
+          <Link to={ROUTES.SEARCH} className="hover:text-primary transition-colors">Search Credentials</Link>
+          <Link to={ROUTES.VERIFY_FORM} className="hover:text-primary transition-colors">Verify a Document</Link>
+          <Link to={ROUTES.DEVELOPERS} className="hover:text-primary transition-colors">Developer API</Link>
+          <Link to={ROUTES.ABOUT} className="hover:text-primary transition-colors">About Arkova</Link>
+        </nav>
       </div>
     </div>
   );

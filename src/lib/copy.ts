@@ -110,6 +110,71 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   OTHER: 'Unclassified document',
 } as const;
 
+/**
+ * Anonymized template descriptions for public-facing anchor metadata.
+ * These replace raw file details with privacy-safe summaries.
+ */
+export const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
+  DEGREE: 'Verified Academic Credential',
+  LICENSE: 'Verified Professional License',
+  CERTIFICATE: 'Verified Certificate of Achievement',
+  TRANSCRIPT: 'Verified Academic Record',
+  PROFESSIONAL: 'Verified Professional Credential',
+  CLE: 'Verified Continuing Education Credit',
+  BADGE: 'Verified Digital Badge',
+  ATTESTATION: 'Verified Attestation Document',
+  FINANCIAL: 'Verified Financial Document',
+  LEGAL: 'Verified Legal Document',
+  INSURANCE: 'Verified Insurance Certificate',
+  SEC_FILING: 'Public Regulatory Filing',
+  PATENT: 'Verified Intellectual Property Record',
+  REGULATION: 'Public Government Record',
+  PUBLICATION: 'Verified Academic Publication',
+  CHARITY: 'Verified Nonprofit Record',
+  FINANCIAL_ADVISOR: 'Verified Financial Advisor Record',
+  BUSINESS_ENTITY: 'Verified Business Entity Record',
+  RESUME: 'Verified Professional History Document',
+  MEDICAL: 'Verified Health Record',
+  MILITARY: 'Verified Service Record',
+  IDENTITY: 'Verified Identity Document',
+  OTHER: 'General Record',
+} as const;
+
+/** Get anonymized template description for a credential type */
+export function getTemplateDescription(credentialType: string | null | undefined): string {
+  if (!credentialType) return 'General Record';
+  const upper = credentialType.replace(/-/g, '_').toUpperCase();
+  return TEMPLATE_DESCRIPTIONS[upper] ?? 'General Record';
+}
+
+/** Standardized industry tag labels for organization profiles */
+export const INDUSTRY_TAG_LABELS: Record<string, string> = {
+  higher_ed: 'Higher Ed',
+  legal_tech: 'Legal Tech',
+  fintech: 'FinTech',
+  healthcare: 'Healthcare',
+  government: 'Government',
+  insurance: 'Insurance',
+  real_estate: 'Real Estate',
+  accounting: 'Accounting',
+  human_resources: 'Human Resources',
+  cybersecurity: 'Cybersecurity',
+  energy: 'Energy',
+  manufacturing: 'Manufacturing',
+  retail: 'Retail',
+  media: 'Media',
+  nonprofit: 'Nonprofit',
+  consulting: 'Consulting',
+  aerospace: 'Aerospace',
+  biotech: 'Biotech',
+  other: 'Other',
+} as const;
+
+/** Industry tag options for select inputs */
+export const INDUSTRY_TAG_OPTIONS = Object.entries(INDUSTRY_TAG_LABELS).map(
+  ([value, label]) => ({ value, label }),
+);
+
 // =============================================================================
 // USER ROLES
 // =============================================================================
@@ -156,6 +221,7 @@ export const NAV_LABELS = {
   DOCUMENTS: 'Documents',
   MY_RECORDS: 'My Records',
   ORGANIZATION: 'Organization',
+  DIRECTORY: 'Directory',
   SETTINGS: 'Settings',
   HELP: 'Help',
   SEARCH: 'Search',

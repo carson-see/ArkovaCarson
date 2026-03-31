@@ -37,7 +37,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
@@ -84,6 +84,8 @@ export function OrgProfilePage() {
   const [orgWebsiteUrl, setOrgWebsiteUrl] = useState('');
   const [orgType, setOrgType] = useState('');
   const [orgLinkedinUrl, setOrgLinkedinUrl] = useState('');
+  const [orgTwitterUrl, setOrgTwitterUrl] = useState('');
+  const [orgIndustryTag, setOrgIndustryTag] = useState('');
   const [orgLocation, setOrgLocation] = useState('');
   const [orgFoundedDate, setOrgFoundedDate] = useState('');
   const [orgSettingsInit, setOrgSettingsInit] = useState(false);
@@ -166,6 +168,8 @@ export function OrgProfilePage() {
     setOrgWebsiteUrl((organization as Record<string, unknown>).website_url as string ?? '');
     setOrgType((organization as Record<string, unknown>).org_type as string ?? '');
     setOrgLinkedinUrl((organization as Record<string, unknown>).linkedin_url as string ?? '');
+    setOrgTwitterUrl((organization as Record<string, unknown>).twitter_url as string ?? '');
+    setOrgIndustryTag((organization as Record<string, unknown>).industry_tag as string ?? '');
     setOrgLocation((organization as Record<string, unknown>).location as string ?? '');
     setOrgFoundedDate((organization as Record<string, unknown>).founded_date as string ?? '');
     setOrgSettingsInit(true);
@@ -573,6 +577,18 @@ export function OrgProfilePage() {
                   />
                 </div>
                 <div className="space-y-2">
+                  <Label htmlFor="org-twitter">X / Twitter</Label>
+                  <Input
+                    id="org-twitter"
+                    value={orgTwitterUrl}
+                    onChange={(e) => { setOrgTwitterUrl(e.target.value); setOrgSaved(false); }}
+                    placeholder="https://x.com/..."
+                    disabled={orgUpdating}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
                   <Label htmlFor="org-location">Headquarters</Label>
                   <Input
                     id="org-location"
@@ -581,6 +597,21 @@ export function OrgProfilePage() {
                     placeholder="San Francisco, CA"
                     disabled={orgUpdating}
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-industry">Industry</Label>
+                  <select
+                    id="org-industry"
+                    value={orgIndustryTag}
+                    onChange={(e) => { setOrgIndustryTag(e.target.value); setOrgSaved(false); }}
+                    disabled={orgUpdating}
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">Select industry...</option>
+                    {INDUSTRY_TAG_OPTIONS.map(opt => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
               <div className="space-y-2">
@@ -603,6 +634,8 @@ export function OrgProfilePage() {
                     website_url: orgWebsiteUrl.trim() || undefined,
                     org_type: orgType || undefined,
                     linkedin_url: orgLinkedinUrl.trim() || undefined,
+                    twitter_url: orgTwitterUrl.trim() || undefined,
+                    industry_tag: orgIndustryTag || undefined,
                     location: orgLocation.trim() || undefined,
                     founded_date: orgFoundedDate || undefined,
                   };
