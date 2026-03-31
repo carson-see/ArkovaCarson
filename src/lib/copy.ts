@@ -1043,6 +1043,7 @@ export const COMPLIANCE_LABELS = {
   PAGE_TITLE: 'Compliance Intelligence',
   PAGE_SUBTITLE: 'Monitor credential health, expiring credentials, and review activity across your organization.',
   CARD_ACTIVE: 'Active Credentials',
+  CARD_ACTIVE_SUBTITLE: 'Issued attestations',
   CARD_EXPIRING: 'Expiring Soon',
   CARD_REVOKED: 'Recently Revoked',
   CARD_ANCHORED: 'Anchored Rate',

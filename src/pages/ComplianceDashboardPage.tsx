@@ -405,6 +405,7 @@ export function ComplianceDashboardPage() {
             value={stats?.activeCount}
             icon={<CheckCircle className="h-5 w-5 text-green-400" />}
             loading={loading}
+            subtitle={COMPLIANCE_LABELS.CARD_ACTIVE_SUBTITLE}
           />
           <StatCard
             title={COMPLIANCE_LABELS.CARD_EXPIRING}
