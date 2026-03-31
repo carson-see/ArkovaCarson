@@ -66,10 +66,10 @@ describe('SCRUM-348/349/352: RLS performance migration', () => {
     expect(content).toContain("length(trim(p_query)) < 2");
   });
 
-  it('creates trigram index for filename search', () => {
-    expect(content).toContain('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+  it('references search indexes from migration 0150', () => {
+    // Trigram indexes moved to 0150_fix_search_performance_indexes.sql
+    // 0152 just contains a comment referencing them
     expect(content).toContain('idx_anchors_filename_trgm');
-    expect(content).toContain('gin_trgm_ops');
   });
 
   it('notifies PostgREST to reload schema cache (fixes SCRUM-351)', () => {
