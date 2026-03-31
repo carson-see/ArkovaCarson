@@ -410,21 +410,21 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~NMT-01~~ | ~~Gemini Golden fine-tuned eval~~ | ~~P0~~ | **COMPLETE** — Weighted F1=90.4% (+8.3pp vs baseline), recommend as prod default | Vertex AI access | Small |
 | ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
 | ~~NMT-03~~ | ~~Nessie confidence recalibration~~ | ~~P1~~ | **COMPLETE** — Piecewise linear calibration (8 knots), provider offset fix. PR #225 | NMT-01 | Medium |
-| NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | **BLOCKED** — RunPod platform-wide GPU outage (5 GPU types tried) | RunPod/GPU capacity | Medium |
+| ~~NMT-04~~ | ~~Full-precision GPU eval (fp16/bf16)~~ | ~~P1~~ | **COMPLETE** — v5: 87.2% F1, v4: 65.6% F1. fp16 ≈ 4-bit (no quality diff). RunPod A6000 48GB. | None | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
-| NMT-06 | Nessie v4 training data improvements | P2 | **IN PROGRESS** — v4 pipeline built, distilling 2K examples via Gemini Golden | NMT-01, NMT-03 | Large |
+| ~~NMT-06~~ | ~~Nessie v5 training + condensed prompt~~ | ~~P2~~ | **COMPLETE** — v5 trained (1,903 train), 87.2% F1, condensed prompt deployed to provider | NMT-01, NMT-03 | Large |
 
-**Eval Results (2026-03-30):**
+**Eval Results (2026-03-31, updated with v5 fp16):**
 
 | Model | Macro F1 | Weighted F1 | Conf Corr | ECE | Notes |
 |-------|----------|-------------|-----------|-----|-------|
-| **Gemini Golden (tuned)** | 81.4% | **90.4%** | 0.262 | **9.5%** | **NEW — recommend prod default** |
-| Gemini (production) | **82.1%** | ~82% | 0.426 | ~10% | Current baseline |
-| Nessie v3 baseline | 56.4% | 58.4% | 0.214 | 44.6% | MLX 4-bit, 50 samples |
-| Nessie reasoning v1 | 34.2% | 63.3% | 0.223 | 57.1% | MLX 4-bit, 50 samples |
-| Nessie DPO v1 | 30.7% | 57.8% | **0.337** | 52.5% | MLX 4-bit, 50 samples |
+| **Nessie v5 (fp16)** | 75.7% | **87.2%** | **0.539** | 11.0% | **NEW — 3.5x faster than Gemini, zero cost** |
+| **Gemini Golden (tuned)** | 81.4% | **90.4%** | 0.426 | **9.5%** | Prod default (API) |
+| Gemini (production) | **82.1%** | ~82% | 0.426 | ~10% | Base baseline |
+| Nessie v4 (fp16) | 52.2% | 65.6% | 0.167 | 24.3% | RunPod A6000, 100 samples |
+| Nessie v3 (4-bit) | 56.4% | 58.4% | 0.214 | 44.6% | MLX 4-bit, 50 samples |
 
-**Key findings:** Gemini Golden tuned model achieves 90.4% weighted F1 (+8.3pp). SEC_FILING improved from 36.8% to 90.9%. Nessie models overconfident, JSON comment parse failures fixed (NMT-02).
+**Key findings:** Nessie v5 achieves 87.2% weighted F1 (+21.6pp over v4), only 3.2pp behind Gemini Golden. v5 confidence correlation (0.539) exceeds Gemini (0.426). fp16 ≈ 4-bit quantization (model quality is bottleneck, not precision). Fine-tuned models MUST use condensed prompt (full 58K prompt = 0% F1).
 
 ---
 
