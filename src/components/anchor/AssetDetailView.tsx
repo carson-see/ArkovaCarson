@@ -38,7 +38,7 @@ import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import {
   Tooltip,
   TooltipContent,
@@ -384,6 +384,24 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                   </div>
                 </div>
               )}
+
+              {/* Category — AI-extracted or credential type, fallback to General Record */}
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Category</p>
+                <Badge variant="secondary" className="text-xs font-normal">
+                  {formatCredentialType(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined) ?? null) !== '—'
+                    ? formatCredentialType(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined) ?? null)
+                    : 'General Record'}
+                </Badge>
+              </div>
+
+              {/* Template Description — anonymized summary */}
+              <div className="space-y-1">
+                <p className="text-xs text-muted-foreground">Template Description</p>
+                <p className="text-sm text-muted-foreground">
+                  {getTemplateDescription(anchor.credentialType ?? (anchor.metadata?.ai_document_type as string | undefined))}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -459,15 +477,15 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </>
           )}
 
-          {/* METADATA — pipeline-style key-value pairs */}
-          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type'].includes(k)).length > 0 && (
+          {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered) */}
+          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_')).length > 0 && (
             <>
               <Separator />
               <div className="space-y-3">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                 <div className="space-y-2">
                   {Object.entries(anchor.metadata)
-                    .filter(([k]) => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type'].includes(k))
+                    .filter(([k]) => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_'))
                     .map(([key, value]) => (
                       <div key={key} className="flex gap-4">
                         <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>

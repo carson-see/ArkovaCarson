@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { usePageMeta } from '@/hooks/usePageMeta';
 import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge, CreditCard, Terminal, DollarSign, Code2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
@@ -68,6 +69,10 @@ const CTA_BUTTON_CLASS = "bg-[#00d4ff] text-[#003642] text-xs uppercase tracking
 
 export function DevelopersPage() {
   const { user } = useAuth();
+  usePageMeta({
+    title: 'Arkova Developer Platform — Verification API, SDKs & MCP Server',
+    description: 'Build with the Arkova Verification API. Programmatic credential verification, AI metadata extraction, batch processing, and MCP server for AI agents.',
+  });
   const [copied, setCopied] = useState(false);
   const [sdkTab, setSdkTab] = useState<'curl' | 'typescript' | 'python'>('curl');
   const [sdkCopied, setSdkCopied] = useState(false);
@@ -179,6 +184,25 @@ export function DevelopersPage() {
               >
                 API Documentation
               </a>
+            </div>
+            {/* GEO-16: Social proof metrics */}
+            <div className="flex flex-wrap justify-center gap-8 mt-12 text-center">
+              <div>
+                <p className="text-2xl font-bold text-[#00d4ff]">1.39M+</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Credentials Secured</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-[#00d4ff]">320K+</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Public Records</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-[#00d4ff]">21</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">Credential Types</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-[#00d4ff]">87.2%</p>
+                <p className="text-[10px] uppercase tracking-[0.2em] text-[#bbc9cf]">AI Extraction F1</p>
+              </div>
             </div>
           </div>
         </section>
@@ -602,11 +626,15 @@ export function DevelopersPage() {
             <div className="text-sm font-bold text-[#bbc9cf]">Arkova</div>
             <div className="font-mono text-xs text-[#bbc9cf]">Secure document verification platform.</div>
           </div>
-          <div className="flex flex-wrap justify-center gap-6">
-            <Link to="/privacy" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Privacy Policy</Link>
-            <Link to="/terms" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Terms of Service</Link>
+          <nav className="flex flex-wrap justify-center gap-6" aria-label="Site navigation">
+            <Link to="/about" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">About</Link>
+            <Link to="/search" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Search Credentials</Link>
+            <Link to="/verify" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Verify</Link>
+            <Link to="/cle" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">CLE API</Link>
+            <Link to="/privacy" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Privacy</Link>
+            <Link to="/terms" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Terms</Link>
             <Link to="/contact" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Contact</Link>
-          </div>
+          </nav>
         </div>
       </footer>
     </div>

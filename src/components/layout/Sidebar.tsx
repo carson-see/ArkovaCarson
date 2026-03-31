@@ -60,7 +60,7 @@ interface NavItem {
 const mainNavItems: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
   { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
-  { label: NAV_LABELS.ORGANIZATION, icon: Building2, to: ROUTES.ORGANIZATIONS },
+  { label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATIONS },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
   { label: 'Developers', icon: Code2, to: ROUTES.DEVELOPERS },
   { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },

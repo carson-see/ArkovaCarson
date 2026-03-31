@@ -12,6 +12,9 @@ MODEL_VARIANT="${1:-v3}"
 PORT="${2:-8000}"
 
 case "$MODEL_VARIANT" in
+  v5)
+    MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v5-87e1d401"
+    ;;
   v3)
     MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v3-22458d86"
     ;;
@@ -21,8 +24,20 @@ case "$MODEL_VARIANT" in
   dpo)
     MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-dpo-v1-d81529d8"
     ;;
+  sec)
+    MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-sec-7c4962d4"
+    ;;
+  academic)
+    MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-academic-d3af8711"
+    ;;
+  legal)
+    MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-legal-56793fc2"
+    ;;
+  regulatory)
+    MODEL_ID="carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-regulatory-2ed0f4d7"
+    ;;
   *)
-    echo "Usage: $0 [v3|reasoning|dpo] [port]"
+    echo "Usage: $0 [v5|v3|reasoning|dpo|sec|academic|legal|regulatory] [port]"
     exit 1
     ;;
 esac

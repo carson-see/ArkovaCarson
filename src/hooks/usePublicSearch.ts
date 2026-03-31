@@ -148,9 +148,11 @@ export interface OrgProfile {
   org_type: string | null;
   website_url: string | null;
   linkedin_url: string | null;
+  twitter_url: string | null;
   logo_url: string | null;
   location: string | null;
   founded_date: string | null;
+  industry_tag: string | null;
   created_at: string;
   total_credentials: number;
   secured_credentials: number;

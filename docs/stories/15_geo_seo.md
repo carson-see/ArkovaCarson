@@ -1,5 +1,5 @@
 # GEO & SEO Optimization Stories
-_Last updated: 2026-03-29 | 7/17 COMPLETE, 2/17 PARTIAL, 8/17 NOT STARTED_
+_Last updated: 2026-03-31 | 7/17 COMPLETE, 3/17 PARTIAL, 7/17 NOT STARTED_
 
 ## Group Overview
 
@@ -45,8 +45,8 @@ Full on-page SEO audit conducted via live site analysis. **Overall score: 57/100
 | Status | Count |
 |--------|-------|
 | COMPLETE | 7 |
-| PARTIAL | 2 |
-| NOT STARTED | 8 |
+| PARTIAL | 3 |
+| NOT STARTED | 7 |
 
 ---
 
@@ -544,7 +544,7 @@ As a security-conscious enterprise evaluating Arkova, I need proper security hea
 
 ## GEO-13: On-Page SEO Critical Fixes (Title, H1, Meta, Keywords)
 
-**Status:** NOT STARTED
+**Status:** PARTIAL (2026-03-31 — app pages done via `usePageMeta` hook; marketing site homepage/H1/ResearchPage still needed)
 **Priority:** CRITICAL (single biggest ranking signal gap — audit score 57/100)
 **Dependencies:** None
 **Estimated Points:** 3

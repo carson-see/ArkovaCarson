@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
 import { TOAST } from '@/lib/copy';
+import { OrganizationUpdateSchema } from '@/lib/validators';
 import type { Database } from '@/types/database.types';
 
 type Organization = Database['public']['Tables']['organizations']['Row'];
@@ -18,7 +19,8 @@ type Organization = Database['public']['Tables']['organizations']['Row'];
 /** All editable org profile fields */
 type EditableOrgFields = Partial<Pick<Organization,
   'display_name' | 'domain' | 'description' | 'website_url' |
-  'logo_url' | 'founded_date' | 'org_type' | 'linkedin_url' | 'location'
+  'logo_url' | 'founded_date' | 'org_type' | 'linkedin_url' |
+  'twitter_url' | 'industry_tag' | 'location'
 >>;
 
 interface UseOrganizationResult {
@@ -79,11 +81,21 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
       setUpdating(true);
       setError(null);
 
+      // Validate before DB call (CLAUDE.md §1.2 / §6)
+      const parsed = OrganizationUpdateSchema.safeParse(updates);
+      if (!parsed.success) {
+        const msg = parsed.error.issues.map(i => i.message).join(', ');
+        setError(msg);
+        toast.error(msg);
+        setUpdating(false);
+        return false;
+      }
+
       // Use .select() to detect silent RLS failures — if RLS blocks the UPDATE,
       // Supabase returns { data: [], error: null } instead of an error.
       const { data: updatedRows, error: updateError } = await supabase
         .from('organizations')
-        .update(updates)
+        .update(parsed.data)
         .eq('id', orgId)
         .select();
 

@@ -170,7 +170,17 @@ export function RecordDetailPage() {
           metadata: anchor.metadata as Record<string, unknown> | null ?? undefined,
           description: anchor.description ?? undefined,
           orgId: anchor.org_id ?? undefined,
-          issuerName: (anchor.metadata as Record<string, unknown> | null)?.issuer as string | undefined,
+          issuerName: (() => {
+            const meta = anchor.metadata as Record<string, unknown> | null;
+            const rawIssuer = meta?.issuer as string | undefined;
+            // Pipeline records (public entities) — show issuer as-is
+            if (meta?.pipeline_source) return rawIssuer;
+            // Org-issued credentials — issuer is the org name (safe)
+            if (anchor.org_id) return rawIssuer;
+            // Individual uploads — anonymize to prevent PII leakage (SOC 2 / Privacy by Design)
+            if (rawIssuer && anchor.public_id) return `ID: ${anchor.public_id.slice(0, 12)}`;
+            return undefined;
+          })(),
           versionNumber: anchor.version_number,
           parentAnchorId: anchor.parent_anchor_id ?? undefined,
           lineage: lineage.length > 1 ? lineage : undefined,

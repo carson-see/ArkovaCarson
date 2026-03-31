@@ -480,7 +480,6 @@ export function x402PaymentGate(endpoint: string) {
 
     // RISK-2: On-chain validation
     const { price } = await getDynamicPrice(endpoint);
-    const payeeAddress = config.arkovaUsdcAddress ?? '';
     const validation = await validateOnChain(payment.txHash, price, payeeAddress);
 
     if (!validation.valid) {

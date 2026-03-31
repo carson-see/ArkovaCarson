@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
 import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
-import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { isSearchSubdomain } from '@/App';
 
@@ -138,6 +138,11 @@ export function IssuerRegistryPage() {
                     Verified Issuer
                   </Badge>
                 )}
+                {profile.industry_tag && (
+                  <Badge variant="outline" className="text-xs shrink-0 border-[#3c494e]/40 text-[#bbc9cf]">
+                    {INDUSTRY_TAG_LABELS[profile.industry_tag] ?? profile.industry_tag}
+                  </Badge>
+                )}
               </div>
 
               {profile.description && (
@@ -185,6 +190,17 @@ export function IssuerRegistryPage() {
                   >
                     <Globe className="h-3 w-3" />
                     Website
+                    <ExternalLink className="h-2.5 w-2.5" />
+                  </a>
+                )}
+                {profile.twitter_url && (
+                  <a
+                    href={profile.twitter_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-[#3c494e]/30 rounded-full px-3 py-1 hover:bg-[#192028] transition-colors"
+                  >
+                    X / Twitter
                     <ExternalLink className="h-2.5 w-2.5" />
                   </a>
                 )}

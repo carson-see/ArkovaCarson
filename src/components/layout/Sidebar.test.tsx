@@ -54,14 +54,14 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Developers').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows Organization link only when orgName is provided (BUG-009)', () => {
+  it('shows Directory link only when orgName is provided (BUG-009)', () => {
     renderSidebar({ orgName: 'Test Org' });
-    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('hides Organization link for Individual accounts (no orgName)', () => {
+  it('hides Directory link for Individual accounts (no orgName)', () => {
     renderSidebar();
-    expect(screen.queryByText('Organization')).toBeNull();
+    expect(screen.queryByText('Directory')).toBeNull();
   });
 
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
