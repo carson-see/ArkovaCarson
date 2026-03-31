@@ -17,11 +17,13 @@ Arkova follows a **stable-first** API versioning strategy:
 
 **PRs:** #225 (NMT-03), #226 (NMT-06), #228 (record-display-bugs), #229 (uat-sweep)
 
-### Database Migrations (0148–0151)
+### Database Migrations (0147–0152)
+- **0147:** ZK-STARK evidence columns on `extraction_manifests` — `zk_proof`, `zk_public_signals`, `zk_proof_protocol`, `zk_circuit_version`, `zk_poseidon_hash`, `zk_proof_generated_at`, `zk_proof_generation_ms` + indexes
 - **0148:** Fix `lookup_org_by_email_domain` and `join_org_by_domain` RPCs referencing non-existent `deleted_at` column on organizations table
 - **0149:** Fix attestations_select RLS recursion — introduced `get_user_org_id()` SECURITY DEFINER helper function to break recursive RLS evaluation
 - **0150:** Add search performance indexes — trigram GIN on `anchors.filename` and `anchors.description`, btree on `credential_type`, partial index on `(created_at DESC) WHERE status IN ('SECURED','SUBMITTED')`
 - **0151:** New ARK-prefixed public_id format (`ARK-{CATEGORY}-{6_ALPHANUM}`) for new anchors — categorizes by pipeline source and credential type
+- **0152:** Platform admin RLS performance fix — `is_current_user_platform_admin()` helper, admin bypass policies on anchors/attestations, `attestations_select` rewritten with EXISTS instead of IN, `search_public_credentials` optimized (removes metadata::text ILIKE full-scan)
 
 ### Frontend Fixes (20 bugs from UAT sweep)
 - Search page: auto-execute example queries, tab-aware empty state, terminology compliance (Constitution 1.3)

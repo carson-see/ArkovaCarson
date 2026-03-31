@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 180/200 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825 tests** (1,101 frontend + 1,724 worker, all green). 139 migration files (0001-0135, gaps at 0033+0078, 0068 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, golden dataset 1,330 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 195K+ anchors (166K SECURED, 28K SUBMITTED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3).
+**Overall progress:** 180/200 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825 tests** (1,101 frontend + 1,724 worker, all green). 153 migration files (0001-0152, gaps at 0033+0078, 0068 split, 0088 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, golden dataset 1,330 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 195K+ anchors (166K SECURED, 28K SUBMITTED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3). **All migrations through 0152 applied to production.**
 
 ### Open Blockers
 
@@ -33,6 +33,9 @@
 | Migration 0149 | Fix attestations_select RLS recursion with `get_user_org_id()` SECURITY DEFINER helper |
 | Migration 0150 | Add trigram GIN indexes on `anchors.filename`/`description`, btree on `credential_type`, partial index for search |
 | Migration 0151 | ARK-prefixed public_id format (`ARK-{CATEGORY}-{6_ALPHANUM}`) for new anchors |
+| Migration 0147 | ZK-STARK evidence columns on `extraction_manifests` (tracked + applied) |
+| Migration 0152 | Platform admin RLS bypass, optimized `search_public_credentials`, attestations EXISTS fix |
+| Migrations applied | All migrations 0001-0152 now applied to production Supabase |
 | Shared utilities | `formatCredentialType()` in copy.ts, `getNetworkDisplayName()` in platform.ts |
 | Terminology compliance | Constitution 1.3 fixes across SearchPage, AnchorStats, SystemHealthPage |
 | Credit widget | Shows "Unlimited / Beta" per no-limits-during-beta policy |

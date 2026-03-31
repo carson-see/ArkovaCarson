@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-28 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 139 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | AI eval F1=82.1% | 320K+ public records | 166K+ SECURED anchors (mainnet)
+> **Stats:** 153 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | AI eval F1=82.1% | 320K+ public records | 166K+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 139 files (0001-0135, 0033+0078 skipped, 0068 split into 0068a/0068b). All migrations applied to production through 0135.
+**Current:** 153 files (0001-0152, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap). All migrations applied to production through 0152.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -307,7 +307,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ~~AWS KMS signing~~ | ~~Key provisioning for mainnet~~ — **DONE** (AWS + GCP KMS providers complete, 69 tests, GCP KMS configured in Cloud Run) |
 | ~~Mainnet treasury funding~~ | ~~Fund production treasury wallet~~ — **DONE** (treasury funded, 116 mainnet TXs confirmed) |
 | ~~Flip to mainnet~~ | ~~Change to mainnet~~ — **DONE** (BITCOIN_NETWORK=mainnet, 166K+ SECURED anchors) |
-| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (all migrations through 0135 applied) |
+| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (all migrations through 0152 applied) |
 
 ### Pre-Launch Tasks
 
@@ -459,5 +459,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-03-29 | 139 migrations | 1,866+ tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | Golden dataset: 1,330 entries | 130 few-shot examples_
+_Directive version: 2026-03-31 | 153 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | Golden dataset: 1,330 entries | 130 few-shot examples_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
