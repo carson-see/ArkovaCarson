@@ -63,7 +63,9 @@ export function OnboardingRolePage() {
   }, [user?.email, lookupOrgByEmail]);
 
   // Log raw error for debugging, show sanitized message to user
-  if (error) console.error('[OnboardingRolePage] Onboarding error:', error);
+  useEffect(() => {
+    if (error) console.error('[OnboardingRolePage] Onboarding error:', error);
+  }, [error]);
 
   const handleRoleSelect = async (role: 'INDIVIDUAL' | 'ORG_ADMIN') => {
     clearError();
@@ -93,18 +95,22 @@ export function OnboardingRolePage() {
     if (!pendingRole) return;
     setPlanLoading(true);
 
-    // Set the role first
-    const result = await setRole(pendingRole);
-    if (result) {
-      // Update subscription_tier on the profile
-      await supabase
-        .from('profiles')
-        .update({ subscription_tier: plan })
-        .eq('id', user?.id ?? '');
+    try {
+      const result = await setRole(pendingRole);
+      if (result) {
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({ subscription_tier: plan })
+          .eq('id', user?.id ?? '');
 
-      await refreshProfile();
+        if (updateError) throw updateError;
+        await refreshProfile();
+      }
+    } catch (err) {
+      console.error('[OnboardingRolePage] Plan selection failed:', err);
+    } finally {
+      setPlanLoading(false);
     }
-    setPlanLoading(false);
   };
 
   const handleJoinOrg = async () => {

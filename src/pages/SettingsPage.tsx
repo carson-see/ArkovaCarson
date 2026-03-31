@@ -53,9 +53,7 @@ export function SettingsPage() {
     setNameInitialized(true);
   }
 
-  const handleSignOut = async () => {
-    await signOut();
-  };
+  const handleSignOut = signOut;
 
   const handleSaveName = useCallback(async () => {
     const trimmed = fullName.trim();
