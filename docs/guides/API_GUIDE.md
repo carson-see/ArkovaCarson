@@ -90,7 +90,13 @@ You can sign up two ways:
 
 ### Step 3: Complete Onboarding
 
-After signing in for the first time, you'll go through a brief onboarding flow where you'll select your role. **To use the API, you must select the "Organization" role.** Individual accounts cannot create API keys.
+After signing in for the first time, you'll go through a brief onboarding flow:
+
+1. **Choose your role** — Individual (personal document security) or Organization (team/business)
+2. **Organization membership** — Individual users are asked if they belong to an existing organization
+3. **Select your plan** — Individual users choose between Free, Individual ($10/mo), or Professional ($100/mo) tiers. During beta, all plans are free.
+
+**To use the API, you must select the "Organization" role.** Individual accounts cannot create API keys.
 
 > **Important:** If there's a beta invite code required, you'll be prompted to enter it before signing up. Contact the Arkova team if you need one.
 
@@ -162,11 +168,11 @@ You should see:
 
 ### Verify an existing record
 
-Let's verify a public record. Replace `YOUR_API_KEY` with your actual key:
+Let's verify a public record. Replace `YOUR_API_KEY` with your actual key, and use a real Public ID from your account (e.g., one returned from the `/anchor` endpoint):
 
 ```bash
 curl -H "X-API-Key: YOUR_API_KEY" \
-  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-DEMO-001
+  https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-ABCD1234
 ```
 
 If the record exists, you'll get a response like:
@@ -175,15 +181,17 @@ If the record exists, you'll get a response like:
 {
   "verified": true,
   "status": "ACTIVE",
-  "issuer_name": "Arkova",
+  "issuer_name": "Your Organization",
   "credential_type": "CERTIFICATE",
   "anchor_timestamp": "2026-03-15T12:00:00.000Z",
   "bitcoin_block": 890123,
   "network_receipt_id": "abc123def456...",
-  "record_uri": "https://app.arkova.io/verify/ARK-DEMO-001",
+  "record_uri": "https://arkova-26.vercel.app/verify/ARK-2026-ABCD1234",
   "explorer_url": "https://mempool.space/tx/abc123def456..."
 }
 ```
+
+> **Note:** To get a real Public ID, first anchor a document using the `/anchor` endpoint (Section 5.2). The returned `public_id` can then be used with `/verify`.
 
 **Congratulations!** You just made your first Arkova API call.
 
@@ -239,7 +247,7 @@ curl -H "X-API-Key: $ARKOVA_API_KEY" \
   "bitcoin_block": 890456,
   "network_receipt_id": "a1b2c3...",
   "merkle_proof_hash": "d4e5f6...",
-  "record_uri": "https://app.arkova.io/verify/ARK-2026-ABCD1234",
+  "record_uri": "https://arkova-26.vercel.app/verify/ARK-2026-ABCD1234",
   "explorer_url": "https://mempool.space/tx/a1b2c3...",
   "jurisdiction": "Michigan, USA"
 }
@@ -305,7 +313,7 @@ curl -X POST "$ARKOVA_BASE/anchor" \
   "fingerprint": "e3b0c44298fc1c149afbf4c8996fb924...",
   "status": "PENDING",
   "created_at": "2026-03-28T15:30:00.000Z",
-  "record_uri": "https://app.arkova.io/verify/ARK-2026-F7A3B2C1"
+  "record_uri": "https://arkova-26.vercel.app/verify/ARK-2026-F7A3B2C1"
 }
 ```
 
@@ -1413,30 +1421,32 @@ Spec:     https://arkova-worker-270018525501.us-central1.run.app/api/docs/spec.j
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
 | `GET` | `/health` | None | Health check (always available) |
-| `GET` | `/verify/:publicId` | Optional | Verify a credential |
+| `GET` | `/verify/:publicId` | API Key or x402 | Verify a credential |
 | `GET` | `/verify/:publicId/proof` | None | Get Merkle proof |
 | `POST` | `/verify/batch` | API Key | Batch verify (up to 100) |
-| `GET` | `/verify/entity` | Optional | Entity lookup |
+| `GET` | `/verify/entity` | API Key or x402 | Entity lookup |
 | `POST` | `/anchor` | API Key | Anchor a fingerprint |
 | `GET` | `/jobs/:jobId` | API Key | Poll async batch job |
 | `POST` | `/attestations` | API Key | Create attestation |
-| `GET` | `/attestations` | None | List attestations |
-| `GET` | `/attestations/:publicId` | None | Get attestation |
+| `GET` | `/attestations` | API Key or x402 | List attestations |
+| `GET` | `/attestations/:publicId` | API Key or x402 | Get attestation |
 | `PATCH` | `/attestations/:publicId/revoke` | API Key | Revoke attestation |
 | `POST` | `/attestations/batch-create` | API Key | Create up to 100 attestations |
 | `POST` | `/attestations/batch-verify` | API Key | Verify up to 100 attestations |
-| `POST` | `/compliance/check` | Optional | Compliance check |
-| `GET` | `/regulatory/lookup` | Optional | Regulatory search |
-| `GET` | `/cle/verify` | Optional | CLE compliance check |
-| `GET` | `/cle/credits` | Optional | List CLE credits |
+| `POST` | `/compliance/check` | API Key or x402 | Compliance check |
+| `GET` | `/regulatory/lookup` | API Key or x402 | Regulatory search |
+| `GET` | `/cle/verify` | API Key or x402 | CLE compliance check |
+| `GET` | `/cle/credits` | API Key or x402 | List CLE credits |
 | `POST` | `/cle/submit` | API Key | Submit CLE completion |
-| `GET` | `/cle/requirements` | None | CLE requirements by state |
-| `GET` | `/nessie/query` | Optional | AI-powered record search |
+| `GET` | `/cle/requirements` | API Key or x402 | CLE requirements by state |
+| `GET` | `/nessie/query` | API Key or x402 | AI-powered record search |
 | `GET` | `/usage` | API Key | Monthly usage stats |
 | `POST` | `/keys` | JWT | Create API key |
 | `GET` | `/keys` | JWT | List API keys |
 | `PATCH` | `/keys/:keyId` | JWT | Update/revoke key |
 | `DELETE` | `/keys/:keyId` | JWT | Delete key |
+
+> **Auth column key:** "None" = no auth needed. "API Key" = requires `X-API-Key` or `Authorization: Bearer ak_...`. "API Key or x402" = requires either an API key or an x402 micropayment (see Section 8). "JWT" = requires Supabase session token.
 
 ---
 
@@ -1479,8 +1489,10 @@ Spec:     https://arkova-worker-270018525501.us-central1.run.app/api/docs/spec.j
 ### "Can I use the API without an account?"
 
 Yes, in two ways:
-1. **Public endpoints** — `/verify/:publicId`, `/attestations` (GET), `/cle/requirements`, `/health` are accessible without any auth
-2. **x402 payments** — pay per query with USDC (see Section 8) — no account needed at all
+1. **Truly public endpoints** — `/health` and `/verify/:publicId/proof` are accessible without any auth
+2. **x402 payments** — most read endpoints accept x402 micropayments (USDC) instead of an API key (see Section 8) — no account needed
+
+> **Note:** Most endpoints require either an API key or an x402 payment. Only `/health` and Merkle proof endpoints are fully unauthenticated.
 
 ### "What's the difference between verify and attestation?"
 

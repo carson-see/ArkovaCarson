@@ -4,6 +4,11 @@
  * Uses useOnboarding hook for atomic role setting via RPC.
  * After role is set, refreshProfile recomputes destination and RouteGuard redirects.
  *
+ * Flow:
+ *   1. Role selection (Individual vs Organization)
+ *   2. Plan selection (for Individual — BUG-1 fix)
+ *   3. Org match prompt (if email domain matches an existing org)
+ *
  * Domain auto-association: If the user's email domain matches an existing org,
  * we show a prompt to join that org instead of creating a new one.
  *
@@ -14,6 +19,9 @@
 import { useState, useEffect } from 'react';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { RoleSelector } from '@/components/onboarding/RoleSelector';
+import { PlanSelector } from '@/components/onboarding/PlanSelector';
+import { OrgMembershipQuestion } from '@/components/onboarding/OrgMembershipQuestion';
+import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -21,6 +29,8 @@ import { AlertCircle, Building2, Loader2, ArrowRight } from 'lucide-react';
 import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useOnboarding } from '@/hooks/useOnboarding';
+import { supabase } from '@/lib/supabase';
+import { ONBOARDING_STEPS } from '@/lib/copy';
 
 export function OnboardingRolePage() {
   const { user } = useAuth();
@@ -35,6 +45,11 @@ export function OnboardingRolePage() {
   } | null>(null);
   const [showOrgMatch, setShowOrgMatch] = useState(false);
   const [pendingRole, setPendingRole] = useState<'INDIVIDUAL' | 'ORG_ADMIN' | null>(null);
+  // BUG-1: Plan selection step for Individual users
+  const [showPlanSelector, setShowPlanSelector] = useState(false);
+  const [planLoading, setPlanLoading] = useState(false);
+  // BUG-11: Org membership question for Individual users
+  const [showOrgMembership, setShowOrgMembership] = useState(false);
 
   // Check for domain-matched org on mount
   useEffect(() => {
@@ -60,10 +75,36 @@ export function OnboardingRolePage() {
       return;
     }
 
+    // BUG-11: For INDIVIDUAL users, ask about org membership first
+    if (role === 'INDIVIDUAL') {
+      setPendingRole(role);
+      setShowOrgMembership(true);
+      return;
+    }
+
     const result = await setRole(role);
     if (result) {
       await refreshProfile();
     }
+  };
+
+  // BUG-1: Handle plan selection for Individual users
+  const handlePlanSelect = async (plan: 'free' | 'individual' | 'professional') => {
+    if (!pendingRole) return;
+    setPlanLoading(true);
+
+    // Set the role first
+    const result = await setRole(pendingRole);
+    if (result) {
+      // Update subscription_tier on the profile
+      await supabase
+        .from('profiles')
+        .update({ subscription_tier: plan })
+        .eq('id', user?.id ?? '');
+
+      await refreshProfile();
+    }
+    setPlanLoading(false);
   };
 
   const handleJoinOrg = async () => {
@@ -81,12 +122,68 @@ export function OnboardingRolePage() {
 
     // Proceed with the role they originally selected
     if (pendingRole) {
+      // BUG-11: If declining org and role is INDIVIDUAL, show org membership question
+      if (pendingRole === 'INDIVIDUAL') {
+        setShowOrgMembership(true);
+        return;
+      }
+
       const result = await setRole(pendingRole);
       if (result) {
         await refreshProfile();
       }
     }
   };
+
+  // BUG-11: Show org membership question for Individual users
+  if (showOrgMembership && !showPlanSelector) {
+    const handleOrgMembershipSkip = () => {
+      setShowOrgMembership(false);
+      setShowPlanSelector(true);
+    };
+    const handleOrgMembershipJoin = async (orgId: string) => {
+      const result = await joinOrgByDomain(orgId);
+      if (result) {
+        await refreshProfile();
+      }
+    };
+    return (
+      <AuthLayout title="Welcome to Arkova" description="Organization membership">
+        <div className="mb-8">
+          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
+        </div>
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Something went wrong. Please try again.</AlertDescription>
+          </Alert>
+        )}
+        <OrgMembershipQuestion
+          onSkip={handleOrgMembershipSkip}
+          onJoinOrg={handleOrgMembershipJoin}
+          loading={loading}
+        />
+      </AuthLayout>
+    );
+  }
+
+  // BUG-1: Show plan selector for Individual users
+  if (showPlanSelector) {
+    return (
+      <AuthLayout title="Welcome to Arkova" description="Choose your plan">
+        <div className="mb-8">
+          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={1} />
+        </div>
+        {error && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>Something went wrong. Please try again.</AlertDescription>
+          </Alert>
+        )}
+        <PlanSelector onSelect={handlePlanSelect} loading={loading || planLoading} />
+      </AuthLayout>
+    );
+  }
 
   // Show org match prompt
   if (showOrgMatch && orgMatch?.found) {

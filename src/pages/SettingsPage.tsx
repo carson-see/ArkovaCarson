@@ -7,7 +7,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter, FileWarning } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -30,7 +30,6 @@ import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
 
 export function SettingsPage() {
-  const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading, updating, updateProfile, refreshProfile } = useProfile();
 
@@ -56,7 +55,6 @@ export function SettingsPage() {
 
   const handleSignOut = async () => {
     await signOut();
-    navigate(ROUTES.LOGIN);
   };
 
   const handleSaveName = useCallback(async () => {

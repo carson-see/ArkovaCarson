@@ -11,7 +11,7 @@
 // Load environment variables FIRST before any other imports
 import 'dotenv/config';
 
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
@@ -162,6 +162,16 @@ app.use('/api/v1/org/sub-orgs', corsMiddleware, rateLimiters.api, requireAuthMw,
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
+
+// ─── 404 catch-all — JSON response for unmatched routes (BUG-14) ───
+// Must be after all route mounts, before error handlers.
+// Without this, Express returns plain text "Cannot GET /path" which breaks API clients.
+app.use((_req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'not_found',
+    message: `The requested endpoint does not exist. See /api/docs for available endpoints.`,
+  });
+});
 
 // ─── Error handling (ARCH-4) ───
 // Sentry error handler must be after all routes, before global error handler

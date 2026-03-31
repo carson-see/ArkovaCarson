@@ -1328,6 +1328,45 @@ export const ONBOARDING_VALUE_PROP_LABELS = {
   CONTINUE: 'Get Started',
 } as const;
 
+export const ORG_MEMBERSHIP_LABELS = {
+  TITLE: 'Are you part of an organization?',
+  DESCRIPTION: 'If your employer or institution uses Arkova, you can request to join their organization for shared access to verified records.',
+  YES_BUTTON: 'Yes, find my organization',
+  NO_BUTTON: 'No, continue as individual',
+  SEARCH_LABEL: 'Organization name or domain',
+  SEARCH_PLACEHOLDER: 'e.g. Acme Corp or acme.com',
+  SEARCHING: 'Searching...',
+  NO_ORG_FOUND: 'No matching organizations found. You can continue as an individual and join an organization later from Settings.',
+  JOIN_BUTTON: 'Request to join',
+  SKIP_BUTTON: 'Continue as individual',
+} as const;
+
+export const PLAN_SELECTOR_LABELS = {
+  TITLE: 'Choose your plan',
+  SUBTITLE: 'Select the plan that fits your needs',
+  BETA_BANNER: 'All plans are free during the beta period',
+  FREE_NAME: 'Free',
+  FREE_DESC: 'Get started at no cost',
+  FREE_RECORDS: '3 records per month',
+  FREE_VERIFICATION: 'Basic verification',
+  FREE_PROOF: '7-day proof access',
+  INDIVIDUAL_NAME: 'Individual',
+  INDIVIDUAL_DESC: 'For personal document security',
+  INDIVIDUAL_PRICE: '$10/mo',
+  INDIVIDUAL_RECORDS: '10 records per month',
+  INDIVIDUAL_SUPPORT: 'Basic support',
+  INDIVIDUAL_DOWNLOADS: 'Proof downloads',
+  PROFESSIONAL_NAME: 'Professional',
+  PROFESSIONAL_DESC: 'For growing businesses',
+  PROFESSIONAL_PRICE: '$100/mo',
+  PROFESSIONAL_RECORDS: '100 records per month',
+  PROFESSIONAL_SUPPORT: 'Priority support',
+  PROFESSIONAL_API: 'API access',
+  PROFESSIONAL_BULK: 'Bulk CSV upload',
+  CONTINUE: 'Continue',
+  CURRENT_PLAN: 'Current plan',
+} as const;
+
 export const REVOKED_EXPIRED_ACTIONS = {
   REQUEST_REISSUANCE: 'Request Re-Issuance',
   REQUEST_RENEWAL: 'Request Renewal',

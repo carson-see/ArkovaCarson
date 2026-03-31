@@ -404,6 +404,33 @@ export function x402PaymentGate(endpoint: string) {
       return;
     }
 
+    // BUG-2 fix: If auth was attempted (any API key or Bearer header present)
+    // but failed validation upstream, return 401 instead of falling through to 402.
+    // This prevents confusing "payment required" responses when the real issue is bad credentials.
+    const authHeader = req.headers.authorization;
+    const apiKeyHeader = req.headers['x-api-key'];
+    if (authHeader?.startsWith('Bearer ak_') || (typeof apiKeyHeader === 'string' && apiKeyHeader.startsWith('ak_'))) {
+      // An API key was provided but didn't pass apiKeyAuth — it's invalid/revoked/expired.
+      // apiKeyAuth already sent 401, but if we somehow reach here, enforce 401.
+      res.status(401).json({
+        error: 'invalid_api_key',
+        message: 'The provided API key is invalid, revoked, or expired.',
+      });
+      return;
+    }
+
+    // BUG-3 fix: If payTo address is not configured, don't offer x402 — fall through
+    // to let downstream handlers reject gracefully instead of returning a broken 402.
+    const payeeAddress = config.arkovaUsdcAddress ?? '';
+    if (!payeeAddress) {
+      logger.warn('ARKOVA_USDC_ADDRESS not configured — x402 payments unavailable, rejecting unauthenticated request');
+      res.status(401).json({
+        error: 'authentication_required',
+        message: 'API key required. Pass via Authorization: Bearer ak_... or X-API-Key header.',
+      });
+      return;
+    }
+
     // Check for x402 payment header
     const payment = parsePaymentHeader(req);
     if (!payment) {
