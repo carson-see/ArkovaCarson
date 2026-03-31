@@ -18,7 +18,7 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_description_trgm
   ON anchors USING GIN (description gin_trgm_ops);
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_credential_type_trgm
-  ON anchors USING GIN (credential_type gin_trgm_ops);
+  ON anchors USING GIN ((credential_type::text) gin_trgm_ops);
 
 -- Also add a partial index for the common status filter to help the planner
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_status_secured_submitted
