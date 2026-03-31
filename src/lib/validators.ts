@@ -316,6 +316,14 @@ const DOMAIN_REGEX = /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/;
 /**
  * Schema for updating an organization (ORG_ADMIN fields)
  */
+/** Validates that a URL uses https:// protocol only (prevents javascript: XSS) */
+const safeUrlSchema = z
+  .string()
+  .url('Must be a valid URL')
+  .refine((val) => /^https?:\/\//i.test(val), 'URL must use https:// or http://')
+  .optional()
+  .nullable();
+
 export const OrganizationUpdateSchema = z.object({
   display_name: z
     .string()
@@ -328,6 +336,16 @@ export const OrganizationUpdateSchema = z.object({
     .regex(DOMAIN_REGEX, 'Domain must be a valid lowercase domain (e.g., example.com)')
     .optional()
     .nullable(),
+
+  description: z.string().max(2000).optional().nullable(),
+  website_url: safeUrlSchema,
+  linkedin_url: safeUrlSchema,
+  twitter_url: safeUrlSchema,
+  logo_url: safeUrlSchema,
+  location: z.string().max(255).optional().nullable(),
+  founded_date: z.string().optional().nullable(),
+  org_type: z.string().optional().nullable(),
+  industry_tag: z.string().optional().nullable(),
 });
 
 export type OrganizationUpdate = z.infer<typeof OrganizationUpdateSchema>;

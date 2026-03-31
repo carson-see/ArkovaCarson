@@ -121,8 +121,8 @@ export function AboutPage() {
             <p className="text-xs text-muted-foreground mt-1">Credential Types</p>
           </div>
           <div className="p-5 rounded-xl border bg-card text-center">
-            <p className="text-3xl font-bold text-primary">50+</p>
-            <p className="text-xs text-muted-foreground mt-1">Jurisdictions Supported</p>
+            <p className="text-3xl font-bold text-primary">87.2%</p>
+            <p className="text-xs text-muted-foreground mt-1">AI Extraction F1</p>
           </div>
         </section>
 

@@ -72,6 +72,7 @@ const adminNavItems: NavItem[] = [
   { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
   { label: 'Overview', icon: BarChart3, to: ROUTES.ADMIN_OVERVIEW },
   { label: 'Users', icon: Users, to: ROUTES.ADMIN_USERS },
+  { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
   { label: 'Records', icon: FileCheck, to: ROUTES.ADMIN_RECORDS },
   { label: NAV_LABELS.TREASURY, icon: Landmark, to: ROUTES.ADMIN_TREASURY },
   { label: 'Pipeline', icon: Database, to: ROUTES.ADMIN_PIPELINE },

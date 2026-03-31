@@ -681,7 +681,7 @@ ATS (Applicant Tracking System) integration configurations.
 | `payment_source_id` | text | Revenue attribution (Stripe payment intent, x402 payment) |
 | `payment_source_type` | text | Payment rail: 'stripe', 'x402', 'free' |
 
-### organizations (migration 0105, 0128)
+### organizations (migration 0105, 0128, 0154)
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -704,6 +704,8 @@ ATS (Applicant Tracking System) integration configurations.
 | `max_sub_orgs` | integer | Maximum allowed sub-organizations |
 | `affiliation_fee_status` | text | Affiliation fee payment status |
 | `affiliation_grace_expires_at` | timestamptz | Grace period for affiliation fees |
+| `twitter_url` | text | X/Twitter profile URL (migration 0154) |
+| `industry_tag` | text | Standardized industry identifier for sorting/filtering; CHECK constraint limits to: higher_ed, legal_tech, fintech, healthcare, government, insurance, real_estate, accounting, human_resources, cybersecurity, energy, manufacturing, retail, media, nonprofit, consulting, aerospace, biotech, other (migration 0154) |
 
 ### profiles (migration 0129)
 
@@ -719,3 +721,4 @@ ATS (Applicant Tracking System) integration configurations.
 | 2026-03-10 | Audit | Complete rewrite: added 16 missing tables, added missing anchor columns (public_id, credential_type, metadata, parent_anchor_id, version_number, revocation_reason), added is_public_profile to profiles, documented all enums, updated ER diagram |
 | 2026-03-12 | INFRA-08 | Added institution_ground_truth table (migration 0051). Enabled pgvector + pg_trgm extensions. 21 tables total. |
 | 2026-03-29 | GAP-03 | Added 9 tables from migrations 0100-0136 (payment_grace_periods, reconciliation_reports, financial_reports, unified_credits, merkle_batches, training_metrics, webhook_idempotency, credential_portfolios, ats_integrations). Added 25 columns to existing tables (anchors, organizations, profiles). Updated total table count to 47+. |
+| 2026-03-31 | GEO-14 | Added twitter_url and industry_tag (CHECK-constrained enum) to organizations (migration 0154). Updated get_public_org_profile RPC to return new columns (migration 0155). |
