@@ -80,13 +80,37 @@ arkova-demo/
 demo-assets/
 /prod-*.png
 /swagger-*.png
+/app-*.png
+/search-*.png
+
+# macOS duplicate files
+*\ 2.*
+*\ 2/
+
+# Binary artifacts
+*.sym
+*.ptau
+*.zkey
+*.r1cs
+*.wasm
+
+# ZK circuit compiled artifacts (rebuild from .circom source)
+services/worker/circuits/artifacts/
+
+# Strategy docs (binary .docx)
+docs/strategy/*.docx
+
+# Env backups
+.env.local.bak
+.env.bak
 
 # Bug report artifacts (screenshots)
 docs/bugs/*.png
 docs/bugs/*.pdf
 
-# Eval data (large JSON)
+# Eval data (large JSON — keep .md summaries only)
 docs/eval/*.json
+services/worker/docs/eval/*.json
 
 # Training data (large JSONL files)
 services/worker/training-data/

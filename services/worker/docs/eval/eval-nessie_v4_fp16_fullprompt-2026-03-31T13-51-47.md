@@ -1,0 +1,86 @@
+# AI Extraction Eval Report
+
+- **Date:** 2026-03-31T13:51:47.036Z
+- **Provider:** nessie_v4_fp16_fullprompt
+- **Prompt Version:** 39d44cf8e0b4
+- **Entries Evaluated:** 100
+
+## Overall Metrics
+
+| Metric | Value |
+|--------|-------|
+| Macro F1 | 0.0% |
+| Weighted F1 | 0.0% |
+| Mean Reported Confidence | 0.0% |
+| Mean Actual Accuracy | 15.8% |
+| Confidence Correlation (r) — raw | 0.000 |
+| Confidence Correlation (r) — calibrated | -0.000 |
+| Mean Calibrated Confidence | 76.0% |
+| Mean Latency | 613ms |
+
+## Per-Field Metrics
+
+| Field | Precision | Recall | F1 | TP | FP | FN |
+|-------|-----------|--------|----|----|----|----|
+| credentialType | 0.0% | 0.0% | 0.0% | 0 | 0 | 100 |
+| issuerName | 0.0% | 0.0% | 0.0% | 0 | 0 | 93 |
+| issuedDate | 0.0% | 0.0% | 0.0% | 0 | 0 | 94 |
+| fieldOfStudy | 0.0% | 0.0% | 0.0% | 0 | 0 | 83 |
+| degreeLevel | 0.0% | 0.0% | 0.0% | 0 | 0 | 13 |
+| jurisdiction | 0.0% | 0.0% | 0.0% | 0 | 0 | 59 |
+| fraudSignals | 0.0% | 0.0% | 0.0% | 0 | 0 | 5 |
+| expiryDate | 0.0% | 0.0% | 0.0% | 0 | 0 | 33 |
+| licenseNumber | 0.0% | 0.0% | 0.0% | 0 | 0 | 12 |
+| accreditingBody | 0.0% | 0.0% | 0.0% | 0 | 0 | 23 |
+| creditHours | 0.0% | 0.0% | 0.0% | 0 | 0 | 2 |
+| creditType | 0.0% | 0.0% | 0.0% | 0 | 0 | 2 |
+
+## Per-Credential-Type Metrics
+
+| Type | Entries | Macro F1 | Weighted F1 | Confidence Corr |
+|------|---------|----------|-------------|-----------------|
+| CERTIFICATE | 14 | 0.0% | 0.0% | 0.000 |
+| DEGREE | 11 | 0.0% | 0.0% | 0.000 |
+| LICENSE | 10 | 0.0% | 0.0% | 0.000 |
+| BADGE | 8 | 0.0% | 0.0% | 0.000 |
+| PROFESSIONAL | 7 | 0.0% | 0.0% | 0.000 |
+| ATTESTATION | 7 | 0.0% | 0.0% | 0.000 |
+| SEC_FILING | 7 | 0.0% | 0.0% | 0.000 |
+| OTHER | 5 | 0.0% | 0.0% | 0.000 |
+| INSURANCE | 4 | 0.0% | 0.0% | 0.000 |
+| PATENT | 4 | 0.0% | 0.0% | 0.000 |
+| REGULATION | 4 | 0.0% | 0.0% | 0.000 |
+| MILITARY | 3 | 0.0% | 0.0% | 0.000 |
+| PUBLICATION | 3 | 0.0% | 0.0% | 0.000 |
+| LEGAL | 3 | 0.0% | 0.0% | 0.000 |
+| CLE | 2 | 0.0% | 0.0% | 0.000 |
+| FINANCIAL | 2 | 0.0% | 0.0% | 0.000 |
+| TRANSCRIPT | 2 | 0.0% | 0.0% | 0.000 |
+| RESUME | 2 | 0.0% | 0.0% | 0.000 |
+| MEDICAL | 1 | 0.0% | 0.0% | 0.000 |
+| IDENTITY | 1 | 0.0% | 0.0% | 0.000 |
+
+## Worst-Performing Entries (Bottom 10)
+
+| Entry | Type | Accuracy | Confidence | Errors |
+|-------|------|----------|------------|--------|
+| GD-015 | DEGREE | 0% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, fieldOfStudy: false_negative, degreeLevel: false_negative, jurisdiction: false_negative, fraudSignals: false_negative |
+| GD-435 | CERTIFICATE | 0% | 0% | credentialType: false_negative, fraudSignals: false_negative |
+| GD-939 | OTHER | 0% | 0% | credentialType: false_negative, fraudSignals: false_negative |
+| GD-1163 | BADGE | 0% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, expiryDate: false_negative, fieldOfStudy: false_negative, fraudSignals: false_negative |
+| GD-1177 | REGULATION | 0% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, jurisdiction: false_negative, fraudSignals: false_negative |
+| GD-043 | LICENSE | 11% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, expiryDate: false_negative, fieldOfStudy: false_negative, licenseNumber: false_negative, accreditingBody: false_negative, jurisdiction: false_negative |
+| GD-729 | CLE | 11% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, fieldOfStudy: false_negative, accreditingBody: false_negative, jurisdiction: false_negative, creditHours: false_negative, creditType: false_negative |
+| GD-491 | CLE | 13% | 0% | credentialType: false_negative, issuedDate: false_negative, fieldOfStudy: false_negative, accreditingBody: false_negative, jurisdiction: false_negative, creditHours: false_negative, creditType: false_negative |
+| GD-001 | DEGREE | 14% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, fieldOfStudy: false_negative, degreeLevel: false_negative, jurisdiction: false_negative |
+| GD-029 | DEGREE | 14% | 0% | credentialType: false_negative, issuerName: false_negative, issuedDate: false_negative, fieldOfStudy: false_negative, degreeLevel: false_negative, jurisdiction: false_negative |
+
+## Confidence Calibration
+
+| Confidence Bucket | Count | Mean Accuracy | Calibration Gap |
+|-------------------|-------|---------------|-----------------|
+| 0-30% | 100 | 15.8% | +0.8pp |
+| 30-50% | 0 | — | — |
+| 50-70% | 0 | — | — |
+| 70-90% | 0 | — | — |
+| 90-100% | 0 | — | — |
