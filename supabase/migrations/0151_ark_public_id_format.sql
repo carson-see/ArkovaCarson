@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 0136: ARK-{CATEGORY}-{ALPHANUM} public_id format for anchors
+-- Migration 0151: ARK-{CATEGORY}-{ALPHANUM} public_id format for anchors
 -- Date: 2026-03-30
 --
 -- PURPOSE
