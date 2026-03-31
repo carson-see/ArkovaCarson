@@ -22,17 +22,21 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
-### Recent Changes (2026-03-31, Session 22 — Nessie v5 Training + RunPod Deployment)
+### Recent Changes (2026-03-31, Session 22 — Nessie v5 Training + RunPod Eval + Prompt Fix)
 
-**v5 training submitted to Together AI. v4 model transferring to RunPod for fp16 eval.**
+**Nessie v5 trained, evaluated at fp16 on RunPod, and production inference updated to use condensed prompt.**
 
 | Change | Detail |
 |--------|--------|
-| Golden dataset phase 10 | 125 targeted gap-closure entries (GD-1481 to GD-1605): 20 RESUME, 15 CLE, 15 FRAUD, 20 JURISDICTION, 15 ACCREDITATION, 10 PATENT, 10 MILITARY, 10 PUBLICATION, 10 LICENSE_NUMBER. Total: 1,605 entries. |
-| v5 export script | `scripts/nessie-v5-export.ts` — converts golden dataset + v4 data to Together AI JSONL. Condensed 1.5K-char system prompt (vs 100K production). 25% general data mix. |
-| v5 fine-tune submitted | Together AI job `ft-b8594db6-80f9` — RUNNING. 1,903 train + 211 val examples, 2 epochs, LR=2e-4, LoRA rank=16/alpha=32, batch_size=8, base: Llama 3.1 8B Instruct. |
-| RunPod v4 deployment | Pod `lt8z6j4si2q59h` (A6000 48GB, $0.33-0.49/hr). Model transfer via tar pipe: 1.6GB/15GB. HF upload running in parallel. |
-| v4 4-bit eval baseline | Weighted F1=67.3%, macro F1=54.4%, mean confidence 86.9% vs actual 66.6%. Weakest: RESUME 33%, PATENT 48%, MILITARY 50%. |
+| Phase 10 golden dataset | +125 targeted gap-closure entries (RESUME, CLE, PATENT, MILITARY, fraud, jurisdiction, accreditation, PUBLICATION). Total: 1,605 entries across 10 phases. |
+| v5 training data export | `nessie-v5-export.ts` — 1,903 train + 211 val examples, condensed 1.5K-char system prompt, 25% general data mix |
+| v5 fine-tune job | Together AI `ft-b8594db6-80f9` → `carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v5-87e1d401` |
+| v4 fp16 eval | RunPod A6000 48GB: Weighted F1=65.6%, Macro F1=52.2%. Finding: fp16 ≈ 4-bit (no quality difference). |
+| **v5 fp16 eval** | **Weighted F1=87.2%, Macro F1=75.7%, Conf r=0.539, ECE=11.0%, Latency=1.5s** — +21.6pp over v4 |
+| Prompt template fix | Fine-tuned Nessie now uses condensed 1.5K-char prompt at inference (was 58K full prompt = 0% F1 due to mismatch) |
+| Default model updated | `DEFAULT_NESSIE_MODEL` → v5 (`arkova-nessie-v5-87e1d401`) |
+| v5 vs Gemini Golden | Only 3.2pp gap on weighted F1 (87.2% vs 90.4%), but v5 is 3.5x faster at zero cost |
+| v5 confidence calibration | r=0.539 EXCEEDS Gemini Golden (0.426) — better calibrated |
 
 ### Recent Changes (2026-03-31, Session 21 — UAT Systematic Sweep + Record Display Fixes)
 

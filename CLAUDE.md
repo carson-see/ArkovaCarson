@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-03-28 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 153 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | AI eval F1=82.1% | 320K+ public records | 166K+ SECURED anchors (mainnet)
+> **Stats:** 153 migrations | 2,825 tests | 200 stories (188 complete, 89%) | 24/24 audit findings resolved | AI eval F1=87.2% (Nessie v5) / 90.4% (Gemini Golden) | 320K+ public records | 166K+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -254,8 +254,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | GEO & SEO | 6/12 | 1 | 5 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 0/8 | 0 | 8 | 0% |
-| Nessie Model Training | 3/6 | 1 | 2 | 50% |
-| **Total** | **186/211** | **4/211** | **21/211** | **~88%** |
+| Nessie Model Training | 5/6 | 0 | 1 | 83% |
+| **Total** | **188/211** | **2/211** | **21/211** | **~89%** |
 
 ### Incomplete Stories
 
@@ -291,13 +291,13 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - ATT-01 through ATT-08. Employment/education verification workflows, batch API, ATS webhooks, credential portfolios.
 - See `docs/stories/18_ats_background_checks.md` and `docs/BACKLOG.md` for details
 
-**Nessie Model Training (6 not started):**
+**Nessie Model Training (1 not started):**
 - ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to Cloud Run)
 - ~~NMT-02 (P1): JSON comment stripping~~ — **DONE** (stripJsonComments utility, 447 tests)
 - ~~NMT-03 (P1): Nessie confidence recalibration~~ — **DONE** (piecewise linear calibration, 8 knots, PR #225)
-- NMT-04 (P1): Full-precision GPU eval — **BLOCKED** on RunPod platform-wide GPU provisioning outage
+- ~~NMT-04 (P1): Full-precision GPU eval~~ — **DONE** (v5: 87.2% F1, v4: 65.6% F1, fp16 ≈ 4-bit)
 - NMT-05 (P2): Upload model weights to HuggingFace — not started
-- NMT-06 (P2): Nessie v4 training data improvements — **IN PROGRESS** (pipeline built, distilling 2K examples)
+- ~~NMT-06 (P2): Nessie v5 training + condensed prompt~~ — **DONE** (v5 trained, 87.2% F1, condensed prompt deployed)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
 
 ### Remaining Production Blockers
@@ -459,5 +459,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-03-31 | 153 migrations | 2,825 tests | 200 stories (180 complete, 90%) | 24/24 audit findings resolved | Golden dataset: 1,330 entries | 130 few-shot examples_
+_Directive version: 2026-03-31 | 153 migrations | 2,825 tests | 200 stories (188 complete, 89%) | 24/24 audit findings resolved | Golden dataset: 1,605 entries | 130 few-shot examples | Nessie v5: 87.2% F1_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
