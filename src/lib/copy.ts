@@ -1339,6 +1339,7 @@ export const ORG_MEMBERSHIP_LABELS = {
   NO_ORG_FOUND: 'No matching organizations found. You can continue as an individual and join an organization later from Settings.',
   JOIN_BUTTON: 'Request to join',
   SKIP_BUTTON: 'Continue as individual',
+  SEARCH_BUTTON: 'Search',
 } as const;
 
 export const PLAN_SELECTOR_LABELS = {
@@ -1365,6 +1366,7 @@ export const PLAN_SELECTOR_LABELS = {
   PROFESSIONAL_BULK: 'Bulk CSV upload',
   CONTINUE: 'Continue',
   CURRENT_PLAN: 'Current plan',
+  RECOMMENDED: 'Recommended',
 } as const;
 
 export const REVOKED_EXPIRED_ACTIONS = {

@@ -108,7 +108,7 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
             {plan.recommended && (
               <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                 <span className="bg-primary text-primary-foreground text-xs font-medium px-3 py-1 rounded-full">
-                  Recommended
+                  {PLAN_SELECTOR_LABELS.RECOMMENDED}
                 </span>
               </div>
             )}
@@ -121,16 +121,14 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
               </div>
               <CardDescription>{plan.desc}</CardDescription>
               <p className="text-2xl font-bold mt-2">
-                {plan.price}
-                {plan.price !== '$0' && (
-                  <span className="text-sm font-normal text-muted-foreground line-through ml-2">
-                    {plan.price}
-                  </span>
-                )}
-                {plan.price !== '$0' && (
-                  <span className="text-sm font-medium text-primary ml-1">
-                    $0 beta
-                  </span>
+                {plan.price === '$0' ? (
+                  '$0'
+                ) : (
+                  <>
+                    <span className="text-muted-foreground line-through">{plan.price}</span>
+                    <span className="text-primary ml-2">$0</span>
+                    <span className="text-sm font-normal text-muted-foreground ml-1">beta</span>
+                  </>
                 )}
               </p>
             </CardHeader>

@@ -39,7 +39,8 @@ export function OrgMembershipQuestion({ onSkip, onJoinOrg, loading = false }: Re
     setSearching(true);
     setSearched(true);
 
-    const query = searchQuery.trim().toLowerCase();
+    // Sanitize query: escape Postgres LIKE wildcards to prevent injection
+    const query = searchQuery.trim().replace(/[%_\\]/g, '\\$&');
     const { data } = await supabase
       .from('organizations')
       .select('id, display_name, domain')
@@ -114,7 +115,7 @@ export function OrgMembershipQuestion({ onSkip, onJoinOrg, loading = false }: Re
               {searching ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                'Search'
+                ORG_MEMBERSHIP_LABELS.SEARCH_BUTTON
               )}
             </Button>
           </div>

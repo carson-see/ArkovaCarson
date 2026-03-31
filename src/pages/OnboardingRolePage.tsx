@@ -135,18 +135,20 @@ export function OnboardingRolePage() {
     }
   };
 
+  const handleOrgMembershipSkip = () => {
+    setShowOrgMembership(false);
+    setShowPlanSelector(true);
+  };
+
+  const handleOrgMembershipJoin = async (orgId: string) => {
+    const result = await joinOrgByDomain(orgId);
+    if (result) {
+      await refreshProfile();
+    }
+  };
+
   // BUG-11: Show org membership question for Individual users
   if (showOrgMembership && !showPlanSelector) {
-    const handleOrgMembershipSkip = () => {
-      setShowOrgMembership(false);
-      setShowPlanSelector(true);
-    };
-    const handleOrgMembershipJoin = async (orgId: string) => {
-      const result = await joinOrgByDomain(orgId);
-      if (result) {
-        await refreshProfile();
-      }
-    };
     return (
       <AuthLayout title="Welcome to Arkova" description="Organization membership">
         <div className="mb-8">
