@@ -254,8 +254,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | GEO & SEO | 6/12 | 1 | 5 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 0/8 | 0 | 8 | 0% |
-| Nessie Model Training | 0/6 | 0 | 6 | 0% |
-| **Total** | **183/211** | **3/211** | **25/211** | **~87%** |
+| Nessie Model Training | 3/6 | 1 | 2 | 50% |
+| **Total** | **186/211** | **4/211** | **21/211** | **~88%** |
 
 ### Incomplete Stories
 
@@ -292,12 +292,12 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - See `docs/stories/18_ats_background_checks.md` and `docs/BACKLOG.md` for details
 
 **Nessie Model Training (6 not started):**
-- NMT-01 (P0): Gemini Golden fine-tuned eval — HIGHEST PRIORITY, trained model sitting idle on Vertex AI
-- NMT-02 (P1): JSON comment stripping in extraction parser
-- NMT-03 (P1): Nessie confidence recalibration (ECE 44-57% → target <15%)
-- NMT-04 (P1): Full-precision GPU eval at fp16/bf16 (blocked on RunPod capacity)
-- NMT-05 (P2): Upload model weights to HuggingFace (3 empty repos)
-- NMT-06 (P2): Nessie v4 training data improvements
+- ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to Cloud Run)
+- ~~NMT-02 (P1): JSON comment stripping~~ — **DONE** (stripJsonComments utility, 447 tests)
+- ~~NMT-03 (P1): Nessie confidence recalibration~~ — **DONE** (piecewise linear calibration, 8 knots, PR #225)
+- NMT-04 (P1): Full-precision GPU eval — **BLOCKED** on RunPod platform-wide GPU provisioning outage
+- NMT-05 (P2): Upload model weights to HuggingFace — not started
+- NMT-06 (P2): Nessie v4 training data improvements — **IN PROGRESS** (pipeline built, distilling 2K examples)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
 
 ### Remaining Production Blockers

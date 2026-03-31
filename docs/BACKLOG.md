@@ -409,10 +409,10 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 |----|-------|----------|--------|-------------|--------|
 | ~~NMT-01~~ | ~~Gemini Golden fine-tuned eval~~ | ~~P0~~ | **COMPLETE** — Weighted F1=90.4% (+8.3pp vs baseline), recommend as prod default | Vertex AI access | Small |
 | ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
-| NMT-03 | Nessie confidence recalibration | P1 | NOT STARTED | NMT-01 analysis | Medium |
-| NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | NOT STARTED | RunPod/GPU capacity | Medium |
+| ~~NMT-03~~ | ~~Nessie confidence recalibration~~ | ~~P1~~ | **COMPLETE** — Piecewise linear calibration (8 knots), provider offset fix. PR #225 | NMT-01 | Medium |
+| NMT-04 | Full-precision GPU eval (fp16/bf16) | P1 | **BLOCKED** — RunPod platform-wide GPU outage (5 GPU types tried) | RunPod/GPU capacity | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
-| NMT-06 | Nessie v4 training data improvements | P2 | NOT STARTED | NMT-01, NMT-03 | Large |
+| NMT-06 | Nessie v4 training data improvements | P2 | **IN PROGRESS** — v4 pipeline built, distilling 2K examples via Gemini Golden | NMT-01, NMT-03 | Large |
 
 **Eval Results (2026-03-30):**
 

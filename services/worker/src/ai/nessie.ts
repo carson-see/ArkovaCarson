@@ -34,6 +34,7 @@ import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
 import { computeAdjustedConfidence } from './confidence-model.js';
 import { routeToDomain, isDomainRoutingEnabled } from './nessie-domain-router.js';
+import { calibrateNessieConfidence } from './eval/calibration.js';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000; // Higher base delay for serverless cold starts
@@ -134,9 +135,18 @@ export class NessieProvider implements IAIProvider {
         throw new Error('Extraction schema validation failed');
       }
 
+      // NMT-03: Apply Nessie-specific calibration to raw confidence.
+      // Nessie models are severely overconfident (85-90% reported, 34-46% actual).
+      // Calibration maps raw scores downward before grounding/fraud pipeline.
+      const calibratedConfidence = calibrateNessieConfidence(confidence);
+      logger.info(
+        { rawConfidence: confidence, calibratedConfidence, model: this.modelName },
+        'Nessie: applied confidence calibration (NMT-03)',
+      );
+
       return {
         fields: validated.data,
-        confidence,
+        confidence: calibratedConfidence,
         tokensUsed: response.usage?.total_tokens,
       };
     });

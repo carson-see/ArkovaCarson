@@ -85,8 +85,8 @@ const TYPE_CALIBRATION: Record<string, { offset: number; scale: number; fieldBon
  */
 const PROVIDER_OFFSETS: Record<string, number> = {
   gemini: 0.08,    // Gemini is ~20% underconfident, partially compensate
-  nessie: 0.03,    // Nessie is slightly underconfident on its training distribution
-  together: 0.05,  // Similar to Nessie
+  nessie: -0.15,   // NMT-03: Nessie is severely OVERconfident (85-90% reported, 34-46% actual)
+  together: 0.05,  // Together models similar to Gemini distribution
   mock: 0.00,
 };
 

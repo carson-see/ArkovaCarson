@@ -22,6 +22,21 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-03-30, Session 20 — Nessie v4 Training Pipeline + Best Practices Audit)
+
+**Built Nessie v4 training data pipeline based on comprehensive best-practices audit.**
+
+| Change | Detail |
+|--------|--------|
+| Best practices audit | Cross-referenced "Nessie-Training-Best-Practices" document against codebase. Identified 10 gaps: LR 40x too low, circular training data, no general mix, no dedup, hardcoded confidence, no base model baseline, no prompt template verification. |
+| v4 data module | `src/ai/training/nessie-v4-data.ts` — realistic confidence scoring, deduplication, validation (rejects 0.92 hardcode), general data mixing, LoRA-correct hyperparameters. 50 tests. |
+| v4 pipeline script | `scripts/nessie-v4-pipeline.ts` — Gemini Golden distillation, ground truth validation, domain-specific system prompts (SEC/Legal/Regulatory/Academic), JSONL export, Together AI training submission. |
+| Domain system prompts | SEC specialist (filing types, CIK, EDGAR), Legal specialist (court hierarchy, citations, precedent), Regulatory specialist (CFR structure, rulemaking), Academic specialist (DOI, accreditation, retractions). |
+| NMT-03 complete | Nessie confidence recalibration: piecewise linear calibration layer, 8 empirical knots, provider offset fix. PR #225. |
+| NMT-04 blocked | RunPod GPU provisioning platform-wide outage: 5 GPU types, secure+community cloud, 3 Docker images, 2 serverless endpoints — all failed. Queued jobs purged. |
+| Gemini Golden deployed | Vertex AI fine-tuned model live in Cloud Run. 90.4% F1 vs 82.1% baseline. |
+| Pipeline running | Distilling 500 examples/domain × 4 domains from Gemini Golden with validation. |
+
 ### Recent Changes (2026-03-30, Session 19 — Nessie Model Comparison Eval)
 
 **Three fine-tuned Nessie models evaluated on local Apple Silicon (MLX 4-bit quantized).**
