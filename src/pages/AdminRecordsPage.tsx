@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
+import { formatCredentialType } from '@/lib/copy';
 
 interface AdminRecord {
   id: string;
@@ -201,8 +202,8 @@ export function AdminRecordsPage() {
                     <div className="text-xs text-muted-foreground font-mono mb-1">{r.public_id}</div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="capitalize text-[10px]">
-                          {r.credential_type?.toLowerCase() ?? '—'}
+                        <Badge variant="outline" className="text-[10px]">
+                          {formatCredentialType(r.credential_type)}
                         </Badge>
                         <span className="font-mono truncate max-w-[120px]">{r.user_email ?? '—'}</span>
                       </div>
@@ -239,8 +240,8 @@ export function AdminRecordsPage() {
                           <RecordStatusBadge status={r.status} />
                         </td>
                         <td className="py-3 pr-4">
-                          <Badge variant="outline" className="capitalize text-xs">
-                            {r.credential_type?.toLowerCase() ?? '—'}
+                          <Badge variant="outline" className="text-xs">
+                            {formatCredentialType(r.credential_type)}
                           </Badge>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground text-xs font-mono">

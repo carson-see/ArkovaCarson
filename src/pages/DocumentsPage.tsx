@@ -436,7 +436,7 @@ function AllDocumentsList({
   items: UnifiedDocumentItem[];
 }) {
   if (items.length === 0) {
-    return <EmptyState title={DOCUMENTS_PAGE_LABELS.EMPTY_TITLE} description="No documents match your search." />;
+    return <EmptyState title={DOCUMENTS_PAGE_LABELS.EMPTY_TITLE} description={DOCUMENTS_PAGE_LABELS.EMPTY_DESC} />;
   }
 
   return (

@@ -16,6 +16,12 @@ export function AuthCallbackPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Strip URL fragment containing access_token to prevent exposure in Sentry breadcrumbs
+    const fragment = window.location.hash; // eslint-disable-line -- browser API, not user-facing
+    if (fragment && fragment.includes('access_token')) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+
     // Supabase automatically detects the hash fragment and exchanges it
     // for a session via onAuthStateChange. We listen for that event.
     const {

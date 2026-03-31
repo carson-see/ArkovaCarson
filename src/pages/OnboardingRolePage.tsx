@@ -151,9 +151,6 @@ export function OnboardingRolePage() {
 
   return (
     <AuthLayout title="Welcome to Arkova" description="Choose how you'll use the platform">
-      <div className="mb-8">
-        <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
-      </div>
       {error && (
         <Alert variant="destructive" className="mb-4">
           <AlertCircle className="h-4 w-4" />

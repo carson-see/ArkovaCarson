@@ -34,7 +34,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { SYSTEM_HEALTH_LABELS } from '@/lib/copy';
 
-import { isPlatformAdmin } from '@/lib/platform';
+import { isPlatformAdmin, getNetworkDisplayName } from '@/lib/platform';
 
 /** Auto-refresh interval in milliseconds */
 const AUTO_REFRESH_MS = 30_000;
@@ -242,7 +242,7 @@ export function SystemHealthPage() {
                   </Badge>
                 )}
                 <p className="text-sm text-muted-foreground">
-                  Network: <Badge variant="secondary" className="font-mono text-xs ml-1">{health.checks.bitcoin.network}</Badge>
+                  Network: <Badge variant="secondary" className="font-mono text-xs ml-1">{getNetworkDisplayName(health.checks.bitcoin.network)}</Badge>
                 </p>
               </div>
             ) : (

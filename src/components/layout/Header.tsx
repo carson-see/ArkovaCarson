@@ -23,17 +23,37 @@ import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
 
 /** Map pathname to a display title for the header */
+const PAGE_TITLES: Record<string, string> = {
+  [ROUTES.DASHBOARD]: NAV_LABELS.DASHBOARD,
+  [ROUTES.DOCUMENTS]: DOCUMENTS_PAGE_LABELS.PAGE_TITLE,
+  [ROUTES.RECORDS]: NAV_LABELS.MY_RECORDS,
+  [ROUTES.ORGANIZATION]: NAV_LABELS.ORGANIZATION,
+  [ROUTES.ORGANIZATIONS]: NAV_LABELS.ORGANIZATION,
+  [ROUTES.SETTINGS]: NAV_LABELS.SETTINGS,
+  [ROUTES.HELP]: NAV_LABELS.HELP,
+  [ROUTES.BILLING]: BILLING_LABELS.PAGE_TITLE,
+  [ROUTES.MY_CREDENTIALS]: MY_CREDENTIALS_LABELS.PAGE_TITLE,
+  [ROUTES.ATTESTATIONS]: 'Attestations',
+  [ROUTES.SEARCH]: NAV_LABELS.SEARCH,
+  [ROUTES.DEVELOPERS]: 'Developers',
+  [ROUTES.COMPLIANCE_DASHBOARD]: NAV_LABELS.COMPLIANCE,
+  [ROUTES.ADMIN_OVERVIEW]: 'Admin Overview',
+  [ROUTES.ADMIN_USERS]: 'Admin Users',
+  [ROUTES.ADMIN_ORGANIZATIONS]: 'Admin Organizations',
+  [ROUTES.ADMIN_RECORDS]: 'Admin Records',
+  [ROUTES.ADMIN_TREASURY]: NAV_LABELS.TREASURY,
+  [ROUTES.ADMIN_PIPELINE]: 'Pipeline',
+  [ROUTES.ADMIN_HEALTH]: 'System Health',
+  [ROUTES.ADMIN_PAYMENTS]: 'Payments',
+  [ROUTES.ADMIN_CONTROLS]: 'Platform Controls',
+};
+
 function getPageTitle(pathname: string): string {
-  if (pathname === ROUTES.DASHBOARD) return NAV_LABELS.DASHBOARD;
-  if (pathname === ROUTES.DOCUMENTS || pathname.startsWith('/documents')) return DOCUMENTS_PAGE_LABELS.PAGE_TITLE;
-  if (pathname === ROUTES.RECORDS || pathname.startsWith('/records/')) return NAV_LABELS.MY_RECORDS;
-  if (pathname === ROUTES.ORGANIZATION) return NAV_LABELS.ORGANIZATION;
-  if (pathname === ROUTES.ORGANIZATIONS || pathname.startsWith('/organizations/')) return NAV_LABELS.ORGANIZATION;
-  if (pathname === ROUTES.SETTINGS || pathname.startsWith('/settings/')) return NAV_LABELS.SETTINGS;
-  if (pathname === ROUTES.HELP) return NAV_LABELS.HELP;
-  if (pathname === ROUTES.BILLING || pathname.startsWith('/billing/')) return BILLING_LABELS.PAGE_TITLE;
-  if (pathname === ROUTES.MY_CREDENTIALS) return MY_CREDENTIALS_LABELS.PAGE_TITLE;
-  if (pathname === ROUTES.ATTESTATIONS) return 'Attestations';
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  // Prefix match for nested routes
+  for (const [route, title] of Object.entries(PAGE_TITLES)) {
+    if (pathname.startsWith(route + '/')) return title;
+  }
   return NAV_LABELS.DASHBOARD;
 }
 

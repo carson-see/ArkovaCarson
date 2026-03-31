@@ -45,13 +45,23 @@ describe('Sidebar', () => {
     expect(logoLink[0]).toHaveAttribute('href', '/search');
   });
 
-  it('renders simplified main navigation (max 5 items)', () => {
+  it('renders simplified main navigation', () => {
     renderSidebar();
     expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Documents').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Search').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Developers').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows Organization link only when orgName is provided (BUG-009)', () => {
+    renderSidebar({ orgName: 'Test Org' });
+    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('hides Organization link for Individual accounts (no orgName)', () => {
+    renderSidebar();
+    expect(screen.queryByText('Organization')).toBeNull();
   });
 
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
@@ -60,9 +70,8 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Billing & Plans')).toBeNull();
   });
 
-  it('does not render Developers or Compliance in main sidebar (moved to admin/dropdown)', () => {
+  it('does not render Compliance in main sidebar (admin section only)', () => {
     renderSidebar();
-    expect(screen.queryByText('Developers')).toBeNull();
     expect(screen.queryByText('Compliance')).toBeNull();
   });
 
