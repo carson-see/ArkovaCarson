@@ -212,13 +212,24 @@ describe('useAuth', () => {
     expect(mockSessionStorage.setItem).toHaveBeenCalledWith('arkova_signed_out', '1');
   });
 
-  it('signOut clears user and session state (UAT-LR1-02)', async () => {
+  it('signOut calls supabase signOut and redirects to /login (UAT-LR1-02)', async () => {
     const mockUser = { id: 'user-1', email: 'test@test.com' };
     mockGetSession.mockResolvedValue({
       data: { session: { user: mockUser } },
       error: null,
     });
     mockSignOut.mockResolvedValue({ error: null });
+
+    // BUG-4: signOut now does window.location.href = '/login' (hard redirect)
+    // instead of clearing React state, to avoid ErrorBoundary race conditions.
+    // Mock location.href setter to capture the redirect without jsdom navigation.
+    const originalLocation = window.location;
+    const mockLocation = { ...originalLocation, href: '' };
+    Object.defineProperty(window, 'location', {
+      value: mockLocation,
+      writable: true,
+      configurable: true,
+    });
 
     const { useAuth } = await import('./useAuth');
     const { result } = renderHook(() => useAuth());
@@ -231,8 +242,15 @@ describe('useAuth', () => {
       await result.current.signOut();
     });
 
-    expect(result.current.user).toBeNull();
-    expect(result.current.session).toBeNull();
+    expect(mockSignOut).toHaveBeenCalled();
+    expect(mockLocation.href).toBe('/login');
+
+    // Restore original location
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it('clearError resets error to null', async () => {
