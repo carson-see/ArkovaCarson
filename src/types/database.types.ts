@@ -1805,6 +1805,7 @@ export type Database = {
           ein_tax_id: string | null
           founded_date: string | null
           id: string
+          industry_tag: string | null
           legal_name: string
           linkedin_url: string | null
           location: string | null
@@ -1816,6 +1817,7 @@ export type Database = {
           parent_approved_at: string | null
           parent_org_id: string | null
           public_id: string | null
+          twitter_url: string | null
           updated_at: string
           verification_status: string
           website_url: string | null
@@ -1835,6 +1837,7 @@ export type Database = {
           ein_tax_id?: string | null
           founded_date?: string | null
           id?: string
+          industry_tag?: string | null
           legal_name: string
           linkedin_url?: string | null
           location?: string | null
@@ -1846,6 +1849,7 @@ export type Database = {
           parent_approved_at?: string | null
           parent_org_id?: string | null
           public_id?: string | null
+          twitter_url?: string | null
           updated_at?: string
           verification_status?: string
           website_url?: string | null
@@ -1865,6 +1869,7 @@ export type Database = {
           ein_tax_id?: string | null
           founded_date?: string | null
           id?: string
+          industry_tag?: string | null
           legal_name?: string
           linkedin_url?: string | null
           location?: string | null
@@ -1876,6 +1881,7 @@ export type Database = {
           parent_approved_at?: string | null
           parent_org_id?: string | null
           public_id?: string | null
+          twitter_url?: string | null
           updated_at?: string
           verification_status?: string
           website_url?: string | null
