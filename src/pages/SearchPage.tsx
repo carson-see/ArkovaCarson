@@ -12,7 +12,7 @@
  * @see UF-02, GAP-03
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import {
   Search, Loader2, Building2, Shield, CheckCircle, XCircle, User,
@@ -61,6 +61,13 @@ const EXAMPLE_QUERIES = [
 export function SearchPage() {
   const navigate = useNavigate();
   const standalone = isSearchSubdomain();
+
+  // BUG-014: Set page title for search.arkova.ai
+  useEffect(() => {
+    if (standalone) {
+      document.title = 'Arkova Search — Verify Credentials';
+    }
+  }, [standalone]);
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
   const [searchMode, setSearchMode] = useState<SearchMode>('issuers');
@@ -245,10 +252,19 @@ export function SearchPage() {
     e.target.value = '';
   }, [handleFileDrop]);
 
-  const handleExampleClick = (example: typeof EXAMPLE_QUERIES[0]) => {
+  const handleExampleClick = useCallback(async (example: typeof EXAMPLE_QUERIES[0]) => {
     setQuery(example.label);
     setSearchMode(example.mode);
-  };
+    // Auto-execute search (BUG-015)
+    const trimmed = example.label.trim();
+    if (!trimmed) return;
+    setHasSearched(true);
+    setSearchType('issuer');
+    await Promise.all([
+      searchIssuers(trimmed),
+      searchPerson(trimmed),
+    ]);
+  }, [searchIssuers, searchPerson]);
 
   const isSearching = searching || fpSearching || personSearching || verifyingFile;
   const displayError = error || fpError || personError;
@@ -414,24 +430,24 @@ export function SearchPage() {
           </Card>
         )}
 
-        {/* Issuer results (shown for text queries) */}
-        {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && (
+        {/* Issuer results (shown for text queries) — hidden when error displayed */}
+        {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && !displayError && (
           <div className="space-y-3">
-            {issuerResults.length > 0 ? (
+            {issuerResults.length > 0 && searchMode === 'issuers' ? (
               issuerResults.map((issuer, i) => (
                 <div key={issuer.org_id} className={`stagger-${Math.min(i + 2, 8)}`}>
                   <IssuerCard issuer={issuer} />
                 </div>
               ))
-            ) : (
+            ) : personResults.length === 0 && (
               <Card className="glass-card">
                 <CardContent className="py-12 text-center">
                   <Building2 className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
                   <p className="text-sm font-medium text-muted-foreground">
-                    {SEARCH_LABELS.NO_ISSUERS}
+                    {searchMode === 'credentials' ? SEARCH_LABELS.NO_RESULTS : SEARCH_LABELS.NO_ISSUERS}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {SEARCH_LABELS.NO_ISSUERS_DESC}
+                    {searchMode === 'credentials' ? SEARCH_LABELS.NO_RESULTS_DESC : SEARCH_LABELS.NO_ISSUERS_DESC}
                   </p>
                 </CardContent>
               </Card>
@@ -513,7 +529,7 @@ export function SearchPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — document integrity anchored on Bitcoin
+              Powered by Arkova — document integrity anchored on a public network
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">

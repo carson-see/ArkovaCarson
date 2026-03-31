@@ -33,6 +33,20 @@ import {
 } from '@/components/ui/select';
 import { ROUTES } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
+import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+
+/** Map raw credential_type DB value to display label */
+function formatCredentialType(raw: string | null): string {
+  if (!raw) return '—';
+  // Try exact match (uppercase DB enum)
+  const upper = raw.toUpperCase();
+  if (upper in CREDENTIAL_TYPE_LABELS) return CREDENTIAL_TYPE_LABELS[upper as keyof typeof CREDENTIAL_TYPE_LABELS];
+  // Try snake_case to UPPER_SNAKE
+  const snakeUpper = raw.replace(/-/g, '_').toUpperCase();
+  if (snakeUpper in CREDENTIAL_TYPE_LABELS) return CREDENTIAL_TYPE_LABELS[snakeUpper as keyof typeof CREDENTIAL_TYPE_LABELS];
+  // Fallback: title case
+  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
 
 interface AdminRecord {
   id: string;
@@ -201,8 +215,8 @@ export function AdminRecordsPage() {
                     <div className="text-xs text-muted-foreground font-mono mb-1">{r.public_id}</div>
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="capitalize text-[10px]">
-                          {r.credential_type?.toLowerCase() ?? '—'}
+                        <Badge variant="outline" className="text-[10px]">
+                          {formatCredentialType(r.credential_type)}
                         </Badge>
                         <span className="font-mono truncate max-w-[120px]">{r.user_email ?? '—'}</span>
                       </div>
@@ -239,8 +253,8 @@ export function AdminRecordsPage() {
                           <RecordStatusBadge status={r.status} />
                         </td>
                         <td className="py-3 pr-4">
-                          <Badge variant="outline" className="capitalize text-xs">
-                            {r.credential_type?.toLowerCase() ?? '—'}
+                          <Badge variant="outline" className="text-xs">
+                            {formatCredentialType(r.credential_type)}
                           </Badge>
                         </td>
                         <td className="py-3 pr-4 text-muted-foreground text-xs font-mono">

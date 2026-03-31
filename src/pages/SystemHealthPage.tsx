@@ -242,7 +242,7 @@ export function SystemHealthPage() {
                   </Badge>
                 )}
                 <p className="text-sm text-muted-foreground">
-                  Network: <Badge variant="secondary" className="font-mono text-xs ml-1">{health.checks.bitcoin.network}</Badge>
+                  Network: <Badge variant="secondary" className="font-mono text-xs ml-1">{health.checks.bitcoin.network === 'mainnet' ? 'Production Network' : health.checks.bitcoin.network === 'signet' || health.checks.bitcoin.network === 'testnet' || health.checks.bitcoin.network === 'testnet4' ? 'Test Environment' : health.checks.bitcoin.network}</Badge>
                 </p>
               </div>
             ) : (

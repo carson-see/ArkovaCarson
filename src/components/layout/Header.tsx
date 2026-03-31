@@ -34,6 +34,19 @@ function getPageTitle(pathname: string): string {
   if (pathname === ROUTES.BILLING || pathname.startsWith('/billing/')) return BILLING_LABELS.PAGE_TITLE;
   if (pathname === ROUTES.MY_CREDENTIALS) return MY_CREDENTIALS_LABELS.PAGE_TITLE;
   if (pathname === ROUTES.ATTESTATIONS) return 'Attestations';
+  if (pathname === ROUTES.SEARCH) return NAV_LABELS.SEARCH;
+  if (pathname === ROUTES.DEVELOPERS) return 'Developers';
+  // Admin pages (BUG-020)
+  if (pathname === ROUTES.COMPLIANCE_DASHBOARD) return NAV_LABELS.COMPLIANCE;
+  if (pathname === ROUTES.ADMIN_OVERVIEW) return 'Admin Overview';
+  if (pathname === ROUTES.ADMIN_USERS) return 'Admin Users';
+  if (pathname === ROUTES.ADMIN_ORGANIZATIONS) return 'Admin Organizations';
+  if (pathname === ROUTES.ADMIN_RECORDS) return 'Admin Records';
+  if (pathname === ROUTES.ADMIN_TREASURY) return NAV_LABELS.TREASURY;
+  if (pathname === ROUTES.ADMIN_PIPELINE) return 'Pipeline';
+  if (pathname === ROUTES.ADMIN_HEALTH) return 'System Health';
+  if (pathname === ROUTES.ADMIN_PAYMENTS) return 'Payments';
+  if (pathname === ROUTES.ADMIN_CONTROLS) return 'Platform Controls';
   return NAV_LABELS.DASHBOARD;
 }
 

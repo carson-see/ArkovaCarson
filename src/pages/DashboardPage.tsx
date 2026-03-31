@@ -34,6 +34,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
+import { isPlatformAdmin } from '@/lib/platform';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
@@ -208,8 +209,8 @@ export function DashboardPage() {
         <CleCreditWidget />
       </div>
 
-      {/* Getting started checklist (UF-10) */}
-      {profile?.role && (
+      {/* Getting started checklist (UF-10) — hidden for platform admins */}
+      {profile?.role && !isPlatformAdmin(user?.email) && (
         <div className="mb-8">
           <GettingStartedChecklist
             role={profile.role as 'ORG_ADMIN' | 'INDIVIDUAL'}

@@ -286,7 +286,9 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* Main Navigation — max 5 items */}
         <nav className="space-y-1 p-3">
-          {mainNavItems.map((item) => (
+          {mainNavItems
+            .filter((item) => item.to !== ROUTES.ORGANIZATIONS || orgName)
+            .map((item) => (
             <SidebarNavLink
               key={item.label}
               item={item}

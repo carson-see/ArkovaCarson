@@ -71,7 +71,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 font-medium">
                   <CheckCircle className="h-3.5 w-3.5 text-green-600" />
-                  Anchored on Bitcoin
+                  Anchored on Network
                 </span>
                 <span className="font-mono font-semibold text-green-600">{anchored.toLocaleString()}</span>
               </div>
@@ -85,7 +85,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 text-muted-foreground">
                   <Hash className="h-3.5 w-3.5" />
-                  Bitcoin Transactions
+                  Network Transactions
                 </span>
                 <span className="font-mono">{stats.distinctTxIds.toLocaleString()}</span>
               </div>

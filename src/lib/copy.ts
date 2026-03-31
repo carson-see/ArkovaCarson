@@ -759,7 +759,7 @@ export const NAV_POLISH_LABELS = {
   SIGN_OUT: 'Sign Out',
   COLLAPSE: 'Collapse',
   PUBLIC_PROFILE_DESC_ON: 'When enabled, your organization name appears in public search results and your credential registry is visible. Your email and internal data are never exposed.',
-  PUBLIC_PROFILE_DESC_OFF: 'Your organization is not visible in public search results.',
+  PUBLIC_PROFILE_DESC_OFF: 'Your profile is not visible in public search results.',
 } as const;
 
 // =============================================================================

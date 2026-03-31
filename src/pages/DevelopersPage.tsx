@@ -8,6 +8,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
 import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge, CreditCard, Terminal, DollarSign, Code2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
@@ -64,6 +65,7 @@ const PRICING_TABLE = [
 ];
 
 export function DevelopersPage() {
+  const { user } = useAuth();
   const [copied, setCopied] = useState(false);
   const [sdkTab, setSdkTab] = useState<'curl' | 'typescript' | 'python'>('curl');
   const [sdkCopied, setSdkCopied] = useState(false);
@@ -114,18 +116,29 @@ export function DevelopersPage() {
           </Link>
         </nav>
         <div className="flex items-center gap-4">
-          <Link
-            to={ROUTES.LOGIN}
-            className="text-xs uppercase tracking-wider text-[#bbc9cf] hover:text-[#00d4ff] transition-all font-semibold"
-          >
-            Sign In
-          </Link>
-          <Link
-            to={ROUTES.SIGNUP}
-            className="bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all"
-          >
-            Get Started
-          </Link>
+          {user ? (
+            <Link
+              to={ROUTES.DASHBOARD}
+              className="bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all"
+            >
+              Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                to={ROUTES.LOGIN}
+                className="text-xs uppercase tracking-wider text-[#bbc9cf] hover:text-[#00d4ff] transition-all font-semibold"
+              >
+                Sign In
+              </Link>
+              <Link
+                to={ROUTES.SIGNUP}
+                className="bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all"
+              >
+                Get Started
+              </Link>
+            </>
+          )}
         </div>
       </header>
 

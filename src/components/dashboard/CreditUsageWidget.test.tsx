@@ -1,7 +1,8 @@
 /**
  * CreditUsageWidget Tests
  *
- * @see MVP-25
+ * Beta mode: shows unlimited credits, no limits.
+ * @see MVP-25, feedback: no credit/quota limits during beta
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -54,31 +55,15 @@ describe('CreditUsageWidget', () => {
     mockCredits.error = null;
   });
 
-  it('displays credit balance', () => {
+  it('displays unlimited credits during beta', () => {
     const { getByText } = render(<CreditUsageWidget />);
-    expect(getByText('45')).toBeInTheDocument();
-    expect(getByText(/50 remaining/)).toBeInTheDocument();
+    expect(getByText('Unlimited')).toBeInTheDocument();
+    expect(getByText('Beta')).toBeInTheDocument();
   });
 
-  it('displays plan name badge', () => {
+  it('displays no credit limits message', () => {
     const { getByText } = render(<CreditUsageWidget />);
-    expect(getByText('Free')).toBeInTheDocument();
-  });
-
-  it('displays usage count', () => {
-    const { getByText } = render(<CreditUsageWidget />);
-    expect(getByText('5 used this period')).toBeInTheDocument();
-  });
-
-  it('shows low credits warning', () => {
-    mockCredits.current = {
-      ...mockCredits.current!,
-      balance: 5,
-      is_low: true,
-    };
-
-    const { getByText } = render(<CreditUsageWidget />);
-    expect(getByText(/Low credits/)).toBeInTheDocument();
+    expect(getByText('No credit limits during beta')).toBeInTheDocument();
   });
 
   it('renders nothing on error', () => {
@@ -93,7 +78,6 @@ describe('CreditUsageWidget', () => {
     mockCredits.loading = true;
 
     const { container } = render(<CreditUsageWidget />);
-    // Should render skeleton, not credit info
     expect(container.querySelector('[data-slot="skeleton"]') || container.querySelector('.animate-pulse')).toBeTruthy();
   });
 });
