@@ -1,5 +1,5 @@
 # Arkova Story Documentation Index
-_Last updated: 2026-03-30 (NMT-01 through NMT-06 added for Nessie Model Training)_
+_Last updated: 2026-03-31 (GEO index corrected: GEO-04/08/13 statuses + GEO-13–17 rows added; NMT statuses synced to CLAUDE.md)_
 
 ## Overview
 
@@ -36,13 +36,13 @@ For a new developer joining the project, read in this order:
 | INFRA | Infrastructure & Edge | 8 | 7 | 1 | 0 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
-| GEO | GEO & SEO Optimization | 12 | 6 | 2 | 4 | [15_geo_seo.md](./15_geo_seo.md) |
+| GEO | GEO & SEO Optimization | 17 | 7 | 3 | 7 | [15_geo_seo.md](./15_geo_seo.md) |
 | BETA | Beta Readiness | 13 | 13 | 0 | 0 | [16_beta_readiness.md](./16_beta_readiness.md) |
 | PH1.5 | Phase 1.5 Foundation | 16 | 15 | 1 | 0 | [17_phase1_5_foundation.md](./17_phase1_5_foundation.md) |
 | ATT | ATS & Background Checks | 8 | 0 | 0 | 8 | [18_ats_background_checks.md](./18_ats_background_checks.md) |
 | CML | Compliance Mapping Layer | 5 | 5 | 0 | 0 | [19_compliance_mapping.md](./19_compliance_mapping.md) |
 | VAI | Verifiable AI | 5 | 3 | 0 | 2 | [20_verifiable_ai.md](./20_verifiable_ai.md) |
-| NMT | Nessie Model Training | 6 | 0 | 0 | 6 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
+| NMT | Nessie Model Training | 6 | 5 | 0 | 1 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
 | **Total** | | **211** | **183** | **3** | **25** | |
 
 ### All Stories by ID
@@ -186,15 +186,20 @@ For a new developer joining the project, read in this order:
 | GEO-01 | SSR for Marketing Site | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-02 | Fix LinkedIn Entity Collision + Expand sameAs | PARTIAL | [GEO](./15_geo_seo.md) | — |
 | GEO-03 | Publish Privacy + Terms on Marketing Site | COMPLETE | [GEO](./15_geo_seo.md) | — |
-| GEO-04 | About Page + Team Bios + Person Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-04 | About Page + Team Bios + Person Schema | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-05 | Enhanced Schema (WebSite, speakable, AggregateOffer) | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-06 | Deploy Upgraded llms.txt | COMPLETE | [GEO](./15_geo_seo.md) | — |
 | GEO-07 | Fix Broken og:image + Complete Meta Tags | COMPLETE | [GEO](./15_geo_seo.md) | — |
-| GEO-08 | Content Expansion — 5 Core Pages | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-08 | Content Expansion — 5 Core Pages | PARTIAL | [GEO](./15_geo_seo.md) | — |
 | GEO-09 | Community & Brand Presence Launch | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-10 | IndexNow for Bing/Copilot | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-11 | YouTube Explainers + VideoObject Schema | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | GEO-12 | Security Headers + Technical SEO Hardening | COMPLETE | [GEO](./15_geo_seo.md) | — |
+| GEO-13 | On-Page SEO Critical Fixes (Title, H1, Meta, Keywords) | PARTIAL | [GEO](./15_geo_seo.md) | SCRUM-329 |
+| GEO-14 | Fix Soft 404s (Critical Indexing Issue) | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-15 | Image Alt Text + Product Screenshots | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-16 | Add Traction Numbers + Social Proof to Homepage | NOT STARTED | [GEO](./15_geo_seo.md) | — |
+| GEO-17 | Internal Linking + Contextual Cross-References | NOT STARTED | [GEO](./15_geo_seo.md) | — |
 | BETA-01 | Mempool Live Transaction Tracking | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-02 | Revocation Bitcoin Transaction | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-03 | Email Infrastructure (Resend) | COMPLETE | [BETA](./16_beta_readiness.md) | — |
@@ -208,12 +213,12 @@ For a new developer joining the project, read in this order:
 | BETA-11 | Mempool Explorer Link | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-12 | Immutable Description Field | COMPLETE | [BETA](./16_beta_readiness.md) | — |
 | BETA-13 | Realtime Anchor Status Subscriptions | COMPLETE | [BETA](./16_beta_readiness.md) | — |
-| NMT-01 | Gemini Golden Fine-Tuned Eval | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
-| NMT-02 | JSON Comment Stripping in Extraction Parser | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
-| NMT-03 | Nessie Confidence Recalibration | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
-| NMT-04 | Full-Precision GPU Eval | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-01 | Gemini Golden Fine-Tuned Eval | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-334 |
+| NMT-02 | JSON Comment Stripping in Extraction Parser | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-335 |
+| NMT-03 | Nessie Confidence Recalibration | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-336 |
+| NMT-04 | Full-Precision GPU Eval | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-337 |
 | NMT-05 | Upload Model Weights to HuggingFace | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
-| NMT-06 | Nessie v4 Training Data Improvements | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-06 | Nessie v5 Training + Condensed Prompt | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-339 |
 
 ## Bug Cross-Reference
 
