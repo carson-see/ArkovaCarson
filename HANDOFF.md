@@ -22,6 +22,19 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-03-30, Session 20 — Gemini Golden Deploy + NMT-03 Confidence Recalibration)
+
+**Gemini Golden tuned model deployed to production. Nessie confidence recalibration complete.**
+
+| Change | Detail |
+|--------|--------|
+| Gemini Golden deploy | `GEMINI_TUNED_MODEL=projects/270018525501/locations/us-central1/endpoints/481340352117080064` set in Cloud Run. Revision `arkova-worker-00217-p4n` serving 100%. Weighted F1: 90.4% (was 82.1%). |
+| NMT-03: Nessie calibration | Added `NESSIE_CALIBRATION_KNOTS` (8 knots) + `calibrateNessieConfidence()` in `calibration.ts`. Applied in `nessie.ts` before grounding/fraud pipeline. Maps 87% reported → ~41% calibrated. 9 new tests. |
+| Provider offset fix | `confidence-model.ts` `PROVIDER_OFFSETS.nessie` changed from +0.03 (wrong!) to -0.15. Nessie is overconfident, not underconfident. |
+| Jira sync | SCRUM-336 (NMT-03) → Done. SCRUM-312 (epic) → In Progress. SCRUM-337 (NMT-04) → Blocked. SCRUM-40/43 → To Do (were incorrectly In Progress). SCRUM-298 → To Do. |
+| Story docs | `docs/stories/21_nessie_model_training.md` updated: NMT-03 marked COMPLETE with implementation details. |
+| BACKLOG.md | NMT-03 marked complete, Gemini Golden deployment noted, NMT done count 2→3. |
+
 ### Recent Changes (2026-03-30, Session 19 — Nessie Model Comparison Eval)
 
 **Three fine-tuned Nessie models evaluated on local Apple Silicon (MLX 4-bit quantized).**

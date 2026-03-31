@@ -142,6 +142,67 @@ describe('calibrateConfidence', () => {
   });
 });
 
+describe('calibrateNessieConfidence', () => {
+  // NMT-03: Nessie models are severely overconfident (85-90% reported, 34-46% actual)
+  // These tests verify the Nessie-specific calibration curve maps scores DOWN.
+
+  it('maps raw 0.87 (typical Nessie output) to ~0.40 actual accuracy', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    const result = calibrateNessieConfidence(0.87);
+    expect(result).toBeGreaterThan(0.35);
+    expect(result).toBeLessThan(0.45);
+  });
+
+  it('maps raw 0.90 to ~0.45', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(0.90)).toBeCloseTo(0.45, 2);
+  });
+
+  it('maps raw 0.85 to ~0.38', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(0.85)).toBeCloseTo(0.38, 2);
+  });
+
+  it('caps at 0.58 for raw 1.0', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(1.0)).toBeCloseTo(0.58, 2);
+  });
+
+  it('maps raw 0.0 to floor 0.10', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(0.0)).toBeCloseTo(0.10, 2);
+  });
+
+  it('is monotonically non-decreasing', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    const values = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
+    const calibrated = values.map(calibrateNessieConfidence);
+    for (let i = 1; i < calibrated.length; i++) {
+      expect(calibrated[i]).toBeGreaterThanOrEqual(calibrated[i - 1]);
+    }
+  });
+
+  it('always returns values less than corresponding Gemini calibration', async () => {
+    const { calibrateNessieConfidence, calibrateConfidence } = await import('./calibration.js');
+    // Nessie calibrated confidence should always be lower than Gemini
+    // (Nessie is overconfident, Gemini is underconfident)
+    const testPoints = [0.5, 0.7, 0.8, 0.85, 0.9, 0.95, 1.0];
+    for (const raw of testPoints) {
+      expect(calibrateNessieConfidence(raw)).toBeLessThan(calibrateConfidence(raw));
+    }
+  });
+
+  it('negative values return floor', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(-0.5)).toBeCloseTo(0.10, 2);
+  });
+
+  it('values > 1 return cap', async () => {
+    const { calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateNessieConfidence(1.5)).toBeCloseTo(0.58, 2);
+  });
+});
+
 describe('formatCalibrationReport', () => {
   it('generates valid markdown', () => {
     const entries = [
