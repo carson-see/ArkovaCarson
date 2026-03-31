@@ -3,7 +3,7 @@
  *
  * Allows users to choose their subscription tier during onboarding.
  * During beta, all plans are free (banner shown).
- * Updates profile.subscription_tier on selection.
+ * Updates profile.subscription_tier on selection via set_onboarding_plan RPC.
  */
 
 import { useState } from 'react';
@@ -19,7 +19,7 @@ import {
 import { cn } from '@/lib/utils';
 import { PLAN_SELECTOR_LABELS } from '@/lib/copy';
 
-type PlanOption = 'free' | 'individual' | 'professional';
+type PlanOption = 'free' | 'starter' | 'professional';
 
 interface PlanSelectorProps {
   onSelect: (plan: PlanOption) => void;
@@ -38,7 +38,7 @@ const PLANS: {
     id: 'free',
     name: PLAN_SELECTOR_LABELS.FREE_NAME,
     desc: PLAN_SELECTOR_LABELS.FREE_DESC,
-    price: '$0',
+    price: PLAN_SELECTOR_LABELS.FREE_PRICE,
     features: [
       PLAN_SELECTOR_LABELS.FREE_RECORDS,
       PLAN_SELECTOR_LABELS.FREE_VERIFICATION,
@@ -46,14 +46,14 @@ const PLANS: {
     ],
   },
   {
-    id: 'individual',
-    name: PLAN_SELECTOR_LABELS.INDIVIDUAL_NAME,
-    desc: PLAN_SELECTOR_LABELS.INDIVIDUAL_DESC,
-    price: PLAN_SELECTOR_LABELS.INDIVIDUAL_PRICE,
+    id: 'starter',
+    name: PLAN_SELECTOR_LABELS.STARTER_NAME,
+    desc: PLAN_SELECTOR_LABELS.STARTER_DESC,
+    price: PLAN_SELECTOR_LABELS.STARTER_PRICE,
     features: [
-      PLAN_SELECTOR_LABELS.INDIVIDUAL_RECORDS,
-      PLAN_SELECTOR_LABELS.INDIVIDUAL_SUPPORT,
-      PLAN_SELECTOR_LABELS.INDIVIDUAL_DOWNLOADS,
+      PLAN_SELECTOR_LABELS.STARTER_RECORDS,
+      PLAN_SELECTOR_LABELS.STARTER_SUPPORT,
+      PLAN_SELECTOR_LABELS.STARTER_DOWNLOADS,
     ],
     recommended: true,
   },
@@ -78,6 +78,17 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
     onSelect(selected);
   };
 
+  const handleCardSelect = (planId: PlanOption) => {
+    if (!loading) setSelected(planId);
+  };
+
+  const handleCardKeyDown = (e: React.KeyboardEvent, planId: PlanOption) => {
+    if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      handleCardSelect(planId);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="text-center space-y-2">
@@ -95,15 +106,19 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3" role="radiogroup" aria-label={PLAN_SELECTOR_LABELS.TITLE}>
         {PLANS.map((plan) => (
           <Card
             key={plan.id}
+            role="radio"
+            aria-checked={selected === plan.id}
+            tabIndex={0}
             className={cn(
               'cursor-pointer transition-all hover:border-primary/50 relative',
               selected === plan.id && 'border-primary ring-2 ring-primary/20'
             )}
-            onClick={() => !loading && setSelected(plan.id)}
+            onClick={() => handleCardSelect(plan.id)}
+            onKeyDown={(e) => handleCardKeyDown(e, plan.id)}
           >
             {plan.recommended && (
               <div className="absolute -top-3 left-1/2 -translate-x-1/2">
@@ -121,13 +136,13 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
               </div>
               <CardDescription>{plan.desc}</CardDescription>
               <p className="text-2xl font-bold mt-2">
-                {plan.price === '$0' ? (
-                  '$0'
+                {plan.price === PLAN_SELECTOR_LABELS.FREE_PRICE ? (
+                  PLAN_SELECTOR_LABELS.FREE_PRICE
                 ) : (
                   <>
                     <span className="text-muted-foreground line-through">{plan.price}</span>
-                    <span className="text-primary ml-2">$0</span>
-                    <span className="text-sm font-normal text-muted-foreground ml-1">beta</span>
+                    <span className="text-primary ml-2">{PLAN_SELECTOR_LABELS.FREE_PRICE}</span>
+                    <span className="text-sm font-normal text-muted-foreground ml-1">{PLAN_SELECTOR_LABELS.BETA_LABEL}</span>
                   </>
                 )}
               </p>
@@ -155,7 +170,7 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
         {loading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Setting up...
+            {PLAN_SELECTOR_LABELS.SETTING_UP}
           </>
         ) : (
           <>

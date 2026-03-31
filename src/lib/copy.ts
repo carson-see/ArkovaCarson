@@ -358,16 +358,26 @@ export const RECORDS_LIST_LABELS = {
 export const ONBOARDING_LABELS = {
   STEP_ROLE: 'Account Type',
   STEP_ORG: 'Organization',
+  STEP_PLAN: 'Choose Plan',
   STEP_CONFIRM: 'Confirmation',
   STEP_ROLE_DESC: 'Choose your account type',
   STEP_ORG_DESC: 'Set up your organization',
+  STEP_PLAN_DESC: 'Select your subscription plan',
   STEP_CONFIRM_DESC: 'Review and confirm',
   STEPPER_ARIA_LABEL: 'Onboarding progress',
+  WELCOME_TITLE: 'Welcome to Arkova',
+  ORG_MEMBERSHIP_DESC: 'Organization membership',
+  CHOOSE_PLAN_DESC: 'Choose your plan',
+  FOUND_ORG_DESC: 'We found your organization',
+  CHOOSE_ROLE_DESC: 'Choose how you\'ll use the platform',
+  ERROR_GENERIC: 'Something went wrong. Please try again.',
+  ERROR_ONBOARDING: 'Something went wrong during onboarding. Please try again.',
 } as const;
 
 export const ONBOARDING_STEPS = [
   { label: ONBOARDING_LABELS.STEP_ROLE, description: ONBOARDING_LABELS.STEP_ROLE_DESC },
   { label: ONBOARDING_LABELS.STEP_ORG, description: ONBOARDING_LABELS.STEP_ORG_DESC },
+  { label: ONBOARDING_LABELS.STEP_PLAN, description: ONBOARDING_LABELS.STEP_PLAN_DESC },
   { label: ONBOARDING_LABELS.STEP_CONFIRM, description: ONBOARDING_LABELS.STEP_CONFIRM_DESC },
 ] as const;
 
@@ -1351,12 +1361,12 @@ export const PLAN_SELECTOR_LABELS = {
   FREE_RECORDS: '3 records per month',
   FREE_VERIFICATION: 'Basic verification',
   FREE_PROOF: '7-day proof access',
-  INDIVIDUAL_NAME: 'Individual',
-  INDIVIDUAL_DESC: 'For personal document security',
-  INDIVIDUAL_PRICE: '$10/mo',
-  INDIVIDUAL_RECORDS: '10 records per month',
-  INDIVIDUAL_SUPPORT: 'Basic support',
-  INDIVIDUAL_DOWNLOADS: 'Proof downloads',
+  STARTER_NAME: 'Starter',
+  STARTER_DESC: 'For personal document security',
+  STARTER_PRICE: '$10/mo',
+  STARTER_RECORDS: '10 records per month',
+  STARTER_SUPPORT: 'Basic support',
+  STARTER_DOWNLOADS: 'Proof downloads',
   PROFESSIONAL_NAME: 'Professional',
   PROFESSIONAL_DESC: 'For growing businesses',
   PROFESSIONAL_PRICE: '$100/mo',
@@ -1367,6 +1377,9 @@ export const PLAN_SELECTOR_LABELS = {
   CONTINUE: 'Continue',
   CURRENT_PLAN: 'Current plan',
   RECOMMENDED: 'Recommended',
+  SETTING_UP: 'Setting up...',
+  FREE_PRICE: '$0',
+  BETA_LABEL: 'beta',
 } as const;
 
 export const REVOKED_EXPIRED_ACTIONS = {
