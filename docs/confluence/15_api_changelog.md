@@ -1,6 +1,6 @@
 # API Changelog & Versioning
 
-> Last updated: 2026-03-23
+> Last updated: 2026-03-31
 
 ## Versioning Policy
 
@@ -10,6 +10,36 @@ Arkova follows a **stable-first** API versioning strategy:
 - **Breaking changes** require a new major version (`/api/v2/`) with a 12-month deprecation period (Constitution 1.8)
 - **Additive changes** (new nullable fields, new endpoints) are shipped without version bump
 - **Frozen schemas:** The `VerificationResult` schema is frozen. Fields cannot be removed or renamed.
+
+## v1.3.1 — 2026-03-31
+
+### Platform Release: UAT Sweep + AI Training + Record Display Fixes
+
+**PRs:** #225 (NMT-03), #226 (NMT-06), #228 (record-display-bugs), #229 (uat-sweep)
+
+### Database Migrations (0148–0151)
+- **0148:** Fix `lookup_org_by_email_domain` and `join_org_by_domain` RPCs referencing non-existent `deleted_at` column on organizations table
+- **0149:** Fix attestations_select RLS recursion — introduced `get_user_org_id()` SECURITY DEFINER helper function to break recursive RLS evaluation
+- **0150:** Add search performance indexes — trigram GIN on `anchors.filename` and `anchors.description`, btree on `credential_type`, partial index on `(created_at DESC) WHERE status IN ('SECURED','SUBMITTED')`
+- **0151:** New ARK-prefixed public_id format (`ARK-{CATEGORY}-{6_ALPHANUM}`) for new anchors — categorizes by pipeline source and credential type
+
+### Frontend Fixes (20 bugs from UAT sweep)
+- Search page: auto-execute example queries, tab-aware empty state, terminology compliance (Constitution 1.3)
+- Credit widget: "Unlimited / Beta" display (no-limits-during-beta policy)
+- Sidebar: hide Organization nav for Individual accounts
+- Header: refactored to declarative PAGE_TITLES map
+- Developers page: login-state-aware CTA buttons
+- Record display: ARK-prefixed public IDs, EDGAR source URLs, description display, email exposure fix
+- Admin records: shared `formatCredentialType()` utility
+- System health: `getNetworkDisplayName()` for terminology compliance
+- Onboarding: removed stepper, CSP frame-ancestors cleanup
+
+### AI Training (NMT-03, NMT-06)
+- Nessie confidence recalibration (ECE reduction)
+- Nessie v4 training data pipeline with improved data generation
+
+### No API Changes
+This release contains no changes to the public verification API. All modifications are internal platform improvements, database performance, and UI fixes.
 
 ## v1.3.0 — 2026-03-23
 

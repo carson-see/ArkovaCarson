@@ -22,6 +22,26 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-03-31, Session 21 — UAT Systematic Sweep + Record Display Fixes)
+
+**Comprehensive UAT sweep resolving 20 frontend bugs + 3 backend migrations + AI training pipeline.**
+
+| Change | Detail |
+|--------|--------|
+| UAT sweep | Systematic review of all user-facing pages at desktop + mobile. 20 frontend bugs resolved, 6 triaged as non-code-fixable. |
+| Migration 0148 | Fix `lookup_org_by_email_domain` and `join_org_by_domain` RPCs referencing non-existent `deleted_at` column |
+| Migration 0149 | Fix attestations_select RLS recursion with `get_user_org_id()` SECURITY DEFINER helper |
+| Migration 0150 | Add trigram GIN indexes on `anchors.filename`/`description`, btree on `credential_type`, partial index for search |
+| Migration 0151 | ARK-prefixed public_id format (`ARK-{CATEGORY}-{6_ALPHANUM}`) for new anchors |
+| Shared utilities | `formatCredentialType()` in copy.ts, `getNetworkDisplayName()` in platform.ts |
+| Terminology compliance | Constitution 1.3 fixes across SearchPage, AnchorStats, SystemHealthPage |
+| Credit widget | Shows "Unlimited / Beta" per no-limits-during-beta policy |
+| Record display | EDGAR source URLs, description display, email exposure fix, ARK-prefixed IDs |
+| NMT-03 merged | Nessie confidence recalibration |
+| NMT-06 merged | Nessie v4 training data pipeline |
+| PRs merged | #225, #226, #228, #229 — all CI green, squash-merged to main |
+| Branches cleaned | All 4 feature branches deleted from remote + local |
+
 ### Recent Changes (2026-03-30, Session 20 — Nessie v4 Training Pipeline + Best Practices Audit)
 
 **Built Nessie v4 training data pipeline based on comprehensive best-practices audit.**

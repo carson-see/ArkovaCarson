@@ -1,5 +1,5 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-03-24 | Story: P1-TS-03 through P6-TS-06, migration 0107 (org RLS recursion fix)_
+_Last updated: 2026-03-31 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix)_
 
 ## Overview
 
@@ -27,6 +27,8 @@ Used by multiple RLS policies. Originally `SECURITY INVOKER` (migration 0009), u
 | `get_flag(text)` | `boolean` | DEFINER | 0021, 0102 | Safe switchboard flag lookup with default (param renamed p_flag_key in 0102) |
 
 > **Session 16 Fix (0107):** `is_org_admin_of()` and `get_user_org_ids()` were originally `SECURITY INVOKER` in migration 0087. This caused circular RLS when called from `organizations` policies that check `org_members` (which has its own self-referencing RLS). Migration 0107 changes both to `SECURITY DEFINER SET search_path = public`. This was the root cause of org settings silently failing to save.
+
+> **UAT Sweep Fix (0149):** `attestations_select` policy had inline `SELECT org_id FROM profiles WHERE id = auth.uid()` which caused recursive RLS evaluation. Migration 0149 replaces this with the existing `get_user_org_id()` SECURITY DEFINER helper. Also fixes `lookup_org_by_email_domain` and `join_org_by_domain` RPCs (0148) that referenced a non-existent `deleted_at` column on organizations.
 
 ## Access Control by Table
 

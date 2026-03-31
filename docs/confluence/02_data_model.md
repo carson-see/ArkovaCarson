@@ -1,5 +1,5 @@
 # Data Model
-_Last updated: 2026-03-29 | Migrations: 0001-0136 (gaps at 0033+0078, 0068 split into 0068a/0068b, 139 files). All applied to production through 0135._
+_Last updated: 2026-03-31 | Migrations: 0001-0151 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0147 skipped, 143 files). All applied to production through 0135. Migrations 0136-0151 pending production deployment._
 
 ## Overview
 
