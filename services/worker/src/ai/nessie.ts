@@ -27,7 +27,7 @@ import type {
   ProviderHealth,
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
-import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
+import { buildExtractionPrompt } from './prompts/extraction.js';
 import { stripJsonComments } from './strip-json-comments.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';

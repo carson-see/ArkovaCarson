@@ -181,12 +181,15 @@ export function useAuth(): AuthState & AuthActions {
     if (error) {
       sessionStorage.removeItem('arkova_signed_out');
       setError(error.message);
+      setLoading(false);
+      return;
     }
 
-    // Explicitly clear user/session to prevent stale state
-    setUser(null);
-    setSession(null);
-    setLoading(false);
+    // BUG-4 fix: Use hard redirect instead of relying on callers to navigate().
+    // React state teardown (profile/user → null) races with component re-render,
+    // causing ErrorBoundary "Something went wrong" before navigate() takes effect.
+    // Hard redirect avoids the React re-render entirely.
+    window.location.href = '/login';
   }, []);
 
   const clearError = useCallback(() => {
