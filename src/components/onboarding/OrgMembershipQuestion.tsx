@@ -4,6 +4,9 @@
  * Asks Individual users during onboarding if they belong to an organization.
  * If yes, allows searching for and requesting to join an existing org.
  * If no, continues to plan selection.
+ *
+ * Uses SECURITY DEFINER RPC (search_organizations_public) to bypass RLS —
+ * new users have no org membership so direct queries are blocked.
  */
 
 import { useState } from 'react';
@@ -39,15 +42,14 @@ export function OrgMembershipQuestion({ onSkip, onJoinOrg, loading = false }: Re
     setSearching(true);
     setSearched(true);
 
-    // Sanitize query: escape Postgres LIKE wildcards to prevent injection
-    const query = searchQuery.trim().replace(/[%_\\]/g, '\\$&');
-    const { data } = await supabase
-      .from('organizations')
-      .select('id, display_name, domain')
-      .or(`display_name.ilike.%${query}%,domain.ilike.%${query}%`)
-      .limit(5);
+    // Use SECURITY DEFINER RPC to bypass RLS — new users have no org membership
+    // so organizations_select_member policy blocks direct queries.
+    // RPC: migration 0153. Types not yet regenerated, hence the cast.
+    const { data } = await (supabase.rpc as CallableFunction)(
+      'search_organizations_public', { p_query: searchQuery.trim() },
+    );
 
-    setResults((data as OrgSearchResult[]) ?? []);
+    setResults((data as unknown as OrgSearchResult[]) ?? []);
     setSearching(false);
   };
 

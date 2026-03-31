@@ -6,8 +6,9 @@
  *
  * Flow:
  *   1. Role selection (Individual vs Organization)
- *   2. Plan selection (for Individual — BUG-1 fix)
- *   3. Org match prompt (if email domain matches an existing org)
+ *   2. Org match prompt (if email domain matches an existing org)
+ *   3. Org membership question (for Individual — BUG-11)
+ *   4. Plan selection (for Individual — BUG-1 fix)
  *
  * Domain auto-association: If the user's email domain matches an existing org,
  * we show a prompt to join that org instead of creating a new one.
@@ -30,7 +31,14 @@ import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useOnboarding } from '@/hooks/useOnboarding';
 import { supabase } from '@/lib/supabase';
-import { ONBOARDING_STEPS } from '@/lib/copy';
+import { ONBOARDING_STEPS, ONBOARDING_LABELS } from '@/lib/copy';
+
+/** Maps UI plan IDs to DB subscription_tier CHECK constraint values */
+const PLAN_TO_TIER: Record<string, string> = {
+  free: 'free',
+  starter: 'starter',
+  professional: 'professional',
+};
 
 export function OnboardingRolePage() {
   const { user } = useAuth();
@@ -91,19 +99,23 @@ export function OnboardingRolePage() {
   };
 
   // BUG-1: Handle plan selection for Individual users
-  const handlePlanSelect = async (plan: 'free' | 'individual' | 'professional') => {
+  // Uses set_onboarding_plan RPC (migration 0153) to bypass
+  // protect_privileged_profile_fields trigger and CHECK constraint.
+  const handlePlanSelect = async (plan: string) => {
     if (!pendingRole) return;
     setPlanLoading(true);
 
     try {
       const result = await setRole(pendingRole);
       if (result) {
-        const { error: updateError } = await supabase
-          .from('profiles')
-          .update({ subscription_tier: plan })
-          .eq('id', user?.id ?? '');
+        const tier = PLAN_TO_TIER[plan] ?? 'free';
+        // Use SECURITY DEFINER RPC to bypass protect_privileged_profile_fields trigger.
+        // RPC: migration 0153. Types not yet regenerated, hence the cast.
+        const { error: planError } = await (supabase.rpc as CallableFunction)(
+          'set_onboarding_plan', { p_tier: tier },
+        );
 
-        if (updateError) throw updateError;
+        if (planError) throw planError;
         await refreshProfile();
       }
     } catch (err) {
@@ -156,14 +168,14 @@ export function OnboardingRolePage() {
   // BUG-11: Show org membership question for Individual users
   if (showOrgMembership && !showPlanSelector) {
     return (
-      <AuthLayout title="Welcome to Arkova" description="Organization membership">
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.ORG_MEMBERSHIP_DESC}>
         <div className="mb-8">
-          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
+          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={1} />
         </div>
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>Something went wrong. Please try again.</AlertDescription>
+            <AlertDescription>{ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
           </Alert>
         )}
         <OrgMembershipQuestion
@@ -178,14 +190,14 @@ export function OnboardingRolePage() {
   // BUG-1: Show plan selector for Individual users
   if (showPlanSelector) {
     return (
-      <AuthLayout title="Welcome to Arkova" description="Choose your plan">
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.CHOOSE_PLAN_DESC}>
         <div className="mb-8">
-          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={1} />
+          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={2} />
         </div>
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>Something went wrong. Please try again.</AlertDescription>
+            <AlertDescription>{ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
           </Alert>
         )}
         <PlanSelector onSelect={handlePlanSelect} loading={loading || planLoading} />
@@ -196,11 +208,11 @@ export function OnboardingRolePage() {
   // Show org match prompt
   if (showOrgMatch && orgMatch?.found) {
     return (
-      <AuthLayout title="Welcome to Arkova" description="We found your organization">
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.FOUND_ORG_DESC}>
         {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>Something went wrong. Please try again.</AlertDescription>
+            <AlertDescription>{ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
           </Alert>
         )}
         <Card className="max-w-lg mx-auto">
@@ -250,11 +262,11 @@ export function OnboardingRolePage() {
   }
 
   return (
-    <AuthLayout title="Welcome to Arkova" description="Choose how you'll use the platform">
+    <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.CHOOSE_ROLE_DESC}>
       {error && (
         <Alert variant="destructive" className="mb-4">
           <AlertCircle className="h-4 w-4" />
-          <AlertDescription>Something went wrong during onboarding. Please try again.</AlertDescription>
+          <AlertDescription>{ONBOARDING_LABELS.ERROR_ONBOARDING}</AlertDescription>
         </Alert>
       )}
       <RoleSelector onSelect={handleRoleSelect} loading={loading} />
