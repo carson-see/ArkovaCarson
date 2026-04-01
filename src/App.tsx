@@ -79,6 +79,7 @@ const PublicAttestationVerifyPage = React.lazy(() => import('@/pages/PublicAttes
 const StateBarApiPage = React.lazy(() => import('@/pages/StateBarApiPage').then(m => ({ default: m.StateBarApiPage })));
 const ApiSandboxPage = React.lazy(() => import('@/pages/ApiSandboxPage').then(m => ({ default: m.ApiSandboxPage })));
 const PublicPortfolioPage = React.lazy(() => import('@/pages/PublicPortfolioPage').then(m => ({ default: m.PublicPortfolioPage })));
+const ActivateAccountPage = React.lazy(() => import('@/pages/ActivateAccountPage').then(m => ({ default: m.ActivateAccountPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -176,6 +177,7 @@ export function App() {
           <Route path={ROUTES.API_SANDBOX} element={<RouteErrorBoundary section="API Sandbox"><ApiSandboxPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.CLE_API} element={<RouteErrorBoundary section="CLE API"><StateBarApiPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.PORTFOLIO} element={<RouteErrorBoundary section="Portfolio"><PublicPortfolioPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.ACTIVATE} element={<ActivateAccountPage />} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />

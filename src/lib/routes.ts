@@ -24,6 +24,7 @@ export const ROUTES = {
   DEVELOPERS: '/developers',
   API_SANDBOX: '/developers/sandbox',
   CLE_API: '/cle',
+  ACTIVATE: '/activate',
 
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',

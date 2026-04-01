@@ -149,7 +149,7 @@ export function OrgRegistryTable({
 
     let query = supabase
       .from('anchors')
-      .select('*', { count: 'exact' })
+      .select('*', { count: 'estimated' })
       .eq('org_id', orgId)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
