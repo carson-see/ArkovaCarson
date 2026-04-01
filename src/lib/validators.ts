@@ -309,6 +309,13 @@ export type AuditEventCreate = z.infer<typeof AuditEventCreateSchema>;
 // =============================================================================
 
 /**
+ * EIN (Employer Identification Number) regex
+ * Format: XX-XXXXXXX (2 digits, hyphen, 7 digits)
+ * Standard US federal tax ID issued by the IRS.
+ */
+const EIN_REGEX = /^\d{2}-\d{7}$/;
+
+/**
  * Domain regex: lowercase letters/numbers, dots, hyphens, valid TLD
  */
 const DOMAIN_REGEX = /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,}$/;
@@ -323,6 +330,28 @@ const safeUrlSchema = z
   .refine((val) => /^https?:\/\//i.test(val), 'URL must use https:// or http://')
   .optional()
   .nullable();
+
+/**
+ * Schema for validating an EIN (Employer Identification Number)
+ * Accepts XX-XXXXXXX format (e.g., 12-3456789)
+ */
+export const EinSchema = z
+  .string()
+  .regex(EIN_REGEX, 'EIN must be in XX-XXXXXXX format (e.g., 12-3456789)')
+  .optional()
+  .nullable();
+
+export type Ein = z.infer<typeof EinSchema>;
+
+/**
+ * Validate an EIN string, returning normalized value or null if invalid/empty
+ */
+export function validateEin(ein: string | null | undefined): string | null {
+  if (!ein) return null;
+  const trimmed = ein.trim();
+  if (!EIN_REGEX.test(trimmed)) return null;
+  return trimmed;
+}
 
 export const OrganizationUpdateSchema = z.object({
   display_name: z

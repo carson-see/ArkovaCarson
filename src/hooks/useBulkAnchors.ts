@@ -40,8 +40,9 @@ interface UseBulkAnchorsReturn {
   cancel: () => void;
 }
 
-// Process in batches to show progress
-const BATCH_SIZE = 50;
+// Process in batches of 10 to prevent browser/server timeouts
+// and provide fine-grained progress updates (SCRUM-IDT-TASK2)
+const BATCH_SIZE = 10;
 
 export function useBulkAnchors(): UseBulkAnchorsReturn {
   const { canCreateCount, remaining, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
@@ -98,6 +99,8 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
             return null;
           }
 
+          const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+          const totalBatches = Math.ceil(records.length / BATCH_SIZE);
           const batch = records.slice(i, i + BATCH_SIZE);
           const batchData = batch.map(r => ({
             fingerprint: r.fingerprint,
@@ -127,10 +130,17 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
             }
           }
 
-          // Update progress
+          // Update progress + report per-batch completion
           const processed = Math.min(i + BATCH_SIZE, records.length);
           setProcessedCount(processed);
           setProgress((processed / records.length) * 100);
+
+          // Per-batch progress log (visible in browser console)
+          console.info(
+            `[BulkUpload] Batch ${batchNumber}/${totalBatches} complete — ` +
+            `records ${i + 1}–${processed} of ${records.length} | ` +
+            `created: ${data?.created ?? 0}, skipped: ${data?.skipped ?? 0}, failed: ${data?.failed ?? 0}`
+          );
         }
 
         const finalResult: BulkCreateResult = {

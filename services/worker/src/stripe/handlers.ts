@@ -147,6 +147,41 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     details: `Subscription created: ${session.subscription}`,
   });
 
+  // Propagate subscription activation to org: set verification_status = VERIFIED
+  // and mark the admin profile as is_verified = true (Verified Admin badge).
+  const { data: adminProfile } = await db
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (adminProfile?.org_id) {
+    const orgId = adminProfile.org_id;
+
+    // Mark org as subscription-verified (VERIFIED status enables OrgVerifiedBadge)
+    await db
+      .from('organizations')
+      .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
+      .eq('id', orgId);
+
+    // Grant Verified Admin permission to the admin profile
+    await db
+      .from('profiles')
+      .update({ is_verified: true })
+      .eq('id', userId);
+
+    // Audit the org verification grant
+    await db.from('audit_events').insert({
+      event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
+      event_category: 'ORG',
+      actor_id: userId,
+      org_id: orgId,
+      details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
+    });
+
+    logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
+  }
+
   logger.info({ userId, subscriptionId: session.subscription, planId }, 'Subscription activated');
 }
 
