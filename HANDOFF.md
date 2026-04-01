@@ -12,7 +12,7 @@
 
 **Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 180/200 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825 tests** (1,101 frontend + 1,724 worker, all green). 153 migration files (0001-0152, gaps at 0033+0078, 0068 split, 0088 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=82.1%, golden dataset 1,330 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 195K+ anchors (166K SECURED, 28K SUBMITTED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3). **All migrations through 0152 applied to production.**
+**Overall progress:** 191/211 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024, gaps at 0033+0078, 0068 split, 0088 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=87.2% Nessie v5, golden dataset 1,605 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 1.4M+ anchors (166K SECURED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3). **All migrations through 0157 applied to production.** PRs merged this session: #235, #236, #237.
 
 ### Open Blockers
 
@@ -21,6 +21,23 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
+
+**Production UAT completed for Tasks 4-5 + Bulk Upload. Critical RLS performance fix applied to 1.4M row anchors table. Three PRs merged (#235, #236, #237).**
+
+| Change | Detail |
+|--------|--------|
+| **PR #237 merged** | `fix/rls-timeout-and-activate`: Anchors RLS timeout fix (subquery-based policies), ActivateAccountPage route, OrgRegistryTable `count: 'estimated'` |
+| **PR #236 merged** | Dependabot: `@xmldom/xmldom` 0.8.11 → 0.8.12 (security patch) |
+| **PR #235 merged** | `feat/idt-v3-tasks-1-3`: EIN validation, bulk chunking (BATCH_SIZE 50→10), privacy gate (0156+0157), RecoveryPhraseModal + recoveryPhrase.ts |
+| **Revocation UAT** | Credential `ARK-ACD-Z9NMCY` issued, revoked, RED REVOKED banner verified on `/verify/ARK-ACD-Z9NMCY`, audit_events ANCHOR_REVOKED confirmed |
+| **ActivateAccountPage** | `/activate?token=xxx` route added (react-router-dom), RecoveryPhraseModal wired to `activate_user` RPC, deployed + verified in production |
+| **Bulk Upload UAT** | 10-record graduating class CSV uploaded via BulkUploadWizard, all 10 records created with Degree type + student names as metadata |
+| **RLS performance fix (production)** | `anchors_select_org`: 2 function calls → 1 EXISTS subquery. `anchors_select_platform_admin`: per-row function → scalar subquery (InitPlan). Query time: timeout → 0.6ms |
+| **Production DB changes** | Migration 0024 (index + RLS policy), platform_admin policy optimized, `authenticated` timeout 8s→30s, `bulk_create_anchors` timeout set to 60s |
+| **Migrations applied** | 0156 (search privacy gate), 0157 (materialized CTE perf fix), 0024 (RLS indexes + policy) — all applied to production |
+| Vercel deployment | app.arkova.ai updated via GitHub auto-deploy from merged PRs |
 
 ### Recent Changes (2026-03-31, Session 22 — Nessie v5 Training + RunPod Eval + Prompt Fix)
 

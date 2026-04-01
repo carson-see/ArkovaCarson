@@ -1,5 +1,5 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-03-31 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix)_
+_Last updated: 2026-04-01 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate)_
 
 ## Overview
 
@@ -29,6 +29,10 @@ Used by multiple RLS policies. Originally `SECURITY INVOKER` (migration 0009), u
 > **Session 16 Fix (0107):** `is_org_admin_of()` and `get_user_org_ids()` were originally `SECURITY INVOKER` in migration 0087. This caused circular RLS when called from `organizations` policies that check `org_members` (which has its own self-referencing RLS). Migration 0107 changes both to `SECURITY DEFINER SET search_path = public`. This was the root cause of org settings silently failing to save.
 
 > **UAT Sweep Fix (0149):** `attestations_select` policy had inline `SELECT org_id FROM profiles WHERE id = auth.uid()` which caused recursive RLS evaluation. Migration 0149 replaces this with the existing `get_user_org_id()` SECURITY DEFINER helper. Also fixes `lookup_org_by_email_domain` and `join_org_by_domain` RPCs (0148) that referenced a non-existent `deleted_at` column on organizations.
+
+> **Anchors RLS Performance Fix (Session 23, 0024/prod-only + PR #237):** With 1.4M rows in the anchors table, three SELECT policies (`anchors_select_own`, `anchors_select_org`, `anchors_select_platform_admin`) were OR'd together. `is_current_user_platform_admin()` was called per-row (1.4M times), causing PG 57014 statement timeouts. Fixed by: (1) replacing `anchors_select_org` two-function policy with single EXISTS subquery, (2) replacing `anchors_select_platform_admin` function call with scalar subquery evaluated as PostgreSQL InitPlan (once per query, not per row), (3) adding composite index `idx_anchors_org_deleted_created` and covering index `idx_profiles_id_role_org`. Query time dropped from timeout (>8s) to 0.6ms.
+
+> **Search Privacy Gate (0156-0157):** `search_public_credentials` SECURITY DEFINER function now gates org-issued anchors behind a privacy check — only visible if the org has at least one admin with `is_public_profile=true`. Migration 0157 optimizes with a MATERIALIZED CTE to avoid correlated subquery timeout on the 1.4M row table.
 
 ## Access Control by Table
 
@@ -68,7 +72,8 @@ No INSERT/DELETE policies. Organization creation handled by `update_profile_onbo
 | Policy | Operation | Condition | Migration |
 |--------|-----------|-----------|-----------|
 | `anchors_select_own` | SELECT | `user_id = auth.uid()` | 0010 |
-| `anchors_select_org` | SELECT | `org_id = get_user_org_id() AND is_org_admin()` | 0010 |
+| `anchors_select_org` | SELECT | `EXISTS (SELECT 1 FROM profiles p WHERE p.id = auth.uid() AND p.role = 'ORG_ADMIN' AND p.org_id = anchors.org_id)` | 0010, **0024** |
+| `anchors_select_platform_admin` | SELECT | `(SELECT COALESCE(p.is_platform_admin, false) FROM profiles p WHERE p.id = auth.uid())` | 0152, **0024** |
 | `anchors_insert_own` | INSERT | `user_id = auth.uid() AND status = 'PENDING' AND (org_id IS NULL OR org_id = get_user_org_id())` | 0010 |
 | `anchors_update_own` | UPDATE | `user_id = auth.uid()` (USING + WITH CHECK) | 0010 |
 

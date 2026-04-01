@@ -1,5 +1,5 @@
 # Data Model
-_Last updated: 2026-03-31 | Migrations: 0001-0155 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 155 files). All applied to production through 0155._
+_Last updated: 2026-04-01 | Migrations: 0001-0157 + 0024 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 161 files). Migrations through 0157 applied to production. Migration 0024 (RLS perf fix) applied directly to production DB (not via supabase db push). Additional production-only changes: anchors_select_platform_admin policy optimized, authenticated role statement_timeout increased to 30s, bulk_create_anchors function timeout set to 60s._
 
 ## Overview
 

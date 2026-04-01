@@ -72,6 +72,8 @@ Even service_role cannot modify audit events (triggers run regardless of role).
 - `org.updated` - Organization details changed
 - `org.member_added` - User added to organization
 - `org.member_removed` - User removed from organization
+- `ORG_VERIFIED_VIA_SUBSCRIPTION` - Organization verification_status set to VERIFIED on Stripe checkout completion (Session 23, PR #235)
+- `ANCHOR_REVOKED` - Anchor revoked via `revoke_anchor` RPC. Details include: reason, filename, fingerprint, previous_status (Session 23 UAT verified)
 
 ### ADMIN Events
 - `admin.user_suspended` - User account suspended
