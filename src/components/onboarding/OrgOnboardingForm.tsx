@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Separator } from '@/components/ui/separator';
+import { validateEin } from '@/lib/validators';
 import {
   Card,
   CardContent,
@@ -61,10 +62,13 @@ export function OrgOnboardingForm({
       }
     }
 
-    // EIN validation if provided
-    if (einTaxId.trim() && einTaxId.trim().length < 5) {
-      setValidationError('EIN/Tax ID must be at least 5 characters');
-      return;
+    // EIN validation if provided — must be XX-XXXXXXX format
+    if (einTaxId.trim()) {
+      const normalized = validateEin(einTaxId.trim());
+      if (!normalized) {
+        setValidationError('EIN must be in XX-XXXXXXX format (e.g., 12-3456789)');
+        return;
+      }
     }
 
     const effectiveDisplay = displayName.trim() || legalName.trim();
