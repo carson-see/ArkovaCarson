@@ -522,6 +522,23 @@ export function SearchPage() {
           </div>
         )}
 
+        {/* GEO-16: Traction metrics — social proof for search visitors */}
+        {!hasSearched && (
+          <div className="flex flex-wrap justify-center gap-8 mt-12 text-center" aria-label="Platform metrics">
+            {[
+              { value: '1.39M+', label: 'Records Secured' },
+              { value: '320K+', label: 'Public Records' },
+              { value: '21', label: 'Credential Types' },
+              { value: '87.2%', label: 'AI Extraction F1' },
+            ].map((m) => (
+              <div key={m.label}>
+                <p className="text-2xl font-black text-[#00d4ff]">{m.value}</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Standalone footer */}
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">

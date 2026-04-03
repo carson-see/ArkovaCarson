@@ -20,6 +20,8 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
+| Phase 2 Agentic Layer | 6 | 0 | 6 | No (planned) |
+| Phase 3 eSignature (placeholders) | 3 | 0 | 3 | No (deferred) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -32,7 +34,7 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **23** | |
+| **Total Open Items** | | | **32** | |
 
 ---
 
@@ -550,6 +552,32 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 | ~~QA-CHAOS-02~~ | ~~Mempool.space unavailability test~~ | ~~MEDIUM~~ | **COMPLETE** — `chaos-mempool-unavail.test.ts` (29 tests: retry classification, backoff, 5xx/network/timeout, duplicate TX detection) |
 | ~~QA-CHAOS-03~~ | ~~Stripe webhook duplicate delivery test~~ | ~~LOW~~ | **COMPLETE** — `chaos-webhook-idempotency.test.ts` (7 tests: duplicate key caching, rapid-fire simulation, scope isolation) |
 | ~~QA-CHAOS-04~~ | ~~Embedding memory pressure test~~ | ~~LOW~~ | **COMPLETE** — `chaos-embedding-pressure.test.ts` (11 tests: edge cases, PII exclusion, bounded stores, batch load) |
+
+---
+
+## TIER 0E: PHASE 2 — AGENTIC LAYER (Planned, 2026-04-03)
+
+> Source: Phase II Gap Analysis, Arkova-Master-Strategy-Complete
+> Story doc: [22_phase2_agentic_layer.md](./stories/22_phase2_agentic_layer.md)
+
+**Phase II — Agentic Layer: Make Arkova verification a first-class primitive for autonomous AI agents.**
+
+| ID | Story | Priority | Status | Sprint | Depends On | Effort |
+|----|-------|----------|--------|--------|------------|--------|
+| PH2-AGENT-01 | Verification audit trail (log /api/v1/verify calls to audit_events) | P0 | NOT STARTED | S1 | — | Small |
+| PH2-AGENT-02 | Attestation Bitcoin anchoring (wire attestations to anchor pipeline) | P0 | NOT STARTED | S1 | — | Medium |
+| PH2-AGENT-03 | Webhook event triggers (anchor SECURED/REVOKED, attestation events) | P1 | NOT STARTED | S2 | PH2-AGENT-02 | Medium |
+| PH2-AGENT-04 | Record authenticity oracle (POST /api/v1/oracle/verify, signed responses) | P1 | NOT STARTED | S2 | PH2-AGENT-01 | Large |
+| PH2-AGENT-05 | Agent identity & delegation (registration, scoped API keys, delegation chains) | P2 | NOT STARTED | S3 | PH2-AGENT-04 | XL |
+| PH2-AGENT-06 | Agent framework integrations (LangChain, AutoGen, MCP enhancements) | P2 | NOT STARTED | S3 | PH2-AGENT-04, PH2-AGENT-05 | Large |
+
+**Phase III Placeholders (eSignature & Compliance — deferred until Phase II Gate 2):**
+
+| ID | Story | Priority | Status | Depends On | Effort |
+|----|-------|----------|--------|------------|--------|
+| PH3-ESIG-01 | AdES signature engine (XAdES, PAdES, CAdES — ETSI EN 319 401/411-1) | P0 (Phase III) | NOT STARTED | Phase II complete | XL |
+| PH3-ESIG-02 | QTSP integration (RFC 3161 timestamp tokens, ETSI EN 319 421/422) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01 | XL |
+| PH3-ESIG-03 | Compliance center (audit proofs, policy transparency, SOC 2 bundles) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01, CML-03 | Large |
 
 ---
 
