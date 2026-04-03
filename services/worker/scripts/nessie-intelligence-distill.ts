@@ -208,15 +208,27 @@ async function generateQAPair(
   index: number,
 ): Promise<IntelligenceQAPair | null> {
   const systemPrompt = NESSIE_INTELLIGENCE_SYSTEM_PROMPT + TASK_PROMPTS[taskType];
-  const contextBlock = context.map((doc, i) =>
-    `--- DOCUMENT ${i + 1} ---
-record_id: ${doc.record_id}
+
+  // Use short aliases (DOC-1, DOC-2) in the prompt so Gemini can cite them reliably.
+  // Map back to real UUIDs after generation.
+  const aliasMap = new Map<string, string>(); // alias -> real UUID
+  const reverseMap = new Map<string, string>(); // real UUID -> alias
+  context.forEach((doc, i) => {
+    const alias = `DOC-${i + 1}`;
+    aliasMap.set(alias, doc.record_id);
+    reverseMap.set(doc.record_id, alias);
+  });
+
+  const contextBlock = context.map((doc, i) => {
+    const alias = `DOC-${i + 1}`;
+    return `--- DOCUMENT ${i + 1} ---
+record_id: ${alias}
 source: ${doc.source}
 title: ${doc.title}
 record_type: ${doc.record_type}
 content_hash: ${doc.content_hash}
-content: ${doc.content}`
-  ).join('\n\n');
+content: ${doc.content}`;
+  }).join('\n\n');
 
   const userPrompt = `${query}
 
@@ -224,7 +236,7 @@ VERIFIED DOCUMENTS (${context.length} results):
 
 ${contextBlock}
 
-Analyze these documents and respond.`;
+Analyze these documents and respond. Use the record_id values (DOC-1, DOC-2, etc.) in your citations.`;
 
   try {
     const response = await callGeminiTeacher(systemPrompt, userPrompt);
@@ -237,9 +249,21 @@ Analyze these documents and respond.`;
       gaps?: string[];
     };
 
+    // Map alias citations back to real UUIDs
+    const mappedCitations = (parsed.citations ?? []).map((c) => ({
+      ...c,
+      record_id: aliasMap.get(c.record_id) ?? c.record_id,
+    }));
+
+    // Also remap aliases in the analysis text back to real UUIDs for training
+    let mappedAnalysis = parsed.analysis;
+    for (const [alias, realId] of aliasMap) {
+      mappedAnalysis = mappedAnalysis.replaceAll(`[${alias}]`, `[${realId}]`);
+    }
+
     // Validate citations reference actual context documents
     const validIds = new Set(context.map((c) => c.record_id));
-    const validCitations = (parsed.citations ?? []).filter((c) => validIds.has(c.record_id));
+    const validCitations = mappedCitations.filter((c) => validIds.has(c.record_id));
 
     if (validCitations.length === 0) {
       console.warn(`  [SKIP] No valid citations for ${taskType}/${domain}/${index}`);
@@ -254,7 +278,7 @@ Analyze these documents and respond.`;
       domain,
       question: query,
       context,
-      answer: parsed.analysis,
+      answer: mappedAnalysis,
       citations: validCitations.map((c) => ({
         record_id: c.record_id,
         excerpt: c.excerpt ?? '',
