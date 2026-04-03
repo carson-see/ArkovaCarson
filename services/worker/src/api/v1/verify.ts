@@ -221,6 +221,23 @@ router.get('/:publicId', async (req, res) => {
     }
 
     const result = buildVerificationResult(anchor);
+
+    // PH2-AGENT-01: Log verification to audit trail (fire-and-forget)
+    void db.from('audit_events').insert({
+      event_type: 'VERIFICATION_QUERIED',
+      event_category: 'ANCHOR',
+      target_type: 'anchor',
+      target_id: anchor.public_id,
+      details: JSON.stringify({
+        verified: result.verified,
+        status: result.status,
+        credential_type: result.credential_type ?? null,
+        querying_ip: req.ip ?? null,
+        querying_agent: req.headers['user-agent']?.substring(0, 200) ?? null,
+        api_key_id: (req as Record<string, unknown>).apiKeyId ?? null,
+      }),
+    });
+
     res.json(result);
   } catch (err) {
     logger.error({ error: err, publicId }, 'Verification lookup failed');

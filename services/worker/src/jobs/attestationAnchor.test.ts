@@ -50,6 +50,10 @@ vi.mock('../chain/client.js', () => ({
   }),
 }));
 
+vi.mock('../webhooks/delivery.js', () => ({
+  dispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../utils/merkle.js', () => ({
   buildMerkleTree: (fingerprints: string[]) => ({
     root: 'merkle_root_' + fingerprints.length,
@@ -118,7 +122,7 @@ describe('processAttestationAnchoring', () => {
           limit: vi.fn().mockResolvedValue({ data: mockAttestations, error: null }),
         };
       }
-      // Update calls — return data with one item to indicate row matched
+      // Update + audit insert calls — return data with one item to indicate row matched
       return {
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -127,6 +131,7 @@ describe('processAttestationAnchoring', () => {
             }),
           }),
         }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
       };
     });
 
@@ -250,10 +255,13 @@ describe('processAttestationAnchoring', () => {
       { id: 'att-2', public_id: 'ARK-TST-AUD-DEF456', fingerprint: 'fp_2' },
     ];
 
-    let callCount = 0;
-    mockDbFrom.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) {
+    let updateCallCount = 0;
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'audit_events') {
+        return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
+      }
+      if (updateCallCount === 0) {
+        updateCallCount++;
         return {
           select: vi.fn().mockReturnThis(),
           eq: vi.fn().mockReturnThis(),
@@ -263,7 +271,8 @@ describe('processAttestationAnchoring', () => {
         };
       }
       // First update succeeds, second fails
-      const shouldFail = callCount === 3;
+      updateCallCount++;
+      const shouldFail = updateCallCount === 3;
       return {
         update: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -275,6 +284,7 @@ describe('processAttestationAnchoring', () => {
             }),
           }),
         }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
       };
     });
 

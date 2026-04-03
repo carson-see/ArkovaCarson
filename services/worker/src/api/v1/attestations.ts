@@ -18,6 +18,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
+import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 
 const router = Router();
 
@@ -209,6 +210,17 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     logger.info({ publicId: attestation.public_id, attestationType: data.attestation_type, attester: data.attester_name }, 'Attestation created');
+
+    // PH2-AGENT-03: Dispatch webhook for attestation created — non-fatal
+    if (profile?.org_id) {
+      void dispatchWebhookEvent(profile.org_id, 'attestation.created', attestation.id, {
+        public_id: attestation.public_id,
+        attestation_type: attestation.attestation_type,
+        status: attestation.status,
+        fingerprint: attestation.fingerprint,
+        created_at: attestation.created_at,
+      }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation creation webhook failed'));
+    }
 
     res.status(201).json({
       public_id: attestation.public_id,
@@ -753,6 +765,17 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
     }
 
     logger.info({ publicId, reason }, 'Attestation revoked');
+
+    // PH2-AGENT-03: Dispatch webhook for attestation revoked — non-fatal
+    if (attestation.attester_org_id) {
+      void dispatchWebhookEvent(attestation.attester_org_id, 'attestation.revoked', attestation.id, {
+        public_id: publicId,
+        status: 'REVOKED',
+        revocation_reason: reason,
+        revoked_at: new Date().toISOString(),
+      }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation revocation webhook failed'));
+    }
+
     res.json({ public_id: publicId, status: 'REVOKED', revoked_at: new Date().toISOString() });
   } catch (error) {
     logger.error({ error }, 'Attestation revocation error');
