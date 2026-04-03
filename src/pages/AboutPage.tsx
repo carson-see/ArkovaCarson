@@ -45,7 +45,6 @@ const ADVISORS = [
     link: 'https://www.linkedin.com/in/periwinkle-doerfler/',
     linkLabel: 'LinkedIn',
     initials: 'PD',
-    avatar: '/team/periwinkle.jpg',
   },
 ];
 
