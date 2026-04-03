@@ -8,11 +8,11 @@
 
 ## Current State
 
-### Active Phase: Phase 3 — Go-Live (Production Launch) + P8 AI Intelligence (infrastructure done)
+### Active Phase: Phase 2 — Attestations + Agentic Verification Layer (67% complete)
 
-**Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
+**Goal:** Extend verification into agentic workflows, agent framework integrations, and institutional attestations
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 191/211 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024, gaps at 0033+0078, 0068 split, 0088 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=87.2% Nessie v5, golden dataset 1,605 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 1.4M+ anchors (166K SECURED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3). **All migrations through 0157 applied to production.** PRs merged this session: #235, #236, #237.
+**Overall progress:** 200/220 stories complete (~91%) incl. 4 Phase II stories done this session. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10 complete, 1 partial, 6 not started. ATS: 8/8. CML: 5/5. **Phase II Agentic: 4/6 DONE.** Phase III: 0/3 (planned). **All 24/24 audit findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0157 applied.** PR #238 open (Session 24, 6 commits).
 
 ### Open Blockers
 
@@ -21,6 +21,26 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-04-03, Session 24 — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
+
+**Phase II 4/6 done. 12 UAT bugs fixed. 4 GEO stories completed. Wikidata entity created. PR #238 open (6 commits).**
+
+| Change | Detail |
+|--------|--------|
+| **PH2-AGENT-01** | Verification audit trail — every `/api/v1/verify/:publicId` call logged to audit_events |
+| **PH2-AGENT-02** | Attestation Bitcoin anchoring — confirmed pre-existing (`attestationAnchor.ts`) |
+| **PH2-AGENT-03** | Attestation webhook events — `attestation.created`, `attestation.active`, `attestation.revoked` |
+| **PH2-AGENT-04** | Record Authenticity Oracle — `POST /api/v1/oracle/verify` with HMAC signatures, batch queries |
+| **GEO-02** | Wikidata entity Q138865713 created (SaaS, official website, USA, software industry) |
+| **GEO-14** | Soft 404s — NotFoundPage title updated, already implemented |
+| **GEO-16** | Traction metrics on SearchPage (1.39M+, 320K+, 21 types, 87.2% F1) |
+| **GEO-17** | Internal cross-links on SearchPage + DevelopersPage |
+| **12 UAT bugs** | Constitution 1.3 violations, CSP frame-ancestors, sidebar, header, search chips |
+| **Jira** | 21+ issues → Done, Phase II epic SCRUM-388, Phase III epic SCRUM-390, 9 stories created |
+| **Confluence** | Data Model (migrations 0157), 90-Day Priority updated |
+| **GitHub** | Draft release v1.3.0-rc1 created |
+| **Docs** | CLAUDE.md (ATS 8/8, 161 migrations, 196/211), BACKLOG.md (Phase II/III stories), story doc 22 |
 
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
