@@ -42,9 +42,12 @@ dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 // --- CLI args ---
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
-const EPOCHS = parseInt(args[args.indexOf('--epochs') + 1] || '8', 10); // More epochs for small dataset
-const ADAPTER_SIZE = parseInt(args[args.indexOf('--adapter-size') + 1] || '4', 10);
-const LR_MULTIPLIER = parseFloat(args[args.indexOf('--lr-multiplier') + 1] || '2.0'); // Higher LR for small dataset
+const epochIdx = args.indexOf('--epochs');
+const EPOCHS = epochIdx >= 0 ? parseInt(args[epochIdx + 1], 10) : 8;
+const adapterIdx = args.indexOf('--adapter-size');
+const ADAPTER_SIZE = adapterIdx >= 0 ? parseInt(args[adapterIdx + 1], 10) : 4;
+const lrIdx = args.indexOf('--lr-multiplier');
+const LR_MULTIPLIER = lrIdx >= 0 ? parseFloat(args[lrIdx + 1]) : 2.0;
 
 const GCP_PROJECT = 'arkova1';
 const GCP_REGION = 'us-central1';

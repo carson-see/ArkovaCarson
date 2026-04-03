@@ -1096,6 +1096,21 @@ export const COMPLIANCE_LABELS = {
 } as const;
 
 // =============================================================================
+// NESSIE INTELLIGENCE (NMT-07)
+// =============================================================================
+
+export const NESSIE_LABELS = {
+  PANEL_TITLE: 'Nessie Intelligence',
+  PANEL_SUBTITLE: 'Ask compliance questions. Answers cite verified, anchored documents.',
+  INPUT_PLACEHOLDER: 'Ask a compliance question...',
+  CONFIDENCE: 'confidence',
+  CITATIONS_HEADING: 'Verified Citations',
+  VIEW_ON_CHAIN: 'On-chain proof',
+  VERIFY: 'Verify',
+  EMPTY_STATE: 'Ask a question to get compliance intelligence backed by verified evidence.',
+} as const;
+
+// =============================================================================
 // AI REPORTS (P8-S16)
 // =============================================================================
 
