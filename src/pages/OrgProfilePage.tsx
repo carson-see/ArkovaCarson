@@ -325,7 +325,7 @@ export function OrgProfilePage() {
             <div className="relative group">
               <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-lg border-4 border-background bg-card shadow-xl overflow-hidden">
                 {orgLogoUrl ? (
-                  <img src={orgLogoUrl} alt={organization?.display_name ?? 'Organization logo'} className="h-full w-full object-cover" />
+                  <img src={orgLogoUrl} alt={organization?.display_name ? `${organization.display_name} organization logo` : 'Organization logo'} className="h-full w-full object-cover" />
                 ) : (
                   <Building2 className="h-14 w-14 text-primary" />
                 )}

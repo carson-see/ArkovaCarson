@@ -100,7 +100,7 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
             ) : (
               <>
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={profile?.avatar_url || undefined} alt={displayName} />
+                  <AvatarImage src={profile?.avatar_url || undefined} alt={`${displayName} profile photo`} />
                   <AvatarFallback className="bg-primary/10 text-primary text-xs">
                     {initials}
                   </AvatarFallback>

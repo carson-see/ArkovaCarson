@@ -116,7 +116,7 @@ export function IssuerRegistryPage() {
               {profile.logo_url ? (
                 <img
                   src={profile.logo_url}
-                  alt={profile.display_name}
+                  alt={`${profile.display_name} organization logo`}
                   className="h-16 w-16 sm:h-20 sm:w-20 rounded-2xl object-contain bg-[#192028] p-2"
                 />
               ) : (
