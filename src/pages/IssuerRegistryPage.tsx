@@ -235,7 +235,7 @@ export function IssuerRegistryPage() {
               <p className="text-2xl font-black text-green-400">
                 {formatNumber(profile.secured_credentials)}
               </p>
-              <p className="text-xs text-muted-foreground mt-1">Secured on Bitcoin</p>
+              <p className="text-xs text-muted-foreground mt-1">Network Secured</p>
             </CardContent>
           </Card>
           <Card className="bg-transparent border-[#3c494e]/30">
@@ -321,7 +321,7 @@ export function IssuerRegistryPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — document integrity anchored on Bitcoin
+              Powered by Arkova — document integrity anchored on a public network
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">

@@ -62,12 +62,10 @@ export function SearchPage() {
   const navigate = useNavigate();
   const standalone = isSearchSubdomain();
 
-  // BUG-014: Set page title for search.arkova.ai
+  // BUG-014 + SCRUM-365: Set page title for SEO
   useEffect(() => {
-    if (standalone) {
-      document.title = 'Arkova Search — Verify Credentials';
-    }
-  }, [standalone]);
+    document.title = 'Arkova Search — Verify Credentials';
+  }, []);
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
   const [searchMode, setSearchMode] = useState<SearchMode>('issuers');
@@ -252,15 +250,17 @@ export function SearchPage() {
     e.target.value = '';
   }, [handleFileDrop]);
 
-  const handleExampleClick = useCallback((example: typeof EXAMPLE_QUERIES[0]) => {
+  const handleExampleClick = useCallback(async (example: typeof EXAMPLE_QUERIES[0]) => {
     setQuery(example.label);
     setSearchMode(example.mode);
     const trimmed = example.label.trim();
     if (!trimmed) return;
     setHasSearched(true);
     setSearchType('issuer');
-    searchIssuers(trimmed);
-    if (example.mode !== 'issuers') searchPerson(trimmed);
+    await Promise.all([
+      searchIssuers(trimmed),
+      ...(example.mode !== 'issuers' ? [searchPerson(trimmed)] : []),
+    ]);
   }, [searchIssuers, searchPerson]);
 
   const isSearching = searching || fpSearching || personSearching || verifyingFile;
