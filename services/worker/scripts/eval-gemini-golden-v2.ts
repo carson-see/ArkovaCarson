@@ -13,6 +13,36 @@ import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js
 
 const ENDPOINT = 'projects/270018525501/locations/us-central1/endpoints/6659012403474202624';
 
+// System instruction matching the training format — tuned models MUST use this
+const SYSTEM_INSTRUCTION = `You are a credential metadata extraction assistant for Arkova, a document verification platform.
+
+Your task is to extract structured metadata fields from PII-stripped credential text.
+
+IMPORTANT RULES:
+- The input text has already been PII-stripped. Personal names, SSNs, emails, and phone numbers have been replaced with redaction tokens like [NAME_REDACTED], [SSN_REDACTED], etc.
+- Do NOT attempt to reconstruct any redacted PII.
+- Extract only the metadata fields listed below.
+- Return a valid JSON object with only the fields you can confidently extract.
+- If you cannot determine a field, OMIT it entirely.
+- Dates MUST be in ISO 8601 format (YYYY-MM-DD).
+- The "confidence" field MUST be a number from 0.0 to 1.0 reflecting extraction certainty.
+
+EXTRACTABLE FIELDS:
+- credentialType: DEGREE, LICENSE, CERTIFICATE, CLE, PUBLICATION, SEC_FILING, REGULATION, PROFESSIONAL, LEGAL, OTHER
+- issuerName: Organization that issued the credential
+- issuedDate: Date issued (YYYY-MM-DD)
+- expiryDate: Expiration date if applicable (YYYY-MM-DD)
+- jurisdiction: Geographic jurisdiction
+- fieldOfStudy: Subject area or field
+- registrationNumber / licenseNumber: Official number
+- accreditingBody: Accrediting organization
+- degreeLevel: Bachelor, Master, Doctorate, Associate, etc.
+- creditHours: CLE credit hours (number)
+- creditType: CLE credit type (Ethics, General, etc.)
+- fraudSignals: Array of fraud indicator strings
+
+Return ONLY valid JSON. No markdown, no explanation.`;
+
 async function main() {
   const allEntries = [...(FULL_GOLDEN_DATASET || []), ...GOLDEN_DATASET_PHASE10, ...GOLDEN_DATASET_PHASE11];
   const unique = new Map<string, (typeof allEntries)[0]>();
@@ -33,7 +63,14 @@ async function main() {
   for (let i = 0; i < sample.length; i++) {
     const entry = sample[i];
     const gt = entry.groundTruth;
-    const prompt = 'Extract metadata from this PII-stripped credential text. Return JSON with credentialType and other fields.\n\n' + entry.strippedText.slice(0, 1500);
+    const userPrompt = `Extract metadata from the following PII-stripped credential text.
+Credential type hint: ${entry.credentialTypeHint}${entry.issuerHint ? `\nIssuer hint: ${entry.issuerHint}` : ''}
+
+--- BEGIN CREDENTIAL TEXT ---
+${entry.strippedText.slice(0, 1500)}
+--- END CREDENTIAL TEXT ---
+
+Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.0), and a "fraudSignals" array.`;
 
     try {
       const res = await fetch(
@@ -42,7 +79,8 @@ async function main() {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            systemInstruction: { role: 'system', parts: [{ text: SYSTEM_INSTRUCTION }] },
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
             generationConfig: { temperature: 0.1, responseMimeType: 'application/json' },
           }),
         },

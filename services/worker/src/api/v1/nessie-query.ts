@@ -382,38 +382,51 @@ async function generateVerifiedContext(
   const togetherKey = process.env.TOGETHER_API_KEY;
 
   if (intelligenceModel && togetherKey) {
-    // Route to Nessie Intelligence model on Together AI
-    const response = await fetch('https://api.together.xyz/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${togetherKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: intelligenceModel,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt },
-        ],
-        temperature: 0.2,
-        max_tokens: 4096,
-      }),
-    });
+    // Route to Nessie Intelligence model on Together AI (30s timeout)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
 
-    if (!response.ok) {
-      const err = await response.text();
-      logger.warn({ status: response.status, err: err.slice(0, 200) }, 'Nessie Intelligence API failed, falling back to Gemini');
+    try {
+      const response = await fetch('https://api.together.xyz/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${togetherKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: intelligenceModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const err = await response.text();
+        logger.warn({ status: response.status, err: err.slice(0, 200) }, 'Nessie Intelligence API failed, falling back to Gemini');
+        // Fall through to Gemini below
+      } else {
+        const data = await response.json() as {
+          choices: Array<{ message: { content: string } }>;
+          usage?: { total_tokens: number };
+        };
+        text = data.choices[0]?.message?.content ?? '';
+        tokensUsed = data.usage?.total_tokens;
+        modelName = intelligenceModel;
+
+        return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ error: msg }, 'Nessie Intelligence request failed (timeout or network), falling back to Gemini');
       // Fall through to Gemini below
-    } else {
-      const data = await response.json() as {
-        choices: Array<{ message: { content: string } }>;
-        usage?: { total_tokens: number };
-      };
-      text = data.choices[0]?.message?.content ?? '';
-      tokensUsed = data.usage?.total_tokens;
-      modelName = intelligenceModel;
-
-      return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
     }
   }
 
