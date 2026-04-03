@@ -1108,6 +1108,7 @@ export const NESSIE_LABELS = {
   VIEW_ON_CHAIN: 'On-chain proof',
   VERIFY: 'Verify',
   EMPTY_STATE: 'Ask a question to get compliance intelligence backed by verified evidence.',
+  CACHED: 'cached',
 } as const;
 
 // =============================================================================

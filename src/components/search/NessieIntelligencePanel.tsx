@@ -179,7 +179,7 @@ export function NessieIntelligencePanel() {
                 &nbsp;{NESSIE_LABELS.CONFIDENCE}
               </Badge>
               {response.cached && (
-                <Badge variant="secondary" className="text-xs">cached</Badge>
+                <Badge variant="secondary" className="text-xs">{NESSIE_LABELS.CACHED}</Badge>
               )}
               {response.tokens_used && (
                 <span className="text-xs text-muted-foreground">

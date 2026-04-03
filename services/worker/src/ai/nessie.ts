@@ -316,33 +316,23 @@ export class NessieProvider implements IAIProvider {
   async generateRAGResponse(
     systemPrompt: string,
     userPrompt: string,
-    credentialType?: string,
+    _credentialType?: string,
   ): Promise<{ text: string; tokensUsed?: number }> {
     this.checkCircuit();
 
-    // Use the intelligence model for RAG/context queries.
-    // Falls back to domain routing only if intelligence model is not available.
+    // Intelligence queries ALWAYS use the intelligence model.
+    // Domain routing is for extraction adapters only — never for intelligence.
     const intelligenceModel = process.env.NESSIE_INTELLIGENCE_MODEL ?? DEFAULT_INTELLIGENCE_MODEL;
-    let modelOverride: string = intelligenceModel;
 
-    if (isDomainRoutingEnabled() && !process.env.NESSIE_INTELLIGENCE_MODEL) {
-      const adapter = routeToDomain(credentialType, userPrompt);
-      modelOverride = adapter.modelId;
-      logger.info(
-        { domain: adapter.domain, modelId: adapter.modelId },
-        'Nessie RAG: routed to domain adapter (intelligence model not configured)',
-      );
-    } else {
-      logger.info(
-        { model: modelOverride },
-        'Nessie RAG: using intelligence model for compliance analysis',
-      );
-    }
+    logger.info(
+      { model: intelligenceModel },
+      'Nessie RAG: using intelligence model for compliance analysis',
+    );
 
     const response = await this.withRetry(async () => {
       return this.chatCompletion(systemPrompt, userPrompt, {
         temperature: 0.2,
-        model: modelOverride,
+        model: intelligenceModel,
       });
     });
 

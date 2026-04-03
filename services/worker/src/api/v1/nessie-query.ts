@@ -18,7 +18,6 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
-import type { TogetherProvider } from '../../ai/together.js';
 import { INTELLIGENCE_SYSTEM_PROMPT } from '../../ai/prompts/intelligence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
@@ -112,47 +111,7 @@ export interface NessieContextResponse {
   tokens_used?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Gemini RAG Prompt (PH1-INT-03)
-// ---------------------------------------------------------------------------
-
-const NESSIE_RAG_SYSTEM_PROMPT = `You are Nessie, Arkova's verified intelligence assistant. You answer questions using ONLY the provided verified documents as context. Each document has been anchored to a public ledger with a cryptographic proof.
-
-RULES:
-1. Answer ONLY from the provided documents. If the documents don't contain enough information, say "I don't have enough verified information to fully answer this." and provide what you can.
-2. Cite specific documents using their record_id in square brackets like [record_id]. Every factual claim MUST have a citation.
-3. Only cite a document if its content DIRECTLY supports your claim. Do not cite a document just because it mentions a related topic.
-4. Rate your overall confidence (0.0 to 1.0) based on how well the documents answer the query:
-   - 0.8-1.0: Documents directly and completely answer the query
-   - 0.5-0.79: Documents partially answer or require inference
-   - 0.0-0.49: Documents are tangentially related at best
-5. Never fabricate information not present in the documents.
-6. Keep answers concise and factual. Prefer shorter, well-cited answers over longer speculative ones.
-
-SOURCE AUTHORITY (prefer higher-authority sources when multiple documents cover the same topic):
-- EDGAR filings (SEC): Highest authority for financial/corporate data
-- Federal Register: Highest authority for regulatory/government data
-- DAPIP (Dept of Education): Highest authority for educational institution data
-- USPTO: Highest authority for patent/trademark data
-- OpenAlex: Academic abstracts — useful for research context, but cite the underlying paper, not the abstract alone
-- CourtListener: Court opinions and case law — highest authority for legal precedent and judicial decisions
-
-Respond in valid JSON with this schema:
-{
-  "answer": "Your synthesized answer with inline [record_id] citations",
-  "citations": [
-    {
-      "record_id": "the record ID",
-      "source": "edgar|uspto|federal_register|dapip|openalex|courtlistener",
-      "source_url": "original URL",
-      "title": "document title",
-      "relevance_score": 0.0-1.0,
-      "anchor_proof": { "chain_tx_id": "tx hash or null", "content_hash": "sha256", "explorer_url": "mempool link or null", "verify_url": "arkova verify link or null" },
-      "excerpt": "the specific excerpt from the document that supports your claim (must be actual text from the document)"
-    }
-  ],
-  "confidence": 0.0-1.0
-}`;
+// Intelligence system prompt is imported from prompts/intelligence.ts (NMT-07)
 
 function buildRAGPrompt(query: string, documents: NessieResult[]): string {
   const docContext = documents.map((doc, i) => {
@@ -367,7 +326,7 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // MODE: context — feed to Gemini for synthesized answer (PH1-INT-03)
+    // MODE: context — intelligence analysis via Nessie/Gemini (NMT-07)
     try {
       // Check cache first
       const cacheKey = `${q}::${results.map(r => r.record_id).join(',')}`;
@@ -380,9 +339,9 @@ router.get('/', async (req: Request, res: Response) => {
       const contextResponse = await generateVerifiedContext(q, results);
       setCachedContext(cacheKey, contextResponse);
       res.json(contextResponse);
-    } catch (geminiError) {
+    } catch (contextError) {
       // Graceful degradation: fall back to retrieval mode
-      logger.warn({ error: geminiError }, 'Gemini RAG generation failed, falling back to retrieval');
+      logger.warn({ error: contextError }, 'Intelligence generation failed, falling back to retrieval');
       res.json({
         results,
         count: results.length,
@@ -448,8 +407,10 @@ async function generateVerifiedContext(
     tokensUsed = response.response.usageMetadata?.totalTokenCount;
   }
 
+  // Intelligence prompt returns "analysis", legacy RAG prompt returns "answer"
   const parsed = JSON.parse(text) as {
-    answer: string;
+    answer?: string;
+    analysis?: string;
     citations: NessieCitation[];
     confidence: number;
   };
@@ -477,7 +438,7 @@ async function generateVerifiedContext(
   });
 
   return {
-    answer: parsed.answer,
+    answer: parsed.analysis ?? parsed.answer ?? '',
     citations: enrichedCitations,
     confidence: Math.min(1, Math.max(0, parsed.confidence ?? 0)),
     model: modelName,
