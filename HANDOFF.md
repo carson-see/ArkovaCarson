@@ -33,7 +33,10 @@
 | **NMT-07: Intelligence prompts** | `prompts/intelligence.ts` — System prompts for all 5 intelligence modes with verified citation requirements. 10 tests. |
 | **NMT-08: Gemini Golden v2 script** | `gemini-golden-finetune.ts` updated: +phases 10-11 (291 new entries), hardcoded confidence replaced with `computeRealisticConfidence()`. Total: 1,605 entries. |
 | **TS error fix** | `ActivateAccountPage.tsx`: `deriveClaimKey` → `deriveClaimKeyHash` (function was renamed). 0 TS errors now. |
-| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist but gated by `ENABLE_PUBLIC_RECORD_EMBEDDINGS`. |
+| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist. `ENABLE_PUBLIC_RECORD_EMBEDDINGS` already `true` in production. |
+| **Intelligence distillation** | 339 examples generated (306 train / 33 val) from 400 SEC + 300 legal records via Gemini teacher. 5 task types. |
+| **Nessie Intelligence v1 TRAINED** | Together AI `ft-14935428-4d67` → `carson_6cec/...-arkova-nessie-intelligence-v1-4b6c5a52`. 310 examples, 2 epochs, 78 steps, LoRA rank 64. |
+| **Gemini Golden v2 submitted** | Vertex AI job `6192779736259756032` — 1,665 entries, 8 epochs. Training in progress (~2-6 hrs). |
 
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
