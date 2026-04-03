@@ -118,10 +118,11 @@ async function main(): Promise<void> {
   console.log('\n--- Step 1: Upload training file ---');
   const fileContent = readFileSync(TRAIN_FILE);
   const formData = new FormData();
-  formData.append('file', new Blob([fileContent]), 'intelligence-train.jsonl');
+  formData.append('file', new Blob([fileContent], { type: 'application/jsonl' }), 'intelligence-train.jsonl');
+  formData.append('file_name', 'arkova-nessie-intelligence-train.jsonl');
   formData.append('purpose', 'fine-tune');
 
-  const uploadRes = await fetch('https://api.together.xyz/v1/files', {
+  const uploadRes = await fetch('https://api.together.xyz/files/upload', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
     body: formData,
@@ -137,7 +138,7 @@ async function main(): Promise<void> {
 
   // Submit fine-tune job
   console.log('\n--- Step 2: Submit fine-tune job ---');
-  const jobRes = await fetch('https://api.together.xyz/v1/fine-tunes', {
+  const jobRes = await fetch('https://api.together.xyz/fine-tunes', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -176,7 +177,7 @@ async function main(): Promise<void> {
   for (let i = 0; i < MAX_POLLS; i++) {
     await delay(60_000);
 
-    const pollRes = await fetch(`https://api.together.xyz/v1/fine-tunes/${job.id}`, {
+    const pollRes = await fetch(`https://api.together.xyz/fine-tunes/${job.id}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
 
