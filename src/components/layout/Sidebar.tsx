@@ -287,7 +287,6 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         {/* Main Navigation — max 5 items */}
         <nav className="space-y-1 p-3">
           {mainNavItems
-            .filter((item) => item.to !== ROUTES.ORGANIZATIONS || orgName)
             .map((item) => (
             <SidebarNavLink
               key={item.label}
@@ -320,7 +319,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
                   key={item.label}
                   item={item}
                   collapsed={collapsed}
-                  active={location.pathname === item.to || location.pathname.startsWith(item.to + '/')}
+                  active={isNavActive(item)}
                 />
               ))}
             </>

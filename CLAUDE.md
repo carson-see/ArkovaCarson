@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-03-28 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 153 migrations | 2,825 tests | 200 stories (188 complete, 89%) | 24/24 audit findings resolved | AI eval F1=87.2% (Nessie v5) / 90.4% (Gemini Golden) | 320K+ public records | 166K+ SECURED anchors (mainnet)
+> **Version:** 2026-04-03 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
+> **Stats:** 161 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit findings resolved | AI eval F1=87.2% (Nessie v5) / 90.4% (Gemini Golden) | 320K+ public records | 166K+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 153 files (0001-0152, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap). All migrations applied to production through 0152.
+**Current:** 161 files (0001-0157, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap). All migrations applied to production through 0157.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -253,9 +253,9 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | UAT + UF | 27/27 | 0 | 0 | 100% |
 | GEO & SEO | 6/12 | 1 | 5 | 50% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
-| ATS & Background Checks | 0/8 | 0 | 8 | 0% |
+| ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
-| **Total** | **188/211** | **2/211** | **21/211** | **~89%** |
+| **Total** | **196/211** | **2/211** | **13/211** | **~93%** |
 
 ### Incomplete Stories
 
@@ -287,9 +287,9 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 **GEO & SEO (5 not started, 1 partial):**
 - See `docs/stories/15_geo_seo.md` and `docs/BACKLOG.md` for details
 
-**ATS & Background Checks (8 not started):**
-- ATT-01 through ATT-08. Employment/education verification workflows, batch API, ATS webhooks, credential portfolios.
-- See `docs/stories/18_ats_background_checks.md` and `docs/BACKLOG.md` for details
+**~~ATS & Background Checks (8/8 COMPLETE):~~**
+- All 8 stories implemented: employment/education verification forms, batch API, ATS webhooks, credential portfolios, evidence upload, OpenAPI docs, expiry alerts.
+- See `docs/stories/18_ats_background_checks.md` for details
 
 **Nessie Model Training (1 not started):**
 - ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to Cloud Run)
@@ -307,7 +307,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ~~AWS KMS signing~~ | ~~Key provisioning for mainnet~~ — **DONE** (AWS + GCP KMS providers complete, 69 tests, GCP KMS configured in Cloud Run) |
 | ~~Mainnet treasury funding~~ | ~~Fund production treasury wallet~~ — **DONE** (treasury funded, 116 mainnet TXs confirmed) |
 | ~~Flip to mainnet~~ | ~~Change to mainnet~~ — **DONE** (BITCOIN_NETWORK=mainnet, 166K+ SECURED anchors) |
-| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (all migrations through 0152 applied) |
+| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (all migrations through 0157 applied) |
 
 ### Pre-Launch Tasks
 
@@ -460,5 +460,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-03-31 | 153 migrations | 2,825 tests | 200 stories (188 complete, 89%) | 24/24 audit findings resolved | Golden dataset: 1,605 entries | 130 few-shot examples | Nessie v5: 87.2% F1_
+_Directive version: 2026-04-03 | 161 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit findings resolved | Golden dataset: 1,605 entries | 130 few-shot examples | Nessie v5: 87.2% F1_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

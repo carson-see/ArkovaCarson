@@ -54,6 +54,10 @@ function getPageTitle(pathname: string): string {
   for (const [route, title] of Object.entries(PAGE_TITLES)) {
     if (pathname.startsWith(route + '/')) return title;
   }
+  // Extract last path segment as fallback instead of always "Dashboard"
+  const segments = pathname.split('/').filter(Boolean);
+  const last = segments[segments.length - 1];
+  if (last) return last.charAt(0).toUpperCase() + last.slice(1).replace(/-/g, ' ');
   return NAV_LABELS.DASHBOARD;
 }
 

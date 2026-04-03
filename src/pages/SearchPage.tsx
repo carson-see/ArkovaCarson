@@ -62,12 +62,10 @@ export function SearchPage() {
   const navigate = useNavigate();
   const standalone = isSearchSubdomain();
 
-  // BUG-014: Set page title for search.arkova.ai
+  // BUG-014 + SCRUM-365: Set page title for SEO
   useEffect(() => {
-    if (standalone) {
-      document.title = 'Arkova Search — Verify Credentials';
-    }
-  }, [standalone]);
+    document.title = 'Arkova Search — Verify Credentials';
+  }, []);
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
   const [searchMode, setSearchMode] = useState<SearchMode>('issuers');
@@ -252,15 +250,17 @@ export function SearchPage() {
     e.target.value = '';
   }, [handleFileDrop]);
 
-  const handleExampleClick = useCallback((example: typeof EXAMPLE_QUERIES[0]) => {
+  const handleExampleClick = useCallback(async (example: typeof EXAMPLE_QUERIES[0]) => {
     setQuery(example.label);
     setSearchMode(example.mode);
     const trimmed = example.label.trim();
     if (!trimmed) return;
     setHasSearched(true);
     setSearchType('issuer');
-    searchIssuers(trimmed);
-    if (example.mode !== 'issuers') searchPerson(trimmed);
+    await Promise.all([
+      searchIssuers(trimmed),
+      ...(example.mode !== 'issuers' ? [searchPerson(trimmed)] : []),
+    ]);
   }, [searchIssuers, searchPerson]);
 
   const isSearching = searching || fpSearching || personSearching || verifyingFile;
@@ -522,6 +522,32 @@ export function SearchPage() {
           </div>
         )}
 
+        {/* GEO-16: Traction metrics — social proof for search visitors */}
+        {!hasSearched && (
+          <div className="flex flex-wrap justify-center gap-8 mt-12 text-center" aria-label="Platform metrics">
+            {[
+              { value: '1.39M+', label: 'Records Secured' },
+              { value: '320K+', label: 'Public Records' },
+              { value: '21', label: 'Credential Types' },
+              { value: '87.2%', label: 'AI Extraction F1' },
+            ].map((m) => (
+              <div key={m.label}>
+                <p className="text-2xl font-black text-[#00d4ff]">{m.value}</p>
+                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* GEO-17: Internal cross-links for SEO */}
+        {!hasSearched && (
+          <div className="flex flex-wrap justify-center gap-6 mt-8 text-xs text-muted-foreground">
+            <Link to={ROUTES.ABOUT} className="hover:text-[#00d4ff] transition-colors">Learn about Arkova</Link>
+            <Link to={ROUTES.DEVELOPERS} className="hover:text-[#00d4ff] transition-colors">Developer API</Link>
+            <Link to="/issuers" className="hover:text-[#00d4ff] transition-colors">Browse verified issuers</Link>
+          </div>
+        )}
+
         {/* Standalone footer */}
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
@@ -533,6 +559,7 @@ export function SearchPage() {
                 arkova.ai <ExternalLink className="h-3 w-3" />
               </a>
               <Link to={ROUTES.ABOUT} className="text-muted-foreground hover:text-foreground">About</Link>
+              <Link to={ROUTES.DEVELOPERS} className="text-muted-foreground hover:text-foreground">Developers</Link>
               <Link to={ROUTES.PRIVACY} className="text-muted-foreground hover:text-foreground">Privacy</Link>
               <Link to={ROUTES.TERMS} className="text-muted-foreground hover:text-foreground">Terms</Link>
             </div>
