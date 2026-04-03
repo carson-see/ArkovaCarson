@@ -18,8 +18,7 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 
 // Import ALL golden dataset phases (1-11)
 import { GOLDEN_DATASET, FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
@@ -121,8 +120,17 @@ Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.
   };
 }
 
-function getAccessToken(): string {
-  return execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
+/**
+ * Get GCP access token via service account key (GOOGLE_APPLICATION_CREDENTIALS).
+ * NEVER use gcloud CLI auth — it expires and breaks automation.
+ */
+async function getAccessToken(): Promise<string> {
+  const { GoogleAuth } = await import('google-auth-library');
+  const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
+  if (!token.token) throw new Error('Failed to get access token from service account');
+  return token.token;
 }
 
 function delay(ms: number): Promise<void> {
@@ -234,8 +242,29 @@ async function main(): Promise<void> {
   if (DRY_RUN) {
     console.log(`[DRY RUN] Would upload to: ${trainUri}`);
   } else {
-    execSync(`gcloud storage cp "${trainFile}" "${trainUri}" --project=${GCP_PROJECT}`, { stdio: 'inherit' });
-    execSync(`gcloud storage cp "${valFile}" "${valUri}" --project=${GCP_PROJECT}`, { stdio: 'inherit' });
+    // Upload via GCS JSON API using service account (never gcloud CLI)
+    const gcsToken = await getAccessToken();
+    const bucket = GCS_BUCKET.replace('gs://', '');
+    for (const [localFile, gcsPath] of [
+      [trainFile, `gemini-golden/${timestamp}/train.jsonl`],
+      [valFile, `gemini-golden/${timestamp}/validation.jsonl`],
+    ]) {
+      const fileData = readFileSync(localFile);
+      const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(gcsPath)}`;
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${gcsToken}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: fileData,
+      });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.text();
+        throw new Error(`GCS upload failed for ${gcsPath}: ${uploadRes.status}\n${err}`);
+      }
+      console.log(`  Uploaded: gs://${bucket}/${gcsPath}`);
+    }
     console.log(`Train: ${trainUri}`);
     console.log(`Val:   ${valUri}`);
   }
@@ -279,7 +308,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const token = getAccessToken();
+  const token = await getAccessToken();
   const response = await fetch(
     `${VERTEX_API}/projects/${GCP_PROJECT}/locations/${GCP_REGION}/tuningJobs`,
     {
@@ -312,7 +341,7 @@ async function main(): Promise<void> {
     await delay(POLL_INTERVAL);
 
     try {
-      const pollToken = getAccessToken();
+      const pollToken = await getAccessToken();
       const pollRes = await fetch(`${VERTEX_API}/${job.name}`, {
         headers: { Authorization: `Bearer ${pollToken}` },
       });

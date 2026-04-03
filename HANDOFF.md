@@ -36,7 +36,8 @@
 | **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist. `ENABLE_PUBLIC_RECORD_EMBEDDINGS` already `true` in production. |
 | **Intelligence distillation** | 339 examples generated (306 train / 33 val) from 400 SEC + 300 legal records via Gemini teacher. 5 task types. |
 | **Nessie Intelligence v1 TRAINED** | Together AI `ft-14935428-4d67` → `carson_6cec/...-arkova-nessie-intelligence-v1-4b6c5a52`. 310 examples, 2 epochs, 78 steps, LoRA rank 64. |
-| **Gemini Golden v2 submitted** | Vertex AI job `6192779736259756032` — 1,665 entries, 8 epochs. Training in progress (~2-6 hrs). |
+| **Gemini Golden v2 TRAINED** | Vertex AI job `6192779736259756032` SUCCEEDED. Model: `models/2452032975731163136@1`, Endpoint: `endpoints/6659012403474202624`. 1,665 entries, 8 epochs. |
+| **gcloud auth eliminated** | Replaced `gcloud auth print-access-token` + `gcloud storage cp` with service account key (`google-auth-library` + GCS JSON API). Never expires. |
 
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
