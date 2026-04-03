@@ -8,7 +8,6 @@
 
 import { Coins } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCredits } from '@/hooks/useCredits';
 
@@ -41,9 +40,6 @@ export function CreditUsageWidget() {
             <Coins className="h-4 w-4 text-primary" />
             Credits
           </span>
-          <Badge variant="outline" className="text-xs font-normal">
-            Beta
-          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -51,7 +47,7 @@ export function CreditUsageWidget() {
           <span className="text-3xl font-bold">Unlimited</span>
         </div>
         <p className="text-xs text-muted-foreground">
-          No credit limits during beta
+          Unlimited credits included with your plan
         </p>
       </CardContent>
     </Card>
