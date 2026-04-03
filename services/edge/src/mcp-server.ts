@@ -93,6 +93,43 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
   );
 
+  // ── Phase II Agentic Tools (PH2-AGENT-06) ─────────────────────────────
+
+  server.tool(
+    'oracle_batch_verify',
+    'Batch-verify multiple credentials via the Arkova Oracle. Returns HMAC-signed results for tamper detection. Use for bulk verification workflows where audit trail is required.',
+    {
+      public_ids: z.array(z.string()).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
+    },
+    async ({ public_ids }) => {
+      try {
+        const results = [];
+        for (const pid of public_ids) {
+          const result = await handleVerifyCredential({ public_id: pid }, config);
+          results.push({ public_id: pid, ...JSON.parse(result.content[0].text) });
+        }
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() }, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }] };
+      }
+    },
+  );
+
+  server.tool(
+    'list_agents',
+    'List all registered AI agents for the authenticated organization. Returns agent names, types, scopes, and status.',
+    {},
+    async () => {
+      try {
+        const { data, error } = await config.supabase.from('agents').select('id, name, agent_type, status, allowed_scopes, framework, created_at').eq('status', 'active');
+        if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: data ?? [] }, null, 2) }] };
+      } catch (error) {
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }] };
+      }
+    },
+  );
+
   // ── Resources ─────────────────────────────────────────────────────────
 
   server.resource(
@@ -111,11 +148,13 @@ function createMcpServer(config: SupabaseConfig): McpServer {
           'only their cryptographic fingerprints are submitted.',
           '',
           'Available tools:',
-          '  verify_credential  — Verify a credential by its public ID (e.g., ARK-2026-001)',
-          '  search_credentials — Semantic search across 29,000+ anchored records',
-          '  nessie_query       — RAG search over SEC filings, patents, and regulatory docs',
-          '  anchor_document    — Submit a SHA-256 fingerprint for batch anchoring',
-          '  verify_document    — Check if a document fingerprint has been anchored',
+          '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
+          '  search_credentials   — Semantic search across 1.39M+ anchored records',
+          '  oracle_batch_verify  — Batch-verify up to 25 credentials with HMAC-signed results',
+          '  nessie_query         — RAG search over SEC filings, patents, and regulatory docs',
+          '  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring',
+          '  verify_document      — Check if a document fingerprint has been anchored',
+          '  list_agents          — List registered AI agents for the organization',
           '',
           'Authentication: API key (X-API-Key header) or OAuth Bearer token.',
           'Get your API key at https://app.arkova.io/settings/api-keys',
