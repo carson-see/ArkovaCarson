@@ -1,11 +1,14 @@
 /**
- * Nessie RAG Query Endpoint (PH1-INT-02 + PH1-INT-03)
+ * Nessie Intelligence Query Endpoint (PH1-INT-02 + PH1-INT-03 + NMT-07)
  *
  * GET /api/v1/nessie/query?q={query}&mode=retrieval|context
  *
  * mode=retrieval (default): Returns ranked documents with anchor proofs.
- * mode=context (PH1-INT-03): Feeds retrieved docs to Gemini, returns synthesized
- *   answer with citations pointing to anchored documents.
+ * mode=context (PH1-INT-03 + NMT-07): Feeds retrieved docs to Nessie Intelligence
+ *   model for compliance analysis with verified citations.
+ *
+ * Nessie is a compliance intelligence engine — it analyzes documents and makes
+ * recommendations. It does NOT do metadata extraction (that's Gemini Golden's job).
  *
  * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
  *
@@ -16,6 +19,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
 import type { TogetherProvider } from '../../ai/together.js';
+import { INTELLIGENCE_SYSTEM_PROMPT } from '../../ai/prompts/intelligence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
@@ -393,7 +397,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// RAG Generation via AI Provider Factory (PH1-INT-03)
+// RAG Generation via AI Provider Factory (PH1-INT-03 + NMT-07)
 // ---------------------------------------------------------------------------
 
 async function generateVerifiedContext(
@@ -404,17 +408,22 @@ async function generateVerifiedContext(
   const providerName = getProviderName();
   const prompt = buildRAGPrompt(query, documents);
 
+  // Use the intelligence system prompt (NMT-07) instead of the old generic one.
+  // The intelligence prompt teaches Nessie to provide compliance analysis,
+  // risk identification, and actionable recommendations — not just answer Q&A.
+  const systemPrompt = INTELLIGENCE_SYSTEM_PROMPT;
+
   let text: string;
   let tokensUsed: number | undefined;
   let modelName: string;
 
-  if (providerName === 'together') {
-    // Together AI provider has a dedicated RAG method
-    const togetherProvider = aiProvider as TogetherProvider;
-    const result = await togetherProvider.generateRAGResponse(NESSIE_RAG_SYSTEM_PROMPT, prompt);
+  if (providerName === 'together' || providerName === 'nessie') {
+    // Nessie Intelligence model via RunPod or Together AI
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (aiProvider as any).generateRAGResponse(systemPrompt, prompt);
     text = result.text;
     tokensUsed = result.tokensUsed;
-    modelName = process.env.TOGETHER_MODEL ?? 'meta-llama/Llama-3.1-8B-Instruct';
+    modelName = process.env.NESSIE_INTELLIGENCE_MODEL ?? 'nessie-intelligence-v1';
   } else {
     // Fallback: Use Gemini SDK directly for other providers
     const { GoogleGenerativeAI: GenAI } = await import('@google/generative-ai');
@@ -426,7 +435,7 @@ async function generateVerifiedContext(
     modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
     const model = gemini.getGenerativeModel({
       model: modelName,
-      systemInstruction: NESSIE_RAG_SYSTEM_PROMPT,
+      systemInstruction: systemPrompt,
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.2,
