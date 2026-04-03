@@ -27,7 +27,7 @@ export function useAnchorStats() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const dbAny = supabase as any;
 
-      // Use SECURITY DEFINER RPCs for accurate counts (bypasses RLS row limits)
+      // Try SECURITY DEFINER RPCs first for accurate counts
       const [statusResult, txStatsResult] = await Promise.all([
         dbAny.rpc('get_anchor_status_counts'),
         dbAny.rpc('get_anchor_tx_stats'),
@@ -35,21 +35,62 @@ export function useAnchorStats() {
 
       if (!isMountedRef.current) return;
 
-      // Process status counts from RPC
+      // Process status counts — RPC returns object or null
       const statusCounts: Record<string, number> = {};
       const statusData = statusResult.data ?? {};
-      for (const status of ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED']) {
-        statusCounts[status] = statusData[status] ?? 0;
+      const rpcHasData = statusResult.data && !statusResult.error;
+
+      if (rpcHasData) {
+        for (const status of ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED']) {
+          statusCounts[status] = statusData[status] ?? 0;
+        }
+      } else {
+        // Fallback: direct count queries (same approach as PipelineAdminPage)
+        const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'];
+        const countResults = await Promise.all(
+          statuses.map(s =>
+            dbAny.from('anchors').select('*', { count: 'exact', head: true }).eq('status', s)
+          )
+        );
+        for (let i = 0; i < statuses.length; i++) {
+          statusCounts[statuses[i]] = countResults[i].count ?? 0;
+        }
       }
+
       const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
 
       // Process TX stats from RPC (accurate server-side aggregation)
       const txData = txStatsResult.data ?? {};
-      const distinctTxIds = txData.distinct_tx_count ?? 0;
-      const anchorsWithTx = txData.anchors_with_tx ?? 0;
-      const avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTx / distinctTxIds) : 0;
-      const lastAnchorTime = txData.last_anchor_time ?? null;
-      const lastTxTime = txData.last_tx_time ?? null;
+      const txRpcHasData = txStatsResult.data && !txStatsResult.error;
+      let distinctTxIds = 0;
+      let avgAnchorsPerTx = 0;
+      let lastAnchorTime: string | null = null;
+      let lastTxTime: string | null = null;
+
+      if (txRpcHasData) {
+        distinctTxIds = txData.distinct_tx_count ?? 0;
+        const anchorsWithTx = txData.anchors_with_tx ?? 0;
+        avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTx / distinctTxIds) : 0;
+        lastAnchorTime = txData.last_anchor_time ?? null;
+        lastTxTime = txData.last_tx_time ?? null;
+      } else {
+        // Fallback: basic TX count from anchors with chain_tx_id
+        const { count: txCount } = await dbAny
+          .from('anchors')
+          .select('chain_tx_id', { count: 'exact', head: true })
+          .not('chain_tx_id', 'is', null);
+        distinctTxIds = txCount ?? 0;
+        avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(totalAnchors / distinctTxIds) : 0;
+
+        const { data: lastRow } = await dbAny
+          .from('anchors')
+          .select('created_at')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        lastAnchorTime = lastRow?.created_at ?? null;
+        lastTxTime = lastAnchorTime;
+      }
 
       if (isMountedRef.current) {
         setStats({

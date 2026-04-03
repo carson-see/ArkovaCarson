@@ -68,7 +68,7 @@ const PRICING_TABLE = [
 const CTA_BUTTON_CLASS = "bg-[#00d4ff] text-[#003642] text-xs uppercase tracking-widest px-6 py-2.5 rounded-full font-bold shadow-[0_0_15px_rgba(0,212,255,0.3)] hover:shadow-[0_0_25px_rgba(0,212,255,0.5)] transition-all";
 
 export function DevelopersPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   usePageMeta({
     title: 'Arkova Developer Platform — Verification API, SDKs & MCP Server',
     description: 'Build with the Arkova Verification API. Programmatic credential verification, AI metadata extraction, batch processing, and MCP server for AI agents.',
@@ -123,7 +123,9 @@ export function DevelopersPage() {
           </Link>
         </nav>
         <div className="flex items-center gap-4">
-          {user ? (
+          {authLoading ? (
+            <div className="w-24 h-9" /> /* prevent layout shift while auth loads */
+          ) : user ? (
             <Link
               to={ROUTES.DASHBOARD}
               className={CTA_BUTTON_CLASS}

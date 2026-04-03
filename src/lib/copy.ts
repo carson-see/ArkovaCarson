@@ -239,8 +239,8 @@ export const DOCUMENTS_PAGE_LABELS = {
   EMPTY_TITLE: 'No documents yet',
   EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
   SECURE_DOCUMENT: 'Secure Document',
-  NO_MATCHING: 'No matching documents',
-  NO_MATCHING_DESC: 'Try adjusting your search or filter criteria.',
+  NO_MATCHING: 'No results found',
+  NO_MATCHING_DESC: 'No documents match your current search or filter. Try adjusting your criteria.',
 } as const;
 
 // =============================================================================
