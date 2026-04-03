@@ -18,7 +18,7 @@ import { Shield, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RecoveryPhraseModal } from '@/components/auth/RecoveryPhraseModal';
-import { deriveClaimKey } from '@/lib/recoveryPhrase';
+import { deriveClaimKeyHash } from '@/lib/recoveryPhrase';
 import { supabase } from '@/lib/supabase';
 
 type ActivationState = 'idle' | 'activating' | 'success' | 'error';
@@ -37,7 +37,7 @@ export function ActivateAccountPage() {
     setErrorMessage(null);
 
     try {
-      const claimKey = await deriveClaimKey(phrase);
+      const claimKey = await deriveClaimKeyHash(phrase);
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase.rpc as any)('activate_user', {

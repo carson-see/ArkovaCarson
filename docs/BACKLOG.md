@@ -413,6 +413,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~NMT-04~~ | ~~Full-precision GPU eval (fp16/bf16)~~ | ~~P1~~ | **COMPLETE** — v5: 87.2% F1, v4: 65.6% F1. fp16 ≈ 4-bit (no quality diff). RunPod A6000 48GB. | None | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
 | ~~NMT-06~~ | ~~Nessie v5 training + condensed prompt~~ | ~~P2~~ | **COMPLETE** — v5 trained (1,903 train), 87.2% F1, condensed prompt deployed to provider | NMT-01, NMT-03 | Large |
+| **NMT-07** | **Nessie intelligence training pipeline** | **P0** | **IN PROGRESS** — Pipeline + prompts + 34 tests complete. Awaiting distillation + training. | Public records corpus | Large |
+| **NMT-08** | **Gemini Golden v2 — full dataset retrain** | **P1** | **READY** — Script updated with phases 10-11 + realistic confidence. Awaiting submission. | Vertex AI access | Small |
 
 **Eval Results (2026-03-31, updated with v5 fp16):**
 
@@ -425,6 +427,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | Nessie v3 (4-bit) | 56.4% | 58.4% | 0.214 | 44.6% | MLX 4-bit, 50 samples |
 
 **Key findings:** Nessie v5 achieves 87.2% weighted F1 (+21.6pp over v4), only 3.2pp behind Gemini Golden. v5 confidence correlation (0.539) exceeds Gemini (0.426). fp16 ≈ 4-bit quantization (model quality is bottleneck, not precision). Fine-tuned models MUST use condensed prompt (full 58K prompt = 0% F1).
+
+**CRITICAL ROLE DISTINCTION (2026-04-03):** Gemini Golden = metadata extraction engine (templates, fields, fraud). Nessie = compliance intelligence engine (analyzes documents, makes recommendations with verified citations). Nessie v5 was trained as extraction — NMT-07 pivots to intelligence training data. See strategy docs: Arkova-Verified-Intelligence-SLM-Analysis, Arkova Strategic Blueprint.
 
 ---
 

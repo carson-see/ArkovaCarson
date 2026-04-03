@@ -41,6 +41,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { isPlatformAdmin } from '@/lib/platform';
 import { ROUTES } from '@/lib/routes';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
+import { NessieIntelligencePanel } from '@/components/search/NessieIntelligencePanel';
 import { cn } from '@/lib/utils';
 import { COMPLIANCE_CONTROLS, getComplianceControls } from '@/lib/complianceMapping';
 import type { Database } from '@/types/database.types';
@@ -397,6 +398,9 @@ export function ComplianceDashboardPage() {
             {COMPLIANCE_LABELS.PAGE_SUBTITLE}
           </p>
         </div>
+
+        {/* Section 0: Nessie Intelligence Query */}
+        <NessieIntelligencePanel />
 
         {/* Section 1: Health Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

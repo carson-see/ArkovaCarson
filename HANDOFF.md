@@ -22,6 +22,23 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-04-03, Session 24 — Nessie Intelligence Pivot + Gemini Golden v2)
+
+**Pivoted Nessie from extraction (Gemini's job) to compliance intelligence (Nessie's actual job). Built intelligence training data pipeline, prompts, and Gemini Golden v2 finetune script.**
+
+| Change | Detail |
+|--------|--------|
+| **CRITICAL: Nessie role clarification** | Nessie = compliance intelligence engine (analyzes docs, makes recommendations). Gemini Golden = metadata extraction. Previous training was wrong — trained Nessie as extraction model. |
+| **NMT-07: Intelligence training pipeline** | `nessie-intelligence-data.ts` — 5 intelligence task types (compliance_qa, risk_analysis, document_summary, recommendation, cross_reference), seed Q&A pairs, dedup, validation. 24 tests. |
+| **NMT-07: Intelligence prompts** | `prompts/intelligence.ts` — System prompts for all 5 intelligence modes with verified citation requirements. 10 tests. |
+| **NMT-08: Gemini Golden v2 script** | `gemini-golden-finetune.ts` updated: +phases 10-11 (291 new entries), hardcoded confidence replaced with `computeRealisticConfidence()`. Total: 1,605 entries. |
+| **TS error fix** | `ActivateAccountPage.tsx`: `deriveClaimKey` → `deriveClaimKeyHash` (function was renamed). 0 TS errors now. |
+| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist. `ENABLE_PUBLIC_RECORD_EMBEDDINGS` already `true` in production. |
+| **Intelligence distillation** | 339 examples generated (306 train / 33 val) from 400 SEC + 300 legal records via Gemini teacher. 5 task types. |
+| **Nessie Intelligence v1 TRAINED** | Together AI `ft-14935428-4d67` → `carson_6cec/...-arkova-nessie-intelligence-v1-4b6c5a52`. 310 examples, 2 epochs, 78 steps, LoRA rank 64. |
+| **Gemini Golden v2 TRAINED** | Vertex AI job `6192779736259756032` SUCCEEDED. Model: `models/2452032975731163136@1`, Endpoint: `endpoints/6659012403474202624`. 1,665 entries, 8 epochs. |
+| **gcloud auth eliminated** | Replaced `gcloud auth print-access-token` + `gcloud storage cp` with service account key (`google-auth-library` + GCS JSON API). Never expires. |
+
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
 **Production UAT completed for Tasks 4-5 + Bulk Upload. Critical RLS performance fix applied to 1.4M row anchors table. Three PRs merged (#235, #236, #237).**
