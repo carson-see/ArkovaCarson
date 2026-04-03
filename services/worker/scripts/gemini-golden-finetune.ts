@@ -3,12 +3,13 @@
  * Gemini Golden Dataset Fine-Tune
  *
  * Fine-tunes Gemini 2.5 Flash on the golden evaluation dataset —
- * 1,330 manually labeled credential examples covering user-facing types:
- * DEGREE, LICENSE, CERTIFICATE, CLE, and edge cases.
+ * 1,605+ manually labeled credential examples covering all extraction types.
  *
- * This is the RIGHT training data for Gemini: real credential extraction
- * tasks that match what users actually upload. Nessie handles institutional
- * pipeline data (SEC, court, regulatory). Gemini handles user documents.
+ * Gemini Golden v2: Includes phases 10-11 (gap-closure + expanded low-N types)
+ * and uses computeRealisticConfidence instead of hardcoded tag-based buckets.
+ *
+ * Gemini handles metadata extraction, templates, and fraud detection.
+ * Nessie is a separate compliance intelligence engine (RAG + recommendations).
  *
  * Usage:
  *   cd services/worker
@@ -17,10 +18,9 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { execSync } from 'node:child_process';
+import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 
-// Import ALL golden dataset phases
+// Import ALL golden dataset phases (1-11)
 import { GOLDEN_DATASET, FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { GOLDEN_DATASET_EXTENDED } from '../src/ai/eval/golden-dataset-extended.js';
 import { GOLDEN_DATASET_PHASE2 } from '../src/ai/eval/golden-dataset-phase2.js';
@@ -31,6 +31,9 @@ import { GOLDEN_DATASET_PHASE6 } from '../src/ai/eval/golden-dataset-phase6.js';
 import { GOLDEN_DATASET_PHASE7 } from '../src/ai/eval/golden-dataset-phase7.js';
 import { GOLDEN_DATASET_PHASE8 } from '../src/ai/eval/golden-dataset-phase8.js';
 import { GOLDEN_DATASET_PHASE9 } from '../src/ai/eval/golden-dataset-phase9.js';
+import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js';
+import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';
+import { computeRealisticConfidence } from '../src/ai/training/nessie-v4-data.js';
 import type { GoldenDatasetEntry } from '../src/ai/eval/types.js';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
@@ -38,9 +41,12 @@ dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 // --- CLI args ---
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
-const EPOCHS = parseInt(args[args.indexOf('--epochs') + 1] || '8', 10); // More epochs for small dataset
-const ADAPTER_SIZE = parseInt(args[args.indexOf('--adapter-size') + 1] || '4', 10);
-const LR_MULTIPLIER = parseFloat(args[args.indexOf('--lr-multiplier') + 1] || '2.0'); // Higher LR for small dataset
+const epochIdx = args.indexOf('--epochs');
+const EPOCHS = epochIdx >= 0 ? parseInt(args[epochIdx + 1], 10) : 8;
+const adapterIdx = args.indexOf('--adapter-size');
+const ADAPTER_SIZE = adapterIdx >= 0 ? parseInt(args[adapterIdx + 1], 10) : 4;
+const lrIdx = args.indexOf('--lr-multiplier');
+const LR_MULTIPLIER = lrIdx >= 0 ? parseFloat(args[lrIdx + 1]) : 2.0;
 
 const GCP_PROJECT = 'arkova1';
 const GCP_REGION = 'us-central1';
@@ -93,18 +99,14 @@ Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.
 
   // Build the expected model output from ground truth
   const output: Record<string, unknown> = { ...entry.groundTruth };
-  // Add confidence based on tags
-  if (entry.tags.includes('clean')) {
-    output.confidence = 0.92;
-  } else if (entry.tags.includes('ambiguous') || entry.tags.includes('partial')) {
-    output.confidence = 0.72;
-  } else if (entry.tags.includes('corrupted') || entry.tags.includes('junk')) {
-    output.confidence = 0.35;
-  } else if (entry.tags.includes('ocr-noise')) {
-    output.confidence = 0.65;
-  } else {
-    output.confidence = 0.85;
-  }
+  // Compute realistic confidence from ground truth completeness (NMT-03 fix).
+  // Previous approach used hardcoded tag-based buckets (0.92/0.72/0.35) which
+  // taught the model to output overconfident scores. computeRealisticConfidence
+  // scores based on field presence + text length, producing calibrated 0.25-0.95 range.
+  output.confidence = computeRealisticConfidence(
+    entry.groundTruth as Record<string, unknown>,
+    entry.strippedText,
+  );
 
   return {
     systemInstruction: {
@@ -118,8 +120,17 @@ Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.
   };
 }
 
-function getAccessToken(): string {
-  return execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
+/**
+ * Get GCP access token via service account key (GOOGLE_APPLICATION_CREDENTIALS).
+ * NEVER use gcloud CLI auth — it expires and breaks automation.
+ */
+async function getAccessToken(): Promise<string> {
+  const { GoogleAuth } = await import('google-auth-library');
+  const auth = new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] });
+  const client = await auth.getClient();
+  const token = await client.getAccessToken();
+  if (!token.token) throw new Error('Failed to get access token from service account');
+  return token.token;
 }
 
 function delay(ms: number): Promise<void> {
@@ -154,6 +165,8 @@ async function main(): Promise<void> {
     { name: 'phase7', data: GOLDEN_DATASET_PHASE7 },
     { name: 'phase8', data: GOLDEN_DATASET_PHASE8 },
     { name: 'phase9', data: GOLDEN_DATASET_PHASE9 },
+    { name: 'phase10', data: GOLDEN_DATASET_PHASE10 },
+    { name: 'phase11', data: GOLDEN_DATASET_PHASE11 },
   ];
 
   for (const ds of datasets) {
@@ -229,8 +242,29 @@ async function main(): Promise<void> {
   if (DRY_RUN) {
     console.log(`[DRY RUN] Would upload to: ${trainUri}`);
   } else {
-    execSync(`gcloud storage cp "${trainFile}" "${trainUri}" --project=${GCP_PROJECT}`, { stdio: 'inherit' });
-    execSync(`gcloud storage cp "${valFile}" "${valUri}" --project=${GCP_PROJECT}`, { stdio: 'inherit' });
+    // Upload via GCS JSON API using service account (never gcloud CLI)
+    const gcsToken = await getAccessToken();
+    const bucket = GCS_BUCKET.replace('gs://', '');
+    for (const [localFile, gcsPath] of [
+      [trainFile, `gemini-golden/${timestamp}/train.jsonl`],
+      [valFile, `gemini-golden/${timestamp}/validation.jsonl`],
+    ]) {
+      const fileData = readFileSync(localFile);
+      const uploadUrl = `https://storage.googleapis.com/upload/storage/v1/b/${bucket}/o?uploadType=media&name=${encodeURIComponent(gcsPath)}`;
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${gcsToken}`,
+          'Content-Type': 'application/octet-stream',
+        },
+        body: fileData,
+      });
+      if (!uploadRes.ok) {
+        const err = await uploadRes.text();
+        throw new Error(`GCS upload failed for ${gcsPath}: ${uploadRes.status}\n${err}`);
+      }
+      console.log(`  Uploaded: gs://${bucket}/${gcsPath}`);
+    }
     console.log(`Train: ${trainUri}`);
     console.log(`Val:   ${valUri}`);
   }
@@ -274,7 +308,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const token = getAccessToken();
+  const token = await getAccessToken();
   const response = await fetch(
     `${VERTEX_API}/projects/${GCP_PROJECT}/locations/${GCP_REGION}/tuningJobs`,
     {
@@ -307,7 +341,7 @@ async function main(): Promise<void> {
     await delay(POLL_INTERVAL);
 
     try {
-      const pollToken = getAccessToken();
+      const pollToken = await getAccessToken();
       const pollRes = await fetch(`${VERTEX_API}/${job.name}`, {
         headers: { Authorization: `Bearer ${pollToken}` },
       });

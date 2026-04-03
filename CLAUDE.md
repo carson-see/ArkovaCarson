@@ -451,7 +451,8 @@ TOGETHER_EMBEDDING_MODEL=           # Together.ai embedding model
 # Nessie (RunPod vLLM — pipeline extraction)
 RUNPOD_API_KEY=
 RUNPOD_ENDPOINT_ID=                 # e.g., hmayoqhxvy5k5y
-NESSIE_MODEL=nessie-v2              # Nessie model name on RunPod vLLM
+NESSIE_MODEL=nessie-v2              # Nessie extraction model on RunPod vLLM (legacy)
+NESSIE_INTELLIGENCE_MODEL=          # Nessie intelligence model (compliance analysis, recommendations)
 NESSIE_DOMAIN_ROUTING=false         # enable domain-based Nessie routing
 ENABLE_SYNTHETIC_DATA=false
 TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for training data

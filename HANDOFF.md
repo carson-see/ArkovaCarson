@@ -22,9 +22,9 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
-### Recent Changes (2026-04-03, Session 24 — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
+### Recent Changes (2026-04-03, Session 24b — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
 
-**Phase II 4/6 done. 12 UAT bugs fixed. 4 GEO stories completed. Wikidata entity created. PR #238 open (6 commits).**
+**Phase II 6/6 COMPLETE. 12 UAT bugs fixed. 4 GEO stories completed. Wikidata entity created. Security fixes for oracle HMAC + agents IDOR. PR #238 merged (10 commits).**
 
 | Change | Detail |
 |--------|--------|
@@ -32,15 +32,34 @@
 | **PH2-AGENT-02** | Attestation Bitcoin anchoring — confirmed pre-existing (`attestationAnchor.ts`) |
 | **PH2-AGENT-03** | Attestation webhook events — `attestation.created`, `attestation.active`, `attestation.revoked` |
 | **PH2-AGENT-04** | Record Authenticity Oracle — `POST /api/v1/oracle/verify` with HMAC signatures, batch queries |
+| **PH2-AGENT-05** | Agent Identity & Delegation — migration 0158, agents table, scoped API keys, 6 CRUD endpoints |
+| **PH2-AGENT-06** | Agent Framework Integrations — LangChain SDK (`sdks/langchain/`), MCP oracle + list_agents tools |
+| **Security fixes** | Oracle HMAC hardcoded fallback removed (hard-fail on missing secret). Agents cross-org IDOR fixed (org-ownership check on all per-resource handlers). ORG_ADMIN enforcement on agent registration. |
 | **GEO-02** | Wikidata entity Q138865713 created (SaaS, official website, USA, software industry) |
 | **GEO-14** | Soft 404s — NotFoundPage title updated, already implemented |
 | **GEO-16** | Traction metrics on SearchPage (1.39M+, 320K+, 21 types, 87.2% F1) |
 | **GEO-17** | Internal cross-links on SearchPage + DevelopersPage |
 | **12 UAT bugs** | Constitution 1.3 violations, CSP frame-ancestors, sidebar, header, search chips |
-| **Jira** | 21+ issues → Done, Phase II epic SCRUM-388, Phase III epic SCRUM-390, 9 stories created |
+| **Jira** | 25+ issues → Done, Phase II epic SCRUM-388 COMPLETE, Phase III epic SCRUM-390 created, 9 stories |
 | **Confluence** | Data Model (migrations 0157), 90-Day Priority updated |
 | **GitHub** | Draft release v1.3.0-rc1 created |
-| **Docs** | CLAUDE.md (ATS 8/8, 161 migrations, 196/211), BACKLOG.md (Phase II/III stories), story doc 22 |
+
+### Recent Changes (2026-04-03, Session 24a — Nessie Intelligence Pivot + Gemini Golden v2)
+
+**Pivoted Nessie from extraction (Gemini's job) to compliance intelligence (Nessie's actual job). Built intelligence training data pipeline, prompts, and Gemini Golden v2 finetune script.**
+
+| Change | Detail |
+|--------|--------|
+| **CRITICAL: Nessie role clarification** | Nessie = compliance intelligence engine (analyzes docs, makes recommendations). Gemini Golden = metadata extraction. Previous training was wrong — trained Nessie as extraction model. |
+| **NMT-07: Intelligence training pipeline** | `nessie-intelligence-data.ts` — 5 intelligence task types (compliance_qa, risk_analysis, document_summary, recommendation, cross_reference), seed Q&A pairs, dedup, validation. 24 tests. |
+| **NMT-07: Intelligence prompts** | `prompts/intelligence.ts` — System prompts for all 5 intelligence modes with verified citation requirements. 10 tests. |
+| **NMT-08: Gemini Golden v2 script** | `gemini-golden-finetune.ts` updated: +phases 10-11 (291 new entries), hardcoded confidence replaced with `computeRealisticConfidence()`. Total: 1,605 entries. |
+| **TS error fix** | `ActivateAccountPage.tsx`: `deriveClaimKey` → `deriveClaimKeyHash` (function was renamed). 0 TS errors now. |
+| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist. `ENABLE_PUBLIC_RECORD_EMBEDDINGS` already `true` in production. |
+| **Intelligence distillation** | 339 examples generated (306 train / 33 val) from 400 SEC + 300 legal records via Gemini teacher. 5 task types. |
+| **Nessie Intelligence v1 TRAINED** | Together AI `ft-14935428-4d67` → `carson_6cec/...-arkova-nessie-intelligence-v1-4b6c5a52`. 310 examples, 2 epochs, 78 steps, LoRA rank 64. |
+| **Gemini Golden v2 TRAINED** | Vertex AI job `6192779736259756032` SUCCEEDED. Model: `models/2452032975731163136@1`, Endpoint: `endpoints/6659012403474202624`. 1,665 entries, 8 epochs. |
+| **gcloud auth eliminated** | Replaced `gcloud auth print-access-token` + `gcloud storage cp` with service account key (`google-auth-library` + GCS JSON API). Never expires. |
 
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
