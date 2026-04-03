@@ -539,6 +539,15 @@ export function SearchPage() {
           </div>
         )}
 
+        {/* GEO-17: Internal cross-links for SEO */}
+        {!hasSearched && (
+          <div className="flex flex-wrap justify-center gap-6 mt-8 text-xs text-muted-foreground">
+            <Link to={ROUTES.ABOUT} className="hover:text-[#00d4ff] transition-colors">Learn about Arkova</Link>
+            <Link to={ROUTES.DEVELOPERS} className="hover:text-[#00d4ff] transition-colors">Developer API</Link>
+            <Link to="/issuers" className="hover:text-[#00d4ff] transition-colors">Browse verified issuers</Link>
+          </div>
+        )}
+
         {/* Standalone footer */}
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
@@ -550,6 +559,7 @@ export function SearchPage() {
                 arkova.ai <ExternalLink className="h-3 w-3" />
               </a>
               <Link to={ROUTES.ABOUT} className="text-muted-foreground hover:text-foreground">About</Link>
+              <Link to={ROUTES.DEVELOPERS} className="text-muted-foreground hover:text-foreground">Developers</Link>
               <Link to={ROUTES.PRIVACY} className="text-muted-foreground hover:text-foreground">Privacy</Link>
               <Link to={ROUTES.TERMS} className="text-muted-foreground hover:text-foreground">Terms</Link>
             </div>

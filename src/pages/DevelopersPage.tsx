@@ -630,6 +630,7 @@ export function DevelopersPage() {
             <Link to="/about" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">About</Link>
             <Link to="/search" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Search Credentials</Link>
             <Link to="/verify" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Verify</Link>
+            <Link to="/issuers" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Verified Issuers</Link>
             <Link to="/cle" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">CLE API</Link>
             <Link to="/privacy" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Privacy</Link>
             <Link to="/terms" className="font-mono text-xs text-[#bbc9cf] hover:text-[#00d4ff] underline transition-colors">Terms</Link>
