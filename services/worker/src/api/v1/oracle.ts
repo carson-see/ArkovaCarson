@@ -147,9 +147,14 @@ router.post('/verify', async (req: Request, res: Response) => {
       };
     });
 
-    // Sign response with HMAC for tamper detection
+    // Sign response with HMAC for tamper detection (Constitution 1.4: never hardcode secrets)
     const payload = JSON.stringify({ query_id: queryId, results });
-    const hmacSecret = process.env.API_KEY_HMAC_SECRET ?? 'oracle-default';
+    const hmacSecret = process.env.API_KEY_HMAC_SECRET;
+    if (!hmacSecret) {
+      logger.error('API_KEY_HMAC_SECRET not configured — cannot sign oracle responses');
+      res.status(500).json({ error: 'Oracle signing not configured' });
+      return;
+    }
     const signature = createHmac('sha256', hmacSecret)
       .update(payload)
       .digest('hex');

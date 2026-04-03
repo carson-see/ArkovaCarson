@@ -16,7 +16,32 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { generateApiKey, hashApiKey } from '../../middleware/apiKeyAuth.js';
+import { generateApiKey } from '../../middleware/apiKeyAuth.js';
+
+/** Helper: get caller's org_id or return 403 */
+async function getCallerOrgId(userId: string, res: Response): Promise<string | null> {
+  const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
+  if (!profile?.org_id) {
+    res.status(403).json({ error: 'Organization membership required' });
+    return null;
+  }
+  return profile.org_id;
+}
+
+/** Helper: verify agent belongs to caller's org */
+async function verifyAgentOwnership(agentId: string, orgId: string, res: Response): Promise<Record<string, unknown> | null> {
+  const { data: agent, error } = await db
+    .from('agents')
+    .select('*')
+    .eq('id', agentId)
+    .eq('org_id', orgId)
+    .single();
+  if (error || !agent) {
+    res.status(404).json({ error: 'Agent not found' });
+    return null;
+  }
+  return agent;
+}
 
 const router = Router();
 
@@ -57,10 +82,14 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Look up user's org
-    const { data: profile } = await db.from('profiles').select('org_id').eq('id', userId).single();
+    // Look up user's org + verify admin role (migration 0158: admin-only)
+    const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
     if (!profile?.org_id) {
       res.status(403).json({ error: 'Organization membership required to register agents' });
+      return;
+    }
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Only organization admins can register agents' });
       return;
     }
 
@@ -136,16 +165,11 @@ router.get('/:agentId', async (req: Request, res: Response) => {
   const { agentId } = req.params;
 
   try {
-    const { data: agent, error } = await db
-      .from('agents')
-      .select('*')
-      .eq('id', agentId)
-      .single();
+    const orgId = await getCallerOrgId(userId, res);
+    if (!orgId) return;
 
-    if (error || !agent) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
+    const agent = await verifyAgentOwnership(agentId, orgId, res);
+    if (!agent) return;
 
     // Also fetch API keys associated with this agent
     const { data: keys } = await db
@@ -175,6 +199,13 @@ router.patch('/:agentId', async (req: Request, res: Response) => {
   }
 
   try {
+    const orgId = await getCallerOrgId(userId, res);
+    if (!orgId) return;
+
+    // Verify ownership before updating
+    const existing = await verifyAgentOwnership(agentId, orgId, res);
+    if (!existing) return;
+
     const updates: Record<string, unknown> = { ...parsed.data };
     if (parsed.data.status === 'suspended') {
       updates.suspended_at = new Date().toISOString();
@@ -184,6 +215,7 @@ router.patch('/:agentId', async (req: Request, res: Response) => {
       .from('agents')
       .update(updates)
       .eq('id', agentId)
+      .eq('org_id', orgId)
       .select()
       .single();
 
@@ -217,12 +249,21 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
   const { agentId } = req.params;
 
   try {
-    const { error } = await db
+    const orgId = await getCallerOrgId(userId, res);
+    if (!orgId) return;
+
+    // Verify ownership before revoking
+    const existing = await verifyAgentOwnership(agentId, orgId, res);
+    if (!existing) return;
+
+    const { data: updated, error } = await db
       .from('agents')
       .update({ status: 'revoked', revoked_at: new Date().toISOString() })
-      .eq('id', agentId);
+      .eq('id', agentId)
+      .eq('org_id', orgId)
+      .select('id');
 
-    if (error) {
+    if (error || !updated || (updated as unknown[]).length === 0) {
       res.status(500).json({ error: 'Failed to revoke agent' });
       return;
     }
@@ -258,11 +299,15 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
   if (!hmacSecret) { res.status(500).json({ error: 'HMAC secret not configured' }); return; }
 
   try {
-    // Verify agent exists and is active
+    // Verify caller owns the agent's org
+    const orgId = await getCallerOrgId(userId, res);
+    if (!orgId) return;
+
     const { data: agent, error: agentError } = await db
       .from('agents')
       .select('id, org_id, allowed_scopes, name, status')
       .eq('id', agentId)
+      .eq('org_id', orgId)
       .single();
 
     if (agentError || !agent) {
