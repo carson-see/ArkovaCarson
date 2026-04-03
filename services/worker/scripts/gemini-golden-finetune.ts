@@ -3,12 +3,13 @@
  * Gemini Golden Dataset Fine-Tune
  *
  * Fine-tunes Gemini 2.5 Flash on the golden evaluation dataset —
- * 1,330 manually labeled credential examples covering user-facing types:
- * DEGREE, LICENSE, CERTIFICATE, CLE, and edge cases.
+ * 1,605+ manually labeled credential examples covering all extraction types.
  *
- * This is the RIGHT training data for Gemini: real credential extraction
- * tasks that match what users actually upload. Nessie handles institutional
- * pipeline data (SEC, court, regulatory). Gemini handles user documents.
+ * Gemini Golden v2: Includes phases 10-11 (gap-closure + expanded low-N types)
+ * and uses computeRealisticConfidence instead of hardcoded tag-based buckets.
+ *
+ * Gemini handles metadata extraction, templates, and fraud detection.
+ * Nessie is a separate compliance intelligence engine (RAG + recommendations).
  *
  * Usage:
  *   cd services/worker
@@ -20,7 +21,7 @@ import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 
-// Import ALL golden dataset phases
+// Import ALL golden dataset phases (1-11)
 import { GOLDEN_DATASET, FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { GOLDEN_DATASET_EXTENDED } from '../src/ai/eval/golden-dataset-extended.js';
 import { GOLDEN_DATASET_PHASE2 } from '../src/ai/eval/golden-dataset-phase2.js';
@@ -31,6 +32,9 @@ import { GOLDEN_DATASET_PHASE6 } from '../src/ai/eval/golden-dataset-phase6.js';
 import { GOLDEN_DATASET_PHASE7 } from '../src/ai/eval/golden-dataset-phase7.js';
 import { GOLDEN_DATASET_PHASE8 } from '../src/ai/eval/golden-dataset-phase8.js';
 import { GOLDEN_DATASET_PHASE9 } from '../src/ai/eval/golden-dataset-phase9.js';
+import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js';
+import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';
+import { computeRealisticConfidence } from '../src/ai/training/nessie-v4-data.js';
 import type { GoldenDatasetEntry } from '../src/ai/eval/types.js';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
@@ -93,18 +97,14 @@ Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.
 
   // Build the expected model output from ground truth
   const output: Record<string, unknown> = { ...entry.groundTruth };
-  // Add confidence based on tags
-  if (entry.tags.includes('clean')) {
-    output.confidence = 0.92;
-  } else if (entry.tags.includes('ambiguous') || entry.tags.includes('partial')) {
-    output.confidence = 0.72;
-  } else if (entry.tags.includes('corrupted') || entry.tags.includes('junk')) {
-    output.confidence = 0.35;
-  } else if (entry.tags.includes('ocr-noise')) {
-    output.confidence = 0.65;
-  } else {
-    output.confidence = 0.85;
-  }
+  // Compute realistic confidence from ground truth completeness (NMT-03 fix).
+  // Previous approach used hardcoded tag-based buckets (0.92/0.72/0.35) which
+  // taught the model to output overconfident scores. computeRealisticConfidence
+  // scores based on field presence + text length, producing calibrated 0.25-0.95 range.
+  output.confidence = computeRealisticConfidence(
+    entry.groundTruth as Record<string, unknown>,
+    entry.strippedText,
+  );
 
   return {
     systemInstruction: {
@@ -154,6 +154,8 @@ async function main(): Promise<void> {
     { name: 'phase7', data: GOLDEN_DATASET_PHASE7 },
     { name: 'phase8', data: GOLDEN_DATASET_PHASE8 },
     { name: 'phase9', data: GOLDEN_DATASET_PHASE9 },
+    { name: 'phase10', data: GOLDEN_DATASET_PHASE10 },
+    { name: 'phase11', data: GOLDEN_DATASET_PHASE11 },
   ];
 
   for (const ds of datasets) {

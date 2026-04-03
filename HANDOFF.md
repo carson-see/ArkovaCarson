@@ -22,6 +22,19 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-04-03, Session 24 — Nessie Intelligence Pivot + Gemini Golden v2)
+
+**Pivoted Nessie from extraction (Gemini's job) to compliance intelligence (Nessie's actual job). Built intelligence training data pipeline, prompts, and Gemini Golden v2 finetune script.**
+
+| Change | Detail |
+|--------|--------|
+| **CRITICAL: Nessie role clarification** | Nessie = compliance intelligence engine (analyzes docs, makes recommendations). Gemini Golden = metadata extraction. Previous training was wrong — trained Nessie as extraction model. |
+| **NMT-07: Intelligence training pipeline** | `nessie-intelligence-data.ts` — 5 intelligence task types (compliance_qa, risk_analysis, document_summary, recommendation, cross_reference), seed Q&A pairs, dedup, validation. 24 tests. |
+| **NMT-07: Intelligence prompts** | `prompts/intelligence.ts` — System prompts for all 5 intelligence modes with verified citation requirements. 10 tests. |
+| **NMT-08: Gemini Golden v2 script** | `gemini-golden-finetune.ts` updated: +phases 10-11 (291 new entries), hardcoded confidence replaced with `computeRealisticConfidence()`. Total: 1,605 entries. |
+| **TS error fix** | `ActivateAccountPage.tsx`: `deriveClaimKey` → `deriveClaimKeyHash` (function was renamed). 0 TS errors now. |
+| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist but gated by `ENABLE_PUBLIC_RECORD_EMBEDDINGS`. |
+
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 
 **Production UAT completed for Tasks 4-5 + Bulk Upload. Critical RLS performance fix applied to 1.4M row anchors table. Three PRs merged (#235, #236, #237).**
