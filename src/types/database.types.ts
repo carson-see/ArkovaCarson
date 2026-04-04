@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.1"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       ai_credits: {
@@ -3023,7 +2998,6 @@ export type Database = {
         Args: { p_endpoint_id: string }
         Returns: undefined
       }
-      dev_bypass_kyc: { Args: { p_user_id: string }; Returns: boolean }
       generate_anchor_public_id: {
         Args: { category?: string }
         Returns: string
@@ -3081,6 +3055,27 @@ export type Database = {
           status: string
         }[]
       }
+      get_payment_ledger: {
+        Args: { p_limit?: number; p_offset?: number }
+        Returns: {
+          amount_usd: number | null
+          currency: string | null
+          details: Json | null
+          event_at: string | null
+          event_type: string | null
+          external_id: string | null
+          ledger_id: string | null
+          org_id: string | null
+          source: string | null
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "payment_ledger"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_pending_user_anchors: {
         Args: { p_limit?: number }
         Returns: {
@@ -3094,6 +3089,25 @@ export type Database = {
         Returns: Json
       }
       get_public_org_profile: { Args: { p_org_id: string }; Returns: Json }
+      get_public_org_profiles: {
+        Args: { p_limit?: number; p_offset?: number; p_org_id?: string }
+        Returns: {
+          created_at: string
+          description: string
+          display_name: string
+          domain: string
+          founded_date: string
+          id: string
+          industry_tag: string
+          linkedin_url: string
+          location: string
+          logo_url: string
+          org_type: string
+          twitter_url: string
+          verification_status: string
+          website_url: string
+        }[]
+      }
       get_public_records_stats: { Args: never; Returns: Json }
       get_public_template: {
         Args: { p_credential_type: string; p_org_id: string }
@@ -3497,9 +3511,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
