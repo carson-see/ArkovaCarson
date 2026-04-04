@@ -39,7 +39,7 @@ interface PaymentStats {
   recentPayments: Array<{
     id: string;
     amount_usd: number;
-    payer_address: string;
+    tx_hash: string;
     created_at: string;
     network: string;
   }>;
@@ -64,7 +64,7 @@ export function PaymentAnalyticsPage() {
       // Capped at 1000 most recent to prevent unbounded memory usage
       const { data: payments } = await dbAny
         .from('x402_payments')
-        .select('id, amount_usd, payer_address, payee_address, network, created_at, verification_request_id')
+        .select('id, amount_usd, tx_hash, network, created_at, verification_request_id')
         .order('created_at', { ascending: false })
         .limit(1000);
 
@@ -100,10 +100,10 @@ export function PaymentAnalyticsPage() {
         paymentsMonth,
         averagePayment,
         byEndpoint,
-        recentPayments: allPayments.slice(0, 20).map((p: { id: string; amount_usd: number; payer_address: string; created_at: string; network: string }) => ({
+        recentPayments: allPayments.slice(0, 20).map((p: { id: string; amount_usd: number; tx_hash: string; created_at: string; network: string }) => ({
           id: p.id,
           amount_usd: p.amount_usd,
-          payer_address: p.payer_address,
+          tx_hash: p.tx_hash ?? '',
           created_at: p.created_at,
           network: p.network,
         })),
@@ -257,7 +257,7 @@ export function PaymentAnalyticsPage() {
                   <div key={payment.id} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                     <div className="flex flex-col">
                       <span className="text-xs font-mono text-muted-foreground">
-                        {payment.payer_address.slice(0, 10)}...{payment.payer_address.slice(-6)}
+                        {payment.tx_hash ? `${payment.tx_hash.slice(0, 12)}…` : 'N/A'}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {new Date(payment.created_at).toLocaleString()}
