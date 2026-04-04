@@ -54,6 +54,10 @@ function getPageTitle(pathname: string): string {
   for (const [route, title] of Object.entries(PAGE_TITLES)) {
     if (pathname.startsWith(route + '/')) return title;
   }
+  // Extract last path segment as fallback instead of always "Dashboard"
+  const segments = pathname.split('/').filter(Boolean);
+  const last = segments[segments.length - 1];
+  if (last) return last.charAt(0).toUpperCase() + last.slice(1).replace(/-/g, ' ');
   return NAV_LABELS.DASHBOARD;
 }
 
@@ -96,7 +100,7 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
             ) : (
               <>
                 <Avatar className="h-8 w-8">
-                  <AvatarImage src={profile?.avatar_url || undefined} alt={displayName} />
+                  <AvatarImage src={profile?.avatar_url || undefined} alt={`${displayName} profile photo`} />
                   <AvatarFallback className="bg-primary/10 text-primary text-xs">
                     {initials}
                   </AvatarFallback>

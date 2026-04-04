@@ -95,6 +95,13 @@ interface CircuitState {
 
 const DEFAULT_NESSIE_MODEL = 'carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v5-87e1d401';
 
+/**
+ * Nessie Intelligence model — trained for compliance analysis, not extraction.
+ * Uses different prompts (intelligence.ts) and different training data (NMT-07).
+ * Set NESSIE_INTELLIGENCE_MODEL env var to override.
+ */
+const DEFAULT_INTELLIGENCE_MODEL = 'carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-intelligence-v1-4b6c5a52';
+
 export class NessieProvider implements IAIProvider {
   readonly name = 'nessie';
   private readonly apiKey: string;
@@ -299,31 +306,33 @@ export class NessieProvider implements IAIProvider {
   }
 
   /**
-   * Generate a RAG synthesis response using Nessie.
+   * Generate a RAG synthesis response using Nessie Intelligence model.
    * Used by Nessie context mode for verified intelligence queries.
+   *
+   * IMPORTANT: This uses the INTELLIGENCE model (NMT-07), not the extraction
+   * model (v5). The intelligence model was trained for compliance analysis,
+   * recommendations, and verified citations — NOT metadata extraction.
    */
   async generateRAGResponse(
     systemPrompt: string,
     userPrompt: string,
-    credentialType?: string,
+    _credentialType?: string,
   ): Promise<{ text: string; tokensUsed?: number }> {
     this.checkCircuit();
 
-    // Domain routing for RAG queries too
-    let modelOverride: string | undefined;
-    if (isDomainRoutingEnabled()) {
-      const adapter = routeToDomain(credentialType, userPrompt);
-      modelOverride = adapter.modelId;
-      logger.info(
-        { domain: adapter.domain, modelId: adapter.modelId },
-        'Nessie RAG: routed to domain adapter',
-      );
-    }
+    // Intelligence queries ALWAYS use the intelligence model.
+    // Domain routing is for extraction adapters only — never for intelligence.
+    const intelligenceModel = process.env.NESSIE_INTELLIGENCE_MODEL ?? DEFAULT_INTELLIGENCE_MODEL;
+
+    logger.info(
+      { model: intelligenceModel },
+      'Nessie RAG: using intelligence model for compliance analysis',
+    );
 
     const response = await this.withRetry(async () => {
       return this.chatCompletion(systemPrompt, userPrompt, {
         temperature: 0.2,
-        model: modelOverride,
+        model: intelligenceModel,
       });
     });
 

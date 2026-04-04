@@ -56,6 +56,8 @@ import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { grcRouter } from './grc.js';
 import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
+import { oracleRouter } from './oracle.js';
+import { agentsRouter } from './agents.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -236,6 +238,14 @@ router.use('/webhooks/ats', atsWebhookRouter);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 router.use('/webhooks', webhooksRouter);
+
+// ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
+// JWT auth required — agents are org-managed resources
+router.use('/agents', requireAuth, agentsRouter);
+
+// ─── Record Authenticity Oracle — Phase II Agentic Layer (PH2-AGENT-04) ───
+// API key required — tracks agent identity for audit trail
+router.use('/oracle', requireScope('verify'), oracleRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // API key required, standard rate limit

@@ -247,6 +247,70 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ---
 
+### NMT-07: Nessie Intelligence Training Pipeline (P0 — NEW) — IN PROGRESS
+
+**Description:** Pivot Nessie training from extraction (Gemini's job) to compliance intelligence (Nessie's actual job). Build training data pipeline for Q&A, risk analysis, recommendations, and cross-referencing with verified citations.
+
+**CRITICAL DISTINCTION:** Gemini Golden handles metadata extraction, templates, and fraud detection. Nessie is a compliance intelligence engine — it analyzes documents and makes recommendations backed by Bitcoin-anchored evidence.
+
+**Implementation (2026-04-03):**
+- New `services/worker/src/ai/training/nessie-intelligence-data.ts` — Intelligence training data types, seed Q&A pairs (5 task types × multiple domains), deduplication, validation
+- New `services/worker/src/ai/prompts/intelligence.ts` — Intelligence system prompts for all 5 modes (compliance_qa, risk_analysis, document_summary, recommendation, cross_reference)
+- New `services/worker/src/ai/training/nessie-intelligence-data.test.ts` — 24 tests
+- New `services/worker/src/ai/prompts/intelligence.test.ts` — 10 tests
+
+**Intelligence Task Types:**
+1. `compliance_qa` — Answer compliance questions citing anchored documents
+2. `risk_analysis` — Identify risks/red flags, rank by severity (HIGH/MEDIUM/LOW)
+3. `document_summary` — Summarize documents for compliance context
+4. `recommendation` — Recommend specific actions based on analysis
+5. `cross_reference` — Cross-reference multiple documents for consistency
+
+**Acceptance Criteria:**
+- [x] Define intelligence task types and training data format
+- [x] Create seed Q&A pairs covering all 5 task types
+- [x] Build training example converter (ChatML with RAG context)
+- [x] Deduplication and validation utilities
+- [x] Intelligence system prompts for all 5 modes
+- [x] Tests for all components (34 tests passing)
+- [ ] Distill 500+ intelligence examples from Gemini teacher
+- [ ] Fine-tune Nessie v6 on intelligence data via Together AI
+- [ ] Evaluate intelligence model on compliance Q&A benchmark
+- [ ] Deploy intelligence-capable Nessie to RunPod
+
+**Status:** IN PROGRESS — Pipeline and prompts complete, awaiting distillation and training
+
+**Effort:** Large
+**Dependencies:** Public records corpus enabled (ENABLE_PUBLIC_RECORD_EMBEDDINGS), Gemini Golden v2 for teacher distillation
+
+---
+
+### NMT-08: Gemini Golden v2 — Full Dataset Retrain (P1) — READY
+
+**Description:** Retrain Gemini Golden on full 1,605-entry golden dataset (was 1,314, missing phases 10-11). Fix hardcoded confidence labels with `computeRealisticConfidence`.
+
+**Implementation (2026-04-03):**
+- Updated `services/worker/scripts/gemini-golden-finetune.ts`:
+  - Added GOLDEN_DATASET_PHASE10 and PHASE11 imports
+  - Replaced hardcoded tag-based confidence (0.92/0.72/0.35) with `computeRealisticConfidence()`
+  - Updated header comments to clarify Gemini = extraction, Nessie = intelligence
+
+**Acceptance Criteria:**
+- [x] Add phase 10 (125 gap-closure entries) and phase 11 (80 low-N entries)
+- [x] Replace hardcoded confidence with computed realistic confidence
+- [x] Verify script compiles (0 errors)
+- [ ] Run `--dry-run` to validate data shape
+- [ ] Submit Vertex AI tuning job (requires GCP spend approval)
+- [ ] Evaluate Gemini Golden v2 against full golden dataset
+- [ ] Update GEMINI_TUNED_MODEL endpoint if v2 improves
+
+**Status:** READY — Script updated, awaiting `--dry-run` validation and submission
+
+**Effort:** Small
+**Dependencies:** Vertex AI access, GCP billing
+
+---
+
 ## Infrastructure Reference
 
 ### Together AI

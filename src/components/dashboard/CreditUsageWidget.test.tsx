@@ -55,15 +55,15 @@ describe('CreditUsageWidget', () => {
     mockCredits.error = null;
   });
 
-  it('displays unlimited credits during beta', () => {
-    const { getByText } = render(<CreditUsageWidget />);
+  it('displays unlimited credits (SCRUM-353)', () => {
+    const { getByText, queryByText } = render(<CreditUsageWidget />);
     expect(getByText('Unlimited')).toBeInTheDocument();
-    expect(getByText('Beta')).toBeInTheDocument();
+    expect(queryByText('Beta')).toBeNull();
   });
 
-  it('displays no credit limits message', () => {
+  it('displays unlimited credits description (SCRUM-353)', () => {
     const { getByText } = render(<CreditUsageWidget />);
-    expect(getByText('No credit limits during beta')).toBeInTheDocument();
+    expect(getByText('Unlimited credits included with your plan')).toBeInTheDocument();
   });
 
   it('renders nothing on error', () => {

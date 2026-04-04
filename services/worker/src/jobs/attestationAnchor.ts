@@ -24,6 +24,7 @@ import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { callRpc } from '../utils/rpc.js';
+import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 
 /** Max attestations per batch */
 export const ATTESTATION_BATCH_SIZE = 100;
@@ -40,6 +41,8 @@ interface AttestationRow {
   id: string;
   public_id: string;
   fingerprint: string;
+  attester_org_id: string | null;
+  attestation_type: string | null;
 }
 
 /**
@@ -63,7 +66,7 @@ export async function processAttestationAnchoring(
   // Fetch PENDING attestations that have fingerprints
   const { data: attestations, error: fetchError } = await client
     .from('attestations')
-    .select('id, public_id, fingerprint')
+    .select('id, public_id, fingerprint, attester_org_id, attestation_type')
     .eq('status', 'PENDING')
     .not('fingerprint', 'is', null)
     .order('created_at', { ascending: true })
@@ -144,6 +147,34 @@ export async function processAttestationAnchoring(
     }
 
     updateCount++;
+
+    // PH2-AGENT-03: Dispatch webhook for attestation anchored — non-fatal
+    if (att.attester_org_id) {
+      try {
+        await dispatchWebhookEvent(att.attester_org_id, 'attestation.active', att.id, {
+          public_id: att.public_id,
+          attestation_type: att.attestation_type,
+          status: 'ACTIVE',
+          chain_tx_id: txId,
+          chain_timestamp: now,
+          fingerprint: att.fingerprint,
+        });
+      } catch (webhookError) {
+        logger.warn({ attestationId: att.id, error: webhookError }, 'Failed to dispatch attestation webhook');
+      }
+    }
+
+    // PH2-AGENT-01: Audit event for attestation anchored — non-fatal
+    try {
+      void client.from('audit_events').insert({
+        event_type: 'ATTESTATION_ANCHORED',
+        event_category: 'ANCHOR',
+        target_type: 'attestation',
+        target_id: att.id,
+        org_id: att.attester_org_id,
+        details: `Attestation ${att.public_id} anchored in batch ${batchId}, tx ${txId}`,
+      });
+    } catch { /* non-fatal */ }
   }
 
   logger.info(

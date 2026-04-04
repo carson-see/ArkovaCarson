@@ -8,11 +8,11 @@
 
 ## Current State
 
-### Active Phase: Phase 3 — Go-Live (Production Launch) + P8 AI Intelligence (infrastructure done)
+### Active Phase: Phase 2 — Attestations + Agentic Verification Layer (67% complete)
 
-**Goal:** Production launch of Phase 1 credentialing MVP + AI infrastructure foundation
+**Goal:** Extend verification into agentic workflows, agent framework integrations, and institutional attestations
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 191/211 stories complete (~90%) incl. 13 Beta stories + 6 AI infra stories + 7 UX overhaul stories. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024, gaps at 0033+0078, 0068 split, 0088 split). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (eval F1=87.2% Nessie v5, golden dataset 1,605 entries, 130 few-shot examples). GEO: 6 complete, 1 partial, 5 not started. **All 24/24 audit findings resolved.** Bitcoin network: **MAINNET** (116 TXs, 166K+ SECURED). Treasury funded. Frontend on arkova-26.vercel.app (also app.arkova.ai). **Pipeline LIVE:** 320K+ public records, 1.4M+ anchors (166K SECURED on mainnet). 12 Cloud Scheduler jobs. MCP server live at edge.arkova.ai. Worker on GCP Cloud Run (1GB, max 3). **All migrations through 0157 applied to production.** PRs merged this session: #235, #236, #237.
+**Overall progress:** 200/220 stories complete (~91%) incl. 4 Phase II stories done this session. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10 complete, 1 partial, 6 not started. ATS: 8/8. CML: 5/5. **Phase II Agentic: 4/6 DONE.** Phase III: 0/3 (planned). **All 24/24 audit findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0157 applied.** PR #238 open (Session 24, 6 commits).
 
 ### Open Blockers
 
@@ -21,6 +21,76 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-04-04, Session 24c — Nessie Intelligence v2 + Expanded Distillation)
+
+**Nessie Intelligence v2 trained on 644 examples across 5 domains. Gemini Golden v2 eval: 98% type accuracy. Critical double-calibration bug fixed. All deployed.**
+
+| Change | Detail |
+|--------|--------|
+| **Nessie Intelligence v2** | Together AI `ft-8fb075be-8f99` → `arkova-nessie-intelligence-v2-be2b9bcb`. 580 train / 64 val, 5 domains (SEC, legal, regulatory, academic, education), 2 epochs, 50 steps. Deployed to Cloud Run. |
+| **Expanded distillation** | Fixed record_type filters (federal_register: notice/rule/proposed_rule, openalex: article/book-chapter). 644 examples balanced across 5 task types × 5 domains. |
+| **Gemini Golden v2 eval** | 98.0% credentialType accuracy (49/50). Fixed eval script to include system instruction. |
+| **Double calibration fix** | PROVIDER_OFFSETS.nessie: -0.15 → 0.00. calibrateNessieConfidence() already corrects overconfidence. |
+| **Intelligence routing** | Context queries route directly to Nessie on Together AI with 30s timeout + Gemini fallback. |
+| **HuggingFace** | Created nessie-intelligence-v1 repo, uploaded model cards to 4 repos, training data to HF. |
+| **PR #242 merged** | Audit fixes, intelligence routing, eval. |
+
+### Recent Changes (2026-04-04, Session 24d — Nessie v2 + DPO Pipeline + Audit Fixes)
+
+**Both models trained and deployed. Gemini Golden v2: 98% accuracy. Critical bugs fixed. DPO pipeline built.**
+
+| Change | Detail |
+|--------|--------|
+| **Nessie Intelligence v2** | Together AI `ft-8fb075be-8f99` — 580 train across 5 domains. Deployed to Cloud Run env var. |
+| **Gemini Golden v2 eval** | 98.0% credentialType accuracy (49/50) with system instruction. |
+| **Double calibration fix** | PROVIDER_OFFSETS.nessie: -0.15 → 0.00. |
+| **DPO pipeline** | NMT-09: preference pair generator with 5 corruption strategies, 16 tests. |
+| **Distillation expanded** | 644 examples across 5 domains. Fixed record_type filters. |
+| **HuggingFace** | Intelligence repo + 4 model cards. Training data uploaded. |
+| **PR #240 fix** | PublicFooter extracted, hardcoded strings → copy.ts, OP_RETURN removed. |
+| **PRs merged** | #239, #242, #243, #245. |
+| **BLOCKER** | Together AI needs dedicated endpoints for fine-tuned models. Gemini fallback works for now. |
+
+
+### Recent Changes (2026-04-03, Session 24b — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
+
+**Phase II 6/6 COMPLETE. 12 UAT bugs fixed. 4 GEO stories completed. Wikidata entity created. Security fixes for oracle HMAC + agents IDOR. PR #238 merged (10 commits).**
+
+| Change | Detail |
+|--------|--------|
+| **PH2-AGENT-01** | Verification audit trail — every `/api/v1/verify/:publicId` call logged to audit_events |
+| **PH2-AGENT-02** | Attestation Bitcoin anchoring — confirmed pre-existing (`attestationAnchor.ts`) |
+| **PH2-AGENT-03** | Attestation webhook events — `attestation.created`, `attestation.active`, `attestation.revoked` |
+| **PH2-AGENT-04** | Record Authenticity Oracle — `POST /api/v1/oracle/verify` with HMAC signatures, batch queries |
+| **PH2-AGENT-05** | Agent Identity & Delegation — migration 0158, agents table, scoped API keys, 6 CRUD endpoints |
+| **PH2-AGENT-06** | Agent Framework Integrations — LangChain SDK (`sdks/langchain/`), MCP oracle + list_agents tools |
+| **Security fixes** | Oracle HMAC hardcoded fallback removed (hard-fail on missing secret). Agents cross-org IDOR fixed (org-ownership check on all per-resource handlers). ORG_ADMIN enforcement on agent registration. |
+| **GEO-02** | Wikidata entity Q138865713 created (SaaS, official website, USA, software industry) |
+| **GEO-14** | Soft 404s — NotFoundPage title updated, already implemented |
+| **GEO-16** | Traction metrics on SearchPage (1.39M+, 320K+, 21 types, 87.2% F1) |
+| **GEO-17** | Internal cross-links on SearchPage + DevelopersPage |
+| **12 UAT bugs** | Constitution 1.3 violations, CSP frame-ancestors, sidebar, header, search chips |
+| **Jira** | 25+ issues → Done, Phase II epic SCRUM-388 COMPLETE, Phase III epic SCRUM-390 created, 9 stories |
+| **Confluence** | Data Model (migrations 0157), 90-Day Priority updated |
+| **GitHub** | Draft release v1.3.0-rc1 created |
+
+### Recent Changes (2026-04-03, Session 24a — Nessie Intelligence Pivot + Gemini Golden v2)
+
+**Pivoted Nessie from extraction (Gemini's job) to compliance intelligence (Nessie's actual job). Built intelligence training data pipeline, prompts, and Gemini Golden v2 finetune script.**
+
+| Change | Detail |
+|--------|--------|
+| **CRITICAL: Nessie role clarification** | Nessie = compliance intelligence engine (analyzes docs, makes recommendations). Gemini Golden = metadata extraction. Previous training was wrong — trained Nessie as extraction model. |
+| **NMT-07: Intelligence training pipeline** | `nessie-intelligence-data.ts` — 5 intelligence task types (compliance_qa, risk_analysis, document_summary, recommendation, cross_reference), seed Q&A pairs, dedup, validation. 24 tests. |
+| **NMT-07: Intelligence prompts** | `prompts/intelligence.ts` — System prompts for all 5 intelligence modes with verified citation requirements. 10 tests. |
+| **NMT-08: Gemini Golden v2 script** | `gemini-golden-finetune.ts` updated: +phases 10-11 (291 new entries), hardcoded confidence replaced with `computeRealisticConfidence()`. Total: 1,605 entries. |
+| **TS error fix** | `ActivateAccountPage.tsx`: `deriveClaimKey` → `deriveClaimKeyHash` (function was renamed). 0 TS errors now. |
+| **RAG pipeline audit** | Confirmed: pgvector, embedding pipeline, Nessie query endpoint (`/api/v1/nessie/query`) with retrieval + context modes all exist. `ENABLE_PUBLIC_RECORD_EMBEDDINGS` already `true` in production. |
+| **Intelligence distillation** | 339 examples generated (306 train / 33 val) from 400 SEC + 300 legal records via Gemini teacher. 5 task types. |
+| **Nessie Intelligence v1 TRAINED** | Together AI `ft-14935428-4d67` → `carson_6cec/...-arkova-nessie-intelligence-v1-4b6c5a52`. 310 examples, 2 epochs, 78 steps, LoRA rank 64. |
+| **Gemini Golden v2 TRAINED** | Vertex AI job `6192779736259756032` SUCCEEDED. Model: `models/2452032975731163136@1`, Endpoint: `endpoints/6659012403474202624`. 1,665 entries, 8 epochs. |
+| **gcloud auth eliminated** | Replaced `gcloud auth print-access-token` + `gcloud storage cp` with service account key (`google-auth-library` + GCS JSON API). Never expires. |
 
 ### Recent Changes (2026-04-01, Session 23 — Production UAT + RLS Perf Fix + Activate Page + Bulk Upload)
 

@@ -42,14 +42,14 @@ export function BalanceCard({ balance, loading }: Readonly<BalanceCardProps>) {
           <div className="space-y-3">
             <div>
               <p className="text-2xl font-semibold font-mono">
-                {formatBtc(balance.total)} BTC
+                {formatBtc(balance.total)}
               </p>
               {balance.totalUsd !== null && (
                 <p className="text-sm text-muted-foreground">
                   {formatUsd(balance.totalUsd)}
                   {balance.btcPrice && (
                     <span className="ml-1 text-xs">
-                      @ {formatUsd(balance.btcPrice)}/BTC
+                      @ {formatUsd(balance.btcPrice)}/unit
                     </span>
                   )}
                 </p>
@@ -58,13 +58,13 @@ export function BalanceCard({ balance, loading }: Readonly<BalanceCardProps>) {
             <div className="space-y-1 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Confirmed</span>
-                <span className="font-mono">{formatBtc(balance.confirmed)} BTC</span>
+                <span className="font-mono">{formatBtc(balance.confirmed)}</span>
               </div>
               {balance.unconfirmed !== 0 && (
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Unconfirmed</span>
                   <span className="font-mono text-amber-600">
-                    {balance.unconfirmed > 0 ? '+' : ''}{formatBtc(balance.unconfirmed)} BTC
+                    {balance.unconfirmed > 0 ? '+' : ''}{formatBtc(balance.unconfirmed)}
                   </span>
                 </div>
               )}

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-01 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825+ tests, 161 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,605 entries, 130 few-shot examples, Phase 1.5 15/16 complete, PRs #235/#236/#237 merged) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825+ tests, 161 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,605 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 5/6 complete, ATS 8/8 complete) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -19,19 +19,22 @@ _Last updated: 2026-04-01 (320K+ public records, 166K+ SECURED anchors on mainne
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
-| Nessie Model Training (NMT) | 6 | 2 | 4 | No (AI infra) |
+| Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
+| Phase 2 Agentic Layer | 6 | 0 | 6 | No (planned) |
+| Phase 3 eSignature (placeholders) | 3 | 0 | 3 | No (deferred) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
-| UAT Bugs | 29 | 29 | 0 | No |
+| UAT Bugs (legacy) | 29 | 29 | 0 | No |
+| Production UAT Bugs (2026-04) | 19 | 5 | 14 | **YES** (4 HIGHEST) |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | GitHub CodeQL | 29 | 9 fixed | 20 | No (false positives) |
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **12** | |
+| **Total Open Items** | | | **32** | |
 
 ---
 
@@ -161,6 +164,61 @@ _All 13 stories completed 2026-03-18 (PRs #98, #100, #101). Migrations 0068-0071
 | ~~42~~ | ~~UAT3-03~~ | ~~LOW~~ | ~~No loading skeleton on verification page~~ | ~~**FIXED** — Shimmer skeleton already exists in PublicVerification loading state~~ |
 | ~~43~~ | ~~UAT3-04~~ | ~~LOW~~ | ~~QR code on detail page links to localhost~~ | ~~**FIXED** — All copy/QR URLs use `verifyUrl()` (production base URL)~~ |
 | ~~44~~ | ~~UAT3-05~~ | ~~LOW~~ | ~~Missing toast on billing page auth redirect~~ | ~~**FIXED** — AuthGuard already shows redirect toast for all auth redirects including billing~~ |
+
+---
+
+## TIER 1C: PRODUCTION UAT BUGS (2026-04-03 Jira Sync)
+
+_Discovered via Jira UAT sweep (SCRUM-347 epic). 19 bugs filed, 5 already resolved. Synced from Jira 2026-04-03._
+
+### HIGHEST Priority (500 errors — production broken)
+
+| # | Jira | Severity | Bug | Status |
+|---|------|----------|-----|--------|
+| 1 | SCRUM-348 | **HIGHEST** | Search RPC returns 500 — search is completely broken | To Do |
+| 2 | SCRUM-349 | **HIGHEST** | Attestations API returns 500 on every page load | To Do |
+| 3 | SCRUM-351 | **HIGHEST** | lookup_org_by_email_domain RPC returns 400 | To Do |
+| 4 | SCRUM-352 | **HIGHEST** | Anchors API returns 500 — admin overview metrics broken | To Do |
+
+### HIGH Priority
+
+| # | Jira | Severity | Bug | Status |
+|---|------|----------|-----|--------|
+| 5 | SCRUM-353 | HIGH | Credits showing limits during beta — should be unlimited | To Do |
+| 6 | SCRUM-354 | HIGH | CSP frame-ancestors in meta tag — ignored by browsers | To Do |
+| 7 | SCRUM-355 | HIGH | Developers page shows SIGN IN when user is logged in | To Do |
+| 8 | SCRUM-357 | HIGH | Page header says "Dashboard" on all admin pages | To Do |
+| 9 | SCRUM-358 | HIGH | Treasury page uses banned terminology "Bitcoin" (Constitution 1.3) | To Do |
+| 10 | SCRUM-359 | HIGH | Treasury page shows all zeros despite 1.39M records | To Do |
+
+### MEDIUM Priority
+
+| # | Jira | Severity | Bug | Status |
+|---|------|----------|-----|--------|
+| 11 | SCRUM-360 | MEDIUM | Organization sidebar link non-functional for Individual accounts | To Do |
+| 12 | SCRUM-361 | MEDIUM | Documents empty state shows wrong message with no search | To Do |
+| 13 | SCRUM-362 | MEDIUM | Platform Disclaimer shown on Settings page instead of onboarding | To Do |
+| 14 | SCRUM-364 | MEDIUM | search.arkova.ai footer uses banned "Bitcoin" terminology | To Do |
+| 15 | SCRUM-365 | MEDIUM | search.arkova.ai page title is just "Arkova" — bad for SEO | To Do |
+| 16 | SCRUM-366 | MEDIUM | Suggested search chips don't auto-execute search | To Do |
+| 17 | SCRUM-368 | MEDIUM | Admin sidebar active state wrong for Payments and Controls | To Do |
+
+### LOW Priority
+
+| # | Jira | Severity | Bug | Status |
+|---|------|----------|-----|--------|
+| 18 | SCRUM-370 | LOW | About page uses initials avatars instead of real photos | To Do |
+| 19 | SCRUM-371 | LOW | Access token visible in console error log during OAuth | To Do |
+
+### Already Resolved (Done in Jira)
+
+| Jira | Bug | Resolution |
+|------|-----|------------|
+| ~~SCRUM-372~~ | ~~Stale refresh token error on cold load~~ | **DONE** |
+| ~~SCRUM-373~~ | ~~Admin overview metric cards stuck on skeleton~~ | **DONE** |
+| ~~SCRUM-378~~ | ~~Dashboard shows 0 records for admin~~ | **DONE** |
+| ~~SCRUM-380~~ | ~~Compliance page shows 0 Active Credentials~~ | **DONE** |
+| ~~SCRUM-385~~ | ~~GEO-13 on-page SEO keyword fix~~ | **DONE** |
 
 ---
 
@@ -413,6 +471,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~NMT-04~~ | ~~Full-precision GPU eval (fp16/bf16)~~ | ~~P1~~ | **COMPLETE** — v5: 87.2% F1, v4: 65.6% F1. fp16 ≈ 4-bit (no quality diff). RunPod A6000 48GB. | None | Medium |
 | NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
 | ~~NMT-06~~ | ~~Nessie v5 training + condensed prompt~~ | ~~P2~~ | **COMPLETE** — v5 trained (1,903 train), 87.2% F1, condensed prompt deployed to provider | NMT-01, NMT-03 | Large |
+| **NMT-07** | **Nessie intelligence training pipeline** | **P0** | **IN PROGRESS** — Pipeline + prompts + 34 tests complete. Awaiting distillation + training. | Public records corpus | Large |
+| **NMT-08** | **Gemini Golden v2 — full dataset retrain** | **P1** | **READY** — Script updated with phases 10-11 + realistic confidence. Awaiting submission. | Vertex AI access | Small |
 
 **Eval Results (2026-03-31, updated with v5 fp16):**
 
@@ -425,6 +485,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | Nessie v3 (4-bit) | 56.4% | 58.4% | 0.214 | 44.6% | MLX 4-bit, 50 samples |
 
 **Key findings:** Nessie v5 achieves 87.2% weighted F1 (+21.6pp over v4), only 3.2pp behind Gemini Golden. v5 confidence correlation (0.539) exceeds Gemini (0.426). fp16 ≈ 4-bit quantization (model quality is bottleneck, not precision). Fine-tuned models MUST use condensed prompt (full 58K prompt = 0% F1).
+
+**CRITICAL ROLE DISTINCTION (2026-04-03):** Gemini Golden = metadata extraction engine (templates, fields, fraud). Nessie = compliance intelligence engine (analyzes documents, makes recommendations with verified citations). Nessie v5 was trained as extraction — NMT-07 pivots to intelligence training data. See strategy docs: Arkova-Verified-Intelligence-SLM-Analysis, Arkova Strategic Blueprint.
 
 ---
 
@@ -494,6 +556,32 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 | ~~QA-CHAOS-02~~ | ~~Mempool.space unavailability test~~ | ~~MEDIUM~~ | **COMPLETE** — `chaos-mempool-unavail.test.ts` (29 tests: retry classification, backoff, 5xx/network/timeout, duplicate TX detection) |
 | ~~QA-CHAOS-03~~ | ~~Stripe webhook duplicate delivery test~~ | ~~LOW~~ | **COMPLETE** — `chaos-webhook-idempotency.test.ts` (7 tests: duplicate key caching, rapid-fire simulation, scope isolation) |
 | ~~QA-CHAOS-04~~ | ~~Embedding memory pressure test~~ | ~~LOW~~ | **COMPLETE** — `chaos-embedding-pressure.test.ts` (11 tests: edge cases, PII exclusion, bounded stores, batch load) |
+
+---
+
+## TIER 0E: PHASE 2 — AGENTIC LAYER (Planned, 2026-04-03)
+
+> Source: Phase II Gap Analysis, Arkova-Master-Strategy-Complete
+> Story doc: [22_phase2_agentic_layer.md](./stories/22_phase2_agentic_layer.md)
+
+**Phase II — Agentic Layer: Make Arkova verification a first-class primitive for autonomous AI agents.**
+
+| ID | Story | Priority | Status | Sprint | Depends On | Effort |
+|----|-------|----------|--------|--------|------------|--------|
+| PH2-AGENT-01 | Verification audit trail (log /api/v1/verify calls to audit_events) | P0 | NOT STARTED | S1 | — | Small |
+| PH2-AGENT-02 | Attestation Bitcoin anchoring (wire attestations to anchor pipeline) | P0 | NOT STARTED | S1 | — | Medium |
+| PH2-AGENT-03 | Webhook event triggers (anchor SECURED/REVOKED, attestation events) | P1 | NOT STARTED | S2 | PH2-AGENT-02 | Medium |
+| PH2-AGENT-04 | Record authenticity oracle (POST /api/v1/oracle/verify, signed responses) | P1 | NOT STARTED | S2 | PH2-AGENT-01 | Large |
+| PH2-AGENT-05 | Agent identity & delegation (registration, scoped API keys, delegation chains) | P2 | NOT STARTED | S3 | PH2-AGENT-04 | XL |
+| PH2-AGENT-06 | Agent framework integrations (LangChain, AutoGen, MCP enhancements) | P2 | NOT STARTED | S3 | PH2-AGENT-04, PH2-AGENT-05 | Large |
+
+**Phase III Placeholders (eSignature & Compliance — deferred until Phase II Gate 2):**
+
+| ID | Story | Priority | Status | Depends On | Effort |
+|----|-------|----------|--------|------------|--------|
+| PH3-ESIG-01 | AdES signature engine (XAdES, PAdES, CAdES — ETSI EN 319 401/411-1) | P0 (Phase III) | NOT STARTED | Phase II complete | XL |
+| PH3-ESIG-02 | QTSP integration (RFC 3161 timestamp tokens, ETSI EN 319 421/422) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01 | XL |
+| PH3-ESIG-03 | Compliance center (audit proofs, policy transparency, SOC 2 bundles) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01, CML-03 | Large |
 
 ---
 

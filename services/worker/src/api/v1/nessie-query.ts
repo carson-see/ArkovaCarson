@@ -1,11 +1,14 @@
 /**
- * Nessie RAG Query Endpoint (PH1-INT-02 + PH1-INT-03)
+ * Nessie Intelligence Query Endpoint (PH1-INT-02 + PH1-INT-03 + NMT-07)
  *
  * GET /api/v1/nessie/query?q={query}&mode=retrieval|context
  *
  * mode=retrieval (default): Returns ranked documents with anchor proofs.
- * mode=context (PH1-INT-03): Feeds retrieved docs to Gemini, returns synthesized
- *   answer with citations pointing to anchored documents.
+ * mode=context (PH1-INT-03 + NMT-07): Feeds retrieved docs to Nessie Intelligence
+ *   model for compliance analysis with verified citations.
+ *
+ * Nessie is a compliance intelligence engine — it analyzes documents and makes
+ * recommendations. It does NOT do metadata extraction (that's Gemini Golden's job).
  *
  * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
  *
@@ -15,7 +18,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
-import type { TogetherProvider } from '../../ai/together.js';
+import { INTELLIGENCE_SYSTEM_PROMPT } from '../../ai/prompts/intelligence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
@@ -108,47 +111,7 @@ export interface NessieContextResponse {
   tokens_used?: number;
 }
 
-// ---------------------------------------------------------------------------
-// Gemini RAG Prompt (PH1-INT-03)
-// ---------------------------------------------------------------------------
-
-const NESSIE_RAG_SYSTEM_PROMPT = `You are Nessie, Arkova's verified intelligence assistant. You answer questions using ONLY the provided verified documents as context. Each document has been anchored to a public ledger with a cryptographic proof.
-
-RULES:
-1. Answer ONLY from the provided documents. If the documents don't contain enough information, say "I don't have enough verified information to fully answer this." and provide what you can.
-2. Cite specific documents using their record_id in square brackets like [record_id]. Every factual claim MUST have a citation.
-3. Only cite a document if its content DIRECTLY supports your claim. Do not cite a document just because it mentions a related topic.
-4. Rate your overall confidence (0.0 to 1.0) based on how well the documents answer the query:
-   - 0.8-1.0: Documents directly and completely answer the query
-   - 0.5-0.79: Documents partially answer or require inference
-   - 0.0-0.49: Documents are tangentially related at best
-5. Never fabricate information not present in the documents.
-6. Keep answers concise and factual. Prefer shorter, well-cited answers over longer speculative ones.
-
-SOURCE AUTHORITY (prefer higher-authority sources when multiple documents cover the same topic):
-- EDGAR filings (SEC): Highest authority for financial/corporate data
-- Federal Register: Highest authority for regulatory/government data
-- DAPIP (Dept of Education): Highest authority for educational institution data
-- USPTO: Highest authority for patent/trademark data
-- OpenAlex: Academic abstracts — useful for research context, but cite the underlying paper, not the abstract alone
-- CourtListener: Court opinions and case law — highest authority for legal precedent and judicial decisions
-
-Respond in valid JSON with this schema:
-{
-  "answer": "Your synthesized answer with inline [record_id] citations",
-  "citations": [
-    {
-      "record_id": "the record ID",
-      "source": "edgar|uspto|federal_register|dapip|openalex|courtlistener",
-      "source_url": "original URL",
-      "title": "document title",
-      "relevance_score": 0.0-1.0,
-      "anchor_proof": { "chain_tx_id": "tx hash or null", "content_hash": "sha256", "explorer_url": "mempool link or null", "verify_url": "arkova verify link or null" },
-      "excerpt": "the specific excerpt from the document that supports your claim (must be actual text from the document)"
-    }
-  ],
-  "confidence": 0.0-1.0
-}`;
+// Intelligence system prompt is imported from prompts/intelligence.ts (NMT-07)
 
 function buildRAGPrompt(query: string, documents: NessieResult[]): string {
   const docContext = documents.map((doc, i) => {
@@ -363,7 +326,7 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // MODE: context — feed to Gemini for synthesized answer (PH1-INT-03)
+    // MODE: context — intelligence analysis via Nessie/Gemini (NMT-07)
     try {
       // Check cache first
       const cacheKey = `${q}::${results.map(r => r.record_id).join(',')}`;
@@ -376,9 +339,9 @@ router.get('/', async (req: Request, res: Response) => {
       const contextResponse = await generateVerifiedContext(q, results);
       setCachedContext(cacheKey, contextResponse);
       res.json(contextResponse);
-    } catch (geminiError) {
+    } catch (contextError) {
       // Graceful degradation: fall back to retrieval mode
-      logger.warn({ error: geminiError }, 'Gemini RAG generation failed, falling back to retrieval');
+      logger.warn({ error: contextError }, 'Intelligence generation failed, falling back to retrieval');
       res.json({
         results,
         count: results.length,
@@ -393,30 +356,82 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// RAG Generation via AI Provider Factory (PH1-INT-03)
+// RAG Generation via AI Provider Factory (PH1-INT-03 + NMT-07)
 // ---------------------------------------------------------------------------
 
 async function generateVerifiedContext(
   query: string,
   documents: NessieResult[],
 ): Promise<NessieContextResponse> {
-  const aiProvider = createAIProvider();
-  const providerName = getProviderName();
   const prompt = buildRAGPrompt(query, documents);
+
+  // Intelligence queries ALWAYS use the intelligence system prompt (NMT-07).
+  // This teaches Nessie to provide compliance analysis, risk identification,
+  // and actionable recommendations — not just answer Q&A.
+  const systemPrompt = INTELLIGENCE_SYSTEM_PROMPT;
 
   let text: string;
   let tokensUsed: number | undefined;
   let modelName: string;
 
-  if (providerName === 'together') {
-    // Together AI provider has a dedicated RAG method
-    const togetherProvider = aiProvider as TogetherProvider;
-    const result = await togetherProvider.generateRAGResponse(NESSIE_RAG_SYSTEM_PROMPT, prompt);
-    text = result.text;
-    tokensUsed = result.tokensUsed;
-    modelName = process.env.TOGETHER_MODEL ?? 'meta-llama/Llama-3.1-8B-Instruct';
-  } else {
-    // Fallback: Use Gemini SDK directly for other providers
+  // Intelligence mode: prefer Nessie Intelligence model on Together AI.
+  // AI_PROVIDER controls extraction routing — intelligence routing is independent.
+  // If NESSIE_INTELLIGENCE_MODEL is set AND TOGETHER_API_KEY is available,
+  // use Together AI directly. Otherwise fall back to Gemini.
+  const intelligenceModel = process.env.NESSIE_INTELLIGENCE_MODEL;
+  const togetherKey = process.env.TOGETHER_API_KEY;
+
+  if (intelligenceModel && togetherKey) {
+    // Route to Nessie Intelligence model on Together AI (30s timeout)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const response = await fetch('https://api.together.xyz/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${togetherKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: intelligenceModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const err = await response.text();
+        logger.warn({ status: response.status, err: err.slice(0, 200) }, 'Nessie Intelligence API failed, falling back to Gemini');
+        // Fall through to Gemini below
+      } else {
+        const data = await response.json() as {
+          choices: Array<{ message: { content: string } }>;
+          usage?: { total_tokens: number };
+        };
+        text = data.choices[0]?.message?.content ?? '';
+        tokensUsed = data.usage?.total_tokens;
+        modelName = intelligenceModel;
+
+        return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ error: msg }, 'Nessie Intelligence request failed (timeout or network), falling back to Gemini');
+      // Fall through to Gemini below
+    }
+  }
+
+  // Fallback: Use Gemini SDK
+  {
     const { GoogleGenerativeAI: GenAI } = await import('@google/generative-ai');
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
@@ -426,7 +441,7 @@ async function generateVerifiedContext(
     modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
     const model = gemini.getGenerativeModel({
       model: modelName,
-      systemInstruction: NESSIE_RAG_SYSTEM_PROMPT,
+      systemInstruction: systemPrompt,
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.2,
@@ -439,8 +454,24 @@ async function generateVerifiedContext(
     tokensUsed = response.response.usageMetadata?.totalTokenCount;
   }
 
+  return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+}
+
+/**
+ * Parse intelligence/RAG response JSON into NessieContextResponse.
+ * Handles both "analysis" (intelligence prompt) and "answer" (legacy) field names.
+ * Validates citations against actual retrieved documents and enriches with anchor proofs.
+ */
+function parseIntelligenceResponse(
+  text: string,
+  modelName: string,
+  query: string,
+  documents: NessieResult[],
+  tokensUsed?: number,
+): NessieContextResponse {
   const parsed = JSON.parse(text) as {
-    answer: string;
+    answer?: string;
+    analysis?: string;
     citations: NessieCitation[];
     confidence: number;
   };
@@ -468,7 +499,7 @@ async function generateVerifiedContext(
   });
 
   return {
-    answer: parsed.answer,
+    answer: parsed.analysis ?? parsed.answer ?? '',
     citations: enrichedCitations,
     confidence: Math.min(1, Math.max(0, parsed.confidence ?? 0)),
     model: modelName,
