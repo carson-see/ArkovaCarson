@@ -36,21 +36,22 @@
 | **HuggingFace** | Created nessie-intelligence-v1 repo, uploaded model cards to 4 repos, training data to HF. |
 | **PR #242 merged** | Audit fixes, intelligence routing, eval. |
 
-### Recent Changes (2026-04-04, Session 24d — Nessie v2 + Gemini Golden v2 Eval + Audit Fixes)
+### Recent Changes (2026-04-04, Session 24d — Nessie v2 + DPO Pipeline + Audit Fixes)
 
-**Both models trained and deployed. Gemini Golden v2: 98% accuracy. Critical bugs fixed. Inference deployment blocker identified.**
+**Both models trained and deployed. Gemini Golden v2: 98% accuracy. Critical bugs fixed. DPO pipeline built.**
 
 | Change | Detail |
 |--------|--------|
 | **Nessie Intelligence v2** | Together AI `ft-8fb075be-8f99` — 580 train across 5 domains. Deployed to Cloud Run env var. |
-| **Gemini Golden v2 eval** | 98.0% credentialType accuracy (49/50) with system instruction. Eval script fixed. |
-| **Double calibration fix** | PROVIDER_OFFSETS.nessie: -0.15 → 0.00 (was double-penalizing after calibrateNessieConfidence). |
-| **Intelligence routing** | Context queries route to Nessie on Together AI with 30s timeout + Gemini fallback. |
-| **Distillation expanded** | 644 examples across 5 domains. Fixed record_type filters for federal_register and openalex. |
-| **HuggingFace** | Created nessie-intelligence-v1 repo + model cards for 4 repos. Training data uploaded. |
-| **PR #240 fix** | Extracted shared PublicFooter, moved hardcoded strings to copy.ts, removed OP_RETURN. |
-| **PRs merged** | #239 (intelligence pivot), #242 (audit fixes), #243 (v2 training). |
-| **BLOCKER** | Together AI fine-tuned models need dedicated endpoints (not serverless). Need either dedicated endpoint (~$0.50-1/hr) or deploy to RunPod with HF weights. |
+| **Gemini Golden v2 eval** | 98.0% credentialType accuracy (49/50) with system instruction. |
+| **Double calibration fix** | PROVIDER_OFFSETS.nessie: -0.15 → 0.00. |
+| **DPO pipeline** | NMT-09: preference pair generator with 5 corruption strategies, 16 tests. |
+| **Distillation expanded** | 644 examples across 5 domains. Fixed record_type filters. |
+| **HuggingFace** | Intelligence repo + 4 model cards. Training data uploaded. |
+| **PR #240 fix** | PublicFooter extracted, hardcoded strings → copy.ts, OP_RETURN removed. |
+| **PRs merged** | #239, #242, #243, #245. |
+| **BLOCKER** | Together AI needs dedicated endpoints for fine-tuned models. Gemini fallback works for now. |
+
 
 ### Recent Changes (2026-04-03, Session 24b — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
 
