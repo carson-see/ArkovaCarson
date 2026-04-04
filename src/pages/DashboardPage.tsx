@@ -35,7 +35,8 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
-import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS } from '@/lib/copy';
+import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
@@ -48,11 +49,25 @@ type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
 export function DashboardPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
-  const { profile, loading: profileLoading } = useProfile();
+  const { profile, loading: profileLoading, updateProfile } = useProfile();
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+  const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const profileAny = profile as any;
+  const needsDisclaimer = !profileLoading && profile && !profileAny?.disclaimer_accepted_at;
+
+  const handleAcceptDisclaimer = useCallback(async () => {
+    setDisclaimerAccepting(true);
+    try {
+      await updateProfile({ disclaimer_accepted_at: new Date().toISOString() });
+    } finally {
+      setDisclaimerAccepting(false);
+    }
+  }, [updateProfile]);
 
   // Search, filter, pagination state (MVP-09)
   const [searchQuery, setSearchQuery] = useState('');
@@ -155,6 +170,26 @@ export function DashboardPage() {
       onSignOut={handleSignOut}
       orgName={organization?.display_name}
     >
+      {/* Platform Disclaimer Modal (SCRUM-362: show on first login, not buried in settings) */}
+      <Dialog open={!!needsDisclaimer}>
+        <DialogContent className="sm:max-w-lg" onPointerDownOutside={(e) => e.preventDefault()} onEscapeKeyDown={(e) => e.preventDefault()}>
+          <DialogHeader>
+            <DialogTitle>{DISCLAIMER_LABELS.heading}</DialogTitle>
+            <DialogDescription className="sr-only">
+              Please review and accept the platform disclaimer to continue.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground whitespace-pre-line max-h-[40vh] overflow-y-auto">
+              {DISCLAIMER_LABELS.body}
+            </p>
+            <Button onClick={handleAcceptDisclaimer} disabled={disclaimerAccepting} className="w-full">
+              {DISCLAIMER_LABELS.acceptButton}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Welcome section */}
       <div className="mb-8">
         <h1 className="text-[24px] font-bold tracking-tight text-foreground">

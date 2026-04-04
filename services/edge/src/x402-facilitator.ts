@@ -21,6 +21,8 @@ import type { Env } from './env.js';
 
 /** USDC contract on Base Sepolia */
 const USDC_BASE_SEPOLIA = '0x036cbd53842c5426634e7929541ec2318f3dcf7e';
+/** USDC contract on Base Mainnet */
+const USDC_BASE_MAINNET = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 /** USDC Transfer event topic */
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
@@ -83,7 +85,9 @@ async function verifyPayment(
     }
 
     // Find USDC Transfer log
-    const usdcAddress = env.USDC_CONTRACT_ADDRESS ?? USDC_BASE_SEPOLIA;
+    const isMainnet = env.X402_NETWORK === 'eip155:8453';
+    const defaultUsdc = isMainnet ? USDC_BASE_MAINNET : USDC_BASE_SEPOLIA;
+    const usdcAddress = env.USDC_CONTRACT_ADDRESS ?? defaultUsdc;
     const transferLog = receipt.result.logs.find(
       (log) =>
         log.address.toLowerCase() === usdcAddress.toLowerCase() &&

@@ -239,8 +239,8 @@ export const DOCUMENTS_PAGE_LABELS = {
   EMPTY_TITLE: 'No documents yet',
   EMPTY_DESC: 'Secure your first document, receive a credential, or create an attestation to get started.',
   SECURE_DOCUMENT: 'Secure Document',
-  NO_MATCHING: 'No matching documents',
-  NO_MATCHING_DESC: 'Try adjusting your search or filter criteria.',
+  NO_MATCHING: 'No results found',
+  NO_MATCHING_DESC: 'No documents match your current search or filter. Try adjusting your criteria.',
 } as const;
 
 // =============================================================================
@@ -1594,5 +1594,146 @@ export const PROFILE_LABELS = {
     github: { label: 'GitHub', placeholder: 'https://github.com/yourprofile' },
     website: { label: 'Website', placeholder: 'https://yourwebsite.com' },
   },
+} as const;
+
+// =============================================================================
+// SHARED PUBLIC FOOTER (GEO-08)
+// =============================================================================
+
+export const PUBLIC_FOOTER_LABELS = {
+  NAV_SEARCH: 'Search Credentials',
+  NAV_VERIFY: 'Verify a Document',
+  NAV_HOW_IT_WORKS: 'How It Works',
+  NAV_USE_CASES: 'Use Cases',
+  NAV_ENTERPRISE: 'Enterprise',
+  NAV_DEVELOPERS: 'Developer API',
+  NAV_CONTACT: 'Contact',
+  NAV_PRIVACY: 'Privacy',
+  NAV_TERMS: 'Terms',
+  COPYRIGHT: 'Arkova',
+  STEP_PREFIX: 'Step',
+} as const;
+
+// =============================================================================
+// HOW IT WORKS PAGE (GEO-08)
+// =============================================================================
+
+export const HOW_IT_WORKS_LABELS = {
+  PAGE_TITLE: 'How Arkova Works — Credential Verification in 3 Steps',
+  PAGE_DESCRIPTION: 'Learn how Arkova secures credentials with client-side fingerprinting, permanent network anchoring, and universal verification. Privacy-first by design.',
+  HERO_TITLE: 'How Arkova Works',
+  HERO_SUBTITLE: 'Three steps to permanently verifiable credentials. Your documents never leave your device.',
+  STEP_1_TITLE: 'Upload & Fingerprint',
+  STEP_1_DESCRIPTION: 'Select your document and a unique cryptographic fingerprint (SHA-256) is generated entirely in your browser. The document itself never leaves your device — only the fingerprint moves forward.',
+  STEP_1_DETAIL: 'Client-side processing means your sensitive documents remain private. No server ever sees, stores, or transmits the original file.',
+  STEP_2_TITLE: 'Permanent Anchoring',
+  STEP_2_DESCRIPTION: 'The fingerprint is recorded on a public, immutable network. Anchors are batched for efficiency, reducing costs while maintaining cryptographic integrity.',
+  STEP_2_DETAIL: 'Once anchored, the record cannot be altered, deleted, or tampered with. The network provides a permanent, independently verifiable timestamp.',
+  STEP_3_TITLE: 'Universal Verification',
+  STEP_3_DESCRIPTION: 'Anyone can verify a document by generating its fingerprint and comparing it against the permanent record. No account required — verification is open and free.',
+  STEP_3_DETAIL: 'Third-party verifiers, employers, regulators, and auditors can independently confirm document authenticity without needing access to the original.',
+  DIFFERENTIATORS_TITLE: 'What Makes It Different',
+  DIFF_PRIVACY_TITLE: 'Client-Side Privacy',
+  DIFF_PRIVACY_DESC: 'Documents are processed entirely in the browser. No server-side storage, no cloud uploads, no third-party access to your files.',
+  DIFF_IMMUTABILITY_TITLE: 'Permanent Immutability',
+  DIFF_IMMUTABILITY_DESC: 'Anchored fingerprints are recorded on a public, decentralized network. No single entity can alter or remove the record.',
+  DIFF_AI_TITLE: 'AI-Powered Extraction',
+  DIFF_AI_DESC: 'Intelligent metadata extraction identifies credential types, issuers, dates, and fields — making records searchable and structured.',
+  DIFF_OPEN_TITLE: 'Open Verification',
+  DIFF_OPEN_DESC: 'Verification is free and requires no account. Anyone with the document can confirm its authenticity against the permanent record.',
+  CTA_TITLE: 'Ready to Secure Your Credentials?',
+  CTA_DESCRIPTION: 'Start anchoring documents in minutes. Free tier available.',
+  CTA_BUTTON: 'Get Started',
+} as const;
+
+// =============================================================================
+// USE CASES PAGE (GEO-08)
+// =============================================================================
+
+export const USE_CASES_LABELS = {
+  PAGE_TITLE: 'Use Cases — Who Uses Arkova for Credential Verification',
+  PAGE_DESCRIPTION: 'Discover how education, legal, healthcare, finance, HR, and government organizations use Arkova to verify credentials and anchor documents.',
+  HERO_TITLE: 'Who Uses Arkova',
+  HERO_SUBTITLE: 'Organizations across industries trust Arkova to make credentials verifiable, tamper-proof, and portable.',
+  EDUCATION_TITLE: 'Education',
+  EDUCATION_DESC: 'Universities and institutions anchor degree certificates and transcripts, enabling instant verification by employers and other schools. Graduates carry provable credentials wherever they go.',
+  EDUCATION_EXAMPLE: 'A university anchors 10,000 diplomas at graduation. Employers verify any graduate in seconds.',
+  LEGAL_TITLE: 'Legal',
+  LEGAL_DESC: 'Law firms and courts timestamp contracts, evidence, and filings. Anchored records prove a document existed at a specific point in time, providing an unalterable chain of custody.',
+  LEGAL_EXAMPLE: 'A firm anchors a signed contract. Years later, either party can prove the original terms were never modified.',
+  HEALTHCARE_TITLE: 'Healthcare',
+  HEALTHCARE_DESC: 'Hospitals and credentialing bodies verify medical licenses, board certifications, and continuing education. Reduces manual verification from weeks to seconds.',
+  HEALTHCARE_EXAMPLE: 'A hospital verifies a surgeon\'s board certification instantly before granting privileges.',
+  FINANCE_TITLE: 'Finance',
+  FINANCE_DESC: 'Financial institutions anchor compliance documentation, audit reports, and regulatory filings. Creates an immutable audit trail for regulators and internal compliance teams.',
+  FINANCE_EXAMPLE: 'A bank anchors quarterly compliance reports, creating tamper-proof evidence for regulatory review.',
+  HR_TITLE: 'HR & Recruiting',
+  HR_DESC: 'HR teams and recruiters verify candidate credentials, background checks, and employment history. Integrates with applicant tracking systems for automated verification workflows.',
+  HR_EXAMPLE: 'A recruiter verifies a candidate\'s professional certifications directly from their credential portfolio.',
+  GOVERNMENT_TITLE: 'Government',
+  GOVERNMENT_DESC: 'Government agencies anchor public records, licenses, and transparency documents. Citizens can independently verify the authenticity of any official record.',
+  GOVERNMENT_EXAMPLE: 'A state agency publishes anchored business registrations that anyone can verify without contacting the agency.',
+  FAQ_TITLE: 'Frequently Asked Questions',
+  FAQ_1_Q: 'How does Arkova verify a document without seeing it?',
+  FAQ_1_A: 'Arkova generates a cryptographic fingerprint of your document entirely in your browser. Only this fingerprint is sent to our servers and anchored on a public network. To verify, anyone can re-generate the fingerprint from the original document and compare it to the anchored record.',
+  FAQ_2_Q: 'How long does verification take?',
+  FAQ_2_A: 'Fingerprint generation is instant. Anchoring to the network typically completes within 10-30 minutes. Once anchored, verification is instant and permanent.',
+  FAQ_3_Q: 'Can a secured record be altered or deleted?',
+  FAQ_3_A: 'No. Once a fingerprint is anchored on the public network, it cannot be modified, deleted, or tampered with by anyone — including Arkova. This is the foundation of the platform\'s trust model.',
+  FAQ_4_Q: 'What types of documents can I anchor?',
+  FAQ_4_A: 'Arkova supports 21 credential types including degrees, licenses, certificates, legal documents, financial records, and more. Any digital document can be fingerprinted and anchored.',
+  FAQ_5_Q: 'Is there an API for automated verification?',
+  FAQ_5_A: 'Yes. Arkova provides a RESTful Verification API with TypeScript and Python SDKs for programmatic access. Enterprise plans include batch processing, webhooks, and dedicated support.',
+  CTA_TITLE: 'See It in Action',
+  CTA_DESCRIPTION: 'Try verifying a credential on the public search page, or create an account to start anchoring.',
+  CTA_BUTTON_SEARCH: 'Search Credentials',
+  CTA_BUTTON_SIGNUP: 'Create Account',
+} as const;
+
+// =============================================================================
+// ENTERPRISE PAGE (GEO-08)
+// =============================================================================
+
+export const ENTERPRISE_LABELS = {
+  PAGE_TITLE: 'Enterprise Credential Verification — Arkova for Organizations',
+  PAGE_DESCRIPTION: 'Enterprise-grade credential verification with API access, batch processing, SSO, webhooks, and dedicated support. Built on permanent anchoring infrastructure.',
+  HERO_TITLE: 'Enterprise-Grade Credential Verification',
+  HERO_SUBTITLE: 'Scalable, secure, and auditable credential infrastructure for organizations that need more than a login.',
+  FEATURES_TITLE: 'Built for Scale',
+  FEAT_API_TITLE: 'RESTful API Access',
+  FEAT_API_DESC: 'Programmatic credential verification and anchoring. Full OpenAPI documentation with TypeScript and Python SDKs.',
+  FEAT_BATCH_TITLE: 'Batch Processing',
+  FEAT_BATCH_DESC: 'Anchor thousands of credentials in a single operation. Optimized batching reduces costs while maintaining individual verifiability.',
+  FEAT_WEBHOOKS_TITLE: 'Custom Webhooks',
+  FEAT_WEBHOOKS_DESC: 'Real-time notifications when credentials are anchored, verified, or expire. Integrate with your existing workflows.',
+  FEAT_SSO_TITLE: 'Single Sign-On',
+  FEAT_SSO_DESC: 'SAML and OAuth integration for seamless team access. Centralized user management with role-based permissions.',
+  FEAT_SUPPORT_TITLE: 'Dedicated Support',
+  FEAT_SUPPORT_DESC: 'Named account manager, priority response times, and onboarding assistance for your team.',
+  FEAT_SLA_TITLE: 'SLA Guarantees',
+  FEAT_SLA_DESC: '99.9% uptime commitment with proactive monitoring and incident response. Enterprise-grade reliability.',
+  TRUST_TITLE: 'Trusted Infrastructure',
+  TRUST_ANCHORING_TITLE: 'Permanent Anchoring',
+  TRUST_ANCHORING_DESC: 'Every credential fingerprint is recorded on a public, immutable network. No single entity can alter the record.',
+  TRUST_SOC2_TITLE: 'SOC 2 Compliance Path',
+  TRUST_SOC2_DESC: 'Security controls designed for SOC 2 Type II certification. Comprehensive audit trails and access logging.',
+  TRUST_ENCRYPTION_TITLE: 'End-to-End Privacy',
+  TRUST_ENCRYPTION_DESC: 'Documents never leave the user\'s device. Only cryptographic fingerprints are transmitted and stored.',
+  TRUST_RLS_TITLE: 'Row-Level Security',
+  TRUST_RLS_DESC: 'Every database query is scoped to the authenticated user\'s organization. Data isolation is enforced at the infrastructure level.',
+  INTEGRATIONS_TITLE: 'Integrations',
+  INTEGRATIONS_SUBTITLE: 'Connect Arkova to your existing tools and workflows.',
+  INT_API_TITLE: 'REST API',
+  INT_API_DESC: 'Full-featured verification and anchoring API with comprehensive documentation.',
+  INT_SDK_TITLE: 'TypeScript & Python SDKs',
+  INT_SDK_DESC: 'Official client libraries for rapid integration. Type-safe with full IDE support.',
+  INT_MCP_TITLE: 'MCP Server for AI Agents',
+  INT_MCP_DESC: 'Model Context Protocol server enables AI agents to verify and anchor credentials programmatically.',
+  INT_WEBHOOKS_TITLE: 'Webhook Events',
+  INT_WEBHOOKS_DESC: 'Subscribe to credential lifecycle events and integrate with Slack, Zapier, or custom endpoints.',
+  CTA_TITLE: 'Ready to Scale Credential Verification?',
+  CTA_DESCRIPTION: 'Talk to our team about enterprise pricing, custom integrations, and volume discounts.',
+  CTA_BUTTON_CONTACT: 'Contact Sales',
+  CTA_BUTTON_DOCS: 'View API Documentation',
 } as const;
 

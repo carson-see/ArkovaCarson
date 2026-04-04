@@ -33,6 +33,7 @@ import { orgVerificationRouter } from './api/v1/orgVerification.js';
 import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
+import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
@@ -55,66 +56,69 @@ if (config.nodeEnv === 'production') {
 // ─── X-Request-Id on every response (DX-6) ───
 app.use(correlationIdMiddleware);
 
-// ─── Health check — always available, no auth ───
+// ─── Health check — always available, no auth (Constitution 1.9) ───
+// P7-TS-06: Enhanced with subsystem checks (anchoring, KMS, fee rate)
 app.get('/health', async (req, res) => {
   const detailed = req.query.detailed === 'true';
-  const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; message?: string }> = {};
 
-  if (!isDbHealthy()) {
-    const circuitState = getDbCircuitState();
-    checks.supabase = {
-      status: 'error',
-      message: `Circuit breaker open (${circuitState.consecutiveFailures} consecutive failures): ${circuitState.lastError}`,
-    };
-  } else {
-    const dbStart = Date.now();
-    try {
-      const { error } = await db.from('plans').select('id').limit(1);
-      if (error) {
-        recordDbFailure(error);
-        checks.supabase = { status: 'error', latencyMs: Date.now() - dbStart, message: error.message };
-      } else {
-        recordDbSuccess();
-        checks.supabase = { status: 'ok', latencyMs: Date.now() - dbStart };
+  const deps: HealthCheckDeps = {
+    isDbHealthy,
+    dbQuery: () => db.from('plans').select('id').limit(1) as unknown as Promise<{ data: unknown; error: { message: string } | null }>,
+    recordDbSuccess,
+    recordDbFailure,
+    getDbCircuitState,
+    getConnectionInfo,
+    config: {
+      bitcoinNetwork: config.bitcoinNetwork,
+      stripeSecretKey: config.stripeSecretKey,
+      sentryDsn: config.sentryDsn,
+      geminiApiKey: config.geminiApiKey,
+      aiProvider: config.aiProvider,
+      kmsProvider: config.kmsProvider,
+      bitcoinKmsKeyId: config.bitcoinKmsKeyId,
+      gcpKmsKeyResourceName: config.gcpKmsKeyResourceName,
+      bitcoinTreasuryWif: config.bitcoinTreasuryWif,
+      enableProdNetworkAnchoring: config.enableProdNetworkAnchoring,
+    },
+    getLastSecuredAnchor: () =>
+      db.from('anchors')
+        .select('created_at')
+        .eq('status', 'SECURED')
+        .order('created_at', { ascending: false })
+        .limit(1) as unknown as Promise<{ data: Array<{ created_at: string }> | null; error: { message: string } | null }>,
+    getLastBatchAnchor: () =>
+      db.from('anchors')
+        .select('updated_at')
+        .eq('status', 'SUBMITTED')
+        .order('updated_at', { ascending: false })
+        .limit(1) as unknown as Promise<{ data: Array<{ completed_at: string }> | null; error: { message: string } | null }>,
+    getPendingAnchorCount: async () => {
+      const result = await db.from('anchors').select('id', { count: 'exact', head: true }).eq('status', 'PENDING');
+      return { count: result.count ?? null, error: result.error ? { message: result.error.message } : null };
+    },
+    getCurrentFeeRate: async () => {
+      // Best-effort fee rate — returns null if not available
+      try {
+        const { createFeeEstimator } = await import('./chain/fee-estimator.js');
+        const estimator = createFeeEstimator({
+          strategy: config.bitcoinFeeStrategy ?? 'static',
+          staticRate: config.bitcoinStaticFeeRate,
+          mempoolApiUrl: config.mempoolApiUrl,
+          fallbackRate: config.bitcoinFallbackFeeRate,
+        });
+        return await estimator.estimateFee();
+      } catch {
+        return null;
       }
-    } catch (err) {
-      recordDbFailure(err);
-      checks.supabase = {
-        status: 'error',
-        latencyMs: Date.now() - dbStart,
-        message: err instanceof Error ? err.message : 'Connection failed',
-      };
-    }
-  }
-
-  const info: Record<string, { configured: boolean; message?: string }> = {};
-  info.stripe = { configured: Boolean(config.stripeSecretKey) };
-  info.sentry = {
-    configured: Boolean(config.sentryDsn),
-    ...(!config.sentryDsn ? { message: 'SENTRY_DSN not configured' } : {}),
-  };
-  info.ai = {
-    configured: Boolean(config.geminiApiKey) || config.aiProvider === 'mock',
+    },
   };
 
-  const allHealthy = Object.values(checks).every((c) => c.status === 'ok');
+  const result = await buildHealthResponse(deps, detailed);
 
-  const compactChecks: Record<string, 'ok' | 'error'> = {};
-  for (const [key, val] of Object.entries(checks)) {
-    compactChecks[key] = val.status;
-  }
-
-  if (!allHealthy) {
+  if (result.statusCode === 503) {
     res.setHeader('Retry-After', '60');
   }
-  res.status(allHealthy ? 200 : 503).json({
-    status: allHealthy ? 'healthy' : 'degraded',
-    version: process.env.npm_package_version ?? '0.1.0',
-    uptime: Math.floor(process.uptime()),
-    network: config.bitcoinNetwork,
-    checks: detailed ? checks : compactChecks,
-    ...(detailed ? { info, connection: getConnectionInfo() } : {}),
-  });
+  res.status(result.statusCode).json(result.body);
 });
 
 // ─── Stripe webhook — raw body required, before json parser ───
