@@ -61,6 +61,13 @@ describe('GEO-12: Security Headers (vercel.json)', () => {
     expect(value).toContain('https://*.stripe.com');
   });
 
+  it('CSP connect-src does not use wildcards for run.app or railway.app (SEC-RECON-6)', () => {
+    const value = getHeaderValue('Content-Security-Policy');
+    expect(value).toBeDefined();
+    expect(value).not.toContain('*.run.app');
+    expect(value).not.toContain('*.railway.app');
+  });
+
   it('X-DNS-Prefetch-Control is on', () => {
     expect(getHeaderValue('X-DNS-Prefetch-Control')).toBe('on');
   });

@@ -1,5 +1,5 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-04-01 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate)_
+_Last updated: 2026-04-04 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**_
 
 ## Overview
 
@@ -59,11 +59,20 @@ No INSERT/DELETE policies. Profile creation handled by auth hooks/system.
 | Policy | Operation | Condition | Migration |
 |--------|-----------|-----------|-----------|
 | `organizations_select_own` | SELECT | `id = get_user_org_id()` | 0009 |
+| ~~`organizations_select_public`~~ | ~~SELECT (anon)~~ | ~~`true`~~ | ~~0105~~ **DROPPED in 0160 — leaked EIN/tax IDs** |
 | `organizations_update_admin` | UPDATE | `id = get_user_org_id() AND is_org_admin()` (USING + WITH CHECK) | 0009 |
 
 No INSERT/DELETE policies. Organization creation handled by `update_profile_onboarding()` (SECURITY DEFINER).
 
 **Grants (0007):** `SELECT, INSERT, UPDATE, DELETE` to authenticated; `ALL` to service_role.
+
+> **Security Hardening (0160):** The `organizations_select_public` policy (migration 0105) allowed anonymous users to read ALL organization data including EIN tax IDs and domain verification tokens. Migration 0160 drops this policy and creates `public_org_profiles` VIEW exposing only safe fields (display_name, org_type, verification_status, etc.). Anon can SELECT the view, not the raw table.
+
+### public_org_profiles (VIEW — migration 0160)
+
+Safe anonymous-accessible view of organizations. Exposes: `id, display_name, domain, description, website_url, logo_url, founded_date, org_type, linkedin_url, twitter_url, location, industry_tag, verification_status, created_at`. Excludes: `ein_tax_id, domain_verification_token, parent_org_id, affiliation data`.
+
+**Grants:** `SELECT` to anon.
 
 ### anchors
 
@@ -467,3 +476,20 @@ npm run test:rls
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-03-10 | Audit session 3 | Full rewrite: expanded from 4 tables to all 20. Added policy details from migrations 0013-0042. Documented grants, triggers, SECURITY DEFINER functions, and implementation status. |
+| 2026-04-04 | Security audit (0160) | **Critical hardening**: Dropped `organizations_select_public` (EIN leak), created `public_org_profiles` VIEW, dropped `dev_bypass_kyc`, added service_role auth guards to admin RPCs, restricted payment_ledger/treasury/pipeline stats to admin, tightened CSP, blocked ORG_ADMIN invites. 9 findings fixed. See SCRUM-412 epic. |
+
+## Security Audit: Migration 0160 (2026-04-04)
+
+Internal penetration test identified CVSS 9.8 Critical privilege escalation chain. Migration 0160 fixes all findings:
+
+| Finding | Severity | Root Cause | Fix |
+|---------|----------|-----------|-----|
+| Privilege escalation via admin RPCs | CRITICAL | No auth guards in SECURITY DEFINER functions | Added `service_role` check to `admin_set_platform_admin`, `admin_change_user_role`, `admin_set_user_org`; revoked EXECUTE from authenticated/anon/public |
+| Organizations EIN leak | HIGH | `organizations_select_public` anon policy `USING (true)` | Dropped policy, created `public_org_profiles` safe VIEW |
+| `dev_bypass_kyc` in production | HIGH | Dev function never removed | `DROP FUNCTION` |
+| `payment_ledger` readable by all auth | HIGH | VIEW granted to authenticated | Revoked, created admin-gated `get_payment_ledger()` wrapper |
+| Invitation ORG_ADMIN escalation | HIGH | `invite_member()` allowed ORG_ADMIN role | Blocked ORG_ADMIN invites |
+| Treasury/pipeline stats exposure | MEDIUM | RPCs granted to all authenticated | Added platform admin auth guards, removed `payer_address` PII |
+| CSP wildcards | MEDIUM | `*.run.app`, `*.railway.app` in connect-src | Pinned to exact Cloud Run domain |
+| Email autoconfirm | MEDIUM | Supabase dashboard setting | **MANUAL**: Disable in Supabase Dashboard |
+| OpenAPI schema exposure | LOW | Default Supabase API spec | Revoked unnecessary anon grants; dashboard config recommended |
