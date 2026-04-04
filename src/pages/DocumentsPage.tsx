@@ -337,13 +337,13 @@ export function DocumentsPage() {
           ) : activeTab === 'all' ? (
             <AllDocumentsList
               items={unifiedItems.filter(i => filterBySearch(i) && filterByStatus(i.status))}
-              allEmpty={unifiedItems.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
+              allEmpty={unifiedItems.length === 0}
               onSecure={() => setSecureDialogOpen(true)}
             />
           ) : activeTab === 'records' ? (
             <RecordsList
               records={records.filter(r => filterBySearch(r) && filterByStatus(r.status))}
-              allEmpty={records.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
+              allEmpty={records.length === 0}
               navigate={navigate}
               onSecure={() => setSecureDialogOpen(true)}
               onRevoke={handleRevokeRecord}
@@ -351,13 +351,13 @@ export function DocumentsPage() {
           ) : activeTab === 'credentials' ? (
             <CredentialsList
               credentials={credentials.filter(c => filterBySearch(c) && filterByStatus(c.status))}
-              allEmpty={credentials.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
+              allEmpty={credentials.length === 0}
               navigate={navigate}
             />
           ) : (
             <AttestationsList
               attestations={attestations.filter(a => filterBySearch(a) && filterByStatus(a.status))}
-              allEmpty={attestations.length === 0 && !searchQuery.trim() && statusFilter === 'ALL'}
+              allEmpty={attestations.length === 0}
               navigate={navigate}
             />
           )}

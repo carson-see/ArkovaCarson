@@ -430,7 +430,7 @@ export function SearchPage() {
         {/* Issuer results (shown for text queries) — hidden when error displayed */}
         {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && !displayError && (
           <div className="space-y-3">
-            {issuerResults.length > 0 && searchMode === 'issuers' ? (
+            {issuerResults.length > 0 ? (
               issuerResults.map((issuer, i) => (
                 <div key={issuer.org_id} className={`stagger-${Math.min(i + 2, 8)}`}>
                   <IssuerCard issuer={issuer} />
@@ -552,7 +552,7 @@ export function SearchPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — document integrity anchored on a public network
+              Powered by Arkova — immutable document integrity verification
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">
