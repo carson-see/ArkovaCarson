@@ -80,6 +80,9 @@ const StateBarApiPage = React.lazy(() => import('@/pages/StateBarApiPage').then(
 const ApiSandboxPage = React.lazy(() => import('@/pages/ApiSandboxPage').then(m => ({ default: m.ApiSandboxPage })));
 const PublicPortfolioPage = React.lazy(() => import('@/pages/PublicPortfolioPage').then(m => ({ default: m.PublicPortfolioPage })));
 const ActivateAccountPage = React.lazy(() => import('@/pages/ActivateAccountPage').then(m => ({ default: m.ActivateAccountPage })));
+const HowItWorksPage = React.lazy(() => import('@/pages/HowItWorksPage').then(m => ({ default: m.HowItWorksPage })));
+const UseCasesPage = React.lazy(() => import('@/pages/UseCasesPage').then(m => ({ default: m.UseCasesPage })));
+const EnterprisePage = React.lazy(() => import('@/pages/EnterprisePage').then(m => ({ default: m.EnterprisePage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -178,6 +181,9 @@ export function App() {
           <Route path={ROUTES.CLE_API} element={<RouteErrorBoundary section="CLE API"><StateBarApiPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.PORTFOLIO} element={<RouteErrorBoundary section="Portfolio"><PublicPortfolioPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ACTIVATE} element={<ActivateAccountPage />} />
+          <Route path={ROUTES.HOW_IT_WORKS} element={<HowItWorksPage />} />
+          <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
+          <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
