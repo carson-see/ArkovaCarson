@@ -41,6 +41,70 @@ const NUMERIC_FIELDS = new Set(['creditHours']);
 const FUZZY_FIELDS = new Set(['fieldOfStudy', 'issuerName', 'accreditingBody']);
 
 /**
+ * Canonical degreeLevel normalization map.
+ * The golden dataset uses inconsistent labels across phases ("Doctorate" vs "Ph.D."
+ * vs "Doctor of Medicine"). The model outputs various forms. All map to one of 4
+ * canonical values for fair comparison. Without this, F1=58.6% due to normalization
+ * mismatches, not model errors.
+ */
+const DEGREE_LEVEL_MAP: Record<string, string> = {
+  // Bachelor
+  'bachelor': 'bachelor', "bachelor's": 'bachelor', 'bs': 'bachelor', 'ba': 'bachelor',
+  'bsc': 'bachelor', 'b.s.': 'bachelor', 'b.a.': 'bachelor', 'b.sc.': 'bachelor',
+  'bachelor of science': 'bachelor', 'bachelor of arts': 'bachelor',
+  'bachelor of engineering': 'bachelor', 'bachelor of fine arts': 'bachelor',
+  'bfa': 'bachelor', 'b.e.': 'bachelor', 'beng': 'bachelor',
+  // Master
+  'master': 'master', "master's": 'master', 'ms': 'master', 'ma': 'master',
+  'msc': 'master', 'm.s.': 'master', 'm.a.': 'master', 'm.sc.': 'master',
+  'master of science': 'master', 'master of arts': 'master',
+  'master of business administration': 'master', 'mba': 'master', 'm.b.a.': 'master',
+  'master of public health': 'master', 'mph': 'master', 'm.p.h.': 'master',
+  'master of education': 'master', 'med': 'master', 'm.ed.': 'master',
+  'master of engineering': 'master', 'meng': 'master', 'm.eng.': 'master',
+  'master of fine arts': 'master', 'mfa': 'master', 'm.f.a.': 'master',
+  'master of social work': 'master', 'msw': 'master',
+  'master of public administration': 'master', 'mpa': 'master',
+  'master of laws': 'master', 'llm': 'master', 'll.m.': 'master',
+  // Doctorate
+  'doctorate': 'doctorate', 'doctoral': 'doctorate', 'doctor': 'doctorate',
+  'ph.d.': 'doctorate', 'phd': 'doctorate', 'ph.d': 'doctorate',
+  'doctor of philosophy': 'doctorate', 'doctor of medicine': 'doctorate',
+  'doctor of education': 'doctorate', 'doctor of science': 'doctorate',
+  'doctor of law': 'doctorate', 'doctor of dental surgery': 'doctorate',
+  'doctor of pharmacy': 'doctorate', 'doctor of nursing practice': 'doctorate',
+  'doctor of veterinary medicine': 'doctorate', 'doctor of psychology': 'doctorate',
+  'doctor of physical therapy': 'doctorate', 'doctor of ministry': 'doctorate',
+  'doctor of public health': 'doctorate', 'doctor of business administration': 'doctorate',
+  'm.d.': 'doctorate', 'md': 'doctorate',
+  'j.d.': 'doctorate', 'jd': 'doctorate', 'juris doctor': 'doctorate',
+  'ed.d.': 'doctorate', 'edd': 'doctorate',
+  'd.d.s.': 'doctorate', 'dds': 'doctorate',
+  'pharm.d.': 'doctorate', 'pharmd': 'doctorate',
+  'dnp': 'doctorate', 'd.n.p.': 'doctorate',
+  'dvm': 'doctorate', 'd.v.m.': 'doctorate',
+  'psy.d.': 'doctorate', 'psyd': 'doctorate',
+  'dpt': 'doctorate', 'd.p.t.': 'doctorate',
+  'd.min.': 'doctorate', 'dmin': 'doctorate',
+  'drph': 'doctorate', 'dr.p.h.': 'doctorate',
+  'dba': 'doctorate', 'd.b.a.': 'doctorate',
+  // Associate
+  'associate': 'associate', "associate's": 'associate', 'as': 'associate', 'aa': 'associate',
+  'a.s.': 'associate', 'a.a.': 'associate',
+  'associate of science': 'associate', 'associate of arts': 'associate',
+  'associate of applied science': 'associate', 'aas': 'associate',
+};
+
+/**
+ * Normalize a degreeLevel value to a canonical form for fair comparison.
+ */
+export function normalizeDegreeLevel(value: string | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const lower = String(value).trim().toLowerCase().replace(/['']/g, "'");
+  return DEGREE_LEVEL_MAP[lower] ?? lower;
+}
+
+/**
  * Normalize a string for comparison: lowercase, trim, collapse whitespace.
  */
 export function normalizeString(value: string | undefined): string | undefined {
@@ -124,6 +188,16 @@ export function compareField(
       }
     }
     return { field, expected, actual, correct: false, matchType: 'mismatch' };
+  }
+
+  // DegreeLevel: canonical normalization before comparison
+  if (field === 'degreeLevel') {
+    const normExp = normalizeDegreeLevel(String(expected));
+    const normAct = normalizeDegreeLevel(String(actual));
+    if (normExp && normAct && normExp === normAct) {
+      return { field, expected, actual, correct: true, matchType: 'normalized' };
+    }
+    return { field, expected, actual, correct: normExp === normAct, matchType: normExp === normAct ? 'exact' : 'mismatch' };
   }
 
   // String comparison

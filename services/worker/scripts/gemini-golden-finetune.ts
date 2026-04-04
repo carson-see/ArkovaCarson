@@ -33,6 +33,7 @@ import { GOLDEN_DATASET_PHASE8 } from '../src/ai/eval/golden-dataset-phase8.js';
 import { GOLDEN_DATASET_PHASE9 } from '../src/ai/eval/golden-dataset-phase9.js';
 import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js';
 import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';
+import { GOLDEN_DATASET_PHASE12 } from '../src/ai/eval/golden-dataset-phase12.js';
 import { computeRealisticConfidence } from '../src/ai/training/nessie-v4-data.js';
 import type { GoldenDatasetEntry } from '../src/ai/eval/types.js';
 
@@ -167,6 +168,7 @@ async function main(): Promise<void> {
     { name: 'phase9', data: GOLDEN_DATASET_PHASE9 },
     { name: 'phase10', data: GOLDEN_DATASET_PHASE10 },
     { name: 'phase11', data: GOLDEN_DATASET_PHASE11 },
+    { name: 'phase12', data: GOLDEN_DATASET_PHASE12 },
   ];
 
   for (const ds of datasets) {
