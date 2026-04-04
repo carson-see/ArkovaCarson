@@ -70,15 +70,10 @@ export function RequestAffiliationDialog({
 
     setSearching(true);
     try {
+      // Use SECURITY DEFINER RPC to search orgs (direct table query blocked by RLS)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (supabase as any)
-        .from('organizations')
-        .select('id, display_name, domain, logo_url, verification_status')
-        .eq('verification_status', 'VERIFIED')
-        .is('parent_org_id', null)
-        .neq('id', currentOrgId)
-        .ilike('display_name', `%${query.trim()}%`)
-        .limit(10);
+        .rpc('search_organizations_public', { p_query: query.trim() });
 
       if (!error && data) {
         setResults(data as VerifiedOrg[]);

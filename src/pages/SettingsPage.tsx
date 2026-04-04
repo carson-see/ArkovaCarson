@@ -8,7 +8,7 @@
 
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter, FileWarning } from 'lucide-react';
+import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
@@ -23,7 +23,7 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS, DISCLAIMER_LABELS, PROFILE_LABELS } from '@/lib/copy';
+import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
@@ -101,14 +101,6 @@ export function SettingsPage() {
     }
   }, [socialLinks, updateProfile]);
 
-  const handleAcceptDisclaimer = useCallback(async () => {
-    setError(null);
-    const success = await updateProfile({ disclaimer_accepted_at: new Date().toISOString() } );
-    if (!success) {
-      setError('Failed to accept disclaimer');
-    }
-  }, [updateProfile]);
-
   const handleTogglePublicProfile = useCallback(async (checked: boolean) => {
     await updateProfile({ is_public_profile: checked });
   }, [updateProfile]);
@@ -130,27 +122,6 @@ export function SettingsPage() {
       </div>
 
       <div className="space-y-6 max-w-2xl">
-        {/* Disclaimer Banner (IDT-01) */}
-        {profile && !profileAny?.disclaimer_accepted_at && (
-          <Card className="border-amber-500/50 bg-amber-50/50 dark:bg-amber-950/20">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
-                <FileWarning className="h-5 w-5" />
-                {DISCLAIMER_LABELS.title}
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-muted-foreground whitespace-pre-line">
-                {DISCLAIMER_LABELS.body}
-              </p>
-              <Button onClick={handleAcceptDisclaimer} disabled={updating}>
-                {updating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                {DISCLAIMER_LABELS.acceptButton}
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Profile Information */}
         <Card>
           <CardHeader>
