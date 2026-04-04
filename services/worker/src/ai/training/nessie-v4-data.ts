@@ -146,22 +146,39 @@ export function computeRealisticConfidence(
   }
 
   // Text length bonus (logarithmic — diminishing returns)
-  // 20 chars = +0.01, 100 chars = +0.04, 500 chars = +0.06, 2000+ chars = +0.08
-  const textLen = sourceText.length;
-  if (textLen > 10) {
-    const lengthBonus = Math.min(0.08, 0.035 * Math.log10(textLen / 10));
-    score += lengthBonus;
+  if (sourceText.length > 500) {
+    score += Math.min(0.06, 0.025 * Math.log10(sourceText.length / 100));
   }
 
-  // Domain-specific boost for well-structured sources
+  // Domain-specific difficulty adjustment
+  // Types that are historically harder to extract get lower confidence to spread
+  // the distribution (improves confidence correlation r from 0.137).
   const credType = fields.credentialType as string | undefined;
-  if (credType === 'SEC_FILING' || credType === 'PUBLICATION') {
-    score += 0.02; // Structured data sources
+  const HARD_TYPES: Record<string, number> = {
+    'PUBLICATION': -0.08,   // Often confused with OTHER/PROFESSIONAL
+    'MILITARY': -0.05,      // Specialized vocabulary, many subtypes
+    'IDENTITY': -0.05,      // International formats, sparse text
+    'REGULATION': -0.03,    // Can be confused with LEGAL
+    'MEDICAL': -0.03,       // Can be confused with LICENSE
+  };
+  const EASY_TYPES: Record<string, number> = {
+    'SEC_FILING': 0.03,     // Very structured, clear format
+    'DEGREE': 0.02,         // Standard academic format
+    'LICENSE': 0.02,        // Clear credential format
+  };
+  score += HARD_TYPES[credType ?? ''] ?? EASY_TYPES[credType ?? ''] ?? 0;
+
+  // Short text penalty — less signal = less confidence
+  const textLen = sourceText.length;
+  if (textLen < 200) {
+    score -= 0.10; // Very short text: hard to extract reliably
+  } else if (textLen < 400) {
+    score -= 0.05; // Short text: some signal missing
   }
 
   // Jitter: deterministic based on text content (reproducible but varied)
   const hash = createHash('md5').update(sourceText).digest();
-  const jitter = ((hash[0] % 5) - 2) * 0.01; // -0.02 to +0.02
+  const jitter = ((hash[0] % 7) - 3) * 0.015; // -0.045 to +0.045 (wider spread)
   score += jitter;
 
   // Clamp to valid range
