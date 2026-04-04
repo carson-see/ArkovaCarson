@@ -75,22 +75,23 @@ export function useUserOrgs(): UseUserOrgsReturn {
       return;
     }
 
-    // Step 2: Fetch org details for all orgs
+    // Step 2: Fetch org details via SECURITY DEFINER RPC (direct table query
+    // restricted by RLS to user's primary org only — insufficient for multi-org)
     const orgIds = rows.map((m) => m.org_id);
-    const { data: organizations, error: orgError } = await supabase
-      .from('organizations')
-      .select('*')
-      .in('id', orgIds);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orgResults = await Promise.all(
+      orgIds.map((orgId) =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (supabase as any).rpc('get_public_org_profiles', { p_org_id: orgId, p_limit: 1 })
+      )
+    );
 
-    if (orgError) {
-      setError(orgError.message);
-      setOrgs([]);
-      setLoading(false);
-      return;
-    }
+    const organizations = orgResults
+      .filter((r) => !r.error && r.data?.length > 0)
+      .map((r) => r.data[0]);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const orgMap = new Map((organizations ?? []).map((o: any) => [o.id, o]));
+    const orgMap = new Map(organizations.map((o: any) => [o.id, o]));
 
     setOrgs(
       rows.map((m) => {
