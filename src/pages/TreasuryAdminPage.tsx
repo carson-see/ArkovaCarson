@@ -133,14 +133,14 @@ export function TreasuryAdminPage() {
 
 /** x402 payment stats from x402_payments table */
 function X402PaymentStats() {
-  const [stats, setStats] = useState<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null>(null);
+  const [stats, setStats] = useState<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Single RPC replaces 3 separate x402_payments queries
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = supabase as any;
-    dbAny.rpc('get_treasury_stats').then(({ data, error }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; payer_address: string; created_at: string }> } | null; error: unknown }) => {
+    dbAny.rpc('get_treasury_stats').then(({ data, error }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null; error: unknown }) => {
       if (!error && data) {
         setStats({
           total: data.total_payments ?? 0,
@@ -193,7 +193,7 @@ function X402PaymentStats() {
           <p className="text-xs text-muted-foreground">Recent payments:</p>
           {stats.recent.map((p) => (
             <div key={p.tx_hash} className="flex items-center justify-between text-xs">
-              <span className="font-mono truncate max-w-[140px]">{p.payer_address}</span>
+              <span className="font-mono truncate max-w-[140px]">{p.tx_hash.slice(0, 12)}…</span>
               <span className="font-mono">${p.amount_usd.toFixed(4)}</span>
             </div>
           ))}
