@@ -114,10 +114,10 @@ interface DomainConfig {
 
 const DOMAINS: DomainConfig[] = [
   { domain: 'sec', sources: ['edgar'], recordTypes: ['sec_filing'], targetCount: 200 },
-  { domain: 'legal', sources: ['courtlistener'], recordTypes: ['court_opinion', 'legal'], targetCount: 150 },
-  { domain: 'regulatory', sources: ['federal_register'], recordTypes: ['regulation', 'federal_register'], targetCount: 150 },
-  { domain: 'patent', sources: ['uspto'], recordTypes: ['patent'], targetCount: 100 },
-  { domain: 'academic', sources: ['openalex'], recordTypes: ['academic_paper', 'publication'], targetCount: 100 },
+  { domain: 'legal', sources: ['courtlistener'], recordTypes: ['court_opinion'], targetCount: 150 },
+  { domain: 'regulatory', sources: ['federal_register'], recordTypes: ['notice', 'rule', 'proposed_rule'], targetCount: 150 },
+  { domain: 'academic', sources: ['openalex'], recordTypes: ['article', 'book-chapter'], targetCount: 150 },
+  { domain: 'education', sources: ['dapip'], recordTypes: ['accreditation'], targetCount: 50 },
 ];
 
 // --- Gemini Teacher ---

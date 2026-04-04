@@ -22,6 +22,20 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-04-04, Session 24c — Nessie Intelligence v2 + Expanded Distillation)
+
+**Nessie Intelligence v2 trained on 644 examples across 5 domains. Gemini Golden v2 eval: 98% type accuracy. Critical double-calibration bug fixed. All deployed.**
+
+| Change | Detail |
+|--------|--------|
+| **Nessie Intelligence v2** | Together AI `ft-8fb075be-8f99` → `arkova-nessie-intelligence-v2-be2b9bcb`. 580 train / 64 val, 5 domains (SEC, legal, regulatory, academic, education), 2 epochs, 50 steps. Deployed to Cloud Run. |
+| **Expanded distillation** | Fixed record_type filters (federal_register: notice/rule/proposed_rule, openalex: article/book-chapter). 644 examples balanced across 5 task types × 5 domains. |
+| **Gemini Golden v2 eval** | 98.0% credentialType accuracy (49/50). Fixed eval script to include system instruction. |
+| **Double calibration fix** | PROVIDER_OFFSETS.nessie: -0.15 → 0.00. calibrateNessieConfidence() already corrects overconfidence. |
+| **Intelligence routing** | Context queries route directly to Nessie on Together AI with 30s timeout + Gemini fallback. |
+| **HuggingFace** | Created nessie-intelligence-v1 repo, uploaded model cards to 4 repos, training data to HF. |
+| **PR #242 merged** | Audit fixes, intelligence routing, eval. |
+
 ### Recent Changes (2026-04-03, Session 24b — Phase II Agentic Layer + GEO Sprint + UAT Bug Sweep)
 
 **Phase II 6/6 COMPLETE. 12 UAT bugs fixed. 4 GEO stories completed. Wikidata entity created. Security fixes for oracle HMAC + agents IDOR. PR #238 merged (10 commits).**
