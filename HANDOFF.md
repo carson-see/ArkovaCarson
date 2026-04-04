@@ -12,7 +12,7 @@
 
 **Goal:** Extend verification into agentic workflows, agent framework integrations, and institutional attestations
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 200/220 stories complete (~91%) incl. 4 Phase II stories done this session. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 161 migration files (0001-0157 + 0024). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10 complete, 1 partial, 6 not started. ATS: 8/8. CML: 5/5. **Phase II Agentic: 4/6 DONE.** Phase III: 0/3 (planned). **All 24/24 audit findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0157 applied.** PR #238 open (Session 24, 6 commits).
+**Overall progress:** 200/220 stories complete (~91%) incl. 4 Phase II stories done this session. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 163 migration files (0001-0159 + 0024). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10 complete, 1 partial, 6 not started. ATS: 8/8. CML: 5/5. **Phase II Agentic: 4/6 DONE.** Phase III: 0/3 (planned). **24/24 audit findings resolved. 9 pentest findings in PR #257 (migration 0160+0161, CodeRabbit review addressed).** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0159 applied.** PR #257 open (security hardening, 9 pentest findings).
 
 ### Open Blockers
 

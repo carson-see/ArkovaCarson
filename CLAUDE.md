@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-03 | **Repo:** ArkovaCarson | **Deploy:** arkova-26.vercel.app
-> **Stats:** 161 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit findings resolved | AI eval F1=87.2% (Nessie v5) / 90.4% (Gemini Golden) | 320K+ public records | 166K+ SECURED anchors (mainnet)
+> **Version:** 2026-04-04 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 163 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit findings resolved + 9 pentest findings (PR #257) | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.39M+ public records | 166K+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -224,7 +224,7 @@ Update `docs/confluence/` if schema/security/API changed. Update story docs + `a
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 161 files (0001-0157, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap). All migrations applied to production through 0157.
+**Current:** 163 files (0001-0159, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap). Migration 0160 (security hardening) in PR #257. All migrations applied to production through 0159.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -363,7 +363,7 @@ STRIPE_WEBHOOK_SECRET=
 
 # Bitcoin (worker only)
 BITCOIN_TREASURY_WIF=               # never logged (Constitution 1.4)
-BITCOIN_NETWORK=                    # "signet" | "testnet4" | "testnet" | "mainnet" (currently signet)
+BITCOIN_NETWORK=                    # "signet" | "testnet4" | "testnet" | "mainnet" (currently mainnet)
 BITCOIN_RPC_URL=                    # optional
 BITCOIN_RPC_AUTH=                   # optional
 BITCOIN_UTXO_PROVIDER=mempool      # "rpc" | "mempool" | "getblock"
@@ -460,5 +460,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-03 | 161 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit findings resolved | Golden dataset: 1,605 entries | 130 few-shot examples | Nessie v5: 87.2% F1_
+_Directive version: 2026-04-04 | 163 migrations | 2,825 tests | 211 stories (196 complete, 93%) | 24/24 audit + 9 pentest findings (PR #257) | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
