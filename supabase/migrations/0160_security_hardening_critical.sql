@@ -46,8 +46,7 @@ SELECT
   industry_tag,
   verification_status,
   created_at
-FROM organizations
-WHERE deleted_at IS NULL;
+FROM organizations;
 
 -- Anon can read the safe view, not the raw table
 GRANT SELECT ON public_org_profiles TO anon;
