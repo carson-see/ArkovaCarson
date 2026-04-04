@@ -74,13 +74,22 @@ export function useAnchorStats() {
         lastAnchorTime = txData.last_anchor_time ?? null;
         lastTxTime = txData.last_tx_time ?? null;
       } else {
-        // Fallback: basic TX count from anchors with chain_tx_id
-        const { count: txCount } = await dbAny
-          .from('anchors')
-          .select('chain_tx_id', { count: 'exact', head: true })
-          .not('chain_tx_id', 'is', null);
-        distinctTxIds = txCount ?? 0;
-        avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(totalAnchors / distinctTxIds) : 0;
+        // Fallback: count distinct chain_tx_id values via RPC
+        // Supabase JS .select() with count counts rows, not distinct values,
+        // so we use a raw SQL query for accuracy
+        try {
+          const { data: txCountData } = await dbAny.rpc('get_distinct_tx_count');
+          distinctTxIds = txCountData ?? 0;
+        } catch {
+          // Final fallback: count anchors with chain_tx_id (overcounts but better than 0)
+          const { count: txCount } = await dbAny
+            .from('anchors')
+            .select('chain_tx_id', { count: 'exact', head: true })
+            .not('chain_tx_id', 'is', null);
+          distinctTxIds = txCount ?? 0;
+        }
+        const anchorsWithTxFallback = statusCounts['SECURED'] ?? 0;
+        avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTxFallback / distinctTxIds) : 0;
 
         const { data: lastRow } = await dbAny
           .from('anchors')

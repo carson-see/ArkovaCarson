@@ -62,8 +62,11 @@ export function DashboardPage() {
 
   const handleAcceptDisclaimer = useCallback(async () => {
     setDisclaimerAccepting(true);
-    await updateProfile({ disclaimer_accepted_at: new Date().toISOString() });
-    setDisclaimerAccepting(false);
+    try {
+      await updateProfile({ disclaimer_accepted_at: new Date().toISOString() });
+    } finally {
+      setDisclaimerAccepting(false);
+    }
   }, [updateProfile]);
 
   // Search, filter, pagination state (MVP-09)

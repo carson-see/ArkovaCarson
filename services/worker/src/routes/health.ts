@@ -62,8 +62,6 @@ export async function buildHealthResponse(
   deps: HealthCheckDeps,
   detailed: boolean,
 ): Promise<HealthResponse> {
-  const startTime = Date.now();
-
   // ─── Database check ───
   type DbCheck = { status: 'ok' | 'error'; latencyMs?: number; message?: string };
   let dbCheck: DbCheck;
@@ -109,37 +107,41 @@ export async function buildHealthResponse(
   let pendingCount: number | null = null;
   let feeRateSatVb: number | null = null;
 
-  try {
-    const securedResult = await deps.getLastSecuredAnchor();
-    if (!securedResult.error && securedResult.data && securedResult.data.length > 0) {
-      lastSecuredAt = securedResult.data[0].created_at;
+  // Only fetch enrichment data in detailed mode — basic /health probes
+  // from load balancers should be cheap (DB ping only)
+  if (detailed) {
+    try {
+      const securedResult = await deps.getLastSecuredAnchor();
+      if (!securedResult.error && securedResult.data && securedResult.data.length > 0) {
+        lastSecuredAt = securedResult.data[0].created_at;
+      }
+    } catch {
+      // Non-critical — continue
     }
-  } catch {
-    // Non-critical — continue
-  }
 
-  try {
-    const batchResult = await deps.getLastBatchAnchor();
-    if (!batchResult.error && batchResult.data && batchResult.data.length > 0) {
-      lastBatchAt = batchResult.data[0].updated_at ?? batchResult.data[0].completed_at ?? null;
+    try {
+      const batchResult = await deps.getLastBatchAnchor();
+      if (!batchResult.error && batchResult.data && batchResult.data.length > 0) {
+        lastBatchAt = batchResult.data[0].updated_at ?? batchResult.data[0].completed_at ?? null;
+      }
+    } catch {
+      // Non-critical — continue
     }
-  } catch {
-    // Non-critical — continue
-  }
 
-  try {
-    const countResult = await deps.getPendingAnchorCount();
-    if (!countResult.error && countResult.count !== null) {
-      pendingCount = countResult.count;
+    try {
+      const countResult = await deps.getPendingAnchorCount();
+      if (!countResult.error && countResult.count !== null) {
+        pendingCount = countResult.count;
+      }
+    } catch {
+      // Non-critical — continue
     }
-  } catch {
-    // Non-critical — continue
-  }
 
-  try {
-    feeRateSatVb = await deps.getCurrentFeeRate();
-  } catch {
-    // Non-critical — continue
+    try {
+      feeRateSatVb = await deps.getCurrentFeeRate();
+    } catch {
+      // Non-critical — continue
+    }
   }
 
   const anchoringCheck: AnchoringCheck = {
