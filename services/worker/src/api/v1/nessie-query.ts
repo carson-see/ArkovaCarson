@@ -363,28 +363,75 @@ async function generateVerifiedContext(
   query: string,
   documents: NessieResult[],
 ): Promise<NessieContextResponse> {
-  const aiProvider = createAIProvider();
-  const providerName = getProviderName();
   const prompt = buildRAGPrompt(query, documents);
 
-  // Use the intelligence system prompt (NMT-07) instead of the old generic one.
-  // The intelligence prompt teaches Nessie to provide compliance analysis,
-  // risk identification, and actionable recommendations — not just answer Q&A.
+  // Intelligence queries ALWAYS use the intelligence system prompt (NMT-07).
+  // This teaches Nessie to provide compliance analysis, risk identification,
+  // and actionable recommendations — not just answer Q&A.
   const systemPrompt = INTELLIGENCE_SYSTEM_PROMPT;
 
   let text: string;
   let tokensUsed: number | undefined;
   let modelName: string;
 
-  if (providerName === 'together' || providerName === 'nessie') {
-    // Nessie Intelligence model via RunPod or Together AI
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await (aiProvider as any).generateRAGResponse(systemPrompt, prompt);
-    text = result.text;
-    tokensUsed = result.tokensUsed;
-    modelName = process.env.NESSIE_INTELLIGENCE_MODEL ?? 'nessie-intelligence-v1';
-  } else {
-    // Fallback: Use Gemini SDK directly for other providers
+  // Intelligence mode: prefer Nessie Intelligence model on Together AI.
+  // AI_PROVIDER controls extraction routing — intelligence routing is independent.
+  // If NESSIE_INTELLIGENCE_MODEL is set AND TOGETHER_API_KEY is available,
+  // use Together AI directly. Otherwise fall back to Gemini.
+  const intelligenceModel = process.env.NESSIE_INTELLIGENCE_MODEL;
+  const togetherKey = process.env.TOGETHER_API_KEY;
+
+  if (intelligenceModel && togetherKey) {
+    // Route to Nessie Intelligence model on Together AI (30s timeout)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    try {
+      const response = await fetch('https://api.together.xyz/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${togetherKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: intelligenceModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: prompt },
+          ],
+          temperature: 0.2,
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        const err = await response.text();
+        logger.warn({ status: response.status, err: err.slice(0, 200) }, 'Nessie Intelligence API failed, falling back to Gemini');
+        // Fall through to Gemini below
+      } else {
+        const data = await response.json() as {
+          choices: Array<{ message: { content: string } }>;
+          usage?: { total_tokens: number };
+        };
+        text = data.choices[0]?.message?.content ?? '';
+        tokensUsed = data.usage?.total_tokens;
+        modelName = intelligenceModel;
+
+        return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn({ error: msg }, 'Nessie Intelligence request failed (timeout or network), falling back to Gemini');
+      // Fall through to Gemini below
+    }
+  }
+
+  // Fallback: Use Gemini SDK
+  {
     const { GoogleGenerativeAI: GenAI } = await import('@google/generative-ai');
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) {
@@ -407,7 +454,21 @@ async function generateVerifiedContext(
     tokensUsed = response.response.usageMetadata?.totalTokenCount;
   }
 
-  // Intelligence prompt returns "analysis", legacy RAG prompt returns "answer"
+  return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+}
+
+/**
+ * Parse intelligence/RAG response JSON into NessieContextResponse.
+ * Handles both "analysis" (intelligence prompt) and "answer" (legacy) field names.
+ * Validates citations against actual retrieved documents and enriches with anchor proofs.
+ */
+function parseIntelligenceResponse(
+  text: string,
+  modelName: string,
+  query: string,
+  documents: NessieResult[],
+  tokensUsed?: number,
+): NessieContextResponse {
   const parsed = JSON.parse(text) as {
     answer?: string;
     analysis?: string;
