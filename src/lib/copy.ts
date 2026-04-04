@@ -1581,6 +1581,24 @@ export const PROFILE_LABELS = {
 } as const;
 
 // =============================================================================
+// SHARED PUBLIC FOOTER (GEO-08)
+// =============================================================================
+
+export const PUBLIC_FOOTER_LABELS = {
+  NAV_SEARCH: 'Search Credentials',
+  NAV_VERIFY: 'Verify a Document',
+  NAV_HOW_IT_WORKS: 'How It Works',
+  NAV_USE_CASES: 'Use Cases',
+  NAV_ENTERPRISE: 'Enterprise',
+  NAV_DEVELOPERS: 'Developer API',
+  NAV_CONTACT: 'Contact',
+  NAV_PRIVACY: 'Privacy',
+  NAV_TERMS: 'Terms',
+  COPYRIGHT: 'Arkova',
+  STEP_PREFIX: 'Step',
+} as const;
+
+// =============================================================================
 // HOW IT WORKS PAGE (GEO-08)
 // =============================================================================
 
@@ -1593,7 +1611,7 @@ export const HOW_IT_WORKS_LABELS = {
   STEP_1_DESCRIPTION: 'Select your document and a unique cryptographic fingerprint (SHA-256) is generated entirely in your browser. The document itself never leaves your device — only the fingerprint moves forward.',
   STEP_1_DETAIL: 'Client-side processing means your sensitive documents remain private. No server ever sees, stores, or transmits the original file.',
   STEP_2_TITLE: 'Permanent Anchoring',
-  STEP_2_DESCRIPTION: 'The fingerprint is recorded on a public, immutable network via OP_RETURN. Anchors are batched for efficiency, reducing costs while maintaining cryptographic integrity.',
+  STEP_2_DESCRIPTION: 'The fingerprint is recorded on a public, immutable network. Anchors are batched for efficiency, reducing costs while maintaining cryptographic integrity.',
   STEP_2_DETAIL: 'Once anchored, the record cannot be altered, deleted, or tampered with. The network provides a permanent, independently verifiable timestamp.',
   STEP_3_TITLE: 'Universal Verification',
   STEP_3_DESCRIPTION: 'Anyone can verify a document by generating its fingerprint and comparing it against the permanent record. No account required — verification is open and free.',

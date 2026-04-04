@@ -27,6 +27,7 @@ import {
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { ENTERPRISE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
+import { PublicFooter } from '@/components/shared/PublicFooter';
 
 const FEATURES = [
   { icon: Code2, title: ENTERPRISE_LABELS.FEAT_API_TITLE, description: ENTERPRISE_LABELS.FEAT_API_DESC },
@@ -201,22 +202,7 @@ export function EnterprisePage() {
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t mt-16">
-        <div className="mx-auto max-w-4xl px-6 py-8">
-          <nav className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground" aria-label="Site navigation">
-            <Link to={ROUTES.SEARCH} className="hover:text-primary transition-colors">Search Credentials</Link>
-            <Link to={ROUTES.VERIFY_FORM} className="hover:text-primary transition-colors">Verify a Document</Link>
-            <Link to={ROUTES.HOW_IT_WORKS} className="hover:text-primary transition-colors">How It Works</Link>
-            <Link to={ROUTES.USE_CASES} className="hover:text-primary transition-colors">Use Cases</Link>
-            <Link to={ROUTES.DEVELOPERS} className="hover:text-primary transition-colors">Developer API</Link>
-            <Link to={ROUTES.CONTACT} className="hover:text-primary transition-colors">Contact</Link>
-            <Link to={ROUTES.PRIVACY} className="hover:text-primary transition-colors">Privacy</Link>
-            <Link to={ROUTES.TERMS} className="hover:text-primary transition-colors">Terms</Link>
-          </nav>
-          <p className="text-center text-xs text-muted-foreground mt-4">&copy; {new Date().getFullYear()} Arkova</p>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }

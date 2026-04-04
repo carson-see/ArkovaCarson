@@ -19,8 +19,9 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
-import { HOW_IT_WORKS_LABELS } from '@/lib/copy';
+import { HOW_IT_WORKS_LABELS, PUBLIC_FOOTER_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
+import { PublicFooter } from '@/components/shared/PublicFooter';
 
 const STEPS = [
   {
@@ -156,7 +157,7 @@ export function HowItWorksPage() {
                   <div>
                     <div className="flex items-center gap-3 mb-2">
                       <span className={`text-sm font-bold ${step.color}`}>
-                        {`Step ${step.number}`}
+                        {`${PUBLIC_FOOTER_LABELS.STEP_PREFIX} ${step.number}`}
                       </span>
                     </div>
                     <h2 className="text-xl font-semibold mb-2">{step.title}</h2>
@@ -206,22 +207,7 @@ export function HowItWorksPage() {
         </section>
       </main>
 
-      {/* Footer */}
-      <footer className="border-t mt-16">
-        <div className="mx-auto max-w-4xl px-6 py-8">
-          <nav className="flex flex-wrap justify-center gap-6 text-sm text-muted-foreground" aria-label="Site navigation">
-            <Link to={ROUTES.SEARCH} className="hover:text-primary transition-colors">Search Credentials</Link>
-            <Link to={ROUTES.VERIFY_FORM} className="hover:text-primary transition-colors">Verify a Document</Link>
-            <Link to={ROUTES.USE_CASES} className="hover:text-primary transition-colors">Use Cases</Link>
-            <Link to={ROUTES.ENTERPRISE} className="hover:text-primary transition-colors">Enterprise</Link>
-            <Link to={ROUTES.DEVELOPERS} className="hover:text-primary transition-colors">Developer API</Link>
-            <Link to={ROUTES.CONTACT} className="hover:text-primary transition-colors">Contact</Link>
-            <Link to={ROUTES.PRIVACY} className="hover:text-primary transition-colors">Privacy</Link>
-            <Link to={ROUTES.TERMS} className="hover:text-primary transition-colors">Terms</Link>
-          </nav>
-          <p className="text-center text-xs text-muted-foreground mt-4">&copy; {new Date().getFullYear()} Arkova</p>
-        </div>
-      </footer>
+      <PublicFooter />
     </div>
   );
 }
