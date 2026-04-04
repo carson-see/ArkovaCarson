@@ -1,5 +1,5 @@
 /**
- * ReceiptTable — Recent Bitcoin receipts from treasury
+ * ReceiptTable — Recent network receipts from treasury
  *
  * Lists last 20 receipts with tx_id linked to mempool.space,
  * fee paid, confirmation status, and timestamps.

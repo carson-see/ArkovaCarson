@@ -35,6 +35,10 @@ export function BillingPage() {
 
       if (response.ok) {
         const data = await response.json();
+        // SCRUM-353: Beta override — force unlimited quota display
+        if (data?.usage) {
+          data.usage.recordsLimit = null;
+        }
         setBillingInfo(data);
       } else {
         // Fallback: show beta plan info

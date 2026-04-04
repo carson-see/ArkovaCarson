@@ -46,67 +46,83 @@ export async function handlePlatformStats(
   }
 
   try {
-    // Run all queries in parallel for performance
-    const [
-      { count: totalUsers },
-      { count: recentUsers },
-      { count: totalOrgs },
-      { count: totalAnchors },
-      { count: pendingAnchors },
-      { count: securedAnchors },
-      { count: revokedAnchors },
-      { count: submittedAnchors },
-      { count: recentAnchors },
-      { data: subscriptionData },
-      { data: feeData },
-    ] = await Promise.all([
-      // Total users
+    // Run all queries in parallel. Use allSettled so one failing query
+    // (e.g. subscriptions FK join, large metadata scan) does not crash
+    // the entire endpoint. SCRUM-352 fix.
+    const results = await Promise.allSettled([
+      // 0: Total users
       db.from('profiles').select('*', { count: 'exact', head: true })
         .is('deleted_at', null),
-      // Users in last 7 days
+      // 1: Users in last 7 days
       db.from('profiles').select('*', { count: 'exact', head: true })
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      // Total orgs
+      // 2: Total orgs
       db.from('organizations').select('*', { count: 'exact', head: true })
         .is('deleted_at', null),
-      // Total anchors
+      // 3: Total anchors
       db.from('anchors').select('*', { count: 'exact', head: true })
         .is('deleted_at', null),
-      // Pending anchors
+      // 4: Pending anchors
       db.from('anchors').select('*', { count: 'exact', head: true })
         .eq('status', 'PENDING').is('deleted_at', null),
-      // Secured anchors
+      // 5: Secured anchors
       db.from('anchors').select('*', { count: 'exact', head: true })
         .eq('status', 'SECURED').is('deleted_at', null),
-      // Revoked anchors
+      // 6: Revoked anchors
       db.from('anchors').select('*', { count: 'exact', head: true })
         .eq('status', 'REVOKED').is('deleted_at', null),
-      // Submitted anchors
+      // 7: Submitted anchors
       db.from('anchors').select('*', { count: 'exact', head: true })
         .eq('status', 'SUBMITTED').is('deleted_at', null),
-      // Anchors in last 24h
+      // 8: Anchors in last 24h
       db.from('anchors').select('*', { count: 'exact', head: true })
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-      // Subscriptions by plan
+      // 9: Subscriptions by plan
       db.from('subscriptions').select('plan_id, plans(name)')
         .in('status', ['active', 'trialing']),
-      // Anchor fee data — fetch metadata._fee_sats for cost tracking
+      // 10: Anchor fee data — cap at 1000 recent rows to avoid timeout
       db.from('anchors').select('metadata')
         .not('metadata->_fee_sats', 'is', null)
         .is('deleted_at', null)
-        .limit(10000),
+        .order('created_at', { ascending: false })
+        .limit(1000),
     ]);
+
+    // Helper to safely extract fulfilled results
+    const val = <T>(i: number): T | null => {
+      const r = results[i];
+      return r.status === 'fulfilled' ? (r.value as T) : null;
+    };
+
+    const totalUsers = val<{ count: number }>(0)?.count ?? 0;
+    const recentUsers = val<{ count: number }>(1)?.count ?? 0;
+    const totalOrgs = val<{ count: number }>(2)?.count ?? 0;
+    const totalAnchors = val<{ count: number }>(3)?.count ?? 0;
+    const pendingAnchors = val<{ count: number }>(4)?.count ?? 0;
+    const securedAnchors = val<{ count: number }>(5)?.count ?? 0;
+    const revokedAnchors = val<{ count: number }>(6)?.count ?? 0;
+    const submittedAnchors = val<{ count: number }>(7)?.count ?? 0;
+    const recentAnchors = val<{ count: number }>(8)?.count ?? 0;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const subscriptionData = val<{ data: any[] }>(9)?.data ?? [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const feeData = val<{ data: any[] }>(10)?.data ?? [];
+
+    // Log any failed queries for debugging (don't crash the endpoint)
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === 'rejected') {
+        logger.warn({ index: i, error: (results[i] as PromiseRejectedResult).reason }, 'Platform stats query failed (degraded)');
+      }
+    }
 
     // Aggregate subscription counts by plan name
     const byPlan: Record<string, number> = {};
-    if (subscriptionData) {
-      for (const sub of subscriptionData) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const planName = (sub as any).plans?.name ?? 'Unknown';
-        byPlan[planName] = (byPlan[planName] ?? 0) + 1;
-      }
+    for (const sub of subscriptionData) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const planName = (sub as any).plans?.name ?? 'Unknown';
+      byPlan[planName] = (byPlan[planName] ?? 0) + 1;
     }
 
     // Calculate average sats per anchor from metadata._fee_sats
@@ -142,21 +158,21 @@ export async function handlePlatformStats(
 
     const result: PlatformStatsResponse = {
       users: {
-        total: totalUsers ?? 0,
-        last7Days: recentUsers ?? 0,
+        total: totalUsers,
+        last7Days: recentUsers,
       },
       organizations: {
-        total: totalOrgs ?? 0,
+        total: totalOrgs,
       },
       anchors: {
-        total: totalAnchors ?? 0,
+        total: totalAnchors,
         byStatus: {
-          PENDING: pendingAnchors ?? 0,
-          SUBMITTED: submittedAnchors ?? 0,
-          SECURED: securedAnchors ?? 0,
-          REVOKED: revokedAnchors ?? 0,
+          PENDING: pendingAnchors,
+          SUBMITTED: submittedAnchors,
+          SECURED: securedAnchors,
+          REVOKED: revokedAnchors,
         },
-        last24h: recentAnchors ?? 0,
+        last24h: recentAnchors,
         avgSatsPerAnchor,
         totalFeeSats,
       },

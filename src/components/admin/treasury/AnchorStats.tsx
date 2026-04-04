@@ -6,8 +6,8 @@
  * Language:
  *   - "Queued" = PENDING (waiting to be batched)
  *   - "In Mempool" = SUBMITTED (broadcast, waiting for confirmation)
- *   - "Anchored" = SECURED (confirmed on Bitcoin, ≥1 block)
- *   - Nothing is "anchored" until Bitcoin confirms it.
+ *   - "Anchored" = SECURED (confirmed on the network, ≥1 block)
+ *   - Nothing is "anchored" until the network confirms it.
  */
 
 import { FileText, CheckCircle, Clock, Radio, Ban, Hash, TrendingUp, Anchor } from 'lucide-react';
