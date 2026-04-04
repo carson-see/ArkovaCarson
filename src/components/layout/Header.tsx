@@ -46,6 +46,7 @@ const PAGE_TITLES: Record<string, string> = {
   [ROUTES.ADMIN_HEALTH]: 'System Health',
   [ROUTES.ADMIN_PAYMENTS]: 'Payments',
   [ROUTES.ADMIN_CONTROLS]: 'Platform Controls',
+  [ROUTES.ADMIN_SUBSCRIPTIONS]: 'Subscriptions',
 };
 
 function getPageTitle(pathname: string): string {

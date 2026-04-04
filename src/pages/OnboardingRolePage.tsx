@@ -5,6 +5,7 @@
  * After role is set, refreshProfile recomputes destination and RouteGuard redirects.
  *
  * Flow:
+ *   0. Platform disclaimer acceptance (SCRUM-362)
  *   1. Role selection (Individual vs Organization)
  *   2. Org match prompt (if email domain matches an existing org)
  *   3. Org membership question (for Individual — BUG-11)
@@ -23,6 +24,7 @@ import { RoleSelector } from '@/components/onboarding/RoleSelector';
 import { PlanSelector } from '@/components/onboarding/PlanSelector';
 import { OrgMembershipQuestion } from '@/components/onboarding/OrgMembershipQuestion';
 import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
+import { DisclaimerStep } from '@/components/onboarding/DisclaimerStep';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -42,8 +44,13 @@ const PLAN_TO_TIER: Record<string, string> = {
 
 export function OnboardingRolePage() {
   const { user } = useAuth();
-  const { refreshProfile } = useProfile();
+  const { profile, refreshProfile, updateProfile, updating } = useProfile();
   const { loading, error, setRole, lookupOrgByEmail, joinOrgByDomain, clearError } = useOnboarding();
+
+  // SCRUM-362: Disclaimer acceptance as first onboarding step
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const profileAny = profile as any;
+  const [disclaimerAccepted, setDisclaimerAccepted] = useState(!!profileAny?.disclaimer_accepted_at);
 
   const [orgMatch, setOrgMatch] = useState<{
     found: boolean;
@@ -164,6 +171,26 @@ export function OnboardingRolePage() {
       await refreshProfile();
     }
   };
+
+  // SCRUM-362: Accept platform disclaimer during onboarding
+  const handleAcceptDisclaimer = async () => {
+    const success = await updateProfile({ disclaimer_accepted_at: new Date().toISOString() });
+    if (success) {
+      setDisclaimerAccepted(true);
+    }
+  };
+
+  // SCRUM-362: Show disclaimer as first onboarding step
+  if (!disclaimerAccepted) {
+    return (
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description="Please review our platform disclaimer">
+        <div className="mb-8">
+          <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
+        </div>
+        <DisclaimerStep onAccept={handleAcceptDisclaimer} loading={updating} />
+      </AuthLayout>
+    );
+  }
 
   // BUG-11: Show org membership question for Individual users
   if (showOrgMembership && !showPlanSelector) {

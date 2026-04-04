@@ -27,7 +27,7 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs (legacy) | 29 | 29 | 0 | No |
-| Production UAT Bugs (2026-04) | 19 | 5 | 14 | **YES** (4 HIGHEST) |
+| Production UAT Bugs (2026-04) | 19 | 15 | 4 | No (MEDIUM/LOW only) |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | GitHub CodeQL | 29 | 9 fixed | 20 | No (false positives) |
 | Operational Tasks | 8 | 2 | 6 | **YES** |
@@ -175,21 +175,21 @@ _Discovered via Jira UAT sweep (SCRUM-347 epic). 19 bugs filed, 5 already resolv
 
 | # | Jira | Severity | Bug | Status |
 |---|------|----------|-----|--------|
-| 1 | SCRUM-348 | **HIGHEST** | Search RPC returns 500 — search is completely broken | To Do |
-| 2 | SCRUM-349 | **HIGHEST** | Attestations API returns 500 on every page load | To Do |
-| 3 | SCRUM-351 | **HIGHEST** | lookup_org_by_email_domain RPC returns 400 | To Do |
-| 4 | SCRUM-352 | **HIGHEST** | Anchors API returns 500 — admin overview metrics broken | To Do |
+| ~~1~~ | ~~SCRUM-348~~ | ~~**HIGHEST**~~ | ~~Search RPC returns 500~~ | **DONE** (prod migrations 0157+0160/0161 fixed GRANTs) |
+| ~~2~~ | ~~SCRUM-349~~ | ~~**HIGHEST**~~ | ~~Attestations API returns 500~~ | **DONE** (migration 0149 applied — RLS recursion fix) |
+| ~~3~~ | ~~SCRUM-351~~ | ~~**HIGHEST**~~ | ~~lookup_org_by_email_domain RPC returns 400~~ | **DONE** (migration 0148 applied — deleted_at column fix) |
+| ~~4~~ | ~~SCRUM-352~~ | ~~**HIGHEST**~~ | ~~Anchors API returns 500 — admin overview metrics~~ | **DONE** (admin-stats.ts: Promise.allSettled + fee query cap) |
 
 ### HIGH Priority
 
 | # | Jira | Severity | Bug | Status |
 |---|------|----------|-----|--------|
-| 5 | SCRUM-353 | HIGH | Credits showing limits during beta — should be unlimited | To Do |
-| 6 | SCRUM-354 | HIGH | CSP frame-ancestors in meta tag — ignored by browsers | To Do |
-| 7 | SCRUM-355 | HIGH | Developers page shows SIGN IN when user is logged in | To Do |
-| 8 | SCRUM-357 | HIGH | Page header says "Dashboard" on all admin pages | To Do |
-| 9 | SCRUM-358 | HIGH | Treasury page uses banned terminology "Bitcoin" (Constitution 1.3) | To Do |
-| 10 | SCRUM-359 | HIGH | Treasury page shows all zeros despite 1.39M records | To Do |
+| ~~5~~ | ~~SCRUM-353~~ | ~~HIGH~~ | ~~Credits showing limits during beta~~ | **DONE** (BillingPage.tsx: force recordsLimit null) |
+| ~~6~~ | ~~SCRUM-354~~ | ~~HIGH~~ | ~~CSP frame-ancestors in meta tag~~ | **DONE** (vite.config.ts: X-Frame-Options header for dev) |
+| ~~7~~ | ~~SCRUM-355~~ | ~~HIGH~~ | ~~Developers page shows SIGN IN when logged in~~ | **DONE** (skeleton loader during auth loading) |
+| ~~8~~ | ~~SCRUM-357~~ | ~~HIGH~~ | ~~Page header says "Dashboard" on all admin pages~~ | **DONE** (added ADMIN_SUBSCRIPTIONS to PAGE_TITLES) |
+| ~~9~~ | ~~SCRUM-358~~ | ~~HIGH~~ | ~~Treasury page uses banned terminology "Bitcoin"~~ | **DONE** (JSDoc comments updated, UI was already clean) |
+| ~~10~~ | ~~SCRUM-359~~ | ~~HIGH~~ | ~~Treasury page shows all zeros despite 1.39M records~~ | **DONE** (prod migration 0160 applied — RPC GRANTs) |
 
 ### MEDIUM Priority
 

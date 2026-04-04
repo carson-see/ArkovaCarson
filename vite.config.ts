@@ -31,6 +31,13 @@ export default defineConfig({
       disable: !process.env.SENTRY_AUTH_TOKEN,
     }),
   ],
+  server: {
+    // SCRUM-354: frame-ancestors only works in HTTP headers, not meta tags.
+    // Production uses vercel.json headers; this covers local dev.
+    headers: {
+      'X-Frame-Options': 'SAMEORIGIN',
+    },
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
