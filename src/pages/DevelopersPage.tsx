@@ -123,7 +123,6 @@ export function DevelopersPage() {
           </Link>
         </nav>
         <div className="flex items-center gap-4">
-<<<<<<< HEAD
           {authLoading ? (
             <div className="w-24 h-9" /> /* prevent layout shift while auth loads */
           ) : user ? (
