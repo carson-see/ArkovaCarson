@@ -27,7 +27,7 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs (legacy) | 29 | 29 | 0 | No |
-| Production UAT Bugs (2026-04) | 19 | 15 | 4 | No (MEDIUM/LOW only) |
+| Production UAT Bugs (2026-04) | 19 | 19 | 0 | No (all resolved) |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | GitHub CodeQL | 29 | 9 fixed | 20 | No (false positives) |
 | Operational Tasks | 8 | 2 | 6 | **YES** |
@@ -195,20 +195,20 @@ _Discovered via Jira UAT sweep (SCRUM-347 epic). 19 bugs filed, 5 already resolv
 
 | # | Jira | Severity | Bug | Status |
 |---|------|----------|-----|--------|
-| 11 | SCRUM-360 | MEDIUM | Organization sidebar link non-functional for Individual accounts | To Do |
-| 12 | SCRUM-361 | MEDIUM | Documents empty state shows wrong message with no search | To Do |
-| 13 | SCRUM-362 | MEDIUM | Platform Disclaimer shown on Settings page instead of onboarding | To Do |
-| 14 | SCRUM-364 | MEDIUM | search.arkova.ai footer uses banned "Bitcoin" terminology | To Do |
-| 15 | SCRUM-365 | MEDIUM | search.arkova.ai page title is just "Arkova" — bad for SEO | To Do |
-| 16 | SCRUM-366 | MEDIUM | Suggested search chips don't auto-execute search | To Do |
-| 17 | SCRUM-368 | MEDIUM | Admin sidebar active state wrong for Payments and Controls | To Do |
+| ~~11~~ | ~~SCRUM-360~~ | ~~MEDIUM~~ | ~~Organization sidebar link non-functional for Individual accounts~~ | **DONE** |
+| ~~12~~ | ~~SCRUM-361~~ | ~~MEDIUM~~ | ~~Documents empty state shows wrong message with no search~~ | **DONE** |
+| ~~13~~ | ~~SCRUM-362~~ | ~~MEDIUM~~ | ~~Platform Disclaimer shown on Settings page instead of onboarding~~ | **DONE** (Session 26: removed from Settings, now Dashboard-only) |
+| ~~14~~ | ~~SCRUM-364~~ | ~~MEDIUM~~ | ~~search.arkova.ai footer uses banned "Bitcoin" terminology~~ | **DONE** |
+| ~~15~~ | ~~SCRUM-365~~ | ~~MEDIUM~~ | ~~search.arkova.ai page title is just "Arkova"~~ | **DONE** |
+| ~~16~~ | ~~SCRUM-366~~ | ~~MEDIUM~~ | ~~Suggested search chips don't auto-execute search~~ | **DONE** |
+| ~~17~~ | ~~SCRUM-368~~ | ~~MEDIUM~~ | ~~Admin sidebar active state wrong for Payments and Controls~~ | **DONE** |
 
 ### LOW Priority
 
 | # | Jira | Severity | Bug | Status |
 |---|------|----------|-----|--------|
-| 18 | SCRUM-370 | LOW | About page uses initials avatars instead of real photos | To Do |
-| 19 | SCRUM-371 | LOW | Access token visible in console error log during OAuth | To Do |
+| ~~18~~ | ~~SCRUM-370~~ | ~~LOW~~ | ~~About page uses initials avatars instead of real photos~~ | **DONE** (Session 26: removed broken img tags, clean initials) |
+| ~~19~~ | ~~SCRUM-371~~ | ~~LOW~~ | ~~Access token visible in console error log during OAuth~~ | **DONE** |
 
 ### Already Resolved (Done in Jira)
 

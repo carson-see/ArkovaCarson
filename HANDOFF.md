@@ -8,11 +8,11 @@
 
 ## Current State
 
-### Active Phase: Phase 2 — Attestations + Agentic Verification Layer (67% complete)
+### Active Phase: Phase 2 COMPLETE — Preparing Phase 3 (eSignatures)
 
-**Goal:** Extend verification into agentic workflows, agent framework integrations, and institutional attestations
+**Goal:** All Phase 2 stories done. Security hardening complete. Moving to Phase 3 eSignatures.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 200/220 stories complete (~91%) incl. 4 Phase II stories done this session. **2,825+ tests** (1,128 frontend + 1,724 worker, all green). 163 migration files (0001-0159 + 0024). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10 complete, 1 partial, 6 not started. ATS: 8/8. CML: 5/5. **Phase II Agentic: 4/6 DONE.** Phase III: 0/3 (planned). **24/24 audit findings resolved. 9 pentest findings in PR #257 (migration 0160+0161, CodeRabbit review addressed).** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0159 applied.** PR #257 open (security hardening, 9 pentest findings).
+**Overall progress:** 211 stories (199 complete, ~94%). **1,138+ tests** (all green). 165 migration files (0001-0161). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 7 complete, 3 partial, 7 not started (most need marketing site repo). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 0/3 (planned). **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0161 applied.** 19/19 production UAT bugs resolved. GitHub v1.5.0 released. database.types.ts regenerated.
 
 ### Open Blockers
 
@@ -21,6 +21,26 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-04-04, Session 26 — Security Hardening + UAT Bug Sweep)
+
+**CVSS 9.8 privilege escalation chain fixed. 19/19 UAT bugs resolved. 9 pentest findings + 7 code review issues addressed. All deployed to production.**
+
+| Change | Detail |
+|--------|--------|
+| **Migration 0160** | 10 security fixes: drop anon org policy, drop dev_bypass_kyc, harden admin RPCs, restrict payment_ledger/stats, block ORG_ADMIN invites, tighten CSP |
+| **Migration 0161** | 7 code review fixes: restore activate_user anon, fix pg_temp, replace VIEW with SECURITY DEFINER fn, drop organizations_select_authenticated, restore admin comments |
+| **Email autoconfirm** | Disabled via Supabase Management API |
+| **Test user cleanup** | hunttest1 banned, test@test.invalid deleted, attacker@evil.com invitation deleted |
+| **CSP hardening** | Pinned to exact Cloud Run domain, removed *.run.app and *.railway.app wildcards |
+| **PaymentAnalyticsPage** | payer_address PII removed, replaced with tx_hash |
+| **UAT bugs** | SCRUM-348→370 all resolved (19/19). 500 errors, terminology, credits, disclaimer, about page |
+| **Org query regressions** | RequestAffiliationDialog + useUserOrgs fixed to use RPCs instead of blocked direct table queries |
+| **database.types.ts** | Regenerated from production (dev_bypass_kyc removed, new functions added) |
+| **Branch cleanup** | 8 stale worktrees removed, 7 merged branches cleaned |
+| **GitHub** | Issues #248-256 closed, PR #257/#259/#260 merged, v1.5.0 released |
+| **Jira** | SCRUM-412→420 Done (security), SCRUM-359/362/370 Done (UAT) |
+| **Confluence** | Release v1.5.0 page + security audit section in 03_security_rls.md |
 
 ### Recent Changes (2026-04-04, Session 24c — Nessie Intelligence v2 + Expanded Distillation)
 
