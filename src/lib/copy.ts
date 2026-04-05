@@ -1739,3 +1739,63 @@ export const ENTERPRISE_LABELS = {
   CTA_BUTTON_DOCS: 'View API Documentation',
 } as const;
 
+// ─── Evidence Layers (COMP-01) ─────────────────────────────────────────
+
+export const EVIDENCE_LAYER_LABELS = {
+  SECTION_TITLE: 'Evidence Layers',
+  SECTION_DESCRIPTION: 'Each layer provides independent proof. No single layer depends on another.',
+  ANCHOR_TITLE: 'Existence Proof',
+  ANCHOR_PROVES: 'This document fingerprint was recorded on a public network at the time shown. The record is immutable and independently verifiable.',
+  ANCHOR_DOES_NOT_PROVE: 'This does not prove who created the document, whether its content is accurate, or that it has legal authority.',
+  SIGNATURE_TITLE: 'Electronic Signature',
+  SIGNATURE_PROVES: 'A named signer cryptographically bound their identity to this document fingerprint using an HSM-protected key.',
+  SIGNATURE_DOES_NOT_PROVE: 'This does not prove the signer read or understood the document, only that they authorized the signing action.',
+  TIMESTAMP_TITLE: 'Qualified Timestamp',
+  TIMESTAMP_PROVES: 'A trusted third-party authority certified that this signature existed at the time shown. This timestamp is independent of Arkova.',
+  TIMESTAMP_DOES_NOT_PROVE: 'This does not prove when the document was created, only when the signature was timestamped.',
+  DISCLAIMER: 'This verification confirms the integrity of the document fingerprint. It does not verify the accuracy of the document\'s content or the qualifications of its subject.',
+  LEGAL_EFFECT_EIDAS_QES: 'Equivalent to a handwritten signature under EU eIDAS Regulation Art. 25(2).',
+  LEGAL_EFFECT_EIDAS_ADES: 'Admissible as evidence in legal proceedings under EU eIDAS Regulation Art. 25(1).',
+  LEGAL_EFFECT_ESIGN: 'Valid electronic signature under the US ESIGN Act and UETA.',
+} as const;
+
+// ─── Independent Verification (COMP-03) ─────────────────────────────────
+
+export const INDEPENDENT_VERIFY_LABELS = {
+  PAGE_TITLE: 'Verify Without Arkova',
+  PAGE_DESCRIPTION: 'Step-by-step instructions to verify any Arkova credential using only public data.',
+  HERO_TITLE: 'Verify Without Arkova',
+  HERO_SUBTITLE: 'Every Arkova credential can be independently verified using publicly available data. If Arkova disappears tomorrow, your proofs still work.',
+  STEP_1_TITLE: 'Compute the Document Fingerprint',
+  STEP_1_DESC: 'Generate the SHA-256 hash of your document. This is the same fingerprint Arkova computed when the document was anchored.',
+  STEP_1_CMD: 'shasum -a 256 your-document.pdf',
+  STEP_2_TITLE: 'Find the Network Record',
+  STEP_2_DESC: 'Look up the anchoring record on a public block explorer. The OP_RETURN data contains a Merkle root that includes your fingerprint.',
+  STEP_2_CMD: 'curl https://mempool.space/api/tx/{txid}',
+  STEP_3_TITLE: 'Verify the Merkle Proof',
+  STEP_3_DESC: 'Using the Merkle proof from your proof package, verify that your fingerprint is included in the Merkle root.',
+  STEP_3_CMD: './verify.sh --fingerprint {hash} --proof proof-package.json',
+  STEP_4_TITLE: 'Verify the Timestamp (Optional)',
+  STEP_4_DESC: 'If the credential has an RFC 3161 timestamp, verify it independently using OpenSSL.',
+  STEP_4_CMD: 'openssl ts -verify -data signed-attrs.der -in timestamp.tst -CAfile tsa-ca.pem',
+  FAQ_SHUTDOWN_Q: 'What if Arkova shuts down?',
+  FAQ_SHUTDOWN_A: 'Your proofs remain valid. The network records are permanent and public. The Merkle proofs in your proof packages contain everything needed for independent verification.',
+  FAQ_OFFLINE_Q: 'What if the Arkova website is offline?',
+  FAQ_OFFLINE_A: 'You can verify using only the proof package file and a public block explorer. No Arkova API call is required.',
+  FAQ_TRUST_Q: 'Do I need to trust Arkova?',
+  FAQ_TRUST_A: 'No. Arkova is a convenience layer. The cryptographic proofs are self-contained and verifiable by anyone with standard tools.',
+  DOWNLOAD_SCRIPT: 'Download Verification Script',
+} as const;
+
+// ─── Data Retention (COMP-04) ─────────────────────────────────────────
+
+export const DATA_RETENTION_LABELS = {
+  PAGE_TITLE: 'Data Retention Policy',
+  PAGE_DESCRIPTION: 'How long Arkova retains your data and how to request deletion.',
+  INTRO: 'Arkova retains data only as long as necessary to fulfill its verification purpose.',
+  NETWORK_NOTE: 'Network anchor records are permanent by design. The fingerprint hash recorded on the public network cannot be deleted. However, the mapping between a fingerprint and your identity can be removed upon request.',
+  ERASURE_TITLE: 'Right to Erasure',
+  ERASURE_BODY: 'Request deletion via Settings > Account > Delete Account, or contact privacy@arkova.ai. We remove your profile and identity associations. Cryptographic fingerprints on the public network remain (they contain no personal information).',
+  LEGAL_HOLD_TITLE: 'Legal Hold',
+  LEGAL_HOLD_BODY: 'Retention periods may be extended when required by law, regulatory investigation, or pending litigation.',
+} as const;
