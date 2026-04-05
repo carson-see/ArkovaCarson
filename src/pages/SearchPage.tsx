@@ -27,7 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { IssuerCard } from '@/components/search/IssuerCard';
 import { usePublicSearch } from '@/hooks/usePublicSearch';
-import { SEARCH_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { SEARCH_LABELS, CREDENTIAL_TYPE_LABELS, PUBLIC_FOOTER_LABELS } from '@/lib/copy';
 import { verifyPath, ROUTES } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
 import { generateFingerprint } from '@/lib/fileHasher';
@@ -552,7 +552,7 @@ export function SearchPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — immutable document integrity verification
+              {PUBLIC_FOOTER_LABELS.POWERED_BY}
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">

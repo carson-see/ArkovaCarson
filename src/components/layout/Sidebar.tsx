@@ -2,8 +2,8 @@
  * Sidebar Navigation Component
  *
  * Radically simplified sidebar (Session 10+):
- * - Max 5 items: Dashboard, Documents, Organization, Search, Settings
- * - Billing/Help/Developers moved to Header user dropdown
+ * - 6 items: Dashboard, Documents, Directory, Search, Developers, Settings
+ * - Directory hidden for individual accounts (no org membership)
  * - Compliance moved to admin section (monitoring tool, not primary nav)
  * - Admin section behind collapsible toggle, only for platform admins
  *
@@ -289,7 +289,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
 
       {/* Scrollable nav area */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Main Navigation — max 5 items */}
+        {/* Main Navigation */}
         <nav className="space-y-1 p-3">
           {mainNavItems
             .map((item) => (

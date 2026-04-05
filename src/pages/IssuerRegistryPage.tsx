@@ -19,7 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
 import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
-import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS, PUBLIC_FOOTER_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { isSearchSubdomain } from '@/App';
 
@@ -321,7 +321,7 @@ export function IssuerRegistryPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — immutable document integrity verification
+              {PUBLIC_FOOTER_LABELS.POWERED_BY}
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">
