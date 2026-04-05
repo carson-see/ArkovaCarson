@@ -1576,6 +1576,8 @@ Arkova does NOT:
 A secured record on Arkova confirms that a document's digital fingerprint was anchored at a given time — nothing more. Users and third parties should perform their own due diligence when relying on any credential.
 
 By using this platform, you acknowledge and accept these limitations.`,
+  description: 'Please review our platform disclaimer',
+  cardDescription: 'Please review and accept the following before continuing.',
   acceptButton: 'I Understand and Accept',
   accepted: 'Disclaimer accepted',
   notAccepted: 'Please review and accept the platform disclaimer to continue.',

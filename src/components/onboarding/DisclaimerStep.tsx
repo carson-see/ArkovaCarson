@@ -32,7 +32,7 @@ export function DisclaimerStep({ onAccept, loading }: DisclaimerStepProps) {
         </div>
         <CardTitle>{DISCLAIMER_LABELS.heading}</CardTitle>
         <CardDescription>
-          Please review and accept the following before continuing.
+          {DISCLAIMER_LABELS.cardDescription}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
