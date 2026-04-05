@@ -46,6 +46,7 @@ import { issuerRegistryPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
+import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
 
 interface PublicAnchorData {
   public_id: string;
@@ -383,6 +384,23 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               credentialType={data.credential_type}
               isSecured={true}
               compact={false}
+            />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2b: Evidence Layers (COMP-01)
+            ============================================================ */}
+        {!isPending && (
+          <>
+            <Separator />
+            <EvidenceLayersSection
+              layers={[
+                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.tx_id ? `Network record: ${data.tx_id.substring(0, 16)}...` : undefined },
+                { type: 'signature', present: false },
+                { type: 'timestamp', present: false },
+              ]}
+              jurisdiction={data.jurisdiction}
             />
           </>
         )}

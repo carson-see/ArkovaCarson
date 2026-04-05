@@ -60,6 +60,7 @@ import { oracleRouter } from './oracle.js';
 import { agentsRouter } from './agents.js';
 import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
+import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
@@ -284,6 +285,10 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
+
+// ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
+// JWT auth required, batch rate limit (5 req/min)
+router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

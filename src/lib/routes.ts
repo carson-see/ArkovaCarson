@@ -28,6 +28,8 @@ export const ROUTES = {
   HOW_IT_WORKS: '/how-it-works',
   USE_CASES: '/use-cases',
   ENTERPRISE: '/enterprise',
+  INDEPENDENT_VERIFY: '/verify/independent',
+  DATA_RETENTION: '/privacy/data-retention',
 
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',
