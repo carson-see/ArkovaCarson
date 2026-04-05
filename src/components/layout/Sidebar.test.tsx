@@ -59,9 +59,9 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows Directory link even for Individual accounts without orgName (SCRUM-360)', () => {
+  it('hides Directory link for Individual accounts without orgName (SCRUM-360)', () => {
     renderSidebar();
-    expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Directory')).toBeNull();
   });
 
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {

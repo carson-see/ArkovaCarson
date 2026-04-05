@@ -20,7 +20,7 @@ import {
   FileCheck,
   Scale,
   Lock,
-  Stamp,
+
   BarChart3,
   AlertCircle,
   Loader2,

@@ -57,7 +57,7 @@ interface NavItem {
   to: string;
 }
 
-const mainNavItems: NavItem[] = [
+const BASE_NAV_ITEMS: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
   { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
   { label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATIONS },
@@ -205,6 +205,11 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
     // Only trigger on pathname change
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
+
+  // SCRUM-360: Hide Organization link for individual accounts (no org = no link)
+  const mainNavItems = orgName
+    ? BASE_NAV_ITEMS
+    : BASE_NAV_ITEMS.filter((item) => item.to !== ROUTES.ORGANIZATIONS);
 
   const isNavActive = (item: NavItem) => {
     if (item.to === ROUTES.DOCUMENTS) {
