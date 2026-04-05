@@ -552,7 +552,7 @@ export function SearchPage() {
         {standalone && (
           <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
             <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — document integrity anchored on a public network
+              Powered by Arkova — tamper-proof document verification
             </p>
             <div className="flex justify-center gap-4 text-xs">
               <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">
