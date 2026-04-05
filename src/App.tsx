@@ -83,6 +83,8 @@ const ActivateAccountPage = React.lazy(() => import('@/pages/ActivateAccountPage
 const HowItWorksPage = React.lazy(() => import('@/pages/HowItWorksPage').then(m => ({ default: m.HowItWorksPage })));
 const UseCasesPage = React.lazy(() => import('@/pages/UseCasesPage').then(m => ({ default: m.UseCasesPage })));
 const EnterprisePage = React.lazy(() => import('@/pages/EnterprisePage').then(m => ({ default: m.EnterprisePage })));
+const PublicSignatureVerifyPage = React.lazy(() => import('@/pages/PublicSignatureVerifyPage'));
+const SignatureCompliancePage = React.lazy(() => import('@/pages/SignatureCompliancePage'));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -180,6 +182,7 @@ export function App() {
           <Route path={ROUTES.API_SANDBOX} element={<RouteErrorBoundary section="API Sandbox"><ApiSandboxPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.CLE_API} element={<RouteErrorBoundary section="CLE API"><StateBarApiPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.PORTFOLIO} element={<RouteErrorBoundary section="Portfolio"><PublicPortfolioPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.VERIFY_SIGNATURE} element={<RouteErrorBoundary section="SignatureVerify"><PublicSignatureVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ACTIVATE} element={<ActivateAccountPage />} />
           <Route path={ROUTES.HOW_IT_WORKS} element={<HowItWorksPage />} />
           <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
@@ -216,6 +219,9 @@ export function App() {
 
           {/* Compliance Intelligence */}
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+
+          {/* Signature Compliance Center (Phase III — PH3-ESIG-03) */}
+          <Route path={ROUTES.SIGNATURE_COMPLIANCE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SignatureCompliance"><SignatureCompliancePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Attestations (Phase II) */}
           <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

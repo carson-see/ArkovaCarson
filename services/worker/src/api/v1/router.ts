@@ -58,6 +58,9 @@ import { grcRouter } from './grc.js';
 import { grcFeatureGate } from '../../middleware/grcFeatureGate.js';
 import { oracleRouter } from './oracle.js';
 import { agentsRouter } from './agents.js';
+import { signaturesRouter } from './signatures.js';
+import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
+import { signatureComplianceRouter } from './signatureCompliance.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -273,6 +276,14 @@ router.use('/regulatory/lookup', x402PaymentGate('/api/v1/regulatory/lookup'), r
 router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 
 // Identity & org verification moved to index.ts (outside feature gate)
+
+// ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
+// Feature-gated + JWT auth required — signatures are org-managed resources
+router.use('/sign', adesSignatureGate(), requireAuth, signaturesRouter);
+router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
+router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
+// Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
+router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

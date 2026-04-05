@@ -67,6 +67,10 @@ export const ROUTES = {
   // Compliance Intelligence
   COMPLIANCE_DASHBOARD: '/organization/compliance',
 
+  // Phase III — Signatures & Compliance Center (PH3-ESIG)
+  VERIFY_SIGNATURE: '/verify/signature/:signaturePublicId',
+  SIGNATURE_COMPLIANCE: '/organization/signature-compliance',
+
   // Admin routes (internal ops)
   ADMIN_OVERVIEW: '/admin/overview',
   ADMIN_HEALTH: '/admin/health',
