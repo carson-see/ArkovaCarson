@@ -57,10 +57,10 @@ interface NavItem {
   to: string;
 }
 
-const mainNavItems: NavItem[] = [
+// Base nav items — Organization link filtered by role inside component (SCRUM-360)
+const BASE_NAV_ITEMS: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
   { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
-  { label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATIONS },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
   { label: 'Developers', icon: Code2, to: ROUTES.DEVELOPERS },
   { label: NAV_LABELS.SETTINGS, icon: Settings, to: ROUTES.SETTINGS },
@@ -197,6 +197,13 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
   const [adminExpanded, setAdminExpanded] = useState(false);
   const location = useLocation();
 
+  // SCRUM-360: Show Organization link only for org members (orgName present)
+  const mainNavItems: NavItem[] = [
+    ...BASE_NAV_ITEMS.slice(0, 2),
+    ...(orgName ? [{ label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATION }] : []),
+    ...BASE_NAV_ITEMS.slice(2),
+  ];
+
   // Close mobile sidebar on navigation
   useEffect(() => {
     if (mobileOpen && onMobileClose) {
@@ -225,8 +232,9 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
     return location.pathname === item.to || location.pathname.startsWith(item.to + '/');
   };
 
-  // Check if any admin route is active to auto-expand
-  const isAdminActive = adminNavItems.some((item) => isNavActive(item));
+  // Check if any admin route is active to auto-expand (SCRUM-368)
+  const isAdminActive = adminNavItems.some((item) => isNavActive(item))
+    || location.pathname.startsWith('/admin/');
 
   const sidebarContent = (
     <aside
