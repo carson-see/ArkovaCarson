@@ -595,14 +595,14 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 
 | ID | Story | Priority | Status | Jira | Depends On | Effort |
 |----|-------|----------|--------|------|------------|--------|
-| COMP-01 | Evidence model explainer on verification pages | P0 | NOT STARTED | TBD | None | Medium |
-| COMP-02 | Credential provenance timeline | P1 | NOT STARTED | TBD | None | Large |
-| COMP-03 | Independent verification guide (verify without Arkova) | P0 | NOT STARTED | TBD | None | Medium |
-| COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | NOT STARTED | TBD | None | Small |
-| COMP-05 | Key ceremony documentation & audit evidence | P1 | NOT STARTED | TBD | None | Medium |
-| COMP-06 | Batch verification & audit sampling (ISA 530) | P0 | NOT STARTED | TBD | None | Large |
-| COMP-07 | Compliance trend dashboard | P1 | NOT STARTED | TBD | COMP-06 | Medium |
-| COMP-08 | Compliance event webhooks (GRC platform integration) | P2 | NOT STARTED | TBD | COMP-07 | Medium |
+| COMP-01 | Evidence model explainer on verification pages | P0 | NOT STARTED | SCRUM-427 | None | Medium |
+| COMP-02 | Credential provenance timeline | P1 | NOT STARTED | SCRUM-428 | None | Large |
+| COMP-03 | Independent verification guide (verify without Arkova) | P0 | NOT STARTED | SCRUM-429 | None | Medium |
+| COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | NOT STARTED | SCRUM-430 | None | Small |
+| COMP-05 | Key ceremony documentation & audit evidence | P1 | NOT STARTED | SCRUM-431 | None | Medium |
+| COMP-06 | Batch verification & audit sampling (ISA 530) | P0 | NOT STARTED | SCRUM-432 | None | Large |
+| COMP-07 | Compliance trend dashboard | P1 | NOT STARTED | SCRUM-433 | COMP-06 | Medium |
+| COMP-08 | Compliance event webhooks (GRC platform integration) | P2 | NOT STARTED | SCRUM-434 | COMP-07 | Medium |
 
 **Story doc:** `docs/stories/24_compliance_audit_readiness.md`
 
