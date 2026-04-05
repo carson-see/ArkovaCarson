@@ -33,7 +33,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
 import { useOnboarding } from '@/hooks/useOnboarding';
 import { supabase } from '@/lib/supabase';
-import { ONBOARDING_STEPS, ONBOARDING_LABELS } from '@/lib/copy';
+import { ONBOARDING_STEPS, ONBOARDING_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
 
 /** Maps UI plan IDs to DB subscription_tier CHECK constraint values */
 const PLAN_TO_TIER: Record<string, string> = {
@@ -51,6 +51,13 @@ export function OnboardingRolePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const profileAny = profile as any;
   const [disclaimerAccepted, setDisclaimerAccepted] = useState(!!profileAny?.disclaimer_accepted_at);
+
+  // Sync disclaimer state when profile hydrates (profile is null on first render)
+  useEffect(() => {
+    if (profileAny?.disclaimer_accepted_at) {
+      setDisclaimerAccepted(true);
+    }
+  }, [profileAny?.disclaimer_accepted_at]);
 
   const [orgMatch, setOrgMatch] = useState<{
     found: boolean;
@@ -183,7 +190,7 @@ export function OnboardingRolePage() {
   // SCRUM-362: Show disclaimer as first onboarding step
   if (!disclaimerAccepted) {
     return (
-      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description="Please review our platform disclaimer">
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={DISCLAIMER_LABELS.description}>
         <div className="mb-8">
           <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={0} />
         </div>
