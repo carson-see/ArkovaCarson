@@ -36,6 +36,7 @@ const DB_FLAGS = [
   'ENABLE_SEMANTIC_SEARCH',
   'ENABLE_AI_FRAUD',
   'ENABLE_AI_REPORTS',
+  'ENABLE_ADES_SIGNATURES',
 ] as const;
 
 type FlagName = typeof ENV_FLAGS[number] | typeof DB_FLAGS[number];

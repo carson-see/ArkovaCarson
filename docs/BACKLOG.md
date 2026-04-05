@@ -21,7 +21,7 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
 | Phase 2 Agentic Layer | 6 | 0 | 6 | No (planned) |
-| Phase 3 eSignature (placeholders) | 3 | 0 | 3 | No (deferred) |
+| Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -575,13 +575,20 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 | PH2-AGENT-05 | Agent identity & delegation (registration, scoped API keys, delegation chains) | P2 | NOT STARTED | S3 | PH2-AGENT-04 | XL |
 | PH2-AGENT-06 | Agent framework integrations (LangChain, AutoGen, MCP enhancements) | P2 | NOT STARTED | S3 | PH2-AGENT-04, PH2-AGENT-05 | Large |
 
-**Phase III Placeholders (eSignature & Compliance — deferred until Phase II Gate 2):**
+**Phase III — AdES Signature Engine & eIDAS Compliance (Jira Epic: SCRUM-421):**
 
-| ID | Story | Priority | Status | Depends On | Effort |
-|----|-------|----------|--------|------------|--------|
-| PH3-ESIG-01 | AdES signature engine (XAdES, PAdES, CAdES — ETSI EN 319 401/411-1) | P0 (Phase III) | NOT STARTED | Phase II complete | XL |
-| PH3-ESIG-02 | QTSP integration (RFC 3161 timestamp tokens, ETSI EN 319 421/422) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01 | XL |
-| PH3-ESIG-03 | Compliance center (audit proofs, policy transparency, SOC 2 bundles) | P1 (Phase III) | NOT STARTED | PH3-ESIG-01, CML-03 | Large |
+| ID | Story | Priority | Status | Jira | Depends On | Effort |
+|----|-------|----------|--------|------|------------|--------|
+| PH3-ESIG-01 | AdES signature engine (XAdES, PAdES, CAdES — ETSI EN 319 132/142/122) | P0 (Phase III) | **IN PROGRESS** | SCRUM-422 | Phase II complete | XL |
+| PH3-ESIG-02 | QTSP integration (RFC 3161 timestamp tokens, ETSI EN 319 421/422) | P1 (Phase III) | **IN PROGRESS** | SCRUM-423 | PH3-ESIG-01 | XL |
+| PH3-ESIG-03 | Compliance center (audit proofs, policy transparency, SOC 2 bundles) | P1 (Phase III) | NOT STARTED | SCRUM-424 | PH3-ESIG-01, CML-03 | Large |
+
+**Phase III Progress:**
+- DB migrations: 0163 (signing_certificates), 0164 (signatures), 0165 (timestamp_tokens) — schema complete
+- AdES engine: `services/worker/src/signatures/` — types, constants, PKI module, RFC 3161 client, QTSP provider with circuit breaker, LTV builder/validator, orchestrator
+- API endpoints: POST /sign, GET /signatures/:id, POST /verify-signature, GET /signatures, POST /signatures/:id/revoke
+- Tests: 43 passing (hsmBridge, qtspProvider, ltvBuilder, adesEngine)
+- Architecture spec: `docs/stories/23_phase3_esignatures.md`
 
 ---
 

@@ -22,6 +22,19 @@
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
 
+### Recent Changes (2026-04-05, Session 27 — Phase III AdES Signature Engine)
+
+**Phase III eSignature engine: 3 DB migrations (0163-0165), full module structure, 10 API endpoints, 58 tests passing. Jira epic SCRUM-421 + 3 stories created.**
+
+| Change | Detail |
+|--------|--------|
+| **DB Migrations** | 0163 (signing_certificates), 0164 (signatures), 0165 (timestamp_tokens) — full schema with RLS + FORCE ROW LEVEL SECURITY |
+| **Signature Engine** | `services/worker/src/signatures/` — types, constants, PKI module, RFC 3161, LTV, format builders, compliance exports |
+| **API Endpoints** | 10 endpoints: sign, get, verify, list, revoke, audit-proof, export, soc2, gdpr-article30, eidas-report |
+| **Frontend** | PublicSignatureVerifyPage + SignatureCompliancePage — routes wired in App.tsx |
+| **Tests** | 58 passing across 6 test files |
+| **Jira** | Epic SCRUM-421 + stories SCRUM-422/423/424 |
+
 ### Recent Changes (2026-04-04, Session 26 — Security Hardening + UAT Bug Sweep)
 
 **CVSS 9.8 privilege escalation chain fixed. 19/19 UAT bugs resolved. 9 pentest findings + 7 code review issues addressed. All deployed to production.**
