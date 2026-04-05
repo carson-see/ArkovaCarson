@@ -16,6 +16,7 @@ const TEAM = [
     bio: 'Building the infrastructure layer for credential verification. Previously in enterprise software and fintech. Focused on making document authenticity provable and portable.',
     linkedin: 'https://www.linkedin.com/in/carson-s-8b41061a/',
     initials: 'CS',
+    photo: '/team/carson-seeger.jpg',
   },
   {
     name: 'Sarah Rushton',
@@ -23,6 +24,7 @@ const TEAM = [
     bio: 'Operations and go-to-market strategy. Experience spanning international business development and organizational scaling. Based in Sydney, bringing a global perspective to credentialing.',
     linkedin: 'https://www.linkedin.com/in/sljrushton/',
     initials: 'SR',
+    photo: '/team/sarah-rushton.jpg',
   },
 ];
 
@@ -157,8 +159,12 @@ export function AboutPage() {
           <div className="grid md:grid-cols-2 gap-6">
             {TEAM.map(member => (
               <div key={member.name} className="flex gap-4 p-6 rounded-xl border bg-card">
-                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-lg">
-                  {member.initials}
+                {/* SCRUM-370: Use real photos with initials fallback */}
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-semibold text-lg overflow-hidden">
+                  {member.photo ? (
+                    <img src={member.photo} alt={member.name} className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden'); }} />
+                  ) : null}
+                  <span className={member.photo ? 'hidden' : ''}>{member.initials}</span>
                 </div>
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
