@@ -20,8 +20,9 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
-| Phase 2 Agentic Layer | 6 | 0 | 6 | No (planned) |
+| Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
+| Compliance & Audit Readiness (SCRUM-426) | 8 | 0 | 8 | No (planned) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -589,6 +590,23 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 - API endpoints: POST /sign, GET /signatures/:id, POST /verify-signature, GET /signatures, POST /signatures/:id/revoke
 - Tests: 43 passing (hsmBridge, qtspProvider, ltvBuilder, adesEngine)
 - Architecture spec: `docs/stories/23_phase3_esignatures.md`
+
+**Compliance & Audit Readiness (Jira Epic: SCRUM-426):**
+
+| ID | Story | Priority | Status | Jira | Depends On | Effort |
+|----|-------|----------|--------|------|------------|--------|
+| COMP-01 | Evidence model explainer on verification pages | P0 | NOT STARTED | TBD | None | Medium |
+| COMP-02 | Credential provenance timeline | P1 | NOT STARTED | TBD | None | Large |
+| COMP-03 | Independent verification guide (verify without Arkova) | P0 | NOT STARTED | TBD | None | Medium |
+| COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | NOT STARTED | TBD | None | Small |
+| COMP-05 | Key ceremony documentation & audit evidence | P1 | NOT STARTED | TBD | None | Medium |
+| COMP-06 | Batch verification & audit sampling (ISA 530) | P0 | NOT STARTED | TBD | None | Large |
+| COMP-07 | Compliance trend dashboard | P1 | NOT STARTED | TBD | COMP-06 | Medium |
+| COMP-08 | Compliance event webhooks (GRC platform integration) | P2 | NOT STARTED | TBD | COMP-07 | Medium |
+
+**Story doc:** `docs/stories/24_compliance_audit_readiness.md`
+
+**Strategic value:** Eliminates audit friction for SOC 2 Type II, eIDAS supervision, and enterprise procurement. Transforms Arkova from "trust us" to "verify us" — the independent verification guide alone is a competitive differentiator no signing platform offers.
 
 ---
 

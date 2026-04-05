@@ -1,5 +1,5 @@
 # Proof Packages
-_Last updated: 2026-03-24 | Story: P7-TS-07, P7-TS-08_
+_Last updated: 2026-04-05 | Story: P7-TS-07, P7-TS-08, COMP-01, COMP-02, COMP-03_
 
 ## Overview
 
@@ -178,3 +178,34 @@ Per Constitution Section 1.3, proof packages use approved terminology:
 | 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-5 references as resolved (commit a38b485). JSON proof download now working. |
 | 2026-03-10 ~7:15 PM EST | PR-HARDENING-1 | `proofPackage.ts` went from 0% to 100% test coverage — 33 tests in `src/lib/proofPackage.test.ts` covering schema validation, package generation for all anchor states, validation function, filename generation, and browser download with DOM mocks. `validators.ts` functions coverage fixed from 71% to 100% with 10 new tests. |
 | 2026-03-24 | Doc update | Added Batch Anchoring & Merkle Proof Inclusion section. Documented OP_RETURN format with metadata_hash (8-byte truncated SHA-256). Added Merkle proof fields in JSON proof package schema. |
+
+## Planned: Evidence Model Explainer (COMP-01)
+
+Public verification pages will show a collapsible "Evidence Layers" section with three independent layers:
+
+1. **Bitcoin Existence Proof** — Proves the document fingerprint existed by the block time. Verifiable via any blockchain explorer.
+2. **AdES Legal Signature** (if present) — Signed by a named signer using a PKI certificate. Legal effect depends on jurisdiction (eIDAS Art. 25).
+3. **RFC 3161 Qualified Timestamp** (if present) — Certified timestamp from a Qualified Trust Service Provider. Independent of Arkova infrastructure.
+
+Each layer states what it proves and what it does NOT prove.
+
+## Planned: Credential Provenance Timeline (COMP-02)
+
+A unified timeline API (`GET /api/v1/verify/:publicId/provenance`) returning the complete chain of custody:
+
+```
+upload → fingerprint_computed → anchor_submitted → batch_included → network_confirmed → signature_created → timestamp_acquired → verification_queries
+```
+
+Each event includes timestamp, actor (anonymized), and evidence reference. Anomaly indicators flag unexpected delays (>24h between submission and confirmation).
+
+## Planned: Independent Verification Guide (COMP-03)
+
+Public page at `/verify/independent` with step-by-step instructions to verify a credential without Arkova:
+
+1. Compute SHA-256 of document
+2. Look up fingerprint in Bitcoin transaction (OP_RETURN data)
+3. Decode Merkle root and verify proof
+4. Verify RFC 3161 timestamp token independently via OpenSSL
+
+Includes downloadable `verify.sh` script. This proves Arkova is not a single point of failure — a critical differentiator for audit independence (SOC 2 CC1.2).
