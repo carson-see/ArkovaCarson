@@ -56,7 +56,7 @@ interface InsightResponse {
   task_type?: string;
 }
 
-export function NessieInsights({ credentialType, issuerName, metadata, publicId }: NessieInsightsProps) {
+export function NessieInsights({ credentialType, issuerName, metadata, publicId: _publicId }: NessieInsightsProps) {
   const [response, setResponse] = useState<InsightResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

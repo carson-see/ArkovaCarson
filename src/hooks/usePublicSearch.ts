@@ -66,11 +66,17 @@ export function usePublicSearch(): UsePublicSearchReturn {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase.rpc as any)(
         'search_public_issuers',
-        { p_query: query.trim(), p_limit: 20, p_offset: 0 }
+        { p_query: query.trim(), p_limit: 20 }
       );
 
       if (rpcError) {
-        setError(SEARCH_LABELS.SEARCH_ERROR);
+        // PGRST203 (schema cache stale after migration) — show empty, not error
+        if (rpcError.code === 'PGRST203') {
+          console.warn('search_public_issuers RPC stale cache:', rpcError.message);
+          setIssuerResults([]);
+        } else {
+          setError(SEARCH_LABELS.SEARCH_ERROR);
+        }
         return;
       }
 
