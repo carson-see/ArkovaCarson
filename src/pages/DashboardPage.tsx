@@ -9,7 +9,7 @@
  * @see MVP-09 — Search, filter, and pagination
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, CheckCircle, Clock, Plus, Search, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,6 +42,7 @@ import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
 import { useOrganization } from '@/hooks/useOrganization';
+import { supabase } from '@/lib/supabase';
 
 const PAGE_SIZES = [10, 25, 50] as const;
 type StatusFilter = 'ALL' | 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -155,7 +156,27 @@ export function DashboardPage() {
     setCurrentPage(1);
   }, []);
 
-  const stats = {
+  // BUG-UAT-01 / SCRUM-488: Use count queries for ORG_ADMIN so stats reflect
+  // all org records, not just the 100-record paginated fetch from useAnchors.
+  const [orgStats, setOrgStats] = useState<{ total: number; secured: number; pending: number } | null>(null);
+  useEffect(() => {
+    if (profile?.role !== 'ORG_ADMIN' || !user) return;
+    async function fetchOrgStats() {
+      const [totalRes, securedRes, pendingRes] = await Promise.all([
+        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null),
+        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'SECURED'),
+        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'PENDING'),
+      ]);
+      setOrgStats({
+        total: totalRes.count ?? 0,
+        secured: securedRes.count ?? 0,
+        pending: pendingRes.count ?? 0,
+      });
+    }
+    fetchOrgStats();
+  }, [profile?.role, user]);
+
+  const stats = orgStats ?? {
     total: records.length,
     secured: records.filter(r => r.status === 'SECURED').length,
     pending: records.filter(r => r.status === 'PENDING').length,

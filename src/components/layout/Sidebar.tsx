@@ -69,7 +69,6 @@ const BASE_NAV_ITEMS: NavItem[] = [
 import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
 
 const adminNavItems: NavItem[] = [
-  { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
   { label: 'Overview', icon: BarChart3, to: ROUTES.ADMIN_OVERVIEW },
   { label: 'Users', icon: Users, to: ROUTES.ADMIN_USERS },
   { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
@@ -198,9 +197,13 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
   const location = useLocation();
 
   // SCRUM-360: Show Organization link only for org members (orgName present)
+  // SCRUM-498: Compliance moved from ADMIN to main nav (it's an org feature, not platform admin)
   const mainNavItems: NavItem[] = [
     ...BASE_NAV_ITEMS.slice(0, 2),
-    ...(orgName ? [{ label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATION }] : []),
+    ...(orgName ? [
+      { label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATION },
+      { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
+    ] : []),
     ...BASE_NAV_ITEMS.slice(2),
   ];
 
