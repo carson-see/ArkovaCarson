@@ -8,7 +8,7 @@
 
 import { useState, useCallback } from 'react';
 import { TrendingUp, Download, RefreshCw, AlertTriangle } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -61,7 +61,7 @@ export function ComplianceTrendPage() {
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) { setError('Not authenticated'); return; }
+      if (!session) { setError(COMPLIANCE_TREND_LABELS.ERR_NOT_AUTHENTICATED); return; }
 
       const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
       const params = new URLSearchParams({
@@ -82,7 +82,7 @@ export function ComplianceTrendPage() {
 
       setData(await resp.json());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Network error');
+      setError(err instanceof Error ? err.message : COMPLIANCE_TREND_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }
@@ -122,29 +122,29 @@ export function ComplianceTrendPage() {
           <CardContent className="pt-4">
             <div className="flex flex-wrap gap-4 items-end">
               <div>
-                <Label>Granularity</Label>
+                <Label>{COMPLIANCE_TREND_LABELS.GRANULARITY}</Label>
                 <Select value={granularity} onValueChange={setGranularity}>
                   <SelectTrigger className="w-[130px] mt-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="daily">Daily</SelectItem>
-                    <SelectItem value="weekly">Weekly</SelectItem>
-                    <SelectItem value="monthly">Monthly</SelectItem>
+                    <SelectItem value="daily">{COMPLIANCE_TREND_LABELS.DAILY}</SelectItem>
+                    <SelectItem value="weekly">{COMPLIANCE_TREND_LABELS.WEEKLY}</SelectItem>
+                    <SelectItem value="monthly">{COMPLIANCE_TREND_LABELS.MONTHLY}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div>
-                <Label>From</Label>
+                <Label>{COMPLIANCE_TREND_LABELS.FROM}</Label>
                 <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="mt-1 w-[160px]" />
               </div>
               <div>
-                <Label>To</Label>
+                <Label>{COMPLIANCE_TREND_LABELS.TO}</Label>
                 <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="mt-1 w-[160px]" />
               </div>
               <Button onClick={fetchTrends} disabled={loading}>
                 <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
-                {loading ? 'Loading...' : COMPLIANCE_TREND_LABELS.FETCH}
+                {loading ? COMPLIANCE_TREND_LABELS.LOADING : COMPLIANCE_TREND_LABELS.FETCH}
               </Button>
             </div>
           </CardContent>
@@ -188,13 +188,13 @@ export function ComplianceTrendPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 font-medium">Period</th>
-                        <th className="pb-2 font-medium text-right">Anchors</th>
-                        <th className="pb-2 font-medium text-right">Secured</th>
-                        <th className="pb-2 font-medium text-right">Signatures</th>
-                        <th className="pb-2 font-medium text-right">Timestamp %</th>
-                        <th className="pb-2 font-medium text-right">Avg Delay (min)</th>
-                        <th className="pb-2 font-medium text-right">Certs (active/expired)</th>
+                        <th className="pb-2 font-medium">{COMPLIANCE_TREND_LABELS.COL_PERIOD}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_ANCHORS}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_SECURED}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_SIGNATURES}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_TIMESTAMP_PCT}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_AVG_DELAY}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_CERTS}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -230,7 +230,7 @@ export function ComplianceTrendPage() {
         {data && data.data.length === 0 && (
           <Card>
             <CardContent className="pt-8 pb-8 text-center text-muted-foreground">
-              No data available for the selected period.
+              {COMPLIANCE_TREND_LABELS.NO_DATA}
             </CardContent>
           </Card>
         )}
