@@ -1,4 +1,4 @@
--- Migration: 0167_fix_search_rpc_overloads.sql
+-- Migration: 0168_fix_search_rpc_overloads.sql
 -- Description: Fix PGRST203 "Could not choose the best candidate function"
 --   error on search_public_issuers and search_public_credentials.
 --
