@@ -704,6 +704,7 @@ export const SEARCH_LABELS = {
   NO_PERSONS: 'No matching records found',
   NO_PERSONS_DESC: 'No public credentials match this name.',
   PERSON_CREDENTIALS: 'Verified Credentials',
+  SEARCH_ERROR: 'Search failed. Please try again.',
 } as const;
 
 // =============================================================================
@@ -1802,9 +1803,19 @@ export const DATA_RETENTION_LABELS = {
 
 export const PROVENANCE_LABELS = {
   SECTION_TITLE: 'Provenance Timeline',
-  SECTION_DESCRIPTION: 'Complete chain of custody from upload through verification.',
   EXPORT_JSON: 'Export as JSON',
   LOADING: 'Loading provenance data...',
   NO_EVENTS: 'No provenance data available.',
   ERROR: 'Unable to load provenance timeline.',
+  EVENT_LABELS: {
+    credential_created: 'Credential Created',
+    anchor_submitted: 'Submitted to Network',
+    batch_included: 'Included in Batch',
+    network_confirmed: 'Network Confirmed',
+    credential_revoked: 'Credential Revoked',
+    signature_created: 'Signature Created',
+    signature_completed: 'Signature Completed',
+    timestamp_acquired: 'Timestamp Acquired',
+    verification_query: 'Verification Query',
+  } as Record<string, string>,
 } as const;

@@ -5,24 +5,22 @@
  * Integrated into the public verification page.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Clock, CheckCircle, AlertTriangle, FileText, Pen, Stamp, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PROVENANCE_LABELS } from '@/lib/copy';
+import { WORKER_URL } from '@/lib/workerClient';
 
 interface ProvenanceEvent {
   event_type: string;
   timestamp: string;
-  actor: string;
-  evidence_reference: string | null;
   details: string | null;
   time_delta_seconds: number | null;
 }
 
 interface ProvenanceData {
   public_id: string;
-  fingerprint: string;
   status: string;
   events: ProvenanceEvent[];
   anomalies: string[];
@@ -60,6 +58,10 @@ function formatDelta(seconds: number): string {
   return `${Math.round(seconds / 86400)}d later`;
 }
 
+function eventLabel(eventType: string): string {
+  return PROVENANCE_LABELS.EVENT_LABELS[eventType] ?? eventType.replace(/_/g, ' ');
+}
+
 interface Props {
   publicId: string;
 }
@@ -69,30 +71,44 @@ export function ProvenanceTimeline({ publicId }: Props) {
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fetchedForRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!publicId || !expanded) return;
+    if (fetchedForRef.current === publicId && data) return;
+
+    const controller = new AbortController();
 
     const fetchProvenance = async () => {
       setLoading(true);
       setError(null);
+      setData(null);
       try {
-        const workerUrl = import.meta.env.VITE_WORKER_URL || '';
-        const resp = await fetch(`${workerUrl}/api/v1/verify/${publicId}/provenance`);
+        const resp = await fetch(
+          `${WORKER_URL}/api/v1/verify/${publicId}/provenance`,
+          { signal: controller.signal },
+        );
+        if (controller.signal.aborted) return;
         if (!resp.ok) {
           setError(PROVENANCE_LABELS.ERROR);
           return;
         }
-        setData(await resp.json());
-      } catch {
+        const json = await resp.json();
+        if (!controller.signal.aborted) {
+          setData(json);
+          fetchedForRef.current = publicId;
+        }
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         setError(PROVENANCE_LABELS.ERROR);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
 
     fetchProvenance();
-  }, [publicId, expanded]);
+    return () => controller.abort();
+  }, [publicId, expanded, data]);
 
   return (
     <Card className="mt-4">
@@ -100,6 +116,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
         <button
           className="flex items-center justify-between w-full text-left"
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
         >
           <CardTitle className="text-sm font-medium flex items-center gap-2">
             <Clock className="h-4 w-4" /> {PROVENANCE_LABELS.SECTION_TITLE}
@@ -133,7 +150,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
                   const Icon = EVENT_ICONS[event.event_type] || Clock;
                   const color = EVENT_COLORS[event.event_type] || 'text-muted-foreground';
                   return (
-                    <div key={i} className="relative pb-4 last:pb-0">
+                    <div key={`${event.event_type}-${event.timestamp}`} className="relative pb-4 last:pb-0">
                       {/* Vertical line */}
                       {i < data.events.length - 1 && (
                         <div className="absolute left-[-16px] top-5 bottom-0 w-px bg-border" />
@@ -146,7 +163,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
                       <div>
                         <div className="flex items-baseline gap-2">
                           <span className="text-xs font-medium capitalize">
-                            {event.event_type.replace(/_/g, ' ')}
+                            {eventLabel(event.event_type)}
                           </span>
                           {event.time_delta_seconds !== null && event.time_delta_seconds > 0 && (
                             <span className="text-[10px] text-muted-foreground">
@@ -179,7 +196,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
                     a.href = url;
                     a.download = `provenance-${publicId}.json`;
                     a.click();
-                    URL.revokeObjectURL(url);
+                    setTimeout(() => URL.revokeObjectURL(url), 200);
                   }}
                 >
                   {PROVENANCE_LABELS.EXPORT_JSON}

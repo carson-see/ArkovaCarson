@@ -9,6 +9,7 @@
 
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { SEARCH_LABELS } from '@/lib/copy';
 
 export interface IssuerResult {
   org_id: string;
@@ -69,13 +70,13 @@ export function usePublicSearch(): UsePublicSearchReturn {
       );
 
       if (rpcError) {
-        setError('Search failed. Please try again.');
+        setError(SEARCH_LABELS.SEARCH_ERROR);
         return;
       }
 
       setIssuerResults((data ?? []) as IssuerResult[]);
     } catch {
-      setError('Search failed. Please try again.');
+      setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
       setSearching(false);
     }
