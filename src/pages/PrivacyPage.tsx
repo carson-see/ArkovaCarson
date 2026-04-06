@@ -81,6 +81,12 @@ export function PrivacyPage() {
                 support@arkova.ai
               </a>.
             </p>
+            <p>
+              For detailed retention periods by data category, see our{' '}
+              <Link to="/privacy/data-retention" className="text-primary hover:underline">
+                Data Retention Policy
+              </Link>.
+            </p>
           </section>
 
           <section className="space-y-3">

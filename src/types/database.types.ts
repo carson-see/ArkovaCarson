@@ -2390,6 +2390,231 @@ export type Database = {
           },
         ]
       }
+      signatures: {
+        Row: {
+          anchor_id: string | null
+          archive_timestamp_id: string | null
+          attestation_id: string | null
+          completed_at: string | null
+          contact_info: string | null
+          created_at: string
+          created_by: string
+          document_fingerprint: string
+          format: string
+          id: string
+          jurisdiction: string | null
+          level: string
+          location: string | null
+          ltv_data_embedded: boolean
+          metadata: Json | null
+          org_id: string
+          public_id: string
+          reason: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          signature_algorithm: string | null
+          signature_value: string | null
+          signed_at: string | null
+          signed_attributes: Json | null
+          signer_certificate_id: string
+          signer_name: string | null
+          signer_org: string | null
+          status: string
+          timestamp_token_id: string | null
+        }
+        Insert: {
+          anchor_id?: string | null
+          archive_timestamp_id?: string | null
+          attestation_id?: string | null
+          completed_at?: string | null
+          contact_info?: string | null
+          created_at?: string
+          created_by: string
+          document_fingerprint: string
+          format: string
+          id?: string
+          jurisdiction?: string | null
+          level: string
+          location?: string | null
+          ltv_data_embedded?: boolean
+          metadata?: Json | null
+          org_id: string
+          public_id: string
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          signature_algorithm?: string | null
+          signature_value?: string | null
+          signed_at?: string | null
+          signed_attributes?: Json | null
+          signer_certificate_id: string
+          signer_name?: string | null
+          signer_org?: string | null
+          status?: string
+          timestamp_token_id?: string | null
+        }
+        Update: {
+          anchor_id?: string | null
+          archive_timestamp_id?: string | null
+          attestation_id?: string | null
+          completed_at?: string | null
+          contact_info?: string | null
+          created_at?: string
+          created_by?: string
+          document_fingerprint?: string
+          format?: string
+          id?: string
+          jurisdiction?: string | null
+          level?: string
+          location?: string | null
+          ltv_data_embedded?: boolean
+          metadata?: Json | null
+          org_id?: string
+          public_id?: string
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          signature_algorithm?: string | null
+          signature_value?: string | null
+          signed_at?: string | null
+          signed_attributes?: Json | null
+          signer_certificate_id?: string
+          signer_name?: string | null
+          signer_org?: string | null
+          status?: string
+          timestamp_token_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_signatures_archive_tst"
+            columns: ["archive_timestamp_id"]
+            isOneToOne: false
+            referencedRelation: "timestamp_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_signatures_tst"
+            columns: ["timestamp_token_id"]
+            isOneToOne: false
+            referencedRelation: "timestamp_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_attestation_id_fkey"
+            columns: ["attestation_id"]
+            isOneToOne: false
+            referencedRelation: "attestations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_signer_certificate_id_fkey"
+            columns: ["signer_certificate_id"]
+            isOneToOne: false
+            referencedRelation: "signing_certificates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signing_certificates: {
+        Row: {
+          certificate_pem: string
+          chain_pem: string[] | null
+          created_at: string
+          created_by: string
+          eu_trusted_list_entry: string | null
+          fingerprint_sha256: string
+          id: string
+          issuer_cn: string
+          issuer_org: string | null
+          key_algorithm: string
+          kms_key_id: string
+          kms_provider: string
+          metadata: Json | null
+          not_after: string
+          not_before: string
+          org_id: string
+          qtsp_name: string | null
+          serial_number: string
+          status: string
+          subject_cn: string
+          subject_org: string | null
+          trust_level: string
+          updated_at: string
+        }
+        Insert: {
+          certificate_pem: string
+          chain_pem?: string[] | null
+          created_at?: string
+          created_by: string
+          eu_trusted_list_entry?: string | null
+          fingerprint_sha256: string
+          id?: string
+          issuer_cn: string
+          issuer_org?: string | null
+          key_algorithm: string
+          kms_key_id: string
+          kms_provider: string
+          metadata?: Json | null
+          not_after: string
+          not_before: string
+          org_id: string
+          qtsp_name?: string | null
+          serial_number: string
+          status?: string
+          subject_cn: string
+          subject_org?: string | null
+          trust_level?: string
+          updated_at?: string
+        }
+        Update: {
+          certificate_pem?: string
+          chain_pem?: string[] | null
+          created_at?: string
+          created_by?: string
+          eu_trusted_list_entry?: string | null
+          fingerprint_sha256?: string
+          id?: string
+          issuer_cn?: string
+          issuer_org?: string | null
+          key_algorithm?: string
+          kms_key_id?: string
+          kms_provider?: string
+          metadata?: Json | null
+          not_after?: string
+          not_before?: string
+          org_id?: string
+          qtsp_name?: string | null
+          serial_number?: string
+          status?: string
+          subject_cn?: string
+          subject_org?: string | null
+          trust_level?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signing_certificates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       stats_cache: {
         Row: {
           key: string
@@ -2528,6 +2753,87 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      timestamp_tokens: {
+        Row: {
+          cost_usd: number | null
+          created_at: string
+          hash_algorithm: string
+          id: string
+          message_imprint: string
+          metadata: Json | null
+          org_id: string
+          provider_ref: string | null
+          qtsp_qualified: boolean
+          signature_id: string | null
+          token_type: string
+          tsa_cert_fingerprint: string
+          tsa_name: string
+          tsa_url: string
+          tst_data: string
+          tst_gen_time: string
+          tst_serial: string
+          verification_status: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          cost_usd?: number | null
+          created_at?: string
+          hash_algorithm?: string
+          id?: string
+          message_imprint: string
+          metadata?: Json | null
+          org_id: string
+          provider_ref?: string | null
+          qtsp_qualified?: boolean
+          signature_id?: string | null
+          token_type?: string
+          tsa_cert_fingerprint: string
+          tsa_name: string
+          tsa_url: string
+          tst_data: string
+          tst_gen_time: string
+          tst_serial: string
+          verification_status?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          cost_usd?: number | null
+          created_at?: string
+          hash_algorithm?: string
+          id?: string
+          message_imprint?: string
+          metadata?: Json | null
+          org_id?: string
+          provider_ref?: string | null
+          qtsp_qualified?: boolean
+          signature_id?: string | null
+          token_type?: string
+          tsa_cert_fingerprint?: string
+          tsa_name?: string
+          tsa_url?: string
+          tst_data?: string
+          tst_gen_time?: string
+          tst_serial?: string
+          verification_status?: string | null
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "timestamp_tokens_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "timestamp_tokens_signature_id_fkey"
+            columns: ["signature_id"]
+            isOneToOne: false
+            referencedRelation: "signatures"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       unified_credits: {
         Row: {
@@ -3170,14 +3476,24 @@ export type Database = {
           total_cost_before: Json
         }[]
       }
-      invite_member: {
-        Args: {
-          invitee_email: string
-          invitee_role: Database["public"]["Enums"]["user_role"]
-          target_org_id: string
-        }
-        Returns: string
-      }
+      invite_member:
+        | {
+            Args: {
+              invitee_email: string
+              invitee_role: Database["public"]["Enums"]["user_role"]
+              target_org_id: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              invitee_email: string
+              invitee_role: string
+              inviter_user_id: string
+              target_org_id: string
+            }
+            Returns: string
+          }
       is_current_user_platform_admin: { Args: never; Returns: boolean }
       is_org_admin: { Args: never; Returns: boolean }
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
@@ -3263,19 +3579,41 @@ export type Database = {
           status: string
         }[]
       }
-      search_public_credentials: {
-        Args: { p_limit?: number; p_query: string }
-        Returns: Json[]
-      }
-      search_public_issuers: {
-        Args: { p_query: string }
-        Returns: {
-          credential_count: number
-          org_domain: string
-          org_id: string
-          org_name: string
-        }[]
-      }
+      search_public_credentials:
+        | { Args: { p_limit?: number; p_query: string }; Returns: Json[] }
+        | {
+            Args: { p_limit?: number; p_offset?: number; p_query: string }
+            Returns: {
+              anchored_at: string
+              credential_type: string
+              issuer_name: string
+              issuer_public_id: string
+              public_id: string
+              status: string
+              title: string
+            }[]
+          }
+      search_public_issuers:
+        | {
+            Args: { p_query: string }
+            Returns: {
+              credential_count: number
+              org_domain: string
+              org_id: string
+              org_name: string
+            }[]
+          }
+        | {
+            Args: { p_limit?: number; p_offset?: number; p_query: string }
+            Returns: {
+              credential_count: number
+              display_name: string
+              id: string
+              legal_name: string
+              public_id: string
+              verified: boolean
+            }[]
+          }
       search_public_record_embeddings: {
         Args: {
           p_match_count?: number
@@ -3379,7 +3717,7 @@ export type Database = {
       grc_sync_status: "pending" | "syncing" | "success" | "failed"
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
       job_status: "pending" | "processing" | "completed" | "failed"
-      org_member_role: "owner" | "admin" | "member"
+      org_member_role: "owner" | "admin" | "member" | "compliance_officer"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
       report_status: "pending" | "generating" | "completed" | "failed"
       report_type:
@@ -3594,7 +3932,7 @@ export const Constants = {
       grc_sync_status: ["pending", "syncing", "success", "failed"],
       integrity_level: ["HIGH", "MEDIUM", "LOW", "FLAGGED"],
       job_status: ["pending", "processing", "completed", "failed"],
-      org_member_role: ["owner", "admin", "member"],
+      org_member_role: ["owner", "admin", "member", "compliance_officer"],
       profile_status: ["ACTIVE", "PENDING_ACTIVATION", "DEACTIVATED"],
       report_status: ["pending", "generating", "completed", "failed"],
       report_type: [

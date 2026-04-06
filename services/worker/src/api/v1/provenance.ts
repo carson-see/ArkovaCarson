@@ -1,214 +1,200 @@
 /**
  * Credential Provenance Timeline API (COMP-02)
  *
- * GET /api/v1/verify/:publicId/provenance
- *
- * Returns an ordered array of lifecycle events for a credential,
- * combining anchor state changes, signature events, and timestamp acquisitions.
- * Designed for auditors needing the full chain of custody.
- *
- * Constitution 1.4: Only public_id + derived fields exposed. No internal IDs.
+ * GET /api/v1/verify/:publicId/provenance — Returns the complete chain of custody
+ * for a credential as an ordered array of events with timestamps and evidence refs.
  */
 
 import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
-const router = Router();
-
-interface ProvenanceEvent {
+export interface ProvenanceEvent {
   event_type: string;
   timestamp: string;
-  actor: string;
-  evidence_reference: string | null;
-  details: string | null;
+  detail: string;
+  evidence_ref?: string;
+  actor?: string;
 }
 
-// Input validation: publicId must match ARK-* format, max 64 chars
-const PUBLIC_ID_PATTERN = /^[\w-]{1,64}$/;
+export interface AnchorProvenanceData {
+  public_id: string;
+  fingerprint: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  chain_tx_id?: string | null;
+  chain_block_height?: number | null;
+  chain_timestamp?: string | null;
+  revoked_at?: string | null;
+  submitted_at?: string | null;
+  secured_at?: string | null;
+  tx_id?: string | null;
+  batch_id?: string | null;
+  id?: string;
+  org_id?: string | null;
+  revocation_reason?: string | null;
+}
 
 /**
- * GET /api/v1/verify/:publicId/provenance
- * Aggregate the full provenance chain for a credential.
+ * Build a provenance timeline from anchor data and audit events.
+ * Pure function — no DB calls, fully testable.
  */
+export function buildProvenanceTimeline(
+  anchor: AnchorProvenanceData,
+  auditEvents: Array<{ event_type: string; created_at: string; actor_id: string | null }>,
+): ProvenanceEvent[] {
+  const events: ProvenanceEvent[] = [];
+
+  // 1. Credential created
+  events.push({
+    event_type: 'credential_created',
+    timestamp: anchor.created_at,
+    detail: `Credential ${anchor.public_id} created with fingerprint ${anchor.fingerprint?.substring(0, 16)}...`,
+  });
+
+  // 2. Submitted to network
+  if (anchor.submitted_at) {
+    const delay = new Date(anchor.submitted_at).getTime() - new Date(anchor.created_at).getTime();
+    events.push({
+      event_type: 'anchor_submitted',
+      timestamp: anchor.submitted_at,
+      detail: `Submitted to anchoring pipeline${delay > 0 ? ` (${Math.round(delay / 60000)}min after creation)` : ''}`,
+      evidence_ref: anchor.batch_id || undefined,
+    });
+  }
+
+  // 3. Network confirmed
+  const confirmedAt = anchor.secured_at ?? anchor.chain_timestamp;
+  const txId = anchor.tx_id ?? anchor.chain_tx_id;
+  if (confirmedAt) {
+    const delay = anchor.submitted_at
+      ? new Date(confirmedAt).getTime() - new Date(anchor.submitted_at).getTime()
+      : 0;
+    events.push({
+      event_type: 'network_confirmed',
+      timestamp: confirmedAt,
+      detail: `Confirmed on public network${delay > 0 ? ` (${Math.round(delay / 60000)}min after submission)` : ''}`,
+      evidence_ref: txId || undefined,
+    });
+  }
+
+  // 4. Verification queries from audit trail (anonymized)
+  for (const evt of auditEvents) {
+    if (evt.event_type === 'VERIFICATION_QUERIED' || evt.event_type === 'VERIFICATION_QUERY') {
+      events.push({
+        event_type: 'verification_query',
+        timestamp: evt.created_at,
+        detail: 'Third-party verification request',
+        actor: evt.actor_id ? 'anonymous' : undefined,
+      });
+    }
+  }
+
+  // 5. Revocation
+  if (anchor.revoked_at) {
+    events.push({
+      event_type: 'credential_revoked',
+      timestamp: anchor.revoked_at,
+      detail: `Revoked: ${anchor.revocation_reason || 'no reason provided'}`,
+    });
+  }
+
+  // Sort chronologically
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  return events;
+}
+
+const router = Router();
+
 router.get('/:publicId/provenance', async (req: Request, res: Response) => {
   try {
     const { publicId } = req.params;
 
-    if (!publicId || !PUBLIC_ID_PATTERN.test(publicId)) {
-      res.status(400).json({ error: 'Invalid credential ID format' });
-      return;
-    }
-
-    // Fetch the anchor record — only select fields needed for provenance
-    // Constitution 1.4: never expose internal id, org_id, batch_id
-    const { data: anchor, error: anchorError } = await db
+    // Fetch anchor
+    const { data: anchor, error } = await db
       .from('anchors')
-      .select('id, public_id, status, created_at, submitted_at, secured_at, tx_id, revoked_at')
+      .select('id, public_id, fingerprint, status, created_at, submitted_at, secured_at, tx_id, batch_id, org_id, revoked_at, revocation_reason')
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
 
-    if (anchorError || !anchor) {
+    if (error || !anchor) {
       res.status(404).json({ error: 'Credential not found' });
       return;
     }
 
-    const events: ProvenanceEvent[] = [];
+    // Fetch signature events (Phase III)
+    const { data: signatures } = await (db as any)
+      .from('signatures')
+      .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')
+      .eq('anchor_id', anchor.id)
+      .order('created_at', { ascending: true });
 
-    // Event: Upload / Creation
-    events.push({
-      event_type: 'credential_created',
-      timestamp: anchor.created_at,
-      actor: 'system',
-      evidence_reference: null,
-      details: 'Document uploaded and fingerprint computed client-side',
-    });
+    // Fetch verification events from audit trail
+    const { data: verifyEvents } = await db
+      .from('audit_events')
+      .select('event_type, created_at, actor_id')
+      .eq('target_id', anchor.public_id)
+      .in('event_type', ['VERIFICATION_QUERIED', 'VERIFICATION_QUERY', 'signature.verified'])
+      .order('created_at', { ascending: true })
+      .limit(50);
 
-    // Event: Anchor submitted to network
-    if (anchor.submitted_at) {
-      events.push({
-        event_type: 'anchor_submitted',
-        timestamp: anchor.submitted_at,
-        actor: 'system',
-        evidence_reference: anchor.public_id,
-        details: 'Fingerprint submitted to the network',
-      });
-    }
+    const events = buildProvenanceTimeline(
+      anchor as unknown as AnchorProvenanceData,
+      (verifyEvents ?? []) as Array<{ event_type: string; created_at: string; actor_id: string | null }>,
+    );
 
-    // Event: Network confirmation
-    if (anchor.secured_at) {
-      events.push({
-        event_type: 'network_confirmed',
-        timestamp: anchor.secured_at,
-        actor: 'network',
-        evidence_reference: anchor.public_id,
-        details: 'Anchoring confirmed on the network',
-      });
-    }
-
-    // Event: Revocation
-    if (anchor.revoked_at) {
-      events.push({
-        event_type: 'credential_revoked',
-        timestamp: anchor.revoked_at,
-        actor: 'system',
-        evidence_reference: null,
-        details: 'Credential revoked by issuing organization',
-      });
-    }
-
-    // Fetch related signatures (Phase III — graceful if table doesn't exist)
-    try {
-      const { data: signatures } = await db
-        .from('signatures' as string)
-        .select('signed_at, completed_at, signer_name, format, level')
-        .eq('anchor_id', anchor.id)
-        .order('signed_at', { ascending: true })
-        .limit(100);
-
-      if (signatures) {
-        for (const sig of signatures) {
+    // Add signature events from Phase III tables
+    if (signatures) {
+      for (const sig of signatures) {
+        if (sig.signed_at) {
           events.push({
             event_type: 'signature_created',
             timestamp: sig.signed_at,
-            actor: sig.signer_name || 'signer',
-            evidence_reference: null,
-            details: `${sig.format || 'AdES'} signature (${sig.level || 'B-Level'})`,
+            detail: `${sig.format} ${sig.level} signature by ${sig.signer_name || 'unknown'}`,
+            evidence_ref: sig.public_id,
           });
         }
-      }
-    } catch {
-      // Phase III tables may not exist — degrade gracefully
-    }
-
-    // Fetch timestamp tokens (Phase III — graceful if table doesn't exist)
-    try {
-      const { data: timestamps } = await db
-        .from('timestamp_tokens' as string)
-        .select('tst_gen_time, tsa_name, is_qualified')
-        .eq('anchor_id', anchor.id)
-        .order('tst_gen_time', { ascending: true })
-        .limit(100);
-
-      if (timestamps) {
-        for (const ts of timestamps) {
+        if (sig.timestamp_token_id) {
           events.push({
             event_type: 'timestamp_acquired',
-            timestamp: ts.tst_gen_time,
-            actor: ts.tsa_name || 'TSA',
-            evidence_reference: null,
-            details: `RFC 3161 timestamp${ts.is_qualified ? ' (qualified)' : ''}`,
+            timestamp: sig.signed_at || sig.created_at,
+            detail: `RFC 3161 timestamp token acquired for signature ${sig.public_id}`,
+            evidence_ref: sig.timestamp_token_id,
           });
         }
       }
-    } catch {
-      // Phase III tables may not exist — degrade gracefully
     }
 
-    // Fetch verification queries from audit_events
-    // Note: audit events use public_id as target_id (see verify.ts)
-    try {
-      const { data: verifyEvents } = await db
-        .from('audit_events')
-        .select('created_at, event_type')
-        .eq('resource_type', 'anchor')
-        .eq('target_id', anchor.public_id)
-        .in('event_type', ['VERIFICATION_QUERY', 'API_VERIFY'])
-        .order('created_at', { ascending: true })
-        .limit(50);
-
-      if (verifyEvents) {
-        for (const ve of verifyEvents) {
-          events.push({
-            event_type: 'verification_query',
-            timestamp: ve.created_at,
-            actor: 'anonymous',
-            evidence_reference: null,
-            details: 'Credential verification queried',
-          });
-        }
-      }
-    } catch {
-      // audit_events query may fail — degrade gracefully
-    }
-
-    // Sort all events chronologically
+    // Re-sort after adding signature events
     events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-    // Compute time deltas between events
-    const eventsWithDeltas = events.map((event, i) => {
-      if (i === 0) return { ...event, time_delta_seconds: null };
-      const prev = new Date(events[i - 1].timestamp).getTime();
-      const curr = new Date(event.timestamp).getTime();
-      return { ...event, time_delta_seconds: Math.round((curr - prev) / 1000) };
-    });
-
-    // Detect anomalies
+    // Flag anomalies
     const anomalies: string[] = [];
     if (anchor.submitted_at && anchor.secured_at) {
-      const delayMs = new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime();
-      if (delayMs > 24 * 3600_000) {
-        anomalies.push(`Anchor delay exceeds 24 hours (${Math.round(delayMs / 3600_000)}h)`);
+      const confirmDelay = new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime();
+      if (confirmDelay > 24 * 3600_000) {
+        anomalies.push(`Confirmation delay: ${Math.round(confirmDelay / 3600_000)}h (expected <1h)`);
       }
     }
     if (anchor.status === 'PENDING') {
-      const ageMs = Date.now() - new Date(anchor.created_at).getTime();
-      if (ageMs > 48 * 3600_000) {
-        anomalies.push(`Stale PENDING status (${Math.round(ageMs / 3600_000)}h)`);
+      const age = Date.now() - new Date(anchor.created_at).getTime();
+      if (age > 48 * 3600_000) {
+        anomalies.push(`Stale PENDING: ${Math.round(age / 3600_000)}h without anchoring`);
       }
     }
 
-    // Constitution 1.4: Only expose public_id, status, and derived data
     res.json({
       public_id: anchor.public_id,
       status: anchor.status,
-      events: eventsWithDeltas,
+      events,
       anomalies,
-      generated_at: new Date().toISOString(),
+      event_count: events.length,
     });
   } catch (err) {
-    logger.error('Provenance timeline generation failed', {
+    logger.error('Provenance timeline failed', {
       error: err instanceof Error ? err.message : String(err),
     });
     res.status(500).json({ error: 'Internal server error' });

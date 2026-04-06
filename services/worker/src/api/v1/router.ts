@@ -61,10 +61,10 @@ import { agentsRouter } from './agents.js';
 import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
-import { signatureComplianceRouter } from './signatureCompliance.js';
 import { provenanceRouter } from './provenance.js';
-import { keyInventoryRouter } from './keyInventory.js';
 import { complianceTrendsRouter } from './complianceTrends.js';
+import { signatureComplianceRouter } from './signatureCompliance.js';
+import { keyInventoryRouter } from './key-inventory.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -186,7 +186,6 @@ router.use('/verify', verifyProofRouter);
 // Public verification — no auth required (API key optional for tracking)
 // x402 payment gate: returns 402 if no API key and no payment header
 router.use('/verify', requireScope('verify'), x402PaymentGate('/api/v1/verify'), verifyRouter);
-
 // Job status polling — API key required
 router.use('/jobs', requireScope('verify:batch'), jobsRouter);
 
@@ -292,18 +291,17 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
+// ─── Key Inventory — COMP-05 (SOC 2 CC6.1 audit evidence) ───
+// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
+router.use('/', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
+
+// ─── Compliance Trends — COMP-07 ───
+// Feature-gated + JWT auth + rate limited
+router.use('/compliance/trends', adesSignatureGate(), requireAuth, aiRateLimiter, complianceTrendsRouter);
 
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)
 router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
-
-// ─── Key Inventory — COMP-05 (audit evidence) ───
-// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
-router.use('/signatures/key-inventory', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
-
-// ─── Compliance Trends — COMP-07 ───
-// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
-router.use('/signatures/compliance-trends', adesSignatureGate(), requireAuth, aiRateLimiter, complianceTrendsRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

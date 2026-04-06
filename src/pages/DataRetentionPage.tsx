@@ -1,32 +1,35 @@
 /**
  * Data Retention Policy Page (COMP-04)
  *
- * Public page at /privacy/data-retention showing per-category retention periods,
- * right to erasure instructions, and legal hold policy.
- * GDPR Art. 13/14 transparency requirement.
+ * Public page at /privacy/data-retention. Per-category retention periods,
+ * GDPR Art. 13/14 transparency, right to erasure instructions, legal hold.
  */
 
 import { Link } from 'react-router-dom';
-import { Building2, Shield, Clock, Trash2, Scale } from 'lucide-react';
+import { Clock, Trash2, Scale, AlertTriangle } from 'lucide-react';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 
-const RETENTION_TABLE = [
-  { category: 'Anchor records', period: '10 years', basis: 'eIDAS Art. 24(2)', method: 'Automated purge after retention period' },
-  { category: 'Audit events', period: '7 years', basis: 'SOC 2 CC7.2', method: 'Automated purge after retention period' },
-  { category: 'User accounts', period: 'Until deletion requested', basis: 'GDPR Art. 6(1)(b)', method: 'Account deletion via Settings' },
-  { category: 'Signature records', period: '10 years', basis: 'eIDAS Art. 24(2)', method: 'Automated purge after retention period' },
-  { category: 'Timestamp tokens', period: '10 years', basis: 'ETSI EN 319 421', method: 'Automated purge after retention period' },
-  { category: 'API usage logs', period: '90 days', basis: 'Operational necessity', method: 'Rolling deletion' },
-  { category: 'Webhook delivery logs', period: '30 days', basis: 'Operational necessity', method: 'Rolling deletion' },
+const L = DATA_RETENTION_LABELS;
+
+const RETENTION_SCHEDULE = [
+  { category: L.CAT_ANCHOR_RECORDS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_TSP, deletion: L.DELETION_NO_PROOF },
+  { category: L.CAT_SIGNATURE_RECORDS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_SIG, deletion: L.DELETION_NO_LEGAL },
+  { category: L.CAT_TIMESTAMP_TOKENS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_TS, deletion: L.DELETION_NO_LEGAL },
+  { category: L.CAT_AUDIT_EVENTS, period: L.PERIOD_7_YEARS, basis: L.BASIS_SOC2_SOX, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_BILLING_EVENTS, period: L.PERIOD_7_YEARS, basis: L.BASIS_SOX_FINANCIAL, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_USER_ACCOUNTS, period: L.PERIOD_UNTIL_DELETION, basis: L.BASIS_GDPR_SERVICE, deletion: L.DELETION_ANONYMIZE },
+  { category: L.CAT_AI_METADATA, period: L.PERIOD_2_YEARS, basis: L.BASIS_AI_AUDIT, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_APP_LOGS, period: L.PERIOD_1_YEAR, basis: L.BASIS_OPERATIONAL, deletion: L.DELETION_AUTOMATED },
 ];
 
 export function DataRetentionPage() {
   usePageMeta({
-    title: DATA_RETENTION_LABELS.PAGE_TITLE + ' — Arkova',
-    description: DATA_RETENTION_LABELS.PAGE_DESCRIPTION,
+    title: L.PAGE_TITLE + ' — Arkova',
+    description: L.PAGE_DESCRIPTION,
   });
 
   return (
@@ -34,103 +37,98 @@ export function DataRetentionPage() {
       <header className="border-b">
         <div className="mx-auto flex max-w-4xl items-center gap-2 px-6 py-4">
           <Link to="/" className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity">
-            <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary/10">
-              <Building2 className="h-4 w-4 text-primary" />
-            </div>
+            <ArkovaLogo size={32} />
             <span className="font-semibold">Arkova</span>
           </Link>
-          <span className="text-muted-foreground mx-2">/</span>
-          <Link to={ROUTES.PRIVACY} className="text-sm text-muted-foreground hover:text-foreground">Privacy</Link>
-          <span className="text-muted-foreground mx-2">/</span>
-          <span className="text-sm">Data Retention</span>
         </div>
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-12">
-        <div className="mb-10">
-          <h1 className="text-3xl font-bold tracking-tight mb-3">{DATA_RETENTION_LABELS.PAGE_TITLE}</h1>
-          <p className="text-muted-foreground">{DATA_RETENTION_LABELS.INTRO}</p>
-        </div>
+        <h1 className="text-3xl font-bold tracking-tight mb-4">{L.PAGE_TITLE}</h1>
+        <p className="text-muted-foreground mb-8">{L.INTRO}</p>
 
         {/* Retention Table */}
-        <section className="mb-12">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Clock className="h-5 w-5" /> Retention Periods
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="pb-3 font-medium">Data Category</th>
-                      <th className="pb-3 font-medium">Retention Period</th>
-                      <th className="pb-3 font-medium">Legal Basis</th>
-                      <th className="pb-3 font-medium">Deletion Method</th>
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              {L.SECTION_SCHEDULE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_CATEGORY}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_PERIOD}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground hidden sm:table-cell">{L.TABLE_HEADER_BASIS}</th>
+                    <th className="text-left py-2 font-medium text-muted-foreground hidden md:table-cell">{L.TABLE_HEADER_DELETION}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {RETENTION_SCHEDULE.map(row => (
+                    <tr key={row.category} className="border-b last:border-0">
+                      <td className="py-3 pr-4">{row.category}</td>
+                      <td className="py-3 pr-4 font-medium">{row.period}</td>
+                      <td className="py-3 pr-4 text-muted-foreground hidden sm:table-cell">{row.basis}</td>
+                      <td className="py-3 text-muted-foreground hidden md:table-cell">{row.deletion}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {RETENTION_TABLE.map(row => (
-                      <tr key={row.category} className="border-b last:border-0">
-                        <td className="py-3 font-medium">{row.category}</td>
-                        <td className="py-3 text-muted-foreground">{row.period}</td>
-                        <td className="py-3 text-muted-foreground">{row.basis}</td>
-                        <td className="py-3 text-muted-foreground">{row.method}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="text-xs text-muted-foreground mt-4 italic">
-                {DATA_RETENTION_LABELS.NETWORK_NOTE}
-              </p>
-            </CardContent>
-          </Card>
-        </section>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Network Note */}
+        <Card className="mb-8 border-amber-500/30">
+          <CardContent className="pt-6">
+            <div className="flex gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-sm text-muted-foreground">{L.NETWORK_NOTE}</p>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Right to Erasure */}
-        <section className="mb-12">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Trash2 className="h-5 w-5" /> {DATA_RETENTION_LABELS.ERASURE_TITLE}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">{DATA_RETENTION_LABELS.ERASURE_BODY}</p>
-            </CardContent>
-          </Card>
-        </section>
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-400" />
+              {L.ERASURE_TITLE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{L.ERASURE_BODY}</p>
+          </CardContent>
+        </Card>
 
         {/* Legal Hold */}
-        <section className="mb-12">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Scale className="h-5 w-5" /> {DATA_RETENTION_LABELS.LEGAL_HOLD_TITLE}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">{DATA_RETENTION_LABELS.LEGAL_HOLD_BODY}</p>
-            </CardContent>
-          </Card>
-        </section>
-
-        {/* Footer */}
-        <footer className="text-center py-8 border-t">
-          <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
-            <Link to={ROUTES.PRIVACY} className="hover:text-foreground flex items-center gap-1">
-              <Shield className="h-3.5 w-3.5" /> Privacy Policy
-            </Link>
-            <span>|</span>
-            <Link to={ROUTES.CONTACT} className="hover:text-foreground">
-              Contact Us
-            </Link>
-          </div>
-        </footer>
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Scale className="h-5 w-5 text-primary" />
+              {L.LEGAL_HOLD_TITLE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{L.LEGAL_HOLD_BODY}</p>
+          </CardContent>
+        </Card>
       </main>
+
+      <footer className="border-t">
+        <div className="mx-auto max-w-4xl px-6 py-6">
+          <nav className="flex flex-wrap justify-center gap-4 text-xs text-muted-foreground mb-3" aria-label="Site navigation">
+            <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
+            <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+            <Link to="/contact" className="hover:text-foreground transition-colors">Contact</Link>
+          </nav>
+          <p className="text-center text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Arkova</p>
+        </div>
+      </footer>
     </div>
   );
 }
