@@ -77,15 +77,20 @@ router.post('/', async (req, res) => {
   }
 
   try {
-    // Look up user's org
+    // Look up user's org + role (AUTH-06: require ORG_ADMIN)
     const { data: profile } = await db
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', userId)
       .single();
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'User must belong to an organization to create API keys' });
+      return;
+    }
+
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Only organization admins can manage API keys' });
       return;
     }
 
@@ -147,12 +152,17 @@ router.get('/', async (req, res) => {
   try {
     const { data: profile } = await db
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', userId)
       .single();
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'User must belong to an organization' });
+      return;
+    }
+
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Only organization admins can manage API keys' });
       return;
     }
 
@@ -198,12 +208,17 @@ router.patch('/:keyId', async (req, res) => {
   try {
     const { data: profile } = await db
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', userId)
       .single();
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'User must belong to an organization' });
+      return;
+    }
+
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Only organization admins can manage API keys' });
       return;
     }
 
@@ -261,12 +276,17 @@ router.delete('/:keyId', async (req, res) => {
   try {
     const { data: profile } = await db
       .from('profiles')
-      .select('org_id')
+      .select('org_id, role')
       .eq('id', userId)
       .single();
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'User must belong to an organization' });
+      return;
+    }
+
+    if (profile.role !== 'ORG_ADMIN') {
+      res.status(403).json({ error: 'Only organization admins can manage API keys' });
       return;
     }
 

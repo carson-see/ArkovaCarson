@@ -83,6 +83,41 @@ describe('Frontend scrubPiiFromEvent', () => {
     expect(scrubbed?.user?.id).toBe('123');
   });
 
+  it('strips phone numbers from strings (PII-08)', () => {
+    const event = {
+      message: 'User phone: +44 20 7946 0958 and (555) 123-4567',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).not.toContain('7946 0958');
+    expect(scrubbed?.message).not.toContain('123-4567');
+    expect(scrubbed?.message).toContain('[PHONE]');
+  });
+
+  it('strips IPv4 addresses from strings (PII-08)', () => {
+    const event = {
+      message: 'Request from 10.0.0.55 blocked',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).not.toContain('10.0.0.55');
+    expect(scrubbed?.message).toContain('[IP_ADDR]');
+  });
+
+  it('scrubs PII from event tags (PII-09)', () => {
+    const event = {
+      message: 'Test',
+      tags: {
+        environment: 'production',
+        contact: 'user@example.com',
+      },
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.tags?.environment).toBe('production');
+    expect(scrubbed?.tags?.contact).toContain('[EMAIL]');
+  });
+
   it('returns null for null events', () => {
     expect(scrubPiiFromEvent(null)).toBeNull();
   });
