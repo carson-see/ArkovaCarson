@@ -153,6 +153,44 @@ describe('scrubPiiFromEvent', () => {
     expect(scrubbed?.tags?.environment).toBe('production');
   });
 
+  it('strips phone numbers from strings (PII-08)', () => {
+    const event = {
+      message: 'User phone: +44 20 7946 0958 and +1-555-123-4567',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).not.toContain('7946 0958');
+    expect(scrubbed?.message).not.toContain('123-4567');
+    expect(scrubbed?.message).toContain('[PHONE]');
+  });
+
+  it('strips IPv4 addresses from strings (PII-08)', () => {
+    const event = {
+      message: 'Connection from 192.168.1.100 to 10.0.0.1 failed',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).not.toContain('192.168.1.100');
+    expect(scrubbed?.message).not.toContain('10.0.0.1');
+    expect(scrubbed?.message).toContain('[IP_ADDR]');
+  });
+
+  it('scrubs PII from event tags (PII-09)', () => {
+    const event = {
+      message: 'Test event',
+      tags: {
+        environment: 'production',
+        user_email: 'admin@arkova.local',
+        client_ip: '192.168.1.50',
+      },
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.tags?.environment).toBe('production');
+    expect(scrubbed?.tags?.user_email).toContain('[EMAIL]');
+    expect(scrubbed?.tags?.client_ip).toContain('[IP_ADDR]');
+  });
+
   it('returns null to drop an event entirely if it should be suppressed', () => {
     // Events with null return are dropped by Sentry
     const event = null;

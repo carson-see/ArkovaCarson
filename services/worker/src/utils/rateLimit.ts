@@ -116,7 +116,7 @@ export function rateLimit(options: RateLimitOptions) {
       res.setHeader('Retry-After', retryAfter.toString());
       res.setHeader('X-RateLimit-Limit', maxRequests.toString());
       res.setHeader('X-RateLimit-Remaining', '0');
-      res.setHeader('X-RateLimit-Reset', entry.resetAt.toString());
+      res.setHeader('X-RateLimit-Reset', Math.floor(entry.resetAt / 1000).toString());
 
       res.status(429).json({
         error: 'Too many requests',
@@ -134,7 +134,7 @@ export function rateLimit(options: RateLimitOptions) {
     // Set headers
     res.setHeader('X-RateLimit-Limit', maxRequests.toString());
     res.setHeader('X-RateLimit-Remaining', (maxRequests - currentEntry.count).toString());
-    res.setHeader('X-RateLimit-Reset', currentEntry.resetAt.toString());
+    res.setHeader('X-RateLimit-Reset', Math.floor(currentEntry.resetAt / 1000).toString());
 
     // Handle skip on failure
     if (skipFailedRequests) {

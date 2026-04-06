@@ -19,6 +19,8 @@ const SHA256_REGEX = /\b[a-f0-9]{64}\b/gi;
 const SSN_REGEX = /\b\d{3}-\d{2}-\d{4}\b/g;
 const API_KEY_REGEX = /\bak_(live|test)_[a-zA-Z0-9]+/g;
 const JWT_REGEX = /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
+const PHONE_REGEX = /(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g;
+const IPV4_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
 
 const SENSITIVE_HEADERS = [
@@ -52,7 +54,9 @@ function scrubString(str: string): string {
     .replace(SHA256_REGEX, '[FINGERPRINT]')
     .replace(SSN_REGEX, '[SSN]')
     .replace(API_KEY_REGEX, '[API_KEY]')
-    .replace(JWT_REGEX, '[JWT]');
+    .replace(JWT_REGEX, '[JWT]')
+    .replace(PHONE_REGEX, '[PHONE]')
+    .replace(IPV4_REGEX, '[IP_ADDR]');
 }
 
 function scrubUrl(url: string): string {
@@ -114,6 +118,18 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
     for (const key of SENSITIVE_EXTRA_KEYS) {
       if (key in event.extra) {
         (event.extra as Record<string, unknown>)[key] = '[FILTERED]';
+      }
+    }
+  }
+
+  // PII-09: Scrub event tags
+  if (event.tags) {
+    for (const [tagKey, tagValue] of Object.entries(event.tags)) {
+      if (typeof tagValue === 'string') {
+        const scrubbed = scrubString(tagValue);
+        if (scrubbed !== tagValue) {
+          (event.tags as Record<string, string>)[tagKey] = scrubbed;
+        }
       }
     }
   }
