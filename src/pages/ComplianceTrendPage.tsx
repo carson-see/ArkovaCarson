@@ -191,7 +191,7 @@ export function ComplianceTrendPage() {
                     <table className="w-full text-sm">
                       <thead>
                         <tr className="border-b">
-                          <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Period</th>
+                          <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_PERIOD}</th>
                           <th className="text-right py-2 px-2 font-medium text-muted-foreground">{L.KPI_ANCHORS}</th>
                           <th className="text-right py-2 px-2 font-medium text-muted-foreground">{L.KPI_SIGNATURES}</th>
                           <th className="text-right py-2 px-2 font-medium text-muted-foreground hidden sm:table-cell">{L.KPI_TIMESTAMP_COVERAGE}</th>

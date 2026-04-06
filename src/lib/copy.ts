@@ -1874,6 +1874,7 @@ export const COMPLIANCE_TREND_LABELS = {
   THRESHOLD_GREEN: 'Healthy',
   THRESHOLD_AMBER: 'Warning',
   THRESHOLD_RED: 'Critical',
+  TABLE_HEADER_PERIOD: 'Period',
   EXPORT_CSV: 'Export CSV',
   LOADING: 'Loading compliance trends...',
   NO_DATA: 'No data available for the selected period.',

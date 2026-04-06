@@ -13,6 +13,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 import { db } from '../../utils/db.js';
+import { z } from 'zod';
 
 describe('Compliance Trends API (COMP-07)', () => {
   beforeEach(() => {
@@ -26,7 +27,6 @@ describe('Compliance Trends API (COMP-07)', () => {
 
   it('granularity defaults to weekly', () => {
     // The schema has a default — verify structurally
-    const { z } = require('zod');
     const schema = z.object({
       granularity: z.enum(['daily', 'weekly', 'monthly']).default('weekly'),
     });

@@ -10,7 +10,6 @@ import { Building2, Clock, Trash2, Scale, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
-import { ROUTES } from '@/lib/routes';
 
 const L = DATA_RETENTION_LABELS;
 
