@@ -140,3 +140,25 @@ GRANT EXECUTE ON FUNCTION activate_user(text, text) TO authenticated;
 
 COMMENT ON TABLE  activation_tokens IS 'One-time invitation / activation tokens sent via email';
 COMMENT ON FUNCTION activate_user(text, text) IS 'Activates a user account by consuming an invitation token and storing a SHA-256 recovery phrase claim key';
+
+-- =============================================================================
+-- MERGED FROM: 0023_is_public_profile.sql
+-- =============================================================================
+-- =============================================================================
+-- Migration: 0023_is_public_profile
+-- Story: P3-TS-02
+-- Purpose: Add is_public_profile boolean to profiles table.
+--          Controls whether the user's verification records are publicly
+--          discoverable. Default false (private).
+-- =============================================================================
+
+ALTER TABLE profiles
+  ADD COLUMN is_public_profile boolean NOT NULL DEFAULT false;
+
+-- No new RLS policy needed:
+--   profiles_update_own already allows: auth.uid() = id
+--   protect_privileged_profile_fields() trigger does NOT block is_public_profile
+--   so users can toggle this column directly via the client.
+
+-- ROLLBACK:
+-- ALTER TABLE profiles DROP COLUMN is_public_profile;
