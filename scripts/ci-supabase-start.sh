@@ -45,12 +45,12 @@ fi
 
 # Fix 0069: DROP activate_user before re-creating with different params
 # (Postgres can't rename parameters in CREATE OR REPLACE)
-if [ -f "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql" ]; then
-  if ! grep -q "DROP FUNCTION IF EXISTS activate_user" "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql"; then
-    sed -i '/^CREATE OR REPLACE FUNCTION activate_user/i DROP FUNCTION IF EXISTS activate_user(text, text);' \
-      "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql"
-    echo "  Added DROP FUNCTION before activate_user replacement in 0069"
-  fi
+MIGRATION_0069="$MIGRATIONS_DIR/0069_pending_profiles_activation.sql"
+if [ -f "$MIGRATION_0069" ]; then
+  echo "DROP FUNCTION IF EXISTS activate_user(text, text);" > /tmp/0069_fixed.sql
+  cat "$MIGRATION_0069" >> /tmp/0069_fixed.sql
+  cp /tmp/0069_fixed.sql "$MIGRATION_0069"
+  echo "  Prepended DROP FUNCTION to 0069"
 fi
 
 # Handle duplicate numeric prefixes (merge second into first)
