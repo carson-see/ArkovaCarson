@@ -9,6 +9,7 @@
 
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { SEARCH_LABELS } from '@/lib/copy';
 
 export interface IssuerResult {
   org_id: string;
@@ -65,17 +66,17 @@ export function usePublicSearch(): UsePublicSearchReturn {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase.rpc as any)(
         'search_public_issuers',
-        { p_query: query.trim() }
+        { p_query: query.trim(), p_limit: 20, p_offset: 0 }
       );
 
       if (rpcError) {
-        setError(rpcError.message);
+        setError(SEARCH_LABELS.SEARCH_ERROR);
         return;
       }
 
       setIssuerResults((data ?? []) as IssuerResult[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+    } catch {
+      setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
       setSearching(false);
     }

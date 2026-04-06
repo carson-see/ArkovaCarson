@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
 import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
@@ -47,7 +48,6 @@ import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABE
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
-import { ProvenanceTimeline, type ProvenanceEventData } from '@/components/credential/ProvenanceTimeline';
 
 interface PublicAnchorData {
   public_id: string;
@@ -93,11 +93,6 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
-
-  // Provenance timeline state (COMP-02)
-  const [provenanceEvents, setProvenanceEvents] = useState<ProvenanceEventData[]>([]);
-  const [provenanceLoading, setProvenanceLoading] = useState(false);
-  const [provenanceError, setProvenanceError] = useState<string | null>(null);
 
   // Fetch template for credential rendering (UF-01)
   const { template } = useCredentialTemplate(
@@ -156,32 +151,6 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       fetchVerification();
     }
   }, [publicId]);
-
-  // Fetch provenance timeline when data is loaded (COMP-02)
-  useEffect(() => {
-    if (!data || !publicId) return;
-
-    async function fetchProvenance() {
-      setProvenanceLoading(true);
-      setProvenanceError(null);
-      try {
-        const workerUrl = import.meta.env.VITE_WORKER_URL || '';
-        const res = await fetch(`${workerUrl}/api/v1/verify/${publicId}/provenance`);
-        if (!res.ok) {
-          setProvenanceError('Failed to load provenance');
-          return;
-        }
-        const json = await res.json();
-        setProvenanceEvents(json.events ?? []);
-      } catch {
-        setProvenanceError('Failed to load provenance');
-      } finally {
-        setProvenanceLoading(false);
-      }
-    }
-
-    fetchProvenance();
-  }, [data, publicId]);
 
   const handleCopy = async (value: string, label: string) => {
     await navigator.clipboard.writeText(value);
@@ -534,12 +503,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 4b: Provenance Timeline (COMP-02)
             ============================================================ */}
-        <Separator />
-        <ProvenanceTimeline
-          events={provenanceEvents}
-          loading={provenanceLoading}
-          error={provenanceError ?? undefined}
-        />
+        <ProvenanceTimeline publicId={data.public_id} />
 
         {/* ============================================================
             SECTION 5: Proof Download (UF-07)
