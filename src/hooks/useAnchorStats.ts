@@ -20,6 +20,7 @@ export interface AnchorStats {
 export function useAnchorStats() {
   const [stats, setStats] = useState<AnchorStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
 
   const fetchStats = useCallback(async () => {
@@ -111,8 +112,11 @@ export function useAnchorStats() {
           lastTxTime,
         });
       }
-    } catch {
-      // Stats fetch failed — leave null
+    } catch (err) {
+      console.error('useAnchorStats: failed to fetch stats', err);
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch anchor stats');
+      }
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
@@ -126,5 +130,5 @@ export function useAnchorStats() {
     return () => { isMountedRef.current = false; };
   }, [fetchStats]);
 
-  return { stats, loading, refresh: fetchStats };
+  return { stats, loading, error, refresh: fetchStats };
 }

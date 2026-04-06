@@ -78,6 +78,119 @@ describe('API Key CRUD — key generation security', () => {
   });
 });
 
+describe('API Key CRUD — AUTH-06 ORG_ADMIN role enforcement', () => {
+  // Use supertest-like approach: import the router, mount it, and test via Express
+  // Since we mock db, we test the role-check logic directly via handler extraction
+
+  function mockReqRes(userId: string | undefined) {
+    const req = {
+      authUserId: userId,
+      hmacSecret: TEST_HMAC_SECRET,
+      body: { name: 'Test Key' },
+      params: { keyId: 'key-123' },
+    } as unknown as import('express').Request;
+
+    const res = {
+      status: vi.fn().mockReturnThis(),
+      json: vi.fn().mockReturnThis(),
+      end: vi.fn(),
+    } as unknown as import('express').Response;
+
+    return { req, res };
+  }
+
+  async function mockProfileLookup(role: string | null) {
+    const { db } = await import('../../utils/db.js');
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({
+            data: { org_id: 'org-123', role },
+            error: null,
+          }),
+        }),
+      }),
+    });
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function getRouteHandler(router: any, method: string, path: string) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const layer = router.stack.find((l: any) =>
+      l.route?.path === path && l.route?.methods?.[method]
+    );
+    return layer?.route?.stack?.[0]?.handle;
+  }
+
+  it('rejects MEMBER role with 403 on POST /keys', async () => {
+    const { keysRouter } = await import('./keys.js');
+    await mockProfileLookup('MEMBER');
+    const { req, res } = mockReqRes('user-123');
+
+    const handler = getRouteHandler(keysRouter, 'post', '/');
+    expect(handler).toBeDefined();
+    await handler(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('admin') })
+    );
+  });
+
+  it('rejects MEMBER role with 403 on GET /keys', async () => {
+    const { keysRouter } = await import('./keys.js');
+    await mockProfileLookup('MEMBER');
+    const { req, res } = mockReqRes('user-123');
+
+    const handler = getRouteHandler(keysRouter, 'get', '/');
+    expect(handler).toBeDefined();
+    await handler(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('admin') })
+    );
+  });
+
+  it('rejects MEMBER role with 403 on PATCH /keys/:keyId', async () => {
+    const { keysRouter } = await import('./keys.js');
+    await mockProfileLookup('MEMBER');
+    const { req, res } = mockReqRes('user-123');
+    req.body = { name: 'Updated' };
+
+    const handler = getRouteHandler(keysRouter, 'patch', '/:keyId');
+    expect(handler).toBeDefined();
+    await handler(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('admin') })
+    );
+  });
+
+  it('rejects MEMBER role with 403 on DELETE /keys/:keyId', async () => {
+    const { keysRouter } = await import('./keys.js');
+    await mockProfileLookup('MEMBER');
+    const { req, res } = mockReqRes('user-123');
+
+    const handler = getRouteHandler(keysRouter, 'delete', '/:keyId');
+    expect(handler).toBeDefined();
+    await handler(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.stringContaining('admin') })
+    );
+  });
+
+  it('rejects null role as non-admin', async () => {
+    const { keysRouter } = await import('./keys.js');
+    await mockProfileLookup(null as unknown as string);
+    const { req, res } = mockReqRes('user-123');
+
+    const handler = getRouteHandler(keysRouter, 'get', '/');
+    expect(handler).toBeDefined();
+    await handler(req, res, vi.fn());
+    expect(res.status).toHaveBeenCalledWith(403);
+  });
+});
+
 describe('API Key CRUD — validation schemas', () => {
   it('CreateKeySchema accepts valid input', async () => {
     const { z } = await import('zod');

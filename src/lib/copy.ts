@@ -522,6 +522,8 @@ export const API_KEY_LABELS = {
   UNLIMITED_TIER: 'Unlimited',
   RESET_DATE: 'Resets on',
   PER_KEY_BREAKDOWN: 'Usage by Key',
+  USAGE_UNAVAILABLE: 'Usage data unavailable — worker service not connected',
+  USAGE_CREATE_KEY_HINT: 'Usage metrics will appear once you create your first API key',
 } as const;
 
 // =============================================================================
@@ -595,6 +597,8 @@ export const ISSUE_CREDENTIAL_LABELS = {
   ISSUE_BUTTON: 'Issue Credential',
   VERIFICATION_LINK: 'Verification Link',
   COPY_LINK_ARIA: 'Copy verification link',
+  HINT_UPLOAD_DOCUMENT: 'Upload a document to continue.',
+  HINT_SELECT_TYPE: 'Select a credential type to continue.',
 } as const;
 
 // =============================================================================

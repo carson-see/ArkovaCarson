@@ -5,7 +5,7 @@
  * Shows total usage, per-key breakdown, and quota progress.
  */
 
-import { Loader2, BarChart3, AlertCircle } from 'lucide-react';
+import { Loader2, BarChart3 } from 'lucide-react';
 import {
   Card,
   CardContent,
@@ -83,15 +83,19 @@ export function ApiUsageDashboard({
 
   if (error) {
     const isNetworkError = error.toLowerCase().includes('failed to fetch') || error.toLowerCase().includes('networkerror');
+    const isAuthError = error.toLowerCase().includes('authentication') || error.toLowerCase().includes('401') || error.toLowerCase().includes('unauthorized');
+    const friendlyMessage = isNetworkError
+      ? API_KEY_LABELS.USAGE_UNAVAILABLE
+      : isAuthError
+        ? API_KEY_LABELS.USAGE_CREATE_KEY_HINT
+        : error;
     return (
       <Card className="shadow-card-rest">
         <CardContent className="py-8">
           <div className="flex flex-col items-center text-center gap-2">
-            <AlertCircle className="h-6 w-6 text-muted-foreground" />
+            <BarChart3 className="h-6 w-6 text-muted-foreground" />
             <p className="text-sm font-medium text-muted-foreground">
-              {isNetworkError
-                ? 'Usage data unavailable — worker service not connected'
-                : error}
+              {friendlyMessage}
             </p>
           </div>
         </CardContent>

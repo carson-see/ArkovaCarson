@@ -1,5 +1,5 @@
 # GEO & SEO Optimization Stories
-_Last updated: 2026-04-06 | 7/17 COMPLETE, 4/17 PARTIAL, 6/17 NOT STARTED_
+_Last updated: 2026-04-06 | 12/17 COMPLETE, 2/17 PARTIAL, 3/17 NOT STARTED_
 
 ## Group Overview
 
@@ -44,9 +44,9 @@ Full on-page SEO audit conducted via live site analysis. **Overall score: 57/100
 
 | Status | Count |
 |--------|-------|
-| COMPLETE | 7 |
-| PARTIAL | 4 |
-| NOT STARTED | 6 |
+| COMPLETE | 12 |
+| PARTIAL | 2 |
+| NOT STARTED | 3 |
 
 ---
 
@@ -562,7 +562,7 @@ As a security-conscious enterprise evaluating Arkova, I need proper security hea
 
 ## GEO-13: On-Page SEO Critical Fixes (Title, H1, Meta, Keywords)
 
-**Status:** PARTIAL (2026-03-31 — app pages done via `usePageMeta` hook; marketing site homepage/H1/ResearchPage still needed)
+**Status:** COMPLETE (2026-04-06 — title has "Document Verification Platform", H1 has "Document Verification", per-page meta descriptions via prerender, /research has unique description)
 **Priority:** CRITICAL (single biggest ranking signal gap — audit score 57/100)
 **Dependencies:** None
 **Estimated Points:** 3
@@ -605,7 +605,7 @@ As a search engine indexing arkova.ai, I need target keywords in the title tag, 
 
 ## GEO-14: Fix Soft 404s (Critical Indexing Issue)
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (2026-04-06 — NotFoundPage.tsx with Arkova branding, catch-all Route, 404.html prerendered, catch-all rewrite removed from vercel.json so Vercel serves 404 status)
 **Priority:** CRITICAL (causes index bloat and confuses crawlers)
 **Dependencies:** None
 **Estimated Points:** 2
@@ -648,7 +648,7 @@ As a search engine crawler, I need nonexistent URLs to return a proper 404 statu
 
 ## GEO-15: Image Alt Text + Product Screenshots
 
-**Status:** NOT STARTED
+**Status:** PARTIAL (2026-04-06 — team photos now have full names + roles in alt text: "Carson Seeger, Founder & CEO at Arkova", etc. Product screenshots still needed.)
 **Priority:** HIGH (image SEO score 3/10)
 **Dependencies:** None
 **Estimated Points:** 2
@@ -692,7 +692,7 @@ As a search engine processing images on arkova.ai, I need descriptive alt text t
 
 ## GEO-16: Add Traction Numbers + Social Proof to Homepage
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (2026-04-06 — "Platform Traction" section on homepage with 166K+ Secured Credentials, 320K+ Public Records, 1.4M+ Anchored Documents, 99.9% Uptime. SSR prerendered.)
 **Priority:** HIGH (content quality score 7/10, missing key trust signals)
 **Dependencies:** None
 **Estimated Points:** 1
@@ -733,7 +733,7 @@ As a potential customer or investor evaluating Arkova, I need to see specific tr
 
 ## GEO-17: Internal Linking + Contextual Cross-References
 
-**Status:** NOT STARTED
+**Status:** COMPLETE (2026-04-06 — 8 contextual body links: Infrastructure→/research, AI Intelligence→/research/agentic-recordkeeping, API→/docs/api + /roadmap, Use Cases→/research/real-cost-of-audit-verification, How It Works→/docs/quickstart, Privacy→/whitepaper, CTA→/contact)
 **Priority:** HIGH (internal links score 5/10)
 **Dependencies:** GEO-08 (more content pages to link to)
 **Estimated Points:** 2

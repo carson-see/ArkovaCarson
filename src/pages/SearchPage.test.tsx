@@ -106,6 +106,6 @@ describe('SearchPage', () => {
 
   it('renders example query buttons', () => {
     renderSearchPage();
-    expect(screen.getByText('Harvard University')).toBeInTheDocument();
+    expect(screen.getByText('Arkova')).toBeInTheDocument();
   });
 });

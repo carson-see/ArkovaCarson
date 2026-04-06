@@ -58,7 +58,8 @@ app.use(correlationIdMiddleware);
 
 // ─── Health check — always available, no auth (Constitution 1.9) ───
 // P7-TS-06: Enhanced with subsystem checks (anchoring, KMS, fee rate)
-app.get('/health', async (req, res) => {
+// BUG-UAT-12: CORS enabled so frontend System Health page can reach /health
+app.get('/health', corsMiddleware, async (req, res) => {
   const detailed = req.query.detailed === 'true';
 
   const deps: HealthCheckDeps = {

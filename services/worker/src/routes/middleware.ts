@@ -20,7 +20,9 @@ const CORS_ALLOWED_ORIGINS: string[] = (() => {
   if (config.corsAllowedOrigins) {
     config.corsAllowedOrigins.split(',').map(o => o.trim()).filter(Boolean).forEach(o => origins.add(o));
   }
-  if (origins.size === 0) origins.add('http://localhost:5173');
+  // BUG-UAT-12: Always include production frontend origin so admin pages work
+  origins.add('https://app.arkova.ai');
+  if (origins.size === 1) origins.add('http://localhost:5173');
   return [...origins];
 })();
 
