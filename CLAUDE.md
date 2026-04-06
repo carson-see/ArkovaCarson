@@ -251,11 +251,11 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Phase 1.5 Foundation | 15/16 | 1 | 0 | 94% |
 | INFRA Edge & Ingress | 7/8 | 1 | 0 | 88% |
 | UAT + UF | 27/27 | 0 | 0 | 100% |
-| GEO & SEO | 6/12 | 1 | 5 | 50% |
+| GEO & SEO | 12/17 | 2 | 3 | 71% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
-| **Total** | **196/211** | **2/211** | **13/211** | **~93%** |
+| **Total** | **202/216** | **2/216** | **12/216** | **~94%** |
 
 ### Incomplete Stories
 
@@ -284,8 +284,13 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 **INFRA (1 partial):**
 - INFRA-07: Sentry integration — code complete (30 tests + vite plugin + init), needs SENTRY_AUTH_TOKEN + DSN env vars in Vercel/Cloud Run
 
-**GEO & SEO (5 not started, 1 partial):**
-- See `docs/stories/15_geo_seo.md` and `docs/BACKLOG.md` for details
+**GEO & SEO (3 not started, 2 partial):**
+- GEO-02: LinkedIn entity collision — PARTIAL (sameAs fixed, LinkedIn page + Wikidata = external tasks)
+- GEO-09: Community & brand presence — NOT STARTED (external: ProductHunt, Reddit, G2, Crunchbase)
+- GEO-10: IndexNow for Bing — NOT STARTED
+- GEO-11: YouTube explainer content — NOT STARTED
+- GEO-15: Image alt text — PARTIAL (full names done, product screenshots needed)
+- See `docs/stories/15_geo_seo.md` for details
 
 **~~ATS & Background Checks (8/8 COMPLETE):~~**
 - All 8 stories implemented: employment/education verification forms, batch API, ATS webhooks, credential portfolios, evidence upload, OpenAPI docs, expiry alerts.
