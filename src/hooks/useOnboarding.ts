@@ -56,7 +56,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
     try {
       // For INDIVIDUAL, just set the role
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'update_profile_onboarding',
         { p_role: role }
       );
@@ -92,7 +92,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
       try {
         // Try the onboarding RPC first (works for new users)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: rpcData, error: rpcError } = await (supabase.rpc as any)(
+        const { data: rpcData, error: rpcError } = await (supabase as any).rpc(
           'update_profile_onboarding',
           {
             p_role: 'ORG_ADMIN',
@@ -205,7 +205,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
   const lookupOrgByEmail = useCallback(async (email: string): Promise<OrgMatch | null> => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'lookup_org_by_email_domain',
         { p_email: email }
       );
@@ -226,7 +226,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'join_org_by_domain',
         { p_org_id: orgId }
       );

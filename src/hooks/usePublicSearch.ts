@@ -64,7 +64,7 @@ export function usePublicSearch(): UsePublicSearchReturn {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'search_public_issuers',
         { p_query: query.trim(), p_limit: 20 }
       );
@@ -114,7 +114,7 @@ export function useIssuerRegistry(): UseIssuerRegistryReturn {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'get_public_issuer_registry',
         { p_org_id: orgId, p_limit: 20, p_offset: page * 20 }
       );
@@ -184,7 +184,7 @@ export function useOrgProfile(): UseOrgProfileReturn {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'get_public_org_profile',
         { p_org_id: orgId }
       );

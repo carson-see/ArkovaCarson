@@ -251,6 +251,9 @@ function isPrivateIpv6(ip: string): boolean {
 
 /** Validate domain format to prevent SSRF attacks */
 function isValidDomain(domain: string): boolean {
+  // ARK-SEC-002: Block control characters, whitespace, newlines (log/header injection)
+  if (/[\s\r\n\t\x00-\x1f]/.test(domain)) return false;
+
   // Must be a simple domain (no protocol, no path, no port, no userinfo)
   if (domain.includes('/') || domain.includes(':') || domain.includes('@')) {
     return false;

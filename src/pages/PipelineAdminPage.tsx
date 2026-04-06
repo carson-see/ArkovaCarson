@@ -124,46 +124,44 @@ export function PipelineAdminPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      // Try RPC first (migration 0106) — single call for all stats
-      const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
-
+      // Use worker endpoint (service_role, bypasses RLS) as primary source
       let totalRecords = 0;
       let anchoredRecords = 0;
       let pendingRecords = 0;
       let embeddedRecords = 0;
-
-      if (!rpcError && pipelineStats) {
-        totalRecords = pipelineStats.total_records ?? 0;
-        anchoredRecords = pipelineStats.anchored_records ?? 0;
-        pendingRecords = pipelineStats.pending_records ?? 0;
-        embeddedRecords = pipelineStats.embedded_records ?? 0;
-      } else {
-        // Fallback: direct count queries when RPC function doesn't exist
-        const { count: total } = await dbAny.from('public_records').select('*', { count: 'exact', head: true });
-        const { count: anchored } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).not('anchor_id', 'is', null);
-        const { count: pending } = await dbAny.from('public_records').select('*', { count: 'exact', head: true }).is('anchor_id', null);
-        const { count: embedded } = await dbAny.from('public_record_embeddings').select('*', { count: 'exact', head: true });
-        totalRecords = total ?? 0;
-        anchoredRecords = anchored ?? 0;
-        pendingRecords = pending ?? 0;
-        embeddedRecords = embedded ?? 0;
-      }
-
-      // Records by source — use RPC to avoid PostgREST row limit (was only returning 1000)
-      const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
       const bySource: Record<string, number> = {};
-      if (sourceCounts && Array.isArray(sourceCounts)) {
-        (sourceCounts as Array<{ source: string; count: number }>).forEach((r) => {
-          bySource[r.source] = r.count;
-        });
-      } else {
-        // Fallback: individual count queries per known source
-        for (const src of ['edgar', 'federal_register', 'dapip', 'openalex', 'uspto', 'acnc']) {
-          const { count } = await dbAny
-            .from('public_records')
-            .select('*', { count: 'exact', head: true })
-            .eq('source', src);
-          if (count && count > 0) bySource[src] = count;
+
+      try {
+        const response = await workerFetch('/api/admin/pipeline-stats', { method: 'GET' });
+        if (response.ok) {
+          const data = await response.json() as {
+            totalRecords: number; anchoredRecords: number;
+            pendingRecords: number; embeddedRecords: number;
+            bySource: Record<string, number>;
+          };
+          totalRecords = data.totalRecords;
+          anchoredRecords = data.anchoredRecords;
+          pendingRecords = data.pendingRecords;
+          embeddedRecords = data.embeddedRecords;
+          Object.assign(bySource, data.bySource);
+        } else {
+          throw new Error(`Worker returned ${response.status}`);
+        }
+      } catch {
+        // Fallback: direct Supabase RPC (may fail due to RLS)
+        const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
+        if (!rpcError && pipelineStats) {
+          totalRecords = pipelineStats.total_records ?? 0;
+          anchoredRecords = pipelineStats.anchored_records ?? 0;
+          pendingRecords = pipelineStats.pending_records ?? 0;
+          embeddedRecords = pipelineStats.embedded_records ?? 0;
+        }
+
+        const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
+        if (sourceCounts && Array.isArray(sourceCounts)) {
+          (sourceCounts as Array<{ source: string; count: number }>).forEach((r: { source: string; count: number }) => {
+            bySource[r.source] = r.count;
+          });
         }
       }
 

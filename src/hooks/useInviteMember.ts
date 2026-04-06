@@ -38,7 +38,7 @@ export function useInviteMember(): UseInviteMemberReturn {
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: rpcError } = await (supabase.rpc as any)('invite_member', {
+      const { error: rpcError } = await (supabase as any).rpc('invite_member', {
         invite_email: email,
         invite_role: role,
         org_id: orgId,

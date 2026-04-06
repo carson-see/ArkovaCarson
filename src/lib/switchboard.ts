@@ -64,7 +64,7 @@ export async function getFlag(flagId: FlagId): Promise<boolean> {
 
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.rpc as any)('get_flag', {
+    const { data, error } = await (supabase as any).rpc('get_flag', {
       p_flag_key: flagId,
     });
 
