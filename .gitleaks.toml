@@ -1,5 +1,6 @@
 # Gitleaks configuration for Arkova
 # See: https://github.com/gitleaks/gitleaks#configuration
+# SEC-015: Test files are no longer blanket-excluded. Use specific regex allowlists.
 
 [extend]
 # Use the default gitleaks rules as a base
@@ -13,8 +14,15 @@ useDefault = true
   commits = [
     "9710074050c09cc26152ddbe9033601f01126b9d",
   ]
-  paths = [
-    '''\.test\.ts$''',
-    '''\.test\.tsx$''',
-    '''\.spec\.ts$''',
+  regexes = [
+    # Supabase local dev JWT (anon key) — publicly documented, not a secret
+    '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24''',
+    # Supabase local dev JWT (service_role key) — publicly documented
+    '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSI''',
+    # Test fixture API key prefixes (ak_test_)
+    '''ak_test_[a-f0-9]{16,}''',
+    # Mock/test HMAC secrets used in test fixtures
+    '''test-hmac-secret''',
+    # Supabase local dev URL
+    '''http://127\.0\.0\.1:54321''',
   ]

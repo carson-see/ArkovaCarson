@@ -10,6 +10,7 @@
  */
 
 import { Router, Request } from 'express';
+import crypto from 'node:crypto';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rateLimit } from '../utils/rateLimit.js';
@@ -72,18 +73,16 @@ cronRouter.use(cronJobsLimiter);
  * Non-production: open for local development.
  */
 async function verifyCronAuth(req: Request): Promise<boolean> {
-  if (config.nodeEnv !== 'production') return true;
+  // SEC-028: Only bypass auth in local development, not staging/preview
+  if (config.nodeEnv === 'development' || config.nodeEnv === 'test') return true;
 
-  // Method 1: Shared secret header
+  // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual)
   const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
   if (config.cronSecret && cronSecretHeader) {
-    const expected = config.cronSecret;
-    if (cronSecretHeader.length === expected.length) {
-      let mismatch = 0;
-      for (let i = 0; i < expected.length; i++) {
-        mismatch |= cronSecretHeader.charCodeAt(i) ^ expected.charCodeAt(i);
-      }
-      if (mismatch === 0) return true;
+    const expected = Buffer.from(config.cronSecret);
+    const actual = Buffer.from(cronSecretHeader);
+    if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
+      return true;
     }
     logger.warn('Invalid X-Cron-Secret header');
     return false;
