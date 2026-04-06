@@ -22,7 +22,7 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
-| Compliance & Audit Readiness (SCRUM-426) | 8 | 7 | 1 | No |
+| Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -595,7 +595,7 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 
 | ID | Story | Priority | Status | Jira | Depends On | Effort |
 |----|-------|----------|--------|------|------------|--------|
-| COMP-01 | Evidence model explainer on verification pages | P0 | NOT STARTED | SCRUM-427 | None | Medium |
+| COMP-01 | Evidence model explainer on verification pages | P0 | **COMPLETE** | SCRUM-427 | None | Medium |
 | COMP-02 | Credential provenance timeline | P1 | **COMPLETE** | SCRUM-428 | None | Large |
 | COMP-03 | Independent verification guide (verify without Arkova) | P0 | **COMPLETE** | SCRUM-429 | None | Medium |
 | COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | **COMPLETE** | SCRUM-430 | None | Small |
