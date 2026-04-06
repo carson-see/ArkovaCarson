@@ -66,6 +66,7 @@ function OrganizationSchema() {
           sameAs: [
             'https://www.linkedin.com/company/arkovatech',
             'https://x.com/arkovatech',
+            'https://www.youtube.com/@arkova',
           ],
           contactPoint: {
             '@type': 'ContactPoint',

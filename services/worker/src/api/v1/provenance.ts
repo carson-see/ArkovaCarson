@@ -9,15 +9,104 @@ import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
-const router = Router();
-
-interface ProvenanceEvent {
+export interface ProvenanceEvent {
   event_type: string;
   timestamp: string;
   detail: string;
   evidence_ref?: string;
   actor?: string;
 }
+
+export interface AnchorProvenanceData {
+  public_id: string;
+  fingerprint: string;
+  status: string;
+  created_at: string;
+  updated_at?: string;
+  chain_tx_id?: string | null;
+  chain_block_height?: number | null;
+  chain_timestamp?: string | null;
+  revoked_at?: string | null;
+  submitted_at?: string | null;
+  secured_at?: string | null;
+  tx_id?: string | null;
+  batch_id?: string | null;
+  id?: string;
+  org_id?: string | null;
+  revocation_reason?: string | null;
+}
+
+/**
+ * Build a provenance timeline from anchor data and audit events.
+ * Pure function — no DB calls, fully testable.
+ */
+export function buildProvenanceTimeline(
+  anchor: AnchorProvenanceData,
+  auditEvents: Array<{ event_type: string; created_at: string; actor_id: string | null }>,
+): ProvenanceEvent[] {
+  const events: ProvenanceEvent[] = [];
+
+  // 1. Credential created
+  events.push({
+    event_type: 'credential_created',
+    timestamp: anchor.created_at,
+    detail: `Credential ${anchor.public_id} created with fingerprint ${anchor.fingerprint?.substring(0, 16)}...`,
+  });
+
+  // 2. Submitted to network
+  if (anchor.submitted_at) {
+    const delay = new Date(anchor.submitted_at).getTime() - new Date(anchor.created_at).getTime();
+    events.push({
+      event_type: 'anchor_submitted',
+      timestamp: anchor.submitted_at,
+      detail: `Submitted to anchoring pipeline${delay > 0 ? ` (${Math.round(delay / 60000)}min after creation)` : ''}`,
+      evidence_ref: anchor.batch_id || undefined,
+    });
+  }
+
+  // 3. Network confirmed
+  const confirmedAt = anchor.secured_at ?? anchor.chain_timestamp;
+  const txId = anchor.tx_id ?? anchor.chain_tx_id;
+  if (confirmedAt) {
+    const delay = anchor.submitted_at
+      ? new Date(confirmedAt).getTime() - new Date(anchor.submitted_at).getTime()
+      : 0;
+    events.push({
+      event_type: 'network_confirmed',
+      timestamp: confirmedAt,
+      detail: `Confirmed on public network${delay > 0 ? ` (${Math.round(delay / 60000)}min after submission)` : ''}`,
+      evidence_ref: txId || undefined,
+    });
+  }
+
+  // 4. Verification queries from audit trail (anonymized)
+  for (const evt of auditEvents) {
+    if (evt.event_type === 'VERIFICATION_QUERIED' || evt.event_type === 'VERIFICATION_QUERY') {
+      events.push({
+        event_type: 'verification_query',
+        timestamp: evt.created_at,
+        detail: 'Third-party verification request',
+        actor: evt.actor_id ? 'anonymous' : undefined,
+      });
+    }
+  }
+
+  // 5. Revocation
+  if (anchor.revoked_at) {
+    events.push({
+      event_type: 'credential_revoked',
+      timestamp: anchor.revoked_at,
+      detail: `Revoked: ${anchor.revocation_reason || 'no reason provided'}`,
+    });
+  }
+
+  // Sort chronologically
+  events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  return events;
+}
+
+const router = Router();
 
 router.get('/:publicId/provenance', async (req: Request, res: Response) => {
   try {
@@ -36,46 +125,28 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
       return;
     }
 
-    const events: ProvenanceEvent[] = [];
-
-    // 1. Document uploaded / anchor created
-    events.push({
-      event_type: 'credential_created',
-      timestamp: anchor.created_at,
-      detail: `Credential ${anchor.public_id} created with fingerprint ${anchor.fingerprint?.substring(0, 16)}...`,
-    });
-
-    // 2. Submitted to network (if applicable)
-    if (anchor.submitted_at) {
-      const delay = new Date(anchor.submitted_at).getTime() - new Date(anchor.created_at).getTime();
-      events.push({
-        event_type: 'anchor_submitted',
-        timestamp: anchor.submitted_at,
-        detail: `Submitted to anchoring pipeline${delay > 0 ? ` (${Math.round(delay / 60000)}min after creation)` : ''}`,
-        evidence_ref: anchor.batch_id || undefined,
-      });
-    }
-
-    // 3. Secured on network
-    if (anchor.secured_at) {
-      const delay = anchor.submitted_at
-        ? new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime()
-        : 0;
-      events.push({
-        event_type: 'network_confirmed',
-        timestamp: anchor.secured_at,
-        detail: `Confirmed on public network${delay > 0 ? ` (${Math.round(delay / 60000)}min after submission)` : ''}`,
-        evidence_ref: anchor.tx_id || undefined,
-      });
-    }
-
-    // 4. Fetch signature events (Phase III)
+    // Fetch signature events (Phase III)
     const { data: signatures } = await (db as any)
       .from('signatures')
       .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')
       .eq('anchor_id', anchor.id)
       .order('created_at', { ascending: true });
 
+    // Fetch verification events from audit trail
+    const { data: verifyEvents } = await db
+      .from('audit_events')
+      .select('event_type, created_at, actor_id')
+      .eq('target_id', anchor.public_id)
+      .in('event_type', ['VERIFICATION_QUERIED', 'VERIFICATION_QUERY', 'signature.verified'])
+      .order('created_at', { ascending: true })
+      .limit(50);
+
+    const events = buildProvenanceTimeline(
+      anchor as unknown as AnchorProvenanceData,
+      (verifyEvents ?? []) as Array<{ event_type: string; created_at: string; actor_id: string | null }>,
+    );
+
+    // Add signature events from Phase III tables
     if (signatures) {
       for (const sig of signatures) {
         if (sig.signed_at) {
@@ -97,35 +168,7 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
       }
     }
 
-    // 5. Fetch verification events from audit trail
-    const { data: verifyEvents } = await db
-      .from('audit_events')
-      .select('event_type, created_at, metadata')
-      .eq('resource_id', anchor.id)
-      .in('event_type', ['VERIFICATION_QUERY', 'signature.verified'])
-      .order('created_at', { ascending: true })
-      .limit(50);
-
-    if (verifyEvents) {
-      for (const evt of verifyEvents) {
-        events.push({
-          event_type: 'verification_query',
-          timestamp: evt.created_at,
-          detail: 'Third-party verification request',
-        });
-      }
-    }
-
-    // 6. Revocation
-    if (anchor.revoked_at) {
-      events.push({
-        event_type: 'credential_revoked',
-        timestamp: anchor.revoked_at,
-        detail: `Revoked: ${anchor.revocation_reason || 'no reason provided'}`,
-      });
-    }
-
-    // Sort by timestamp
+    // Re-sort after adding signature events
     events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     // Flag anomalies

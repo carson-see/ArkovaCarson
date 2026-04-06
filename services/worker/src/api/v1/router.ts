@@ -64,6 +64,7 @@ import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { provenanceRouter } from './provenance.js';
 import { complianceTrendsRouter } from './complianceTrends.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
+import { keyInventoryRouter } from './key-inventory.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -175,13 +176,16 @@ router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);
 
+// ─── Credential Provenance Timeline — COMP-02 ───
+// MUST be before /verify to avoid route shadowing (same pattern as P8-S19)
+router.use('/verify', provenanceRouter);
+
 // Merkle proof endpoint — public, no payment required (BTC-003)
 router.use('/verify', verifyProofRouter);
 
 // Public verification — no auth required (API key optional for tracking)
 // x402 payment gate: returns 402 if no API key and no payment header
 router.use('/verify', requireScope('verify'), x402PaymentGate('/api/v1/verify'), verifyRouter);
-
 // Job status polling — API key required
 router.use('/jobs', requireScope('verify:batch'), jobsRouter);
 
@@ -287,12 +291,13 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
-
-// ─── Credential Provenance Timeline — COMP-02 ───
-router.use('/verify', provenanceRouter);
+// ─── Key Inventory — COMP-05 (SOC 2 CC6.1 audit evidence) ───
+// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
+router.use('/', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
 
 // ─── Compliance Trends — COMP-07 ───
-router.use('/compliance/trends', requireAuth, complianceTrendsRouter);
+// Feature-gated + JWT auth + rate limited
+router.use('/compliance/trends', adesSignatureGate(), requireAuth, aiRateLimiter, complianceTrendsRouter);
 
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)

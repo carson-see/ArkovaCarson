@@ -11,23 +11,24 @@ import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
-import { ROUTES } from '@/lib/routes';
 
-const RETENTION_TABLE = [
-  { category: 'Anchor records (fingerprints, status, timestamps)', period: '10 years', basis: 'eIDAS Art. 24(2) — qualified trust service retention', deletion: 'Automated after retention period' },
-  { category: 'Signature records', period: '10 years', basis: 'eIDAS Art. 24(2)', deletion: 'Automated after retention period' },
-  { category: 'Timestamp tokens (RFC 3161)', period: '10 years', basis: 'eIDAS Art. 24(2)', deletion: 'Automated after retention period' },
-  { category: 'Audit events', period: '7 years', basis: 'SOC 2 Trust Services Criteria', deletion: 'Automated after retention period' },
-  { category: 'User accounts & profiles', period: 'Until deletion requested', basis: 'GDPR Art. 6(1)(b) — contract performance', deletion: 'Self-service via Settings > Delete Account' },
-  { category: 'Organization data', period: 'Until org deletion requested', basis: 'GDPR Art. 6(1)(b)', deletion: 'Admin request or account deletion' },
-  { category: 'API keys (hashed)', period: 'Until revoked + 90 days', basis: 'Security audit trail', deletion: 'Automated 90 days after revocation' },
-  { category: 'Network anchor records', period: 'Permanent', basis: 'Immutable public ledger', deletion: 'Cannot be deleted (contains no PII)' },
+const L = DATA_RETENTION_LABELS;
+
+const RETENTION_SCHEDULE = [
+  { category: L.CAT_ANCHOR_RECORDS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_TSP, deletion: L.DELETION_NO_PROOF },
+  { category: L.CAT_SIGNATURE_RECORDS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_SIG, deletion: L.DELETION_NO_LEGAL },
+  { category: L.CAT_TIMESTAMP_TOKENS, period: L.PERIOD_INDEFINITE, basis: L.BASIS_EIDAS_TS, deletion: L.DELETION_NO_LEGAL },
+  { category: L.CAT_AUDIT_EVENTS, period: L.PERIOD_7_YEARS, basis: L.BASIS_SOC2_SOX, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_BILLING_EVENTS, period: L.PERIOD_7_YEARS, basis: L.BASIS_SOX_FINANCIAL, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_USER_ACCOUNTS, period: L.PERIOD_UNTIL_DELETION, basis: L.BASIS_GDPR_SERVICE, deletion: L.DELETION_ANONYMIZE },
+  { category: L.CAT_AI_METADATA, period: L.PERIOD_2_YEARS, basis: L.BASIS_AI_AUDIT, deletion: L.DELETION_ARCHIVE },
+  { category: L.CAT_APP_LOGS, period: L.PERIOD_1_YEAR, basis: L.BASIS_OPERATIONAL, deletion: L.DELETION_AUTOMATED },
 ];
 
 export function DataRetentionPage() {
   usePageMeta({
-    title: DATA_RETENTION_LABELS.PAGE_TITLE + ' — Arkova',
-    description: DATA_RETENTION_LABELS.PAGE_DESCRIPTION,
+    title: L.PAGE_TITLE + ' — Arkova',
+    description: L.PAGE_DESCRIPTION,
   });
 
   return (
@@ -42,15 +43,15 @@ export function DataRetentionPage() {
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-12">
-        <h1 className="text-3xl font-bold tracking-tight mb-4">{DATA_RETENTION_LABELS.PAGE_TITLE}</h1>
-        <p className="text-muted-foreground mb-8">{DATA_RETENTION_LABELS.INTRO}</p>
+        <h1 className="text-3xl font-bold tracking-tight mb-4">{L.PAGE_TITLE}</h1>
+        <p className="text-muted-foreground mb-8">{L.INTRO}</p>
 
         {/* Retention Table */}
         <Card className="mb-8">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5 text-primary" />
-              Retention Periods by Data Category
+              {L.SECTION_SCHEDULE}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -58,19 +59,19 @@ export function DataRetentionPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b">
-                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Data Category</th>
-                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Retention Period</th>
-                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">Legal Basis</th>
-                    <th className="text-left py-2 font-medium text-muted-foreground">Deletion Method</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_CATEGORY}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_PERIOD}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground hidden sm:table-cell">{L.TABLE_HEADER_BASIS}</th>
+                    <th className="text-left py-2 font-medium text-muted-foreground hidden md:table-cell">{L.TABLE_HEADER_DELETION}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {RETENTION_TABLE.map(row => (
+                  {RETENTION_SCHEDULE.map(row => (
                     <tr key={row.category} className="border-b last:border-0">
                       <td className="py-3 pr-4">{row.category}</td>
                       <td className="py-3 pr-4 font-medium">{row.period}</td>
-                      <td className="py-3 pr-4 text-muted-foreground">{row.basis}</td>
-                      <td className="py-3 text-muted-foreground">{row.deletion}</td>
+                      <td className="py-3 pr-4 text-muted-foreground hidden sm:table-cell">{row.basis}</td>
+                      <td className="py-3 text-muted-foreground hidden md:table-cell">{row.deletion}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -84,7 +85,7 @@ export function DataRetentionPage() {
           <CardContent className="pt-6">
             <div className="flex gap-3">
               <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-              <p className="text-sm text-muted-foreground">{DATA_RETENTION_LABELS.NETWORK_NOTE}</p>
+              <p className="text-sm text-muted-foreground">{L.NETWORK_NOTE}</p>
             </div>
           </CardContent>
         </Card>
@@ -94,11 +95,11 @@ export function DataRetentionPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-red-400" />
-              {DATA_RETENTION_LABELS.ERASURE_TITLE}
+              {L.ERASURE_TITLE}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">{DATA_RETENTION_LABELS.ERASURE_BODY}</p>
+            <p className="text-sm text-muted-foreground">{L.ERASURE_BODY}</p>
           </CardContent>
         </Card>
 
@@ -106,20 +107,27 @@ export function DataRetentionPage() {
         <Card className="mb-8">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Scale className="h-5 w-5 text-blue-400" />
-              {DATA_RETENTION_LABELS.LEGAL_HOLD_TITLE}
+              <Scale className="h-5 w-5 text-primary" />
+              {L.LEGAL_HOLD_TITLE}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">{DATA_RETENTION_LABELS.LEGAL_HOLD_BODY}</p>
+            <p className="text-sm text-muted-foreground">{L.LEGAL_HOLD_BODY}</p>
           </CardContent>
         </Card>
-
-        {/* Back link */}
-        <div className="text-center pt-4 border-t">
-          <Link to={ROUTES.PRIVACY} className="text-sm text-primary hover:underline">Back to Privacy Policy</Link>
-        </div>
       </main>
+
+      <footer className="border-t">
+        <div className="mx-auto max-w-4xl px-6 py-6">
+          <nav className="flex flex-wrap justify-center gap-4 text-xs text-muted-foreground mb-3" aria-label="Site navigation">
+            <Link to="/about" className="hover:text-foreground transition-colors">About</Link>
+            <Link to="/privacy" className="hover:text-foreground transition-colors">Privacy</Link>
+            <Link to="/terms" className="hover:text-foreground transition-colors">Terms</Link>
+            <Link to="/contact" className="hover:text-foreground transition-colors">Contact</Link>
+          </nav>
+          <p className="text-center text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Arkova</p>
+        </div>
+      </footer>
     </div>
   );
 }

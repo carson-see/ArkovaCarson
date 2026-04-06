@@ -3,13 +3,10 @@
   "configurations": [
     {
       "name": "arkova-dev",
-      "runtimeExecutable": "/opt/homebrew/bin/npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": ["-c", "export PATH=/opt/homebrew/bin:$PATH && npm run dev -- --port $PORT"],
       "port": 5173,
-      "autoPort": true,
-      "env": {
-        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-      }
+      "autoPort": true
     }
   ]
 }

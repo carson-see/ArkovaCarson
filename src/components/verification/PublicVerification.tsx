@@ -75,6 +75,10 @@ interface PublicAnchorData {
   bitcoin_block?: number;
   /** BETA-11: Explorer URL */
   explorer_url?: string;
+  /** BETA-11: Explorer URL */
+  tx_id?: string;
+  /** COMP-01: Jurisdiction for eIDAS legal effect */
+  jurisdiction?: string;
   /** BETA-12: Immutable description */
   description?: string;
   error?: string;
@@ -397,11 +401,10 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <EvidenceLayersSection
               layers={[
-                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.tx_id ? `Network record: ${data.tx_id.substring(0, 16)}...` : undefined },
+                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.network_receipt_id ? `Network record: ${data.network_receipt_id.substring(0, 16)}...` : undefined },
                 { type: 'signature', present: false },
                 { type: 'timestamp', present: false },
               ]}
-              jurisdiction={data.jurisdiction}
             />
           </>
         )}
