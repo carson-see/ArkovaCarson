@@ -47,7 +47,7 @@ interface AttestationResult {
   subject_identifier: string;
 }
 
-const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+const DEFAULT_BASE_URL = 'https://api.arkova.ai';
 
 // ─── HTTP Client ───────────────────────────────────────────────────────
 
