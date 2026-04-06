@@ -524,23 +524,21 @@ export async function getDeadLetterEntries(
  * Mark a DLQ entry as resolved (after manual retry or dismissal).
  * ARK-SEC-026: Requires orgId to verify ownership before resolving.
  */
-export async function resolveDlqEntry(entryId: string, orgId?: string): Promise<boolean> {
+export async function resolveDlqEntry(entryId: string, orgId: string): Promise<boolean> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
 
-  // ARK-SEC-026: Verify the DLQ entry belongs to the requesting org
-  if (orgId) {
-    const { data: entry } = await dbAny
-      .from('webhook_dead_letter_queue')
-      .select('endpoint_id, webhook_endpoints(org_id)')
-      .eq('id', entryId)
-      .single();
+  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org
+  const { data: entry } = await dbAny
+    .from('webhook_dead_letter_queue')
+    .select('endpoint_id, webhook_endpoints(org_id)')
+    .eq('id', entryId)
+    .single();
 
-    const entryOrgId = entry?.webhook_endpoints?.org_id;
-    if (!entryOrgId || entryOrgId !== orgId) {
-      logger.warn({ entryId, orgId }, 'DLQ entry does not belong to requesting org');
-      return false;
-    }
+  const entryOrgId = entry?.webhook_endpoints?.org_id;
+  if (!entryOrgId || entryOrgId !== orgId) {
+    logger.warn({ entryId, orgId }, 'DLQ entry does not belong to requesting org');
+    return false;
   }
 
   const { error } = await dbAny

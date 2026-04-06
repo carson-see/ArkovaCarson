@@ -150,37 +150,41 @@ export function useTreasuryBalance() {
         }
       }
 
-      if (isMountedRef.current) {
+      // If ALL mempool calls failed, fall back to worker API
+      const allFailed = !addressRes?.ok && !feeRes?.ok;
+      if (allFailed && isMountedRef.current) {
+        try {
+          const response = await workerFetch('/api/treasury/status', { method: 'GET' });
+          if (response.ok && isMountedRef.current) {
+            const data = await response.json() as {
+              wallet?: { balanceSats: number };
+              fees?: { currentRateSatPerVbyte: number };
+            };
+            if (data.wallet) {
+              setBalance({
+                confirmed: data.wallet.balanceSats,
+                unconfirmed: 0,
+                total: data.wallet.balanceSats,
+                btcPrice: null,
+                totalUsd: null,
+              });
+            }
+            if (data.fees) {
+              const rate = data.fees.currentRateSatPerVbyte;
+              setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
+            }
+          }
+        } catch (workerErr) {
+          if (isMountedRef.current) {
+            setError(workerErr instanceof Error ? workerErr.message : 'Failed to fetch treasury data');
+          }
+        }
+      } else if (isMountedRef.current) {
         setError(null);
       }
-    } catch {
-      // Mempool.space completely unreachable — fall back to worker API
-      try {
-        const response = await workerFetch('/api/treasury/status', { method: 'GET' });
-        if (response.ok && isMountedRef.current) {
-          const data = await response.json() as {
-            wallet?: { balanceSats: number };
-            fees?: { currentRateSatPerVbyte: number };
-          };
-          if (data.wallet) {
-            setBalance({
-              confirmed: data.wallet.balanceSats,
-              unconfirmed: 0,
-              total: data.wallet.balanceSats,
-              btcPrice: null,
-              totalUsd: null,
-            });
-          }
-          if (data.fees) {
-            const rate = data.fees.currentRateSatPerVbyte;
-            setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
-          }
-          setError(null);
-        }
-      } catch (workerErr) {
-        if (isMountedRef.current) {
-          setError(workerErr instanceof Error ? workerErr.message : 'Failed to fetch treasury data');
-        }
+    } catch (err) {
+      if (isMountedRef.current) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch treasury data');
       }
     } finally {
       if (isMountedRef.current) {

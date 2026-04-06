@@ -5,7 +5,7 @@
  *
  * Returns public_records ingestion, anchoring, and embedding counts.
  * Uses service_role to bypass RLS on public_records tables.
- * Gated behind platform admin email whitelist.
+ * Gated behind platform admin DB flag (is_platform_admin in profiles).
  *
  * @see SCRUM-457
  */
