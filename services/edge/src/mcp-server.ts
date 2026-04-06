@@ -121,9 +121,21 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     {},
     async () => {
       try {
-        const { data, error } = await config.supabase.from('agents').select('id, name, agent_type, status, allowed_scopes, framework, created_at').eq('status', 'active');
-        if (error) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: error.message }) }] };
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: data ?? [] }, null, 2) }] };
+        const resp = await fetch(
+          `${config.supabaseUrl}/rest/v1/agents?status=eq.active&select=id,name,agent_type,status,allowed_scopes,framework,created_at`,
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              apikey: config.supabaseKey,
+              Authorization: `Bearer ${config.supabaseKey}`,
+            },
+          },
+        );
+        if (!resp.ok) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `HTTP ${resp.status}` }) }] };
+        }
+        const agents = await resp.json();
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: agents ?? [] }, null, 2) }] };
       } catch (error) {
         return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }] };
       }
