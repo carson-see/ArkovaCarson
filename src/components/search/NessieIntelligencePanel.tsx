@@ -169,7 +169,7 @@ export function NessieIntelligencePanel() {
     return labels[source] ?? source;
   };
 
-  const activeTask = TASK_TYPES.find((t) => t.value === taskType) ?? TASK_TYPES[0];
+  const _activeTask = TASK_TYPES.find((t) => t.value === taskType) ?? TASK_TYPES[0];
 
   return (
     <Card className="bg-card border-border">
