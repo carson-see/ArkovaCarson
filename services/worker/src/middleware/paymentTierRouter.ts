@@ -133,8 +133,8 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   const paymentHeader = req.headers['x-payment'] as string | undefined;
   if (!paymentHeader) return null;
 
-  // Validate tx_hash format (hex string, reasonable length) to prevent abuse
-  if (!/^0x[a-fA-F0-9]{64}$/.test(paymentHeader) && paymentHeader.length > 128) {
+  // Validate tx_hash format — must be 0x-prefixed 64-char hex; reject anything else
+  if (!/^0x[a-fA-F0-9]{64}$/.test(paymentHeader)) {
     return null;
   }
 

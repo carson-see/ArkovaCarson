@@ -45,7 +45,7 @@
     iframe.style.overflow = 'hidden';
     iframe.setAttribute('loading', 'lazy');
     iframe.setAttribute('title', 'Arkova Credential Verification');
-    iframe.setAttribute('sandbox', 'allow-scripts');
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
 
     el.innerHTML = '';
     el.appendChild(iframe);
