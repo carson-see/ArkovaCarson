@@ -124,6 +124,15 @@ Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-R
 
 Free tier available with unlimited anchoring during beta. Three paid tiers available.
 
+## Traction
+
+- 166,000+ credential records secured on Bitcoin mainnet via OP_RETURN
+- 1,390,000+ public records indexed (SEC EDGAR, USPTO patents, CourtListener legal records, Federal Register, OpenStates)
+- 116 Bitcoin anchor transactions confirmed on mainnet
+- 100% independently verifiable via public network — no account required
+- Wikidata entity: Q138865713
+- AI extraction accuracy: 90.4% F1 (Gemini Golden fine-tuned), 87.2% F1 (Nessie v5 open-weight)
+
 ## Structured Data
 
 Arkova provides Organization, SoftwareApplication, FAQPage, HowTo, Article, and Person schema markup at https://arkova.ai for search engine and AI system consumption.

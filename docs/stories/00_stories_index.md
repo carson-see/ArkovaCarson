@@ -219,7 +219,7 @@ For a new developer joining the project, read in this order:
 | NMT-02 | JSON Comment Stripping in Extraction Parser | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-335 |
 | NMT-03 | Nessie Confidence Recalibration | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-336 |
 | NMT-04 | Full-Precision GPU Eval | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-337 |
-| NMT-05 | Upload Model Weights to HuggingFace | NOT STARTED | [NMT](./21_nessie_model_training.md) | — |
+| NMT-05 | Upload Model Weights to HuggingFace | READY TO SHIP | [NMT](./21_nessie_model_training.md) | — |
 | NMT-06 | Nessie v5 Training + Condensed Prompt | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-339 |
 
 ## Bug Cross-Reference
