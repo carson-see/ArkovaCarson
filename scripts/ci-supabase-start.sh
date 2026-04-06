@@ -43,6 +43,16 @@ if [ -f "$MIGRATIONS_DIR/0088b_cle_templates.sql" ] && [ -f "$MIGRATIONS_DIR/008
   echo "  Merged 0088b into 0088"
 fi
 
+# Fix 0069: DROP activate_user before re-creating with different params
+# (Postgres can't rename parameters in CREATE OR REPLACE)
+if [ -f "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql" ]; then
+  if ! grep -q "DROP FUNCTION IF EXISTS activate_user" "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql"; then
+    sed -i '/^CREATE OR REPLACE FUNCTION activate_user/i DROP FUNCTION IF EXISTS activate_user(text, text);' \
+      "$MIGRATIONS_DIR/0069_pending_profiles_activation.sql"
+    echo "  Added DROP FUNCTION before activate_user replacement in 0069"
+  fi
+fi
+
 # Handle duplicate numeric prefixes (merge second into first)
 for dup_prefix in $(ls "$MIGRATIONS_DIR"/*.sql | xargs -n1 basename | sed 's/_.*//' | sort | uniq -d); do
   files=("$MIGRATIONS_DIR"/"${dup_prefix}"_*.sql)
