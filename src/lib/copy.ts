@@ -1851,3 +1851,31 @@ export const PROVENANCE_LABELS = {
   NO_EVENTS: 'No provenance data available.',
   ERROR: 'Unable to load provenance timeline.',
 } as const;
+
+// ─── Compliance Trends (COMP-07) ───────────────────────────────────────
+
+export const COMPLIANCE_TREND_LABELS = {
+  PAGE_TITLE: 'Compliance Trends',
+  PAGE_DESCRIPTION: 'Track compliance KPIs over time to demonstrate continuous improvement.',
+  GRANULARITY_DAILY: 'Daily',
+  GRANULARITY_WEEKLY: 'Weekly',
+  GRANULARITY_MONTHLY: 'Monthly',
+  KPI_ANCHORS: 'Anchors Created',
+  KPI_SECURED: 'Anchors Secured',
+  KPI_SIGNATURES: 'Signatures',
+  KPI_TIMESTAMP_COVERAGE: 'Timestamp Coverage',
+  KPI_LTV_COVERAGE: 'LTV Coverage',
+  KPI_ANCHOR_DELAY: 'Avg Anchor Delay (min)',
+  CERT_HEALTH_TITLE: 'Certificate Health',
+  CERT_ACTIVE: 'Active',
+  CERT_EXPIRING: 'Expiring Soon',
+  CERT_EXPIRED: 'Expired',
+  CERT_REVOKED: 'Revoked',
+  THRESHOLD_GREEN: 'Healthy',
+  THRESHOLD_AMBER: 'Warning',
+  THRESHOLD_RED: 'Critical',
+  EXPORT_CSV: 'Export CSV',
+  LOADING: 'Loading compliance trends...',
+  NO_DATA: 'No data available for the selected period.',
+  ERROR: 'Unable to load compliance trends.',
+} as const;

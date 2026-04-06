@@ -72,6 +72,7 @@ export const ROUTES = {
   // Phase III — Signatures & Compliance Center (PH3-ESIG)
   VERIFY_SIGNATURE: '/verify/signature/:signaturePublicId',
   SIGNATURE_COMPLIANCE: '/organization/signature-compliance',
+  COMPLIANCE_TRENDS: '/organization/compliance-trends',
 
   // Admin routes (internal ops)
   ADMIN_OVERVIEW: '/admin/overview',
