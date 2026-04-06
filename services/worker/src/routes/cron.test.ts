@@ -231,6 +231,7 @@ import { config } from '../config.js';
 import { verifyAuthToken } from '../auth.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { callRpc } from '../utils/rpc.js';
+import { db } from '../utils/db.js';
 
 function createApp() {
   const app = express();
@@ -1094,6 +1095,90 @@ describe('cron routes', () => {
       (callRpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/cleanup-retention');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /cron/smoke-test', () => {
+    it('runs smoke tests and returns results', async () => {
+      const mockFrom = vi.fn();
+      // Mock for database check (anchors select)
+      mockFrom.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue({ data: [{ id: '1' }], error: null }),
+          eq: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [{ created_at: '2026-04-01T00:00:00Z' }], error: null }),
+            }),
+          }),
+        }),
+      });
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation(mockFrom);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+      expect(res.status).toBeLessThanOrEqual(503);
+      expect(res.body.results).toBeDefined();
+      expect(Array.isArray(res.body.results)).toBe(true);
+      expect(res.body.total).toBeGreaterThan(0);
+      expect(res.body.timestamp).toBeDefined();
+    });
+
+    it('returns pass/fail status based on check results', async () => {
+      const mockFrom = vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          limit: vi.fn().mockResolvedValue({ data: [{ id: '1' }], error: null }),
+          eq: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [{ created_at: '2026-04-01T00:00:00Z' }], error: null }),
+            }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ error: null }),
+      });
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation(mockFrom);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+      expect(['pass', 'fail']).toContain(res.body.status);
+    });
+  });
+
+  describe('GET /cron/smoke-test/history', () => {
+    it('returns smoke test history from audit_events', async () => {
+      const mockHistory = [
+        { created_at: '2026-04-01T00:00:00Z', metadata: { passed: 5, failed: 0, total: 5, results: [] } },
+      ];
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: mockHistory, error: null }),
+            }),
+          }),
+        }),
+      });
+
+      const app = createApp();
+      const res = await request(app).get('/cron/smoke-test/history');
+      expect(res.status).toBe(200);
+      expect(res.body.history).toHaveLength(1);
+      expect(res.body.history[0].passed).toBe(5);
+    });
+
+    it('returns 500 on database error', async () => {
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }),
+            }),
+          }),
+        }),
+      });
+
+      const app = createApp();
+      const res = await request(app).get('/cron/smoke-test/history');
       expect(res.status).toBe(500);
     });
   });

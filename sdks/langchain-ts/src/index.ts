@@ -201,6 +201,72 @@ export class ArkovaAttestTool {
   }
 }
 
+export class ArkovaBatchVerifyTool {
+  name = 'arkova_batch_verify';
+  description = 'Verify multiple credentials at once. Input should be a JSON array of public IDs (e.g., ["ARK-X-DOC-1", "ARK-Y-DOC-2"]). Returns verification results for each credential.';
+  private config: ArkovaToolConfig;
+
+  constructor(config: ArkovaToolConfig) {
+    this.config = config;
+  }
+
+  async call(input: string): Promise<string> {
+    try {
+      const publicIds: string[] = JSON.parse(input);
+      if (!Array.isArray(publicIds) || publicIds.length === 0) {
+        return JSON.stringify({ error: 'Input must be a JSON array of public IDs' });
+      }
+      if (publicIds.length > 100) {
+        return JSON.stringify({ error: 'Maximum 100 credentials per batch' });
+      }
+
+      const res = await arkovaFetch(this.config, '/api/v1/verify/batch', {
+        method: 'POST',
+        body: JSON.stringify({ public_ids: publicIds }),
+      });
+
+      if (!res.ok) {
+        return JSON.stringify({ error: `API returned ${res.status}` });
+      }
+
+      const data = await res.json();
+      return JSON.stringify(data);
+    } catch (err) {
+      return JSON.stringify({ error: err instanceof Error ? err.message : 'Unknown error' });
+    }
+  }
+}
+
+export class ArkovaVerifySignatureTool {
+  name = 'arkova_verify_signature';
+  description = 'Verify an AdES electronic signature\'s validity, certificate chain, timestamp token, and eIDAS compliance. Input is a signature public ID (e.g., ARK-ACME-SIG-X7Y8Z9).';
+  private config: ArkovaToolConfig;
+
+  constructor(config: ArkovaToolConfig) {
+    this.config = config;
+  }
+
+  async call(input: string): Promise<string> {
+    try {
+      const signatureId = input.trim();
+      const res = await arkovaFetch(this.config, '/api/v1/verify-signature', {
+        method: 'POST',
+        body: JSON.stringify({ signature_id: signatureId }),
+      });
+
+      if (!res.ok) {
+        if (res.status === 404) return JSON.stringify({ valid: false, error: 'Signature not found' });
+        return JSON.stringify({ valid: false, error: `API returned ${res.status}` });
+      }
+
+      const data = await res.json();
+      return JSON.stringify(data);
+    } catch (err) {
+      return JSON.stringify({ valid: false, error: err instanceof Error ? err.message : 'Unknown error' });
+    }
+  }
+}
+
 /**
  * Get all Arkova tools for use with a LangChain agent.
  */
@@ -210,5 +276,7 @@ export function getArkovaTools(config: ArkovaToolConfig) {
     new ArkovaAnchorStatusTool(config),
     new ArkovaSearchTool(config),
     new ArkovaAttestTool(config),
+    new ArkovaBatchVerifyTool(config),
+    new ArkovaVerifySignatureTool(config),
   ];
 }
