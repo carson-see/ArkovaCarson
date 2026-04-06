@@ -111,7 +111,7 @@ jobs:
 
       - name: Start Supabase
         id: supabase-start
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
         continue-on-error: true
 
       - name: Generate types
@@ -156,7 +156,7 @@ jobs:
           version: 1.123.0
 
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-keys
@@ -361,7 +361,7 @@ jobs:
           version: 1.123.0
 
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-e2e-keys

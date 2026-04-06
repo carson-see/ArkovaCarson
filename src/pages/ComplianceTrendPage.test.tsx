@@ -36,7 +36,8 @@ describe('ComplianceTrendPage', () => {
 
   it('renders granularity selector', () => {
     renderPage();
-    expect(screen.getByText(COMPLIANCE_TREND_LABELS.DAILY)).toBeInTheDocument();
+    // Select component renders the current value (Weekly by default), not all options
+    expect(screen.getByText(COMPLIANCE_TREND_LABELS.WEEKLY)).toBeInTheDocument();
   });
 
   it('renders page description', () => {
