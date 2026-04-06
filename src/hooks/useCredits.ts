@@ -45,7 +45,7 @@ export function useCredits(): UseCreditsReturn {
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase.rpc as any)(
+      const { data, error: rpcError } = await (supabase as any).rpc(
         'get_user_credits',
         { p_user_id: user.id }
       );

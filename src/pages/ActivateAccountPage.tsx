@@ -40,7 +40,7 @@ export function ActivateAccountPage() {
       const claimKey = await deriveClaimKeyHash(phrase);
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase.rpc as any)('activate_user', {
+      const { data, error } = await (supabase as any).rpc('activate_user', {
         p_token: token,
         p_claim_key: claimKey,
       });

@@ -22,7 +22,7 @@ export function useRevokeAnchor(): UseRevokeAnchorReturn {
   const revokeImpl = useCallback(async (anchorId: string, reason?: string): Promise<boolean> => {
     // Type assertion needed until types are regenerated
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error: rpcError } = await (supabase.rpc as any)('revoke_anchor', {
+    const { error: rpcError } = await (supabase as any).rpc('revoke_anchor', {
       anchor_id: anchorId,
       reason: reason || null,
     });

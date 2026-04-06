@@ -403,9 +403,38 @@ export class GeminiProvider implements IAIProvider {
         throw new Error('metadata server unavailable');
       }
     } catch {
-      // Fallback: use gcloud CLI (local dev)
-      const { execSync } = await import('node:child_process');
-      accessToken = execSync('gcloud auth print-access-token', { encoding: 'utf-8' }).trim();
+      // ARK-SEC-025: Removed execSync('gcloud auth print-access-token') fallback.
+      // Use GOOGLE_APPLICATION_CREDENTIALS or service account key file instead.
+      const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (keyPath) {
+        const { readFileSync } = await import('node:fs');
+        const { createSign } = await import('node:crypto');
+        const key = JSON.parse(readFileSync(keyPath, 'utf-8')) as {
+          client_email: string; private_key: string; token_uri: string;
+        };
+        const now = Math.floor(Date.now() / 1000);
+        const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+        const payload = Buffer.from(JSON.stringify({
+          iss: key.client_email, sub: key.client_email,
+          aud: key.token_uri, iat: now, exp: now + 3600,
+          scope: 'https://www.googleapis.com/auth/cloud-platform',
+        })).toString('base64url');
+        const sig = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(key.private_key, 'base64url');
+        const jwt = `${header}.${payload}.${sig}`;
+        const tokenRes = await fetch(key.token_uri, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+        });
+        if (tokenRes.ok) {
+          const tokenData = (await tokenRes.json()) as { access_token: string };
+          accessToken = tokenData.access_token;
+        } else {
+          throw new Error('Failed to get access token from service account key');
+        }
+      } else {
+        throw new Error('No GCP credentials available — set GOOGLE_APPLICATION_CREDENTIALS');
+      }
     }
 
     // Vertex AI tuned models are called via their deployed endpoint.

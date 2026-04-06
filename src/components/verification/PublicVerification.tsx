@@ -108,7 +108,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: result, error: rpcError } = await (supabase.rpc as any)(
+        const { data: result, error: rpcError } = await (supabase as any).rpc(
           'get_public_anchor',
           { p_public_id: publicId }
         );
