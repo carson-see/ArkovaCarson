@@ -45,9 +45,9 @@ MCP server for AI agent access:
 
 ## Traction
 
-- 166,000+ credential records secured on Bitcoin mainnet
+- 166,000+ credential records secured on production network
 - 1,390,000+ public records indexed (SEC, USPTO, CourtListener, Federal Register, OpenStates)
-- 116 Bitcoin anchor transactions confirmed
+- 116 anchor receipts confirmed on production network
 - 100% independently verifiable via public network
 - Wikidata entity: Q138865713
 
