@@ -109,12 +109,9 @@ jobs:
         with:
           version: 1.123.0
 
-      - name: Fix migration filenames for Supabase CLI
-        run: bash scripts/fix-migration-names.sh
-
       - name: Start Supabase
         id: supabase-start
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
         continue-on-error: true
 
       - name: Generate types
@@ -158,11 +155,8 @@ jobs:
         with:
           version: 1.123.0
 
-      - name: Fix migration filenames for Supabase CLI
-        run: bash scripts/fix-migration-names.sh
-
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-keys
@@ -366,11 +360,8 @@ jobs:
         with:
           version: 1.123.0
 
-      - name: Fix migration filenames for Supabase CLI
-        run: bash scripts/fix-migration-names.sh
-
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-e2e-keys
