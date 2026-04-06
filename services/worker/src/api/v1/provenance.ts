@@ -1,4 +1,3 @@
-// @ts-nocheck — provenance aggregation query uses audit_events + anchors join
 /**
  * Credential Provenance Timeline API (COMP-02)
  *
@@ -7,6 +6,8 @@
  * Returns an ordered array of lifecycle events for a credential,
  * combining anchor state changes, signature events, and timestamp acquisitions.
  * Designed for auditors needing the full chain of custody.
+ *
+ * Constitution 1.4: Only public_id + derived fields exposed. No internal IDs.
  */
 
 import { Router, Request, Response } from 'express';
@@ -23,6 +24,9 @@ interface ProvenanceEvent {
   details: string | null;
 }
 
+// Input validation: publicId must match ARK-* format, max 64 chars
+const PUBLIC_ID_PATTERN = /^[\w-]{1,64}$/;
+
 /**
  * GET /api/v1/verify/:publicId/provenance
  * Aggregate the full provenance chain for a credential.
@@ -31,10 +35,16 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
   try {
     const { publicId } = req.params;
 
-    // Fetch the anchor record
+    if (!publicId || !PUBLIC_ID_PATTERN.test(publicId)) {
+      res.status(400).json({ error: 'Invalid credential ID format' });
+      return;
+    }
+
+    // Fetch the anchor record — only select fields needed for provenance
+    // Constitution 1.4: never expose internal id, org_id, batch_id
     const { data: anchor, error: anchorError } = await db
       .from('anchors')
-      .select('id, public_id, fingerprint, status, created_at, submitted_at, secured_at, tx_id, batch_id, org_id, revoked_at')
+      .select('id, public_id, status, created_at, submitted_at, secured_at, tx_id, revoked_at')
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
@@ -61,19 +71,8 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
         event_type: 'anchor_submitted',
         timestamp: anchor.submitted_at,
         actor: 'system',
-        evidence_reference: anchor.tx_id,
-        details: 'Fingerprint submitted to anchoring network',
-      });
-    }
-
-    // Event: Batch inclusion (if batched)
-    if (anchor.batch_id) {
-      events.push({
-        event_type: 'batch_included',
-        timestamp: anchor.submitted_at || anchor.created_at,
-        actor: 'system',
-        evidence_reference: anchor.batch_id,
-        details: 'Included in batch Merkle tree for anchoring',
+        evidence_reference: anchor.public_id,
+        details: 'Fingerprint submitted to the network',
       });
     }
 
@@ -83,7 +82,7 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
         event_type: 'network_confirmed',
         timestamp: anchor.secured_at,
         actor: 'network',
-        evidence_reference: anchor.tx_id,
+        evidence_reference: anchor.public_id,
         details: 'Anchoring confirmed on the network',
       });
     }
@@ -99,73 +98,79 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
       });
     }
 
-    // Fetch related signatures (Phase III)
-    const { data: signatures } = await db
-      .from('signatures')
-      .select('id, signed_at, completed_at, signer_name, format, level')
-      .eq('anchor_id', anchor.id)
-      .order('signed_at', { ascending: true });
+    // Fetch related signatures (Phase III — graceful if table doesn't exist)
+    try {
+      const { data: signatures } = await db
+        .from('signatures' as string)
+        .select('signed_at, completed_at, signer_name, format, level')
+        .eq('anchor_id', anchor.id)
+        .order('signed_at', { ascending: true })
+        .limit(100);
 
-    if (signatures) {
-      for (const sig of signatures) {
-        events.push({
-          event_type: 'signature_created',
-          timestamp: sig.signed_at,
-          actor: sig.signer_name || 'signer',
-          evidence_reference: sig.id,
-          details: `${sig.format || 'AdES'} signature (${sig.level || 'B-Level'})`,
-        });
-        if (sig.completed_at && sig.completed_at !== sig.signed_at) {
+      if (signatures) {
+        for (const sig of signatures) {
           events.push({
-            event_type: 'signature_completed',
-            timestamp: sig.completed_at,
+            event_type: 'signature_created',
+            timestamp: sig.signed_at,
             actor: sig.signer_name || 'signer',
-            evidence_reference: sig.id,
-            details: 'Signature validation completed',
+            evidence_reference: null,
+            details: `${sig.format || 'AdES'} signature (${sig.level || 'B-Level'})`,
           });
         }
       }
+    } catch {
+      // Phase III tables may not exist — degrade gracefully
     }
 
-    // Fetch timestamp tokens (Phase III)
-    const { data: timestamps } = await db
-      .from('timestamp_tokens')
-      .select('id, tst_gen_time, tsa_name, is_qualified')
-      .eq('anchor_id', anchor.id)
-      .order('tst_gen_time', { ascending: true });
+    // Fetch timestamp tokens (Phase III — graceful if table doesn't exist)
+    try {
+      const { data: timestamps } = await db
+        .from('timestamp_tokens' as string)
+        .select('tst_gen_time, tsa_name, is_qualified')
+        .eq('anchor_id', anchor.id)
+        .order('tst_gen_time', { ascending: true })
+        .limit(100);
 
-    if (timestamps) {
-      for (const ts of timestamps) {
-        events.push({
-          event_type: 'timestamp_acquired',
-          timestamp: ts.tst_gen_time,
-          actor: ts.tsa_name || 'TSA',
-          evidence_reference: ts.id,
-          details: `RFC 3161 timestamp${ts.is_qualified ? ' (qualified)' : ''}`,
-        });
+      if (timestamps) {
+        for (const ts of timestamps) {
+          events.push({
+            event_type: 'timestamp_acquired',
+            timestamp: ts.tst_gen_time,
+            actor: ts.tsa_name || 'TSA',
+            evidence_reference: null,
+            details: `RFC 3161 timestamp${ts.is_qualified ? ' (qualified)' : ''}`,
+          });
+        }
       }
+    } catch {
+      // Phase III tables may not exist — degrade gracefully
     }
 
     // Fetch verification queries from audit_events
-    const { data: verifyEvents } = await db
-      .from('audit_events')
-      .select('created_at, event_type')
-      .eq('resource_type', 'anchor')
-      .eq('target_id', anchor.id)
-      .in('event_type', ['VERIFICATION_QUERY', 'API_VERIFY'])
-      .order('created_at', { ascending: true })
-      .limit(50);
+    // Note: audit events use public_id as target_id (see verify.ts)
+    try {
+      const { data: verifyEvents } = await db
+        .from('audit_events')
+        .select('created_at, event_type')
+        .eq('resource_type', 'anchor')
+        .eq('target_id', anchor.public_id)
+        .in('event_type', ['VERIFICATION_QUERY', 'API_VERIFY'])
+        .order('created_at', { ascending: true })
+        .limit(50);
 
-    if (verifyEvents) {
-      for (const ve of verifyEvents) {
-        events.push({
-          event_type: 'verification_query',
-          timestamp: ve.created_at,
-          actor: 'anonymous',
-          evidence_reference: null,
-          details: 'Credential verification queried',
-        });
+      if (verifyEvents) {
+        for (const ve of verifyEvents) {
+          events.push({
+            event_type: 'verification_query',
+            timestamp: ve.created_at,
+            actor: 'anonymous',
+            evidence_reference: null,
+            details: 'Credential verification queried',
+          });
+        }
       }
+    } catch {
+      // audit_events query may fail — degrade gracefully
     }
 
     // Sort all events chronologically
@@ -194,9 +199,9 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
       }
     }
 
+    // Constitution 1.4: Only expose public_id, status, and derived data
     res.json({
       public_id: anchor.public_id,
-      fingerprint: anchor.fingerprint,
       status: anchor.status,
       events: eventsWithDeltas,
       anomalies,

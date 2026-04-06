@@ -62,7 +62,7 @@ export function AuditorBatchPage() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
-        setError('Not authenticated');
+        setError(AUDITOR_BATCH_LABELS.ERR_NOT_AUTHENTICATED);
         return;
       }
 
@@ -72,22 +72,29 @@ export function AuditorBatchPage() {
       if (mode === 'csv') {
         const ids = csvIds.split(/[\n,]/).map(s => s.trim()).filter(Boolean);
         if (ids.length === 0) {
-          setError('Enter at least one credential ID');
+          setError(AUDITOR_BATCH_LABELS.ERR_EMPTY_IDS);
           return;
         }
         if (ids.length > 1000) {
-          setError('Maximum 1,000 credential IDs per batch');
+          setError(AUDITOR_BATCH_LABELS.ERR_MAX_IDS);
           return;
         }
         body.credential_ids = ids;
       } else {
         const pct = parseFloat(samplePct);
         if (isNaN(pct) || pct < 0.1 || pct > 100) {
-          setError('Sample percentage must be between 0.1 and 100');
+          setError(AUDITOR_BATCH_LABELS.ERR_INVALID_PCT);
           return;
         }
         body.sample_percentage = pct;
-        if (seed) body.seed = parseInt(seed, 10);
+        if (seed) {
+          const parsedSeed = parseInt(seed, 10);
+          if (isNaN(parsedSeed)) {
+            setError(AUDITOR_BATCH_LABELS.ERR_INVALID_SEED);
+            return;
+          }
+          body.seed = parsedSeed;
+        }
       }
 
       const resp = await fetch(`${workerUrl}/api/v1/audit/batch-verify`, {
@@ -107,7 +114,7 @@ export function AuditorBatchPage() {
 
       setResult(await resp.json());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Network error');
+      setError(err instanceof Error ? err.message : AUDITOR_BATCH_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }
@@ -214,7 +221,7 @@ export function AuditorBatchPage() {
             )}
 
             <Button onClick={handleSubmit} disabled={loading} className="w-full sm:w-auto">
-              {loading ? 'Verifying...' : AUDITOR_BATCH_LABELS.SUBMIT}
+              {loading ? AUDITOR_BATCH_LABELS.VERIFYING : AUDITOR_BATCH_LABELS.SUBMIT}
             </Button>
           </CardContent>
         </Card>
@@ -227,31 +234,31 @@ export function AuditorBatchPage() {
               <Card>
                 <CardContent className="pt-4 text-center">
                   <div className="text-2xl font-bold">{result.summary.total_verified}</div>
-                  <div className="text-xs text-muted-foreground">Verified</div>
+                  <div className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.STAT_VERIFIED}</div>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-4 text-center">
                   <div className="text-2xl font-bold text-green-500">{result.summary.passed}</div>
-                  <div className="text-xs text-muted-foreground">Passed</div>
+                  <div className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.STAT_PASSED}</div>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-4 text-center">
                   <div className="text-2xl font-bold text-destructive">{result.summary.failed}</div>
-                  <div className="text-xs text-muted-foreground">Failed</div>
+                  <div className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.STAT_FAILED}</div>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-4 text-center">
                   <div className="text-2xl font-bold text-muted-foreground">{result.summary.not_found}</div>
-                  <div className="text-xs text-muted-foreground">Not Found</div>
+                  <div className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.STAT_NOT_FOUND}</div>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-4 text-center">
                   <div className="text-2xl font-bold text-amber-500">{result.summary.anomalies_found}</div>
-                  <div className="text-xs text-muted-foreground">Anomalies</div>
+                  <div className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.STAT_ANOMALIES}</div>
                 </CardContent>
               </Card>
             </div>
@@ -270,10 +277,10 @@ export function AuditorBatchPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left">
-                        <th className="pb-2 font-medium">Credential ID</th>
-                        <th className="pb-2 font-medium">Status</th>
-                        <th className="pb-2 font-medium">Secured At</th>
-                        <th className="pb-2 font-medium">Anomalies</th>
+                        <th className="pb-2 font-medium">{AUDITOR_BATCH_LABELS.COL_CREDENTIAL_ID}</th>
+                        <th className="pb-2 font-medium">{AUDITOR_BATCH_LABELS.COL_STATUS}</th>
+                        <th className="pb-2 font-medium">{AUDITOR_BATCH_LABELS.COL_SECURED_AT}</th>
+                        <th className="pb-2 font-medium">{AUDITOR_BATCH_LABELS.COL_ANOMALIES}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -281,9 +288,9 @@ export function AuditorBatchPage() {
                         <tr key={r.public_id} className="border-b last:border-0">
                           <td className="py-2 font-mono text-xs">{r.public_id}</td>
                           <td className="py-2">
-                            {r.status === 'PASS' && <span className="inline-flex items-center gap-1 text-green-500"><CheckCircle className="h-3.5 w-3.5" /> Pass</span>}
-                            {r.status === 'FAIL' && <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3.5 w-3.5" /> Fail</span>}
-                            {r.status === 'NOT_FOUND' && <span className="text-muted-foreground">Not Found</span>}
+                            {r.status === 'PASS' && <span className="inline-flex items-center gap-1 text-green-500"><CheckCircle className="h-3.5 w-3.5" /> {AUDITOR_BATCH_LABELS.STATUS_PASS}</span>}
+                            {r.status === 'FAIL' && <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3.5 w-3.5" /> {AUDITOR_BATCH_LABELS.STATUS_FAIL}</span>}
+                            {r.status === 'NOT_FOUND' && <span className="text-muted-foreground">{AUDITOR_BATCH_LABELS.STATUS_NOT_FOUND}</span>}
                           </td>
                           <td className="py-2 text-muted-foreground text-xs">
                             {r.secured_at ? new Date(r.secured_at).toLocaleString() : '—'}
@@ -298,7 +305,7 @@ export function AuditorBatchPage() {
                                 ))}
                               </div>
                             ) : (
-                              <span className="text-xs text-muted-foreground">None</span>
+                              <span className="text-xs text-muted-foreground">{AUDITOR_BATCH_LABELS.ANOMALY_NONE}</span>
                             )}
                           </td>
                         </tr>

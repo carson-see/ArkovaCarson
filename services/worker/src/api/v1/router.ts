@@ -176,6 +176,10 @@ router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);
 
+// ─── Credential Provenance Timeline — COMP-02 ───
+// MUST be before /verify to avoid route shadowing (same pattern as P8-S19)
+router.use('/verify', provenanceRouter);
+
 // Merkle proof endpoint — public, no payment required (BTC-003)
 router.use('/verify', verifyProofRouter);
 
@@ -293,17 +297,13 @@ router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
 // JWT auth required, batch rate limit (5 req/min)
 router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
 
-// ─── Credential Provenance Timeline — COMP-02 ───
-// Public endpoint (like /verify), no auth required
-router.use('/verify', provenanceRouter);
-
 // ─── Key Inventory — COMP-05 (audit evidence) ───
-// JWT auth required — admin/compliance_officer only
-router.use('/signatures/key-inventory', requireAuth, keyInventoryRouter);
+// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
+router.use('/signatures/key-inventory', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
 
 // ─── Compliance Trends — COMP-07 ───
-// JWT auth required — admin/compliance_officer only
-router.use('/signatures/compliance-trends', requireAuth, complianceTrendsRouter);
+// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
+router.use('/signatures/compliance-trends', adesSignatureGate(), requireAuth, aiRateLimiter, complianceTrendsRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

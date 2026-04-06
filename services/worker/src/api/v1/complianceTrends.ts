@@ -1,4 +1,3 @@
-// @ts-nocheck — signatures/timestamp_tokens tables from Phase III
 /**
  * Compliance Trend Dashboard API (COMP-07)
  *
@@ -66,6 +65,13 @@ router.get('/', async (req: Request, res: Response) => {
 
     const orgId = membership.org_id;
 
+    // Guard: max 365 days range to prevent unbounded DB query flood
+    const rangeMs = new Date(to).getTime() - new Date(from).getTime();
+    if (rangeMs > 365 * 86400_000) {
+      res.status(400).json({ error: 'Date range cannot exceed 365 days' });
+      return;
+    }
+
     // Generate date buckets
     const buckets = generateBuckets(from, to, granularity);
     const dataPoints: TrendDataPoint[] = [];
@@ -119,7 +125,7 @@ router.get('/', async (req: Request, res: Response) => {
 
       try {
         const { count: sigCount } = await db
-          .from('signatures')
+          .from('signatures' as string)
           .select('*', { count: 'exact', head: true })
           .eq('org_id', orgId)
           .gte('signed_at', bucket.start)
@@ -128,7 +134,7 @@ router.get('/', async (req: Request, res: Response) => {
 
         if (totalSigs > 0) {
           const { count: qualifiedCount } = await db
-            .from('timestamp_tokens')
+            .from('timestamp_tokens' as string)
             .select('*', { count: 'exact', head: true })
             .eq('is_qualified', true)
             .gte('tst_gen_time', bucket.start)
@@ -137,14 +143,14 @@ router.get('/', async (req: Request, res: Response) => {
         }
 
         const { count: activeCount } = await db
-          .from('signing_certificates')
+          .from('signing_certificates' as string)
           .select('*', { count: 'exact', head: true })
           .eq('org_id', orgId)
           .gt('not_after', new Date().toISOString());
         activeCerts = activeCount || 0;
 
         const { count: expiredCount } = await db
-          .from('signing_certificates')
+          .from('signing_certificates' as string)
           .select('*', { count: 'exact', head: true })
           .eq('org_id', orgId)
           .lte('not_after', new Date().toISOString());

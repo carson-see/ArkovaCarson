@@ -169,6 +169,7 @@ export async function checkTimestampCoverage(): Promise<number> {
       const { count: timestampedSigs } = await db
         .from('timestamp_tokens')
         .select('*', { count: 'exact', head: true })
+        .eq('org_id', orgId)
         .gte('tst_gen_time', thirtyDaysAgo);
 
       if (totalSigs && totalSigs > 0) {

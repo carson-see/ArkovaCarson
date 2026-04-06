@@ -80,12 +80,12 @@ export function ProvenanceTimeline({ publicId }: Props) {
         const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
         const resp = await fetch(`${workerUrl}/api/v1/verify/${publicId}/provenance`);
         if (!resp.ok) {
-          setError('Failed to load provenance data');
+          setError(PROVENANCE_LABELS.ERROR_LOAD);
           return;
         }
         setData(await resp.json());
       } catch {
-        setError('Network error');
+        setError(PROVENANCE_LABELS.ERROR_NETWORK);
       } finally {
         setLoading(false);
       }
@@ -109,7 +109,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
       </CardHeader>
       {expanded && (
         <CardContent>
-          {loading && <p className="text-sm text-muted-foreground">Loading provenance chain...</p>}
+          {loading && <p className="text-sm text-muted-foreground">{PROVENANCE_LABELS.LOADING}</p>}
           {error && <p className="text-sm text-destructive">{error}</p>}
           {data && (
             <div className="space-y-4">

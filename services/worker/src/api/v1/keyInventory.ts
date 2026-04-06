@@ -66,7 +66,7 @@ router.get('/', async (req: Request, res: Response) => {
       inventory.push({
         key_id_masked: config.gcpKmsKeyResourceName ? maskKeyId(config.gcpKmsKeyResourceName) : '****',
         algorithm: 'ECDSA secp256k1',
-        purpose: 'Bitcoin transaction signing',
+        purpose: 'Network anchor signing',
         provider: 'GCP Cloud KMS',
         created_date: null,
         last_rotation_date: null,
@@ -76,7 +76,7 @@ router.get('/', async (req: Request, res: Response) => {
       inventory.push({
         key_id_masked: config.bitcoinKmsKeyId ? maskKeyId(config.bitcoinKmsKeyId) : '****',
         algorithm: 'ECDSA secp256k1',
-        purpose: 'Bitcoin transaction signing',
+        purpose: 'Network anchor signing',
         provider: 'AWS KMS',
         created_date: null,
         last_rotation_date: null,
@@ -86,8 +86,8 @@ router.get('/', async (req: Request, res: Response) => {
       inventory.push({
         key_id_masked: '****local****',
         algorithm: 'ECDSA secp256k1',
-        purpose: 'Bitcoin transaction signing',
-        provider: 'Local WIF (development)',
+        purpose: 'Network anchor signing',
+        provider: 'Local key (development)',
         created_date: null,
         last_rotation_date: null,
         status: 'active',
@@ -127,10 +127,11 @@ router.get('/', async (req: Request, res: Response) => {
     // Log audit event
     await db.from('audit_events').insert({
       event_type: 'KEY_INVENTORY_ACCESSED',
+      event_category: 'COMPLIANCE',
       org_id: membership.org_id,
       actor_id: userId,
       resource_type: 'compliance',
-      metadata: { key_count: inventory.length },
+      details: JSON.stringify({ key_count: inventory.length }),
     });
 
     res.json({
