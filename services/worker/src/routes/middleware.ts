@@ -20,9 +20,10 @@ const CORS_ALLOWED_ORIGINS: string[] = (() => {
   if (config.corsAllowedOrigins) {
     config.corsAllowedOrigins.split(',').map(o => o.trim()).filter(Boolean).forEach(o => origins.add(o));
   }
-  // BUG-UAT-12: Always include production frontend origin so admin pages work
-  origins.add('https://app.arkova.ai');
-  if (origins.size === 1) origins.add('http://localhost:5173');
+  // CORS origins are driven entirely by FRONTEND_URL + CORS_ALLOWED_ORIGINS env vars.
+  // For production: set FRONTEND_URL=https://app.arkova.ai on Cloud Run.
+  // Localhost fallback only when no env vars are configured (local dev).
+  if (origins.size === 0) origins.add('http://localhost:5173');
   return [...origins];
 })();
 
