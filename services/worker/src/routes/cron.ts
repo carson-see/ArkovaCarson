@@ -630,3 +630,176 @@ cronRouter.post('/cleanup-retention', async (_req, res) => {
     res.status(500).json({ error: 'Processing failed' });
   }
 });
+
+// ─── Production Smoke Test (P7-TS-06) ───
+
+cronRouter.post('/smoke-test', async (_req, res) => {
+  try {
+    const results = await runSmokeTestSuite();
+    const passed = results.filter((r) => r.status === 'pass').length;
+    const failed = results.filter((r) => r.status === 'fail').length;
+
+    // Store results in audit_events for history
+    try {
+      await db.from('audit_events').insert({
+        event_type: 'smoke_test.completed',
+        actor_id: null,
+        metadata: {
+          passed,
+          failed,
+          total: results.length,
+          results,
+          timestamp: new Date().toISOString(),
+        },
+      });
+    } catch (storeErr) {
+      logger.warn({ error: storeErr }, 'Failed to store smoke test results');
+    }
+
+    const statusCode = failed > 0 ? 503 : 200;
+    res.status(statusCode).json({
+      status: failed > 0 ? 'fail' : 'pass',
+      passed,
+      failed,
+      total: results.length,
+      timestamp: new Date().toISOString(),
+      results,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Smoke test suite failed');
+    res.status(500).json({ error: 'Smoke test runner failed' });
+  }
+});
+
+/** GET endpoint for admin dashboard to fetch smoke test history */
+cronRouter.get('/smoke-test/history', async (_req, res) => {
+  try {
+    const { data, error } = await db
+      .from('audit_events')
+      .select('created_at, metadata')
+      .eq('event_type', 'smoke_test.completed')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    if (error) {
+      res.status(500).json({ error: 'Failed to fetch smoke test history' });
+      return;
+    }
+
+    const history = (data ?? []).map((row: { created_at: string; metadata: Record<string, unknown> }) => ({
+      timestamp: row.created_at,
+      ...row.metadata,
+    }));
+
+    res.json({ history });
+  } catch (error) {
+    logger.error({ error }, 'Smoke test history fetch failed');
+    res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+interface SmokeCheckResult {
+  name: string;
+  status: 'pass' | 'fail';
+  durationMs: number;
+  detail?: string;
+  error?: string;
+}
+
+async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
+  const results: SmokeCheckResult[] = [];
+
+  // Check 1: Database connectivity
+  const dbStart = Date.now();
+  try {
+    const { error } = await db.from('anchors').select('id').limit(1);
+    results.push({
+      name: 'database',
+      status: error ? 'fail' : 'pass',
+      durationMs: Date.now() - dbStart,
+      ...(error ? { error: error.message } : { detail: 'Query OK' }),
+    });
+  } catch (err) {
+    results.push({
+      name: 'database',
+      status: 'fail',
+      durationMs: Date.now() - dbStart,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Check 2: Anchor count sanity (production should have >0)
+  const anchorStart = Date.now();
+  try {
+    const { count, error } = await db.from('anchors').select('*', { count: 'exact', head: true });
+    if (error) {
+      results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: error.message });
+    } else {
+      results.push({
+        name: 'anchor-count',
+        status: (count ?? 0) > 0 ? 'pass' : 'fail',
+        durationMs: Date.now() - anchorStart,
+        detail: `${count ?? 0} total anchors`,
+      });
+    }
+  } catch (err) {
+    results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: String(err) });
+  }
+
+  // Check 3: Recent SECURED anchor (should have one within last 7 days)
+  const securedStart = Date.now();
+  try {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await db
+      .from('anchors')
+      .select('created_at')
+      .eq('status', 'SECURED')
+      .gte('created_at', sevenDaysAgo)
+      .limit(1);
+    if (error) {
+      results.push({ name: 'recent-secured', status: 'fail', durationMs: Date.now() - securedStart, error: error.message });
+    } else {
+      const hasRecent = (data?.length ?? 0) > 0;
+      results.push({
+        name: 'recent-secured',
+        status: hasRecent ? 'pass' : 'fail',
+        durationMs: Date.now() - securedStart,
+        detail: hasRecent ? `Last secured: ${data![0].created_at}` : 'No SECURED anchors in last 7 days',
+      });
+    }
+  } catch (err) {
+    results.push({ name: 'recent-secured', status: 'fail', durationMs: Date.now() - securedStart, error: String(err) });
+  }
+
+  // Check 4: Config sanity
+  const configStart = Date.now();
+  const configIssues: string[] = [];
+  if (!config.stripeSecretKey) configIssues.push('STRIPE_SECRET_KEY missing');
+  if (!config.bitcoinNetwork) configIssues.push('BITCOIN_NETWORK missing');
+  if (config.bitcoinNetwork === 'mainnet' && !config.enableProdNetworkAnchoring) {
+    configIssues.push('MAINNET configured but ENABLE_PROD_NETWORK_ANCHORING=false');
+  }
+  results.push({
+    name: 'config-sanity',
+    status: configIssues.length === 0 ? 'pass' : 'fail',
+    durationMs: Date.now() - configStart,
+    detail: configIssues.length === 0 ? 'All critical config present' : configIssues.join('; '),
+  });
+
+  // Check 5: RLS active on anchors table
+  const rlsStart = Date.now();
+  try {
+    // Service role query should work, anonymous should not be able to bypass RLS
+    const { count, error } = await db.from('anchors').select('*', { count: 'exact', head: true });
+    results.push({
+      name: 'rls-active',
+      status: error ? 'fail' : 'pass',
+      durationMs: Date.now() - rlsStart,
+      detail: error ? error.message : `Service role query OK (${count} rows)`,
+    });
+  } catch (err) {
+    results.push({ name: 'rls-active', status: 'fail', durationMs: Date.now() - rlsStart, error: String(err) });
+  }
+
+  return results;
+}

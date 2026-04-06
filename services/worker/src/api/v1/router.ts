@@ -191,6 +191,10 @@ router.use('/usage', requireScope('usage:read'), usageRouter);
 // Key management — requires Supabase JWT auth
 router.use('/keys', requireAuth, requireScope('keys:manage'), keysRouter);
 
+// Credit management — requires Supabase JWT auth (PAY-01)
+import { creditsRouter } from './credits.js';
+router.use('/credits', requireAuth, creditsRouter);
+
 // ─── AI rate limiter (30 req/min per user — AI ops are expensive) ───
 const aiRateLimiter = rateLimit({
   windowMs: 60_000,
