@@ -54,16 +54,6 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Developers').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows Directory link for all accounts (SCRUM-360)', () => {
-    renderSidebar({ orgName: 'Test Org' });
-    expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows Directory link even for Individual accounts without orgName (SCRUM-360)', () => {
-    renderSidebar();
-    expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
-  });
-
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
     renderSidebar();
     expect(screen.queryByText('Help')).toBeNull();

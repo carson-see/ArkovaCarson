@@ -41,7 +41,21 @@
 | **BUG-UAT5-10 (LOW)** | Organization page shows "— records" instead of "0 records" |
 | **Pages passing** | Dashboard, Documents, Directory, Settings (all sub-pages), Billing, Admin Overview, System Health, Payments, Controls, Compliance, Secure Document modal, Auth guard |
 
-### Recent Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
+### Recent Changes (2026-04-05, Session 29 — Sprint: 16 Stories + Code Review)
+
+**16 stories completed across payments, SDKs, signatures, smoke tests, widgets. PR #278 open. Code review found and fixed 6 bugs. Jira updated.**
+
+| Change | Detail |
+|--------|--------|
+| Phase III eSignatures | SCRUM-422/423/424 verified complete — AdES engine (62 tests), QTSP/RFC 3161, Compliance Center |
+| Smoke Test Suite | SCRUM-43 — cron endpoint `/cron/smoke-test` + history + SystemHealthPage integration |
+| SDK Standardization | SCRUM-439/440 — `arkova_` prefix on all tools, added `arkova_batch_verify` + `arkova_verify_signature` |
+| Payment System | SCRUM-442/443/444 — credit packs (1K/10K/100K/1M), Stripe metered billing, three-tier router |
+| Embeddable Widget | SCRUM-91 — `public/embed.js` iframe integration script |
+| ZK-STARK | SCRUM-271 — snarkjs/poseidon-lite deps installed, 11 unit tests passing |
+| Code Review Fixes | 6 bugs: billing_events columns, free credit guard, x402 replay, embed XSS, rate limiting, RPC shape |
+
+### Previous Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
 
 **3 compliance stories completed. PR #270 merged. GitHub v1.6.0 released. Jira SCRUM-428/430/431 Done.**
 

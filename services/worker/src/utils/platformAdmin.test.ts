@@ -1,8 +1,8 @@
 /**
- * Platform Admin Utility Tests (DB-AUDIT SEC-3)
+ * Platform Admin Utility Tests (DB-AUDIT SEC-3, SEC-029)
  *
- * Tests that isPlatformAdmin checks is_platform_admin DB flag
- * with fallback to hardcoded email list.
+ * Tests that isPlatformAdmin checks is_platform_admin DB flag ONLY.
+ * SEC-029: No hardcoded email fallback — null/undefined flag = false.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -37,28 +37,25 @@ describe('isPlatformAdmin', () => {
   });
 
   it('returns true when is_platform_admin flag is true', async () => {
-    setupMock({ email: 'carson@arkova.ai', is_platform_admin: true });
+    setupMock({ is_platform_admin: true });
     expect(await isPlatformAdmin('user-1')).toBe(true);
   });
 
   it('returns false when is_platform_admin flag is false', async () => {
-    setupMock({ email: 'regular@example.com', is_platform_admin: false });
+    setupMock({ is_platform_admin: false });
     expect(await isPlatformAdmin('user-2')).toBe(false);
   });
 
-  it('falls back to email whitelist when flag is null (pre-migration)', async () => {
-    setupMock({ email: 'carson@arkova.ai', is_platform_admin: null });
-    expect(await isPlatformAdmin('user-1')).toBe(true);
+  // SEC-029: No email fallback — null flag means NOT admin
+  it('returns false when flag is null (no email fallback)', async () => {
+    setupMock({ is_platform_admin: null });
+    expect(await isPlatformAdmin('user-1')).toBe(false);
   });
 
-  it('falls back to email whitelist when flag is undefined (pre-migration)', async () => {
-    setupMock({ email: 'sarah@arkova.ai', is_platform_admin: undefined });
-    expect(await isPlatformAdmin('user-2')).toBe(true);
-  });
-
-  it('returns false for non-admin email when flag is null', async () => {
-    setupMock({ email: 'attacker@evil.com', is_platform_admin: null });
-    expect(await isPlatformAdmin('user-3')).toBe(false);
+  // SEC-029: No email fallback — undefined flag means NOT admin
+  it('returns false when flag is undefined (no email fallback)', async () => {
+    setupMock({ is_platform_admin: undefined });
+    expect(await isPlatformAdmin('user-2')).toBe(false);
   });
 
   it('returns false when profile not found', async () => {
@@ -66,13 +63,8 @@ describe('isPlatformAdmin', () => {
     expect(await isPlatformAdmin('missing')).toBe(false);
   });
 
-  it('returns false when email is null', async () => {
-    setupMock({ email: null, is_platform_admin: false });
-    expect(await isPlatformAdmin('user-4')).toBe(false);
-  });
-
   it('queries profiles table with is_platform_admin column', async () => {
-    setupMock({ email: 'test@test.com', is_platform_admin: false });
+    setupMock({ is_platform_admin: false });
     await isPlatformAdmin('user-id-123');
     expect(db.from).toHaveBeenCalledWith('profiles');
   });

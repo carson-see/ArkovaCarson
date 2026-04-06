@@ -38,7 +38,7 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'gcp-kms-***-bitcoin-mainnet',
       algorithm: 'ECDSA secp256k1 (EC_SIGN_SECP256K1_SHA256)',
-      purpose: 'Bitcoin transaction signing',
+      purpose: 'Network anchor signing',
       status: 'active',
       provider: 'GCP Cloud KMS',
     });
@@ -46,7 +46,7 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'aws-kms-***-bitcoin-mainnet',
       algorithm: 'ECDSA secp256k1 (ECC_SECG_P256K1)',
-      purpose: 'Bitcoin transaction signing',
+      purpose: 'Network anchor signing',
       status: 'active',
       provider: 'AWS KMS',
     });
@@ -54,9 +54,9 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'wif-***-' + (bitcoinNetwork || 'unknown'),
       algorithm: 'ECDSA secp256k1',
-      purpose: 'Bitcoin transaction signing',
+      purpose: 'Network anchor signing',
       status: 'active',
-      provider: 'Environment variable (WIF)',
+      provider: 'Environment variable',
     });
   }
 
@@ -96,17 +96,17 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
       return;
     }
 
-    // Check role: admin, owner, or compliance_officer only
+    // Check role: organization admin only
     const { data: membership } = await db
       .from('org_members')
       .select('org_id, role')
       .eq('user_id', userId)
-      .in('role', ['owner', 'admin', 'compliance_officer'])
+      .in('role', ['owner', 'admin'])
       .limit(1)
       .single();
 
     if (!membership) {
-      res.status(403).json({ error: 'Admin, owner, or compliance officer role required' });
+      res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 

@@ -4,12 +4,13 @@
  * Exposes Arkova verification as MCP tools usable by Claude, OpenAI, Cursor,
  * and any MCP-compatible LLM client.
  *
- * Tools:
- *   - verify_credential: Verify a credential by public ID or fingerprint
- *   - get_credential_status: Get anchor status and proof details
- *   - search_credentials: Search verified credentials by query
- *   - create_attestation: Create a third-party attestation
- *   - verify_signature: Verify an AdES signature (Phase III)
+ * Tools (all prefixed with arkova_ for namespace consistency — DX-04):
+ *   - arkova_verify_credential: Verify a credential by public ID or fingerprint
+ *   - arkova_credential_status: Get anchor status and proof details
+ *   - arkova_search_credentials: Search verified credentials by query
+ *   - arkova_create_attestation: Create a third-party attestation
+ *   - arkova_batch_verify: Verify multiple credentials at once (DX-05)
+ *   - arkova_verify_signature: Verify an AdES signature (Phase III)
  *
  * Auth: API key via environment variable ARKOVA_API_KEY
  *
@@ -55,7 +56,7 @@ async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Res
 
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
-    name: 'verify_credential',
+    name: 'arkova_verify_credential',
     description: 'Verify a credential\'s authenticity and Bitcoin anchor status on Arkova. Returns verification result including issuer, credential type, and anchor proof.',
     inputSchema: {
       type: 'object',
@@ -69,7 +70,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'get_credential_status',
+    name: 'arkova_credential_status',
     description: 'Get the current status and proof details of a credential, including Bitcoin anchor information and timestamp.',
     inputSchema: {
       type: 'object',
@@ -83,7 +84,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'search_credentials',
+    name: 'arkova_search_credentials',
     description: 'Search for verified credentials by name, institution, credential type, or other metadata. Returns matching public records.',
     inputSchema: {
       type: 'object',
@@ -101,7 +102,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'create_attestation',
+    name: 'arkova_create_attestation',
     description: 'Create a third-party attestation that a credential or entity has been verified. Requires organization admin privileges.',
     inputSchema: {
       type: 'object',
@@ -124,7 +125,21 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
-    name: 'verify_signature',
+    name: 'arkova_batch_verify',
+    description: 'Verify multiple credentials at once by providing an array of public IDs. Returns verification results for each credential in a single response.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_ids: {
+          type: 'string',
+          description: 'JSON array of credential public IDs to verify (max 100)',
+        },
+      },
+      required: ['public_ids'],
+    },
+  },
+  {
+    name: 'arkova_verify_signature',
     description: 'Verify an AdES electronic signature\'s validity, certificate chain, timestamp token, and eIDAS compliance. Phase III feature.',
     inputSchema: {
       type: 'object',
@@ -147,15 +162,17 @@ export async function handleToolCall(
 ): Promise<McpToolResult> {
   try {
     switch (name) {
-      case 'verify_credential':
+      case 'arkova_verify_credential':
         return await handleVerifyCredential(args.public_id);
-      case 'get_credential_status':
+      case 'arkova_credential_status':
         return await handleGetCredentialStatus(args.public_id);
-      case 'search_credentials':
+      case 'arkova_search_credentials':
         return await handleSearchCredentials(args.query, parseInt(args.limit || '5', 10));
-      case 'create_attestation':
+      case 'arkova_create_attestation':
         return await handleCreateAttestation(args);
-      case 'verify_signature':
+      case 'arkova_batch_verify':
+        return await handleBatchVerify(args.public_ids);
+      case 'arkova_verify_signature':
         return await handleVerifySignature(args.signature_id);
       default:
         return errorResult(`Unknown tool: ${name}`);
@@ -216,6 +233,29 @@ async function handleVerifySignature(signatureId: string): Promise<McpToolResult
     if (res.status === 404) return textResult('Signature not found.');
     return errorResult(`Signature verification API returned ${res.status}`);
   }
+  const data = await res.json();
+  return textResult(JSON.stringify(data, null, 2));
+}
+
+async function handleBatchVerify(publicIdsJson: string): Promise<McpToolResult> {
+  let publicIds: string[];
+  try {
+    publicIds = JSON.parse(publicIdsJson);
+  } catch {
+    return errorResult('Invalid JSON. Provide a JSON array of public IDs.');
+  }
+  if (!Array.isArray(publicIds) || publicIds.length === 0) {
+    return errorResult('Input must be a non-empty JSON array of public IDs.');
+  }
+  if (publicIds.length > 100) {
+    return errorResult('Maximum 100 credentials per batch.');
+  }
+
+  const res = await arkovaFetch('/api/v1/verify/batch', {
+    method: 'POST',
+    body: JSON.stringify({ public_ids: publicIds }),
+  });
+  if (!res.ok) return errorResult(`Batch verify API returned ${res.status}`);
   const data = await res.json();
   return textResult(JSON.stringify(data, null, 2));
 }

@@ -9,6 +9,7 @@
 
 import { useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import { SEARCH_LABELS } from '@/lib/copy';
 
 export interface IssuerResult {
   org_id: string;
@@ -69,19 +70,19 @@ export function usePublicSearch(): UsePublicSearchReturn {
       );
 
       if (rpcError) {
-        // PGRST203/404 (schema cache stale after migration) — show empty, not error
-        if (rpcError.code === 'PGRST203' || rpcError.code === '404') {
+        // PGRST203 (schema cache stale after migration) — show empty, not error
+        if (rpcError.code === 'PGRST203') {
           console.warn('search_public_issuers RPC stale cache:', rpcError.message);
           setIssuerResults([]);
         } else {
-          setError(rpcError.message);
+          setError(SEARCH_LABELS.SEARCH_ERROR);
         }
         return;
       }
 
       setIssuerResults((data ?? []) as IssuerResult[]);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Issuer search failed');
+    } catch {
+      setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
       setSearching(false);
     }

@@ -30,6 +30,8 @@ export const ROUTES = {
   ENTERPRISE: '/enterprise',
   INDEPENDENT_VERIFY: '/verify/independent',
   DATA_RETENTION: '/privacy/data-retention',
+  AUDITOR_BATCH: '/organization/auditor-batch',
+  COMPLIANCE_TRENDS: '/organization/compliance-trends',
 
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',

@@ -122,6 +122,10 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
   if (line.includes('scrollIntoView')) {
     return true;
   }
+  // Skip URL search params (e.g. searchParams.get('token')) — these are URL keys, not UI copy
+  if (line.includes('searchParams.get')) {
+    return true;
+  }
   return false;
 }
 
