@@ -42,6 +42,7 @@ import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
+import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { attestationsRouter } from './attestations.js';
@@ -315,5 +316,8 @@ router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerif
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting
 router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
+
+// ─── Regulatory change monitoring alerts (NMT-REG) ───
+router.use('/regulatory/alerts', aiRateLimiter, regulatoryAlertsRouter);
 
 export { router as apiV1Router };

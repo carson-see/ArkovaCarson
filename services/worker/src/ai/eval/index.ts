@@ -54,6 +54,21 @@ export {
 } from './calibration.js';
 export type { CalibrationResult, CalibrationBucket, TypeCalibrationResult } from './calibration.js';
 
+export { GOLDEN_DATASET_PHASE13_FCRA } from './golden-dataset-phase13-fcra.js';
+
+export {
+  scoreCitationAccuracy,
+  scoreFaithfulness,
+  scoreAnswerRelevance,
+  scoreRiskDetection,
+  aggregateResults as aggregateIntelligenceResults,
+} from './intelligence-eval.js';
+export type {
+  IntelligenceEvalEntry,
+  IntelligenceEvalResult,
+  IntelligenceEvalReport,
+} from './intelligence-eval.js';
+
 export {
   FRAUD_EVAL_DATASET,
   getCleanEntries,

@@ -162,7 +162,9 @@
       "mcp__playwright__browser_evaluate",
       "Bash(sudo ln:*)",
       "Bash(export PATH=\"/opt/homebrew/bin:$HOME/.nvm/versions/node/v25.6.1/bin:$PATH\")",
-      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")"
+      "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
+      "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")",
+      "Bash(git rebase:*)"
     ]
   },
   "enableAllProjectMcpServers": true,
