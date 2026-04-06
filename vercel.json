@@ -1,4 +1,14 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "claude/*": false,
+      "fix/*": false,
+      "security/*": false,
+      "feature/*": false,
+      "*": false
+    }
+  },
   "headers": [
     {
       "source": "/(.*)",
