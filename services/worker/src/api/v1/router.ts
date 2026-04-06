@@ -62,6 +62,8 @@ import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
+import { keyInventoryRouter } from './key-inventory.js';
+import { provenanceRouter } from './provenance.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -179,6 +181,8 @@ router.use('/verify', verifyProofRouter);
 // Public verification — no auth required (API key optional for tracking)
 // x402 payment gate: returns 402 if no API key and no payment header
 router.use('/verify', requireScope('verify'), x402PaymentGate('/api/v1/verify'), verifyRouter);
+// Provenance timeline — COMP-02 (public, same access as verify)
+router.use('/', provenanceRouter);
 
 // Job status polling — API key required
 router.use('/jobs', requireScope('verify:batch'), jobsRouter);
@@ -285,6 +289,8 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
+// Key inventory — COMP-05 (SOC 2 CC6.1 audit evidence)
+router.use('/', requireAuth, keyInventoryRouter);
 
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)

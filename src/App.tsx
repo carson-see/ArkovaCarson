@@ -86,6 +86,7 @@ const EnterprisePage = React.lazy(() => import('@/pages/EnterprisePage').then(m 
 const PublicSignatureVerifyPage = React.lazy(() => import('@/pages/PublicSignatureVerifyPage'));
 const SignatureCompliancePage = React.lazy(() => import('@/pages/SignatureCompliancePage'));
 const IndependentVerifyPage = React.lazy(() => import('@/pages/IndependentVerifyPage').then(m => ({ default: m.IndependentVerifyPage })));
+const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').then(m => ({ default: m.DataRetentionPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -189,6 +190,7 @@ export function App() {
           <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
           <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
           <Route path={ROUTES.INDEPENDENT_VERIFY} element={<RouteErrorBoundary section="IndependentVerify"><IndependentVerifyPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.DATA_RETENTION} element={<DataRetentionPage />} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />

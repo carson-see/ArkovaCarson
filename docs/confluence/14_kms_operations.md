@@ -375,6 +375,53 @@ STUCK_TX_REBROADCAST_ENABLED=true  # default: true
 | Treasury funding | **Pending** | Derive address via `verify-mainnet-address.ts`, then fund |
 | Flip `BITCOIN_NETWORK` | **Pending** | Change `signet` → `mainnet` in worker-deploy.yml after funding |
 
+## Key Ceremony Record Template (COMP-05)
+
+Use this template to document each key generation or rotation event. Completed records serve as SOC 2 CC6.1 evidence.
+
+### Ceremony Record
+
+| Field | Value |
+|-------|-------|
+| **Date** | YYYY-MM-DD HH:MM UTC |
+| **Ceremony Type** | Initial generation / Rotation / Emergency rotation |
+| **Key Purpose** | Bitcoin treasury signing / API HMAC signing / JWT verification |
+| **Algorithm** | e.g., ECDSA secp256k1 (EC_SIGN_SECP256K1_SHA256) |
+| **KMS Provider** | AWS KMS / GCP Cloud KMS / Environment variable |
+| **Key ID (masked)** | e.g., gcp-kms-***-bitcoin-mainnet |
+| **Initiated By** | Name + role (e.g., Engineering Lead) |
+| **Approved By** | Name + role (must differ from initiator — separation of duties) |
+| **Witness** | Name + role (optional, recommended for initial generation) |
+
+### Procedure Followed
+
+1. [ ] Key generation command executed by authorized operator
+2. [ ] Key metadata verified (algorithm, usage, region)
+3. [ ] Bitcoin address derived and recorded (for treasury keys)
+4. [ ] IAM/RBAC permissions scoped to least privilege
+5. [ ] Environment variables updated in deployment config
+6. [ ] Worker redeployed and health check confirmed
+7. [ ] Test anchor/operation verified with new key
+8. [ ] Audit event logged (`key_ceremony_completed`)
+9. [ ] Previous key disabled (rotation only)
+10. [ ] Previous key deletion scheduled with 90-day delay (rotation only)
+
+### Separation of Duties Evidence
+
+| Role | Can Create Keys | Can Use Keys | Can Delete Keys |
+|------|----------------|-------------|-----------------|
+| Engineering Lead | Yes | No (indirect via deploy) | Yes (with approval) |
+| Worker Service Account | No | Yes (KMS Sign/GetPublicKey) | No |
+| Cloud Admin | Yes | No | Yes (with approval) |
+
+### Completed Ceremonies
+
+| Date | Type | Key Purpose | Provider | Initiated By | Approved By |
+|------|------|-------------|----------|-------------|-------------|
+| 2026-03-12 | Initial generation | Bitcoin treasury (mainnet) | GCP Cloud KMS | Engineering Lead | Product Lead |
+
+---
+
 ## Change Log
 
 | Date | Story | Change |
@@ -382,3 +429,4 @@ STUCK_TX_REBROADCAST_ENABLED=true  # default: true
 | 2026-03-12 | DH-03 | Initial document — key provisioning, IAM, rotation, DR |
 | 2026-03-24 | MVP-29, PERF-7 | Added GCP Cloud KMS provider option. Added fee monitoring (MAX_FEE_SAT_PER_VBYTE). Added stuck TX detection and rebroadcast. Added mainnet readiness status table. |
 | 2026-03-26 | P7-TS-04 | Corrected GCP key resource name to match deploy config. Added `verify-mainnet-address.ts` script. Updated IAM commands with production SA. Updated readiness table. |
+| 2026-04-05 | COMP-05 | Added key ceremony record template, separation of duties matrix, completed ceremonies log. Added key-inventory API endpoint. |
