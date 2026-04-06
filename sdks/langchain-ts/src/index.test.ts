@@ -10,6 +10,8 @@ import {
   ArkovaAnchorStatusTool,
   ArkovaSearchTool,
   ArkovaAttestTool,
+  ArkovaBatchVerifyTool,
+  ArkovaVerifySignatureTool,
   getArkovaTools,
   type ArkovaToolConfig,
 } from './index.js';
@@ -138,15 +140,75 @@ describe('ArkovaAttestTool', () => {
   });
 });
 
+describe('ArkovaBatchVerifyTool', () => {
+  it('should POST batch of public IDs', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ results: [{ public_id: 'ARK-1', status: 'SECURED' }] }),
+    });
+
+    const tool = new ArkovaBatchVerifyTool(mockConfig);
+    const result = JSON.parse(await tool.call('["ARK-1"]'));
+
+    expect(result.results).toBeDefined();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://test.arkova.io/api/v1/verify/batch',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('should reject non-array input', async () => {
+    const tool = new ArkovaBatchVerifyTool(mockConfig);
+    const result = JSON.parse(await tool.call('"not-array"'));
+    expect(result.error).toContain('array');
+  });
+
+  it('should reject >100 IDs', async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `ARK-${i}`);
+    const tool = new ArkovaBatchVerifyTool(mockConfig);
+    const result = JSON.parse(await tool.call(JSON.stringify(ids)));
+    expect(result.error).toContain('100');
+  });
+});
+
+describe('ArkovaVerifySignatureTool', () => {
+  it('should verify a signature', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve({ valid: true, signature_id: 'ARK-SIG-1' }),
+    });
+
+    const tool = new ArkovaVerifySignatureTool(mockConfig);
+    const result = JSON.parse(await tool.call('ARK-SIG-1'));
+
+    expect(result.valid).toBe(true);
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://test.arkova.io/api/v1/verify-signature',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('should handle 404', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404 });
+
+    const tool = new ArkovaVerifySignatureTool(mockConfig);
+    const result = JSON.parse(await tool.call('ARK-SIG-NONE'));
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain('not found');
+  });
+});
+
 describe('getArkovaTools', () => {
-  it('should return all 4 tools', () => {
+  it('should return all 6 tools', () => {
     const tools = getArkovaTools(mockConfig);
-    expect(tools).toHaveLength(4);
+    expect(tools).toHaveLength(6);
     expect(tools.map(t => t.name)).toEqual([
       'arkova_verify_credential',
       'arkova_anchor_status',
       'arkova_search_credentials',
       'arkova_create_attestation',
+      'arkova_batch_verify',
+      'arkova_verify_signature',
     ]);
   });
 });

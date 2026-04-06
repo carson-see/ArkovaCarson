@@ -19,10 +19,43 @@
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
+| **UAT5-01** | **Public search broken — no RPC calls made** | **HIGH** | **OPEN** | Debug supabase.rpc() silent failure in SearchPage.tsx:149. Add error logging. |
+| **UAT5-02** | **Treasury/Pipeline admin stats returning zeros** | **HIGH** | **OPEN** | Worker admin stats endpoints failing. Auth or endpoint issue — worker is running (48h uptime). |
 
-**No active code blockers.** All remaining items are operational (infrastructure provisioning).
+### Recent Changes (2026-04-05, Session 29 — Comprehensive UAT Click-Through)
 
-### Recent Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
+**Full production click-through of 20+ pages. 10 bugs found (3 HIGH, 4 MEDIUM, 3 LOW). Bug report: `docs/bugs/uat_comprehensive_2026_04_05.md`.**
+
+| Change | Detail |
+|--------|--------|
+| **UAT click-through** | Every sidebar page, admin page, settings sub-page, public page tested on app.arkova.ai |
+| **BUG-UAT5-01 (HIGH)** | Public search broken — "Search failed" on all tabs. No Supabase RPC calls made. Silent catch in SearchPage.tsx:164 masks root cause. |
+| **BUG-UAT5-02 (HIGH)** | Treasury page: "Unable to fetch balance/fee rates". Pipeline page: all zeros despite 1.4M+ records. Worker stats endpoints failing. |
+| **BUG-UAT5-03 (HIGH)** | Pipeline monitoring page shows all zeros — same root cause as UAT5-02 |
+| **BUG-UAT5-04 (MEDIUM)** | API Keys page shows "authentication_required" error card — worker usage endpoint 401 |
+| **BUG-UAT5-05 (MEDIUM)** | Developers page: ~600px empty gap between metrics and feature cards |
+| **BUG-UAT5-06 (MEDIUM)** | Verification page for revoked records ends abruptly — no network receipt/share/footer |
+| **BUG-UAT5-07 (MEDIUM)** | Dashboard "12,575 records this month" vs Billing "Records secured: 0" — metrics inconsistency |
+| **BUG-UAT5-08 (LOW)** | Attestation ARK-ATT-2026-94008AC0 stuck "Anchoring in Progress" since Mar 22 |
+| **BUG-UAT5-09 (LOW)** | Verification page shows raw ISO 8601 date (2026-04-01T00:00:00Z) |
+| **BUG-UAT5-10 (LOW)** | Organization page shows "— records" instead of "0 records" |
+| **Pages passing** | Dashboard, Documents, Directory, Settings (all sub-pages), Billing, Admin Overview, System Health, Payments, Controls, Compliance, Secure Document modal, Auth guard |
+
+### Recent Changes (2026-04-05, Session 29 — Sprint: 16 Stories + Code Review)
+
+**16 stories completed across payments, SDKs, signatures, smoke tests, widgets. PR #278 open. Code review found and fixed 6 bugs. Jira updated.**
+
+| Change | Detail |
+|--------|--------|
+| Phase III eSignatures | SCRUM-422/423/424 verified complete — AdES engine (62 tests), QTSP/RFC 3161, Compliance Center |
+| Smoke Test Suite | SCRUM-43 — cron endpoint `/cron/smoke-test` + history + SystemHealthPage integration |
+| SDK Standardization | SCRUM-439/440 — `arkova_` prefix on all tools, added `arkova_batch_verify` + `arkova_verify_signature` |
+| Payment System | SCRUM-442/443/444 — credit packs (1K/10K/100K/1M), Stripe metered billing, three-tier router |
+| Embeddable Widget | SCRUM-91 — `public/embed.js` iframe integration script |
+| ZK-STARK | SCRUM-271 — snarkjs/poseidon-lite deps installed, 11 unit tests passing |
+| Code Review Fixes | 6 bugs: billing_events columns, free credit guard, x402 replay, embed XSS, rate limiting, RPC shape |
+
+### Previous Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
 
 **3 compliance stories completed. PR #270 merged. GitHub v1.6.0 released. Jira SCRUM-428/430/431 Done.**
 

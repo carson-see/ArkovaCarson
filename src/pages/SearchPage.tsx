@@ -146,10 +146,14 @@ export function SearchPage() {
     setPersonResults([]);
 
     try {
-      const { data, error: rpcError } = await (supabase as unknown as { rpc: (fn: string, params: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }> })
-        .rpc('search_public_credentials', { p_query: name, p_limit: 20 });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase.rpc as any)(
+        'search_public_credentials',
+        { p_query: name, p_limit: 20 }
+      );
 
       if (rpcError) {
+        console.error('search_public_credentials RPC error:', rpcError.message);
         setPersonError('Search failed. Please try again.');
         return;
       }
@@ -161,7 +165,8 @@ export function SearchPage() {
         return inner as PersonResult;
       });
       setPersonResults(unwrapped);
-    } catch {
+    } catch (err) {
+      console.error('search_public_credentials failed:', err);
       setPersonError('Search failed. Please try again.');
     } finally {
       setPersonSearching(false);

@@ -115,7 +115,7 @@ jobs:
 
       - name: Start Supabase
         id: supabase-start
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
         continue-on-error: true
 
       - name: Generate types
@@ -160,7 +160,7 @@ jobs:
           version: 1.123.0
 
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-keys
@@ -181,7 +181,6 @@ jobs:
         run: npm run test:coverage
 
       - name: Run RLS tests
-        continue-on-error: true
         run: npm run test:rls
         env:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
@@ -190,7 +189,6 @@ jobs:
           RLS_TEST_PASSWORD: Demo1234!
 
       - name: Run worker tests with coverage
-        continue-on-error: true
         working-directory: services/worker
         run: |
           npm ci --ignore-scripts
@@ -209,8 +207,9 @@ jobs:
 
       - name: Check if AI prompt/model code changed
         id: ai-changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
           if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(services/worker/src/ai/prompts/|services/worker/src/ai/gemini\.ts|services/worker/src/ai/schemas\.ts)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -252,8 +251,9 @@ jobs:
 
       - name: Check if TLA+ model or anchor code changed
         id: tla-changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
           if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -287,9 +287,10 @@ jobs:
           fetch-depth: 0
 
       - name: Check for modified migrations (additive-only policy)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
           # Get changed files in this PR/push
-          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'supabase/migrations/*.sql' || true)
           if [ -z "$CHANGED" ]; then
             echo "No migration changes detected"
@@ -333,8 +334,9 @@ jobs:
           done
 
       - name: Check rollback comments
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
           CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'supabase/migrations/*.sql' || true)
           for file in $CHANGED; do
             if [ -f "$file" ] && ! grep -qi 'ROLLBACK' "$file"; then
@@ -369,7 +371,7 @@ jobs:
           version: 1.123.0
 
       - name: Start Supabase
-        run: supabase start
+        run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-e2e-keys
@@ -387,7 +389,6 @@ jobs:
         run: supabase db reset
 
       - name: Run E2E tests
-        continue-on-error: true
         run: npx playwright test --project=chromium
         timeout-minutes: 10
         env:

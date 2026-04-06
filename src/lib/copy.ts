@@ -1110,6 +1110,21 @@ export const NESSIE_LABELS = {
   VERIFY: 'Verify',
   EMPTY_STATE: 'Ask a question to get compliance intelligence backed by verified evidence.',
   CACHED: 'cached',
+  RISKS_HEADING: 'Identified Risks',
+  RECOMMENDATIONS_HEADING: 'Recommendations',
+  CONFIDENCE_DETAIL_CITED: 'Documents cited',
+  CONFIDENCE_DETAIL_ANCHORED: 'Anchored citations',
+  CONFIDENCE_DETAIL_SOURCES: 'Corroborating sources',
+  CONFIDENCE_DETAIL_AUTHORITY: 'Source authority',
+  TASK_COMPLIANCE_QA: 'Compliance Q&A',
+  TASK_RISK_ANALYSIS: 'Risk Analysis',
+  TASK_DOCUMENT_SUMMARY: 'Document Summary',
+  TASK_RECOMMENDATION: 'Recommendations',
+  TASK_CROSS_REFERENCE: 'Cross-Reference',
+  INSIGHTS_TITLE: 'Nessie Insights',
+  INSIGHTS_SUBTITLE: 'AI-powered compliance analysis for this record.',
+  INSIGHTS_LOADING: 'Analyzing...',
+  INSIGHTS_EMPTY: 'No insights available for this record.',
 } as const;
 
 // =============================================================================

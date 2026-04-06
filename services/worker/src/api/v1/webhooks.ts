@@ -74,6 +74,15 @@ router.post('/test', async (req, res) => {
       },
     };
 
+    // SEC-023: SSRF protection — block private/internal URLs on test endpoint
+    if (isPrivateUrl(endpoint.url)) {
+      res.status(400).json({
+        error: 'invalid_url',
+        message: 'Webhook URL targets a private or internal network address',
+      });
+      return;
+    }
+
     // Sign and send
     const payloadString = JSON.stringify(testPayload);
     const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -154,6 +163,21 @@ router.get('/deliveries', async (req, res) => {
       }
     }
 
+    // SEC-025: Always scope delivery logs to the caller's org endpoints
+    // When no endpoint_id is provided, fetch all endpoint IDs for the org first
+    let scopedEndpointIds: string[] = [];
+    if (!endpointId) {
+      const { data: orgEndpoints } = await db
+        .from('webhook_endpoints')
+        .select('id')
+        .eq('org_id', req.apiKey.orgId);
+      scopedEndpointIds = (orgEndpoints ?? []).map((e: { id: string }) => e.id);
+      if (scopedEndpointIds.length === 0) {
+        res.json({ deliveries: [], total: 0 });
+        return;
+      }
+    }
+
     // Fetch delivery logs
     let query = db
       .from('webhook_delivery_logs')
@@ -163,6 +187,8 @@ router.get('/deliveries', async (req, res) => {
 
     if (endpointId) {
       query = query.eq('endpoint_id', endpointId);
+    } else {
+      query = query.in('endpoint_id', scopedEndpointIds);
     }
 
     const { data: logs, error } = await query;

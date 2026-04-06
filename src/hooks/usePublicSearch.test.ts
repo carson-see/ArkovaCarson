@@ -65,7 +65,7 @@ describe('usePublicSearch', () => {
       await result.current.searchIssuers('test');
     });
 
-    expect(result.current.error).toBe('RPC not found');
+    expect(result.current.error).toBe('Search failed. Please try again.');
   });
 
   it('clears results', async () => {
