@@ -85,9 +85,9 @@ export function ApiUsageDashboard({
     const isNetworkError = error.toLowerCase().includes('failed to fetch') || error.toLowerCase().includes('networkerror');
     const isAuthError = error.toLowerCase().includes('authentication') || error.toLowerCase().includes('401') || error.toLowerCase().includes('unauthorized');
     const friendlyMessage = isNetworkError
-      ? 'Usage data unavailable — worker service not connected'
+      ? API_KEY_LABELS.USAGE_UNAVAILABLE
       : isAuthError
-        ? 'Usage metrics will appear once you create your first API key'
+        ? API_KEY_LABELS.USAGE_CREATE_KEY_HINT
         : error;
     return (
       <Card className="shadow-card-rest">

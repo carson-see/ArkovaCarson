@@ -227,7 +227,7 @@ No INSERT/UPDATE/DELETE policies. Delivery logging is service_role only (worker 
 
 | Policy | Operation | Condition | Migration |
 |--------|-----------|-----------|-----------|
-| `reports_read_own_or_admin` | SELECT | `user_id = auth.uid() OR (org_id = get_user_org_id() AND is_org_admin())` | 0168 |
+| `reports_read_own_or_admin` | SELECT | `user_id = auth.uid() OR (org_id = get_user_org_id() AND is_org_admin())` | 0169 |
 | `reports_insert_own` | INSERT | `user_id = auth.uid() AND (org_id IS NULL OR org_id = get_user_org_id())` | 0019 |
 
 No UPDATE/DELETE policies. Report status updates are service_role only.
@@ -240,7 +240,7 @@ No UPDATE/DELETE policies. Report status updates are service_role only.
 
 | Policy | Operation | Condition | Migration |
 |--------|-----------|-----------|-----------|
-| `report_artifacts_read_own_or_admin` | SELECT | `report_id IN (SELECT id FROM reports WHERE user_id = auth.uid() OR (org_id = get_user_org_id() AND is_org_admin()))` | 0168 |
+| `report_artifacts_read_own_or_admin` | SELECT | `report_id IN (SELECT id FROM reports WHERE user_id = auth.uid() OR (org_id = get_user_org_id() AND is_org_admin()))` | 0169 |
 
 No INSERT/UPDATE/DELETE policies. Artifact creation is service_role only.
 
@@ -266,13 +266,13 @@ No INSERT/UPDATE/DELETE policies for authenticated. Flag modifications are servi
 
 | Policy | Operation | Condition | Migration |
 |--------|-----------|-----------|-----------|
-| `switchboard_flag_history_admin_read` | SELECT | `is_org_admin()` (org admins only) | 0168 |
+| `switchboard_flag_history_admin_read` | SELECT | `is_org_admin()` (org admins only) | 0169 |
 
 No INSERT/UPDATE/DELETE policies. History is auto-populated by trigger.
 
 **Grants (0021):** `SELECT` to authenticated; `ALL` to service_role.
 
-> **Note (0168):** Flag history was previously readable by all authenticated users (`USING (true)`). Tightened to org admins only per RLS-06 security audit finding.
+> **Note (0169):** Flag history was previously readable by all authenticated users (`USING (true)`). Tightened to org admins only per RLS-06 security audit finding.
 
 ### memberships
 

@@ -382,12 +382,12 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2D: Compliance Controls (CML-01)
             ============================================================ */}
-        {(data.status === 'SECURED' || data.status === 'REVOKED') && (
+        {data.status === 'SECURED' && (
           <>
             <Separator />
             <ComplianceBadge
               credentialType={data.credential_type}
-              isSecured={data.status === 'SECURED'}
+              isSecured={true}
               compact={false}
             />
           </>

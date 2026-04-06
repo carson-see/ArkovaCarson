@@ -607,8 +607,8 @@ export function IssueCredentialForm({
             {/* BUG-UAT-09: Validation hints when form is incomplete */}
             {!canSubmit && !creating && (file || credentialType) && (
               <p className="text-xs text-muted-foreground px-1">
-                {!file ? 'Upload a document to continue.' :
-                 !credentialType ? 'Select a credential type to continue.' :
+                {!file ? ISSUE_CREDENTIAL_LABELS.HINT_UPLOAD_DOCUMENT :
+                 !credentialType ? ISSUE_CREDENTIAL_LABELS.HINT_SELECT_TYPE :
                  ''}
               </p>
             )}
