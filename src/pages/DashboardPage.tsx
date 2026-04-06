@@ -33,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ROUTES, recordDetailPath } from '@/lib/routes';
+import { ROUTES, recordDetailPath, orgProfilePath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -326,7 +326,13 @@ export function DashboardPage() {
               actionLabel={profile?.role === 'ORG_ADMIN'
                 ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA
                 : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
-              onAction={() => setSecureDialogOpen(true)}
+              onAction={() => {
+                if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
+                  navigate(orgProfilePath(profile.org_id));
+                } else {
+                  setSecureDialogOpen(true);
+                }
+              }}
             />
           ) : !loading && isFiltering && !hasFilteredResults ? (
             <div className="py-12 text-center">

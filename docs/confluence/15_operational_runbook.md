@@ -78,7 +78,7 @@ Set these in GCP Cloud Run configuration (or via `gcloud run services update`). 
 | `BITCOIN_TREASURY_WIF` | Generated via `generate-signet-keypair.ts` | For signet; KMS for mainnet |
 | `BITCOIN_NETWORK` | `testnet4` for testnet launch (recommended) | `mainnet` when ready |
 | `ENABLE_PROD_NETWORK_ANCHORING` | `true` | Gates real Bitcoin calls |
-| `FRONTEND_URL` | `https://arkova-carson.vercel.app` | CORS origin |
+| `FRONTEND_URL` | `https://app.arkova.ai` | CORS origin (must match production domain) |
 | `NODE_ENV` | `production` | |
 | `API_KEY_HMAC_SECRET` | Generate with `openssl rand -hex 32` | For API key hashing |
 

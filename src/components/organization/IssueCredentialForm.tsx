@@ -604,6 +604,15 @@ export function IssueCredentialForm({
               )}
             </div>
 
+            {/* BUG-UAT-09: Validation hints when form is incomplete */}
+            {!canSubmit && !creating && (file || credentialType) && (
+              <p className="text-xs text-muted-foreground px-1">
+                {!file ? 'Upload a document to continue.' :
+                 !credentialType ? 'Select a credential type to continue.' :
+                 ''}
+              </p>
+            )}
+
             <DialogFooter>
               <Button variant="outline" onClick={handleClose} disabled={creating}>
                 Cancel

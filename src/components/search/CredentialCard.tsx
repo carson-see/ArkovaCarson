@@ -18,6 +18,11 @@ interface CredentialCardProps {
   anchor: IssuerRegistryAnchor;
 }
 
+/** Strip HTML tags from labels that may contain raw markup from source data */
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]*>/g, '');
+}
+
 export function CredentialCard({ anchor }: Readonly<CredentialCardProps>) {
   const typeLabel = anchor.credential_type
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[anchor.credential_type] ?? anchor.credential_type
@@ -39,7 +44,7 @@ export function CredentialCard({ anchor }: Readonly<CredentialCardProps>) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium truncate">
-            {anchor.label ?? anchor.filename}
+            {stripHtmlTags(anchor.label ?? anchor.filename ?? '')}
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-1">
             {typeLabel && (
