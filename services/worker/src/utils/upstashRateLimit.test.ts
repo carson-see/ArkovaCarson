@@ -208,6 +208,20 @@ describe('initUpstashRateLimiting', () => {
     );
   });
 
+  it('accepts UPSTASH_REDIS_REST_URL/TOKEN env vars (AUTH-05)', () => {
+    delete process.env.UPSTASH_REDIS_URL;
+    delete process.env.UPSTASH_REDIS_TOKEN;
+    process.env.UPSTASH_REDIS_REST_URL = 'https://rest.upstash.io';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'rest-token';
+    const result = initUpstashRateLimiting();
+    expect(result).toBe(true);
+    expect(mockSetRateLimitStore).toHaveBeenCalledWith(
+      expect.any(UpstashRateLimitStore)
+    );
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  });
+
   it('strips trailing slash from base URL', () => {
     process.env.UPSTASH_REDIS_URL = 'https://test.upstash.io/';
     process.env.UPSTASH_REDIS_TOKEN = 'test-token';

@@ -119,8 +119,8 @@ export class UpstashRateLimitStore implements IRateLimitStore {
  * Call this at worker startup (after config load).
  */
 export function initUpstashRateLimiting(): boolean {
-  const url = process.env.UPSTASH_REDIS_URL;
-  const token = process.env.UPSTASH_REDIS_TOKEN;
+  const url = process.env.UPSTASH_REDIS_REST_URL ?? process.env.UPSTASH_REDIS_URL;
+  const token = process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.UPSTASH_REDIS_TOKEN;
 
   if (!url || !token) {
     logger.info('Upstash Redis not configured — using in-memory rate limiting');
