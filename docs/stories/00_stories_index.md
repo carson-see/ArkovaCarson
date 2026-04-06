@@ -43,7 +43,9 @@ For a new developer joining the project, read in this order:
 | CML | Compliance Mapping Layer | 5 | 5 | 0 | 0 | [19_compliance_mapping.md](./19_compliance_mapping.md) |
 | VAI | Verifiable AI | 5 | 3 | 0 | 2 | [20_verifiable_ai.md](./20_verifiable_ai.md) |
 | NMT | Nessie Model Training | 6 | 5 | 0 | 1 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
-| **Total** | | **211** | **183** | **3** | **25** | |
+| PH3 | Phase III eSignatures | 3 | 0 | 0 | 3 | [23_phase3_esignatures.md](./23_phase3_esignatures.md) |
+| COMP | Compliance Audit Readiness | 8 | 6 | 0 | 2 | [24_compliance_audit_readiness.md](./24_compliance_audit_readiness.md) |
+| **Total** | | **222** | **189** | **3** | **30** | |
 
 ### All Stories by ID
 

@@ -12,7 +12,7 @@
 
 **Goal:** All Phase 2 stories done. Security hardening complete. Moving to Phase 3 eSignatures.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (199 complete, ~94%). **1,138+ tests** (all green). 165 migration files (0001-0161). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 7 complete, 3 partial, 7 not started (most need marketing site repo). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 0/3 (planned). **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0161 applied.** 19/19 production UAT bugs resolved. GitHub v1.5.0 released. database.types.ts regenerated.
+**Overall progress:** 222 stories (199 complete, ~90%). **1,170+ tests** (all green). 165 migration files (0001-0165). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 7 complete, 3 partial, 7 not started (most need marketing site repo). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 0/3 (planned). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0165 applied.** 19/19 production UAT bugs resolved. GitHub v1.6.0 released. database.types.ts regenerated.
 
 ### Open Blockers
 
@@ -21,6 +21,21 @@
 | ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
 
 **No active code blockers.** All remaining items are operational (infrastructure provisioning).
+
+### Recent Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
+
+**3 compliance stories completed. PR #270 merged. GitHub v1.6.0 released. Jira SCRUM-428/430/431 Done.**
+
+| Change | Detail |
+|--------|--------|
+| **COMP-04** | Data retention policy page at `/privacy/data-retention` — card layout, 8 categories, GDPR erasure, legal hold |
+| **COMP-05** | Key ceremony template in Confluence + `GET /api/v1/signatures/key-inventory` endpoint (masked, admin-only) |
+| **COMP-02** | Provenance timeline API (`GET /api/v1/verify/:publicId/provenance`) + collapsible frontend component |
+| **Code Review** | 3 findings fixed: audit_events column names, copy.ts compliance, E2E specs added |
+| **E2E** | `data-retention.spec.ts` (6 tests) + `provenance-timeline.spec.ts` (2 tests) |
+| **Tests** | 31 new unit tests + 8 E2E specs |
+| **GitHub** | PR #270 merged, v1.6.0 released |
+| **Jira** | SCRUM-428, SCRUM-430, SCRUM-431 transitioned to Done |
 
 ### Recent Changes (2026-04-05, Session 27 — Phase III AdES Signature Engine)
 
