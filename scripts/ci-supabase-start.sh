@@ -4,8 +4,9 @@
 # Wrapper around `supabase start` that handles two Postgres/Supabase CLI issues:
 #
 # 1. ALTER TYPE ... ADD VALUE cannot run inside a transaction (Postgres limitation).
-#    Supabase CLI runs each migration in a transaction, so these statements fail.
-#    Fix: Comment them out before start, then apply them directly after.
+#    When migrations are merged (by fix-migration-names.sh), ADD VALUE statements
+#    from appended content fail because they run in the same transaction as DDL.
+#    Fix: Comment them out in merged sections, then apply directly after startup.
 #
 # 2. Duplicate migration prefixes and letter suffixes (handled by fix-migration-names.sh).
 #
@@ -20,15 +21,21 @@ echo "=== Preparing Supabase for CI ==="
 # Step 1: Fix migration filenames (duplicates, letter suffixes)
 bash scripts/fix-migration-names.sh
 
-# Step 2: Extract ALTER TYPE ADD VALUE statements (they fail inside transactions)
-# Save them for post-start application
-ADD_VALUE_STMTS=$(grep -rh "ALTER TYPE.*ADD VALUE" "$MIGRATIONS_DIR"/*.sql 2>/dev/null || true)
-
-# Comment out ADD VALUE statements in migration files
+# Step 2: In MERGED sections only, comment out ALTER TYPE ADD VALUE
+# These fail inside transactions when multiple migrations are combined.
+# We look for "-- MERGED FROM:" markers and disable ADD VALUE after them.
+MERGED_STMTS=""
 for f in "$MIGRATIONS_DIR"/*.sql; do
-  if grep -q "ALTER TYPE.*ADD VALUE" "$f"; then
-    sed -i 's/^\(ALTER TYPE.*ADD VALUE\)/-- CI_DISABLED: \1/' "$f"
-    echo "  Disabled ADD VALUE in $(basename "$f")"
+  if grep -q "MERGED FROM:" "$f"; then
+    # Extract ADD VALUE statements from merged sections for post-start application
+    stmts=$(sed -n '/MERGED FROM:/,$ { /ALTER TYPE.*ADD VALUE/p }' "$f")
+    if [ -n "$stmts" ]; then
+      MERGED_STMTS="$MERGED_STMTS
+$stmts"
+      # Comment out ADD VALUE only in the merged section
+      sed -i '/MERGED FROM:/,$ s/^\(ALTER TYPE.*ADD VALUE\)/-- CI_DISABLED: \1/' "$f"
+      echo "  Disabled ADD VALUE in merged section of $(basename "$f")"
+    fi
   fi
 done
 
@@ -36,12 +43,12 @@ done
 echo "Starting Supabase..."
 supabase start
 
-# Step 4: Apply ADD VALUE statements directly (outside transaction)
-if [ -n "$ADD_VALUE_STMTS" ]; then
-  echo "Applying enum ADD VALUE statements..."
+# Step 4: Apply disabled ADD VALUE statements directly (outside transaction)
+if [ -n "$MERGED_STMTS" ]; then
+  echo "Applying enum ADD VALUE statements from merged sections..."
   DB_CONTAINER=$(docker ps --filter "name=supabase_db" -q | head -1)
   if [ -n "$DB_CONTAINER" ]; then
-    echo "$ADD_VALUE_STMTS" | while IFS= read -r stmt; do
+    echo "$MERGED_STMTS" | while IFS= read -r stmt; do
       [ -z "$stmt" ] && continue
       # Ensure IF NOT EXISTS is present
       safe_stmt=$(echo "$stmt" | sed "s/ADD VALUE '/ADD VALUE IF NOT EXISTS '/; s/IF NOT EXISTS IF NOT EXISTS/IF NOT EXISTS/")
