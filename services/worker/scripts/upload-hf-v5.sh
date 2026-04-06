@@ -190,9 +190,18 @@ echo "Model available at: https://huggingface.co/$HF_REPO"
 echo ""
 
 # Step 6: Cleanup
-read -p "Delete local weights ($DOWNLOAD_DIR)? [y/N] " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
+if [ "${1:-}" = "--no-cleanup" ] || [ "${NO_CLEANUP:-}" = "1" ]; then
+  echo "Skipping cleanup (--no-cleanup). Weights at: $DOWNLOAD_DIR"
+elif [ -t 0 ]; then
+  # Interactive terminal — ask
+  read -p "Delete local weights ($DOWNLOAD_DIR)? [y/N] " -n 1 -r
+  echo
+  if [[ $REPLY =~ ^[Yy]$ ]]; then
+    rm -rf "$DOWNLOAD_DIR"
+    echo "Cleaned up."
+  fi
+else
+  # Non-interactive (CI) — auto-cleanup
   rm -rf "$DOWNLOAD_DIR"
-  echo "Cleaned up."
+  echo "Cleaned up (non-interactive mode)."
 fi

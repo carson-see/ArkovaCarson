@@ -1,5 +1,5 @@
 # GEO & SEO Optimization Stories
-_Last updated: 2026-03-31 | 7/17 COMPLETE, 3/17 PARTIAL, 7/17 NOT STARTED_
+_Last updated: 2026-04-06 | 7/17 COMPLETE, 4/17 PARTIAL, 6/17 NOT STARTED_
 
 ## Group Overview
 
@@ -45,8 +45,8 @@ Full on-page SEO audit conducted via live site analysis. **Overall score: 57/100
 | Status | Count |
 |--------|-------|
 | COMPLETE | 7 |
-| PARTIAL | 3 |
-| NOT STARTED | 7 |
+| PARTIAL | 4 |
+| NOT STARTED | 6 |
 
 ---
 
@@ -436,17 +436,34 @@ As an AI model building entity knowledge from community discussions and review p
 
 ## GEO-10: Implement IndexNow for Bing/Copilot
 
-**Status:** NOT STARTED
+**Status:** PARTIAL (2026-04-06 — worker integration + submit script + 11 tests complete; needs INDEXNOW_KEY env var + key file hosted on marketing site)
 **Priority:** MEDIUM
 **Dependencies:** None
 **Estimated Points:** 2
 
-### Research
+### Implementation (2026-04-06)
 
-- Review IndexNow protocol specification (indexnow.org)
-- Check Vercel/Cloudflare support for IndexNow key hosting
-- Research if IndexNow can be automated on deploy (CI/CD integration)
-- Verify Bing Webmaster Tools verification options
+**Worker integration (`services/worker/src/integrations/indexnow.ts`):**
+- `submitToIndexNow(urls)` — sends URL batch to api.indexnow.org + bing.com/indexnow
+- `buildCredentialUrls(publicIds)` — builds /verify/{id} URLs for new credentials
+- `buildIssuerUrl(orgId)` — builds /issuer/{orgId} URL
+- Silent failure (non-critical SEO, never blocks anchor pipeline)
+- 5-second timeout, max 10,000 URLs per request (IndexNow limit)
+
+**Submit script (`scripts/indexnow-submit.sh`):**
+- Submits default URL set (13 public pages) or custom URLs
+- Hits both Bing and Yandex IndexNow endpoints
+- Usage: `./scripts/indexnow-submit.sh` or `./scripts/indexnow-submit.sh https://app.arkova.ai/verify/ARK-001`
+
+**Tests (`services/worker/src/integrations/indexnow.test.ts`):**
+- 11 tests covering: key-not-set skip, empty URL skip, dual endpoint submission, 202 success, rejection handling, network error handling, 10K truncation, timeout, URL builders
+
+### Remaining (external/ops)
+
+- Set `INDEXNOW_KEY` env var in production (e.g., `arkova-indexnow-2026`)
+- Host key file at `https://arkova.ai/{key}.txt` on marketing site
+- Verify Bing Webmaster Tools
+- Submit sitemap to Bing
 
 ### User Story
 
@@ -461,8 +478,9 @@ As Bing Copilot, I need instant notification when Arkova publishes or updates co
 
 ### Acceptance Criteria
 
+- [x] URL submission works via IndexNow API — worker integration + submit script
+- [x] 11 tests passing
 - [ ] IndexNow key file resolves at `https://arkova.ai/{key}.txt`
-- [ ] URL submission works via IndexNow API
 - [ ] Bing Webmaster Tools shows verified site
 - [ ] Sitemap submitted and accepted by Bing
 
