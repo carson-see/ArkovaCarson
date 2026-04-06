@@ -134,12 +134,12 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
   if (events.length === 0) return;
 
   for (const event of events) {
-    // Log to audit_events
+    // Log to audit_events (correct column names per migration 0006)
     await db.from('audit_events').insert({
       event_type: event.event_type,
+      event_category: 'SYSTEM',
       org_id: event.org_id,
-      resource_type: 'compliance',
-      metadata: { severity: event.severity, ...event.data },
+      details: JSON.stringify({ severity: event.severity, ...event.data }),
     }).then(() => {}, (err: unknown) => {
       logger.error('Failed to log compliance event', { error: err, event_type: event.event_type });
     });
@@ -148,16 +148,17 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
     try {
       const { data: endpoints } = await db
         .from('webhook_endpoints')
-        .select('id, url, secret')
+        .select('id, url')
         .eq('org_id', event.org_id)
         .eq('is_active', true);
 
       if (endpoints) {
         for (const ep of endpoints) {
-          // Queue webhook delivery (fire and forget — existing retry infrastructure handles failures)
-          void db.from('webhook_deliveries').insert({
+          // Queue webhook delivery via webhook_delivery_logs (migration 0018)
+          void db.from('webhook_delivery_logs').insert({
             endpoint_id: ep.id,
             event_type: event.event_type,
+            event_id: crypto.randomUUID(),
             payload: event.data,
             status: 'pending',
           }).then(() => {}, () => {});

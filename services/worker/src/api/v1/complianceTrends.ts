@@ -36,7 +36,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     const { granularity, from, to } = parsed.data;
 
-    const { data: membership } = await db
+    const { data: membership, error: membershipError } = await db
       .from('org_members')
       .select('org_id, role')
       .eq('user_id', userId)
@@ -44,7 +44,7 @@ router.get('/', async (req: Request, res: Response) => {
       .limit(1)
       .single();
 
-    if (!membership) {
+    if (membershipError || !membership) {
       res.status(403).json({ error: 'Admin, owner, or compliance officer role required' });
       return;
     }
@@ -93,9 +93,11 @@ router.get('/', async (req: Request, res: Response) => {
       const d = new Date(dateStr);
       if (granularity === 'daily') return d.toISOString().split('T')[0];
       if (granularity === 'weekly') {
-        const day = d.getDay();
-        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
-        return new Date(d.setDate(diff)).toISOString().split('T')[0];
+        const weekStart = new Date(d);
+        const day = weekStart.getDay();
+        const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1);
+        weekStart.setDate(diff);
+        return weekStart.toISOString().split('T')[0];
       }
       return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
     };
@@ -159,7 +161,7 @@ router.get('/', async (req: Request, res: Response) => {
       anchor_delay: latestBucket?.avg_anchor_delay_min != null
         ? (latestBucket.avg_anchor_delay_min <= 30 ? 'green' : latestBucket.avg_anchor_delay_min <= 120 ? 'amber' : 'red')
         : 'n/a',
-      cert_health: certHealth.expiring_soon > 0 ? 'amber' : certHealth.expired > 0 ? 'red' : 'green',
+      cert_health: certHealth.expired > 0 ? 'red' : certHealth.expiring_soon > 0 ? 'amber' : 'green',
     };
 
     res.json({

@@ -225,13 +225,13 @@ export function App() {
 
           {/* Compliance Intelligence */}
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Signature Compliance Center (Phase III — PH3-ESIG-03) */}
           <Route path={ROUTES.SIGNATURE_COMPLIANCE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SignatureCompliance"><SignatureCompliancePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
-          {/* Compliance Audit Tools (COMP-06, COMP-07) */}
+          {/* Compliance Audit Tools (COMP-06) */}
           <Route path={ROUTES.AUDITOR_BATCH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AuditorBatch"><AuditorBatchPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Attestations (Phase II) */}
           <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
