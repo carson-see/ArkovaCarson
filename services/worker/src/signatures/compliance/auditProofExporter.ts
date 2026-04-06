@@ -1,4 +1,3 @@
-// @ts-nocheck — new Phase III tables not yet in database.types.ts. Remove after `npm run gen:types`.
 /**
  * Audit Proof Exporter — Per-credential compliance proof generation.
  *

@@ -1,5 +1,3 @@
-// @ts-nocheck — signatures/signing_certificates/timestamp_tokens tables defined
-// in migrations 0160-0162 but not yet in database.types.ts. Remove after `npm run gen:types`.
 /**
  * Signature API Routes — Phase III AdES Signature Engine
  *
