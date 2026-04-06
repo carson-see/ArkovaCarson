@@ -1,13 +1,13 @@
 /**
  * Data Retention Policy Page (COMP-04)
  *
- * Public page at /privacy/data-retention showing per-data-category
- * retention periods, right to erasure instructions, and legal hold policy.
- * GDPR Art. 13/14 transparency requirement.
+ * Public page at /privacy/data-retention. Per-category retention periods,
+ * GDPR Art. 13/14 transparency, right to erasure instructions, legal hold.
  */
 
 import { Link } from 'react-router-dom';
-import { Shield, ArrowLeft } from 'lucide-react';
+import { Building2, Clock, Trash2, Scale, AlertTriangle } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -37,7 +37,7 @@ export function DataRetentionPage() {
         <div className="mx-auto flex max-w-4xl items-center gap-2 px-6 py-4">
           <Link to="/" className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity">
             <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary/10">
-              <Shield className="h-4 w-4 text-primary" />
+              <Building2 className="h-4 w-4 text-primary" />
             </div>
             <span className="font-semibold">Arkova</span>
           </Link>
@@ -45,60 +45,78 @@ export function DataRetentionPage() {
       </header>
 
       <main className="mx-auto max-w-4xl px-6 py-12">
-        <Link
-          to={ROUTES.PRIVACY}
-          className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {L.PAGE_TITLE}
-        </Link>
+        <h1 className="text-3xl font-bold tracking-tight mb-4">{L.PAGE_TITLE}</h1>
+        <p className="text-muted-foreground mb-8">{L.INTRO}</p>
 
-        <h1 className="text-3xl font-bold tracking-tight mb-3">{L.PAGE_TITLE}</h1>
-        <p className="text-muted-foreground mb-10">{L.INTRO}</p>
-
-        {/* Retention Schedule Table */}
-        <section className="mb-10">
-          <h2 className="text-xl font-semibold mb-4">{L.SECTION_SCHEDULE}</h2>
-          <div className="overflow-x-auto rounded-lg border">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="px-4 py-3 text-left font-medium">{L.TABLE_HEADER_CATEGORY}</th>
-                  <th className="px-4 py-3 text-left font-medium">{L.TABLE_HEADER_PERIOD}</th>
-                  <th className="px-4 py-3 text-left font-medium hidden sm:table-cell">{L.TABLE_HEADER_BASIS}</th>
-                  <th className="px-4 py-3 text-left font-medium hidden md:table-cell">{L.TABLE_HEADER_DELETION}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {RETENTION_SCHEDULE.map((row) => (
-                  <tr key={row.category} className="border-b last:border-b-0">
-                    <td className="px-4 py-3 font-medium">{row.category}</td>
-                    <td className="px-4 py-3">{row.period}</td>
-                    <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{row.basis}</td>
-                    <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">{row.deletion}</td>
+        {/* Retention Table */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5 text-primary" />
+              {L.SECTION_SCHEDULE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b">
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_CATEGORY}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_PERIOD}</th>
+                    <th className="text-left py-2 pr-4 font-medium text-muted-foreground hidden sm:table-cell">{L.TABLE_HEADER_BASIS}</th>
+                    <th className="text-left py-2 font-medium text-muted-foreground hidden md:table-cell">{L.TABLE_HEADER_DELETION}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                </thead>
+                <tbody>
+                  {RETENTION_SCHEDULE.map(row => (
+                    <tr key={row.category} className="border-b last:border-0">
+                      <td className="py-3 pr-4">{row.category}</td>
+                      <td className="py-3 pr-4 font-medium">{row.period}</td>
+                      <td className="py-3 pr-4 text-muted-foreground hidden sm:table-cell">{row.basis}</td>
+                      <td className="py-3 text-muted-foreground hidden md:table-cell">{row.deletion}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Network Permanence Note */}
-        <section className="mb-10 rounded-lg border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
-          <p className="text-sm text-amber-900 dark:text-amber-200">{L.NETWORK_NOTE}</p>
-        </section>
+        {/* Network Note */}
+        <Card className="mb-8 border-amber-500/30">
+          <CardContent className="pt-6">
+            <div className="flex gap-3">
+              <AlertTriangle className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
+              <p className="text-sm text-muted-foreground">{L.NETWORK_NOTE}</p>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Right to Erasure */}
-        <section className="mb-10">
-          <h2 className="text-xl font-semibold mb-3">{L.ERASURE_TITLE}</h2>
-          <p className="text-sm text-muted-foreground">{L.ERASURE_BODY}</p>
-        </section>
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-red-400" />
+              {L.ERASURE_TITLE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{L.ERASURE_BODY}</p>
+          </CardContent>
+        </Card>
 
         {/* Legal Hold */}
-        <section className="mb-10">
-          <h2 className="text-xl font-semibold mb-3">{L.LEGAL_HOLD_TITLE}</h2>
-          <p className="text-sm text-muted-foreground">{L.LEGAL_HOLD_BODY}</p>
-        </section>
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Scale className="h-5 w-5 text-primary" />
+              {L.LEGAL_HOLD_TITLE}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">{L.LEGAL_HOLD_BODY}</p>
+          </CardContent>
+        </Card>
       </main>
 
       <footer className="border-t">

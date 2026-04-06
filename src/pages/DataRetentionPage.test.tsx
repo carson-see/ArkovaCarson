@@ -27,18 +27,18 @@ describe('DataRetentionPage', () => {
   it('renders retention schedule table with data categories', () => {
     renderPage();
 
-    expect(screen.getByText('Anchor Records')).toBeInTheDocument();
-    expect(screen.getByText('Audit Events')).toBeInTheDocument();
-    expect(screen.getByText('Signature Records')).toBeInTheDocument();
-    expect(screen.getByText('Timestamp Tokens')).toBeInTheDocument();
-    expect(screen.getByText('User Accounts')).toBeInTheDocument();
+    expect(screen.getByText(DATA_RETENTION_LABELS.CAT_ANCHOR_RECORDS)).toBeInTheDocument();
+    expect(screen.getByText(DATA_RETENTION_LABELS.CAT_AUDIT_EVENTS)).toBeInTheDocument();
+    expect(screen.getByText(DATA_RETENTION_LABELS.CAT_SIGNATURE_RECORDS)).toBeInTheDocument();
+    expect(screen.getByText(DATA_RETENTION_LABELS.CAT_TIMESTAMP_TOKENS)).toBeInTheDocument();
+    expect(screen.getByText(DATA_RETENTION_LABELS.CAT_USER_ACCOUNTS)).toBeInTheDocument();
   });
 
   it('renders retention periods', () => {
     renderPage();
 
-    expect(screen.getAllByText('Indefinite').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('7 years').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(DATA_RETENTION_LABELS.PERIOD_INDEFINITE).length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText(DATA_RETENTION_LABELS.PERIOD_7_YEARS).length).toBeGreaterThanOrEqual(1);
   });
 
   it('renders right to erasure section', () => {
@@ -61,10 +61,9 @@ describe('DataRetentionPage', () => {
     expect(screen.getByText(DATA_RETENTION_LABELS.NETWORK_NOTE)).toBeInTheDocument();
   });
 
-  it('links back to privacy page', () => {
+  it('renders section schedule heading from copy.ts', () => {
     renderPage();
 
-    const link = screen.getByRole('link', { name: /data retention policy/i });
-    expect(link).toHaveAttribute('href', '/privacy');
+    expect(screen.getByText(DATA_RETENTION_LABELS.SECTION_SCHEDULE)).toBeInTheDocument();
   });
 });

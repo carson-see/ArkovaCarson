@@ -1,12 +1,8 @@
 /**
- * Credential Provenance Timeline (COMP-02)
+ * Credential Provenance Timeline API (COMP-02)
  *
- * GET /api/v1/verify/:publicId/provenance
- * Returns the complete chain of custody from upload through verification.
- * Events include: upload, fingerprint, anchor submission, network confirmation,
- * signature creation, timestamp acquisition, verification queries.
- *
- * Rate limited: 100 req/min per IP (anonymous), 1000 req/min per key.
+ * GET /api/v1/verify/:publicId/provenance — Returns the complete chain of custody
+ * for a credential as an ordered array of events with timestamps and evidence refs.
  */
 
 import { Router, Request, Response } from 'express';
@@ -16,10 +12,9 @@ import { logger } from '../../utils/logger.js';
 export interface ProvenanceEvent {
   event_type: string;
   timestamp: string;
+  detail: string;
+  evidence_ref?: string;
   actor?: string;
-  evidence_reference?: string;
-  time_delta_seconds?: number;
-  anomaly?: boolean;
 }
 
 export interface AnchorProvenanceData {
@@ -27,20 +22,19 @@ export interface AnchorProvenanceData {
   fingerprint: string;
   status: string;
   created_at: string;
-  updated_at: string;
-  chain_tx_id: string | null;
-  chain_block_height: number | null;
-  chain_timestamp: string | null;
-  revoked_at: string | null;
+  updated_at?: string;
+  chain_tx_id?: string | null;
+  chain_block_height?: number | null;
+  chain_timestamp?: string | null;
+  revoked_at?: string | null;
+  submitted_at?: string | null;
+  secured_at?: string | null;
+  tx_id?: string | null;
+  batch_id?: string | null;
+  id?: string;
+  org_id?: string | null;
+  revocation_reason?: string | null;
 }
-
-interface AuditEventRow {
-  event_type: string;
-  created_at: string;
-  actor_id: string | null;
-}
-
-const TWENTY_FOUR_HOURS_SECONDS = 24 * 60 * 60;
 
 /**
  * Build a provenance timeline from anchor data and audit events.
@@ -48,117 +42,159 @@ const TWENTY_FOUR_HOURS_SECONDS = 24 * 60 * 60;
  */
 export function buildProvenanceTimeline(
   anchor: AnchorProvenanceData,
-  auditEvents: AuditEventRow[],
+  auditEvents: Array<{ event_type: string; created_at: string; actor_id: string | null }>,
 ): ProvenanceEvent[] {
   const events: ProvenanceEvent[] = [];
 
-  // 1. Credential uploaded
+  // 1. Credential created
   events.push({
-    event_type: 'credential_uploaded',
+    event_type: 'credential_created',
     timestamp: anchor.created_at,
+    detail: `Credential ${anchor.public_id} created with fingerprint ${anchor.fingerprint?.substring(0, 16)}...`,
   });
 
-  // 2. Fingerprint computed (same as upload — happens client-side before submission)
-  events.push({
-    event_type: 'fingerprint_computed',
-    timestamp: anchor.created_at,
-    evidence_reference: anchor.fingerprint,
-  });
+  // 2. Submitted to network
+  if (anchor.submitted_at) {
+    const delay = new Date(anchor.submitted_at).getTime() - new Date(anchor.created_at).getTime();
+    events.push({
+      event_type: 'anchor_submitted',
+      timestamp: anchor.submitted_at,
+      detail: `Submitted to anchoring pipeline${delay > 0 ? ` (${Math.round(delay / 60000)}min after creation)` : ''}`,
+      evidence_ref: anchor.batch_id || undefined,
+    });
+  }
 
-  // 3. Network confirmed (if chain data exists)
-  if (anchor.chain_timestamp && anchor.chain_tx_id) {
-    const delaySeconds = (new Date(anchor.chain_timestamp).getTime() - new Date(anchor.created_at).getTime()) / 1000;
-    const isAnomalous = delaySeconds > TWENTY_FOUR_HOURS_SECONDS;
-
+  // 3. Network confirmed
+  const confirmedAt = anchor.secured_at ?? anchor.chain_timestamp;
+  const txId = anchor.tx_id ?? anchor.chain_tx_id;
+  if (confirmedAt) {
+    const delay = anchor.submitted_at
+      ? new Date(confirmedAt).getTime() - new Date(anchor.submitted_at).getTime()
+      : 0;
     events.push({
       event_type: 'network_confirmed',
-      timestamp: anchor.chain_timestamp,
-      evidence_reference: anchor.chain_tx_id,
-      ...(isAnomalous ? { anomaly: true } : {}),
+      timestamp: confirmedAt,
+      detail: `Confirmed on public network${delay > 0 ? ` (${Math.round(delay / 60000)}min after submission)` : ''}`,
+      evidence_ref: txId || undefined,
     });
   }
 
-  // 4. Revocation (if applicable)
-  if (anchor.revoked_at) {
-    events.push({
-      event_type: 'credential_revoked',
-      timestamp: anchor.revoked_at,
-    });
-  }
-
-  // 5. Verification queries from audit log (anonymized)
+  // 4. Verification queries from audit trail (anonymized)
   for (const evt of auditEvents) {
-    if (evt.event_type === 'VERIFICATION_QUERIED') {
+    if (evt.event_type === 'VERIFICATION_QUERIED' || evt.event_type === 'VERIFICATION_QUERY') {
       events.push({
-        event_type: 'verification_queried',
+        event_type: 'verification_query',
         timestamp: evt.created_at,
+        detail: 'Third-party verification request',
         actor: evt.actor_id ? 'anonymous' : undefined,
       });
     }
   }
 
+  // 5. Revocation
+  if (anchor.revoked_at) {
+    events.push({
+      event_type: 'credential_revoked',
+      timestamp: anchor.revoked_at,
+      detail: `Revoked: ${anchor.revocation_reason || 'no reason provided'}`,
+    });
+  }
+
   // Sort chronologically
   events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-  // Calculate time deltas between consecutive events
-  for (let i = 1; i < events.length; i++) {
-    const prev = new Date(events[i - 1].timestamp).getTime();
-    const curr = new Date(events[i].timestamp).getTime();
-    events[i].time_delta_seconds = Math.round((curr - prev) / 1000);
-  }
 
   return events;
 }
 
 const router = Router();
 
-/**
- * GET /api/v1/verify/:publicId/provenance
- * Public endpoint — no auth required (same as /verify/:publicId).
- */
-router.get('/verify/:publicId/provenance', async (req: Request, res: Response) => {
+router.get('/:publicId/provenance', async (req: Request, res: Response) => {
   try {
     const { publicId } = req.params;
 
-    if (!publicId || publicId.length > 64) {
-      res.status(400).json({ error: 'Invalid public ID' });
-      return;
-    }
-
-    // Fetch anchor record
-    const { data: anchor, error: anchorError } = await db
+    // Fetch anchor
+    const { data: anchor, error } = await db
       .from('anchors')
-      .select('public_id, fingerprint, status, created_at, updated_at, chain_tx_id, chain_block_height, chain_timestamp, revoked_at')
+      .select('id, public_id, fingerprint, status, created_at, submitted_at, secured_at, tx_id, batch_id, org_id, revoked_at, revocation_reason')
       .eq('public_id', publicId)
       .is('deleted_at', null)
-      .limit(1)
       .single();
 
-    if (anchorError || !anchor) {
+    if (error || !anchor) {
       res.status(404).json({ error: 'Credential not found' });
       return;
     }
 
-    // Fetch audit events for this anchor
-    const { data: auditEvents } = await db
+    // Fetch signature events (Phase III)
+    const { data: signatures } = await (db as any)
+      .from('signatures')
+      .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')
+      .eq('anchor_id', anchor.id)
+      .order('created_at', { ascending: true });
+
+    // Fetch verification events from audit trail
+    const { data: verifyEvents } = await db
       .from('audit_events')
       .select('event_type, created_at, actor_id')
       .eq('target_id', anchor.public_id)
+      .in('event_type', ['VERIFICATION_QUERIED', 'VERIFICATION_QUERY', 'signature.verified'])
       .order('created_at', { ascending: true })
-      .limit(100);
+      .limit(50);
 
-    const timeline = buildProvenanceTimeline(
-      anchor as AnchorProvenanceData,
-      (auditEvents ?? []) as AuditEventRow[],
+    const events = buildProvenanceTimeline(
+      anchor as unknown as AnchorProvenanceData,
+      (verifyEvents ?? []) as Array<{ event_type: string; created_at: string; actor_id: string | null }>,
     );
 
+    // Add signature events from Phase III tables
+    if (signatures) {
+      for (const sig of signatures) {
+        if (sig.signed_at) {
+          events.push({
+            event_type: 'signature_created',
+            timestamp: sig.signed_at,
+            detail: `${sig.format} ${sig.level} signature by ${sig.signer_name || 'unknown'}`,
+            evidence_ref: sig.public_id,
+          });
+        }
+        if (sig.timestamp_token_id) {
+          events.push({
+            event_type: 'timestamp_acquired',
+            timestamp: sig.signed_at || sig.created_at,
+            detail: `RFC 3161 timestamp token acquired for signature ${sig.public_id}`,
+            evidence_ref: sig.timestamp_token_id,
+          });
+        }
+      }
+    }
+
+    // Re-sort after adding signature events
+    events.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+    // Flag anomalies
+    const anomalies: string[] = [];
+    if (anchor.submitted_at && anchor.secured_at) {
+      const confirmDelay = new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime();
+      if (confirmDelay > 24 * 3600_000) {
+        anomalies.push(`Confirmation delay: ${Math.round(confirmDelay / 3600_000)}h (expected <1h)`);
+      }
+    }
+    if (anchor.status === 'PENDING') {
+      const age = Date.now() - new Date(anchor.created_at).getTime();
+      if (age > 48 * 3600_000) {
+        anomalies.push(`Stale PENDING: ${Math.round(age / 3600_000)}h without anchoring`);
+      }
+    }
+
     res.json({
-      public_id: publicId,
-      event_count: timeline.length,
-      events: timeline,
+      public_id: anchor.public_id,
+      status: anchor.status,
+      events,
+      anomalies,
+      event_count: events.length,
     });
   } catch (err) {
-    logger.error('Provenance timeline retrieval failed', {
+    logger.error('Provenance timeline failed', {
       error: err instanceof Error ? err.message : String(err),
     });
     res.status(500).json({ error: 'Internal server error' });
