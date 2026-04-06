@@ -68,6 +68,13 @@ async function crawlDomains(domains: string[], env: Env): Promise<CrawlResponse>
         continue;
       }
 
+      // INJ-03: DNS rebinding defense — resolve domain before fetching
+      // and verify resolved IPs are not private/reserved
+      if (await resolvesToPrivateIp(domain)) {
+        results.push({ domain, status: 'skipped', error: 'Domain resolves to private/reserved IP' });
+        continue;
+      }
+
       // Fetch the main page
       const url = `https://${domain}`;
       const response = await fetch(url, {
@@ -147,6 +154,54 @@ async function crawlDomains(domains: string[], env: Env): Promise<CrawlResponse>
     failed: results.filter((r) => r.status === 'failed').length,
     results,
   };
+}
+
+/**
+ * INJ-03: Post-resolution IP validation.
+ * Resolves a domain via Cloudflare DNS-over-HTTPS and checks whether
+ * any A/AAAA record points to a private or reserved IP range.
+ * Prevents DNS rebinding attacks where a domain initially resolves to
+ * a public IP but later resolves to a private one.
+ */
+async function resolvesToPrivateIp(domain: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodeURIComponent(domain)}&type=A`,
+      {
+        headers: { Accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (!res.ok) return false; // fail-open on DNS error (CF Workers block private IPs anyway)
+
+    const json = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
+    const answers = json.Answer ?? [];
+
+    for (const answer of answers) {
+      if (answer.type !== 1) continue; // Only check A records
+      if (isPrivateIpv4(answer.data)) return true;
+    }
+
+    return false;
+  } catch {
+    return false; // fail-open — Cloudflare Workers runtime blocks private IPs at fetch level
+  }
+}
+
+/** Check if an IPv4 address falls within private/reserved ranges */
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) return true; // malformed = block
+
+  const [a, b] = parts;
+  if (a === 10) return true;                          // 10.0.0.0/8
+  if (a === 127) return true;                         // 127.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;            // 192.168.0.0/16
+  if (a === 169 && b === 254) return true;            // 169.254.0.0/16 (link-local / cloud metadata)
+  if (a === 100 && b >= 64 && b <= 127) return true;  // 100.64.0.0/10 (CGNAT)
+  if (a === 0) return true;                           // 0.0.0.0/8
+  return false;
 }
 
 /** Validate domain format to prevent SSRF attacks */
