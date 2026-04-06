@@ -62,6 +62,9 @@ import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
+import { provenanceRouter } from './provenance.js';
+import { keyInventoryRouter } from './keyInventory.js';
+import { complianceTrendsRouter } from './complianceTrends.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -289,6 +292,18 @@ router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)
 router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
+
+// ─── Credential Provenance Timeline — COMP-02 ───
+// Public endpoint (like /verify), no auth required
+router.use('/verify', provenanceRouter);
+
+// ─── Key Inventory — COMP-05 (audit evidence) ───
+// JWT auth required — admin/compliance_officer only
+router.use('/signatures/key-inventory', requireAuth, keyInventoryRouter);
+
+// ─── Compliance Trends — COMP-07 ───
+// JWT auth required — admin/compliance_officer only
+router.use('/signatures/compliance-trends', requireAuth, complianceTrendsRouter);
 
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting

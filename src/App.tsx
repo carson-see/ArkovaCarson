@@ -86,6 +86,9 @@ const EnterprisePage = React.lazy(() => import('@/pages/EnterprisePage').then(m 
 const PublicSignatureVerifyPage = React.lazy(() => import('@/pages/PublicSignatureVerifyPage'));
 const SignatureCompliancePage = React.lazy(() => import('@/pages/SignatureCompliancePage'));
 const IndependentVerifyPage = React.lazy(() => import('@/pages/IndependentVerifyPage').then(m => ({ default: m.IndependentVerifyPage })));
+const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').then(m => ({ default: m.DataRetentionPage })));
+const AuditorBatchPage = React.lazy(() => import('@/pages/AuditorBatchPage').then(m => ({ default: m.AuditorBatchPage })));
+const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -189,6 +192,7 @@ export function App() {
           <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
           <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
           <Route path={ROUTES.INDEPENDENT_VERIFY} element={<RouteErrorBoundary section="IndependentVerify"><IndependentVerifyPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.DATA_RETENTION} element={<RouteErrorBoundary section="DataRetention"><DataRetentionPage /></RouteErrorBoundary>} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
@@ -224,6 +228,10 @@ export function App() {
 
           {/* Signature Compliance Center (Phase III — PH3-ESIG-03) */}
           <Route path={ROUTES.SIGNATURE_COMPLIANCE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SignatureCompliance"><SignatureCompliancePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+
+          {/* Compliance Audit Tools (COMP-06, COMP-07) */}
+          <Route path={ROUTES.AUDITOR_BATCH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AuditorBatch"><AuditorBatchPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Attestations (Phase II) */}
           <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

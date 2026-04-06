@@ -1990,8 +1990,10 @@ export type Database = {
           activation_token: string | null
           activation_token_expires_at: string | null
           avatar_url: string | null
+          bio: string | null
           created_at: string
           deleted_at: string | null
+          disclaimer_accepted_at: string | null
           email: string
           full_name: string | null
           id: string
@@ -2012,6 +2014,7 @@ export type Database = {
           requires_manual_review: boolean
           role: Database["public"]["Enums"]["user_role"] | null
           role_set_at: string | null
+          social_links: Json | null
           status: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier: string
           updated_at: string
@@ -2020,8 +2023,10 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           deleted_at?: string | null
+          disclaimer_accepted_at?: string | null
           email: string
           full_name?: string | null
           id: string
@@ -2042,6 +2047,7 @@ export type Database = {
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          social_links?: Json | null
           status?: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier?: string
           updated_at?: string
@@ -2050,8 +2056,10 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           deleted_at?: string | null
+          disclaimer_accepted_at?: string | null
           email?: string
           full_name?: string | null
           id?: string
@@ -2072,6 +2080,7 @@ export type Database = {
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          social_links?: Json | null
           status?: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier?: string
           updated_at?: string

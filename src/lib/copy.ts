@@ -1799,3 +1799,37 @@ export const DATA_RETENTION_LABELS = {
   LEGAL_HOLD_TITLE: 'Legal Hold',
   LEGAL_HOLD_BODY: 'Retention periods may be extended when required by law, regulatory investigation, or pending litigation.',
 } as const;
+
+// ─── Provenance Timeline (COMP-02) ──────────────────────────────────────
+
+export const PROVENANCE_LABELS = {
+  TITLE: 'Provenance Chain',
+  EXPORT_JSON: 'Export as JSON',
+} as const;
+
+// ─── Auditor Batch Verification (COMP-06) ───────────────────────────────
+
+export const AUDITOR_BATCH_LABELS = {
+  PAGE_TITLE: 'Audit Batch Verification',
+  PAGE_DESCRIPTION: 'Verify credentials in bulk for SOC 2 and ISO 27001 audit sampling (ISA 530).',
+  SELECT_MODE: 'Verification Mode',
+  MODE_CSV: 'Credential IDs',
+  MODE_SAMPLE: 'Random Sample',
+  CSV_LABEL: 'Credential IDs (one per line or comma-separated)',
+  CSV_HINT: 'Maximum 1,000 IDs per batch. Paste from CSV or enter manually.',
+  SAMPLE_PCT_LABEL: 'Sample Percentage',
+  SEED_LABEL: 'Random Seed',
+  SEED_PLACEHOLDER: 'Optional — for reproducibility',
+  SEED_HINT: 'Use the same seed to reproduce identical sampling results (ISA 530).',
+  SUBMIT: 'Run Batch Verification',
+  DOWNLOAD_CSV: 'Download CSV Report',
+} as const;
+
+// ─── Compliance Trend Dashboard (COMP-07) ───────────────────────────────
+
+export const COMPLIANCE_TREND_LABELS = {
+  PAGE_TITLE: 'Compliance Trends',
+  PAGE_DESCRIPTION: 'Track compliance KPIs over time. Demonstrate continuous improvement to auditors.',
+  FETCH: 'Load Trends',
+  DOWNLOAD_CSV: 'Export CSV',
+} as const;
