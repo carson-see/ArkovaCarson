@@ -24,7 +24,7 @@
     "@supabase/supabase-js": "^2.39.0",
     "adm-zip": "^0.5.10",
     "asn1js": "^3.0.7",
-    "bitcoinjs-lib": "^6.1.7",
+    "bitcoinjs-lib": "^7.0.1",
     "cheerio": "^1.2.0",
     "dotenv": "^17.3.1",
     "ecpair": "^3.0.1",
