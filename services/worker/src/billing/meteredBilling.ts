@@ -44,7 +44,7 @@ export async function recordMeteredUsage(record: MeteredUsageRecord): Promise<vo
     org_id: record.org_id,
     user_id: record.user_id,
     event_type: 'metered_api_usage',
-    metadata: {
+    payload: {
       endpoint: record.endpoint,
       quantity: record.quantity,
       timestamp: record.timestamp,
@@ -67,11 +67,11 @@ export async function getMeteredUsage(
 ): Promise<number> {
   const { data, error } = await db
     .from('billing_events')
-    .select('metadata')
+    .select('payload')
     .eq('org_id', orgId)
     .eq('event_type', 'metered_api_usage')
-    .gte('created_at', periodStart)
-    .lte('created_at', periodEnd);
+    .gte('processed_at', periodStart)
+    .lte('processed_at', periodEnd);
 
   if (error) {
     logger.error({ error, orgId }, 'Failed to fetch metered usage');
@@ -79,7 +79,7 @@ export async function getMeteredUsage(
   }
 
   return (data ?? []).reduce((sum, row) => {
-    const qty = (row.metadata as { quantity?: number })?.quantity ?? 1;
+    const qty = (row.payload as { quantity?: number })?.quantity ?? 1;
     return sum + qty;
   }, 0);
 }
@@ -92,11 +92,11 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
   const results: UsageReportResult[] = [];
 
   // Find all orgs with active metered subscriptions
+  // Note: subscriptions table uses plan_id FK to plans table, not plan_type column
   const { data: subs, error: subError } = await db
     .from('subscriptions')
-    .select('id, user_id, org_id, stripe_subscription_id, plan_type')
-    .in('status', ['active', 'trialing'])
-    .eq('plan_type', 'metered');
+    .select('id, user_id, org_id, stripe_subscription_id, plan_id')
+    .in('status', ['active', 'trialing']);
 
   if (subError || !subs?.length) {
     logger.info('No active metered subscriptions found');

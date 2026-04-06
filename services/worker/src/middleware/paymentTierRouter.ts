@@ -58,7 +58,11 @@ async function tryCredits(orgId: string, userId: string, cost: number): Promise<
 
     if (error || !data) return null;
 
-    const remaining = (data as { remaining: number }).remaining ?? 0;
+    // check_unified_credits returns TABLE — Supabase may return array or single row
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return null;
+
+    const remaining = (row as { remaining: number }).remaining ?? 0;
     if (remaining < cost) return null;
 
     // Deduct credits
@@ -90,7 +94,7 @@ async function tryStripeMetered(userId: string, orgId: string): Promise<PaymentR
     // Check for active metered subscription
     const { data } = await db
       .from('subscriptions')
-      .select('id, stripe_subscription_id, status, plan_type')
+      .select('id, stripe_subscription_id, status, plan_id')
       .eq('user_id', userId)
       .in('status', ['active', 'trialing'])
       .maybeSingle();
@@ -103,8 +107,8 @@ async function tryStripeMetered(userId: string, orgId: string): Promise<PaymentR
         org_id: orgId,
         user_id: userId,
         event_type: 'api_metered_usage',
-        stripe_subscription_id: data.stripe_subscription_id,
-        metadata: {
+        payload: {
+          stripe_subscription_id: data.stripe_subscription_id,
           timestamp: new Date().toISOString(),
           source: 'payment_tier_router',
         },
@@ -129,23 +133,34 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   const paymentHeader = req.headers['x-payment'] as string | undefined;
   if (!paymentHeader) return null;
 
-  // Delegate to existing x402 validation logic
+  // Validate tx_hash format (hex string, reasonable length) to prevent abuse
+  if (!/^0x[a-fA-F0-9]{64}$/.test(paymentHeader) && paymentHeader.length > 128) {
+    return null;
+  }
+
+  // Check for verified, unconsumed payment — mark as consumed atomically
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data } = await (db as any)
     .from('x402_payments')
-    .select('id, tx_hash, verified')
+    .select('id, tx_hash')
     .eq('tx_hash', paymentHeader)
     .eq('verified', true)
+    .is('consumed_at', null)
     .maybeSingle();
 
-  if (data) {
-    return {
-      tier: 'x402',
-      authorized: true,
-    };
-  }
+  if (!data) return null;
 
-  return null;
+  // Mark payment as consumed to prevent replay
+  await (db as any)
+    .from('x402_payments')
+    .update({ consumed_at: new Date().toISOString() })
+    .eq('id', data.id)
+    .is('consumed_at', null); // optimistic lock
+
+  return {
+    tier: 'x402',
+    authorized: true,
+  };
 }
 
 // ─── Admin/Beta Bypass ──────────────────────────────────────────────────

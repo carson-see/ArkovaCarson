@@ -60,7 +60,9 @@ creditsRouter.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const credits = data as { monthly_allocation: number; used_this_month: number; remaining: number } | null;
+    // check_unified_credits returns TABLE — Supabase may return array or single row
+    const row = Array.isArray(data) ? data[0] : data;
+    const credits = row as { monthly_allocation: number; used_this_month: number; remaining: number } | null;
 
     res.json({
       balance: credits?.remaining ?? 0,
@@ -102,8 +104,8 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
   }
 
   try {
-    if (!config.stripeSecretKey) {
-      // Direct credit grant for development/testing
+    if (!config.stripeSecretKey && config.nodeEnv !== 'production') {
+      // Direct credit grant for development/testing only — NEVER in production
       const { error: grantError } = await db.rpc('deduct_unified_credits', {
         p_org_id: orgId ?? null,
         p_user_id: userId,

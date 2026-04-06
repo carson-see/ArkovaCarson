@@ -28,11 +28,15 @@
     var publicId = el.getAttribute('data-public-id');
     if (!publicId) continue;
 
-    var mode = el.getAttribute('data-mode') || 'full';
-    var theme = el.getAttribute('data-theme') || 'light';
+    var rawMode = el.getAttribute('data-mode') || 'full';
+    var rawTheme = el.getAttribute('data-theme') || 'light';
+
+    // Validate mode/theme against allowed values to prevent injection
+    var mode = rawMode === 'compact' ? 'compact' : 'full';
+    var theme = rawTheme === 'dark' ? 'dark' : 'light';
 
     var iframe = document.createElement('iframe');
-    iframe.src = ARKOVA_BASE + '/embed/verify/' + encodeURIComponent(publicId) + '?mode=' + mode + '&theme=' + theme;
+    iframe.src = ARKOVA_BASE + '/embed/verify/' + encodeURIComponent(publicId) + '?mode=' + encodeURIComponent(mode) + '&theme=' + encodeURIComponent(theme);
     iframe.style.border = 'none';
     iframe.style.width = '100%';
     iframe.style.height = mode === 'compact' ? '60px' : '280px';
@@ -41,7 +45,7 @@
     iframe.style.overflow = 'hidden';
     iframe.setAttribute('loading', 'lazy');
     iframe.setAttribute('title', 'Arkova Credential Verification');
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    iframe.setAttribute('sandbox', 'allow-scripts');
 
     el.innerHTML = '';
     el.appendChild(iframe);

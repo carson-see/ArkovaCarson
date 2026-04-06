@@ -78,9 +78,9 @@ describe('getMeteredUsage', () => {
             gte: vi.fn().mockReturnValue({
               lte: vi.fn().mockResolvedValue({
                 data: [
-                  { metadata: { quantity: 5 } },
-                  { metadata: { quantity: 10 } },
-                  { metadata: { quantity: 3 } },
+                  { payload: { quantity: 5 } },
+                  { payload: { quantity: 10 } },
+                  { payload: { quantity: 3 } },
                 ],
                 error: null,
               }),
@@ -116,9 +116,7 @@ describe('reportMeteredUsageToStripe', () => {
   it('returns empty when no metered subscriptions', async () => {
     (db.from as any).mockReturnValue({
       select: vi.fn().mockReturnValue({
-        in: vi.fn().mockReturnValue({
-          eq: vi.fn().mockResolvedValue({ data: [], error: null }),
-        }),
+        in: vi.fn().mockResolvedValue({ data: [], error: null }),
       }),
     });
 
@@ -127,28 +125,26 @@ describe('reportMeteredUsageToStripe', () => {
   });
 
   it('reports usage for dev mode (no Stripe key)', async () => {
-    // Subscriptions query
+    // Subscriptions query (no plan_type filter — uses plan_id instead)
     (db.from as any).mockImplementation((table: string) => {
       if (table === 'subscriptions') {
         return {
           select: vi.fn().mockReturnValue({
-            in: vi.fn().mockReturnValue({
-              eq: vi.fn().mockResolvedValue({
-                data: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_type: 'metered' }],
-                error: null,
-              }),
+            in: vi.fn().mockResolvedValue({
+              data: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_id: 'plan-metered' }],
+              error: null,
             }),
           }),
         };
       }
-      // billing_events query for usage
+      // billing_events query for usage (uses payload + processed_at columns)
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
               gte: vi.fn().mockReturnValue({
                 lte: vi.fn().mockResolvedValue({
-                  data: [{ metadata: { quantity: 42 } }],
+                  data: [{ payload: { quantity: 42 } }],
                   error: null,
                 }),
               }),
