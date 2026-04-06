@@ -216,6 +216,17 @@ function CardCopyButton({ value }: { value: string }) {
   );
 }
 
+/** Format an ISO date string for display (e.g. "2026-04-01T00:00:00Z" → "April 1, 2026") */
+function formatDateForDisplay(dateStr: string): string {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
 /**
  * Build a one-line description for a record card.
  * Priority: file_description → form_type + filing_date + period_of_report → issuer + issued_date
@@ -246,7 +257,7 @@ function buildRecordDescription(record: Record): string | null {
   const issuedDate = (meta.issued_date ?? meta.date) as string | undefined;
 
   if (issuer) parts.push(`Issued by ${issuer}`);
-  if (issuedDate) parts.push(issuedDate);
+  if (issuedDate) parts.push(formatDateForDisplay(issuedDate));
 
   return parts.length > 0 ? parts.join(' · ') : null;
 }
@@ -261,7 +272,7 @@ function buildRecordTitle(record: Record): string {
   const date = meta.filing_date ?? meta.issued_date ?? meta.date;
 
   if (entityName && formType && date) {
-    return `${entityName} — ${formType} (${date})`;
+    return `${entityName} — ${formType} (${formatDateForDisplay(date as string)})`;
   }
   if (entityName && formType) {
     return `${entityName} — ${formType}`;

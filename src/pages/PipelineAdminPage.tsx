@@ -193,7 +193,8 @@ export function PipelineAdminPage() {
         byCredentialType,
         recentErrors: 0,
       });
-    } catch {
+    } catch (err) {
+      console.error('PipelineAdminPage: failed to fetch stats', err);
       // Stats fetch failed — set empty state so UI doesn't hang on skeleton
       setStats({ totalRecords: 0, anchoredRecords: 0, pendingRecords: 0, embeddedRecords: 0, bySource: {}, byCredentialType: {}, recentErrors: 0  });
     } finally {

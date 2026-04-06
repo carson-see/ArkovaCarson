@@ -35,7 +35,7 @@ export function TreasuryAdminPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { balance, receipts, feeRates, loading: balanceLoading, error: balanceError, refresh: refreshBalance } = useTreasuryBalance();
-  const { stats: anchorStats, loading: statsLoading, refresh: refreshStats } = useAnchorStats();
+  const { stats: anchorStats, loading: statsLoading, error: _statsError, refresh: refreshStats } = useAnchorStats();
 
   const [refreshing, setRefreshing] = useState(false);
 

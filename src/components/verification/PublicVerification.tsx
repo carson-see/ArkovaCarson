@@ -382,12 +382,12 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2D: Compliance Controls (CML-01)
             ============================================================ */}
-        {data.status === 'SECURED' && (
+        {(data.status === 'SECURED' || data.status === 'REVOKED') && (
           <>
             <Separator />
             <ComplianceBadge
               credentialType={data.credential_type}
-              isSecured={true}
+              isSecured={data.status === 'SECURED'}
               compact={false}
             />
           </>
@@ -401,7 +401,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <EvidenceLayersSection
               layers={[
-                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.network_receipt_id ? `Network record: ${data.network_receipt_id.substring(0, 16)}...` : undefined },
+                { type: 'anchor', present: data.status === 'SECURED' || data.status === 'REVOKED', timestamp: data.secured_at, detail: data.network_receipt_id ? `Network record: ${data.network_receipt_id.substring(0, 16)}...` : undefined },
                 { type: 'signature', present: false },
                 { type: 'timestamp', present: false },
               ]}

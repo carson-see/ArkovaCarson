@@ -153,7 +153,7 @@ export function DevelopersPage() {
 
       <main className="pt-24 pb-20">
         {/* Hero */}
-        <section className="relative px-6 py-20 md:py-32 overflow-hidden">
+        <section className="relative px-6 py-16 md:py-24 overflow-hidden">
           <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-[#00d4ff]/10 rounded-full blur-[120px] -z-10 translate-x-1/2 -translate-y-1/2" />
           <div className="max-w-7xl mx-auto flex flex-col items-center text-center">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#242b32] border border-[#3c494e]/20 mb-8">
@@ -210,7 +210,7 @@ export function DevelopersPage() {
         </section>
 
         {/* Feature Grid */}
-        <section className="px-6 py-20 max-w-7xl mx-auto">
+        <section className="px-6 py-12 max-w-7xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
               <div className="text-[#a8e8ff] mb-6">

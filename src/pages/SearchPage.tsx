@@ -53,9 +53,9 @@ interface FingerprintResult {
 }
 
 const EXAMPLE_QUERIES = [
-  { label: 'Harvard University', mode: 'issuers' as SearchMode },
-  { label: 'SEC 10-K filing Apple', mode: 'credentials' as SearchMode },
-  { label: 'Federal Register healthcare', mode: 'credentials' as SearchMode },
+  { label: 'Arkova', mode: 'issuers' as SearchMode },
+  { label: 'SEC filing', mode: 'credentials' as SearchMode },
+  { label: 'Federal Register', mode: 'credentials' as SearchMode },
 ];
 
 export function SearchPage() {
@@ -76,14 +76,15 @@ export function SearchPage() {
   const [fpSearching, setFpSearching] = useState(false);
   const [fpError, setFpError] = useState<string | null>(null);
 
-  // Person search state
+  // Person search state — matches search_public_credentials RETURNS TABLE columns
   interface PersonResult {
     public_id: string;
-    title: string | null;
     credential_type: string | null;
+    title: string | null;
     status: string;
-    created_at: string;
-    org_id: string | null;
+    issuer_name: string | null;
+    issuer_public_id: string | null;
+    anchored_at: string | null;
   }
   const [personResults, setPersonResults] = useState<PersonResult[]>([]);
   const [personSearching, setPersonSearching] = useState(false);
@@ -158,13 +159,8 @@ export function SearchPage() {
         return;
       }
 
-      // RPC returns SETOF jsonb — results are nested under function name key
-      const rows = (data as Record<string, unknown>[]) ?? [];
-      const unwrapped = rows.map((row) => {
-        const inner = row.search_public_credentials ?? row;
-        return inner as PersonResult;
-      });
-      setPersonResults(unwrapped);
+      // RPC uses RETURNS TABLE — data is already an array of proper objects
+      setPersonResults((data ?? []) as PersonResult[]);
     } catch (err) {
       console.error('search_public_credentials failed:', err);
       setPersonError('Search failed. Please try again.');
@@ -301,7 +297,12 @@ export function SearchPage() {
         </div>
 
         {/* Search type tabs */}
-        <Tabs value={searchMode} onValueChange={(v) => setSearchMode(v as SearchMode)} className="mb-4">
+        <Tabs value={searchMode} onValueChange={(v) => {
+          setSearchMode(v as SearchMode);
+          // BUG-UAT-05: Clear stale results when switching tabs
+          setHasSearched(false);
+          setQuery('');
+        }} className="mb-4">
           <TabsList className="w-full grid grid-cols-3">
             <TabsTrigger value="issuers" className="gap-1.5">
               <Building className="h-3.5 w-3.5" />
@@ -482,15 +483,20 @@ export function SearchPage() {
                           <p className="text-sm font-medium truncate">
                             {result.title || result.public_id || 'Untitled Record'}
                           </p>
+                          {result.issuer_name && (
+                            <p className="text-xs text-muted-foreground truncate">{result.issuer_name}</p>
+                          )}
                           <div className="flex items-center gap-2 mt-1">
                             {result.credential_type && (
                               <span className="text-xs text-muted-foreground">
                                 {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
                               </span>
                             )}
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(result.created_at).toLocaleDateString()}
-                            </span>
+                            {result.anchored_at && (
+                              <span className="text-xs text-muted-foreground">
+                                {new Date(result.anchored_at).toLocaleDateString()}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <Badge
