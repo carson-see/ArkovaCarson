@@ -631,6 +631,19 @@ cronRouter.post('/cleanup-retention', async (_req, res) => {
   }
 });
 
+// ─── Metered Usage Reporting (PAY-02) ───
+
+cronRouter.post('/report-metered-usage', async (_req, res) => {
+  try {
+    const { reportMeteredUsageToStripe } = await import('../billing/meteredBilling.js');
+    const results = await reportMeteredUsageToStripe();
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'Metered usage reporting failed');
+    res.status(500).json({ error: 'Reporting failed' });
+  }
+});
+
 // ─── Production Smoke Test (P7-TS-06) ───
 
 cronRouter.post('/smoke-test', async (_req, res) => {
