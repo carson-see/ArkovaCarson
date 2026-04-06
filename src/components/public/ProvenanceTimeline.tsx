@@ -77,15 +77,15 @@ export function ProvenanceTimeline({ publicId }: Props) {
       setLoading(true);
       setError(null);
       try {
-        const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
+        const workerUrl = import.meta.env.VITE_WORKER_URL || '';
         const resp = await fetch(`${workerUrl}/api/v1/verify/${publicId}/provenance`);
         if (!resp.ok) {
-          setError(PROVENANCE_LABELS.ERROR_LOAD);
+          setError(PROVENANCE_LABELS.ERROR);
           return;
         }
         setData(await resp.json());
       } catch {
-        setError(PROVENANCE_LABELS.ERROR_NETWORK);
+        setError(PROVENANCE_LABELS.ERROR);
       } finally {
         setLoading(false);
       }
@@ -102,7 +102,7 @@ export function ProvenanceTimeline({ publicId }: Props) {
           onClick={() => setExpanded(!expanded)}
         >
           <CardTitle className="text-sm font-medium flex items-center gap-2">
-            <Clock className="h-4 w-4" /> {PROVENANCE_LABELS.TITLE}
+            <Clock className="h-4 w-4" /> {PROVENANCE_LABELS.SECTION_TITLE}
           </CardTitle>
           {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </button>

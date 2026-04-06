@@ -1852,16 +1852,6 @@ export const PROVENANCE_LABELS = {
   ERROR: 'Unable to load provenance timeline.',
 } as const;
 
-// ─── Provenance Timeline (COMP-02) ──────────────────────────────────────
-
-export const PROVENANCE_LABELS = {
-  TITLE: 'Provenance Chain',
-  EXPORT_JSON: 'Export as JSON',
-  LOADING: 'Loading provenance chain...',
-  ERROR_LOAD: 'Failed to load provenance data',
-  ERROR_NETWORK: 'Network error',
-} as const;
-
 // ─── Auditor Batch Verification (COMP-06) ───────────────────────────────
 
 export const AUDITOR_BATCH_LABELS = {
