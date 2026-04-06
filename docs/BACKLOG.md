@@ -22,20 +22,21 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
-| Compliance & Audit Readiness (SCRUM-426) | 8 | 0 | 8 | No (planned) |
+| Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs (legacy) | 29 | 29 | 0 | No |
 | Production UAT Bugs (2026-04) | 19 | 19 | 0 | No (all resolved) |
+| Production UAT Bugs (2026-04-05 Click-Through) | 10 | 0 | 10 | **YES (3 HIGH)** |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | GitHub CodeQL | 29 | 9 fixed | 20 | No (false positives) |
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **32** | |
+| **Total Open Items** | | | **42** | |
 
 ---
 
@@ -220,6 +221,37 @@ _Discovered via Jira UAT sweep (SCRUM-347 epic). 19 bugs filed, 5 already resolv
 | ~~SCRUM-378~~ | ~~Dashboard shows 0 records for admin~~ | **DONE** |
 | ~~SCRUM-380~~ | ~~Compliance page shows 0 Active Credentials~~ | **DONE** |
 | ~~SCRUM-385~~ | ~~GEO-13 on-page SEO keyword fix~~ | **DONE** |
+
+---
+
+## TIER 1D: PRODUCTION UAT BUGS (2026-04-05 Comprehensive Click-Through)
+
+_Discovered via comprehensive UAT click-through of app.arkova.ai. 10 bugs found (3 HIGH, 4 MEDIUM, 3 LOW). Full report: `docs/bugs/uat_comprehensive_2026_04_05.md`._
+
+### HIGH Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 1 | UAT5-01 / SCRUM-455 | **HIGH** | Public search broken — "Search failed" on all tabs. No Supabase RPC calls made. Silent catch in SearchPage.tsx:164. | **OPEN** |
+| 2 | UAT5-02 / SCRUM-456 | **HIGH** | Treasury page: "Unable to fetch balance/fee rates". Worker admin stats endpoints failing. | **OPEN** |
+| 3 | UAT5-03 / SCRUM-457 | **HIGH** | Pipeline monitoring page shows all zeros — worker stats endpoints not returning data | **OPEN** |
+
+### MEDIUM Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 4 | UAT5-04 | **MEDIUM** | API Keys page shows "authentication_required" error card — worker usage endpoint 401 | **OPEN** |
+| 5 | UAT5-05 | **MEDIUM** | Developers page: ~600px empty gap between metrics and feature cards | **OPEN** |
+| 6 | UAT5-06 | **MEDIUM** | Verification page for revoked records ends abruptly — no network receipt/share/footer | **OPEN** |
+| 7 | UAT5-07 | **MEDIUM** | Dashboard "12,575 records" vs Billing "Records secured: 0" — metrics inconsistency | **OPEN** |
+
+### LOW Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 8 | UAT5-08 | **LOW** | Attestation ARK-ATT-2026-94008AC0 stuck "Anchoring in Progress" since Mar 22 | **OPEN** |
+| 9 | UAT5-09 | **LOW** | Verification page shows raw ISO 8601 date (2026-04-01T00:00:00Z) | **OPEN** |
+| 10 | UAT5-10 | **LOW** | Organization page shows "— records" instead of "0 records" | **OPEN** |
 
 ---
 
@@ -599,14 +631,14 @@ _From external QA/UAT Performance Resilience Audit (`QAAudit.docx`). 11 of 25 ac
 
 | ID | Story | Priority | Status | Jira | Depends On | Effort |
 |----|-------|----------|--------|------|------------|--------|
-| COMP-01 | Evidence model explainer on verification pages | P0 | NOT STARTED | SCRUM-427 | None | Medium |
-| COMP-02 | Credential provenance timeline | P1 | NOT STARTED | SCRUM-428 | None | Large |
-| COMP-03 | Independent verification guide (verify without Arkova) | P0 | NOT STARTED | SCRUM-429 | None | Medium |
-| COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | NOT STARTED | SCRUM-430 | None | Small |
-| COMP-05 | Key ceremony documentation & audit evidence | P1 | NOT STARTED | SCRUM-431 | None | Medium |
-| COMP-06 | Batch verification & audit sampling (ISA 530) | P0 | NOT STARTED | SCRUM-432 | None | Large |
-| COMP-07 | Compliance trend dashboard | P1 | NOT STARTED | SCRUM-433 | COMP-06 | Medium |
-| COMP-08 | Compliance event webhooks (GRC platform integration) | P2 | NOT STARTED | SCRUM-434 | COMP-07 | Medium |
+| COMP-01 | Evidence model explainer on verification pages | P0 | **COMPLETE** | SCRUM-427 | None | Medium |
+| COMP-02 | Credential provenance timeline | P1 | **COMPLETE** | SCRUM-428 | None | Large |
+| COMP-03 | Independent verification guide (verify without Arkova) | P0 | **COMPLETE** | SCRUM-429 | None | Medium |
+| COMP-04 | Data retention policy page (GDPR Art. 13/14) | P1 | **COMPLETE** | SCRUM-430 | None | Small |
+| COMP-05 | Key ceremony documentation & audit evidence | P1 | **COMPLETE** | SCRUM-431 | None | Medium |
+| COMP-06 | Batch verification & audit sampling (ISA 530) | P0 | **COMPLETE** | SCRUM-432 | None | Large |
+| COMP-07 | Compliance trend dashboard | P1 | **COMPLETE** | SCRUM-433 | COMP-06 | Medium |
+| COMP-08 | Compliance event webhooks (GRC platform integration) | P2 | **COMPLETE** | SCRUM-434 | COMP-07 | Medium |
 
 **Story doc:** `docs/stories/24_compliance_audit_readiness.md`
 

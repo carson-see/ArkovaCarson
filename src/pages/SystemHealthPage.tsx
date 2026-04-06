@@ -22,10 +22,12 @@ import {
   Clock,
   Zap,
   AlertTriangle,
+  Play,
+  History,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { useSystemHealth } from '@/hooks/useSystemHealth';
+import { useSystemHealth, useSmokeTestHistory } from '@/hooks/useSystemHealth';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,8 +55,10 @@ export function SystemHealthPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { health, loading: healthLoading, error: healthError, fetchHealth } = useSystemHealth();
+  const { history: smokeHistory, loading: smokeLoading, fetchHistory, runSmokeTest } = useSmokeTestHistory();
 
   const [refreshing, setRefreshing] = useState(false);
+  const [runningSmoke, setRunningSmoke] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isAdmin = isPlatformAdmin(user?.email);
@@ -62,6 +66,7 @@ export function SystemHealthPage() {
   useEffect(() => {
     if (isAdmin) {
       fetchHealth();
+      fetchHistory();
 
       intervalRef.current = setInterval(() => {
         fetchHealth();
@@ -73,7 +78,7 @@ export function SystemHealthPage() {
         clearInterval(intervalRef.current);
       }
     };
-  }, [isAdmin, fetchHealth]);
+  }, [isAdmin, fetchHealth, fetchHistory]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -320,6 +325,78 @@ export function SystemHealthPage() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      {/* Smoke Test Section */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <History className="h-5 w-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">Production Smoke Tests</h2>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              setRunningSmoke(true);
+              await runSmokeTest();
+              setRunningSmoke(false);
+            }}
+            disabled={runningSmoke}
+          >
+            <Play className={`mr-2 h-4 w-4 ${runningSmoke ? 'animate-pulse' : ''}`} />
+            {runningSmoke ? 'Running...' : 'Run Now'}
+          </Button>
+        </div>
+
+        {smokeHistory.length > 0 ? (
+          <div className="space-y-3">
+            {smokeHistory.slice(0, 5).map((run, i) => (
+              <Card key={i}>
+                <CardContent className="pt-4 pb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      {run.failed === 0 ? (
+                        <Badge className="bg-green-500/10 text-green-700 border-green-500/30">
+                          <CheckCircle className="mr-1 h-3 w-3" /> All Passed
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-red-500/10 text-red-700 border-red-500/30">
+                          <XCircle className="mr-1 h-3 w-3" /> {run.failed} Failed
+                        </Badge>
+                      )}
+                      <span className="text-sm text-muted-foreground">
+                        {run.passed}/{run.total} checks passed
+                      </span>
+                    </div>
+                    <span className="text-xs text-muted-foreground font-mono">
+                      {new Date(run.timestamp).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {run.results.map((check, j) => (
+                      <div
+                        key={j}
+                        className={`text-xs px-2 py-1 rounded-md font-mono ${
+                          check.status === 'pass'
+                            ? 'bg-green-500/10 text-green-700'
+                            : 'bg-red-500/10 text-red-700'
+                        }`}
+                        title={check.detail ?? check.error ?? ''}
+                      >
+                        {check.name}: {check.durationMs}ms
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        ) : smokeLoading ? (
+          <Skeleton className="h-24 w-full rounded-lg" />
+        ) : (
+          <p className="text-sm text-muted-foreground">No smoke test history. Click &quot;Run Now&quot; to execute.</p>
+        )}
       </div>
 
       {/* Memory + Uptime + Version */}

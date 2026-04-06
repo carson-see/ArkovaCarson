@@ -18,7 +18,9 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
-import { INTELLIGENCE_SYSTEM_PROMPT } from '../../ai/prompts/intelligence.js';
+import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
+import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
+import { hybridSearch } from '../../ai/hybrid-search.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
@@ -63,6 +65,7 @@ const NessieQuerySchema = z.object({
   threshold: z.coerce.number().min(0).max(1).default(0.72),
   limit: z.coerce.number().int().min(1).max(50).default(10),
   mode: z.enum(['retrieval', 'context']).default('retrieval'),
+  task: z.enum(['compliance_qa', 'risk_analysis', 'document_summary', 'recommendation', 'cross_reference']).optional(),
 });
 
 /** Single result with anchor proof */
@@ -101,13 +104,33 @@ export interface NessieCitation {
   excerpt: string;
 }
 
+/** Confidence decomposition showing why the score is what it is */
+export interface ConfidenceDecomposition {
+  /** Number of retrieved documents that were cited */
+  citedDocumentCount: number;
+  /** Total documents retrieved */
+  totalDocumentCount: number;
+  /** Fraction of cited docs with Bitcoin anchor proofs */
+  anchoredCitationRate: number;
+  /** Average source authority weight of cited docs */
+  meanSourceAuthority: number;
+  /** Whether multiple corroborating sources were found */
+  hasCorroboratingSources: boolean;
+  /** Task type used for analysis */
+  taskType: IntelligenceMode;
+}
+
 /** Verified context response (mode=context) */
 export interface NessieContextResponse {
   answer: string;
   citations: NessieCitation[];
   confidence: number;
+  confidence_decomposition?: ConfidenceDecomposition;
+  risks?: string[];
+  recommendations?: string[];
   model: string;
   query: string;
+  task_type?: IntelligenceMode;
   tokens_used?: number;
 }
 
@@ -162,7 +185,8 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const { q, threshold, limit, mode } = parsed.data;
+  const { q, threshold, limit, mode, task } = parsed.data;
+  const taskType: IntelligenceMode = task ?? 'compliance_qa';
 
   try {
     // Check switchboard flag
@@ -182,18 +206,38 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // QA-PERF-6: Monitor RAG search query performance
-    const { data: matches, error: searchError } = await monitorQuery(
-      'nessie-rag-search',
-      () => dbAny.rpc(
-        'search_public_record_embeddings',
-        {
-          p_query_embedding: embeddingResult.embedding,
-          p_match_threshold: threshold,
-          p_match_count: limit,
-        },
-      ),
-    ) as { data: Array<{ public_record_id: string; similarity: number }> | null; error: unknown };
+    // Hybrid search: BM25 + dense retrieval with RRF fusion (NMT-SEARCH)
+    // Falls back to dense-only if BM25 RPC doesn't exist yet
+    let matches: Array<{ public_record_id: string; similarity: number }> | null = null;
+    let searchError: unknown = null;
+
+    try {
+      const hybridResults = await monitorQuery(
+        'nessie-hybrid-search',
+        () => hybridSearch(dbAny, q, embeddingResult.embedding, { threshold, limit }),
+      );
+      // Convert hybrid results to the format expected downstream
+      matches = (hybridResults as Array<{ public_record_id: string; rrf_score: number; dense_score: number | null }>).map((r) => ({
+        public_record_id: r.public_record_id,
+        similarity: r.dense_score ?? r.rrf_score,
+      }));
+    } catch {
+      // Fallback: dense-only search if hybrid search fails (e.g. BM25 RPC not deployed)
+      logger.debug('Hybrid search unavailable, falling back to dense-only');
+      const result = await monitorQuery(
+        'nessie-rag-search',
+        () => dbAny.rpc(
+          'search_public_record_embeddings',
+          {
+            p_query_embedding: embeddingResult.embedding,
+            p_match_threshold: threshold,
+            p_match_count: limit,
+          },
+        ),
+      ) as { data: Array<{ public_record_id: string; similarity: number }> | null; error: unknown };
+      matches = result.data;
+      searchError = result.error;
+    }
 
     if (searchError) {
       logger.error({ error: searchError }, 'Nessie search RPC failed');
@@ -336,7 +380,7 @@ router.get('/', async (req: Request, res: Response) => {
         return;
       }
 
-      const contextResponse = await generateVerifiedContext(q, results);
+      const contextResponse = await generateVerifiedContext(q, results, taskType);
       setCachedContext(cacheKey, contextResponse);
       res.json(contextResponse);
     } catch (contextError) {
@@ -362,13 +406,13 @@ router.get('/', async (req: Request, res: Response) => {
 async function generateVerifiedContext(
   query: string,
   documents: NessieResult[],
+  taskType: IntelligenceMode = 'compliance_qa',
 ): Promise<NessieContextResponse> {
   const prompt = buildRAGPrompt(query, documents);
 
-  // Intelligence queries ALWAYS use the intelligence system prompt (NMT-07).
-  // This teaches Nessie to provide compliance analysis, risk identification,
-  // and actionable recommendations — not just answer Q&A.
-  const systemPrompt = INTELLIGENCE_SYSTEM_PROMPT;
+  // Use task-specific system prompt (NMT-07) — routes to the right intelligence mode
+  // instead of always using the base compliance_qa prompt.
+  const systemPrompt = buildIntelligenceSystemPrompt(taskType);
 
   let text: string;
   let tokensUsed: number | undefined;
@@ -420,7 +464,7 @@ async function generateVerifiedContext(
         tokensUsed = data.usage?.total_tokens;
         modelName = intelligenceModel;
 
-        return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+        return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed, taskType);
       }
     } catch (err) {
       clearTimeout(timeout);
@@ -454,7 +498,7 @@ async function generateVerifiedContext(
     tokensUsed = response.response.usageMetadata?.totalTokenCount;
   }
 
-  return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed);
+  return parseIntelligenceResponse(text, modelName, query, documents, tokensUsed, taskType);
 }
 
 /**
@@ -468,12 +512,15 @@ function parseIntelligenceResponse(
   query: string,
   documents: NessieResult[],
   tokensUsed?: number,
+  taskType: IntelligenceMode = 'compliance_qa',
 ): NessieContextResponse {
   const parsed = JSON.parse(text) as {
     answer?: string;
     analysis?: string;
     citations: NessieCitation[];
     confidence: number;
+    risks?: string[];
+    recommendations?: string[];
   };
 
   // Validate citations reference actual documents
@@ -498,12 +545,54 @@ function parseIntelligenceResponse(
     };
   });
 
+  // Compute confidence decomposition — explains WHY the confidence is what it is
+  const sourceWeight: Record<string, number> = {
+    edgar: 1.15, federal_register: 1.12, courtlistener: 1.12,
+    dapip: 1.10, uspto: 1.10, openalex: 1.0,
+  };
+  const citedDocIds = new Set(enrichedCitations.map((c) => c.record_id));
+  const citedDocs = documents.filter((d) => citedDocIds.has(d.record_id));
+  const anchoredCitations = citedDocs.filter((d) => d.anchor_proof?.chain_tx_id);
+  const meanAuthority = citedDocs.length > 0
+    ? citedDocs.reduce((sum, d) => sum + (sourceWeight[d.source] ?? 1.0), 0) / citedDocs.length
+    : 0;
+  const uniqueSources = new Set(citedDocs.map((d) => d.source));
+
+  // Ensemble-adjusted confidence: combine model's self-reported confidence with
+  // evidence strength signals to correct for overconfidence/underconfidence
+  const rawConfidence = Math.min(1, Math.max(0, parsed.confidence ?? 0));
+  const citationCoverage = documents.length > 0 ? citedDocs.length / documents.length : 0;
+  const anchorRate = citedDocs.length > 0 ? anchoredCitations.length / citedDocs.length : 0;
+  const corroborationBonus = uniqueSources.size >= 2 ? 0.05 : 0;
+
+  // Weighted ensemble: 50% model self-report, 25% citation coverage, 15% anchor rate, 10% authority
+  const ensembleConfidence = Math.min(1, Math.max(0,
+    rawConfidence * 0.50 +
+    citationCoverage * 0.25 +
+    anchorRate * 0.15 +
+    (meanAuthority > 0 ? (meanAuthority - 1.0) * 2 : 0) * 0.10 +
+    corroborationBonus
+  ));
+
+  const decomposition: ConfidenceDecomposition = {
+    citedDocumentCount: citedDocs.length,
+    totalDocumentCount: documents.length,
+    anchoredCitationRate: anchorRate,
+    meanSourceAuthority: meanAuthority,
+    hasCorroboratingSources: uniqueSources.size >= 2,
+    taskType,
+  };
+
   return {
     answer: parsed.analysis ?? parsed.answer ?? '',
     citations: enrichedCitations,
-    confidence: Math.min(1, Math.max(0, parsed.confidence ?? 0)),
+    confidence: ensembleConfidence,
+    confidence_decomposition: decomposition,
+    risks: parsed.risks,
+    recommendations: parsed.recommendations,
     model: modelName,
     query,
+    task_type: taskType,
     tokens_used: tokensUsed,
   };
 }

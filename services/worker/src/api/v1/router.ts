@@ -42,6 +42,7 @@ import { rateLimit } from '../../utils/rateLimit.js';
 import { x402PaymentGate } from '../../middleware/x402PaymentGate.js';
 import { idempotencyMiddleware } from '../../middleware/idempotency.js';
 import { nessieQueryRouter } from './nessie-query.js';
+import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { attestationsRouter } from './attestations.js';
@@ -176,6 +177,10 @@ router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);
 
+// ─── Credential Provenance Timeline — COMP-02 ───
+// MUST be before /verify to avoid route shadowing (same pattern as P8-S19)
+router.use('/verify', provenanceRouter);
+
 // Merkle proof endpoint — public, no payment required (BTC-003)
 router.use('/verify', verifyProofRouter);
 
@@ -190,6 +195,15 @@ router.use('/usage', requireScope('usage:read'), usageRouter);
 
 // Key management — requires Supabase JWT auth
 router.use('/keys', requireAuth, requireScope('keys:manage'), keysRouter);
+
+// Credit management — requires Supabase JWT auth + rate limit (PAY-01)
+import { creditsRouter } from './credits.js';
+const creditsRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  keyGenerator: (req) => `credits:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+router.use('/credits', requireAuth, creditsRateLimiter, creditsRouter);
 
 // ─── AI rate limiter (30 req/min per user — AI ops are expensive) ───
 const aiRateLimiter = rateLimit({
@@ -287,14 +301,13 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
-// Key inventory — COMP-05 (SOC 2 CC6.1 audit evidence)
-router.use('/', requireAuth, keyInventoryRouter);
-
-// ─── Credential Provenance Timeline — COMP-02 ───
-router.use('/verify', provenanceRouter);
+// ─── Key Inventory — COMP-05 (SOC 2 CC6.1 audit evidence) ───
+// Feature-gated + JWT auth + rate limited — admin/compliance_officer only
+router.use('/', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter);
 
 // ─── Compliance Trends — COMP-07 ───
-router.use('/compliance/trends', requireAuth, complianceTrendsRouter);
+// Feature-gated + JWT auth + rate limited
+router.use('/compliance/trends', adesSignatureGate(), requireAuth, aiRateLimiter, complianceTrendsRouter);
 
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)
@@ -303,5 +316,8 @@ router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerif
 // ─── Nessie RAG query (PH1-INT-02) ───
 // x402 payment gate + AI rate limiting
 router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
+
+// ─── Regulatory change monitoring alerts (NMT-REG) ───
+router.use('/regulatory/alerts', aiRateLimiter, regulatoryAlertsRouter);
 
 export { router as apiV1Router };

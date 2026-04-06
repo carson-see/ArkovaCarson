@@ -173,7 +173,13 @@ router.post('/:provider', async (req: Request, res: Response) => {
     let attestations: any[] = [];
     if (searchTerms.length > 0) {
       // Search attestations by subject_identifier matching candidate info
-      const filters = searchTerms.map((term) => `subject_identifier.ilike.%${term}%`);
+      // SEC-024: Escape PostgREST filter syntax chars to prevent .or() injection (CRIT-3 pattern)
+      const escapeIlike = (input: string): string => {
+        let escaped = input.replace(/[%_\\]/g, '\\$&');
+        escaped = escaped.replace(/[,.()"']/g, '');
+        return escaped;
+      };
+      const filters = searchTerms.map((term) => `subject_identifier.ilike.%${escapeIlike(term)}%`);
       const { data, error } = await dbAny
         .from('attestations')
         .select('public_id, attestation_type, status, subject_identifier, attester_name, expires_at, chain_tx_id')

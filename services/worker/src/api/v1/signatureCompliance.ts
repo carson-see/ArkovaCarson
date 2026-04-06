@@ -130,12 +130,12 @@ router.get('/signatures/soc2-evidence', async (req: Request, res: Response) => {
       .from('org_members')
       .select('org_id, role')
       .eq('user_id', userId)
-      .in('role', ['owner', 'admin', 'compliance_officer'])
+      .in('role', ['owner', 'admin'])
       .limit(1)
       .single();
 
     if (!membership) {
-      res.status(403).json({ error: 'Admin, owner, or compliance officer role required for SOC 2 evidence' });
+      res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 
@@ -170,12 +170,12 @@ router.get('/signatures/gdpr-article30', async (req: Request, res: Response) => 
       .from('org_members')
       .select('org_id, role')
       .eq('user_id', userId)
-      .in('role', ['owner', 'admin', 'compliance_officer'])
+      .in('role', ['owner', 'admin'])
       .limit(1)
       .single();
 
     if (!membership) {
-      res.status(403).json({ error: 'Admin, owner, or compliance officer role required' });
+      res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 
@@ -216,12 +216,12 @@ router.get('/signatures/eidas-report', async (req: Request, res: Response) => {
       .from('org_members')
       .select('org_id, role')
       .eq('user_id', userId)
-      .in('role', ['owner', 'admin', 'compliance_officer'])
+      .in('role', ['owner', 'admin'])
       .limit(1)
       .single();
 
     if (!membership) {
-      res.status(403).json({ error: 'Admin, owner, or compliance officer role required' });
+      res.status(403).json({ error: 'Organization administrator role required' });
       return;
     }
 

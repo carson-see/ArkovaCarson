@@ -1,9 +1,8 @@
 /**
  * Embeddable Verification Widget
  *
- * STATUS: POST-LAUNCH (MVP-14) — This component exists but is not yet
- * routed or exported. It will be integrated when the embeddable widget
- * feature is prioritized. See docs/BACKLOG.md for MVP-14 status.
+ * Routed at /embed/verify/:publicId via EmbedVerifyPage.
+ * Embedded on third-party sites via iframe.
  *
  * A self-contained component that can be embedded on third-party websites
  * via an iframe or script tag. Shows verification status for a given publicId.

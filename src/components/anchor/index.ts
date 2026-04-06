@@ -10,3 +10,4 @@ export type { TemplateOption } from './TemplateSelector';
 export { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 export { VerificationWalkthrough } from './VerificationWalkthrough';
 export { AnchorDisclaimer, AnchorDisclaimerDark } from './AnchorDisclaimer';
+export { NessieInsights } from './NessieInsights';

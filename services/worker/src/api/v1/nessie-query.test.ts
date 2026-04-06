@@ -204,6 +204,28 @@ describe('GET /nessie/query', () => {
     expect(res.body.results).toHaveLength(0);
   });
 
+  it('accepts task parameter for intelligence mode routing', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/nessie/query?q=test+query&mode=context&task=risk_analysis');
+
+    expect(res.status).toBe(200);
+    expect(res.body.task_type).toBe('risk_analysis');
+  });
+
+  it('rejects invalid task parameter', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/nessie/query?q=test&task=invalid_mode');
+    expect(res.status).toBe(400);
+  });
+
+  it('defaults task to compliance_qa when not specified', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/nessie/query?q=test+query&mode=context');
+
+    expect(res.status).toBe(200);
+    expect(res.body.task_type).toBe('compliance_qa');
+  });
+
   // PH1-INT-03: Verified context mode
   describe('mode=context (Gemini RAG)', () => {
     beforeEach(() => {
@@ -226,6 +248,8 @@ describe('GET /nessie/query', () => {
               },
             ],
             confidence: 0.88,
+            risks: ['Market volatility risk identified'],
+            recommendations: ['Review quarterly filing for updated risk factors'],
           }),
           usageMetadata: { totalTokenCount: 450 },
         },
@@ -242,6 +266,28 @@ describe('GET /nessie/query', () => {
       expect(res.body.citations.length).toBeGreaterThan(0);
       expect(res.body.confidence).toBeDefined();
       expect(res.body.query).toBe('apple financials');
+    });
+
+    it('includes confidence decomposition in response', async () => {
+      const app = buildApp();
+      const res = await request(app).get('/nessie/query?q=apple+report&mode=context');
+
+      expect(res.status).toBe(200);
+      expect(res.body.confidence_decomposition).toBeDefined();
+      expect(res.body.confidence_decomposition.citedDocumentCount).toBeGreaterThanOrEqual(0);
+      expect(res.body.confidence_decomposition.totalDocumentCount).toBeGreaterThan(0);
+      expect(res.body.confidence_decomposition.taskType).toBe('compliance_qa');
+    });
+
+    it('returns risks and recommendations from intelligence response', async () => {
+      const app = buildApp();
+      const res = await request(app).get('/nessie/query?q=apple+report&mode=context');
+
+      expect(res.status).toBe(200);
+      expect(res.body.risks).toBeDefined();
+      expect(res.body.risks.length).toBeGreaterThan(0);
+      expect(res.body.recommendations).toBeDefined();
+      expect(res.body.recommendations.length).toBeGreaterThan(0);
     });
 
     it('includes anchor proofs in citations', async () => {

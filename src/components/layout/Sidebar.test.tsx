@@ -64,6 +64,7 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Directory')).toBeNull();
   });
 
+
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
     renderSidebar();
     expect(screen.queryByText('Help')).toBeNull();

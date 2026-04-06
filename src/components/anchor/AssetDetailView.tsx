@@ -33,6 +33,7 @@ import { FileUpload } from './FileUpload';
 import { ShareSheet } from './ShareSheet';
 import { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
+import { NessieInsights } from './NessieInsights';
 import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
@@ -566,6 +567,14 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           />
         </CardContent>
       </Card>
+
+      {/* Nessie Insights — Proactive compliance analysis (NMT-07) */}
+      <NessieInsights
+        credentialType={anchor.credentialType}
+        issuerName={anchor.issuerName}
+        metadata={anchor.metadata}
+        publicId={anchor.publicId}
+      />
 
       {/* Version History / Lineage (P4-TS-06) */}
       {(anchor.versionNumber ?? 1) > 1 || (anchor.lineage && anchor.lineage.length > 1) ? (
