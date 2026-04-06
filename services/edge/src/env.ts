@@ -29,6 +29,7 @@ export interface Env {
   BASE_RPC_URL: string;
   USDC_CONTRACT_ADDRESS?: string;
   ARKOVA_USDC_ADDRESS?: string;
+  X402_NETWORK?: string;
 }
 
 export interface BatchQueueMessage {

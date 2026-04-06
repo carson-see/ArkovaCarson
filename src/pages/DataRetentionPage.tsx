@@ -6,7 +6,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import { Building2, Clock, Trash2, Scale, AlertTriangle } from 'lucide-react';
+import { Clock, Trash2, Scale, AlertTriangle } from 'lucide-react';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
@@ -35,9 +36,7 @@ export function DataRetentionPage() {
       <header className="border-b">
         <div className="mx-auto flex max-w-4xl items-center gap-2 px-6 py-4">
           <Link to="/" className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity">
-            <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary/10">
-              <Building2 className="h-4 w-4 text-primary" />
-            </div>
+            <ArkovaLogo size={32} />
             <span className="font-semibold">Arkova</span>
           </Link>
         </div>

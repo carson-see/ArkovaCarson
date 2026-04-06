@@ -1,252 +1,238 @@
 /**
- * Compliance Trend Dashboard (COMP-07)
+ * Compliance Trend Dashboard Page (COMP-07)
  *
- * Time-series compliance KPIs with threshold indicators.
- * Accessible from compliance center sidebar.
+ * Displays time-series compliance KPIs with green/amber/red thresholds.
+ * Designed for CISOs and compliance officers to demonstrate continuous
+ * improvement to auditors.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import {
-  TrendingUp,
-  ShieldCheck,
-  Download,
-  AlertTriangle,
-  CheckCircle,
-  XCircle,
-} from 'lucide-react';
-import { AppShell } from '@/components/layout';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { useState, useCallback } from 'react';
+import { TrendingUp, Download, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { AppShell } from '@/components/layout';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
-import { usePageMeta } from '@/hooks/usePageMeta';
+import { supabase } from '@/lib/supabase';
 import { COMPLIANCE_TREND_LABELS } from '@/lib/copy';
 
-const L = COMPLIANCE_TREND_LABELS;
-
-interface TrendBucket {
+interface TrendDataPoint {
   period: string;
-  anchors: number;
-  secured: number;
-  signatures: number;
-  timestamp_coverage_pct: number | null;
-  ltv_coverage_pct: number | null;
-  avg_anchor_delay_min: number | null;
+  total_signatures: number;
+  qualified_timestamp_pct: number;
+  avg_anchor_delay_minutes: number;
+  active_certificates: number;
+  expired_certificates: number;
+  total_anchors: number;
+  secured_anchors: number;
 }
 
-interface CertHealth {
-  active: number;
-  expiring_soon: number;
-  expired: number;
-  revoked: number;
+interface TrendsResponse {
+  data: TrendDataPoint[];
+  thresholds: Record<string, string> | null;
+  generated_at: string;
 }
 
-interface TrendData {
-  granularity: string;
-  time_series: TrendBucket[];
-  certificate_health: CertHealth;
-  thresholds: Record<string, string>;
-}
-
-function ThresholdBadge({ level }: { level: string }) {
-  if (level === 'green') return <Badge variant="outline" className="border-green-500 text-green-600"><CheckCircle className="h-3 w-3 mr-1" />{L.THRESHOLD_GREEN}</Badge>;
-  if (level === 'amber') return <Badge variant="outline" className="border-amber-500 text-amber-600"><AlertTriangle className="h-3 w-3 mr-1" />{L.THRESHOLD_AMBER}</Badge>;
-  if (level === 'red') return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" />{L.THRESHOLD_RED}</Badge>;
-  return <Badge variant="secondary">N/A</Badge>;
-}
+const THRESHOLD_COLORS: Record<string, string> = {
+  green: 'text-green-500',
+  amber: 'text-amber-500',
+  red: 'text-destructive',
+};
 
 export function ComplianceTrendPage() {
-  usePageMeta({ title: L.PAGE_TITLE + ' — Arkova', description: L.PAGE_DESCRIPTION });
-
-  const { session, user, signOut } = useAuth();
+  const { signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const [data, setData] = useState<TrendData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [granularity, setGranularity] = useState('weekly');
+  const [fromDate, setFromDate] = useState(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 3);
+    return d.toISOString().split('T')[0];
+  });
+  const [toDate, setToDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState<TrendsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [granularity, setGranularity] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
 
   const fetchTrends = useCallback(async () => {
-    if (!session?.access_token) return;
     setLoading(true);
     setError(null);
     try {
-      const now = new Date();
-      const threeMonthsAgo = new Date(now.getTime() - 90 * 86400_000);
-      const workerUrl = import.meta.env.VITE_WORKER_URL || '';
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setError(COMPLIANCE_TREND_LABELS.ERR_NOT_AUTHENTICATED); return; }
+
+      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
       const params = new URLSearchParams({
         granularity,
-        from: threeMonthsAgo.toISOString(),
-        to: now.toISOString(),
+        from: new Date(fromDate).toISOString(),
+        to: new Date(toDate).toISOString(),
       });
-      const res = await fetch(`${workerUrl}/api/v1/compliance/trends?${params}`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
+
+      const resp = await fetch(`${workerUrl}/api/v1/signatures/compliance-trends?${params}`, {
+        headers: { 'Authorization': `Bearer ${session.access_token}` },
       });
-      if (!res.ok) {
-        setError(L.ERROR);
+
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: 'Request failed' }));
+        setError(err.error || `HTTP ${resp.status}`);
         return;
       }
-      setData(await res.json());
-    } catch {
-      setError(L.ERROR);
+
+      setData(await resp.json());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : COMPLIANCE_TREND_LABELS.ERR_NETWORK);
     } finally {
       setLoading(false);
     }
-  }, [session?.access_token, granularity]);
+  }, [granularity, fromDate, toDate]);
 
-  useEffect(() => { fetchTrends(); }, [fetchTrends]);
-
-  const handleExportCsv = () => {
+  const downloadCsv = useCallback(() => {
     if (!data) return;
-    const header = 'Period,Anchors,Secured,Signatures,Timestamp Coverage %,LTV Coverage %,Avg Delay (min)\n';
-    const rows = data.time_series.map(b =>
-      `${b.period},${b.anchors},${b.secured},${b.signatures},${b.timestamp_coverage_pct ?? ''},${b.ltv_coverage_pct ?? ''},${b.avg_anchor_delay_min ?? ''}`
+    const header = 'period,total_anchors,secured_anchors,total_signatures,qualified_timestamp_pct,avg_anchor_delay_minutes,active_certificates,expired_certificates\n';
+    const rows = data.data.map(d =>
+      `${d.period},${d.total_anchors},${d.secured_anchors},${d.total_signatures},${d.qualified_timestamp_pct},${d.avg_anchor_delay_minutes},${d.active_certificates},${d.expired_certificates}`
     ).join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `compliance-trends-${granularity}.csv`;
-    document.body.appendChild(a);
+    a.download = `compliance-trends-${fromDate}-to-${toDate}.csv`;
     a.click();
-    document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  };
+  }, [data, fromDate, toDate]);
 
   return (
-    <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
+    <AppShell
+      profile={profile}
+      profileLoading={profileLoading}
+      onSignOut={signOut}
+    >
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-              <TrendingUp className="h-6 w-6 text-primary" />
-              {L.PAGE_TITLE}
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">{L.PAGE_DESCRIPTION}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {(['daily', 'weekly', 'monthly'] as const).map(g => (
-              <Button
-                key={g}
-                variant={granularity === g ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setGranularity(g)}
-              >
-                {g === 'daily' ? L.GRANULARITY_DAILY : g === 'weekly' ? L.GRANULARITY_WEEKLY : L.GRANULARITY_MONTHLY}
-              </Button>
-            ))}
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <TrendingUp className="h-6 w-6" /> {COMPLIANCE_TREND_LABELS.PAGE_TITLE}
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">{COMPLIANCE_TREND_LABELS.PAGE_DESCRIPTION}</p>
         </div>
 
-        {loading && (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Card key={i}><CardContent className="pt-6"><Skeleton className="h-16 w-full" /></CardContent></Card>
+        {/* Controls */}
+        <Card>
+          <CardContent className="pt-4">
+            <div className="flex flex-wrap gap-4 items-end">
+              <div>
+                <Label>{COMPLIANCE_TREND_LABELS.GRANULARITY}</Label>
+                <Select value={granularity} onValueChange={setGranularity}>
+                  <SelectTrigger className="w-[130px] mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="daily">{COMPLIANCE_TREND_LABELS.DAILY}</SelectItem>
+                    <SelectItem value="weekly">{COMPLIANCE_TREND_LABELS.WEEKLY}</SelectItem>
+                    <SelectItem value="monthly">{COMPLIANCE_TREND_LABELS.MONTHLY}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>{COMPLIANCE_TREND_LABELS.FROM}</Label>
+                <Input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} className="mt-1 w-[160px]" />
+              </div>
+              <div>
+                <Label>{COMPLIANCE_TREND_LABELS.TO}</Label>
+                <Input type="date" value={toDate} onChange={e => setToDate(e.target.value)} className="mt-1 w-[160px]" />
+              </div>
+              <Button onClick={fetchTrends} disabled={loading}>
+                <RefreshCw className={`h-4 w-4 mr-1 ${loading ? 'animate-spin' : ''}`} />
+                {loading ? COMPLIANCE_TREND_LABELS.LOADING : COMPLIANCE_TREND_LABELS.FETCH}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {error && (
+          <div className="text-sm text-destructive flex items-center gap-1">
+            <AlertTriangle className="h-4 w-4" /> {error}
+          </div>
+        )}
+
+        {/* Thresholds */}
+        {data?.thresholds && (
+          <div className="grid grid-cols-3 gap-3">
+            {Object.entries(data.thresholds).map(([key, status]) => (
+              <Card key={key}>
+                <CardContent className="pt-4 text-center">
+                  <div className={`text-lg font-bold ${THRESHOLD_COLORS[status] || ''}`}>
+                    {status.toUpperCase()}
+                  </div>
+                  <div className="text-xs text-muted-foreground capitalize">
+                    {key.replace(/_/g, ' ')}
+                  </div>
+                </CardContent>
+              </Card>
             ))}
           </div>
         )}
 
-        {error && !loading && (
-          <Card className="border-destructive">
-            <CardContent className="pt-6 text-center text-destructive">{error}</CardContent>
-          </Card>
-        )}
-
-        {!loading && !error && data && (
+        {/* Data Table */}
+        {data && data.data.length > 0 && (
           <>
-            {/* Threshold Summary */}
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">{L.KPI_TIMESTAMP_COVERAGE}</CardTitle></CardHeader>
-                <CardContent><ThresholdBadge level={data.thresholds.timestamp_coverage} /></CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">{L.KPI_LTV_COVERAGE}</CardTitle></CardHeader>
-                <CardContent><ThresholdBadge level={data.thresholds.ltv_coverage} /></CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">{L.KPI_ANCHOR_DELAY}</CardTitle></CardHeader>
-                <CardContent><ThresholdBadge level={data.thresholds.anchor_delay} /></CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">{L.CERT_HEALTH_TITLE}</CardTitle></CardHeader>
-                <CardContent><ThresholdBadge level={data.thresholds.cert_health} /></CardContent>
-              </Card>
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={downloadCsv}>
+                <Download className="h-4 w-4 mr-1" /> {COMPLIANCE_TREND_LABELS.DOWNLOAD_CSV}
+              </Button>
             </div>
-
-            {/* Time Series Table */}
             <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>{L.PAGE_TITLE}</CardTitle>
-                <Button variant="outline" size="sm" onClick={handleExportCsv}>
-                  <Download className="h-3.5 w-3.5 mr-1.5" />{L.EXPORT_CSV}
-                </Button>
-              </CardHeader>
-              <CardContent>
-                {data.time_series.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">{L.NO_DATA}</p>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b">
-                          <th className="text-left py-2 pr-4 font-medium text-muted-foreground">{L.TABLE_HEADER_PERIOD}</th>
-                          <th className="text-right py-2 px-2 font-medium text-muted-foreground">{L.KPI_ANCHORS}</th>
-                          <th className="text-right py-2 px-2 font-medium text-muted-foreground">{L.KPI_SIGNATURES}</th>
-                          <th className="text-right py-2 px-2 font-medium text-muted-foreground hidden sm:table-cell">{L.KPI_TIMESTAMP_COVERAGE}</th>
-                          <th className="text-right py-2 px-2 font-medium text-muted-foreground hidden md:table-cell">{L.KPI_LTV_COVERAGE}</th>
-                          <th className="text-right py-2 pl-2 font-medium text-muted-foreground hidden lg:table-cell">{L.KPI_ANCHOR_DELAY}</th>
+              <CardContent className="pt-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left">
+                        <th className="pb-2 font-medium">{COMPLIANCE_TREND_LABELS.COL_PERIOD}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_ANCHORS}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_SECURED}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_SIGNATURES}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_TIMESTAMP_PCT}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_AVG_DELAY}</th>
+                        <th className="pb-2 font-medium text-right">{COMPLIANCE_TREND_LABELS.COL_CERTS}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.data.map(d => (
+                        <tr key={d.period} className="border-b last:border-0">
+                          <td className="py-2 font-medium">{d.period}</td>
+                          <td className="py-2 text-right text-muted-foreground">{d.total_anchors}</td>
+                          <td className="py-2 text-right text-muted-foreground">{d.secured_anchors}</td>
+                          <td className="py-2 text-right text-muted-foreground">{d.total_signatures}</td>
+                          <td className="py-2 text-right">
+                            <span className={d.qualified_timestamp_pct >= 95 ? 'text-green-500' : d.qualified_timestamp_pct >= 80 ? 'text-amber-500' : 'text-destructive'}>
+                              {d.qualified_timestamp_pct}%
+                            </span>
+                          </td>
+                          <td className="py-2 text-right">
+                            <span className={d.avg_anchor_delay_minutes <= 60 ? 'text-green-500' : d.avg_anchor_delay_minutes <= 1440 ? 'text-amber-500' : 'text-destructive'}>
+                              {d.avg_anchor_delay_minutes}
+                            </span>
+                          </td>
+                          <td className="py-2 text-right text-muted-foreground">
+                            {d.active_certificates}/{d.expired_certificates}
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {data.time_series.map(b => (
-                          <tr key={b.period} className="border-b last:border-0">
-                            <td className="py-2 pr-4 font-medium">{b.period}</td>
-                            <td className="py-2 px-2 text-right">{b.anchors}</td>
-                            <td className="py-2 px-2 text-right">{b.signatures}</td>
-                            <td className="py-2 px-2 text-right hidden sm:table-cell">{b.timestamp_coverage_pct != null ? `${b.timestamp_coverage_pct}%` : '—'}</td>
-                            <td className="py-2 px-2 text-right hidden md:table-cell">{b.ltv_coverage_pct != null ? `${b.ltv_coverage_pct}%` : '—'}</td>
-                            <td className="py-2 pl-2 text-right hidden lg:table-cell">{b.avg_anchor_delay_min != null ? `${b.avg_anchor_delay_min}m` : '—'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Certificate Health */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <ShieldCheck className="h-5 w-5 text-primary" />
-                  {L.CERT_HEALTH_TITLE}
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
-                  <div>
-                    <p className="text-2xl font-bold text-green-600">{data.certificate_health.active}</p>
-                    <p className="text-xs text-muted-foreground">{L.CERT_ACTIVE}</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-amber-500">{data.certificate_health.expiring_soon}</p>
-                    <p className="text-xs text-muted-foreground">{L.CERT_EXPIRING}</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-red-500">{data.certificate_health.expired}</p>
-                    <p className="text-xs text-muted-foreground">{L.CERT_EXPIRED}</p>
-                  </div>
-                  <div>
-                    <p className="text-2xl font-bold text-muted-foreground">{data.certificate_health.revoked}</p>
-                    <p className="text-xs text-muted-foreground">{L.CERT_REVOKED}</p>
-                  </div>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </CardContent>
             </Card>
           </>
+        )}
+
+        {data && data.data.length === 0 && (
+          <Card>
+            <CardContent className="pt-8 pb-8 text-center text-muted-foreground">
+              {COMPLIANCE_TREND_LABELS.NO_DATA}
+            </CardContent>
+          </Card>
         )}
       </div>
     </AppShell>

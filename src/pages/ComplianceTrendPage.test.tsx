@@ -9,7 +9,7 @@ import { ComplianceTrendPage } from './ComplianceTrendPage';
 import { COMPLIANCE_TREND_LABELS } from '@/lib/copy';
 
 vi.mock('@/hooks/useAuth', () => ({
-  useAuth: () => ({ session: null, user: null, loading: false }),
+  useAuth: () => ({ session: null, user: null, loading: false, signOut: vi.fn() }),
 }));
 
 vi.mock('@/hooks/useProfile', () => ({
@@ -34,11 +34,9 @@ describe('ComplianceTrendPage', () => {
     expect(screen.getByText(COMPLIANCE_TREND_LABELS.PAGE_TITLE, { exact: false })).toBeInTheDocument();
   });
 
-  it('renders granularity buttons', () => {
+  it('renders granularity selector', () => {
     renderPage();
-    expect(screen.getByText(COMPLIANCE_TREND_LABELS.GRANULARITY_DAILY)).toBeInTheDocument();
-    expect(screen.getByText(COMPLIANCE_TREND_LABELS.GRANULARITY_WEEKLY)).toBeInTheDocument();
-    expect(screen.getByText(COMPLIANCE_TREND_LABELS.GRANULARITY_MONTHLY)).toBeInTheDocument();
+    expect(screen.getByText(COMPLIANCE_TREND_LABELS.DAILY)).toBeInTheDocument();
   });
 
   it('renders page description', () => {

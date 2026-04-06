@@ -65,7 +65,6 @@ const AuthCallbackPage = React.lazy(() => import('@/pages/AuthCallbackPage').the
 const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(m => ({ default: m.ReviewQueuePage })));
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
 const ComplianceDashboardPage = React.lazy(() => import('@/pages/ComplianceDashboardPage').then(m => ({ default: m.ComplianceDashboardPage })));
-const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
 const AdminUsersPage = React.lazy(() => import('@/pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
@@ -88,6 +87,8 @@ const PublicSignatureVerifyPage = React.lazy(() => import('@/pages/PublicSignatu
 const SignatureCompliancePage = React.lazy(() => import('@/pages/SignatureCompliancePage'));
 const IndependentVerifyPage = React.lazy(() => import('@/pages/IndependentVerifyPage').then(m => ({ default: m.IndependentVerifyPage })));
 const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').then(m => ({ default: m.DataRetentionPage })));
+const AuditorBatchPage = React.lazy(() => import('@/pages/AuditorBatchPage').then(m => ({ default: m.AuditorBatchPage })));
+const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -191,7 +192,7 @@ export function App() {
           <Route path={ROUTES.USE_CASES} element={<UseCasesPage />} />
           <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
           <Route path={ROUTES.INDEPENDENT_VERIFY} element={<RouteErrorBoundary section="IndependentVerify"><IndependentVerifyPage /></RouteErrorBoundary>} />
-          <Route path={ROUTES.DATA_RETENTION} element={<DataRetentionPage />} />
+          <Route path={ROUTES.DATA_RETENTION} element={<RouteErrorBoundary section="DataRetention"><DataRetentionPage /></RouteErrorBoundary>} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />
@@ -228,6 +229,9 @@ export function App() {
 
           {/* Signature Compliance Center (Phase III — PH3-ESIG-03) */}
           <Route path={ROUTES.SIGNATURE_COMPLIANCE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SignatureCompliance"><SignatureCompliancePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+
+          {/* Compliance Audit Tools (COMP-06) */}
+          <Route path={ROUTES.AUDITOR_BATCH} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AuditorBatch"><AuditorBatchPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Attestations (Phase II) */}
           <Route path={ROUTES.ATTESTATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Attestations"><AttestationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

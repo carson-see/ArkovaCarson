@@ -160,7 +160,8 @@
       "mcp__playwright__browser_navigate",
       "mcp__playwright__browser_take_screenshot",
       "mcp__playwright__browser_evaluate",
-      "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")"
+      "Bash(sudo ln:*)",
+      "Bash(export PATH=\"/opt/homebrew/bin:$HOME/.nvm/versions/node/v25.6.1/bin:$PATH\")"
     ]
   },
   "enableAllProjectMcpServers": true,

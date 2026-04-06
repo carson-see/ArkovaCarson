@@ -36,7 +36,7 @@ interface McpToolResult {
 // ─── Configuration ─────────────────────────────────────────────────────
 
 const API_KEY = process.env.ARKOVA_API_KEY || '';
-const BASE_URL = process.env.ARKOVA_API_URL || 'https://arkova-worker-270018525501.us-central1.run.app';
+const BASE_URL = process.env.ARKOVA_API_URL || 'https://api.arkova.ai';
 const TIMEOUT_MS = 10000;
 
 async function arkovaFetch(path: string, options: RequestInit = {}): Promise<Response> {
