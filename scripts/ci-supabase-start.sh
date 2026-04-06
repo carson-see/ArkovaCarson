@@ -34,13 +34,12 @@ if [ -f "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" ]; then
   echo "  Renamed 0068b → 0068"
 fi
 
-# Handle 0088b: merge into 0088 (no ADD VALUE conflicts)
-if [ -f "$MIGRATIONS_DIR/0088b_cle_templates.sql" ] && [ -f "$MIGRATIONS_DIR/0088_cle_credential_type.sql" ]; then
-  echo "" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
-  echo "-- MERGED FROM: 0088b_cle_templates.sql" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
-  cat "$MIGRATIONS_DIR/0088b_cle_templates.sql" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
-  rm "$MIGRATIONS_DIR/0088b_cle_templates.sql"
-  echo "  Merged 0088b into 0088"
+# Handle 0088/0088b: ADD VALUE in 0088, usage in 0088b — keep separate
+# 00880 sorts before 0088_ because '0' (48) < '_' (95)
+if [ -f "$MIGRATIONS_DIR/0088_cle_credential_type.sql" ] && [ -f "$MIGRATIONS_DIR/0088b_cle_templates.sql" ]; then
+  mv "$MIGRATIONS_DIR/0088_cle_credential_type.sql" "$MIGRATIONS_DIR/00880_cle_credential_type.sql"
+  mv "$MIGRATIONS_DIR/0088b_cle_templates.sql" "$MIGRATIONS_DIR/0088_cle_templates.sql"
+  echo "  Renamed 0088 → 00880, 0088b → 0088 (keeps ADD VALUE in separate transaction)"
 fi
 
 # Fix 0069: DROP activate_user before re-creating with different params
