@@ -22,7 +22,7 @@ export const ADMIN_PAGE_SIZE = 25;
  * CRIT-3: PostgREST .or() uses commas, dots, and parens as delimiters.
  * Unescaped input can break out of the ilike value and inject filter conditions.
  */
-function escapeIlike(input: string): string {
+export function escapeIlike(input: string): string {
   // First escape SQL ilike wildcards
   let escaped = input.replace(/[%_\\]/g, '\\$&');
   // Then strip PostgREST filter syntax chars that could break .or() parsing

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks
+  BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+
 jobs:
   # Secret scanning - block commits containing secrets
   secret-scan:
@@ -206,7 +210,8 @@ jobs:
       - name: Check if AI prompt/model code changed
         id: ai-changed
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD | grep -qE '^(services/worker/src/ai/prompts/|services/worker/src/ai/gemini\.ts|services/worker/src/ai/schemas\.ts)'; then
+          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(services/worker/src/ai/prompts/|services/worker/src/ai/gemini\.ts|services/worker/src/ai/schemas\.ts)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -248,7 +253,8 @@ jobs:
       - name: Check if TLA+ model or anchor code changed
         id: tla-changed
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD | grep -qE '^(machines/|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
+          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -283,7 +289,8 @@ jobs:
       - name: Check for modified migrations (additive-only policy)
         run: |
           # Get changed files in this PR/push
-          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD -- 'supabase/migrations/*.sql' || true)
+          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'supabase/migrations/*.sql' || true)
           if [ -z "$CHANGED" ]; then
             echo "No migration changes detected"
             exit 0
@@ -307,7 +314,7 @@ jobs:
               echo "Allowing modification to un-deployed migration: $file"
               continue
             fi
-            if git log --oneline ${{ github.event.pull_request.base.sha || 'HEAD~1' }} -- "$file" | head -1 | grep -q .; then
+            if git log --oneline "$BASE_SHA" -- "$file" | head -1 | grep -q .; then
               echo "::error::MODIFIED existing migration: $file — write a compensating migration instead"
               exit 1
             fi
@@ -327,7 +334,8 @@ jobs:
 
       - name: Check rollback comments
         run: |
-          CHANGED=$(git diff --name-only ${{ github.event.pull_request.base.sha || 'HEAD~1' }} HEAD -- 'supabase/migrations/*.sql' || true)
+          BASE_SHA="${BASE_REF_SHA:-HEAD~1}"
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD -- 'supabase/migrations/*.sql' || true)
           for file in $CHANGED; do
             if [ -f "$file" ] && ! grep -qi 'ROLLBACK' "$file"; then
               echo "::warning::Migration $file is missing a ROLLBACK comment section"

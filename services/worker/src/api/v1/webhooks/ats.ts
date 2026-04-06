@@ -15,6 +15,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
+import { escapeIlike } from '../../admin-lists.js';
 
 const router = Router();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,7 +174,7 @@ router.post('/:provider', async (req: Request, res: Response) => {
     let attestations: any[] = [];
     if (searchTerms.length > 0) {
       // Search attestations by subject_identifier matching candidate info
-      const filters = searchTerms.map((term) => `subject_identifier.ilike.%${term}%`);
+      const filters = searchTerms.map((term) => `subject_identifier.ilike.%${escapeIlike(term)}%`);
       const { data, error } = await dbAny
         .from('attestations')
         .select('public_id, attestation_type, status, subject_identifier, attester_name, expires_at, chain_tx_id')

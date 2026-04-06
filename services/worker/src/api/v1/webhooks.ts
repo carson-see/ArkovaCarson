@@ -9,6 +9,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { isPrivateUrl } from '../../webhooks/delivery.js';
 
 const router = Router();
 
@@ -80,6 +81,11 @@ router.post('/test', async (req, res) => {
       .createHmac('sha256', endpoint.secret_hash)
       .update(`${timestamp}.${payloadString}`)
       .digest('hex');
+
+    if (isPrivateUrl(endpoint.url)) {
+      res.status(400).json({ error: 'Webhook URL targets a private/internal network address' });
+      return;
+    }
 
     const response = await fetch(endpoint.url, {
       method: 'POST',
