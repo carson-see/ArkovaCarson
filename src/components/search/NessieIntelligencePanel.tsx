@@ -27,7 +27,6 @@ import {
   ChevronUp,
   FileSearch,
   Scale,
-  ClipboardList,
   Lightbulb,
   GitCompare,
   Info,
@@ -50,7 +49,7 @@ interface ConfidenceDecomposition {
   totalDocumentCount: number;
   anchoredCitationRate: number;
   meanSourceAuthority: number;
-  hasCorroboratingSourcees: boolean;
+  hasCorroboratingSources: boolean;
   taskType: IntelligenceMode;
 }
 
@@ -299,7 +298,7 @@ export function NessieIntelligencePanel() {
                   <GitCompare className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_SOURCES}:</span>
                   <span className="font-mono font-medium">
-                    {response.confidence_decomposition.hasCorroboratingSourcees ? 'Yes' : 'No'}
+                    {response.confidence_decomposition.hasCorroboratingSources ? 'Yes' : 'No'}
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">

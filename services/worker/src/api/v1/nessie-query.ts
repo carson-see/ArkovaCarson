@@ -18,7 +18,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
-import { INTELLIGENCE_SYSTEM_PROMPT, buildIntelligenceSystemPrompt, isValidIntelligenceMode } from '../../ai/prompts/intelligence.js';
+import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
 import { db } from '../../utils/db.js';
@@ -115,7 +115,7 @@ export interface ConfidenceDecomposition {
   /** Average source authority weight of cited docs */
   meanSourceAuthority: number;
   /** Whether multiple corroborating sources were found */
-  hasCorroboratingSourcees: boolean;
+  hasCorroboratingSources: boolean;
   /** Task type used for analysis */
   taskType: IntelligenceMode;
 }
@@ -579,7 +579,7 @@ function parseIntelligenceResponse(
     totalDocumentCount: documents.length,
     anchoredCitationRate: anchorRate,
     meanSourceAuthority: meanAuthority,
-    hasCorroboratingSourcees: uniqueSources.size >= 2,
+    hasCorroboratingSources: uniqueSources.size >= 2,
     taskType,
   };
 
