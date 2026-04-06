@@ -5,7 +5,13 @@
  * Nessie analyzes documents and returns answers with verified citations
  * backed by Bitcoin-anchored evidence.
  *
- * Calls GET /api/v1/nessie/query?q={query}&mode=context
+ * Features:
+ * - Task-type selector (compliance_qa, risk_analysis, etc.)
+ * - Confidence decomposition (why the score is what it is)
+ * - Risks & recommendations display
+ * - Verified citations with anchor proofs
+ *
+ * Calls GET /api/v1/nessie/query?q={query}&mode=context&task={taskType}
  */
 
 import { useState, useCallback } from 'react';
@@ -17,6 +23,15 @@ import {
   AlertTriangle,
   Loader2,
   Sparkles,
+  ChevronDown,
+  ChevronUp,
+  FileSearch,
+  Scale,
+  ClipboardList,
+  Lightbulb,
+  GitCompare,
+  Info,
+  CheckCircle,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -27,6 +42,17 @@ import { NESSIE_LABELS } from '@/lib/copy';
 // ---------------------------------------------------------------------------
 // Types (matching nessie-query.ts response shapes)
 // ---------------------------------------------------------------------------
+
+type IntelligenceMode = 'compliance_qa' | 'risk_analysis' | 'document_summary' | 'recommendation' | 'cross_reference';
+
+interface ConfidenceDecomposition {
+  citedDocumentCount: number;
+  totalDocumentCount: number;
+  anchoredCitationRate: number;
+  meanSourceAuthority: number;
+  hasCorroboratingSourcees: boolean;
+  taskType: IntelligenceMode;
+}
 
 interface NessieCitation {
   record_id: string;
@@ -47,11 +73,27 @@ interface NessieContextResponse {
   answer: string;
   citations: NessieCitation[];
   confidence: number;
+  confidence_decomposition?: ConfidenceDecomposition;
+  risks?: string[];
+  recommendations?: string[];
   model: string;
   query: string;
+  task_type?: IntelligenceMode;
   tokens_used?: number;
   cached?: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// Task type config
+// ---------------------------------------------------------------------------
+
+const TASK_TYPES: { value: IntelligenceMode; label: string; icon: typeof Brain; description: string }[] = [
+  { value: 'compliance_qa', label: NESSIE_LABELS.TASK_COMPLIANCE_QA, icon: Scale, description: 'Answer compliance questions with citations' },
+  { value: 'risk_analysis', label: NESSIE_LABELS.TASK_RISK_ANALYSIS, icon: AlertTriangle, description: 'Identify risks and red flags' },
+  { value: 'document_summary', label: NESSIE_LABELS.TASK_DOCUMENT_SUMMARY, icon: FileSearch, description: 'Compliance-focused summaries' },
+  { value: 'recommendation', label: NESSIE_LABELS.TASK_RECOMMENDATION, icon: Lightbulb, description: 'Action recommendations' },
+  { value: 'cross_reference', label: NESSIE_LABELS.TASK_CROSS_REFERENCE, icon: GitCompare, description: 'Cross-reference for consistency' },
+];
 
 // ---------------------------------------------------------------------------
 // Component
@@ -59,9 +101,11 @@ interface NessieContextResponse {
 
 export function NessieIntelligencePanel() {
   const [query, setQuery] = useState('');
+  const [taskType, setTaskType] = useState<IntelligenceMode>('compliance_qa');
   const [response, setResponse] = useState<NessieContextResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showConfidenceDetail, setShowConfidenceDetail] = useState(false);
 
   const handleQuery = useCallback(async () => {
     if (!query.trim() || loading) return;
@@ -76,6 +120,7 @@ export function NessieIntelligencePanel() {
         `${workerUrl}/api/v1/nessie/query?${new URLSearchParams({
           q: query.trim(),
           mode: 'context',
+          task: taskType,
           limit: '10',
         })}`,
       );
@@ -92,7 +137,7 @@ export function NessieIntelligencePanel() {
     } finally {
       setLoading(false);
     }
-  }, [query, loading]);
+  }, [query, taskType, loading]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -107,6 +152,12 @@ export function NessieIntelligencePanel() {
     return 'text-red-400';
   };
 
+  const confidenceBgColor = (confidence: number): string => {
+    if (confidence >= 0.85) return 'bg-green-400/10 border-green-400/30';
+    if (confidence >= 0.65) return 'bg-yellow-400/10 border-yellow-400/30';
+    return 'bg-red-400/10 border-red-400/30';
+  };
+
   const sourceLabel = (source: string): string => {
     const labels: Record<string, string> = {
       edgar: 'SEC EDGAR',
@@ -118,6 +169,8 @@ export function NessieIntelligencePanel() {
     };
     return labels[source] ?? source;
   };
+
+  const activeTask = TASK_TYPES.find((t) => t.value === taskType) ?? TASK_TYPES[0];
 
   return (
     <Card className="bg-card border-border">
@@ -132,6 +185,30 @@ export function NessieIntelligencePanel() {
       </CardHeader>
 
       <CardContent className="space-y-4">
+        {/* Task type selector */}
+        <div className="flex gap-1.5 flex-wrap">
+          {TASK_TYPES.map((t) => {
+            const Icon = t.icon;
+            return (
+              <button
+                key={t.value}
+                type="button"
+                onClick={() => setTaskType(t.value)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors',
+                  taskType === t.value
+                    ? 'bg-[#00d4ff]/15 text-[#00d4ff] border border-[#00d4ff]/30'
+                    : 'bg-muted/30 text-muted-foreground hover:bg-muted/50 border border-transparent',
+                )}
+                title={t.description}
+              >
+                <Icon className="h-3 w-3" />
+                {t.label}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Query input */}
         <div className="flex gap-2">
           <div className="relative flex-1">
@@ -170,14 +247,27 @@ export function NessieIntelligencePanel() {
         {/* Response */}
         {response && (
           <div className="space-y-4 pt-2">
-            {/* Confidence badge */}
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="text-xs">
-                <span className={cn('font-mono', confidenceColor(response.confidence))}>
+            {/* Confidence badge + decomposition toggle */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowConfidenceDetail(!showConfidenceDetail)}
+                className={cn(
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs border transition-colors cursor-pointer',
+                  confidenceBgColor(response.confidence),
+                )}
+              >
+                <span className={cn('font-mono font-semibold', confidenceColor(response.confidence))}>
                   {(response.confidence * 100).toFixed(0)}%
                 </span>
-                &nbsp;{NESSIE_LABELS.CONFIDENCE}
-              </Badge>
+                <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE}</span>
+                {showConfidenceDetail ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </button>
+              {response.task_type && (
+                <Badge variant="outline" className="text-xs">
+                  {TASK_TYPES.find((t) => t.value === response.task_type)?.label ?? response.task_type}
+                </Badge>
+              )}
               {response.cached && (
                 <Badge variant="secondary" className="text-xs">{NESSIE_LABELS.CACHED}</Badge>
               )}
@@ -188,10 +278,84 @@ export function NessieIntelligencePanel() {
               )}
             </div>
 
+            {/* Confidence decomposition */}
+            {showConfidenceDetail && response.confidence_decomposition && (
+              <div className="grid grid-cols-2 gap-2 p-3 rounded-md border border-border bg-muted/20 text-xs">
+                <div className="flex items-center gap-1.5">
+                  <Info className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_CITED}:</span>
+                  <span className="font-mono font-medium">
+                    {response.confidence_decomposition.citedDocumentCount}/{response.confidence_decomposition.totalDocumentCount}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <ShieldCheck className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_ANCHORED}:</span>
+                  <span className="font-mono font-medium">
+                    {(response.confidence_decomposition.anchoredCitationRate * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <GitCompare className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_SOURCES}:</span>
+                  <span className="font-mono font-medium">
+                    {response.confidence_decomposition.hasCorroboratingSourcees ? 'Yes' : 'No'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Scale className="h-3 w-3 text-muted-foreground" />
+                  <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_AUTHORITY}:</span>
+                  <span className="font-mono font-medium">
+                    {response.confidence_decomposition.meanSourceAuthority.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* Analysis text */}
             <div className="text-sm text-foreground leading-relaxed whitespace-pre-wrap bg-muted/30 p-4 rounded-md border border-border">
               {response.answer}
             </div>
+
+            {/* Risks */}
+            {response.risks && response.risks.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {NESSIE_LABELS.RISKS_HEADING} ({response.risks.length})
+                </p>
+                <div className="space-y-1.5">
+                  {response.risks.map((risk, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 text-sm p-2.5 rounded-md bg-red-400/5 border border-red-400/20"
+                    >
+                      <AlertTriangle className="h-3.5 w-3.5 text-red-400 shrink-0 mt-0.5" />
+                      <span className="text-foreground">{risk}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Recommendations */}
+            {response.recommendations && response.recommendations.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                  {NESSIE_LABELS.RECOMMENDATIONS_HEADING} ({response.recommendations.length})
+                </p>
+                <div className="space-y-1.5">
+                  {response.recommendations.map((rec, i) => (
+                    <div
+                      key={i}
+                      className="flex items-start gap-2 text-sm p-2.5 rounded-md bg-[#00d4ff]/5 border border-[#00d4ff]/20"
+                    >
+                      <CheckCircle className="h-3.5 w-3.5 text-[#00d4ff] shrink-0 mt-0.5" />
+                      <span className="text-foreground">{rec}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Citations */}
             {response.citations.length > 0 && (
