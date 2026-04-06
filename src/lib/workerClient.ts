@@ -21,8 +21,8 @@ const CLOUD_RUN_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
 export const WORKER_URL = import.meta.env.VITE_WORKER_URL
   ?? (import.meta.env.PROD ? CLOUD_RUN_URL : 'http://localhost:3001');
 
-/** Full public URL for display in docs, curl examples, etc. */
-export const PUBLIC_API_URL = import.meta.env.VITE_WORKER_URL || (typeof window !== 'undefined' ? window.location.origin : '');
+/** Full public URL for display in docs, curl examples, etc. Always shows production URL — never localhost. */
+export const PUBLIC_API_URL = import.meta.env.VITE_WORKER_URL || CLOUD_RUN_URL;
 
 const WORKER_UNAVAILABLE_MESSAGE =
   'Unable to connect to the server. Please check your connection and try again.';
