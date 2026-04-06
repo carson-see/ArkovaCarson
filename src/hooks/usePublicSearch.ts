@@ -65,17 +65,21 @@ export function usePublicSearch(): UsePublicSearchReturn {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase.rpc as any)(
         'search_public_issuers',
-        { p_query: query.trim() }
+        { p_query: query.trim(), p_limit: 20 }
       );
 
       if (rpcError) {
-        setError(rpcError.message);
+        // Gracefully handle PostgREST 404 (schema cache stale) — don't surface to user
+        console.warn('search_public_issuers RPC error:', rpcError.message);
+        setIssuerResults([]);
         return;
       }
 
       setIssuerResults((data ?? []) as IssuerResult[]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Search failed');
+      // Don't surface issuer search errors — credential search is the primary path
+      console.warn('search_public_issuers failed:', err instanceof Error ? err.message : err);
+      setIssuerResults([]);
     } finally {
       setSearching(false);
     }
