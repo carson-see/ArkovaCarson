@@ -159,7 +159,8 @@
       "Bash(unzip -o /Users/carson/Downloads/stitch_arkova_ai_redesign_landing_page_variant_2.zip)",
       "mcp__playwright__browser_navigate",
       "mcp__playwright__browser_take_screenshot",
-      "mcp__playwright__browser_evaluate"
+      "mcp__playwright__browser_evaluate",
+      "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")"
     ]
   },
   "enableAllProjectMcpServers": true,

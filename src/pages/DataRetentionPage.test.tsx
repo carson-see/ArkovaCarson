@@ -20,7 +20,7 @@ describe('DataRetentionPage', () => {
   it('renders page title and description', () => {
     renderPage();
 
-    expect(screen.getByText(DATA_RETENTION_LABELS.PAGE_TITLE)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: DATA_RETENTION_LABELS.PAGE_TITLE })).toBeInTheDocument();
     expect(screen.getByText(DATA_RETENTION_LABELS.INTRO)).toBeInTheDocument();
   });
 
@@ -64,7 +64,7 @@ describe('DataRetentionPage', () => {
   it('links back to privacy page', () => {
     renderPage();
 
-    const link = screen.getByRole('link', { name: /privacy policy/i });
+    const link = screen.getByRole('link', { name: /data retention policy/i });
     expect(link).toHaveAttribute('href', '/privacy');
   });
 });
