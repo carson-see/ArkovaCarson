@@ -432,11 +432,10 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <EvidenceLayersSection
               layers={[
-                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.tx_id ? `Network record: ${data.tx_id.substring(0, 16)}...` : undefined },
+                { type: 'anchor', present: data.status === 'SECURED', timestamp: data.secured_at, detail: data.network_receipt_id ? `Network record: ${data.network_receipt_id.substring(0, 16)}...` : undefined },
                 { type: 'signature', present: false },
                 { type: 'timestamp', present: false },
               ]}
-              jurisdiction={data.jurisdiction}
             />
           </>
         )}

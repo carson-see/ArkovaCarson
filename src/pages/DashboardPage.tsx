@@ -55,15 +55,19 @@ export function DashboardPage() {
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
+  const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const profileAny = profile as any;
-  const needsDisclaimer = !profileLoading && profile && !profileAny?.disclaimer_accepted_at;
+  const needsDisclaimer = !disclaimerDismissed && !profileLoading && profile && !profile.disclaimer_accepted_at;
 
   const handleAcceptDisclaimer = useCallback(async () => {
     setDisclaimerAccepting(true);
     try {
+      // Dismiss immediately — disclaimer is informational, not a legal gate.
+      // If the DB update fails, the dialog will re-appear next session.
+      setDisclaimerDismissed(true);
       await updateProfile({ disclaimer_accepted_at: new Date().toISOString() });
+    } catch {
+      // Swallow errors — dismissal is already applied locally
     } finally {
       setDisclaimerAccepting(false);
     }

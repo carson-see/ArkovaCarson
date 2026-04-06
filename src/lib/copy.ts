@@ -1793,7 +1793,7 @@ export const DATA_RETENTION_LABELS = {
   PAGE_TITLE: 'Data Retention Policy',
   PAGE_DESCRIPTION: 'How long Arkova retains your data and how to request deletion.',
   INTRO: 'Arkova retains data only as long as necessary to fulfill its verification purpose.',
-  NETWORK_NOTE: 'Network anchor records are permanent by design. The fingerprint hash recorded on the public network cannot be deleted. However, the mapping between a fingerprint and your identity can be removed upon request.',
+  NETWORK_NOTE: 'Network anchor records are permanent by design. The fingerprint recorded on the public network cannot be deleted. However, the mapping between a fingerprint and your identity can be removed upon request.',
   ERASURE_TITLE: 'Right to Erasure',
   ERASURE_BODY: 'Request deletion via Settings > Account > Delete Account, or contact privacy@arkova.ai. We remove your profile and identity associations. Cryptographic fingerprints on the public network remain (they contain no personal information).',
   LEGAL_HOLD_TITLE: 'Legal Hold',
@@ -1850,4 +1850,78 @@ export const PROVENANCE_LABELS = {
   LOADING: 'Loading provenance data...',
   NO_EVENTS: 'No provenance data available.',
   ERROR: 'Unable to load provenance timeline.',
+} as const;
+
+// ─── Provenance Timeline (COMP-02) ──────────────────────────────────────
+
+export const PROVENANCE_LABELS = {
+  TITLE: 'Provenance Chain',
+  EXPORT_JSON: 'Export as JSON',
+  LOADING: 'Loading provenance chain...',
+  ERROR_LOAD: 'Failed to load provenance data',
+  ERROR_NETWORK: 'Network error',
+} as const;
+
+// ─── Auditor Batch Verification (COMP-06) ───────────────────────────────
+
+export const AUDITOR_BATCH_LABELS = {
+  PAGE_TITLE: 'Audit Batch Verification',
+  PAGE_DESCRIPTION: 'Verify credentials in bulk for SOC 2 and ISO 27001 audit sampling (ISA 530).',
+  SELECT_MODE: 'Verification Mode',
+  MODE_CSV: 'Credential IDs',
+  MODE_SAMPLE: 'Random Sample',
+  CSV_LABEL: 'Credential IDs (one per line or comma-separated)',
+  CSV_HINT: 'Maximum 1,000 IDs per batch. Paste from CSV or enter manually.',
+  SAMPLE_PCT_LABEL: 'Sample Percentage',
+  SEED_LABEL: 'Random Seed',
+  SEED_PLACEHOLDER: 'Optional — for reproducibility',
+  SEED_HINT: 'Use the same seed to reproduce identical sampling results (ISA 530).',
+  SUBMIT: 'Run Batch Verification',
+  DOWNLOAD_CSV: 'Download CSV Report',
+  VERIFYING: 'Verifying...',
+  COL_CREDENTIAL_ID: 'Credential ID',
+  COL_STATUS: 'Status',
+  COL_SECURED_AT: 'Secured At',
+  COL_ANOMALIES: 'Anomalies',
+  STAT_VERIFIED: 'Verified',
+  STAT_PASSED: 'Passed',
+  STAT_FAILED: 'Failed',
+  STAT_NOT_FOUND: 'Not Found',
+  STAT_ANOMALIES: 'Anomalies',
+  STATUS_PASS: 'Pass',
+  STATUS_FAIL: 'Fail',
+  STATUS_NOT_FOUND: 'Not Found',
+  ANOMALY_NONE: 'None',
+  ERR_EMPTY_IDS: 'Enter at least one credential ID',
+  ERR_MAX_IDS: 'Maximum 1,000 credential IDs per batch',
+  ERR_INVALID_PCT: 'Sample percentage must be between 0.1 and 100',
+  ERR_NOT_AUTHENTICATED: 'Not authenticated',
+  ERR_NETWORK: 'Network error',
+  ERR_INVALID_SEED: 'Seed must be a valid number',
+} as const;
+
+// ─── Compliance Trend Dashboard (COMP-07) ───────────────────────────────
+
+export const COMPLIANCE_TREND_LABELS = {
+  PAGE_TITLE: 'Compliance Trends',
+  PAGE_DESCRIPTION: 'Track compliance KPIs over time. Demonstrate continuous improvement to auditors.',
+  FETCH: 'Load Trends',
+  DOWNLOAD_CSV: 'Export CSV',
+  LOADING: 'Loading...',
+  GRANULARITY: 'Granularity',
+  DAILY: 'Daily',
+  WEEKLY: 'Weekly',
+  MONTHLY: 'Monthly',
+  FROM: 'From',
+  TO: 'To',
+  COL_PERIOD: 'Period',
+  COL_ANCHORS: 'Anchors',
+  COL_SECURED: 'Secured',
+  COL_SIGNATURES: 'Signatures',
+  COL_TIMESTAMP_PCT: 'Timestamp %',
+  COL_AVG_DELAY: 'Avg Delay (min)',
+  COL_CERTS: 'Certs (active/expired)',
+  NO_DATA: 'No data available for the selected period.',
+  ERR_NOT_AUTHENTICATED: 'Not authenticated',
+  ERR_NETWORK: 'Network error',
 } as const;

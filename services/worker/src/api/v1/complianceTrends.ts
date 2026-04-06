@@ -1,4 +1,3 @@
-// @ts-nocheck — new tables not yet in database.types.ts
 /**
  * Compliance Trends API (COMP-07)
  *
