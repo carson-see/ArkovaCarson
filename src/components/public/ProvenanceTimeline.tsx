@@ -108,7 +108,8 @@ export function ProvenanceTimeline({ publicId }: Props) {
 
     fetchProvenance();
     return () => controller.abort();
-  }, [publicId, expanded, data]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publicId, expanded]);
 
   return (
     <Card className="mt-4">
@@ -195,7 +196,9 @@ export function ProvenanceTimeline({ publicId }: Props) {
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = `provenance-${publicId}.json`;
+                    document.body.appendChild(a);
                     a.click();
+                    document.body.removeChild(a);
                     setTimeout(() => URL.revokeObjectURL(url), 200);
                   }}
                 >
