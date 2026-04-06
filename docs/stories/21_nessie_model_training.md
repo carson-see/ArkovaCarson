@@ -165,28 +165,38 @@ Additionally, a Gemini Golden fine-tuned model was trained on Vertex AI (1,314 g
 
 ---
 
-### NMT-05: Upload Model Weights to HuggingFace (P2)
+### NMT-05: Upload Model Weights to HuggingFace (P2) — READY TO SHIP
 
-**Description:** Upload merged model weights from Together AI to the three private HuggingFace repos for portable serving infrastructure.
+**Status:** READY TO SHIP (2026-04-06 — upload script complete + tested, model card included, awaiting execution)
 
-**Repos (created, currently empty):**
-- `carsonarkova/nessie-v3-llama-3.1-8b`
-- `carsonarkova/nessie-reasoning-v1-llama-3.1-8b`
-- `carsonarkova/nessie-dpo-v1-llama-3.1-8b`
+**Description:** Upload Nessie v5 model weights from Together AI to HuggingFace for portable serving infrastructure.
 
-**Together Fine-Tune IDs:**
-- v3: `ft-f9826e6d-0a55`
-- reasoning v1: `ft-3fd3b5ef-32ac`
-- DPO v1: `ft-b17f012c-fb6a`
+**Primary target (v5 — production model):**
+- Repo: `carsonarkova/nessie-v5-llama-3.1-8b`
+- Together model: `carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-v5-87e1d401`
+- Upload script: `services/worker/scripts/upload-hf-v5.sh`
+- Model card: included in script (auto-generated with eval results, training details)
+
+**Legacy repos (lower priority):**
+- `carsonarkova/nessie-v3-llama-3.1-8b` (v3: `ft-f9826e6d-0a55`)
+- `carsonarkova/nessie-reasoning-v1-llama-3.1-8b` (reasoning v1: `ft-3fd3b5ef-32ac`)
+- `carsonarkova/nessie-dpo-v1-llama-3.1-8b` (DPO v1: `ft-b17f012c-fb6a`)
+
+**To execute:**
+```bash
+# From services/worker/ directory:
+source .env  # loads HF_TOKEN + TOGETHER_API_KEY
+./scripts/upload-hf-v5.sh --no-cleanup  # ~16GB download + upload
+```
 
 **Acceptance Criteria:**
-- [ ] Download merged weights from Together AI (each ~16GB)
-- [ ] Upload to respective HuggingFace repos
-- [ ] Add model cards with training details, eval results, and usage instructions
-- [ ] Verify vLLM can load from HuggingFace repos
+- [x] Upload script created with model card, error handling, CI support
+- [x] Script supports non-interactive mode (--no-cleanup flag, auto-cleanup in CI)
+- [ ] Execute upload (requires ~16GB bandwidth + disk space)
+- [ ] Verify model loads on vLLM/RunPod from HF repo
 - [ ] Update RunPod endpoint template to point to HF repo
 
-**Effort:** Medium (bandwidth-intensive — ~48GB total upload)
+**Effort:** Medium (bandwidth-intensive — ~16GB for v5)
 **Dependencies:** HF token (stored in worker .env, never committed)
 
 ---

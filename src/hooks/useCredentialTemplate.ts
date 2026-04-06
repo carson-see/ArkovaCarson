@@ -97,7 +97,7 @@ export function useCredentialTemplate(
         if (options?.public) {
           // Public context: use RPC that exposes only display fields
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data, error: rpcError } = await (supabase.rpc as any)(
+          const { data, error: rpcError } = await (supabase as any).rpc(
             'get_public_template',
             { p_credential_type: ct, p_org_id: oid }
           );

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+env:
+  # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks
+  BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+
 jobs:
   # Secret scanning - block commits containing secrets
   secret-scan:

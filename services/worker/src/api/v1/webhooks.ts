@@ -91,6 +91,11 @@ router.post('/test', async (req, res) => {
       .update(`${timestamp}.${payloadString}`)
       .digest('hex');
 
+    if (isPrivateUrl(endpoint.url)) {
+      res.status(400).json({ error: 'Webhook URL targets a private/internal network address' });
+      return;
+    }
+
     const response = await fetch(endpoint.url, {
       method: 'POST',
       headers: {

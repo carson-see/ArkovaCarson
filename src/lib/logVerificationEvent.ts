@@ -35,7 +35,7 @@ export async function logVerificationEvent({
 }: LogVerificationEventParams): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (supabase.rpc as any)('log_verification_event', {
+    await (supabase as any).rpc('log_verification_event', {
       p_public_id: publicId,
       p_method: method,
       p_result: result,

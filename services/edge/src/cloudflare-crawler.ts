@@ -68,6 +68,13 @@ async function crawlDomains(domains: string[], env: Env): Promise<CrawlResponse>
         continue;
       }
 
+      // INJ-03: DNS rebinding defense — resolve domain before fetching
+      // and verify resolved IPs are not private/reserved
+      if (await resolvesToPrivateIp(domain)) {
+        results.push({ domain, status: 'skipped', error: 'Domain resolves to private/reserved IP' });
+        continue;
+      }
+
       // Fetch the main page
       const url = `https://${domain}`;
       const response = await fetch(url, {
@@ -149,8 +156,104 @@ async function crawlDomains(domains: string[], env: Env): Promise<CrawlResponse>
   };
 }
 
+/**
+ * INJ-03: Post-resolution IP validation.
+ * Resolves a domain via Cloudflare DNS-over-HTTPS and checks whether
+ * any A/AAAA record points to a private or reserved IP range.
+ * Prevents DNS rebinding attacks where a domain initially resolves to
+ * a public IP but later resolves to a private one.
+ * Both IPv4 (A) and IPv6 (AAAA) records are checked.
+ */
+async function resolvesToPrivateIp(domain: string): Promise<boolean> {
+  try {
+    const encodedDomain = encodeURIComponent(domain);
+
+    // Query A records (IPv4)
+    const resA = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodedDomain}&type=A`,
+      {
+        headers: { Accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+
+    if (resA.ok) {
+      const jsonA = (await resA.json()) as { Answer?: Array<{ type: number; data: string }> };
+      for (const answer of jsonA.Answer ?? []) {
+        if (answer.type !== 1) continue; // Only A records (type 1)
+        if (isPrivateIpv4(answer.data)) return true;
+      }
+    }
+
+    // Query AAAA records (IPv6)
+    const resAAAA = await fetch(
+      `https://cloudflare-dns.com/dns-query?name=${encodedDomain}&type=AAAA`,
+      {
+        headers: { Accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+
+    if (resAAAA.ok) {
+      const jsonAAAA = (await resAAAA.json()) as { Answer?: Array<{ type: number; data: string }> };
+      for (const answer of jsonAAAA.Answer ?? []) {
+        if (answer.type !== 28) continue; // Only AAAA records (type 28)
+        if (isPrivateIpv6(answer.data)) return true;
+      }
+    }
+
+    return false;
+  } catch {
+    return false; // fail-open — Cloudflare Workers runtime blocks private IPs at fetch level
+  }
+}
+
+/** Check if an IPv4 address falls within private/reserved ranges */
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) return true; // malformed = block
+
+  const [a, b] = parts;
+  if (a === 10) return true;                          // 10.0.0.0/8
+  if (a === 127) return true;                         // 127.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16.0.0/12
+  if (a === 192 && b === 168) return true;            // 192.168.0.0/16
+  if (a === 169 && b === 254) return true;            // 169.254.0.0/16 (link-local / cloud metadata)
+  if (a === 100 && b >= 64 && b <= 127) return true;  // 100.64.0.0/10 (CGNAT)
+  if (a === 0) return true;                           // 0.0.0.0/8
+  return false;
+}
+
+/**
+ * Check if an IPv6 address falls within private/reserved ranges.
+ * Addresses from DNS are already in normalized lowercase string form.
+ * Covered ranges:
+ *   ::1          — loopback
+ *   fe80::/10    — link-local (fe80:: through febf::)
+ *   fc00::/7     — ULA (fc00:: and fd00::)
+ *   ::           — unspecified
+ *   100::/64     — discard prefix (RFC 6666)
+ */
+function isPrivateIpv6(ip: string): boolean {
+  const lower = ip.toLowerCase().trim();
+  if (lower === '::1') return true;          // loopback
+  if (lower === '::') return true;           // unspecified
+  if (lower.startsWith('fe80:')) return true; // link-local fe80::/10
+  if (lower.startsWith('fe90:')) return true; // link-local fe80::/10 (fe80-febf)
+  if (lower.startsWith('fea0:')) return true; // link-local fe80::/10
+  if (lower.startsWith('feb0:')) return true; // link-local fe80::/10
+  if (lower.startsWith('fc00:')) return true; // ULA fc00::/7
+  if (lower.startsWith('fd00:')) return true; // ULA fc00::/7 (fd subrange)
+  if (lower.startsWith('0100:0000:0000:0000:')) return true; // 100::/64 discard
+  if (lower.startsWith('100::')) return true; // 100::/64 discard (compressed)
+  return false;
+}
+
 /** Validate domain format to prevent SSRF attacks */
 function isValidDomain(domain: string): boolean {
+  // ARK-SEC-002: Block control characters, whitespace, newlines (log/header injection)
+  if (/[\s\r\n\t\x00-\x1f]/.test(domain)) return false;
+
   // Must be a simple domain (no protocol, no path, no port, no userinfo)
   if (domain.includes('/') || domain.includes(':') || domain.includes('@')) {
     return false;

@@ -13,6 +13,7 @@ import { corsMiddleware, extractAuthUserId } from './middleware.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
 import { handleTreasuryStatus } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
+import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
@@ -47,6 +48,19 @@ adminRouter.get('/admin/platform-stats', async (req, res) => {
     await handlePlatformStats(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Platform stats request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Pipeline Stats (SCRUM-457) ───
+adminRouter.get('/admin/pipeline-stats', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+
+  try {
+    await handlePipelineStats(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Pipeline stats request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

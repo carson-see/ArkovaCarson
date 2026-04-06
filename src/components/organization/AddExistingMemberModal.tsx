@@ -157,7 +157,7 @@ export function AddExistingMemberModal({
     try {
       // Add user to organization via SECURITY DEFINER RPC — no direct insert fallback
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: addError } = await (supabase.rpc as any)('add_org_member', {
+      const { error: addError } = await (supabase as any).rpc('add_org_member', {
         p_user_id: parsed.data.userId,
         p_org_id: parsed.data.orgId,
         p_role: parsed.data.role,

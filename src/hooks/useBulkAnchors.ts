@@ -111,7 +111,7 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
           }));
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { data, error: rpcError } = await (supabase.rpc as any)(
+          const { data, error: rpcError } = await (supabase as any).rpc(
             'bulk_create_anchors',
             { anchors_data: batchData }
           );

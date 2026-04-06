@@ -22,6 +22,18 @@
 | **UAT5-01** | **Public search broken — no RPC calls made** | **HIGH** | **OPEN** | Debug supabase.rpc() silent failure in SearchPage.tsx:149. Add error logging. |
 | **UAT5-02** | **Treasury/Pipeline admin stats returning zeros** | **HIGH** | **OPEN** | Worker admin stats endpoints failing. Auth or endpoint issue — worker is running (48h uptime). |
 
+### Recent Changes (2026-04-06, Session 29 — Sprint Completion: GEO, INFRA-07, NMT-05, PH1-PAY-02)
+
+**Verification + testing sprint across 4 incomplete story areas. New tests written, docs updated.**
+
+| Change | Detail |
+|--------|--------|
+| **GEO-10** | IndexNow worker integration verified + 11 new tests (`services/worker/src/integrations/indexnow.test.ts`). Submit script (`scripts/indexnow-submit.sh`) ready. Status: PARTIAL → needs INDEXNOW_KEY env var + key file on marketing site |
+| **INFRA-07** | All 30 Sentry tests verified passing (21 worker + 9 frontend). Code complete. Status: needs SENTRY_AUTH_TOKEN + SENTRY_DSN in Vercel + Cloud Run env vars only |
+| **NMT-05** | Upload script fixed for non-interactive/CI use (--no-cleanup flag, auto-cleanup in CI). Model card embedded in script. Status: READY TO SHIP — execute `./scripts/upload-hf-v5.sh` |
+| **PH1-PAY-02** | All 8 x402 payment gate tests verified passing. Code complete. Status: needs ARKOVA_USDC_ADDRESS + X402_FACILITATOR_URL env vars |
+| **Docs** | BACKLOG.md, stories index, GEO-10 story, NMT-05 story all updated with current status |
+
 ### Recent Changes (2026-04-05, Session 29 — Comprehensive UAT Click-Through)
 
 **Full production click-through of 20+ pages. 10 bugs found (3 HIGH, 4 MEDIUM, 3 LOW). Bug report: `docs/bugs/uat_comprehensive_2026_04_05.md`.**
@@ -55,7 +67,7 @@
 | ZK-STARK | SCRUM-271 — snarkjs/poseidon-lite deps installed, 11 unit tests passing |
 | Code Review Fixes | 6 bugs: billing_events columns, free credit guard, x402 replay, embed XSS, rate limiting, RPC shape |
 
-### Previous Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
+### Recent Changes (2026-04-05, Session 28 — Audit Readiness Sprint COMP-02/04/05)
 
 **3 compliance stories completed. PR #270 merged. GitHub v1.6.0 released. Jira SCRUM-428/430/431 Done.**
 

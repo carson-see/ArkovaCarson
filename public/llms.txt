@@ -43,6 +43,14 @@ MCP server for AI agent access:
 - `search_credentials` — Search by query with max_results
 - `verify_fingerprint` — Check SHA-256 fingerprint match
 
+## Traction
+
+- 166,000+ credential records secured on Bitcoin mainnet
+- 1,390,000+ public records indexed (SEC, USPTO, CourtListener, Federal Register, OpenStates)
+- 116 Bitcoin anchor transactions confirmed
+- 100% independently verifiable via public network
+- Wikidata entity: Q138865713
+
 ## Optional
 
 - [Full Documentation](https://app.arkova.ai/llms-full.txt)

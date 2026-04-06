@@ -76,9 +76,15 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
   // SEC-028: Only bypass auth in local development, not staging/preview
   if (config.nodeEnv === 'development' || config.nodeEnv === 'test') return true;
 
+  // ARK-SEC-CRON: Fail secure if CRON_SECRET not configured in production
+  if (!config.cronSecret) {
+    logger.error('CRON_SECRET not configured in production — rejecting all cron requests');
+    return false;
+  }
+
   // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual)
   const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
-  if (config.cronSecret && cronSecretHeader) {
+  if (cronSecretHeader) {
     const expected = Buffer.from(config.cronSecret);
     const actual = Buffer.from(cronSecretHeader);
     if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {

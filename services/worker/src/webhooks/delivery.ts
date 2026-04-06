@@ -39,8 +39,23 @@ const BLOCKED_HOSTNAMES = new Set([
 ]);
 
 /**
+ * Check if an IP address is private/internal.
+ * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
+ */
+function isPrivateIp(ip: string): boolean {
+  if (ip === '169.254.169.254') return true;
+  return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(ip));
+}
+
+/**
  * Check if a webhook URL targets a private/internal network address.
  * Blocks RFC 1918 ranges, loopback, link-local, cloud metadata endpoints.
+ *
+ * ARK-SEC-002: Performs DNS resolution to prevent DNS rebinding attacks.
+ * The hostname is resolved to IP addresses, and all resolved IPs are checked
+ * against the private IP blocklist. This prevents an attacker from registering
+ * a domain that resolves to a public IP during validation but switches to
+ * 169.254.169.254 via DNS rebinding.
  */
 export function isPrivateUrl(url: string): boolean {
   try {
@@ -57,10 +72,46 @@ export function isPrivateUrl(url: string): boolean {
     // Block non-HTTP(S) schemes
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return true;
 
-    // Check IP patterns
+    // Check IP patterns on hostname (catches literal IP addresses)
     return PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(hostname));
   } catch {
     // Malformed URL — block it
+    return true;
+  }
+}
+
+/**
+ * ARK-SEC-002: Async version that resolves DNS before checking.
+ * Use this before making actual fetch() calls to prevent DNS rebinding.
+ */
+export async function isPrivateUrlResolved(url: string): Promise<boolean> {
+  // First check static patterns
+  if (isPrivateUrl(url)) return true;
+
+  try {
+    const { hostname } = new URL(url);
+    const cleanHost = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+
+    // Skip DNS resolution for literal IP addresses
+    if (/^[\d.]+$/.test(cleanHost) || cleanHost.includes(':')) return isPrivateIp(cleanHost);
+
+    // Resolve hostname to IP addresses
+    const dns = await import('node:dns');
+    const { resolve4, resolve6 } = dns.promises;
+
+    const [ipv4Results, ipv6Results] = await Promise.allSettled([
+      resolve4(cleanHost),
+      resolve6(cleanHost),
+    ]);
+
+    const allIps: string[] = [];
+    if (ipv4Results.status === 'fulfilled') allIps.push(...ipv4Results.value);
+    if (ipv6Results.status === 'fulfilled') allIps.push(...ipv6Results.value);
+
+    // Block if ANY resolved IP is private
+    return allIps.some(isPrivateIp);
+  } catch {
+    // DNS resolution failed — block as precaution
     return true;
   }
 }
@@ -187,8 +238,8 @@ async function deliverToEndpoint(
   payload: WebhookPayload,
   attempt: number = 1
 ): Promise<boolean> {
-  // INJ-02: SSRF protection — block private/internal URLs
-  if (isPrivateUrl(endpoint.url)) {
+  // INJ-02 + ARK-SEC-002: SSRF protection with DNS rebinding mitigation
+  if (await isPrivateUrlResolved(endpoint.url)) {
     logger.warn(
       { endpointId: endpoint.id },
       'Blocked webhook delivery to private/internal URL (SSRF protection)',
@@ -471,10 +522,26 @@ export async function getDeadLetterEntries(
 
 /**
  * Mark a DLQ entry as resolved (after manual retry or dismissal).
+ * ARK-SEC-026: Requires orgId to verify ownership before resolving.
  */
-export async function resolveDlqEntry(entryId: string): Promise<boolean> {
+export async function resolveDlqEntry(entryId: string, orgId: string): Promise<boolean> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error } = await (db as any)
+  const dbAny = db as any;
+
+  // ARK-SEC-026: Always verify the DLQ entry belongs to the requesting org
+  const { data: entry } = await dbAny
+    .from('webhook_dead_letter_queue')
+    .select('endpoint_id, webhook_endpoints(org_id)')
+    .eq('id', entryId)
+    .single();
+
+  const entryOrgId = entry?.webhook_endpoints?.org_id;
+  if (!entryOrgId || entryOrgId !== orgId) {
+    logger.warn({ entryId, orgId }, 'DLQ entry does not belong to requesting org');
+    return false;
+  }
+
+  const { error } = await dbAny
     .from('webhook_dead_letter_queue')
     .update({ resolved: true, resolved_at: new Date().toISOString() })
     .eq('id', entryId);

@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825+ tests, 161 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,605 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 5/6 complete, ATS 8/8 complete) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825+ tests, 161 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,605 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 5/6 (v5 ready to ship), ATS 8/8 complete, GEO-10 IndexNow code+tests done, INFRA-07 code+30 tests verified) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -308,32 +308,36 @@ _Discovered via comprehensive UAT click-through of app.arkova.ai. 10 bugs found 
 ### ~~P8 AI Intelligence — ALL COMPLETE (19/19)~~
 _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integrity scoring), P8-S9 (review queue), P8-S16 (AI reports). Completed via PR #80._
 
-### GEO & SEO — 8 not started (5 NEW from 2026-03-29 audit)
+### GEO & SEO — 6 not started (marketing site / external tasks)
 | ID | Description | Priority | Source |
 |----|-------------|----------|--------|
-| **GEO-13** | **On-page SEO critical fixes (title, H1, meta, keywords)** | **CRITICAL** | 2026-03-29 audit: keyword score 4/10 |
-| **GEO-14** | **Fix soft 404s (nonexistent URLs return 200 + homepage)** | **CRITICAL** | 2026-03-29 audit: verified via curl |
-| **GEO-15** | **Image alt text + product screenshots** | **HIGH** | 2026-03-29 audit: image score 3/10 |
-| **GEO-16** | **Add traction numbers / social proof to homepage** | **HIGH** | 2026-03-29 audit: 0 metrics shown |
-| **GEO-17** | **Internal linking + contextual cross-references** | **HIGH** | 2026-03-29 audit: 0 body links |
-| GEO-08 | Content expansion — 5 core pages | HIGH | Original |
-| GEO-09 | Community & brand presence launch | MEDIUM | Original |
-| GEO-10 | IndexNow for Bing/Copilot | MEDIUM | Original |
-| GEO-11 | YouTube explainers + VideoObject schema | MEDIUM | Original |
+| **GEO-13** | **On-page SEO critical fixes (title, H1, meta, keywords)** | **CRITICAL** | 2026-03-29 audit: keyword score 4/10. Requires arkova-marketing repo |
+| **GEO-14** | **Fix soft 404s (nonexistent URLs return 200 + homepage)** | **CRITICAL** | 2026-03-29 audit. Requires arkova-marketing repo |
+| **GEO-15** | **Image alt text + product screenshots** | **HIGH** | 2026-03-29 audit: image score 3/10. Requires arkova-marketing repo |
+| **GEO-16** | **Add traction numbers / social proof to homepage** | **HIGH** | 2026-03-29 audit: 0 metrics shown. Requires arkova-marketing repo |
+| **GEO-17** | **Internal linking + contextual cross-references** | **HIGH** | 2026-03-29 audit: 0 body links. Requires arkova-marketing repo |
+| GEO-09 | Community & brand presence launch | MEDIUM | External tasks (ProductHunt, Reddit, G2, Crunchbase) |
 
-### GEO & SEO — 1 partial
+### GEO & SEO — 4 partial
 | ID | Description | Remaining |
 |----|-------------|-----------|
 | GEO-02 | LinkedIn entity + sameAs | Wikidata entry (external) |
+| GEO-08 | Content expansion — 5 core pages | 5 pages needed in arkova-marketing repo |
+| GEO-10 | IndexNow for Bing/Copilot | **Code + tests DONE** (11 tests). Needs INDEXNOW_KEY env var + key file on marketing site |
 | ~~GEO-03~~ | ~~Publish /privacy and /terms~~ | ~~**COMPLETE** — verified 200 status 2026-03-29~~ |
 | ~~GEO-04~~ | ~~About page + team bios~~ | ~~**COMPLETE** — team section + Person schema on homepage~~ |
 | ~~GEO-05~~ | ~~Enhanced schema~~ | ~~**COMPLETE** — speakable + AggregateOffer deployed~~ |
 | ~~GEO-12~~ | ~~Security headers~~ | ~~**COMPLETE** — vercel.json headers deployed~~ |
 
-### INFRA — 1 partial
+### GEO & SEO — NOT APPLICABLE in this repo
+| ID | Description | Notes |
+|----|-------------|-------|
+| GEO-11 | YouTube explainers + VideoObject schema | External content creation |
+
+### INFRA — 1 partial (code complete, needs env vars)
 | ID | Description | Remaining |
 |----|-------------|-----------|
-| INFRA-07 | Sentry integration | Source map upload + DSN env vars in production |
+| INFRA-07 | Sentry integration | **Code + 30 tests DONE**. Needs SENTRY_AUTH_TOKEN + SENTRY_DSN in Vercel + Cloud Run env vars |
 
 ### Compliance Mapping Layer (CML) — 5 not started
 _Source: [Strategic Blueprint — The Immutable Compliance Fabric](https://docs.google.com/document/d/1yLGX5zJ6xWu_J2J-510n0yQZZe9YfzLTK_h7wm3mqyQ/edit) | Story doc: [19_compliance_mapping.md](stories/19_compliance_mapping.md) | Jira Epic: SCRUM-263_
@@ -502,7 +506,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
 | ~~NMT-03~~ | ~~Nessie confidence recalibration~~ | ~~P1~~ | **COMPLETE** — Piecewise linear calibration (8 knots), provider offset fix. PR #225 | NMT-01 | Medium |
 | ~~NMT-04~~ | ~~Full-precision GPU eval (fp16/bf16)~~ | ~~P1~~ | **COMPLETE** — v5: 87.2% F1, v4: 65.6% F1. fp16 ≈ 4-bit (no quality diff). RunPod A6000 48GB. | None | Medium |
-| NMT-05 | Upload model weights to HuggingFace | P2 | NOT STARTED | HF token | Medium |
+| NMT-05 | Upload model weights to HuggingFace | P2 | **READY TO SHIP** — upload script + model card complete, needs execution (`./scripts/upload-hf-v5.sh`) | HF token | Medium |
 | ~~NMT-06~~ | ~~Nessie v5 training + condensed prompt~~ | ~~P2~~ | **COMPLETE** — v5 trained (1,903 train), 87.2% F1, condensed prompt deployed to provider | NMT-01, NMT-03 | Large |
 | **NMT-07** | **Nessie intelligence training pipeline** | **P0** | **IN PROGRESS** — Pipeline + prompts + 34 tests complete. Awaiting distillation + training. | Public records corpus | Large |
 | **NMT-08** | **Gemini Golden v2 — full dataset retrain** | **P1** | **READY** — Script updated with phases 10-11 + realistic confidence. Awaiting submission. | Vertex AI access | Small |
