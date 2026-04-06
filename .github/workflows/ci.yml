@@ -109,6 +109,9 @@ jobs:
         with:
           version: 1.123.0
 
+      - name: Fix migration filenames for Supabase CLI
+        run: bash scripts/fix-migration-names.sh
+
       - name: Start Supabase
         id: supabase-start
         run: supabase start
@@ -154,6 +157,9 @@ jobs:
         uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
         with:
           version: 1.123.0
+
+      - name: Fix migration filenames for Supabase CLI
+        run: bash scripts/fix-migration-names.sh
 
       - name: Start Supabase
         run: supabase start
@@ -359,6 +365,9 @@ jobs:
         uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
         with:
           version: 1.123.0
+
+      - name: Fix migration filenames for Supabase CLI
+        run: bash scripts/fix-migration-names.sh
 
       - name: Start Supabase
         run: supabase start
