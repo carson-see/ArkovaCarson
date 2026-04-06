@@ -69,17 +69,19 @@ export function usePublicSearch(): UsePublicSearchReturn {
       );
 
       if (rpcError) {
-        // Gracefully handle PostgREST 404 (schema cache stale) — don't surface to user
-        console.warn('search_public_issuers RPC error:', rpcError.message);
-        setIssuerResults([]);
+        // PGRST203/404 (schema cache stale after migration) — show empty, not error
+        if (rpcError.code === 'PGRST203' || rpcError.code === '404') {
+          console.warn('search_public_issuers RPC stale cache:', rpcError.message);
+          setIssuerResults([]);
+        } else {
+          setError(rpcError.message);
+        }
         return;
       }
 
       setIssuerResults((data ?? []) as IssuerResult[]);
     } catch (err) {
-      // Don't surface issuer search errors — credential search is the primary path
-      console.warn('search_public_issuers failed:', err instanceof Error ? err.message : err);
-      setIssuerResults([]);
+      setError(err instanceof Error ? err.message : 'Issuer search failed');
     } finally {
       setSearching(false);
     }
