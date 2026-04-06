@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
 import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
@@ -495,6 +496,11 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             />
           </div>
         )}
+
+        {/* ============================================================
+            SECTION 4b: Provenance Timeline (COMP-02)
+            ============================================================ */}
+        <ProvenanceTimeline publicId={data.public_id} />
 
         {/* ============================================================
             SECTION 5: Proof Download (UF-07)

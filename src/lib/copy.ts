@@ -1799,3 +1799,12 @@ export const DATA_RETENTION_LABELS = {
   LEGAL_HOLD_TITLE: 'Legal Hold',
   LEGAL_HOLD_BODY: 'Retention periods may be extended when required by law, regulatory investigation, or pending litigation.',
 } as const;
+
+export const PROVENANCE_LABELS = {
+  SECTION_TITLE: 'Provenance Timeline',
+  SECTION_DESCRIPTION: 'Complete chain of custody from upload through verification.',
+  EXPORT_JSON: 'Export as JSON',
+  LOADING: 'Loading provenance data...',
+  NO_EVENTS: 'No provenance data available.',
+  ERROR: 'Unable to load provenance timeline.',
+} as const;
