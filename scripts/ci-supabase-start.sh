@@ -1,62 +1,68 @@
 #!/usr/bin/env bash
 # ci-supabase-start.sh
 #
-# Wrapper around `supabase start` that handles two Postgres/Supabase CLI issues:
+# Wrapper around `supabase start` for CI.
 #
-# 1. ALTER TYPE ... ADD VALUE cannot run inside a transaction (Postgres limitation).
-#    When migrations are merged (by fix-migration-names.sh), ADD VALUE statements
-#    from appended content fail because they run in the same transaction as DDL.
-#    Fix: Comment them out in merged sections, then apply directly after startup.
+# Fixes migration issues that prevent `supabase start` from succeeding:
+# 1. Duplicate numeric prefixes (0022/0022, 0023/0023, 0024/0024)
+# 2. Letter suffixes rejected by CLI (0068a, 0068b, 0088b)
+# 3. ALTER TYPE ADD VALUE must be in a separate transaction from usage
 #
-# 2. Duplicate migration prefixes and letter suffixes (handled by fix-migration-names.sh).
-#
-# See CLAUDE.md "Post-db-reset step" for the manual equivalent.
+# Strategy:
+# - Merge duplicate-prefix files (append second into first)
+# - For letter-suffix files: merge into base OR rename to valid prefix
+# - Special case: 0068a (ADD VALUE) must stay separate from 0068b (uses the value)
+#   → rename 0068a to 00680, 0068b to 0068 (00680 sorts before 0068_)
 
 set -euo pipefail
 
 MIGRATIONS_DIR="supabase/migrations"
 
-echo "=== Preparing Supabase for CI ==="
+echo "=== CI Supabase Start ==="
 
-# Step 1: Fix migration filenames (duplicates, letter suffixes)
-bash scripts/fix-migration-names.sh
+# --- Fix migration filenames ---
+echo "Fixing migration filenames..."
 
-# Step 2: In MERGED sections only, comment out ALTER TYPE ADD VALUE
-# These fail inside transactions when multiple migrations are combined.
-# We look for "-- MERGED FROM:" markers and disable ADD VALUE after them.
-MERGED_STMTS=""
-for f in "$MIGRATIONS_DIR"/*.sql; do
-  if grep -q "MERGED FROM:" "$f"; then
-    # Extract ADD VALUE statements from merged sections for post-start application
-    stmts=$(sed -n '/MERGED FROM:/,$ { /ALTER TYPE.*ADD VALUE/p }' "$f")
-    if [ -n "$stmts" ]; then
-      MERGED_STMTS="$MERGED_STMTS
-$stmts"
-      # Comment out ADD VALUE only in the merged section
-      sed -i '/MERGED FROM:/,$ s/^\(ALTER TYPE.*ADD VALUE\)/-- CI_DISABLED: \1/' "$f"
-      echo "  Disabled ADD VALUE in merged section of $(basename "$f")"
-    fi
+# Handle 0068a/0068b: ADD VALUE must be a separate transaction
+# 00680 sorts before 0068_ because '0' (48) < '_' (95)
+if [ -f "$MIGRATIONS_DIR/0068a_add_submitted_enum.sql" ]; then
+  mv "$MIGRATIONS_DIR/0068a_add_submitted_enum.sql" "$MIGRATIONS_DIR/00680_add_submitted_enum.sql"
+  echo "  Renamed 0068a → 00680 (sorts before 0068_)"
+fi
+if [ -f "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" ]; then
+  mv "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" "$MIGRATIONS_DIR/0068_submitted_status_and_confirmations.sql"
+  echo "  Renamed 0068b → 0068"
+fi
+
+# Handle 0088b: merge into 0088 (no ADD VALUE conflicts)
+if [ -f "$MIGRATIONS_DIR/0088b_cle_templates.sql" ] && [ -f "$MIGRATIONS_DIR/0088_cle_credential_type.sql" ]; then
+  echo "" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
+  echo "-- MERGED FROM: 0088b_cle_templates.sql" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
+  cat "$MIGRATIONS_DIR/0088b_cle_templates.sql" >> "$MIGRATIONS_DIR/0088_cle_credential_type.sql"
+  rm "$MIGRATIONS_DIR/0088b_cle_templates.sql"
+  echo "  Merged 0088b into 0088"
+fi
+
+# Handle duplicate numeric prefixes (merge second into first)
+for dup_prefix in $(ls "$MIGRATIONS_DIR"/*.sql | xargs -n1 basename | sed 's/_.*//' | sort | uniq -d); do
+  files=("$MIGRATIONS_DIR"/"${dup_prefix}"_*.sql)
+  if [ "${#files[@]}" -gt 1 ]; then
+    first="${files[0]}"
+    for ((i=1; i<${#files[@]}; i++)); do
+      dup="${files[$i]}"
+      echo "  Merging $(basename "$dup") into $(basename "$first")"
+      echo "" >> "$first"
+      echo "-- MERGED FROM: $(basename "$dup")" >> "$first"
+      cat "$dup" >> "$first"
+      rm "$dup"
+    done
   fi
 done
 
-# Step 3: Start Supabase
+echo "Migration filenames fixed."
+
+# --- Start Supabase ---
 echo "Starting Supabase..."
 supabase start
-
-# Step 4: Apply disabled ADD VALUE statements directly (outside transaction)
-if [ -n "$MERGED_STMTS" ]; then
-  echo "Applying enum ADD VALUE statements from merged sections..."
-  DB_CONTAINER=$(docker ps --filter "name=supabase_db" -q | head -1)
-  if [ -n "$DB_CONTAINER" ]; then
-    echo "$MERGED_STMTS" | while IFS= read -r stmt; do
-      [ -z "$stmt" ] && continue
-      # Ensure IF NOT EXISTS is present
-      safe_stmt=$(echo "$stmt" | sed "s/ADD VALUE '/ADD VALUE IF NOT EXISTS '/; s/IF NOT EXISTS IF NOT EXISTS/IF NOT EXISTS/")
-      echo "  $safe_stmt"
-      docker exec -i "$DB_CONTAINER" psql -U postgres -c "$safe_stmt" 2>/dev/null || true
-    done
-    docker exec -i "$DB_CONTAINER" psql -U postgres -c "NOTIFY pgrst, 'reload schema';" 2>/dev/null || true
-  fi
-fi
 
 echo "=== Supabase ready ==="
