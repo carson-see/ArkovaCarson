@@ -10,8 +10,8 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import {
-  Shield,
   CheckCircle,
   XCircle,
   Clock,
@@ -148,7 +148,7 @@ export default function PublicSignatureVerifyPage() {
         {/* Header */}
         <div className="text-center">
           <Link to={ROUTES.HOME} className="inline-flex items-center gap-2 text-cyan-400 hover:text-cyan-300 mb-6">
-            <Shield className="h-5 w-5" />
+            <ArkovaLogo size={24} />
             <span className="font-semibold">Arkova</span>
           </Link>
         </div>
