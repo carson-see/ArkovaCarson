@@ -61,6 +61,8 @@ import { agentsRouter } from './agents.js';
 import { signaturesRouter } from './signatures.js';
 import { adesSignatureGate } from '../../middleware/adesFeatureGate.js';
 import { auditBatchVerifyRouter } from './auditBatchVerify.js';
+import { provenanceRouter } from './provenance.js';
+import { complianceTrendsRouter } from './complianceTrends.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
@@ -285,6 +287,12 @@ router.use('/signatures', adesSignatureGate(), requireAuth, signaturesRouter);
 router.use('/verify-signature', adesSignatureGate(), signaturesRouter);
 // Compliance endpoints — audit proofs, bulk export, SOC 2 evidence (PH3-ESIG-03)
 router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter);
+
+// ─── Credential Provenance Timeline — COMP-02 ───
+router.use('/verify', provenanceRouter);
+
+// ─── Compliance Trends — COMP-07 ───
+router.use('/compliance/trends', requireAuth, complianceTrendsRouter);
 
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)

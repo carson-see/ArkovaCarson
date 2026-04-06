@@ -382,3 +382,76 @@ STUCK_TX_REBROADCAST_ENABLED=true  # default: true
 | 2026-03-12 | DH-03 | Initial document — key provisioning, IAM, rotation, DR |
 | 2026-03-24 | MVP-29, PERF-7 | Added GCP Cloud KMS provider option. Added fee monitoring (MAX_FEE_SAT_PER_VBYTE). Added stuck TX detection and rebroadcast. Added mainnet readiness status table. |
 | 2026-03-26 | P7-TS-04 | Corrected GCP key resource name to match deploy config. Added `verify-mainnet-address.ts` script. Updated IAM commands with production SA. Updated readiness table. |
+
+---
+
+## Key Ceremony Documentation (COMP-05)
+
+_Added: 2026-04-05 | Required by: SOC 2 CC6.1, eIDAS Art. 19_
+
+### Key Ceremony Record Template
+
+For each cryptographic key generated or rotated, the following record must be created and retained:
+
+| Field | Description |
+|-------|-------------|
+| **Date** | Date and time of ceremony (UTC) |
+| **Participants** | Names and roles of all participants (minimum: 1 key custodian + 1 witness) |
+| **Key Purpose** | Bitcoin treasury signing / AdES document signing / timestamp signing |
+| **KMS Provider** | AWS KMS / GCP Cloud HSM |
+| **Key ID** | KMS key ARN or resource path (record full path; mask in API responses) |
+| **Algorithm** | ECC_SECG_P256K1 (Bitcoin) / RSA-2048+ / ECDSA P-256/P-384 (AdES) |
+| **Key Policy** | IAM roles/principals authorized to use the key |
+| **Public Key Fingerprint** | SHA-256 of the exported public key (for future reference) |
+| **Backup** | N/A for KMS-managed keys (KMS handles replication) |
+| **Authorization** | Who approved the key creation (name, role, ticket reference) |
+| **Cloud Audit Log Ref** | CloudTrail event ID (AWS) or Cloud Audit log entry (GCP) |
+| **Rotation Schedule** | Annual / on-demand / never (immutable keys) |
+
+### Separation of Duties
+
+| Action | Required Role | Cannot Also Hold |
+|--------|--------------|-----------------|
+| Create KMS key | Infrastructure Admin | Cannot be sole signing authorizer |
+| Authorize signing | Application Deployer (Cloud Run SA) | Cannot create keys |
+| Rotate key | Infrastructure Admin | Requires 2nd approval |
+| Delete/disable key | Infrastructure Admin | Requires CEO/CTO approval |
+| View key inventory | Admin, Compliance Officer | — |
+
+### Key Inventory API
+
+`GET /api/v1/signatures/key-inventory` (admin/compliance_officer only)
+
+Returns a masked inventory of all signing keys. Never returns raw key material, full ARNs, or resource paths (Constitution 1.4).
+
+```json
+{
+  "keys": [
+    {
+      "key_id_masked": "arn:aws:kms:us-****:key/****-abcd",
+      "algorithm": "ECC_SECG_P256K1",
+      "purpose": "bitcoin_treasury",
+      "created_at": "2026-03-15T00:00:00Z",
+      "last_rotation": null,
+      "status": "ACTIVE",
+      "provider": "aws_kms"
+    }
+  ],
+  "total_keys": 1,
+  "generated_at": "2026-04-05T00:00:00Z"
+}
+```
+
+### Existing Key Records
+
+| Key | Provider | Algorithm | Purpose | Created | Status |
+|-----|----------|-----------|---------|---------|--------|
+| GCP KMS secp256k1 | GCP Cloud KMS | EC_SIGN_SECP256K1_SHA256 | Bitcoin treasury (mainnet) | 2026-03-15 | ACTIVE |
+| (Planned) AdES RSA-2048 | TBD | RSA-2048 | AdES document signing | — | PLANNED |
+| (Planned) AdES ECDSA P-256 | TBD | ECDSA P-256 | AdES document signing | — | PLANNED |
+
+### Change Log
+
+| Date | Change |
+|------|--------|
+| 2026-04-05 | Added key ceremony template, separation of duties, key inventory API spec (COMP-05) |

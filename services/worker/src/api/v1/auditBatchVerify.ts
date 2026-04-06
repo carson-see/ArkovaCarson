@@ -1,4 +1,3 @@
-// @ts-nocheck — audit_batch tables not yet in database.types.ts
 /**
  * Audit Batch Verification API (COMP-06)
  *
