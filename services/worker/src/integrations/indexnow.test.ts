@@ -51,6 +51,7 @@ describe('IndexNow Integration (GEO-10)', () => {
 
     it('should skip submission for empty URL list', async () => {
       process.env.INDEXNOW_KEY = 'test-key-123';
+      vi.resetModules();
       const mod = await import('./indexnow.js');
 
       await mod.submitToIndexNow([]);

@@ -11,7 +11,7 @@
 set -euo pipefail
 
 HOST="app.arkova.ai"
-KEY="arkova-indexnow-2026"
+KEY="${INDEXNOW_KEY:?INDEXNOW_KEY not set}"
 KEY_LOCATION="https://${HOST}/indexnow-key.txt"
 
 # Default URLs to submit (public pages + sitemap entries)
