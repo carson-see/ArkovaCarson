@@ -29,13 +29,14 @@ _Last updated: 2026-04-03 (320K+ public records, 166K+ SECURED anchors on mainne
 | Security Findings | 12 | 12 fixed | 0 | No |
 | UAT Bugs (legacy) | 29 | 29 | 0 | No |
 | Production UAT Bugs (2026-04) | 19 | 19 | 0 | No (all resolved) |
+| Production UAT Bugs (2026-04-05 Click-Through) | 10 | 0 | 10 | **YES (3 HIGH)** |
 | Audit Findings | 24 | 24 resolved | 0 | No |
 | GitHub CodeQL | 29 | 9 fixed | 20 | No (false positives) |
 | Operational Tasks | 8 | 2 | 6 | **YES** |
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **32** | |
+| **Total Open Items** | | | **42** | |
 
 ---
 
@@ -220,6 +221,37 @@ _Discovered via Jira UAT sweep (SCRUM-347 epic). 19 bugs filed, 5 already resolv
 | ~~SCRUM-378~~ | ~~Dashboard shows 0 records for admin~~ | **DONE** |
 | ~~SCRUM-380~~ | ~~Compliance page shows 0 Active Credentials~~ | **DONE** |
 | ~~SCRUM-385~~ | ~~GEO-13 on-page SEO keyword fix~~ | **DONE** |
+
+---
+
+## TIER 1D: PRODUCTION UAT BUGS (2026-04-05 Comprehensive Click-Through)
+
+_Discovered via comprehensive UAT click-through of app.arkova.ai. 10 bugs found (3 HIGH, 4 MEDIUM, 3 LOW). Full report: `docs/bugs/uat_comprehensive_2026_04_05.md`._
+
+### HIGH Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 1 | UAT5-01 / SCRUM-455 | **HIGH** | Public search broken — "Search failed" on all tabs. No Supabase RPC calls made. Silent catch in SearchPage.tsx:164. | **OPEN** |
+| 2 | UAT5-02 / SCRUM-456 | **HIGH** | Treasury page: "Unable to fetch balance/fee rates". Worker admin stats endpoints failing. | **OPEN** |
+| 3 | UAT5-03 / SCRUM-457 | **HIGH** | Pipeline monitoring page shows all zeros — worker stats endpoints not returning data | **OPEN** |
+
+### MEDIUM Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 4 | UAT5-04 | **MEDIUM** | API Keys page shows "authentication_required" error card — worker usage endpoint 401 | **OPEN** |
+| 5 | UAT5-05 | **MEDIUM** | Developers page: ~600px empty gap between metrics and feature cards | **OPEN** |
+| 6 | UAT5-06 | **MEDIUM** | Verification page for revoked records ends abruptly — no network receipt/share/footer | **OPEN** |
+| 7 | UAT5-07 | **MEDIUM** | Dashboard "12,575 records" vs Billing "Records secured: 0" — metrics inconsistency | **OPEN** |
+
+### LOW Priority
+
+| # | ID | Severity | Bug | Status |
+|---|-----|----------|-----|--------|
+| 8 | UAT5-08 | **LOW** | Attestation ARK-ATT-2026-94008AC0 stuck "Anchoring in Progress" since Mar 22 | **OPEN** |
+| 9 | UAT5-09 | **LOW** | Verification page shows raw ISO 8601 date (2026-04-01T00:00:00Z) | **OPEN** |
+| 10 | UAT5-10 | **LOW** | Organization page shows "— records" instead of "0 records" | **OPEN** |
 
 ---
 
