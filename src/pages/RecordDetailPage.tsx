@@ -100,6 +100,19 @@ export function RecordDetailPage() {
     navigate(-1);
   };
 
+  const handleRenameFile = async (newName: string) => {
+    if (!anchor) return;
+    const { error: updateError } = await supabase
+      .from('anchors')
+      .update({ filename: newName })
+      .eq('id', anchor.id);
+    if (updateError) {
+      toast.error('Failed to rename document');
+      throw updateError;
+    }
+    toast.success('Document renamed');
+  };
+
   if (anchorLoading) {
     return (
       <AppShell
@@ -186,6 +199,7 @@ export function RecordDetailPage() {
           lineage: lineage.length > 1 ? lineage : undefined,
         }}
         onBack={handleBack}
+        onRenameFile={handleRenameFile}
         onDownloadProof={() => {
           import('@/lib/generateAuditReport').then(({ generateAuditReport }) => {
             generateAuditReport({
