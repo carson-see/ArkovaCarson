@@ -214,11 +214,15 @@ ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.de
 -- 7b. CREDENTIAL TEMPLATES — for RLS org-level tests
 -- =============================================================================
 
+DELETE FROM credential_templates WHERE org_id IN (
+  'aaaaaaaa-0000-0000-0000-000000000001',
+  'bbbbbbbb-0000-0000-0000-000000000001'
+);
+
 INSERT INTO credential_templates (org_id, name, credential_type, default_metadata, is_active, created_by)
 VALUES
   ('aaaaaaaa-0000-0000-0000-000000000001', 'Arkova Standard Certificate', 'CERTIFICATE', '{"fields": ["issuer", "date"]}', true, '44444444-0000-0000-0000-000000000001'),
-  ('bbbbbbbb-0000-0000-0000-000000000001', 'Acme Compliance Report', 'CERTIFICATE', '{"fields": ["auditor", "period"]}', true, '55555555-0000-0000-0000-000000000001')
-ON CONFLICT (org_id, name) DO NOTHING;
+  ('bbbbbbbb-0000-0000-0000-000000000001', 'Acme Compliance Report', 'CERTIFICATE', '{"fields": ["auditor", "period"]}', true, '55555555-0000-0000-0000-000000000001');
 
 
 -- =============================================================================
