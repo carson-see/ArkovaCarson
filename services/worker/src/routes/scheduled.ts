@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
+import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
 import { processWebhookRetries } from '../webhooks/delivery.js';
@@ -51,8 +52,8 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // Process pending anchors every minute — only in non-production
-  if (chainInitialized && config.nodeEnv !== 'production') {
+  // Process pending anchors every minute (all environments including production)
+  if (chainInitialized) {
     cron.schedule('* * * * *', async () => {
       logger.debug('Running scheduled anchor processing (in-process cron)');
       try {
@@ -61,10 +62,19 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
         logger.error({ error }, 'Scheduled anchor processing failed');
       }
     });
-  } else if (!chainInitialized) {
-    logger.warn('Anchor processing cron DISABLED — chain client not initialized');
+
+    // Batch anchor processing every 10 minutes
+    const batchInterval = config.batchAnchorIntervalMinutes ?? 10;
+    cron.schedule(`*/${batchInterval} * * * *`, async () => {
+      logger.debug('Running scheduled batch anchor processing (in-process cron)');
+      try {
+        await trackOperation(processBatchAnchors());
+      } catch (error) {
+        logger.error({ error }, 'Scheduled batch anchor processing failed');
+      }
+    });
   } else {
-    logger.info('Anchor processing cron DISABLED in production — Cloud Scheduler is authoritative');
+    logger.warn('Anchor processing cron DISABLED — chain client not initialized');
   }
 
   // BETA-01: Check SUBMITTED anchors for blockchain confirmation every 2 minutes

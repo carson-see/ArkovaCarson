@@ -21,6 +21,7 @@ import {
   Share2,
   ExternalLink,
   GitBranch,
+  Pencil,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ComplianceBadge } from './ComplianceBadge';
@@ -33,7 +34,6 @@ import { FileUpload } from './FileUpload';
 import { ShareSheet } from './ShareSheet';
 import { LinkedInShareButton, LinkedInBadgeSnippet } from './LinkedInShare';
 import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
-import { NessieInsights } from './NessieInsights';
 import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/tooltip';
 import { verifyUrl } from '@/lib/routes';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
+import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 
 /** Inline copy button for values */
 function CopyButton({ value }: { value: string }) {
@@ -105,6 +106,7 @@ interface AssetDetailViewProps {
   onBack?: () => void;
   onDownloadProof?: () => void;
   onDownloadProofJson?: () => void;
+  onRenameFile?: (newName: string) => Promise<void>;
 }
 
 type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
@@ -148,11 +150,14 @@ const statusConfig = {
   },
 };
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson }: Readonly<AssetDetailViewProps>) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [editingFilename, setEditingFilename] = useState(false);
+  const [filenameInput, setFilenameInput] = useState(anchor.filename);
+  const [renameSaving, setRenameSaving] = useState(false);
 
   // Fetch template for credential rendering (UF-01)
   const { template } = useCredentialTemplate(anchor.credentialType, anchor.orgId);
@@ -240,7 +245,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-background shadow-sm">
-                <Shield className="h-6 w-6 text-primary" />
+                <ArkovaLogo size={28} />
               </div>
               <div>
                 <h2 className="font-semibold">Verification Certificate</h2>
@@ -263,7 +268,75 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               <FileText className="h-7 w-7 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-lg font-medium truncate">{anchor.filename}</p>
+              {editingFilename ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={filenameInput}
+                    onChange={(e) => setFilenameInput(e.target.value)}
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter' && filenameInput.trim() && onRenameFile) {
+                        setRenameSaving(true);
+                        try {
+                          await onRenameFile(filenameInput.trim());
+                        } finally {
+                          setRenameSaving(false);
+                          setEditingFilename(false);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setFilenameInput(anchor.filename);
+                        setEditingFilename(false);
+                      }
+                    }}
+                    className="flex-1 min-w-0 text-lg font-medium bg-muted rounded px-2 py-1 border border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary"
+                    autoFocus
+                    disabled={renameSaving}
+                    maxLength={255}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    disabled={renameSaving || !filenameInput.trim()}
+                    onClick={async () => {
+                      if (filenameInput.trim() && onRenameFile) {
+                        setRenameSaving(true);
+                        try {
+                          await onRenameFile(filenameInput.trim());
+                        } finally {
+                          setRenameSaving(false);
+                          setEditingFilename(false);
+                        }
+                      }
+                    }}
+                  >
+                    <Check className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0"
+                    onClick={() => { setFilenameInput(anchor.filename); setEditingFilename(false); }}
+                    disabled={renameSaving}
+                  >
+                    <XCircle className="h-4 w-4" />
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 group">
+                  <p className="text-lg font-medium truncate">{anchor.filename}</p>
+                  {onRenameFile && (
+                    <button
+                      type="button"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                      onClick={() => { setFilenameInput(anchor.filename); setEditingFilename(true); }}
+                      aria-label="Edit document name"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-sm text-muted-foreground">
                 {formatFileSize(anchor.fileSize)}
                 {anchor.fileMime && ` • ${anchor.fileMime}`}
@@ -406,16 +479,23 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             </div>
           </div>
 
-          {/* Description (BETA-12) */}
-          {anchor.description && (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Description</span>
-                <p className="text-sm text-muted-foreground break-words">{anchor.description}</p>
-              </div>
-            </>
-          )}
+          {/* Description (BETA-12) — falls back to metadata abstract/description/summary */}
+          {(() => {
+            const desc = anchor.description
+              ?? (anchor.metadata?.abstract as string | undefined)
+              ?? (anchor.metadata?.description as string | undefined)
+              ?? (anchor.metadata?.summary as string | undefined);
+            if (!desc) return null;
+            return (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Description</span>
+                  <p className="text-sm text-muted-foreground break-words">{desc}</p>
+                </div>
+              </>
+            );
+          })()}
 
           {/* Source Document Link (pipeline records) */}
           {(() => {
@@ -567,14 +647,6 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           />
         </CardContent>
       </Card>
-
-      {/* Nessie Insights — Proactive compliance analysis (NMT-07) */}
-      <NessieInsights
-        credentialType={anchor.credentialType}
-        issuerName={anchor.issuerName}
-        metadata={anchor.metadata}
-        publicId={anchor.publicId}
-      />
 
       {/* Version History / Lineage (P4-TS-06) */}
       {(anchor.versionNumber ?? 1) > 1 || (anchor.lineage && anchor.lineage.length > 1) ? (

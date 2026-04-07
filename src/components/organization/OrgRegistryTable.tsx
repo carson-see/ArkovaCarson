@@ -147,9 +147,10 @@ export function OrgRegistryTable({
   const fetchAnchors = useCallback(async () => {
     setLoading(true);
 
+    // SCRUM-493: Use 'exact' count since 'estimated' can return 0 for filtered queries on large tables.
     let query = supabase
       .from('anchors')
-      .select('*', { count: 'estimated' })
+      .select('*', { count: 'exact' })
       .eq('org_id', orgId)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
