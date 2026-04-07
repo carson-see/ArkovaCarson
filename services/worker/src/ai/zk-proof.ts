@@ -16,9 +16,9 @@ import { readFileSync, existsSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
-// @ts-expect-error — snarkjs has no type declarations
+// @ts-ignore — snarkjs has no type declarations
 import * as snarkjs from 'snarkjs';
-// @ts-expect-error — poseidon-lite has no type declarations
+// @ts-ignore — poseidon-lite has no type declarations
 import { poseidon4, poseidon3 } from 'poseidon-lite';
 
 const __filename = fileURLToPath(import.meta.url);
