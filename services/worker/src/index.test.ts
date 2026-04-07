@@ -317,7 +317,7 @@ describe('worker server', () => {
       expect(res.body).toMatchObject({
         status: 'healthy',
         network: 'signet',
-        checks: { supabase: 'ok' },
+        checks: { database: 'ok' },
       });
       expect(typeof res.body.uptime).toBe('number');
       expect(res.body.version).toBeDefined();
@@ -331,7 +331,7 @@ describe('worker server', () => {
       expect(res.status).toBe(503);
       expect(res.body).toMatchObject({
         status: 'degraded',
-        checks: { supabase: 'error' },
+        checks: { database: 'error' },
       });
     });
   });

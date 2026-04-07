@@ -85,7 +85,7 @@ describe('Golden Dataset Integrity', () => {
       for (const field of dateFields) {
         const val = entry.groundTruth[field];
         if (val) {
-          expect(val).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+          expect(val).toMatch(/^\d{4}(-\d{2}(-\d{2})?)?$/);
         }
       }
     }

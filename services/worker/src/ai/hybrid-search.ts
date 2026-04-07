@@ -137,7 +137,7 @@ export function buildTsQuery(query: string): string {
     .split(/\s+/)
     .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
 
-  if (tokens.length === 0) return query.replace(/[^\w\s]/g, '');
+  if (tokens.length === 0) return query.replace(/[^\w\s]/g, '').trim();
 
   return tokens.join(' & ');
 }
