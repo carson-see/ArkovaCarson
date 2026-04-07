@@ -195,20 +195,31 @@ export async function processPublicRecordAnchoring(
   logger.info({ recordCount: records.length, batchSize: PUBLIC_RECORD_BATCH_SIZE }, 'Creating individual anchors for public records');
 
   // Step 1: Create individual anchor records for each public record
-  const anchorInserts = records.map((r) => ({
-    user_id: ownerId,
-    org_id: ownerOrgId,
-    fingerprint: r.content_hash,
-    filename: buildAnchorFilename(r),
-    credential_type: mapCredentialType(r.source),
-    status: 'PENDING' as const,
-    metadata: {
-      pipeline_source: r.source,
-      source_id: r.source_id,
-      source_url: r.source_url,
-      record_type: r.record_type,
-    },
-  }));
+  const anchorInserts = records.map((r) => {
+    // Pull description from public record metadata (abstract, description, summary)
+    const meta = r.metadata ?? {};
+    const description = (
+      (typeof meta.abstract === 'string' ? meta.abstract : null)
+      ?? (typeof meta.description === 'string' ? meta.description : null)
+      ?? (typeof meta.summary === 'string' ? meta.summary : null)
+    )?.slice(0, 500) ?? null;
+
+    return {
+      user_id: ownerId,
+      org_id: ownerOrgId,
+      fingerprint: r.content_hash,
+      filename: buildAnchorFilename(r),
+      credential_type: mapCredentialType(r.source),
+      status: 'PENDING' as const,
+      ...(description ? { description } : {}),
+      metadata: {
+        pipeline_source: r.source,
+        source_id: r.source_id,
+        source_url: r.source_url,
+        record_type: r.record_type,
+      },
+    };
+  });
 
   // Batch insert via server-side RPC — handles partial unique index ON CONFLICT
   // 10x faster than serial inserts (single round-trip instead of N)
