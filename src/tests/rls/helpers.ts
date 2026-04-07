@@ -51,15 +51,15 @@ export const DEMO_CREDENTIALS = {
   adminPassword: RLS_TEST_PASSWORD,
   adminId: '44444444-0000-0000-0000-000000000001',
 
-  // Platform admin / ORG_ADMIN (Arkova org) — Sarah
-  userEmail: 'sarah@arkova.ai',
+  // INDIVIDUAL user (no org) — Jamie Demo-User
+  userEmail: 'demo-user@arkova.local',
   userPassword: RLS_TEST_PASSWORD,
-  userId: '44444444-0000-0000-0000-000000000002',
+  userId: '55555555-0000-0000-0000-000000000002',
 
-  // Kept for backward compat in tests — points to Sarah (second admin)
-  betaAdminEmail: 'sarah@arkova.ai',
+  // ORG_ADMIN (Acme Corp) — Alex Demo-Admin (second org for cross-tenant tests)
+  betaAdminEmail: 'demo-admin@arkova.local',
   betaAdminPassword: RLS_TEST_PASSWORD,
-  betaAdminId: '44444444-0000-0000-0000-000000000002',
+  betaAdminId: '55555555-0000-0000-0000-000000000001',
 };
 
 /**
@@ -67,8 +67,7 @@ export const DEMO_CREDENTIALS = {
  */
 export const ORG_IDS = {
   arkova: 'aaaaaaaa-0000-0000-0000-000000000001',
-  /** @deprecated No second org in production-matching seed. Alias for arkova. */
-  betaCorp: 'aaaaaaaa-0000-0000-0000-000000000001',
+  betaCorp: 'bbbbbbbb-0000-0000-0000-000000000001',
 };
 
 /**
@@ -85,7 +84,7 @@ export type UserRole = 'INDIVIDUAL' | 'ORG_ADMIN';
  *
  * @example
  * const adminClient = await withUser('carson@arkova.ai', 'ORG_ADMIN');
- * const sarahClient = await withUser('sarah@arkova.ai', 'ORG_ADMIN');
+ * const userClient = await withUser('demo-user@arkova.local', 'INDIVIDUAL');
  */
 export async function withUser(email: string, role: UserRole): Promise<TypedClient> {
   const password = getPasswordForEmail(email);
@@ -155,7 +154,7 @@ export const withArkovaAdmin = () =>
   withUser(DEMO_CREDENTIALS.adminEmail, 'ORG_ADMIN');
 
 export const withIndividualUser = () =>
-  withUser(DEMO_CREDENTIALS.userEmail, 'ORG_ADMIN');
+  withUser(DEMO_CREDENTIALS.userEmail, 'INDIVIDUAL');
 
 export const withBetaAdmin = () =>
   withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');

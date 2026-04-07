@@ -416,7 +416,7 @@ describe('TLA-01: credential_type Immutability After PENDING', () => {
 
     // Create a PENDING anchor (credential_type should still be mutable)
     const ts1 = Date.now().toString(16).padStart(16, '0');
-    const fp1 = `tla01aaa${ts1}`.padEnd(64, '0').slice(0, 64);
+    const fp1 = `a0a01aaa${ts1}`.padEnd(64, '0').slice(0, 64);
     const { data: pending, error: e1 } = await userClient
       .from('anchors')
       .insert({
@@ -434,7 +434,7 @@ describe('TLA-01: credential_type Immutability After PENDING', () => {
 
     // Create a SECURED anchor (credential_type should be immutable)
     const ts2 = (Date.now() + 1).toString(16).padStart(16, '0');
-    const fp2 = `tla01bbb${ts2}`.padEnd(64, '0').slice(0, 64);
+    const fp2 = `b0b01bbb${ts2}`.padEnd(64, '0').slice(0, 64);
     const { data: secured, error: e2 } = await serviceClient
       .from('anchors')
       .insert({
