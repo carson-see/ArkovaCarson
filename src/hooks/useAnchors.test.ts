@@ -8,6 +8,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -41,6 +43,12 @@ describe('useAnchors', () => {
     });
   });
 
+  function createWrapper() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+  }
+
   it('returns empty records when user is not authenticated', async () => {
     mockGetSession.mockResolvedValue({
       data: { session: null },
@@ -48,7 +56,7 @@ describe('useAnchors', () => {
     });
 
     const { useAnchors } = await import('./useAnchors');
-    const { result } = renderHook(() => useAnchors());
+    const { result } = renderHook(() => useAnchors(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -83,7 +91,7 @@ describe('useAnchors', () => {
     });
 
     const { useAnchors } = await import('./useAnchors');
-    const { result } = renderHook(() => useAnchors());
+    const { result } = renderHook(() => useAnchors(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -117,7 +125,7 @@ describe('useAnchors', () => {
     });
 
     const { useAnchors } = await import('./useAnchors');
-    const { result } = renderHook(() => useAnchors());
+    const { result } = renderHook(() => useAnchors(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -152,7 +160,7 @@ describe('useAnchors', () => {
     });
 
     const { useAnchors } = await import('./useAnchors');
-    const { result } = renderHook(() => useAnchors());
+    const { result } = renderHook(() => useAnchors(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);

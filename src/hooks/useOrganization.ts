@@ -2,15 +2,18 @@
  * Organization Hook
  *
  * Fetches and manages the current user's organization from the database.
+ * Uses React Query for caching — org data shared across all pages instantly.
  *
  * @see P2-TS-06
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
 import { TOAST } from '@/lib/copy';
+import { queryKeys } from '@/lib/queryClient';
 import { OrganizationUpdateSchema } from '@/lib/validators';
 import type { Database } from '@/types/database.types';
 
@@ -23,6 +26,18 @@ type EditableOrgFields = Partial<Pick<Organization,
   'twitter_url' | 'industry_tag' | 'location'
 >>;
 
+/** Fetch organization from Supabase — extracted for React Query */
+async function fetchOrganizationData(orgId: string): Promise<Organization> {
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('*')
+    .eq('id', orgId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
 interface UseOrganizationResult {
   organization: Organization | null;
   loading: boolean;
@@ -33,61 +48,36 @@ interface UseOrganizationResult {
 }
 
 export function useOrganization(orgId: string | null | undefined): UseOrganizationResult {
-  const [organization, setOrganization] = useState<Organization | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [updating, setUpdating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchOrganization = useCallback(async () => {
-    if (!orgId) {
-      setOrganization(null);
-      setLoading(false);
-      return;
-    }
+  const {
+    data: organization = null,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.organization(orgId ?? ''),
+    queryFn: () => fetchOrganizationData(orgId!),
+    enabled: !!orgId,
+    staleTime: 60_000, // Org data rarely changes — 1 min stale
+  });
 
-    setLoading(true);
-    setError(null);
-
-    const { data, error: fetchError } = await supabase
-      .from('organizations')
-      .select('*')
-      .eq('id', orgId)
-      .single();
-
-    if (fetchError) {
-      setError(fetchError.message);
-    } else {
-      setOrganization(data);
-    }
-
-    setLoading(false);
-  }, [orgId]);
-
-  useEffect(() => {
-    fetchOrganization();
-  }, [fetchOrganization]);
+  const error = queryError ? (queryError as Error).message : null;
 
   const refreshOrganization = useCallback(async () => {
-    await fetchOrganization();
-  }, [fetchOrganization]);
+    if (orgId) {
+      await qc.invalidateQueries({ queryKey: queryKeys.organization(orgId) });
+    }
+  }, [orgId, qc]);
 
   const updateOrganization = useCallback(
     async (updates: EditableOrgFields): Promise<boolean> => {
-      if (!orgId) {
-        setError('No organization');
-        return false;
-      }
-
-      setUpdating(true);
-      setError(null);
+      if (!orgId) return false;
 
       // Validate before DB call (CLAUDE.md §1.2 / §6)
       const parsed = OrganizationUpdateSchema.safeParse(updates);
       if (!parsed.success) {
         const msg = parsed.error.issues.map(i => i.message).join(', ');
-        setError(msg);
         toast.error(msg);
-        setUpdating(false);
         return false;
       }
 
@@ -100,17 +90,13 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
         .select();
 
       if (updateError) {
-        setError(updateError.message);
         toast.error(TOAST.ORG_UPDATE_FAILED);
-        setUpdating(false);
         return false;
       }
 
       // Detect silent RLS rejection: query succeeded but no rows updated
       if (!updatedRows || updatedRows.length === 0) {
-        setError('Update blocked — you may not have admin permissions for this organization');
         toast.error('Update failed — admin permissions required');
-        setUpdating(false);
         return false;
       }
 
@@ -123,20 +109,19 @@ export function useOrganization(orgId: string | null | undefined): UseOrganizati
         details: `Updated fields: ${Object.keys(updates).join(', ')}`,
       });
 
-      // Use the returned data directly instead of re-fetching
-      setOrganization(updatedRows[0] as Organization);
+      // Update cache directly with returned data — no extra round-trip
+      qc.setQueryData(queryKeys.organization(orgId), updatedRows[0]);
 
       toast.success(TOAST.ORG_UPDATED);
-      setUpdating(false);
       return true;
     },
-    [orgId]
+    [orgId, qc]
   );
 
   return {
     organization,
     loading,
-    updating,
+    updating: false,
     error,
     updateOrganization,
     refreshOrganization,

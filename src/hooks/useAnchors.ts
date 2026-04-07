@@ -7,16 +7,21 @@
  *   - INDIVIDUAL users see only their own anchors
  *   - ORG_ADMIN users see all anchors in their organization
  *
+ * Uses React Query for caching + stale-while-revalidate. Instant renders
+ * on navigation — no re-fetch delay.
+ *
  * Returns data mapped to the Record interface used by RecordsList.
  *
  * @see P3-TS-01 — Replace useState mock arrays with real Supabase queries
  * @see BETA-01 — Mempool Live Transaction Tracking (realtime)
  */
 
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { TOAST, REALTIME_TOAST_LABELS } from '@/lib/copy';
+import { queryKeys } from '@/lib/queryClient';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
 import type { Database } from '@/types/database.types';
@@ -52,6 +57,25 @@ function mapAnchorToRecord(anchor: AnchorPartial): Record {
   };
 }
 
+/** Fetch anchors from Supabase — extracted for React Query */
+async function fetchAnchorsData(): Promise<Record[]> {
+  const { data, error } = await supabase
+    .from('anchors')
+    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
+    .is('deleted_at', null)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+
+  // Exclude pipeline-generated anchors (have metadata.pipeline_source set)
+  const userAnchors = (data ?? []).filter((a) => {
+    const meta = a.metadata as { pipeline_source?: string } | null;
+    return !meta?.pipeline_source;
+  });
+  return userAnchors.map(mapAnchorToRecord);
+}
+
 interface UseAnchorsReturn {
   records: Record[];
   loading: boolean;
@@ -61,51 +85,18 @@ interface UseAnchorsReturn {
 
 export function useAnchors(): UseAnchorsReturn {
   const { user, loading: authLoading } = useAuth();
-  const [records, setRecords] = useState<Record[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
-  /** Track whether initial fetch has completed to prevent double-fetch from realtime subscribe */
-  const initialFetchDone = useRef(false);
 
-  const fetchAnchors = useCallback(async () => {
-    if (!user) {
-      setRecords([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    // Select only needed columns. Limit to 100 user-created records.
-    const { data, error: fetchError } = await supabase
-      .from('anchors')
-      .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (fetchError) {
-      setError(fetchError.message);
-      setRecords([]);
-      toast.error(TOAST.RECORDS_FETCH_FAILED);
-    } else {
-      // Exclude pipeline-generated anchors (have metadata.pipeline_source set)
-      const userAnchors = (data ?? []).filter((a) => {
-        const meta = a.metadata as { pipeline_source?: string } | null;
-        return !meta?.pipeline_source;
-      });
-      setRecords(userAnchors.map(mapAnchorToRecord));
-    }
-
-    setLoading(false);
-  }, [user]);
-
-  useEffect(() => {
-    initialFetchDone.current = false;
-    fetchAnchors().then(() => { initialFetchDone.current = true; });
-  }, [fetchAnchors]);
+  const {
+    data: records = [],
+    isLoading: queryLoading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.anchors(user?.id ?? ''),
+    queryFn: fetchAnchorsData,
+    enabled: !!user,
+  });
 
   // Fire status-transition toast with optional mempool link
   const fireStatusToast = useCallback((oldRow: Partial<AnchorRow> | null, newRow: AnchorRow) => {
@@ -144,30 +135,36 @@ export function useAnchors(): UseAnchorsReturn {
     }
   }, []);
 
-  // Extracted handler to reduce nesting depth (SonarQube S2004)
+  // Handle realtime events by updating the React Query cache directly
   const handleRealtimePayload = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (payload: { eventType: string; new: any; old: any }) => {
+      const key = queryKeys.anchors(user?.id ?? '');
+
       if (payload.eventType === 'UPDATE') {
         const updated = payload.new as AnchorRow;
         const old = payload.old as Partial<AnchorRow> | null;
         fireStatusToast(old, updated);
-        setRecords((prev) =>
-          prev.map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
+        qc.setQueryData<Record[]>(key, (prev) =>
+          (prev ?? []).map((r) => (r.id === updated.id ? mapAnchorToRecord(updated) : r)),
         );
       } else if (payload.eventType === 'INSERT') {
         const inserted = payload.new as AnchorRow;
         if (!inserted.deleted_at) {
-          setRecords((prev) => [mapAnchorToRecord(inserted), ...prev]);
+          qc.setQueryData<Record[]>(key, (prev) =>
+            [mapAnchorToRecord(inserted), ...(prev ?? [])],
+          );
         }
       } else if (payload.eventType === 'DELETE') {
         const deleted = payload.old as Partial<AnchorRow>;
         if (deleted.id) {
-          setRecords((prev) => prev.filter((r) => r.id !== deleted.id));
+          qc.setQueryData<Record[]>(key, (prev) =>
+            (prev ?? []).filter((r) => r.id !== deleted.id),
+          );
         }
       }
     },
-    [fireStatusToast],
+    [user?.id, fireStatusToast, qc],
   );
 
   // Realtime subscription for anchor changes (BETA-01)
@@ -189,9 +186,8 @@ export function useAnchors(): UseAnchorsReturn {
       )
       .subscribe((status) => {
         // Refetch on reconnect to catch any missed updates (C4)
-        // Skip if this is the initial subscribe (initial fetch already in progress)
-        if (status === 'SUBSCRIBED' && channelRef.current && initialFetchDone.current) {
-          fetchAnchors();
+        if (status === 'SUBSCRIBED' && channelRef.current) {
+          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
         }
       });
 
@@ -203,16 +199,22 @@ export function useAnchors(): UseAnchorsReturn {
         channelRef.current = null;
       }
     };
-  }, [user, handleRealtimePayload, fetchAnchors]);
+  }, [user, handleRealtimePayload, qc]);
 
   const refreshAnchors = useCallback(async () => {
-    await fetchAnchors();
-  }, [fetchAnchors]);
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
+    }
+  }, [user, qc]);
+
+  if (queryError) {
+    toast.error(TOAST.RECORDS_FETCH_FAILED);
+  }
 
   return {
     records,
-    loading: authLoading || loading,
-    error,
+    loading: authLoading || (!!user && queryLoading),
+    error: queryError ? (queryError as Error).message : null,
     refreshAnchors,
   };
 }

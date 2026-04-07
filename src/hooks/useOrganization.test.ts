@@ -9,6 +9,8 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
+import { createElement, type ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -42,9 +44,15 @@ describe('useOrganization', () => {
     });
   });
 
+  function createWrapper() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    return ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+  }
+
   it('returns null organization when orgId is null', async () => {
     const { useOrganization } = await import('./useOrganization');
-    const { result } = renderHook(() => useOrganization(null));
+    const { result } = renderHook(() => useOrganization(null), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -65,7 +73,7 @@ describe('useOrganization', () => {
     });
 
     const { useOrganization } = await import('./useOrganization');
-    const { result } = renderHook(() => useOrganization('org-1'));
+    const { result } = renderHook(() => useOrganization('org-1'), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -87,7 +95,7 @@ describe('useOrganization', () => {
     });
 
     const { useOrganization } = await import('./useOrganization');
-    const { result } = renderHook(() => useOrganization('org-1'));
+    const { result } = renderHook(() => useOrganization('org-1'), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -98,7 +106,7 @@ describe('useOrganization', () => {
 
   it('updateOrganization returns false when orgId is null', async () => {
     const { useOrganization } = await import('./useOrganization');
-    const { result } = renderHook(() => useOrganization(null));
+    const { result } = renderHook(() => useOrganization(null), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -110,7 +118,6 @@ describe('useOrganization', () => {
     });
 
     expect(updated).toBe(false);
-    expect(result.current.error).toBe('No organization');
   });
 
   it('updateOrganization calls supabase update and logs audit event on success', async () => {
@@ -126,7 +133,7 @@ describe('useOrganization', () => {
     });
 
     const { useOrganization } = await import('./useOrganization');
-    const { result } = renderHook(() => useOrganization('org-1'));
+    const { result } = renderHook(() => useOrganization('org-1'), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);

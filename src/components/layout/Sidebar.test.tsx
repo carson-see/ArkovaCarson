@@ -59,7 +59,7 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('does not show Directory link for Individual accounts without orgName (SCRUM-360)', () => {
+  it('does not show Directory link when orgName is not provided (SCRUM-360)', () => {
     renderSidebar();
     expect(screen.queryByText('Directory')).toBeNull();
   });

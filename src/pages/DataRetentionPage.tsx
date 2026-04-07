@@ -11,7 +11,6 @@ import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { DATA_RETENTION_LABELS } from '@/lib/copy';
-
 const L = DATA_RETENTION_LABELS;
 
 const RETENTION_SCHEDULE = [

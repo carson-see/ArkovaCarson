@@ -11,10 +11,12 @@
  */
 
 import React, { Suspense } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Toaster } from 'sonner';
+import { queryClient } from '@/lib/queryClient';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile, ProfileProvider } from '@/hooks/useProfile';
@@ -151,6 +153,7 @@ export function App() {
 
   return (
     <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
       <AuditorModeContext.Provider value={auditorMode}>
       <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <ProfileProvider>
@@ -265,6 +268,7 @@ export function App() {
         </ProfileProvider>
       </BrowserRouter>
       </AuditorModeContext.Provider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

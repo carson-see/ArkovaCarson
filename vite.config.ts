@@ -5,13 +5,19 @@ import path from 'node:path';
 
 export default defineConfig({
   build: {
-    sourcemap: true,
+    // Only generate source maps when Sentry can upload them.
+    // When SENTRY_AUTH_TOKEN is set, the plugin uploads maps then deletes them
+    // from the bundle so users never download them.
+    // Without the token, skip generation entirely to reduce build output.
+    sourcemap: !!process.env.SENTRY_AUTH_TOKEN,
     rollupOptions: {
       output: {
         manualChunks: {
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-query': ['@tanstack/react-query'],
           'vendor-supabase': ['@supabase/supabase-js'],
           'vendor-ui': ['lucide-react', 'sonner', 'class-variance-authority', 'clsx', 'tailwind-merge'],
+          'vendor-sentry': ['@sentry/react'],
         },
       },
     },
