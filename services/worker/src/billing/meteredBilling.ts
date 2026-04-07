@@ -133,7 +133,7 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
 
       // Get subscription items to find the metered item
       const subscriptionItems = await stripeClient.subscriptionItems.list({
-        subscription: sub.stripe_subscription_id,
+        subscription: sub.stripe_subscription_id!,
       });
 
       const meteredItem = subscriptionItems.data.find(

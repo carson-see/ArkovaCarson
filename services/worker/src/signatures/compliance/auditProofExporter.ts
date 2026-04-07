@@ -120,7 +120,7 @@ export async function generateAuditProof(
   if (sig.anchor_id) {
     const { data } = await db
       .from('anchors')
-      .select('public_id, fingerprint, status, tx_id, block_time')
+      .select('public_id, fingerprint, status, chain_tx_id, chain_timestamp')
       .eq('id', sig.anchor_id)
       .single();
     anchorData = data;
@@ -161,8 +161,8 @@ export async function generateAuditProof(
       public_id: anchorData?.public_id || sig.document_fingerprint,
       fingerprint: sig.document_fingerprint,
       anchor_status: anchorData?.status || 'NOT_ANCHORED',
-      network_observed_time: anchorData?.block_time || undefined,
-      tx_id: anchorData?.tx_id || undefined,
+      network_observed_time: anchorData?.chain_timestamp || undefined,
+      tx_id: anchorData?.chain_tx_id || undefined,
     },
     signature: {
       public_id: sig.public_id,

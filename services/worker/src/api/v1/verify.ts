@@ -234,7 +234,7 @@ router.get('/:publicId', async (req, res) => {
         credential_type: result.credential_type ?? null,
         querying_ip: req.ip ?? null,
         querying_agent: req.headers['user-agent']?.substring(0, 200) ?? null,
-        api_key_id: (req as Record<string, unknown>).apiKeyId ?? null,
+        api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
       }),
     });
 

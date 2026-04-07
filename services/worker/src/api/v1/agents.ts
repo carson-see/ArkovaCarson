@@ -18,6 +18,10 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 
+// agents table not yet in database.types.ts — use untyped client
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dbAny = db as any;
+
 /** Helper: get caller's org_id or return 403 */
 async function getCallerOrgId(userId: string, res: Response): Promise<string | null> {
   const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
@@ -30,7 +34,7 @@ async function getCallerOrgId(userId: string, res: Response): Promise<string | n
 
 /** Helper: verify agent belongs to caller's org */
 async function verifyAgentOwnership(agentId: string, orgId: string, res: Response): Promise<Record<string, unknown> | null> {
-  const { data: agent, error } = await db
+  const { data: agent, error } = await dbAny
     .from('agents')
     .select('*')
     .eq('id', agentId)
@@ -93,7 +97,7 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const { data: agent, error } = await db.from('agents').insert({
+    const { data: agent, error } = await dbAny.from('agents').insert({
       org_id: profile.org_id,
       registered_by: userId,
       ...parsed.data,
@@ -137,7 +141,7 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const { data: agents, error } = await db
+    const { data: agents, error } = await dbAny
       .from('agents')
       .select('*')
       .eq('org_id', profile.org_id)
@@ -172,7 +176,7 @@ router.get('/:agentId', async (req: Request, res: Response) => {
     if (!agent) return;
 
     // Also fetch API keys associated with this agent
-    const { data: keys } = await db
+    const { data: keys } = await dbAny
       .from('api_keys')
       .select('id, name, key_prefix, scopes, is_active, last_used_at, created_at, expires_at')
       .eq('agent_id', agentId)
@@ -211,7 +215,7 @@ router.patch('/:agentId', async (req: Request, res: Response) => {
       updates.suspended_at = new Date().toISOString();
     }
 
-    const { data: agent, error } = await db
+    const { data: agent, error } = await dbAny
       .from('agents')
       .update(updates)
       .eq('id', agentId)
@@ -256,7 +260,7 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
     const existing = await verifyAgentOwnership(agentId, orgId, res);
     if (!existing) return;
 
-    const { data: updated, error } = await db
+    const { data: updated, error } = await dbAny
       .from('agents')
       .update({ status: 'revoked', revoked_at: new Date().toISOString() })
       .eq('id', agentId)
@@ -269,7 +273,7 @@ router.delete('/:agentId', async (req: Request, res: Response) => {
     }
 
     // Also revoke all associated API keys
-    await db.from('api_keys').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('agent_id', agentId);
+    await dbAny.from('api_keys').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('agent_id', agentId);
 
     void db.from('audit_events').insert({
       actor_id: userId,
@@ -303,7 +307,7 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
     const orgId = await getCallerOrgId(userId, res);
     if (!orgId) return;
 
-    const { data: agent, error: agentError } = await db
+    const { data: agent, error: agentError } = await dbAny
       .from('agents')
       .select('id, org_id, allowed_scopes, name, status')
       .eq('id', agentId)
@@ -322,7 +326,7 @@ router.post('/:agentId/key', async (req: Request, res: Response) => {
     // Generate key scoped to agent's allowed scopes
     const { raw, hash, prefix } = generateApiKey(hmacSecret);
 
-    const { data: key, error: insertError } = await db.from('api_keys').insert({
+    const { data: key, error: insertError } = await dbAny.from('api_keys').insert({
       org_id: agent.org_id,
       key_prefix: prefix,
       key_hash: hash,

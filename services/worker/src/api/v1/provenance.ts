@@ -115,7 +115,7 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
     // Fetch anchor
     const { data: anchor, error } = await db
       .from('anchors')
-      .select('id, public_id, fingerprint, status, created_at, submitted_at, secured_at, tx_id, batch_id, org_id, revoked_at, revocation_reason')
+      .select('id, public_id, fingerprint, status, created_at, chain_timestamp, chain_tx_id, org_id, revoked_at, revocation_reason')
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
@@ -136,7 +136,7 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
     const { data: verifyEvents } = await db
       .from('audit_events')
       .select('event_type, created_at, actor_id')
-      .eq('target_id', anchor.public_id)
+      .eq('target_id', anchor.public_id!)
       .in('event_type', ['VERIFICATION_QUERIED', 'VERIFICATION_QUERY', 'signature.verified'])
       .order('created_at', { ascending: true })
       .limit(50);
@@ -173,8 +173,8 @@ router.get('/:publicId/provenance', async (req: Request, res: Response) => {
 
     // Flag anomalies
     const anomalies: string[] = [];
-    if (anchor.submitted_at && anchor.secured_at) {
-      const confirmDelay = new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime();
+    if (anchor.created_at && anchor.chain_timestamp) {
+      const confirmDelay = new Date(anchor.chain_timestamp).getTime() - new Date(anchor.created_at).getTime();
       if (confirmDelay > 24 * 3600_000) {
         anomalies.push(`Confirmation delay: ${Math.round(confirmDelay / 3600_000)}h (expected <1h)`);
       }

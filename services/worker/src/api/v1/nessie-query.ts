@@ -212,12 +212,9 @@ router.get('/', async (req: Request, res: Response) => {
     let searchError: unknown = null;
 
     try {
-      const hybridResults = await monitorQuery(
-        'nessie-hybrid-search',
-        () => hybridSearch(dbAny, q, embeddingResult.embedding, { threshold, limit }),
-      );
+      const hybridResultsRaw = await hybridSearch(dbAny, q, embeddingResult.embedding, { threshold, limit });
       // Convert hybrid results to the format expected downstream
-      matches = (hybridResults as Array<{ public_record_id: string; rrf_score: number; dense_score: number | null }>).map((r) => ({
+      matches = (hybridResultsRaw as Array<{ public_record_id: string; rrf_score: number; dense_score: number | null }>).map((r) => ({
         public_record_id: r.public_record_id,
         similarity: r.dense_score ?? r.rrf_score,
       }));
@@ -337,10 +334,10 @@ router.get('/', async (req: Request, res: Response) => {
         metadata: {
           ...meta,
           // Strip internal fields
-          merkle_proof: undefined,
-          merkle_root: undefined,
-          chain_tx_id: undefined,
-          batch_id: undefined,
+          merkle_proof: undefined as undefined,
+          merkle_root: undefined as undefined,
+          chain_tx_id: undefined as undefined,
+          batch_id: undefined as undefined,
         },
       };
     });

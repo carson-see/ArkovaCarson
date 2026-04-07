@@ -206,7 +206,7 @@ router.post('/', async (req: Request, res: Response) => {
     }
 
     const batchDurationMs = Date.now() - batchStartMs;
-    const creditsRemaining = null; // Beta: unlimited
+    const creditsRemaining: number | null = null; // Beta: unlimited
 
     // Structured observability log — batch extraction summary
     logger.info({

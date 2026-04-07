@@ -661,14 +661,14 @@ cronRouter.post('/smoke-test', async (_req, res) => {
     try {
       await db.from('audit_events').insert({
         event_type: 'smoke_test.completed',
-        actor_id: null,
-        metadata: {
+        event_category: 'SYSTEM',
+        details: JSON.stringify({
           passed,
           failed,
           total: results.length,
           results,
           timestamp: new Date().toISOString(),
-        },
+        }),
       });
     } catch (storeErr) {
       logger.warn({ error: storeErr }, 'Failed to store smoke test results');
@@ -694,7 +694,7 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
   try {
     const { data, error } = await db
       .from('audit_events')
-      .select('created_at, metadata')
+      .select('created_at, details')
       .eq('event_type', 'smoke_test.completed')
       .order('created_at', { ascending: false })
       .limit(20);
@@ -704,10 +704,10 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
       return;
     }
 
-    const history = (data ?? []).map((row: { created_at: string; metadata: Record<string, unknown> }) => ({
-      timestamp: row.created_at,
-      ...row.metadata,
-    }));
+    const history = (data ?? []).map((row) => {
+      const parsed = row.details ? JSON.parse(row.details) : {};
+      return { timestamp: row.created_at, ...parsed };
+    });
 
     res.json({ history });
   } catch (error) {

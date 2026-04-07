@@ -14,8 +14,8 @@ import type { Logger } from './utils/logger.js';
 
 export interface AuthConfig {
   supabaseJwtSecret?: string;
-  supabaseUrl: string;
-  supabaseServiceKey: string;
+  supabaseUrl?: string;
+  supabaseServiceKey?: string;
 }
 
 /**
@@ -81,7 +81,7 @@ async function verifyJwtViaSupabase(
 ): Promise<string | null> {
   try {
     const { createClient } = await import('@supabase/supabase-js');
-    const supabaseClient = createClient(config.supabaseUrl, config.supabaseServiceKey);
+    const supabaseClient = createClient(config.supabaseUrl!, config.supabaseServiceKey!);
     const { data: { user }, error } = await supabaseClient.auth.getUser(token);
 
     if (error || !user) {

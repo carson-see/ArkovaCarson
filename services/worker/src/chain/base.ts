@@ -245,21 +245,23 @@ export class BaseChainClient implements ChainClient {
       this.publicClient = clientConfig.publicClient;
     } else {
       const transport = http(clientConfig.rpcUrl);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.publicClient = createPublicClient({
         chain: this.chain,
         transport,
-      });
+      }) as any;
     }
 
     if (clientConfig.walletClient) {
       this.walletClient = clientConfig.walletClient;
     } else {
       const transport = http(clientConfig.rpcUrl);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       this.walletClient = createWalletClient({
         account: this.account,
         chain: this.chain,
         transport,
-      });
+      }) as any;
     }
 
     // Log only the address, NEVER the private key (Constitution 1.4)
@@ -336,6 +338,7 @@ export class BaseChainClient implements ChainClient {
 
     // 4. Send transaction with retries
     const txHash = await withRetry(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       () => this.walletClient.sendTransaction({
         account: this.account,
         chain: this.chain,
@@ -343,7 +346,7 @@ export class BaseChainClient implements ChainClient {
         value: 0n,
         data: calldata,
         gas: gasLimit,
-      }),
+      } as any),
       'send transaction',
     );
 

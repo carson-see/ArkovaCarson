@@ -116,13 +116,14 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
     });
 
     // Log audit event for key inventory access
-    await db.from('audit_events').insert({
+    void db.from('audit_events').insert({
       event_type: 'key_inventory_accessed',
+      event_category: 'SYSTEM',
       actor_id: userId,
       org_id: membership.org_id,
       details: JSON.stringify({ role: membership.role }),
-    }).then(() => {/* fire and forget */}).catch((err: Error) => {
-      logger.warn('Failed to log key inventory audit event', { error: err.message });
+    }).then(() => {/* fire and forget */}, (err: unknown) => {
+      logger.warn('Failed to log key inventory audit event', { error: err instanceof Error ? err.message : String(err) });
     });
 
     res.json({
