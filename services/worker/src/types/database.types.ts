@@ -365,6 +365,7 @@ export type Database = {
           chain_confirmations: number | null
           chain_timestamp: string | null
           chain_tx_id: string | null
+          compliance_controls: Json | null
           created_at: string
           credential_type: Database["public"]["Enums"]["credential_type"] | null
           deleted_at: string | null
@@ -400,6 +401,7 @@ export type Database = {
           chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
+          compliance_controls?: Json | null
           created_at?: string
           credential_type?:
             | Database["public"]["Enums"]["credential_type"]
@@ -437,6 +439,7 @@ export type Database = {
           chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
+          compliance_controls?: Json | null
           created_at?: string
           credential_type?:
             | Database["public"]["Enums"]["credential_type"]
@@ -742,10 +745,7 @@ export type Database = {
       }
       audit_events: {
         Row: {
-          actor_email: string | null
           actor_id: string | null
-          actor_ip: unknown
-          actor_user_agent: string | null
           created_at: string
           details: string | null
           event_category: string
@@ -756,10 +756,7 @@ export type Database = {
           target_type: string | null
         }
         Insert: {
-          actor_email?: string | null
           actor_id?: string | null
-          actor_ip?: unknown
-          actor_user_agent?: string | null
           created_at?: string
           details?: string | null
           event_category: string
@@ -770,10 +767,7 @@ export type Database = {
           target_type?: string | null
         }
         Update: {
-          actor_email?: string | null
           actor_id?: string | null
-          actor_ip?: unknown
-          actor_user_agent?: string | null
           created_at?: string
           details?: string | null
           event_category?: string
@@ -994,6 +988,42 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      credential_portfolios: {
+        Row: {
+          anchor_ids: string[] | null
+          attestation_ids: string[] | null
+          created_at: string | null
+          expires_at: string | null
+          id: string
+          public_id: string
+          title: string
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          anchor_ids?: string[] | null
+          attestation_ids?: string[] | null
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          public_id: string
+          title: string
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          anchor_ids?: string[] | null
+          attestation_ids?: string[] | null
+          created_at?: string | null
+          expires_at?: string | null
+          id?: string
+          public_id?: string
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
       }
       credential_templates: {
         Row: {
@@ -1257,6 +1287,93 @@ export type Database = {
           },
         ]
       }
+      extraction_manifests: {
+        Row: {
+          anchor_id: string | null
+          confidence_scores: Json
+          created_at: string
+          extracted_fields: Json
+          extraction_timestamp: string
+          fingerprint: string
+          id: string
+          manifest_hash: string
+          model_id: string
+          model_version: string
+          org_id: string | null
+          prompt_version: string | null
+          usage_event_id: string | null
+          user_id: string | null
+          zk_circuit_version: string | null
+          zk_poseidon_hash: string | null
+          zk_proof: Json | null
+          zk_proof_generated_at: string | null
+          zk_proof_generation_ms: number | null
+          zk_proof_protocol: string | null
+          zk_public_signals: Json | null
+        }
+        Insert: {
+          anchor_id?: string | null
+          confidence_scores: Json
+          created_at?: string
+          extracted_fields: Json
+          extraction_timestamp?: string
+          fingerprint: string
+          id?: string
+          manifest_hash: string
+          model_id: string
+          model_version: string
+          org_id?: string | null
+          prompt_version?: string | null
+          usage_event_id?: string | null
+          user_id?: string | null
+          zk_circuit_version?: string | null
+          zk_poseidon_hash?: string | null
+          zk_proof?: Json | null
+          zk_proof_generated_at?: string | null
+          zk_proof_generation_ms?: number | null
+          zk_proof_protocol?: string | null
+          zk_public_signals?: Json | null
+        }
+        Update: {
+          anchor_id?: string | null
+          confidence_scores?: Json
+          created_at?: string
+          extracted_fields?: Json
+          extraction_timestamp?: string
+          fingerprint?: string
+          id?: string
+          manifest_hash?: string
+          model_id?: string
+          model_version?: string
+          org_id?: string | null
+          prompt_version?: string | null
+          usage_event_id?: string | null
+          user_id?: string | null
+          zk_circuit_version?: string | null
+          zk_poseidon_hash?: string | null
+          zk_proof?: Json | null
+          zk_proof_generated_at?: string | null
+          zk_proof_generation_ms?: number | null
+          zk_proof_protocol?: string | null
+          zk_public_signals?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "extraction_manifests_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "extraction_manifests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       financial_reports: {
         Row: {
           avg_cost_per_anchor_usd: number | null
@@ -1304,6 +1421,137 @@ export type Database = {
           x402_revenue_usd?: number | null
         }
         Relationships: []
+      }
+      grc_connections: {
+        Row: {
+          access_token_encrypted: string | null
+          created_at: string
+          created_by: string
+          external_org_id: string | null
+          external_workspace_id: string | null
+          id: string
+          is_active: boolean
+          last_sync_at: string | null
+          last_sync_error: string | null
+          last_sync_status:
+            | Database["public"]["Enums"]["grc_sync_status"]
+            | null
+          org_id: string
+          platform: Database["public"]["Enums"]["grc_platform"]
+          refresh_token_encrypted: string | null
+          scopes: string[] | null
+          sync_count: number
+          token_expires_at: string | null
+          updated_at: string
+        }
+        Insert: {
+          access_token_encrypted?: string | null
+          created_at?: string
+          created_by: string
+          external_org_id?: string | null
+          external_workspace_id?: string | null
+          id?: string
+          is_active?: boolean
+          last_sync_at?: string | null
+          last_sync_error?: string | null
+          last_sync_status?:
+            | Database["public"]["Enums"]["grc_sync_status"]
+            | null
+          org_id: string
+          platform: Database["public"]["Enums"]["grc_platform"]
+          refresh_token_encrypted?: string | null
+          scopes?: string[] | null
+          sync_count?: number
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Update: {
+          access_token_encrypted?: string | null
+          created_at?: string
+          created_by?: string
+          external_org_id?: string | null
+          external_workspace_id?: string | null
+          id?: string
+          is_active?: boolean
+          last_sync_at?: string | null
+          last_sync_error?: string | null
+          last_sync_status?:
+            | Database["public"]["Enums"]["grc_sync_status"]
+            | null
+          org_id?: string
+          platform?: Database["public"]["Enums"]["grc_platform"]
+          refresh_token_encrypted?: string | null
+          scopes?: string[] | null
+          sync_count?: number
+          token_expires_at?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grc_connections_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      grc_sync_logs: {
+        Row: {
+          anchor_id: string | null
+          connection_id: string
+          created_at: string
+          duration_ms: number | null
+          error_message: string | null
+          evidence_type: string
+          external_evidence_id: string | null
+          id: string
+          request_payload: Json | null
+          response_payload: Json | null
+          status: Database["public"]["Enums"]["grc_sync_status"]
+        }
+        Insert: {
+          anchor_id?: string | null
+          connection_id: string
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          evidence_type?: string
+          external_evidence_id?: string | null
+          id?: string
+          request_payload?: Json | null
+          response_payload?: Json | null
+          status?: Database["public"]["Enums"]["grc_sync_status"]
+        }
+        Update: {
+          anchor_id?: string | null
+          connection_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          evidence_type?: string
+          external_evidence_id?: string | null
+          id?: string
+          request_payload?: Json | null
+          response_payload?: Json | null
+          status?: Database["public"]["Enums"]["grc_sync_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "grc_sync_logs_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grc_sync_logs_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "grc_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       institution_ground_truth: {
         Row: {
@@ -1534,60 +1782,110 @@ export type Database = {
       }
       organizations: {
         Row: {
+          affiliation_fee_status: string | null
+          affiliation_grace_expires_at: string | null
           created_at: string
           description: string | null
           display_name: string
           domain: string | null
+          domain_verification_method: string | null
+          domain_verification_token: string | null
+          domain_verification_token_expires_at: string | null
+          domain_verified: boolean | null
+          domain_verified_at: string | null
+          ein_tax_id: string | null
           founded_date: string | null
           id: string
+          industry_tag: string | null
           legal_name: string
           linkedin_url: string | null
           location: string | null
           logo_url: string | null
+          max_sub_orgs: number | null
           org_prefix: string | null
           org_type: string | null
+          parent_approval_status: string | null
+          parent_approved_at: string | null
+          parent_org_id: string | null
           public_id: string | null
+          twitter_url: string | null
           updated_at: string
           verification_status: string
           website_url: string | null
         }
         Insert: {
+          affiliation_fee_status?: string | null
+          affiliation_grace_expires_at?: string | null
           created_at?: string
           description?: string | null
           display_name: string
           domain?: string | null
+          domain_verification_method?: string | null
+          domain_verification_token?: string | null
+          domain_verification_token_expires_at?: string | null
+          domain_verified?: boolean | null
+          domain_verified_at?: string | null
+          ein_tax_id?: string | null
           founded_date?: string | null
           id?: string
+          industry_tag?: string | null
           legal_name: string
           linkedin_url?: string | null
           location?: string | null
           logo_url?: string | null
+          max_sub_orgs?: number | null
           org_prefix?: string | null
           org_type?: string | null
+          parent_approval_status?: string | null
+          parent_approved_at?: string | null
+          parent_org_id?: string | null
           public_id?: string | null
+          twitter_url?: string | null
           updated_at?: string
           verification_status?: string
           website_url?: string | null
         }
         Update: {
+          affiliation_fee_status?: string | null
+          affiliation_grace_expires_at?: string | null
           created_at?: string
           description?: string | null
           display_name?: string
           domain?: string | null
+          domain_verification_method?: string | null
+          domain_verification_token?: string | null
+          domain_verification_token_expires_at?: string | null
+          domain_verified?: boolean | null
+          domain_verified_at?: string | null
+          ein_tax_id?: string | null
           founded_date?: string | null
           id?: string
+          industry_tag?: string | null
           legal_name?: string
           linkedin_url?: string | null
           location?: string | null
           logo_url?: string | null
+          max_sub_orgs?: number | null
           org_prefix?: string | null
           org_type?: string | null
+          parent_approval_status?: string | null
+          parent_approved_at?: string | null
+          parent_org_id?: string | null
           public_id?: string | null
+          twitter_url?: string | null
           updated_at?: string
           verification_status?: string
           website_url?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "organizations_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       payment_grace_periods: {
         Row: {
@@ -1683,8 +1981,10 @@ export type Database = {
           activation_token: string | null
           activation_token_expires_at: string | null
           avatar_url: string | null
+          bio: string | null
           created_at: string
           deleted_at: string | null
+          disclaimer_accepted_at: string | null
           email: string
           full_name: string | null
           id: string
@@ -1694,15 +1994,18 @@ export type Database = {
           is_platform_admin: boolean
           is_public_profile: boolean
           is_verified: boolean
+          kyc_provider: string | null
           manual_review_completed_at: string | null
           manual_review_completed_by: string | null
           manual_review_reason: string | null
           org_id: string | null
           phone_number: string | null
+          phone_verified_at: string | null
           public_id: string | null
           requires_manual_review: boolean
           role: Database["public"]["Enums"]["user_role"] | null
           role_set_at: string | null
+          social_links: Json | null
           status: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier: string
           updated_at: string
@@ -1711,8 +2014,10 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           deleted_at?: string | null
+          disclaimer_accepted_at?: string | null
           email: string
           full_name?: string | null
           id: string
@@ -1722,15 +2027,18 @@ export type Database = {
           is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
+          kyc_provider?: string | null
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
           org_id?: string | null
           phone_number?: string | null
+          phone_verified_at?: string | null
           public_id?: string | null
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          social_links?: Json | null
           status?: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier?: string
           updated_at?: string
@@ -1739,8 +2047,10 @@ export type Database = {
           activation_token?: string | null
           activation_token_expires_at?: string | null
           avatar_url?: string | null
+          bio?: string | null
           created_at?: string
           deleted_at?: string | null
+          disclaimer_accepted_at?: string | null
           email?: string
           full_name?: string | null
           id?: string
@@ -1750,15 +2060,18 @@ export type Database = {
           is_platform_admin?: boolean
           is_public_profile?: boolean
           is_verified?: boolean
+          kyc_provider?: string | null
           manual_review_completed_at?: string | null
           manual_review_completed_by?: string | null
           manual_review_reason?: string | null
           org_id?: string | null
           phone_number?: string | null
+          phone_verified_at?: string | null
           public_id?: string | null
           requires_manual_review?: boolean
           role?: Database["public"]["Enums"]["user_role"] | null
           role_set_at?: string | null
+          social_links?: Json | null
           status?: Database["public"]["Enums"]["profile_status"] | null
           subscription_tier?: string
           updated_at?: string
@@ -2068,6 +2381,249 @@ export type Database = {
           },
         ]
       }
+      signatures: {
+        Row: {
+          anchor_id: string | null
+          archive_timestamp_id: string | null
+          attestation_id: string | null
+          completed_at: string | null
+          contact_info: string | null
+          created_at: string
+          created_by: string
+          document_fingerprint: string
+          format: string
+          id: string
+          jurisdiction: string | null
+          level: string
+          location: string | null
+          ltv_data_embedded: boolean
+          metadata: Json | null
+          org_id: string
+          public_id: string
+          reason: string | null
+          revocation_reason: string | null
+          revoked_at: string | null
+          signature_algorithm: string | null
+          signature_value: string | null
+          signed_at: string | null
+          signed_attributes: Json | null
+          signer_certificate_id: string
+          signer_name: string | null
+          signer_org: string | null
+          status: string
+          timestamp_token_id: string | null
+        }
+        Insert: {
+          anchor_id?: string | null
+          archive_timestamp_id?: string | null
+          attestation_id?: string | null
+          completed_at?: string | null
+          contact_info?: string | null
+          created_at?: string
+          created_by: string
+          document_fingerprint: string
+          format: string
+          id?: string
+          jurisdiction?: string | null
+          level: string
+          location?: string | null
+          ltv_data_embedded?: boolean
+          metadata?: Json | null
+          org_id: string
+          public_id: string
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          signature_algorithm?: string | null
+          signature_value?: string | null
+          signed_at?: string | null
+          signed_attributes?: Json | null
+          signer_certificate_id: string
+          signer_name?: string | null
+          signer_org?: string | null
+          status?: string
+          timestamp_token_id?: string | null
+        }
+        Update: {
+          anchor_id?: string | null
+          archive_timestamp_id?: string | null
+          attestation_id?: string | null
+          completed_at?: string | null
+          contact_info?: string | null
+          created_at?: string
+          created_by?: string
+          document_fingerprint?: string
+          format?: string
+          id?: string
+          jurisdiction?: string | null
+          level?: string
+          location?: string | null
+          ltv_data_embedded?: boolean
+          metadata?: Json | null
+          org_id?: string
+          public_id?: string
+          reason?: string | null
+          revocation_reason?: string | null
+          revoked_at?: string | null
+          signature_algorithm?: string | null
+          signature_value?: string | null
+          signed_at?: string | null
+          signed_attributes?: Json | null
+          signer_certificate_id?: string
+          signer_name?: string | null
+          signer_org?: string | null
+          status?: string
+          timestamp_token_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_signatures_archive_tst"
+            columns: ["archive_timestamp_id"]
+            isOneToOne: false
+            referencedRelation: "timestamp_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "fk_signatures_tst"
+            columns: ["timestamp_token_id"]
+            isOneToOne: false
+            referencedRelation: "timestamp_tokens"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_attestation_id_fkey"
+            columns: ["attestation_id"]
+            isOneToOne: false
+            referencedRelation: "attestations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "signatures_signer_certificate_id_fkey"
+            columns: ["signer_certificate_id"]
+            isOneToOne: false
+            referencedRelation: "signing_certificates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      signing_certificates: {
+        Row: {
+          certificate_pem: string
+          chain_pem: string[] | null
+          created_at: string
+          created_by: string
+          eu_trusted_list_entry: string | null
+          fingerprint_sha256: string
+          id: string
+          issuer_cn: string
+          issuer_org: string | null
+          key_algorithm: string
+          kms_key_id: string
+          kms_provider: string
+          metadata: Json | null
+          not_after: string
+          not_before: string
+          org_id: string
+          qtsp_name: string | null
+          serial_number: string
+          status: string
+          subject_cn: string
+          subject_org: string | null
+          trust_level: string
+          updated_at: string
+        }
+        Insert: {
+          certificate_pem: string
+          chain_pem?: string[] | null
+          created_at?: string
+          created_by: string
+          eu_trusted_list_entry?: string | null
+          fingerprint_sha256: string
+          id?: string
+          issuer_cn: string
+          issuer_org?: string | null
+          key_algorithm: string
+          kms_key_id: string
+          kms_provider: string
+          metadata?: Json | null
+          not_after: string
+          not_before: string
+          org_id: string
+          qtsp_name?: string | null
+          serial_number: string
+          status?: string
+          subject_cn: string
+          subject_org?: string | null
+          trust_level?: string
+          updated_at?: string
+        }
+        Update: {
+          certificate_pem?: string
+          chain_pem?: string[] | null
+          created_at?: string
+          created_by?: string
+          eu_trusted_list_entry?: string | null
+          fingerprint_sha256?: string
+          id?: string
+          issuer_cn?: string
+          issuer_org?: string | null
+          key_algorithm?: string
+          kms_key_id?: string
+          kms_provider?: string
+          metadata?: Json | null
+          not_after?: string
+          not_before?: string
+          org_id?: string
+          qtsp_name?: string | null
+          serial_number?: string
+          status?: string
+          subject_cn?: string
+          subject_org?: string | null
+          trust_level?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "signing_certificates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      stats_cache: {
+        Row: {
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
       subscriptions: {
         Row: {
           cancel_at_period_end: boolean
@@ -2188,6 +2744,87 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      timestamp_tokens: {
+        Row: {
+          cost_usd: number | null
+          created_at: string
+          hash_algorithm: string
+          id: string
+          message_imprint: string
+          metadata: Json | null
+          org_id: string
+          provider_ref: string | null
+          qtsp_qualified: boolean
+          signature_id: string | null
+          token_type: string
+          tsa_cert_fingerprint: string
+          tsa_name: string
+          tsa_url: string
+          tst_data: string
+          tst_gen_time: string
+          tst_serial: string
+          verification_status: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          cost_usd?: number | null
+          created_at?: string
+          hash_algorithm?: string
+          id?: string
+          message_imprint: string
+          metadata?: Json | null
+          org_id: string
+          provider_ref?: string | null
+          qtsp_qualified?: boolean
+          signature_id?: string | null
+          token_type?: string
+          tsa_cert_fingerprint: string
+          tsa_name: string
+          tsa_url: string
+          tst_data: string
+          tst_gen_time: string
+          tst_serial: string
+          verification_status?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          cost_usd?: number | null
+          created_at?: string
+          hash_algorithm?: string
+          id?: string
+          message_imprint?: string
+          metadata?: Json | null
+          org_id?: string
+          provider_ref?: string | null
+          qtsp_qualified?: boolean
+          signature_id?: string | null
+          token_type?: string
+          tsa_cert_fingerprint?: string
+          tsa_name?: string
+          tsa_url?: string
+          tst_data?: string
+          tst_gen_time?: string
+          tst_serial?: string
+          verification_status?: string | null
+          verified_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "timestamp_tokens_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "timestamp_tokens_signature_id_fkey"
+            columns: ["signature_id"]
+            isOneToOne: false
+            referencedRelation: "signatures"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       unified_credits: {
         Row: {
@@ -2498,6 +3135,41 @@ export type Database = {
       }
     }
     Views: {
+      hypopg_hidden_indexes: {
+        Row: {
+          am_name: unknown
+          index_name: unknown
+          indexrelid: unknown
+          is_hypo: boolean | null
+          schema_name: unknown
+          table_name: unknown
+        }
+        Relationships: []
+      }
+      hypopg_list_indexes: {
+        Row: {
+          am_name: unknown
+          index_name: string | null
+          indexrelid: unknown
+          schema_name: unknown
+          table_name: unknown
+        }
+        Relationships: []
+      }
+      mv_anchor_status_counts: {
+        Row: {
+          cnt: number | null
+          status: string | null
+        }
+        Relationships: []
+      }
+      mv_public_records_source_counts: {
+        Row: {
+          cnt: number | null
+          source: string | null
+        }
+        Relationships: []
+      }
       payment_ledger: {
         Row: {
           amount_usd: number | null
@@ -2519,13 +3191,27 @@ export type Database = {
         Args: { p_password: string; p_token: string }
         Returns: Json
       }
+      admin_change_user_role: {
+        Args: { p_new_role: string; p_user_id: string }
+        Returns: undefined
+      }
+      admin_set_platform_admin: {
+        Args: { p_is_admin: boolean; p_user_id: string }
+        Returns: undefined
+      }
+      admin_set_user_org: {
+        Args: { p_org_id: string; p_org_role?: string; p_user_id: string }
+        Returns: undefined
+      }
       allocate_monthly_credits: { Args: never; Returns: number }
       anonymize_user_data: { Args: { p_user_id: string }; Returns: Json }
       archive_old_audit_events: {
         Args: { retention_days?: number }
         Returns: number
       }
+      batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
+      bulk_promote_confirmed: { Args: { p_tx_ids: string[] }; Returns: number }
       check_ai_credits: {
         Args: { p_org_id?: string; p_user_id?: string }
         Returns: {
@@ -2618,11 +3304,26 @@ export type Database = {
         Args: { p_endpoint_id: string }
         Returns: undefined
       }
+      generate_anchor_public_id: {
+        Args: { category?: string }
+        Returns: string
+      }
       generate_attestation_public_id: {
         Args: { p_attestation_type: string; p_org_prefix: string }
         Returns: string
       }
       generate_public_id: { Args: never; Returns: string }
+      get_anchor_status_counts: { Args: never; Returns: Json }
+      get_anchor_tx_stats: { Args: never; Returns: Json }
+      get_anchor_type_counts: {
+        Args: never
+        Returns: {
+          count: number
+          credential_type: string
+          status: string
+        }[]
+      }
+      get_edgar_shard_counts: { Args: never; Returns: Json }
       get_extraction_accuracy: {
         Args: { p_credential_type?: string; p_days?: number; p_org_id?: string }
         Returns: {
@@ -2660,6 +3361,27 @@ export type Database = {
           status: string
         }[]
       }
+      get_payment_ledger: {
+        Args: { p_limit?: number; p_offset?: number }
+        Returns: {
+          amount_usd: number | null
+          currency: string | null
+          details: Json | null
+          event_at: string | null
+          event_type: string | null
+          external_id: string | null
+          ledger_id: string | null
+          org_id: string | null
+          source: string | null
+          user_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "payment_ledger"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_pending_user_anchors: {
         Args: { p_limit?: number }
         Returns: {
@@ -2672,9 +3394,33 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_org_id: string }
         Returns: Json
       }
+      get_public_org_profile: { Args: { p_org_id: string }; Returns: Json }
+      get_public_org_profiles: {
+        Args: { p_limit?: number; p_offset?: number; p_org_id?: string }
+        Returns: {
+          created_at: string
+          description: string
+          display_name: string
+          domain: string
+          founded_date: string
+          id: string
+          industry_tag: string
+          linkedin_url: string
+          location: string
+          logo_url: string
+          org_type: string
+          twitter_url: string
+          verification_status: string
+          website_url: string
+        }[]
+      }
       get_public_records_stats: { Args: never; Returns: Json }
       get_public_template: {
         Args: { p_credential_type: string; p_org_id: string }
+        Returns: Json
+      }
+      get_source_date_range: {
+        Args: { p_date_field?: string; p_source: string }
         Returns: Json
       }
       get_treasury_stats: { Args: never; Returns: Json }
@@ -2691,16 +3437,58 @@ export type Database = {
       get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }
-      invite_member: {
-        Args: {
-          invitee_email: string
-          invitee_role: Database["public"]["Enums"]["user_role"]
-          target_org_id: string
-        }
-        Returns: string
+      hypopg: { Args: never; Returns: Record<string, unknown>[] }
+      hypopg_create_index: {
+        Args: { sql_order: string }
+        Returns: Record<string, unknown>[]
       }
+      hypopg_drop_index: { Args: { indexid: unknown }; Returns: boolean }
+      hypopg_get_indexdef: { Args: { indexid: unknown }; Returns: string }
+      hypopg_hidden_indexes: {
+        Args: never
+        Returns: {
+          indexid: unknown
+        }[]
+      }
+      hypopg_hide_index: { Args: { indexid: unknown }; Returns: boolean }
+      hypopg_relation_size: { Args: { indexid: unknown }; Returns: number }
+      hypopg_reset: { Args: never; Returns: undefined }
+      hypopg_reset_index: { Args: never; Returns: undefined }
+      hypopg_unhide_all_indexes: { Args: never; Returns: undefined }
+      hypopg_unhide_index: { Args: { indexid: unknown }; Returns: boolean }
+      index_advisor: {
+        Args: { query: string }
+        Returns: {
+          errors: string[]
+          index_statements: string[]
+          startup_cost_after: Json
+          startup_cost_before: Json
+          total_cost_after: Json
+          total_cost_before: Json
+        }[]
+      }
+      invite_member:
+        | {
+            Args: {
+              invitee_email: string
+              invitee_role: Database["public"]["Enums"]["user_role"]
+              target_org_id: string
+            }
+            Returns: string
+          }
+        | {
+            Args: {
+              invitee_email: string
+              invitee_role: string
+              inviter_user_id: string
+              target_org_id: string
+            }
+            Returns: string
+          }
+      is_current_user_platform_admin: { Args: never; Returns: boolean }
       is_org_admin: { Args: never; Returns: boolean }
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
+      is_user_verified: { Args: { p_user_id: string }; Returns: boolean }
       join_org_by_domain: { Args: { p_org_id: string }; Returns: Json }
       link_recipient_on_signup: {
         Args: { p_email_hash: string; p_user_id: string }
@@ -2727,6 +3515,8 @@ export type Database = {
           stuck_since: string
         }[]
       }
+      refresh_stats_cache: { Args: never; Returns: undefined }
+      refresh_stats_materialized_views: { Args: never; Returns: undefined }
       release_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
       revoke_anchor:
         | { Args: { anchor_id: string }; Returns: undefined }
@@ -2755,6 +3545,14 @@ export type Database = {
           name: string
         }[]
       }
+      search_organizations_public: {
+        Args: { p_query: string }
+        Returns: {
+          display_name: string
+          domain: string
+          id: string
+        }[]
+      }
       search_public_credential_embeddings: {
         Args: {
           p_match_count?: number
@@ -2777,7 +3575,7 @@ export type Database = {
         Returns: Json[]
       }
       search_public_issuers: {
-        Args: { p_query: string }
+        Args: { p_limit?: number; p_query: string }
         Returns: {
           credential_count: number
           org_domain: string
@@ -2796,8 +3594,20 @@ export type Database = {
           similarity: number
         }[]
       }
+      set_onboarding_plan: { Args: { p_tier: string }; Returns: Json }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      submit_batch_anchors: {
+        Args: {
+          p_anchor_ids: string[]
+          p_batch_id?: string
+          p_block_height?: number
+          p_block_timestamp?: string
+          p_merkle_root?: string
+          p_tx_id: string
+        }
+        Returns: number
+      }
       try_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
       update_profile_onboarding: {
         Args: {
@@ -2862,15 +3672,21 @@ export type Database = {
         | "CHARITY"
         | "FINANCIAL_ADVISOR"
         | "BUSINESS_ENTITY"
+        | "RESUME"
+        | "MEDICAL"
+        | "MILITARY"
+        | "IDENTITY"
       credit_transaction_type:
         | "ALLOCATION"
         | "PURCHASE"
         | "DEDUCTION"
         | "EXPIRY"
         | "REFUND"
+      grc_platform: "vanta" | "drata" | "anecdotes"
+      grc_sync_status: "pending" | "syncing" | "success" | "failed"
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
       job_status: "pending" | "processing" | "completed" | "failed"
-      org_member_role: "owner" | "admin" | "member"
+      org_member_role: "owner" | "admin" | "member" | "compliance_officer"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
       report_status: "pending" | "generating" | "completed" | "failed"
       report_type:
@@ -3069,6 +3885,10 @@ export const Constants = {
         "CHARITY",
         "FINANCIAL_ADVISOR",
         "BUSINESS_ENTITY",
+        "RESUME",
+        "MEDICAL",
+        "MILITARY",
+        "IDENTITY",
       ],
       credit_transaction_type: [
         "ALLOCATION",
@@ -3077,9 +3897,11 @@ export const Constants = {
         "EXPIRY",
         "REFUND",
       ],
+      grc_platform: ["vanta", "drata", "anecdotes"],
+      grc_sync_status: ["pending", "syncing", "success", "failed"],
       integrity_level: ["HIGH", "MEDIUM", "LOW", "FLAGGED"],
       job_status: ["pending", "processing", "completed", "failed"],
-      org_member_role: ["owner", "admin", "member"],
+      org_member_role: ["owner", "admin", "member", "compliance_officer"],
       profile_status: ["ACTIVE", "PENDING_ACTIVATION", "DEACTIVATED"],
       report_status: ["pending", "generating", "completed", "failed"],
       report_type: [
@@ -3100,4 +3922,3 @@ export const Constants = {
     },
   },
 } as const
-

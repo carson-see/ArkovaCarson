@@ -745,10 +745,7 @@ export type Database = {
       }
       audit_events: {
         Row: {
-          actor_email: string | null
           actor_id: string | null
-          actor_ip: unknown
-          actor_user_agent: string | null
           created_at: string
           details: string | null
           event_category: string
@@ -759,10 +756,7 @@ export type Database = {
           target_type: string | null
         }
         Insert: {
-          actor_email?: string | null
           actor_id?: string | null
-          actor_ip?: unknown
-          actor_user_agent?: string | null
           created_at?: string
           details?: string | null
           event_category: string
@@ -773,10 +767,7 @@ export type Database = {
           target_type?: string | null
         }
         Update: {
-          actor_email?: string | null
           actor_id?: string | null
-          actor_ip?: unknown
-          actor_user_agent?: string | null
           created_at?: string
           details?: string | null
           event_category?: string
@@ -3579,41 +3570,19 @@ export type Database = {
           status: string
         }[]
       }
-      search_public_credentials:
-        | { Args: { p_limit?: number; p_query: string }; Returns: Json[] }
-        | {
-            Args: { p_limit?: number; p_offset?: number; p_query: string }
-            Returns: {
-              anchored_at: string
-              credential_type: string
-              issuer_name: string
-              issuer_public_id: string
-              public_id: string
-              status: string
-              title: string
-            }[]
-          }
-      search_public_issuers:
-        | {
-            Args: { p_query: string }
-            Returns: {
-              credential_count: number
-              org_domain: string
-              org_id: string
-              org_name: string
-            }[]
-          }
-        | {
-            Args: { p_limit?: number; p_offset?: number; p_query: string }
-            Returns: {
-              credential_count: number
-              display_name: string
-              id: string
-              legal_name: string
-              public_id: string
-              verified: boolean
-            }[]
-          }
+      search_public_credentials: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: Json[]
+      }
+      search_public_issuers: {
+        Args: { p_limit?: number; p_query: string }
+        Returns: {
+          credential_count: number
+          org_domain: string
+          org_id: string
+          org_name: string
+        }[]
+      }
       search_public_record_embeddings: {
         Args: {
           p_match_count?: number
