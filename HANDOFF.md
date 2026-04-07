@@ -8,19 +8,39 @@
 
 ## Current State
 
-### Active Phase: Phase 2 COMPLETE — Preparing Phase 3 (eSignatures)
+### Active Phase: Performance + Auth Stabilization → Phase 3 (eSignatures)
 
-**Goal:** All Phase 2 stories done. Security hardening complete. Moving to Phase 3 eSignatures.
+**Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 222 stories (199 complete, ~90%). **1,170+ tests** (all green). 165 migration files (0001-0165). P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 7 complete, 3 partial, 7 not started (most need marketing site repo). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 0/3 (planned). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0165 applied.** 19/19 production UAT bugs resolved. GitHub v1.6.0 released. database.types.ts regenerated.
+**Overall progress:** 211 stories (200 complete, ~95%). **1,153 tests** (all green). 165 migration files (0001-0165). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0165 applied.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 15 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
 
 ### Open Blockers
 
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
-| ~~CRIT-2~~ | ~~Bitcoin chain client~~ | ~~**OPS-ONLY**~~ | ~~CODE COMPLETE~~ | ~~AWS KMS key provisioning, mainnet treasury funding.~~ |
-| **UAT5-01** | **Public search broken — no RPC calls made** | **HIGH** | **OPEN** | Debug supabase.rpc() silent failure in SearchPage.tsx:149. Add error logging. |
-| **UAT5-02** | **Treasury/Pipeline admin stats returning zeros** | **HIGH** | **OPEN** | Worker admin stats endpoints failing. Auth or endpoint issue — worker is running (48h uptime). |
+| **SCRUM-499** | **Worker CORS not configured** | **HIGHEST** | **OPEN** | Blocks all frontend-to-worker API calls. Configure CORS on Cloud Run worker. |
+| **SCRUM-502** | **Security Remediation (BIA Assessment)** | **HIGHEST** | **OPEN** | Epic: Upstash rate limiting, FileVault, incident response, SOC 2 framework. |
+| **SCRUM-490** | **Attestation stuck 15+ days** | **HIGH** | **OPEN** | Anchoring pipeline not processing attestations. |
+| **SCRUM-500** | **Dashboard "Issue Credential" wrong dialog** | **HIGH** | **OPEN** | Opens Secure Document instead of credential issuance. |
+
+### Jira Status (2026-04-07)
+
+37 open issues (37 To Do, 5 Blocked). 5 Jira issues transitioned to Done today (4 GEO + 1 duplicate). See Jira SCRUM board for full backlog.
+
+### Recent Changes (2026-04-07, Session 30 — Performance + Auth + Cleanup)
+
+**Enterprise performance overhaul. Auth email fix. Full GitHub/Jira/worktree cleanup.**
+
+| Change | Detail |
+|--------|--------|
+| **React Query** | Added `@tanstack/react-query` — `useProfile`, `useAnchors`, `useOrganization` now cache with stale-while-revalidate. Instant page renders on navigation. |
+| **Deferred Sentry** | `initSentry()` moved to `requestIdleCallback` + dynamic import. No longer blocks first paint. |
+| **Build optimization** | Conditional source maps (only with SENTRY_AUTH_TOKEN). Vendor chunks for react-query + sentry. Font preloading. |
+| **Email fix** | Root cause: Resend domain `arkova.ai` not verified (DKIM/SPF/MX DNS records missing in Cloudflare). Added 3 DNS records via Cloudflare API. Domain verification completed. |
+| **GitHub cleanup** | 15 merged remote branches deleted. PR #325 (vite patch) merged. 8 open PRs remain (3 active work + 5 dependabot). |
+| **Local cleanup** | 9 worktrees removed. 8 stale stashes dropped. |
+| **Jira sync** | SCRUM-484 closed (duplicate). 4 GEO stories → Done (SCRUM-472/473/475/476). SCRUM-479 updated with Wikidata status. |
+| **Lint fixes** | Unused imports in DataRetentionPage + SignatureCompliancePage. Sidebar test updated. |
 
 ### Recent Changes (2026-04-06, Session 29 — Sprint Completion: GEO, INFRA-07, NMT-05, PH1-PAY-02)
 
