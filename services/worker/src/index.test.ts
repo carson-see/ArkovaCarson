@@ -124,6 +124,7 @@ vi.mock('./utils/db.js', () => ({
   recordDbSuccess: vi.fn(),
   recordDbFailure: vi.fn(),
   getDbCircuitState: () => ({ healthy: true, consecutiveFailures: 0, lastError: null }),
+  getConnectionInfo: () => ({ mode: 'direct', url: 'https://test.supabase.co' }),
   resetDbCircuit: vi.fn(),
 }));
 

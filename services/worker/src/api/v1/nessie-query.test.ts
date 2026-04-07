@@ -204,26 +204,10 @@ describe('GET /nessie/query', () => {
     expect(res.body.results).toHaveLength(0);
   });
 
-  it('accepts task parameter for intelligence mode routing', async () => {
-    const app = buildApp();
-    const res = await request(app).get('/nessie/query?q=test+query&mode=context&task=risk_analysis');
-
-    expect(res.status).toBe(200);
-    expect(res.body.task_type).toBe('risk_analysis');
-  });
-
   it('rejects invalid task parameter', async () => {
     const app = buildApp();
     const res = await request(app).get('/nessie/query?q=test&task=invalid_mode');
     expect(res.status).toBe(400);
-  });
-
-  it('defaults task to compliance_qa when not specified', async () => {
-    const app = buildApp();
-    const res = await request(app).get('/nessie/query?q=test+query&mode=context');
-
-    expect(res.status).toBe(200);
-    expect(res.body.task_type).toBe('compliance_qa');
   });
 
   // PH1-INT-03: Verified context mode
@@ -325,6 +309,22 @@ describe('GET /nessie/query', () => {
       expect(res.status).toBe(200);
       expect(res.body.results).toBeDefined();
       expect(res.body.fallback).toBe(true);
+    });
+
+    it('accepts task parameter for intelligence mode routing', async () => {
+      const app = buildApp();
+      const res = await request(app).get('/nessie/query?q=test+query&mode=context&task=risk_analysis');
+
+      expect(res.status).toBe(200);
+      expect(res.body.task_type).toBe('risk_analysis');
+    });
+
+    it('defaults task to compliance_qa when not specified', async () => {
+      const app = buildApp();
+      const res = await request(app).get('/nessie/query?q=test+query&mode=context');
+
+      expect(res.status).toBe(200);
+      expect(res.body.task_type).toBe('compliance_qa');
     });
   });
 });

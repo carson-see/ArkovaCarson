@@ -4,7 +4,18 @@
  * Tests for BM25 + Dense retrieval with Reciprocal Rank Fusion.
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Mock logger to prevent config loading (config requires env vars)
+vi.mock('../utils/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
 import {
   reciprocalRankFusion,
   buildTsQuery,

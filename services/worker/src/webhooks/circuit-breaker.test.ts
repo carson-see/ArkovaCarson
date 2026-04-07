@@ -332,13 +332,21 @@ describe('DH-12: Dead Letter Queue', () => {
     mockDbFrom.mockImplementation((table: string) => {
       if (table === 'webhook_dead_letter_queue') {
         return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { endpoint_id: 'ep-001', webhook_endpoints: { org_id: 'org-001' } },
+                error: null,
+              }),
+            })),
+          })),
           update: vi.fn(() => ({ eq: updateEq })),
         };
       }
       return {};
     });
 
-    const result = await resolveDlqEntry('dlq-001');
+    const result = await resolveDlqEntry('dlq-001', 'org-001');
     expect(result).toBe(true);
   });
 
@@ -348,13 +356,21 @@ describe('DH-12: Dead Letter Queue', () => {
     mockDbFrom.mockImplementation((table: string) => {
       if (table === 'webhook_dead_letter_queue') {
         return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({
+                data: { endpoint_id: 'ep-001', webhook_endpoints: { org_id: 'org-001' } },
+                error: null,
+              }),
+            })),
+          })),
           update: vi.fn(() => ({ eq: updateEq })),
         };
       }
       return {};
     });
 
-    const result = await resolveDlqEntry('dlq-001');
+    const result = await resolveDlqEntry('dlq-001', 'org-001');
     expect(result).toBe(false);
   });
 });
