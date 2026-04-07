@@ -16,6 +16,20 @@ import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 
+/** Count user's anchors from Supabase when the worker billing endpoint is unreachable */
+async function getFallbackRecordCount(): Promise<number> {
+  try {
+    const { count, error } = await supabase
+      .from('anchors')
+      .select('id', { count: 'exact', head: true })
+      .is('deleted_at', null);
+    if (error || count === null) return 0;
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 export function BillingPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -24,19 +38,6 @@ export function BillingPage() {
   const [loading, setLoading] = useState(true);
 
   const fetchBillingInfo = useCallback(async () => {
-    /** Count user's anchors from Supabase as a reliable fallback */
-    const countAnchorsFromDb = async (): Promise<number> => {
-      try {
-        const { count } = await supabase
-          .from('anchors')
-          .select('*', { count: 'exact', head: true })
-          .in('status', ['SECURED', 'SUBMITTED', 'PENDING', 'BROADCASTING']);
-        return count ?? 0;
-      } catch {
-        return 0;
-      }
-    };
-
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) return;
@@ -54,21 +55,21 @@ export function BillingPage() {
         }
         setBillingInfo(data);
       } else {
-        // Fallback: count from Supabase so metrics stay consistent with Dashboard
-        const recordsUsed = await countAnchorsFromDb();
+        // Fallback: count records from Supabase directly
+        const fallbackCount = await getFallbackRecordCount();
         setBillingInfo({
           plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-          usage: { recordsUsed, recordsLimit: null },
+          usage: { recordsUsed: fallbackCount, recordsLimit: null },
           billing: { status: 'active' },
           status: 'active',
         });
       }
     } catch {
       // Fallback for beta — count from Supabase
-      const recordsUsed = await countAnchorsFromDb();
+      const fallbackCount = await getFallbackRecordCount();
       setBillingInfo({
         plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-        usage: { recordsUsed, recordsLimit: null },
+        usage: { recordsUsed: fallbackCount, recordsLimit: null },
         billing: { status: 'active' },
         status: 'active',
       });

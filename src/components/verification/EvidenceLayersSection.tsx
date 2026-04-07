@@ -106,7 +106,7 @@ export function EvidenceLayersSection({ layers, jurisdiction, className }: Evide
                       )}
                     </div>
                     {layer.timestamp && (
-                      <span className="text-xs text-muted-foreground">{new Date(layer.timestamp).toLocaleString()}</span>
+                      <span className="text-xs text-muted-foreground">{new Date(layer.timestamp).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })} UTC</span>
                     )}
                   </div>
                 </div>

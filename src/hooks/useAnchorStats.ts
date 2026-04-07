@@ -111,9 +111,9 @@ export function useAnchorStats() {
           lastAnchorTime,
           lastTxTime,
         });
+        setError(null);
       }
     } catch (err) {
-      console.error('useAnchorStats: failed to fetch stats', err);
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Failed to fetch anchor stats');
       }

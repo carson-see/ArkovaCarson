@@ -131,6 +131,18 @@ export function useApiUsage() {
     try {
       const res = await workerFetch('/api/v1/usage');
       if (!res.ok) {
+        // 401/403: session expired or insufficient permissions — show empty usage instead of error
+        if (res.status === 401 || res.status === 403) {
+          setUsage({
+            used: 0,
+            limit: 'unlimited',
+            remaining: 'unlimited',
+            reset_date: new Date().toISOString(),
+            month: new Date().toISOString().slice(0, 7),
+            keys: [],
+          });
+          return;
+        }
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? `Failed to fetch usage (${res.status})`);
       }

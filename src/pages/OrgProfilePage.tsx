@@ -385,15 +385,10 @@ export function OrgProfilePage() {
           {/* Meta row: domain, location, founding date */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 text-sm text-muted-foreground">
             {organization?.domain && (
-              <a
-                href={organization.domain.startsWith('http') ? organization.domain : `https://${organization.domain}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1.5 hover:text-foreground transition-colors"
-              >
+              <span className="flex items-center gap-1.5">
                 <Globe className="h-3.5 w-3.5" />
                 {organization.domain}
-              </a>
+              </span>
             )}
             {orgPrefix && (
               <span className="flex items-center gap-1.5 font-mono text-xs">
@@ -436,18 +431,8 @@ export function OrgProfilePage() {
             </TabsList>
           </div>
 
-        {/* Home Tab — About + Records (like LinkedIn posts feed) */}
+        {/* Home Tab — Records (like LinkedIn posts feed) */}
         <TabsContent value="home" className="p-4 md:p-6">
-          {/* About section — show org description if available */}
-          {typeof (organization as Record<string, unknown>)?.description === 'string' && (organization as Record<string, unknown>).description !== '' && (
-            <div className="mb-6">
-              <h2 className="text-lg font-semibold mb-2">About</h2>
-              <p className="text-sm text-muted-foreground">
-                {String((organization as Record<string, unknown>).description)}
-              </p>
-            </div>
-          )}
-
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Records</h2>
             {isAdmin && (
