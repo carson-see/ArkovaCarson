@@ -160,13 +160,13 @@ describe('RLS: Organizations', () => {
     expect(error).toBeNull();
     expect(data).toHaveLength(1);
     expect(data![0].id).toBe(ARKOVA_ORG_ID);
-    expect(data![0].display_name).toBe('UMich Registrar');
+    expect(data![0].display_name).toBe('Arkova');
   });
 
   it('ORG_ADMIN can update their organization', async () => {
     const { error } = await adminClient
       .from('organizations')
-      .update({ display_name: 'UMich Registrar Updated' })
+      .update({ display_name: 'Arkova Updated' })
       .eq('id', ARKOVA_ORG_ID);
 
     expect(error).toBeNull();
@@ -174,7 +174,7 @@ describe('RLS: Organizations', () => {
     // Reset
     await createServiceClient()
       .from('organizations')
-      .update({ display_name: 'UMich Registrar' })
+      .update({ display_name: 'Arkova' })
       .eq('id', ARKOVA_ORG_ID);
   });
 
@@ -299,14 +299,19 @@ describe('RLS: Anchors', () => {
   });
 
   it('users cannot see anchors from other organizations', async () => {
-    // Arkova admin should not see Beta Corp anchors
-    const { data, error } = await adminClient
+    // Beta admin (non-platform-admin) should not see Arkova org anchors
+    const betaAdmin = await createAuthenticatedClient(
+      DEMO_CREDENTIALS.betaAdminEmail,
+      DEMO_CREDENTIALS.betaAdminPassword
+    );
+    const { data, error } = await betaAdmin
       .from('anchors')
       .select('*')
-      .eq('org_id', BETA_ORG_ID);
+      .eq('org_id', ARKOVA_ORG_ID);
 
     expect(error).toBeNull();
     expect(data).toHaveLength(0);
+    await betaAdmin.auth.signOut();
   });
 });
 
@@ -436,8 +441,8 @@ describe('Database Constraints', () => {
   });
 
   it('enforces legal_hold prevents soft deletion', async () => {
-    // Anchor 2 (Okafor MBA) has legal_hold=true in seed data
-    const legalHoldAnchorId = 'a2a2a2a2-0000-0000-0000-000000000002';
+    // Arkova org anchor has legal_hold=true in seed data
+    const legalHoldAnchorId = 'aaaaaaaa-0000-0000-0000-000000000010';
 
     const { error } = await serviceClient
       .from('anchors')
@@ -449,7 +454,8 @@ describe('Database Constraints', () => {
   });
 
   it('enforces unique fingerprint per user', async () => {
-    const duplicateFingerprint = 'e5f6a890123456789012345678901234567890123456789012345678ef012abc';
+    // Use fingerprint from seeded anchor cccccccc-...-001 (demo-user's first anchor)
+    const duplicateFingerprint = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
 
     const { error } = await serviceClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,

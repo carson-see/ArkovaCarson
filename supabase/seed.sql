@@ -180,6 +180,13 @@ VALUES
   ('44444444-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'admin')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
+-- Memberships (legacy junction table, used by RLS policies)
+INSERT INTO memberships (user_id, org_id, role)
+VALUES
+  ('44444444-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'ORG_ADMIN'),
+  ('44444444-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'ORG_ADMIN')
+ON CONFLICT (user_id, org_id) DO NOTHING;
+
 
 -- =============================================================================
 -- 7. SWITCHBOARD FLAGS
@@ -188,7 +195,7 @@ ON CONFLICT (user_id, org_id) DO NOTHING;
 -- =============================================================================
 
 INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
-  ('ENABLE_PROD_NETWORK_ANCHORING', true, false, 'Enable production network anchoring (real network fees)', true),
+  ('ENABLE_PROD_NETWORK_ANCHORING', false, false, 'Enable production network anchoring (real network fees)', true),
   ('ENABLE_OUTBOUND_WEBHOOKS', false, false, 'Enable outbound webhook delivery', false),
   ('ENABLE_NEW_CHECKOUTS', true, true, 'Allow new checkout sessions', false),
   ('ENABLE_REPORTS', true, true, 'Enable report generation', false),
@@ -201,6 +208,17 @@ INSERT INTO switchboard_flags (id, value, default_value, description, is_dangero
   ('ENABLE_X402_PAYMENTS', false, false, 'Enable x402 USDC pay-per-request on Base L2', false),
   ('ENABLE_GRC_INTEGRATIONS', false, false, 'Enable GRC platform integrations (Vanta, Drata, Anecdotes) — CML-05', false)
 ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+
+
+-- =============================================================================
+-- 7b. CREDENTIAL TEMPLATES — for RLS org-level tests
+-- =============================================================================
+
+INSERT INTO credential_templates (org_id, name, credential_type, default_metadata, is_active, created_by)
+VALUES
+  ('aaaaaaaa-0000-0000-0000-000000000001', 'Arkova Standard Certificate', 'CERTIFICATE', '{"fields": ["issuer", "date"]}', true, '44444444-0000-0000-0000-000000000001'),
+  ('bbbbbbbb-0000-0000-0000-000000000001', 'Acme Compliance Report', 'CERTIFICATE', '{"fields": ["auditor", "period"]}', true, '55555555-0000-0000-0000-000000000001')
+ON CONFLICT (org_id, name) DO NOTHING;
 
 
 -- =============================================================================
@@ -229,6 +247,32 @@ VALUES
     NOW() + INTERVAL '15 days'
   )
 ON CONFLICT (id) DO NOTHING;
+
+
+-- =============================================================================
+-- 8b. ARKOVA ORG ANCHORS — for RLS org-level tests
+-- =============================================================================
+
+INSERT INTO anchors (id, user_id, org_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, description, metadata, chain_tx_id, chain_block_height, chain_timestamp, legal_hold, created_at)
+VALUES (
+  'aaaaaaaa-0000-0000-0000-000000000010',
+  '44444444-0000-0000-0000-000000000001',
+  'aaaaaaaa-0000-0000-0000-000000000001',
+  'Arkova_Incorporation.pdf',
+  'a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9',
+  'SECURED',
+  1200000,
+  'application/pdf',
+  'LEGAL',
+  'ARK-ORG-001',
+  'Arkova articles of incorporation',
+  '{"entity_name": "Arkova Inc.", "form_type": "Articles of Incorporation", "_confidence": 0.95, "_prompt_version": "v3"}',
+  'arkova_org_tx_001',
+  200100,
+  NOW() - INTERVAL '90 days',
+  true,
+  NOW() - INTERVAL '90 days'
+);
 
 
 -- =============================================================================
@@ -346,6 +390,11 @@ VALUES
 INSERT INTO org_members (user_id, org_id, role)
 VALUES
   ('55555555-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000001', 'owner')
+ON CONFLICT (user_id, org_id) DO NOTHING;
+
+INSERT INTO memberships (user_id, org_id, role)
+VALUES
+  ('55555555-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000001', 'ORG_ADMIN')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
 -- Demo subscription (individual plan for demo-user)
