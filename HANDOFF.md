@@ -12,7 +12,7 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **1,153 tests** (all green). 165 migration files (0001-0165). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0165 applied.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 15 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
+**Overall progress:** 211 stories (200 complete, ~95%). **1,153 tests** (all green). 169 migration files (0001-0169). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0169 applied.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 20 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
 
 ### Open Blockers
 
@@ -26,6 +26,23 @@
 ### Jira Status (2026-04-07)
 
 37 open issues (37 To Do, 5 Blocked). 5 Jira issues transitioned to Done today (4 GEO + 1 duplicate). See Jira SCRUM board for full backlog.
+
+### Recent Changes (2026-04-07, Session 31 — Record Details + RLS Performance + Description Backfill)
+
+**Record detail improvements. Permanent RLS performance fix for 1.4M+ records. Description backfill for pipeline anchors.**
+
+| Change | Detail |
+|--------|--------|
+| **Record descriptions** | Pipeline anchors now display abstracts/descriptions. Backfill migration 0168 + trigger update (NULL→value allowed). ~63K+ OpenAlex records backfilled so far. |
+| **Arkova logo** | Shield icon replaced with ArkovaLogo in Verification Certificate header. |
+| **Inline filename edit** | Pencil icon on hover, inline edit with Enter/Escape. Directly updates via Supabase. |
+| **RLS performance (0169)** | `is_current_user_platform_admin()` SECURITY DEFINER helper — cached per statement via STABLE. Fixes all admin dashboard timeouts on 1.4M+ records. |
+| **useAnchors filter** | Pipeline_source filter pushed from client-side to Supabase query. Prevents scanning 1.4M rows. |
+| **Anchor scheduling** | `scheduled.ts` now runs anchor processing in production (was non-production only). Batch processing added on interval. |
+| **publicRecordAnchor** | New pipeline anchors now populate `description` from metadata (abstract/description/summary). |
+| **PRs merged** | #323 (UAT bugs), #329 (RLS perf + description backfill). Both merged to main. |
+| **Branch cleanup** | Deleted 5 stale remote branches (charming-feynman, fervent-lalande, fix/ci-green, feat/comp-remaining-and-geo, goofy-mayer). |
+| **Deployed** | Frontend: Vercel (app.arkova.ai). DB: migrations 0166-0169 applied to production. Worker: needs Cloud Run redeploy for scheduling fix. |
 
 ### Recent Changes (2026-04-07, Session 30 — Performance + Auth + Cleanup)
 
