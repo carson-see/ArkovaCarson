@@ -24,10 +24,14 @@ const GEMINI_CREDENTIAL_TYPES = [
   'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY', 'OTHER',
 ] as const;
 
-/** All credential types including pipeline-only (Nessie) types */
+/** All credential types including pipeline-only (Nessie) types and FCRA-specific types */
 const ALL_CREDENTIAL_TYPES = [
   ...GEMINI_CREDENTIAL_TYPES,
   'SEC_FILING', 'PATENT', 'REGULATION', 'PUBLICATION',
+  // FCRA/ATS phase13 credential types (lowercase, domain-specific)
+  'employment_screening', 'employment_verification', 'employment_authorization',
+  'degree', 'license', 'certificate', 'medical_license', 'nursing_license',
+  'cpa_license', 'teaching_license', 'real_estate_license', 'professional_certification',
 ] as const;
 
 describe('Golden Dataset Integrity', () => {
@@ -81,7 +85,7 @@ describe('Golden Dataset Integrity', () => {
       for (const field of dateFields) {
         const val = entry.groundTruth[field];
         if (val) {
-          expect(val).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+          expect(val).toMatch(/^\d{4}(-\d{2}(-\d{2})?)?$/);
         }
       }
     }

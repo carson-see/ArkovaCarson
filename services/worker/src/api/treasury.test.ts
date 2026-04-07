@@ -13,7 +13,7 @@ vi.mock('../utils/db.js', () => ({
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: { email: 'carson@arkova.ai' }, error: null }),
+          single: vi.fn().mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
           is: vi.fn().mockResolvedValue({ count: 5, error: null }),
           neq: vi.fn().mockResolvedValue({ count: 0, error: null }),
         }),

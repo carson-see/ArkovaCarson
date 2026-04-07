@@ -18,8 +18,10 @@ const entrypoint = readFileSync(resolve(WORKER_ROOT, 'entrypoint.sh'), 'utf-8');
 const compose = readFileSync(resolve(WORKER_ROOT, 'docker-compose.yml'), 'utf-8');
 
 describe('INFRA-01: Dockerfile', () => {
-  it('uses node:lts-alpine base image', () => {
-    expect(dockerfile).toContain('node:lts-alpine');
+  it('uses a pinned node-alpine base image (SEC-013: specific version, not mutable lts tag)', () => {
+    // SEC-013: Must use a pinned version (e.g. node:20-alpine), NOT the mutable lts-alpine tag
+    expect(dockerfile).toMatch(/FROM node:\d+-alpine/);
+    expect(dockerfile).not.toContain('node:lts-alpine');
   });
 
   it('exposes PORT via ENV', () => {

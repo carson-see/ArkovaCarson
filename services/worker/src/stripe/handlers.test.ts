@@ -86,6 +86,18 @@ const {
   // audit_events.insert({})
   const auditInsert = vi.fn();
 
+  // profiles.select('org_id').eq('id', userId).maybeSingle()
+  const profilesMaybeSingle = vi.fn().mockResolvedValue({ data: null });
+  const profilesSelectEq = vi.fn(() => ({ maybeSingle: profilesMaybeSingle }));
+  const profilesSelect = vi.fn(() => ({ eq: profilesSelectEq }));
+  // profiles.update({}).eq('id', userId)
+  const profilesUpdateEq = vi.fn().mockResolvedValue({ error: null });
+  const profilesUpdate = vi.fn(() => ({ eq: profilesUpdateEq }));
+
+  // organizations.update({}).eq('id', orgId)
+  const organizationsUpdateEq = vi.fn().mockResolvedValue({ error: null });
+  const organizationsUpdate = vi.fn(() => ({ eq: organizationsUpdateEq }));
+
   const mockDbFrom = vi.fn((table: string) => {
     switch (table) {
       case 'billing_events':
@@ -103,6 +115,15 @@ const {
         };
       case 'audit_events':
         return { insert: auditInsert };
+      case 'profiles':
+        return {
+          select: profilesSelect,
+          update: profilesUpdate,
+        };
+      case 'organizations':
+        return {
+          update: organizationsUpdate,
+        };
       default:
         return {};
     }

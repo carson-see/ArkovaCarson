@@ -38,7 +38,7 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'gcp-kms-***-bitcoin-mainnet',
       algorithm: 'ECDSA secp256k1 (EC_SIGN_SECP256K1_SHA256)',
-      purpose: 'Network anchor signing',
+      purpose: 'Bitcoin transaction signing',
       status: 'active',
       provider: 'GCP Cloud KMS',
     });
@@ -46,7 +46,7 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'aws-kms-***-bitcoin-mainnet',
       algorithm: 'ECDSA secp256k1 (ECC_SECG_P256K1)',
-      purpose: 'Network anchor signing',
+      purpose: 'Bitcoin transaction signing',
       status: 'active',
       provider: 'AWS KMS',
     });
@@ -54,9 +54,9 @@ export function buildKeyInventory(config: {
     entries.push({
       keyId: 'wif-***-' + (bitcoinNetwork || 'unknown'),
       algorithm: 'ECDSA secp256k1',
-      purpose: 'Network anchor signing',
+      purpose: 'Bitcoin transaction signing',
       status: 'active',
-      provider: 'Environment variable',
+      provider: 'Environment variable (WIF)',
     });
   }
 
