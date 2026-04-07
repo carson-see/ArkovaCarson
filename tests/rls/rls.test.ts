@@ -290,12 +290,13 @@ describe('RLS: Anchors', () => {
   });
 
   it('ORG_ADMIN can see all anchors in their organization', async () => {
-    const { data, error } = await adminClient.from('anchors').select('*');
+    // Use betaAdmin (non-platform-admin, Acme org) to test org-scoped visibility
+    // Carson is platform_admin and sees ALL anchors, which isn't a useful org-scope test
+    const { data, error } = await betaAdminClient.from('anchors').select('*');
 
     expect(error).toBeNull();
-    // Admin should see their own 4 anchors (org anchors visible via org_id)
     expect(data!.length).toBeGreaterThan(0);
-    expect(data!.every((a) => a.org_id === ARKOVA_ORG_ID || a.user_id === DEMO_CREDENTIALS.adminId)).toBe(true);
+    expect(data!.every((a) => a.org_id === BETA_ORG_ID || a.user_id === DEMO_CREDENTIALS.betaAdminId)).toBe(true);
   });
 
   it('users cannot see anchors from other organizations', async () => {
