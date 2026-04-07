@@ -97,8 +97,9 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
       const fingerprint = await generateFingerprint(file);
       setSelectedFile({ file, fingerprint, processing: false });
       onFileSelect(file, fingerprint);
-    } catch {
-      setError('Failed to process document. Please try again.');
+    } catch (err) {
+      console.error('[FileUpload] Failed to process document:', err);
+      setError(`Failed to process document: ${err instanceof Error ? err.message : 'Unknown error'}`);
       setSelectedFile(null);
     }
   }, [onFileSelect]);
