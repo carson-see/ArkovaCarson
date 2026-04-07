@@ -63,17 +63,13 @@ async function fetchAnchorsData(): Promise<Record[]> {
     .from('anchors')
     .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
     .is('deleted_at', null)
+    .is('metadata->pipeline_source', null)
     .order('created_at', { ascending: false })
     .limit(100);
 
   if (error) throw error;
 
-  // Exclude pipeline-generated anchors (have metadata.pipeline_source set)
-  const userAnchors = (data ?? []).filter((a) => {
-    const meta = a.metadata as { pipeline_source?: string } | null;
-    return !meta?.pipeline_source;
-  });
-  return userAnchors.map(mapAnchorToRecord);
+  return (data ?? []).map(mapAnchorToRecord);
 }
 
 interface UseAnchorsReturn {
