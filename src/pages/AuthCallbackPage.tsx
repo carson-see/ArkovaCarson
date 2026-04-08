@@ -16,31 +16,26 @@ export function AuthCallbackPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Strip URL fragment containing access_token to prevent exposure in Sentry breadcrumbs
-    const fragment = window.location.hash; // eslint-disable-line -- browser API, not user-facing
-    if (fragment && fragment.includes('access_token')) {
-      window.history.replaceState(null, '', window.location.pathname + window.location.search);
-    }
-
-    // Supabase automatically detects the hash fragment and exchanges it
-    // for a session via onAuthStateChange. We listen for that event.
+    // Supabase automatically detects the hash fragment (#access_token=...)
+    // and exchanges it for a session. We listen for that event.
+    // IMPORTANT: Do NOT strip the hash fragment before Supabase reads it.
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-        // Session established — redirect to dashboard
+        // Strip the access_token from URL AFTER Supabase has consumed it
+        window.history.replaceState(null, '', window.location.pathname);
         navigate(ROUTES.DASHBOARD, { replace: true });
       } else if (event === 'SIGNED_OUT') {
-        // Auth failed — redirect to login
         navigate(ROUTES.LOGIN, { replace: true });
       }
     });
 
-    // Fallback: if no auth event fires within 5s, redirect to dashboard
+    // Fallback: if no auth event fires within 10s, redirect to dashboard
     // (useAuth's getSession will handle routing from there)
     const timeout = setTimeout(() => {
       navigate(ROUTES.DASHBOARD, { replace: true });
-    }, 5000);
+    }, 10000);
 
     return () => {
       subscription.unsubscribe();

@@ -76,15 +76,18 @@ export function SearchPage() {
   const [fpSearching, setFpSearching] = useState(false);
   const [fpError, setFpError] = useState<string | null>(null);
 
-  // Person search state — matches search_public_credentials RETURNS TABLE columns
+  // Person search state
   interface PersonResult {
     public_id: string;
-    credential_type: string | null;
     title: string | null;
+    credential_type: string | null;
     status: string;
-    issuer_name: string | null;
-    issuer_public_id: string | null;
-    anchored_at: string | null;
+    created_at: string;
+    org_id: string | null;
+    /** RPC returns anchored_at, mapped to created_at */
+    anchored_at?: string;
+    issuer_name?: string | null;
+    issuer_public_id?: string | null;
   }
   const [personResults, setPersonResults] = useState<PersonResult[]>([]);
   const [personSearching, setPersonSearching] = useState(false);
@@ -150,19 +153,29 @@ export function SearchPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase.rpc as any)(
         'search_public_credentials',
-        { p_query: name, p_limit: 20 }
+        { p_query: name, p_limit: 20 },
       );
 
       if (rpcError) {
-        console.error('search_public_credentials RPC error:', rpcError.message);
         setPersonError('Search failed. Please try again.');
         return;
       }
 
-      // RPC uses RETURNS TABLE — data is already an array of proper objects
-      setPersonResults((data ?? []) as PersonResult[]);
-    } catch (err) {
-      console.error('search_public_credentials failed:', err);
+      // RPC returns rows with anchored_at (not created_at) — normalize field names
+      const rows = (data as Record<string, unknown>[]) ?? [];
+      const unwrapped: PersonResult[] = rows.map((row) => {
+        const inner = (row.search_public_credentials ?? row) as Record<string, unknown>;
+        return {
+          public_id: inner.public_id as string,
+          title: (inner.title as string | null) ?? null,
+          credential_type: (inner.credential_type as string | null) ?? null,
+          status: inner.status as string,
+          created_at: (inner.anchored_at as string) ?? (inner.created_at as string) ?? '',
+          org_id: (inner.issuer_public_id as string | null) ?? (inner.org_id as string | null) ?? null,
+        };
+      });
+      setPersonResults(unwrapped);
+    } catch {
       setPersonError('Search failed. Please try again.');
     } finally {
       setPersonSearching(false);
@@ -487,20 +500,15 @@ export function SearchPage() {
                           <p className="text-sm font-medium truncate">
                             {result.title || result.public_id || 'Untitled Record'}
                           </p>
-                          {result.issuer_name && (
-                            <p className="text-xs text-muted-foreground truncate">{result.issuer_name}</p>
-                          )}
                           <div className="flex items-center gap-2 mt-1">
                             {result.credential_type && (
                               <span className="text-xs text-muted-foreground">
                                 {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
                               </span>
                             )}
-                            {result.anchored_at && (
-                              <span className="text-xs text-muted-foreground">
-                                {new Date(result.anchored_at).toLocaleDateString()}
-                              </span>
-                            )}
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(result.created_at).toLocaleDateString()}
+                            </span>
                           </div>
                         </div>
                         <Badge
