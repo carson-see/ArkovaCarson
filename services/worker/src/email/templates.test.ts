@@ -14,7 +14,7 @@ describe('buildActivationEmail', () => {
   const baseData = {
     recipientEmail: 'student@example.com',
     organizationName: 'University of Michigan',
-    activationUrl: 'https://app.arkova.io/activate?token=abc123',
+    activationUrl: 'https://app.arkova.ai/activate?token=abc123',
   };
 
   it('returns subject and HTML', () => {
@@ -61,7 +61,7 @@ describe('buildAnchorSecuredEmail', () => {
   const baseData = {
     recipientEmail: 'student@example.com',
     credentialLabel: 'Bachelor of Science',
-    verificationUrl: 'https://app.arkova.io/verify/pub-123',
+    verificationUrl: 'https://app.arkova.ai/verify/pub-123',
     organizationName: 'University of Michigan',
   };
 

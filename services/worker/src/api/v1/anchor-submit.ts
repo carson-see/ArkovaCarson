@@ -70,7 +70,7 @@ router.post('/', async (req: Request, res: Response) => {
         fingerprint: existing.fingerprint,
         status: 'PENDING',
         created_at: existing.created_at,
-        record_uri: `https://app.arkova.io/verify/${existing.public_id ?? ''}`,
+        record_uri: `https://app.arkova.ai/verify/${existing.public_id ?? ''}`,
       };
       res.status(200).json(receipt);
       return;
@@ -113,7 +113,7 @@ router.post('/', async (req: Request, res: Response) => {
       fingerprint: anchor.fingerprint,
       status: 'PENDING',
       created_at: anchor.created_at,
-      record_uri: `https://app.arkova.io/verify/${anchor.public_id ?? publicId}`,
+      record_uri: `https://app.arkova.ai/verify/${anchor.public_id ?? publicId}`,
     };
 
     logger.info({ publicId, fingerprint: fingerprint.slice(0, 12) }, 'Anchor submitted via API');

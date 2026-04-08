@@ -131,7 +131,7 @@ router.get('/', async (req: Request, res: Response) => {
         issued_date: m.issued_date,
         expiry_date: m.expiry_date,
         anchor_timestamp: m.anchor_timestamp,
-        record_uri: `https://app.arkova.io/verify/${m.public_id}`,
+        record_uri: `https://app.arkova.ai/verify/${m.public_id}`,
         similarity: m.similarity,
       }),
     );

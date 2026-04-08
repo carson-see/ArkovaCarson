@@ -65,7 +65,7 @@ export const openApiSpec: Record<string, any> = {
                   anchor_timestamp: '2026-03-10T08:00:00Z',
                   bitcoin_block: 204567,
                   network_receipt_id: 'b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57',
-                  record_uri: 'https://app.arkova.io/verify/ARK-2026-TEST-001',
+                  record_uri: 'https://app.arkova.ai/verify/ARK-2026-TEST-001',
                 },
               },
             },

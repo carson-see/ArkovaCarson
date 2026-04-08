@@ -196,7 +196,7 @@ describe('End-to-end: dummy PDF → hash → anchor → verify', () => {
     expect(result.verified).toBe(true);
     expect(result.status).toBe('ACTIVE');
     expect(result.network_receipt_id).toBe(mockBitcoinReceipt.chain_tx_id);
-    expect(result.record_uri).toBe('https://app.arkova.io/verify/ARK-2026-E2E-001');
+    expect(result.record_uri).toBe('https://app.arkova.ai/verify/ARK-2026-E2E-001');
   });
 
   it('modified document fails verification', async () => {

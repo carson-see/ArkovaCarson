@@ -118,18 +118,19 @@ export function OnboardingRolePage() {
     setPlanLoading(true);
 
     try {
-      const result = await setRole(pendingRole);
-      if (result) {
-        const tier = PLAN_TO_TIER[plan] ?? 'free';
-        // Use SECURITY DEFINER RPC to bypass protect_privileged_profile_fields trigger.
-        // RPC: migration 0153. Types not yet regenerated, hence the cast.
-        const { error: planError } = await (supabase.rpc as CallableFunction)(
-          'set_onboarding_plan', { p_tier: tier },
-        );
+      // Set role first — may return null if already set (retry/back-button), which is fine.
+      await setRole(pendingRole);
 
-        if (planError) throw planError;
-        await refreshProfile();
-      }
+      // Always save the plan, even if role was already set from a prior attempt.
+      const tier = PLAN_TO_TIER[plan] ?? 'free';
+      // Use SECURITY DEFINER RPC to bypass protect_privileged_profile_fields trigger.
+      // RPC: migration 0153. Types not yet regenerated, hence the cast.
+      const { error: planError } = await (supabase.rpc as CallableFunction)(
+        'set_onboarding_plan', { p_tier: tier },
+      );
+
+      if (planError) throw planError;
+      await refreshProfile();
     } catch (err) {
       console.error('[OnboardingRolePage] Plan selection failed:', err);
     } finally {
@@ -222,7 +223,7 @@ export function OnboardingRolePage() {
   // BUG-1: Show plan selector for Individual users
   if (showPlanSelector) {
     return (
-      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.CHOOSE_PLAN_DESC}>
+      <AuthLayout title={ONBOARDING_LABELS.WELCOME_TITLE} description={ONBOARDING_LABELS.CHOOSE_PLAN_DESC} wide>
         <div className="mb-8">
           <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={2} />
         </div>

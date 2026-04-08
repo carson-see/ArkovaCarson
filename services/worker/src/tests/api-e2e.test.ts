@@ -884,7 +884,7 @@ describe('API E2E — Verification API', () => {
       const res = await request(app)
         .get('/api/v1/verify/ARK-2026-TEST-001')
         .set('X-API-Key', TEST_API_KEY)
-        .set('Origin', 'https://app.arkova.io');
+        .set('Origin', 'https://app.arkova.ai');
 
       const exposed = res.headers['access-control-expose-headers'] ?? '';
       expect(exposed).toContain('X-RateLimit-Limit');
@@ -901,7 +901,7 @@ describe('API E2E — Verification API', () => {
     it('responds to OPTIONS preflight with 204', async () => {
       const res = await request(app)
         .options('/api/v1/verify/ARK-001')
-        .set('Origin', 'https://app.arkova.io');
+        .set('Origin', 'https://app.arkova.ai');
 
       expect(res.status).toBe(204);
     });
@@ -909,7 +909,7 @@ describe('API E2E — Verification API', () => {
     it('includes CORS headers when Origin is present', async () => {
       const res = await request(app)
         .get('/api/v1/verify/ARK-2026-TEST-001')
-        .set('Origin', 'https://app.arkova.io')
+        .set('Origin', 'https://app.arkova.ai')
         .set('X-API-Key', TEST_API_KEY);
 
       expect(res.headers['access-control-allow-origin']).toBeDefined();

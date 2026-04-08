@@ -327,7 +327,7 @@ router.get('/', async (req: Request, res: Response) => {
                 ? `${explorerBase}/tx/${anchor.chain_tx_id}`
                 : null,
               verify_url: anchor.public_id
-                ? `https://app.arkova.io/verify/${anchor.public_id}`
+                ? `https://app.arkova.ai/verify/${anchor.public_id}`
                 : null,
             }
           : null,

@@ -229,7 +229,7 @@ router.post('/', async (req: Request, res: Response) => {
       status: attestation.status,
       fingerprint: attestation.fingerprint,
       created_at: attestation.created_at,
-      verify_url: `https://app.arkova.io/verify/attestation/${attestation.public_id}`,
+      verify_url: `https://app.arkova.ai/verify/attestation/${attestation.public_id}`,
     });
   } catch (error) {
     logger.error({ error }, 'Attestation creation failed');
@@ -294,7 +294,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
           public_id: anchor.public_id,
           credential_type: anchor.credential_type,
           verification_status: anchor.status === 'SECURED' ? 'VERIFIED' : anchor.status,
-          verify_url: `https://app.arkova.io/verify/${anchor.public_id}`,
+          verify_url: `https://app.arkova.ai/verify/${anchor.public_id}`,
         };
       }
     }
@@ -336,7 +336,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       revocation_reason: attestation.revocation_reason,
       created_at: attestation.created_at,
       // URI
-      verify_url: `https://app.arkova.io/verify/attestation/${attestation.public_id}`,
+      verify_url: `https://app.arkova.ai/verify/attestation/${attestation.public_id}`,
     });
   } catch (error) {
     logger.error({ error, publicId }, 'Attestation lookup failed');
@@ -400,7 +400,7 @@ router.get('/', async (req: Request, res: Response) => {
     res.json({
       attestations: resultItems.map((a: Record<string, unknown>) => ({
         ...a,
-        verify_url: `https://app.arkova.io/verify/attestation/${a.public_id}`,
+        verify_url: `https://app.arkova.ai/verify/attestation/${a.public_id}`,
       })),
       total: count ?? 0,
       page: cursor ? undefined : page,

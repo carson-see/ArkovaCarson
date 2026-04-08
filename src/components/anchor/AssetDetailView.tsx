@@ -323,12 +323,12 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                   </Button>
                 </div>
               ) : (
-                <div className="flex items-center gap-2 group">
+                <div className="flex items-center gap-2">
                   <p className="text-lg font-medium truncate">{anchor.filename}</p>
                   {onRenameFile && (
                     <button
                       type="button"
-                      className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                      className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
                       onClick={() => { setFilenameInput(anchor.filename); setEditingFilename(true); }}
                       aria-label="Edit document name"
                     >

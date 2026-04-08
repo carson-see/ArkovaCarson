@@ -68,7 +68,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.io' },
+  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
 }));
 
 vi.mock('../../auth.js', () => ({

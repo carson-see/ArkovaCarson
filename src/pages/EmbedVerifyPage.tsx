@@ -5,7 +5,7 @@
  * Route: /embed/verify/:publicId
  *
  * Designed to be embedded on third-party websites via:
- *   <iframe src="https://app.arkova.io/embed/verify/ARK-2026-001" width="400" height="500" />
+ *   <iframe src="https://app.arkova.ai/embed/verify/ARK-2026-001" width="400" height="500" />
  *
  * @see P6-TS-03
  */

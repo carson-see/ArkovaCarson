@@ -14,9 +14,11 @@ interface AuthLayoutProps {
   children: React.ReactNode;
   title: string;
   description: string;
+  /** Use wider container (e.g. for plan selection grids that need more room) */
+  wide?: boolean;
 }
 
-export function AuthLayout({ children, title, description }: Readonly<AuthLayoutProps>) {
+export function AuthLayout({ children, title, description, wide = false }: Readonly<AuthLayoutProps>) {
   // Auth pages now respect the user's theme preference (dark mode default).
   // BUG-001 force-light workaround removed — no longer needed since the app
   // defaults to dark and public/auth routes all support dark mode.
@@ -31,7 +33,7 @@ export function AuthLayout({ children, title, description }: Readonly<AuthLayout
 
       {/* Main content */}
       <main className="flex-1 flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-        <div className="w-full max-w-md space-y-8">
+        <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-md'} space-y-8`}>
           {/* Logo and branding */}
           <div className="flex flex-col items-center text-center">
             <div className="mb-4">

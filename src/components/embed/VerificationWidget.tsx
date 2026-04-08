@@ -8,7 +8,7 @@
  * via an iframe or script tag. Shows verification status for a given publicId.
  *
  * Usage (iframe):
- *   <iframe src="https://app.arkova.io/embed/verify/ABC123" width="400" height="500" />
+ *   <iframe src="https://app.arkova.ai/embed/verify/ABC123" width="400" height="500" />
  *
  * @see P6-TS-03, MVP-14
  * @see MVP-14 — Full embeddable widget integration (post-launch)

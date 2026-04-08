@@ -100,7 +100,7 @@ export async function verifyAnchorByFingerprint(
 
   // Include record URI if public_id exists
   if (anchor.public_id) {
-    result.record_uri = `https://app.arkova.io/verify/${anchor.public_id}`;
+    result.record_uri = `https://app.arkova.ai/verify/${anchor.public_id}`;
   }
 
   // Optional fields from enriched lookup

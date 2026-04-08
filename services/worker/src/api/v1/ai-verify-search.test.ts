@@ -109,7 +109,7 @@ describe('GET /api/v1/verify/search', () => {
         verified: true,
         status: 'SECURED',
         issuer_name: 'University of Michigan',
-        record_uri: 'https://app.arkova.io/verify/pub-123',
+        record_uri: 'https://app.arkova.ai/verify/pub-123',
       }),
     );
   });

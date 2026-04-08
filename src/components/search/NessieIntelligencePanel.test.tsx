@@ -73,7 +73,7 @@ describe('NessieIntelligencePanel', () => {
             chain_tx_id: 'abc123',
             content_hash: 'def456',
             explorer_url: 'https://mempool.space/tx/abc123',
-            verify_url: 'https://app.arkova.io/verify/ARK-001',
+            verify_url: 'https://app.arkova.ai/verify/ARK-001',
           },
           excerpt: 'Filed all required reports.',
         }],
