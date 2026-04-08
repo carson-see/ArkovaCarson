@@ -9,7 +9,10 @@ const vercelConfig = JSON.parse(
   readFileSync(resolve(__dirname, '../../vercel.json'), 'utf-8')
 );
 
-const headerBlock = vercelConfig.headers?.[0];
+// Find the global security headers block (source: "/(.*)")
+const headerBlock = vercelConfig.headers?.find(
+  (h: { source: string }) => h.source === '/(.*)',
+);
 const headers: Array<{ key: string; value: string }> = headerBlock?.headers ?? [];
 
 function getHeaderValue(key: string): string | undefined {

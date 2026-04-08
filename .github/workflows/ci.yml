@@ -62,6 +62,20 @@ jobs:
         working-directory: services/worker
         run: npm ci && npm audit --audit-level=critical --omit=dev
 
+  # TDD enforcement — production code changes must include test changes
+  tdd-enforcement:
+    name: TDD Enforcement
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce TDD (test files required for production changes)
+        run: bash scripts/enforce-tdd.sh --diff "$BASE_REF_SHA"
+
   # Type checking and linting
   typecheck-lint:
     name: TypeCheck & Lint
@@ -145,7 +159,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    needs: [typecheck-lint]
+    needs: [typecheck-lint, tdd-enforcement]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 

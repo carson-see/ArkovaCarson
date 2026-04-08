@@ -64,13 +64,15 @@ function setupMocks(opts: {
       };
     }
     if (table === 'plans') {
-      const planData = subscription?.plan_id && subscription.status === 'active' ? plan : freePlan;
+      // Hook now fetches all plans in parallel (no .eq().single())
+      const allPlans = [
+        { id: 'free', ...freePlan },
+        ...(subscription?.plan_id && subscription.plan_id !== 'free'
+          ? [{ id: subscription.plan_id, ...plan }]
+          : []),
+      ];
       return {
-        select: () => ({
-          eq: () => ({
-            single: () => Promise.resolve({ data: planData, error: planError }),
-          }),
-        }),
+        select: () => Promise.resolve({ data: allPlans, error: planError }),
       };
     }
     if (table === 'anchors') {

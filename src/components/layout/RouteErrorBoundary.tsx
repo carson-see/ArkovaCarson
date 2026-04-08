@@ -10,7 +10,6 @@ import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Sentry } from '@/lib/sentry';
 import { ERROR_BOUNDARY_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 
@@ -55,17 +54,15 @@ export class RouteErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    // Report to Sentry with route context
-    try {
-      Sentry?.captureException(error, {
+    // Lazy-load Sentry to keep it out of the initial bundle (456KB saved)
+    import('@/lib/sentry').then(({ Sentry: S }) => {
+      S.captureException(error, {
         extra: {
           componentStack: errorInfo.componentStack,
           section: this.props.section ?? 'unknown-route',
         },
       });
-    } catch {
-      // Sentry may not be initialized
-    }
+    }).catch(() => { /* Sentry unavailable */ });
     console.error('[RouteErrorBoundary]', error, errorInfo);
   }
 

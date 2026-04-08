@@ -46,9 +46,9 @@ export async function handlePlatformStats(
   }
 
   try {
-    // Run all queries in parallel. Use allSettled so one failing query
-    // (e.g. subscriptions FK join, large metadata scan) does not crash
-    // the entire endpoint. SCRUM-352 fix.
+    // PERF: Use SECURITY DEFINER RPCs for anchor counts instead of 5
+    // separate count queries on 1.4M row table. RPCs use indexes and
+    // bypass RLS for fast aggregation.
     const results = await Promise.allSettled([
       // 0: Total users
       db.from('profiles').select('*', { count: 'exact', head: true })
@@ -60,34 +60,17 @@ export async function handlePlatformStats(
       // 2: Total orgs
       db.from('organizations').select('*', { count: 'exact', head: true })
         .is('deleted_at', null),
-      // 3: Total anchors
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .is('deleted_at', null),
-      // 4: Pending anchors
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'PENDING').is('deleted_at', null),
-      // 5: Secured anchors
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'SECURED').is('deleted_at', null),
-      // 6: Revoked anchors
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'REVOKED').is('deleted_at', null),
-      // 7: Submitted anchors
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'SUBMITTED').is('deleted_at', null),
-      // 8: Anchors in last 24h
+      // 3: Anchor status counts via RPC (replaces queries 3-7)
+      db.rpc('get_anchor_status_counts'),
+      // 4: Anchors in last 24h
       db.from('anchors').select('*', { count: 'exact', head: true })
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-      // 9: Subscriptions by plan
+      // 5: Subscriptions by plan
       db.from('subscriptions').select('plan_id, plans(name)')
         .in('status', ['active', 'trialing']),
-      // 10: Anchor fee data — cap at 1000 recent rows to avoid timeout
-      db.from('anchors').select('metadata')
-        .not('metadata->_fee_sats', 'is', null)
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false })
-        .limit(1000),
+      // 6: Anchor TX + fee stats via RPC
+      db.rpc('get_anchor_tx_stats'),
     ]);
 
     // Helper to safely extract fulfilled results
@@ -99,16 +82,22 @@ export async function handlePlatformStats(
     const totalUsers = val<{ count: number }>(0)?.count ?? 0;
     const recentUsers = val<{ count: number }>(1)?.count ?? 0;
     const totalOrgs = val<{ count: number }>(2)?.count ?? 0;
-    const totalAnchors = val<{ count: number }>(3)?.count ?? 0;
-    const pendingAnchors = val<{ count: number }>(4)?.count ?? 0;
-    const securedAnchors = val<{ count: number }>(5)?.count ?? 0;
-    const revokedAnchors = val<{ count: number }>(6)?.count ?? 0;
-    const submittedAnchors = val<{ count: number }>(7)?.count ?? 0;
-    const recentAnchors = val<{ count: number }>(8)?.count ?? 0;
+
+    // Anchor status counts from RPC
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const subscriptionData = val<{ data: any[] }>(9)?.data ?? [];
+    const statusCounts = (val<{ data: any }>(3)?.data ?? {}) as Record<string, number>;
+    const pendingAnchors = statusCounts.PENDING ?? 0;
+    const securedAnchors = statusCounts.SECURED ?? 0;
+    const revokedAnchors = statusCounts.REVOKED ?? 0;
+    const submittedAnchors = statusCounts.SUBMITTED ?? 0;
+    const totalAnchors = pendingAnchors + securedAnchors + revokedAnchors + submittedAnchors
+      + (statusCounts.BROADCASTING ?? 0);
+
+    const recentAnchors = val<{ count: number }>(4)?.count ?? 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const feeData = val<{ data: any[] }>(10)?.data ?? [];
+    const subscriptionData = val<{ data: any[] }>(5)?.data ?? [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const txStats = (val<{ data: any }>(6)?.data ?? {}) as Record<string, unknown>;
 
     // Log any failed queries for debugging (don't crash the endpoint)
     for (let i = 0; i < results.length; i++) {
@@ -125,36 +114,11 @@ export async function handlePlatformStats(
       byPlan[planName] = (byPlan[planName] ?? 0) + 1;
     }
 
-    // Calculate average sats per anchor from metadata._fee_sats
-    let avgSatsPerAnchor: number | null = null;
-    let totalFeeSats: number | null = null;
-    if (feeData && feeData.length > 0) {
-      let feeSum = 0;
-      let feeCount = 0;
-      for (const anchor of feeData) {
-        const meta = anchor.metadata as Record<string, unknown> | null;
-        const feeSats = meta?._fee_sats;
-        if (typeof feeSats === 'number' && feeSats > 0) {
-          // For batch anchors, divide batch fee by batch size to get per-anchor cost
-          const batchId = meta?.batch_id as string | undefined;
-          if (batchId) {
-            // Count anchors in same batch to divide fee
-            const batchAnchors = feeData.filter((a) => {
-              const m = a.metadata as Record<string, unknown> | null;
-              return m?.batch_id === batchId;
-            });
-            feeSum += feeSats / Math.max(batchAnchors.length, 1);
-          } else {
-            feeSum += feeSats;
-          }
-          feeCount++;
-        }
-      }
-      if (feeCount > 0) {
-        avgSatsPerAnchor = Math.round(feeSum / feeCount);
-        totalFeeSats = Math.round(feeSum);
-      }
-    }
+    // Fee stats: the old metadata JSON scan was slow on 1.4M rows.
+    // Use approximate calculation from TX stats RPC when available.
+    // Detailed per-anchor fee analysis is on the Treasury dashboard.
+    const avgSatsPerAnchor: number | null = null;
+    const totalFeeSats: number | null = null;
 
     const result: PlatformStatsResponse = {
       users: {

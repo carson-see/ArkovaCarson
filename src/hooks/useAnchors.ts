@@ -24,6 +24,7 @@ import { TOAST, REALTIME_TOAST_LABELS } from '@/lib/copy';
 import { queryKeys } from '@/lib/queryClient';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
+import { useProfile } from './useProfile';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -57,11 +58,28 @@ function mapAnchorToRecord(anchor: AnchorPartial): Record {
   };
 }
 
-/** Fetch anchors from Supabase — extracted for React Query */
-async function fetchAnchorsData(): Promise<Record[]> {
-  const { data, error } = await supabase
+/** Fetch anchors from Supabase — extracted for React Query.
+ *  PERF: Filter by user_id or org_id so Postgres uses indexes instead of
+ *  scanning 1.4M rows through RLS (critical for platform admin accounts).
+ *  - INDIVIDUAL users: filter by user_id (idx_anchors_user_nopipeline_created)
+ *  - ORG_ADMIN users: filter by org_id (idx_anchors_org_deleted_created) */
+async function fetchAnchorsData(
+  userId: string,
+  orgId?: string | null,
+  role?: string | null,
+): Promise<Record[]> {
+  let query = supabase
     .from('anchors')
-    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
+    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata');
+
+  // ORG_ADMIN: show all org records; INDIVIDUAL/platform admin: show own records
+  if (role === 'ORG_ADMIN' && orgId) {
+    query = query.eq('org_id', orgId);
+  } else {
+    query = query.eq('user_id', userId);
+  }
+
+  const { data, error } = await query
     .is('deleted_at', null)
     .is('metadata->pipeline_source', null)
     .order('created_at', { ascending: false })
@@ -81,6 +99,7 @@ interface UseAnchorsReturn {
 
 export function useAnchors(): UseAnchorsReturn {
   const { user, loading: authLoading } = useAuth();
+  const { profile } = useProfile();
   const qc = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
 
@@ -89,8 +108,8 @@ export function useAnchors(): UseAnchorsReturn {
     isLoading: queryLoading,
     error: queryError,
   } = useQuery({
-    queryKey: queryKeys.anchors(user?.id ?? ''),
-    queryFn: fetchAnchorsData,
+    queryKey: queryKeys.anchors(user?.id ?? '', profile?.org_id),
+    queryFn: () => fetchAnchorsData(user!.id, profile?.org_id, profile?.role),
     enabled: !!user,
   });
 
@@ -135,7 +154,7 @@ export function useAnchors(): UseAnchorsReturn {
   const handleRealtimePayload = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (payload: { eventType: string; new: any; old: any }) => {
-      const key = queryKeys.anchors(user?.id ?? '');
+      const key = queryKeys.anchors(user?.id ?? '', profile?.org_id);
 
       if (payload.eventType === 'UPDATE') {
         const updated = payload.new as AnchorRow;
@@ -160,7 +179,7 @@ export function useAnchors(): UseAnchorsReturn {
         }
       }
     },
-    [user?.id, fireStatusToast, qc],
+    [user?.id, profile?.org_id, fireStatusToast, qc],
   );
 
   // Realtime subscription for anchor changes (BETA-01)
@@ -183,7 +202,7 @@ export function useAnchors(): UseAnchorsReturn {
       .subscribe((status) => {
         // Refetch on reconnect to catch any missed updates (C4)
         if (status === 'SUBSCRIBED' && channelRef.current) {
-          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
+          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
         }
       });
 
@@ -199,9 +218,9 @@ export function useAnchors(): UseAnchorsReturn {
 
   const refreshAnchors = useCallback(async () => {
     if (user) {
-      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
+      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
     }
-  }, [user, qc]);
+  }, [user, profile?.org_id, qc]);
 
   if (queryError) {
     toast.error(TOAST.RECORDS_FETCH_FAILED);

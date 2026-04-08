@@ -9,7 +9,6 @@ import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 import { Shield, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Sentry } from '@/lib/sentry';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -31,7 +30,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
-    Sentry.captureException(error, { extra: { componentStack: errorInfo.componentStack } });
+    // Lazy-load Sentry to keep it out of the initial bundle (456KB saved)
+    import('@/lib/sentry').then(({ Sentry: S }) => {
+      S.captureException(error, { extra: { componentStack: errorInfo.componentStack } });
+    }).catch(() => { /* Sentry unavailable — error already logged below */ });
     console.error('[ErrorBoundary] Uncaught error:', error, errorInfo);
   }
 

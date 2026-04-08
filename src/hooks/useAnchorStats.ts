@@ -37,20 +37,30 @@ export function useAnchorStats() {
       if (!isMountedRef.current) return;
 
       // Process status counts — RPC returns object or null
+      // Production RPC reads from stats_cache with keys like "pending_count", "secured_count"
+      // Local/original RPC uses json_object_agg with keys like "PENDING", "SECURED"
       const statusCounts: Record<string, number> = {};
       const statusData = statusResult.data ?? {};
       const rpcHasData = statusResult.data && !statusResult.error;
 
       if (rpcHasData) {
-        for (const status of ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED']) {
-          statusCounts[status] = statusData[status] ?? 0;
+        // Map from either format: cached ("pending_count") or aggregated ("PENDING")
+        const statusMap: Record<string, string> = {
+          PENDING: 'pending_count',
+          BROADCASTING: 'broadcasting_count',
+          SUBMITTED: 'submitted_count',
+          SECURED: 'secured_count',
+          REVOKED: 'revoked_count',
+        };
+        for (const [status, cacheKey] of Object.entries(statusMap)) {
+          statusCounts[status] = statusData[status] ?? statusData[cacheKey] ?? 0;
         }
       } else {
         // Fallback: direct count queries (same approach as PipelineAdminPage)
         const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'];
         const countResults = await Promise.all(
           statuses.map(s =>
-            dbAny.from('anchors').select('*', { count: 'exact', head: true }).eq('status', s)
+            dbAny.from('anchors').select('id', { count: 'exact', head: true }).eq('status', s)
           )
         );
         for (let i = 0; i < statuses.length; i++) {

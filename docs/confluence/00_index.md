@@ -3,7 +3,7 @@ _Last updated: 2026-03-20_
 
 ## Reading Guide
 
-This directory contains 19 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
+This directory contains 20 architecture and design documents for the Arkova platform. They are numbered for easy reference but should be read in the order that matches your task.
 
 ### Suggested Reading Order
 
@@ -19,6 +19,7 @@ This directory contains 19 architecture and design documents for the Arkova plat
 - Verification: 11 → 06
 - Identity/Auth: 12 → 03
 - Feature flags: 13
+- Testing & quality: 18 → `docs/reference/TESTING.md`
 
 ---
 
@@ -45,6 +46,7 @@ This directory contains 19 architecture and design documents for the Arkova plat
 | 15b | `15_operational_runbook.md` | Production operational runbook — deployment, monitoring, secret rotation, disaster recovery |
 | 16 | `16_incident_response.md` | SOC 2 incident response plan — detection, classification, escalation, containment, post-incident review |
 | 17 | `17_data_classification.md` | Data classification policy — L1-L4 levels, handling requirements, retention schedule, PII scrubbing rules |
+| 18 | `18_testing_quality_standards.md` | Testing & quality standards — TDD enforcement, custom ESLint rules, CI gates, coverage thresholds, escalation plan |
 
 ### Audit Documents
 
