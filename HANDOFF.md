@@ -12,20 +12,37 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0181, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00240-wtm with admin-stats RPC optimization). **All migrations through 0181 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
+**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0181, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (1.28M+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00246-lrb with mempool UTXO provider fix). **All migrations through 0181 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
 
 ### Open Blockers
 
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
 | **SCRUM-502** | **Security Remediation (BIA Assessment)** | **HIGHEST** | **OPEN** | Epic: Upstash rate limiting, FileVault, incident response, SOC 2 framework. |
-| **SCRUM-490** | **Attestation stuck 15+ days** | **HIGH** | **OPEN** | Anchoring pipeline not processing attestations. |
+| ~~SCRUM-490~~ | ~~Attestation stuck 15+ days~~ | ~~HIGH~~ | **RESOLVED** | Root cause: BITCOIN_UTXO_PROVIDER=getblock but BITCOIN_RPC_URL removed. Fixed: set mempool provider, deployed rev 00246-lrb. |
+| **BUG-S35-04** | **Google OAuth login broken** | **CRITICAL** | **CODE FIXED** | AuthCallbackPage didn't handle INITIAL_SESSION event. Fix deployed pending Vercel build. |
+| BUG-S35-01 | Plan selection layout broken | MEDIUM | OPEN | Cards cut off, pricing text truncated during onboarding. |
+| BUG-S35-07 | Admin Overview stats all zeros | MEDIUM | OPEN | Records by Status + Total Records show 0 despite 1.39M records. |
+| BUG-S35-08 | Treasury balance fetch fails | MEDIUM | OPEN | "Unable to fetch balance" on treasury page. |
 | ~~BUG-S33-02~~ | ~~Billing page skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Added 8s AbortController timeout; falls back to Supabase count. |
 | ~~BUG-S33-03~~ | ~~Admin Overview skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Worker revision 00240-wtm deployed with RPC-based admin-stats. |
 
-### Jira Status (2026-04-07)
+### Jira Status (2026-04-08)
 
-37 open issues (37 To Do, 5 Blocked). 5 Jira issues transitioned to Done today (4 GEO + 1 duplicate). See Jira SCRUM board for full backlog.
+See Jira SCRUM board for full backlog. Session 35 filed 11 new bugs in `docs/bugs/UAT_S35_bugs.md`.
+
+### Recent Changes (2026-04-08, Session 35 — Comprehensive UAT Click-Through + Critical Fixes)
+
+**Full live UAT. Two CRITICAL bugs fixed. Worker redeployed. 11 bugs documented.**
+
+| Change | Detail |
+|--------|--------|
+| **Google OAuth fix** | AuthCallbackPage now handles `INITIAL_SESSION` event (PKCE flow). Also fixed hash-stripping race condition in supabase.ts (`queueMicrotask` → `setTimeout(2000)`). |
+| **Worker pipeline fix** | BITCOIN_UTXO_PROVIDER changed from `getblock` to `mempool` in Cloud Run. Deployed revision 00246-lrb. Chain client now initializes, anchoring pipeline active. |
+| **New account tested** | sterlingmallorya@gmail.com created, email verification confirmed, onboarding flow tested end-to-end. |
+| **API tested externally** | Verification API: health, verify, 404, rate limiting, batch auth, CORS all verified via curl. |
+| **11 bugs documented** | See `docs/bugs/UAT_S35_bugs.md` — 2 CRITICAL (fixed), 4 MEDIUM, 5 LOW. |
+| **UAT coverage** | Dashboard, Documents, Search, Admin (Overview, Treasury, Pipeline), Developers, API Sandbox — all pages visited and tested. |
 
 ### Recent Changes (2026-04-08, Session 34 — Worker Deploy + Bug Fixes + Merge)
 
