@@ -1,6 +1,22 @@
 # UAT Session 35 — Bug Report
 _Date: 2026-04-08_
 
+## Jira Cross-Reference
+
+| Bug ID | Jira Key | Priority | Status |
+|--------|----------|----------|--------|
+| S35-01 | SCRUM-526 | High | Open |
+| S35-02 | SCRUM-527 | High | Open |
+| S35-03 | SCRUM-528 | Medium | Open |
+| S35-04 | SCRUM-524 | Highest | **Done** (PR #338) |
+| S35-05 | SCRUM-525 | Highest | **Done** (Cloud Run rev 00246-lrb) |
+| S35-06 | SCRUM-529 | Medium | Open |
+| S35-07 | SCRUM-530 | High | Open |
+| S35-08 | SCRUM-531 | High | Open |
+| S35-09 | SCRUM-532 | Medium | Open |
+| S35-10 | SCRUM-533 | High | Open |
+| S35-11 | SCRUM-534 | Medium | Open |
+
 ## BUG-S35-01: Plan selection page layout broken (MEDIUM)
 **Steps:** Sign up new account > Complete onboarding > Step 3 "Choose your plan"
 **Expected:** Plan cards fully visible with select buttons, pricing clearly displayed
