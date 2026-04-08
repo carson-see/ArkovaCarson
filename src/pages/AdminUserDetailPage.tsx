@@ -7,22 +7,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  User,
-  Mail,
-  Calendar,
-  Shield,
-  Building2,
-  FileText,
-  CreditCard,
-  AlertTriangle,
-  ShieldCheck,
-  ShieldOff,
-  UserCog,
-  Loader2,
-} from 'lucide-react';
+import { ArrowLeft, User, Mail, Calendar, Building2, FileText, CreditCard, AlertTriangle, UserCog, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -260,7 +247,7 @@ export function AdminUserDetailPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Shield className="h-4 w-4 text-muted-foreground" />
+                  <ArkovaIcon className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <p className="text-xs text-muted-foreground">Role</p>
                     <RoleBadge role={userProfile.role} />
@@ -274,7 +261,7 @@ export function AdminUserDetailPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                  <ArkovaIcon className="h-4 w-4 text-muted-foreground" />
                   <div>
                     <p className="text-xs text-muted-foreground">Platform Admin</p>
                     <Badge variant={userProfile.is_platform_admin ? 'default' : 'outline'}>
@@ -323,9 +310,9 @@ export function AdminUserDetailPage() {
                 >
                   {actionLoading === 'promote-admin' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                   {userProfile.is_platform_admin ? (
-                    <><ShieldOff className="mr-2 h-4 w-4" />Remove Admin</>
+                    <><ArkovaIcon className="mr-2 h-4 w-4" />Remove Admin</>
                   ) : (
-                    <><ShieldCheck className="mr-2 h-4 w-4" />Make Admin</>
+                    <><ArkovaIcon className="mr-2 h-4 w-4" />Make Admin</>
                   )}
                 </Button>
               </div>

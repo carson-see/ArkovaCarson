@@ -7,19 +7,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useParams } from 'react-router-dom';
-import {
-  Shield,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Clock,
-  Loader2,
-  ExternalLink,
-  Copy,
-  Check,
-  Briefcase,
-} from 'lucide-react';
+import { CheckCircle, XCircle, AlertTriangle, Clock, Loader2, ExternalLink, Copy, Check, Briefcase } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -268,7 +258,7 @@ export function PublicPortfolioPage() {
         {attestations.length > 0 && (
           <div>
             <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Shield className="h-5 w-5 text-[#00d4ff]" />
+              <ArkovaIcon className="h-5 w-5 text-[#00d4ff]" />
               Attestations ({attestations.length})
             </h2>
             <div className="space-y-3">
@@ -306,7 +296,7 @@ export function PublicPortfolioPage() {
                         {/* Chain proof */}
                         {att.chain_tx_id && (
                           <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-                            <Shield className="h-3 w-3 text-[#00d4ff]" />
+                            <ArkovaIcon className="h-3 w-3 text-[#00d4ff]" />
                             <span>Network Receipt: </span>
                             <code className="text-[#00d4ff] font-mono text-[10px]">
                               {att.chain_tx_id.slice(0, 12)}...{att.chain_tx_id.slice(-8)}
@@ -333,7 +323,7 @@ export function PublicPortfolioPage() {
         {anchors.length > 0 && (
           <div>
             <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
-              <Shield className="h-5 w-5 text-[#00d4ff]" />
+              <ArkovaIcon className="h-5 w-5 text-[#00d4ff]" />
               Anchored Records ({anchors.length})
             </h2>
             <div className="space-y-3">
@@ -356,7 +346,7 @@ export function PublicPortfolioPage() {
                         </div>
                         {anc.chain_tx_id && (
                           <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
-                            <Shield className="h-3 w-3 text-[#00d4ff]" />
+                            <ArkovaIcon className="h-3 w-3 text-[#00d4ff]" />
                             <span>Network Receipt: </span>
                             <code className="text-[#00d4ff] font-mono text-[10px]">
                               {anc.chain_tx_id.slice(0, 12)}...{anc.chain_tx_id.slice(-8)}

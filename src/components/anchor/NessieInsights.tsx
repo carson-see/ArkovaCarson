@@ -10,17 +10,8 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import {
-  Brain,
-  AlertTriangle,
-  CheckCircle,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  ShieldCheck,
-  ExternalLink,
-  RefreshCw,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Brain, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, ExternalLink, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -212,7 +203,7 @@ export function NessieInsights({ credentialType, issuerName, metadata, publicId:
               </p>
               {response.citations.slice(0, 3).map((c) => (
                 <div key={c.record_id} className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                  <ShieldCheck className="h-3 w-3 text-[#00d4ff] shrink-0" />
+                  <ArkovaIcon className="h-3 w-3 text-[#00d4ff] shrink-0" />
                   <span className="truncate">{c.title ?? c.record_id.slice(0, 12)}</span>
                   {c.anchor_proof?.explorer_url && (
                     <a

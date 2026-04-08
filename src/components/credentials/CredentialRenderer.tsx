@@ -17,7 +17,8 @@
  * @see UF-01, DEMO-04
  */
 
-import { Award, Building2, Calendar, Copy, Check, GraduationCap, Shield, ScrollText, BadgeCheck, FileText, Scale, Landmark, ShieldCheck, FileSignature, Microscope, BookOpen, Stamp } from 'lucide-react';
+import { Award, Building2, Calendar, Copy, Check, GraduationCap, ScrollText, BadgeCheck, FileText, Scale, Landmark, FileSignature, Microscope, BookOpen, Stamp } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -67,7 +68,7 @@ const TYPE_CONFIG: Record<string, {
     label: 'Certified Achievement',
   },
   LICENSE: {
-    icon: Shield,
+    icon: ArkovaIcon,
     accentColor: 'text-[#a8e8ff]',
     borderAccent: 'border-l-[#a8e8ff]',
     bgGradient: 'from-[#a8e8ff]/8 to-transparent',
@@ -123,7 +124,7 @@ const TYPE_CONFIG: Record<string, {
     label: 'Legal Document',
   },
   INSURANCE: {
-    icon: ShieldCheck,
+    icon: ArkovaIcon,
     accentColor: 'text-[#5fd6eb]',
     borderAccent: 'border-l-[#5fd6eb]',
     bgGradient: 'from-[#5fd6eb]/8 to-transparent',

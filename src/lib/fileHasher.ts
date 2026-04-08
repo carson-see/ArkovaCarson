@@ -8,16 +8,26 @@
 /**
  * Generate SHA-256 fingerprint for a file
  * Uses Web Crypto API (crypto.subtle.digest)
+ * Includes 10-second timeout to prevent indefinite spinner.
  *
  * @param file - The file to hash
  * @returns Promise<string> - Hex-encoded SHA-256 hash
  */
 export async function generateFingerprint(file: File): Promise<string> {
-  const buffer = await file.arrayBuffer();
-  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  return hashHex;
+  const TIMEOUT_MS = 10_000;
+
+  const hashPromise = (async () => {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  })();
+
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error('Fingerprint generation timed out after 10 seconds')), TIMEOUT_MS),
+  );
+
+  return Promise.race([hashPromise, timeoutPromise]);
 }
 
 /**

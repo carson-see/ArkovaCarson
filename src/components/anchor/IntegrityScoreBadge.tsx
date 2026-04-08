@@ -7,8 +7,9 @@
  * Design: "Nordic Vault" aesthetic — glass card, gradient badges.
  */
 
-import { Shield, ShieldAlert, ShieldCheck, ShieldQuestion } from 'lucide-react';
+
 import type { IntegrityLevel } from '@/hooks/useIntegrityScore';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { INTEGRITY_LABELS } from '@/lib/copy';
 
 interface IntegrityScoreBadgeProps {
@@ -23,35 +24,35 @@ const LEVEL_CONFIG: Record<IntegrityLevel, {
   color: string;
   bg: string;
   border: string;
-  icon: typeof ShieldCheck;
+  icon: typeof ArkovaIcon;
   label: string;
 }> = {
   HIGH: {
     color: 'text-green-700',
     bg: 'bg-green-50',
     border: 'border-green-200',
-    icon: ShieldCheck,
+    icon: ArkovaIcon,
     label: INTEGRITY_LABELS.SCORE_HIGH,
   },
   MEDIUM: {
     color: 'text-amber-700',
     bg: 'bg-amber-50',
     border: 'border-amber-200',
-    icon: Shield,
+    icon: ArkovaIcon,
     label: INTEGRITY_LABELS.SCORE_MEDIUM,
   },
   LOW: {
     color: 'text-orange-700',
     bg: 'bg-orange-50',
     border: 'border-orange-200',
-    icon: ShieldQuestion,
+    icon: ArkovaIcon,
     label: INTEGRITY_LABELS.SCORE_LOW,
   },
   FLAGGED: {
     color: 'text-red-700',
     bg: 'bg-red-50',
     border: 'border-red-200',
-    icon: ShieldAlert,
+    icon: ArkovaIcon,
     label: INTEGRITY_LABELS.SCORE_FLAGGED,
   },
 };

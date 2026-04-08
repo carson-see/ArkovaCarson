@@ -7,17 +7,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import {
-  Building2,
-  Upload,
-  Anchor,
-  Search,
-  ShieldCheck,
-  Lock,
-  Sparkles,
-  Globe,
-  ArrowRight,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, Upload, Anchor, Search, Lock, Sparkles, Globe, ArrowRight } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { HOW_IT_WORKS_LABELS, PUBLIC_FOOTER_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -60,7 +51,7 @@ const DIFFERENTIATORS = [
     description: HOW_IT_WORKS_LABELS.DIFF_PRIVACY_DESC,
   },
   {
-    icon: ShieldCheck,
+    icon: ArkovaIcon,
     title: HOW_IT_WORKS_LABELS.DIFF_IMMUTABILITY_TITLE,
     description: HOW_IT_WORKS_LABELS.DIFF_IMMUTABILITY_DESC,
   },

@@ -5,8 +5,9 @@
  */
 
 import { useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { Shield, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ROUTES } from '@/lib/routes';
 import { usePageMeta } from '@/hooks/usePageMeta';
@@ -40,7 +41,7 @@ export function NotFoundPage() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
       <div className="flex max-w-md flex-col items-center space-y-6 text-center">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-          <Shield className="h-8 w-8 text-primary" />
+          <ArkovaIcon className="h-8 w-8 text-primary" />
         </div>
         <div className="space-y-2">
           <h1 className="text-4xl font-bold tracking-tight">404</h1>

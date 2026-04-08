@@ -14,18 +14,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import {
-  CheckCircle,
-  XCircle,
-  Fingerprint,
-  Shield,
-  Copy,
-  Check,
-  Ban,
-  Clock,
-  Flag,
-  AlertTriangle,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag, AlertTriangle } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
@@ -417,7 +407,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             <Separator />
             <div>
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Shield className="h-4 w-4" />
+                <ArkovaIcon className="h-4 w-4" />
                 {PUBLIC_VERIFICATION_LABELS.CRYPTOGRAPHIC_PROOF}
               </h3>
               <div className="space-y-3">
@@ -491,7 +481,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {data.created_at && (
           <div>
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
-              <Shield className="h-4 w-4" />
+              <ArkovaIcon className="h-4 w-4" />
               {PUBLIC_VERIFICATION_LABELS.LIFECYCLE}
             </h3>
             <AnchorLifecycleTimeline

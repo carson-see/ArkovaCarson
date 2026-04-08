@@ -7,7 +7,8 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { Building2, Globe, AlertCircle, Loader2, Hash, ShieldCheck } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, Globe, AlertCircle, Loader2, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -161,7 +162,7 @@ export function OrgOnboardingForm({
             <div className="flex items-center gap-2">
               <Label htmlFor="einTaxId">EIN / Tax ID</Label>
               <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded flex items-center gap-1">
-                <ShieldCheck className="h-3 w-3" />
+                <ArkovaIcon className="h-3 w-3" />
                 For verified badge
               </span>
             </div>

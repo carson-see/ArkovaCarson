@@ -7,15 +7,8 @@
  */
 
 import { Link, useNavigate } from 'react-router-dom';
-import {
-  Shield,
-  FileText,
-  Eye,
-  Lock,
-  ExternalLink,
-  Mail,
-  Code2,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { FileText, Eye, Lock, ExternalLink, Mail, Code2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
@@ -26,7 +19,7 @@ import { NAV_LABELS, DEVELOPER_PAGE_LABELS } from '@/lib/copy';
 
 const FAQ_ITEMS = [
   {
-    icon: Shield,
+    icon: ArkovaIcon,
     question: 'How does document securing work?',
     answer:
       'When you upload a document, a unique cryptographic fingerprint is computed in your browser. This fingerprint is then permanently anchored, creating a tamper-proof record that proves the document existed at a specific point in time. Your document never leaves your device.',

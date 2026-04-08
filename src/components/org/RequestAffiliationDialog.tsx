@@ -6,9 +6,8 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import {
-  Building2, Search, Loader2, ShieldCheck, Link2, X,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, Search, Loader2, Link2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -159,7 +158,7 @@ export function RequestAffiliationDialog({
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{selectedOrg.display_name}</p>
                     <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1">
-                      <ShieldCheck className="h-3 w-3" />
+                      <ArkovaIcon className="h-3 w-3" />
                       Verified
                     </Badge>
                   </div>
@@ -208,7 +207,7 @@ export function RequestAffiliationDialog({
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-medium truncate">{org.display_name}</p>
-                        <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        <ArkovaIcon className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                       </div>
                       {org.domain && (
                         <p className="text-xs text-muted-foreground truncate">{org.domain}</p>

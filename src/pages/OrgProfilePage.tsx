@@ -7,12 +7,9 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams } from 'react-router-dom';
-import {
-  Building2, Settings, Plus, Upload, UserPlus, Users,
-  ArrowLeft, Crown, Shield, User, Loader2, Check, ExternalLink,
-  Globe, MapPin, Calendar, Camera, Link2,
-} from 'lucide-react';
+import { Building2, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -356,7 +353,7 @@ export function OrgProfilePage() {
               {userRole && (
                 <Badge variant="outline" className="text-xs h-8 px-3">
                   {userRole === 'owner' && <Crown className="mr-1.5 h-3.5 w-3.5" />}
-                  {userRole === 'admin' && <Shield className="mr-1.5 h-3.5 w-3.5" />}
+                  {userRole === 'admin' && <ArkovaIcon className="mr-1.5 h-3.5 w-3.5" />}
                   {userRole === 'member' && <User className="mr-1.5 h-3.5 w-3.5" />}
                   {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
                 </Badge>

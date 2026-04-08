@@ -8,16 +8,9 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Mail,
-  Shield,
-  Calendar,
-  User,
-  FileText,
-  Loader2,
-} from 'lucide-react';
+import { ArrowLeft, Mail, Calendar, User, FileText, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrganization } from '@/hooks/useOrganization';
@@ -204,7 +197,7 @@ export function MemberDetailPage() {
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant={member.role === 'ORG_ADMIN' ? 'default' : 'secondary'}>
                         {member.role === 'ORG_ADMIN' ? (
-                          <><Shield className="mr-1 h-3 w-3" />Admin</>
+                          <><ArkovaIcon className="mr-1 h-3 w-3" />Admin</>
                         ) : 'Member'}
                       </Badge>
                     </div>

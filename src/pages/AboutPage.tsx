@@ -6,7 +6,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import { Building2, ExternalLink, Shield, Lightbulb, Globe } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, ExternalLink, Lightbulb, Globe } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
 
 const TEAM = [
@@ -129,7 +130,7 @@ export function AboutPage() {
         {/* Mission cards */}
         <div className="grid md:grid-cols-3 gap-6 mb-16">
           <div className="p-6 rounded-xl border bg-card">
-            <Shield className="h-8 w-8 text-primary mb-3" />
+            <ArkovaIcon className="h-8 w-8 text-primary mb-3" />
             <h3 className="font-semibold mb-2">Privacy by Design</h3>
             <p className="text-sm text-muted-foreground">
               Documents never leave the user's device. Only a cryptographic fingerprint is anchored — the original content stays private.

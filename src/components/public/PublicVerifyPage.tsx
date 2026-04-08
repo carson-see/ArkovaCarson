@@ -7,7 +7,8 @@
  */
 
 import { Link, useParams } from 'react-router-dom';
-import { Shield } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { VerificationForm } from '@/components/verify';
 import { PublicVerification } from '@/components/verification/PublicVerification';
@@ -24,7 +25,7 @@ export function PublicVerifyPage() {
         <div className="container flex h-16 items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-              <Shield className="h-5 w-5 text-primary-foreground" />
+              <ArkovaIcon className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="text-lg font-semibold">Arkova</span>
           </div>

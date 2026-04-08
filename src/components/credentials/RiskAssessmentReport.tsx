@@ -6,7 +6,8 @@
  */
 
 import React from 'react';
-import { AlertTriangle, CheckCircle, Info, ShieldAlert, XCircle } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { AlertTriangle, CheckCircle, Info, XCircle } from 'lucide-react';
 import { FRAUD_DETECTION_LABELS } from '../../lib/copy';
 
 // Types matching the server-side VisualFraudResult
@@ -101,7 +102,7 @@ export function RiskAssessmentReport({ data, loading, onAnalyze }: RiskAssessmen
     return (
       <div className="rounded-lg border p-4">
         <div className="flex items-center gap-2 mb-2">
-          <ShieldAlert className="h-5 w-5 text-gray-400" />
+          <ArkovaIcon className="h-5 w-5 text-gray-400" />
           <h3 className="font-medium text-gray-900">{FRAUD_DETECTION_LABELS.TITLE}</h3>
         </div>
         <p className="text-sm text-gray-500 mb-3">{FRAUD_DETECTION_LABELS.NO_ANALYSIS}</p>
@@ -130,7 +131,7 @@ export function RiskAssessmentReport({ data, loading, onAnalyze }: RiskAssessmen
       {/* Header with risk level */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <ShieldAlert className="h-5 w-5 text-gray-700" />
+          <ArkovaIcon className="h-5 w-5 text-gray-700" />
           <h3 className="font-medium text-gray-900">{FRAUD_DETECTION_LABELS.TITLE}</h3>
         </div>
         <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full border ${RISK_COLORS[data.riskLevel]}`}>

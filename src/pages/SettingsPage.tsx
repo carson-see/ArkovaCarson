@@ -7,8 +7,9 @@
  */
 
 import { useState, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { Settings, User, Shield, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter } from 'lucide-react';
+import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
@@ -386,7 +387,7 @@ export function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
+              <ArkovaIcon className="h-5 w-5" />
               Privacy
             </CardTitle>
             <CardDescription>

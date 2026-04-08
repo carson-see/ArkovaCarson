@@ -13,8 +13,9 @@
  */
 
 import { useState } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Shield, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RecoveryPhraseModal } from '@/components/auth/RecoveryPhraseModal';
@@ -83,7 +84,7 @@ export function ActivateAccountPage() {
       {/* Header */}
       <div className="flex items-center gap-2 mb-8">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
-          <Shield className="h-5 w-5 text-primary-foreground" />
+          <ArkovaIcon className="h-5 w-5 text-primary-foreground" />
         </div>
         <span className="text-xl font-semibold">Arkova</span>
       </div>

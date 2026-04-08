@@ -12,22 +12,10 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import type { Json } from '@/types/database.types';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
-import {
-  Shield,
-  CheckCircle,
-  AlertCircle,
-  Loader2,
-  Copy,
-  Check,
-  ExternalLink,
-  Sparkles,
-  SkipForward,
-  RefreshCw,
-  PenLine,
-  Clock,
-} from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -480,7 +468,7 @@ export function SecureDocumentDialog({
       <DialogContent className={step === 'bulk' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-primary" />
+            <ArkovaIcon className="h-5 w-5 text-primary" />
             {step === 'bulk' ? 'Bulk Upload' : SECURE_DIALOG_LABELS.TITLE}
           </DialogTitle>
           <DialogDescription>
@@ -504,7 +492,7 @@ export function SecureDocumentDialog({
             <div className="space-y-4">
               <div className="rounded-lg border border-[#00d4ff]/20 bg-[#00d4ff]/5 px-4 py-3">
                 <p className="text-sm font-medium flex items-center gap-2">
-                  <Shield className="h-4 w-4 text-[#00d4ff]" />
+                  <ArkovaIcon className="h-4 w-4 text-[#00d4ff]" />
                   Attestation detected
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -714,7 +702,7 @@ export function SecureDocumentDialog({
                 </p>
               </div>
               <Alert>
-                <Shield className="h-4 w-4" />
+                <ArkovaIcon className="h-4 w-4" />
                 <AlertDescription>
                   {SECURE_DIALOG_LABELS.SECURITY_NOTICE}
                 </AlertDescription>
@@ -906,7 +894,7 @@ export function SecureDocumentDialog({
                 {SECURE_DIALOG_LABELS.BACK}
               </Button>
               <Button onClick={() => handleConfirm()}>
-                <Shield className="mr-2 h-4 w-4" />
+                <ArkovaIcon className="mr-2 h-4 w-4" />
                 {SECURE_DIALOG_LABELS.SECURE_BUTTON}
               </Button>
             </>
@@ -958,7 +946,7 @@ export function SecureDocumentDialog({
                 Cancel
               </Button>
               <Button onClick={handleAttestationSubmit}>
-                <Shield className="mr-2 h-4 w-4" />
+                <ArkovaIcon className="mr-2 h-4 w-4" />
                 Create Attestation
               </Button>
             </>

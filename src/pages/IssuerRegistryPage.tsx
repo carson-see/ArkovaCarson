@@ -8,12 +8,9 @@
  */
 
 import { useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, Link } from 'react-router-dom';
-import {
-  Building2, ArrowLeft, Loader2, Shield, Globe, MapPin, Calendar,
-  ExternalLink, Award, FileText, Scale, Landmark, BookOpen, Briefcase,
-  CheckCircle2,
-} from 'lucide-react';
+import { Building2, ArrowLeft, Loader2, Globe, MapPin, Calendar, ExternalLink, Award, FileText, Scale, Landmark, BookOpen, Briefcase, CheckCircle2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -246,7 +243,7 @@ export function IssuerRegistryPage() {
           <Card className="bg-transparent border-[#3c494e]/30">
             <CardContent className="p-4 text-center">
               <div className="flex items-center justify-center gap-1.5">
-                <Shield className="h-5 w-5 text-[#00d4ff]" />
+                <ArkovaIcon className="h-5 w-5 text-[#00d4ff]" />
                 <p className="text-2xl font-black">{securedPct}%</p>
               </div>
               <p className="text-xs text-muted-foreground mt-1">Verification Rate</p>

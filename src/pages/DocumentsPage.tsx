@@ -11,27 +11,9 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import {
-  FileText,
-  CheckCircle,
-  Clock,
-  Plus,
-  Search,
-  Filter,
-  XCircle,
-  AlertTriangle,
-  MoreHorizontal,
-  Eye,
-  Download,
-  Loader2,
-  GraduationCap,
-  Award,
-  Building2,
-  ExternalLink,
-  Shield,
-  Inbox,
-} from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Search, Filter, XCircle, AlertTriangle, MoreHorizontal, Eye, Download, Loader2, GraduationCap, Award, Building2, ExternalLink, Inbox } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
@@ -292,7 +274,7 @@ export function DocumentsPage() {
             {!isLoading && credentialCount > 0 && <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0">{credentialCount}</Badge>}
           </TabsTrigger>
           <TabsTrigger value="attestations" className="gap-1.5">
-            <Shield className="h-3.5 w-3.5" />
+            <ArkovaIcon className="h-3.5 w-3.5" />
             {DOCUMENTS_PAGE_LABELS.TAB_ATTESTATIONS}
             {!isLoading && attestationCount > 0 && <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0">{attestationCount}</Badge>}
           </TabsTrigger>
@@ -421,7 +403,7 @@ function StatusBadge({ status }: { status: string }) {
 
 function TypeIcon({ type }: { type: 'record' | 'credential' | 'attestation' }) {
   if (type === 'credential') return <Award className="h-5 w-5 text-primary" />;
-  if (type === 'attestation') return <Shield className="h-5 w-5 text-primary" />;
+  if (type === 'attestation') return <ArkovaIcon className="h-5 w-5 text-primary" />;
   return <FileText className="h-5 w-5 text-muted-foreground" />;
 }
 
@@ -695,7 +677,7 @@ function AttestationsList({
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/verify/attestation/${att.public_id}`); } }}
         >
           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-            <Shield className="h-5 w-5 text-primary" />
+            <ArkovaIcon className="h-5 w-5 text-primary" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">

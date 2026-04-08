@@ -7,10 +7,11 @@
  */
 
 import { useState } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { usePageMeta } from '@/hooks/usePageMeta';
-import { ShieldCheck, Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge, CreditCard, Terminal, DollarSign, Code2 } from 'lucide-react';
+import { Layers, Brain, ArrowRight, Copy, Check, Bot, AlertCircle, Building2, Key, Gauge, CreditCard, Terminal, DollarSign, Code2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
@@ -214,7 +215,7 @@ export function DevelopersPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
               <div className="text-[#a8e8ff] mb-6">
-                <ShieldCheck className="h-10 w-10" strokeWidth={1.5} />
+                <ArkovaIcon className="h-10 w-10" strokeWidth={1.5} />
               </div>
               <h3 className="text-xl font-bold mb-4">Verify Credentials</h3>
               <p className="text-[#bbc9cf] text-sm leading-relaxed">

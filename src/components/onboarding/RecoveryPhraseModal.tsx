@@ -12,7 +12,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, Copy, CheckCircle, AlertTriangle, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Copy, CheckCircle, AlertTriangle, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -82,7 +83,7 @@ export function RecoveryPhraseModal({
         <DialogHeader>
           <div className="flex items-center gap-3 mb-2">
             <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-              <ShieldCheck className="h-5 w-5 text-primary" />
+              <ArkovaIcon className="h-5 w-5 text-primary" />
             </div>
             <div>
               <DialogTitle>Secure your profile</DialogTitle>

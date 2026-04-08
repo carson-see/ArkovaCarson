@@ -9,8 +9,9 @@
  * @see MVP-08 — progress stepper
  */
 
-import { Shield } from 'lucide-react';
+
 import { OrgOnboardingForm } from '@/components/onboarding/OrgOnboardingForm';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { OnboardingStepper } from '@/components/onboarding/OnboardingStepper';
 import { useProfile } from '@/hooks/useProfile';
 import { useOnboarding } from '@/hooks/useOnboarding';
@@ -39,7 +40,7 @@ export function OnboardingOrgPage() {
         {/* Branding */}
         <div className="flex flex-col items-center text-center">
           <div className="flex items-center justify-center h-14 w-14 rounded-xl bg-primary/10 mb-4">
-            <Shield className="h-8 w-8 text-primary" />
+            <ArkovaIcon className="h-8 w-8 text-primary" />
           </div>
         </div>
 

@@ -9,7 +9,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { ShieldCheck, Loader2, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Loader2, CheckCircle, AlertCircle, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -29,7 +30,7 @@ interface IdentityVerificationProps {
 
 const STATUS_CONFIG = {
   unstarted: {
-    icon: ShieldCheck,
+    icon: ArkovaIcon,
     label: 'Not Verified',
     variant: 'secondary' as const,
     description: 'Verify your identity to build trust with your credentials and attestations.',
@@ -150,7 +151,7 @@ export function IdentityVerification({ status, verifiedAt, onVerified }: Identit
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <ShieldCheck className="h-5 w-5" />
+          <ArkovaIcon className="h-5 w-5" />
           Identity Verification
           {status === 'verified' && (
             <CheckCircle className="h-5 w-5 text-emerald-500" />

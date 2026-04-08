@@ -5,7 +5,8 @@
  * Blocks access until review is completed by admin.
  */
 
-import { Clock, ShieldAlert, Mail } from 'lucide-react';
+import { Clock, Mail } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -26,7 +27,7 @@ export function ManualReviewGate({ reason, onSignOut }: Readonly<ManualReviewGat
       <Card className="max-w-md w-full">
         <CardHeader className="text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-100 mb-4">
-            <ShieldAlert className="h-8 w-8 text-amber-600" />
+            <ArkovaIcon className="h-8 w-8 text-amber-600" />
           </div>
           <CardTitle>Account Under Review</CardTitle>
           <CardDescription>

@@ -10,8 +10,9 @@
  */
 
 import { useState } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import { Building2, Plus, Crown, Shield, User } from 'lucide-react';
+import { Building2, Plus, Crown, User } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useUserOrgs } from '@/hooks/useUserOrgs';
@@ -25,7 +26,7 @@ import { ROUTES, orgProfilePath } from '@/lib/routes';
 
 const ROLE_CONFIG = {
   owner: { label: 'Owner', icon: Crown, variant: 'default' as const },
-  admin: { label: 'Admin', icon: Shield, variant: 'secondary' as const },
+  admin: { label: 'Admin', icon: ArkovaIcon, variant: 'secondary' as const },
   member: { label: 'Member', icon: User, variant: 'outline' as const },
 } as const;
 

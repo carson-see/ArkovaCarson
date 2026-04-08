@@ -7,21 +7,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import {
-  ShieldCheck,
-  Clock,
-  XCircle,
-  Link2,
-  AlertTriangle,
-  CheckCircle,
-  Activity,
-  ArrowRight,
-  FileCheck,
-  Ban,
-  Download,
-  BarChart3,
-} from 'lucide-react';
+import { Clock, XCircle, Link2, AlertTriangle, CheckCircle, Activity, ArrowRight, FileCheck, Ban, Download, BarChart3 } from 'lucide-react';
 import { AppShell } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -374,7 +362,7 @@ export function ComplianceDashboardPage() {
     return (
       <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
         <div className="flex flex-col items-center justify-center min-h-[60vh] text-center p-6">
-          <ShieldCheck className="h-12 w-12 text-muted-foreground/30 mb-4" />
+          <ArkovaIcon className="h-12 w-12 text-muted-foreground/30 mb-4" />
           <h1 className="text-xl font-semibold text-foreground mb-2">Access Restricted</h1>
           <p className="text-sm text-muted-foreground max-w-md">
             The Compliance Intelligence dashboard is available to organization administrators.
@@ -391,7 +379,7 @@ export function ComplianceDashboardPage() {
         {/* Header */}
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <ShieldCheck className="h-6 w-6 text-[#00d4ff]" />
+            <ArkovaIcon className="h-6 w-6 text-[#00d4ff]" />
             {COMPLIANCE_LABELS.PAGE_TITLE}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -452,7 +440,7 @@ export function ComplianceDashboardPage() {
                 </div>
               ) : !coverageData || coverageData.securedCount === 0 ? (
                 <div className="text-center py-8">
-                  <ShieldCheck className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+                  <ArkovaIcon className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
                   <p className="text-sm font-medium text-foreground">{COMPLIANCE_LABELS.COVERAGE_EMPTY}</p>
                   <p className="text-xs text-muted-foreground mt-1">{COMPLIANCE_LABELS.COVERAGE_EMPTY_DESC}</p>
                 </div>
@@ -693,7 +681,7 @@ export function ComplianceDashboardPage() {
           <Card className="bg-card border-border">
             <CardHeader className="pb-3">
               <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5 text-[#00d4ff]" />
+                <ArkovaIcon className="h-5 w-5 text-[#00d4ff]" />
                 {COMPLIANCE_LABELS.SECTION_REVIEW}
               </CardTitle>
             </CardHeader>

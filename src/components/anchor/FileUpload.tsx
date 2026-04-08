@@ -6,7 +6,8 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { Upload, FileText, X, Shield, Loader2, Lock } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Upload, FileText, X, Loader2, Lock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { generateFingerprint } from '@/lib/fileHasher';
@@ -94,12 +95,16 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
     setSelectedFile({ file, fingerprint: null, processing: true });
 
     try {
+      // Check crypto.subtle availability first (requires secure context)
+      if (!globalThis.crypto?.subtle) {
+        throw new Error('Secure context required — crypto.subtle is unavailable. Please ensure you are using HTTPS.');
+      }
       const fingerprint = await generateFingerprint(file);
       setSelectedFile({ file, fingerprint, processing: false });
       onFileSelect(file, fingerprint);
     } catch (err) {
       console.error('[FileUpload] Failed to process document:', err);
-      setError(`Failed to process document: ${err instanceof Error ? err.message : 'Unknown error'}`);
+      setError(`Failed to process document: ${err instanceof Error ? err.message : 'Unknown error'}. Please try again.`);
       setSelectedFile(null);
     }
   }, [onFileSelect]);
@@ -260,7 +265,7 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
       {selectedFile?.fingerprint && (
         <div className="rounded-lg border bg-muted/50 p-4">
           <div className="flex items-start gap-3">
-            <Shield className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+            <ArkovaIcon className="h-5 w-5 text-primary mt-0.5 shrink-0" />
             <div className="min-w-0">
               <p className="text-sm font-medium mb-1">Document Fingerprint</p>
               <p className="text-xs text-muted-foreground font-mono break-all">

@@ -5,7 +5,8 @@
  * Per IDT spec, trust signal varies by source type.
  */
 
-import { CheckCircle, ShieldCheck, Building2, Link2 } from 'lucide-react';
+import { CheckCircle, Building2, Link2 } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Badge } from '@/components/ui/badge';
 
 /** Individual verified badge — shown next to user names */
@@ -28,7 +29,7 @@ export function OrgVerifiedBadge({ className }: { className?: string }) {
       className={`bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs gap-1 ${className ?? ''}`}
       title="EIN/Tax ID confirmed, domain verified"
     >
-      <ShieldCheck className="h-3 w-3" />
+      <ArkovaIcon className="h-3 w-3" />
       Verified Organization
     </Badge>
   );
@@ -69,12 +70,13 @@ interface AnchorTrustLabelProps {
 const TRUST_CONFIG: Record<TrustLevel, {
   label: string;
   badgeClass: string;
-  icon: typeof ShieldCheck;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  icon: any;
 }> = {
   verified_org: {
     label: 'Verified Issuer',
     badgeClass: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
-    icon: ShieldCheck,
+    icon: ArkovaIcon,
   },
   affiliated: {
     label: 'Affiliated Issuer',

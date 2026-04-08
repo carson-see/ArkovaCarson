@@ -10,16 +10,8 @@
  */
 
 import { useState } from 'react';
-import {
-  ChevronDown,
-  ChevronUp,
-  Shield,
-  FileSignature,
-  Stamp,
-  CheckCircle,
-  AlertCircle,
-  Info,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { ChevronDown, ChevronUp, FileSignature, Stamp, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { EVIDENCE_LAYER_LABELS } from '@/lib/copy';
 
@@ -38,7 +30,7 @@ interface EvidenceLayersSectionProps {
 
 const LAYER_CONFIG = {
   anchor: {
-    icon: Shield,
+    icon: ArkovaIcon,
     title: EVIDENCE_LAYER_LABELS.ANCHOR_TITLE,
     proves: EVIDENCE_LAYER_LABELS.ANCHOR_PROVES,
     doesNotProve: EVIDENCE_LAYER_LABELS.ANCHOR_DOES_NOT_PROVE,

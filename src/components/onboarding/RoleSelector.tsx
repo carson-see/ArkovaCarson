@@ -6,7 +6,8 @@
  */
 
 import { useState } from 'react';
-import { User, Building2, ArrowRight, Loader2, CheckCircle, Upload, Sparkles, Shield } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { User, Building2, ArrowRight, Loader2, CheckCircle, Upload, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -40,7 +41,7 @@ export function RoleSelector({ onSelect, loading = false }: Readonly<RoleSelecto
     const steps = [
       { icon: Upload, title: ONBOARDING_VALUE_PROP_LABELS.STEP_1_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_1_DESC },
       { icon: Sparkles, title: ONBOARDING_VALUE_PROP_LABELS.STEP_2_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_2_DESC },
-      { icon: Shield, title: ONBOARDING_VALUE_PROP_LABELS.STEP_3_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_3_DESC },
+      { icon: ArkovaIcon, title: ONBOARDING_VALUE_PROP_LABELS.STEP_3_TITLE, desc: ONBOARDING_VALUE_PROP_LABELS.STEP_3_DESC },
     ];
     return (
       <div className="space-y-8">

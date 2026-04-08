@@ -7,7 +7,8 @@
  * Design: "Nordic Vault" glass card with staggered animations.
  */
 
-import { Shield, AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { IntegrityScoreBadge } from './IntegrityScoreBadge';
 import type { IntegrityScore } from '@/hooks/useIntegrityScore';
 import { INTEGRITY_DETAIL_LABELS } from '@/lib/copy';
@@ -58,7 +59,7 @@ export function IntegrityDetailView({ score, onClose }: IntegrityDetailViewProps
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
-            <Shield className="h-5 w-5 text-primary" />
+            <ArkovaIcon className="h-5 w-5 text-primary" />
           </div>
           <div>
             <h3 className="font-semibold text-sm">Integrity Analysis</h3>

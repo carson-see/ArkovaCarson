@@ -6,7 +6,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -145,7 +146,7 @@ export function TwoFactorSetup() {
     <Card>
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Shield className="h-5 w-5" />
+          <ArkovaIcon className="h-5 w-5" />
           Two-Factor Authentication
         </CardTitle>
         <CardDescription>
@@ -185,7 +186,7 @@ export function TwoFactorSetup() {
             {busy ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
-              <Shield className="mr-2 h-4 w-4" />
+              <ArkovaIcon className="mr-2 h-4 w-4" />
             )}
             Enable 2FA
           </Button>

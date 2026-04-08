@@ -8,31 +8,9 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import {
-  RefreshCw,
-  Database,
-  Shield,
-  Cpu,
-  AlertCircle,
-  FileText,
-  Scale,
-  BookOpen,
-  GraduationCap,
-  Loader2,
-  Search,
-  ExternalLink,
-  ChevronLeft,
-  ChevronRight,
-  X,
-  Copy,
-  Check,
-  Link2,
-  Layers,
-  Building2,
-  Heart,
-  Landmark,
-} from 'lucide-react';
+import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
@@ -445,7 +423,7 @@ export function PipelineAdminPage() {
           <StatCard
             label={PIPELINE_LABELS.RECORDS_ANCHORED}
             value={stats?.anchoredRecords}
-            icon={<Shield className="h-5 w-5 text-emerald-400" />}
+            icon={<ArkovaIcon className="h-5 w-5 text-emerald-400" />}
             loading={loading}
           />
           <StatCard
@@ -531,7 +509,7 @@ export function PipelineAdminPage() {
                         }}
                       >
                         <div className="flex items-center gap-3 min-w-0">
-                          <Shield className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <ArkovaIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
                           <span className="text-sm font-medium">{label}</span>
                         </div>
                         <div className="flex items-center gap-3 shrink-0">
@@ -598,7 +576,7 @@ export function PipelineAdminPage() {
                 { path: 'fetch-state-courts?state=TX', label: 'Fetch TX Courts', icon: <Landmark className="h-4 w-4" /> },
                 { path: 'fetch-all-state-bills', label: 'Fetch State Bills (CA/NY/TX)', icon: <FileText className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
-                { path: 'anchor-public-records', label: 'Run Anchoring', icon: <Shield className="h-4 w-4" /> },
+                { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className="h-4 w-4" /> },
                 { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },
               ] as const).map(({ path, label, icon }) => {
                 const status = triggerStatus[path] ?? 'idle';
@@ -803,7 +781,7 @@ export function PipelineAdminPage() {
                           <TableCell className="py-2">
                             {record.anchor_id ? (
                               <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
-                                <Shield className="h-3 w-3 mr-1" />
+                                <ArkovaIcon className="h-3 w-3 mr-1" />
                                 Anchored
                               </Badge>
                             ) : (

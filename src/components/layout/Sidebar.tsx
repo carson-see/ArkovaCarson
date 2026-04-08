@@ -11,32 +11,9 @@
  */
 
 import { useState, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  FileText,
-  Building2,
-  Settings,
-  ChevronLeft,
-  ChevronRight,
-  X,
-  Search,
-  Code2,
-  Landmark,
-  Moon,
-  Sun,
-  Monitor,
-  BarChart3,
-  Activity,
-  Database,
-  DollarSign,
-  ChevronDown,
-  ChevronUp,
-  Users,
-  FileCheck,
-  ToggleRight,
-  ShieldCheck,
-} from 'lucide-react';
+import { LayoutDashboard, FileText, Building2, Settings, ChevronLeft, ChevronRight, X, Search, Code2, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES } from '@/lib/routes';
@@ -156,7 +133,7 @@ function AuditorModeToggle({ collapsed }: Readonly<{ collapsed: boolean }>) {
       )}
       aria-label={isAuditorMode ? 'Auditor Mode: On. Click to disable.' : 'Auditor Mode: Off. Click to enable.'}
     >
-      <ShieldCheck className="h-4 w-4 shrink-0" />
+      <ArkovaIcon className="h-4 w-4 shrink-0" />
       {!collapsed && <span className="ml-2">{isAuditorMode ? 'Auditor Mode' : 'Auditor Mode'}</span>}
       {!collapsed && isAuditorMode && (
         <span className="ml-auto text-[10px] font-mono text-[#00d4ff]">ON</span>
@@ -202,7 +179,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
     ...BASE_NAV_ITEMS.slice(0, 2),
     ...(orgName ? [
       { label: NAV_LABELS.DIRECTORY, icon: Building2, to: ROUTES.ORGANIZATION },
-      { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
+      { label: NAV_LABELS.COMPLIANCE, icon: ArkovaIcon, to: ROUTES.COMPLIANCE_DASHBOARD },
     ] : []),
     ...BASE_NAV_ITEMS.slice(2),
   ];

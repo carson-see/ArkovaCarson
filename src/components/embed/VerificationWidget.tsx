@@ -15,14 +15,8 @@
  */
 
 import { useState, useEffect } from 'react';
-import {
-  CheckCircle,
-  XCircle,
-  Loader2,
-  Shield,
-  Fingerprint,
-  Ban,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { CheckCircle, XCircle, Loader2, Fingerprint, Ban } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
@@ -212,7 +206,7 @@ function DetailRow({ label, value }: Readonly<{ label: string; value: string }>)
 function ArkovaLogo() {
   return (
     <div className="flex items-center gap-1">
-      <Shield className="h-3 w-3 text-[#82b8d0]" />
+      <ArkovaIcon className="h-3 w-3 text-[#82b8d0]" />
       <span className="text-[10px] text-gray-400 font-medium">Arkova</span>
     </div>
   );

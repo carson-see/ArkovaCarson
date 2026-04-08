@@ -5,8 +5,9 @@
  * Clean, professional design inspired by modern SaaS patterns.
  */
 
-import { Shield } from 'lucide-react';
+
 import { Link } from 'react-router-dom';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -81,7 +82,7 @@ export function AuthLayout({ children, title, description, wide = false }: Reado
       <footer className="py-6 text-center">
         <div className="flex items-center justify-center gap-6 text-xs text-[#859398]">
           <span className="flex items-center gap-1.5">
-            <Shield className="h-3.5 w-3.5" />
+            <ArkovaIcon className="h-3.5 w-3.5" />
             Enterprise-grade security
           </span>
           <span className="hidden sm:inline text-[#3c494e]">|</span>

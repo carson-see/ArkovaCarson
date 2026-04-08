@@ -5,8 +5,9 @@
  */
 
 import { useState, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { MoreHorizontal, UserMinus, Shield, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
+import { MoreHorizontal, UserMinus, User, Mail, Loader2, ArrowUpDown } from 'lucide-react';
 import { ORG_PAGE_LABELS } from '@/lib/copy';
 import { memberDetailPath } from '@/lib/routes';
 import { Button } from '@/components/ui/button';
@@ -139,7 +140,7 @@ export function MembersTable({
                 <Badge variant={member.role === 'ORG_ADMIN' ? 'default' : 'secondary'}>
                   {member.role === 'ORG_ADMIN' ? (
                     <>
-                      <Shield className="mr-1 h-3 w-3" />
+                      <ArkovaIcon className="mr-1 h-3 w-3" />
                       Admin
                     </>
                   ) : (

@@ -8,9 +8,10 @@
  */
 
 import { useEffect, useState } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Loader2, AlertCircle, Shield } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchor } from '@/hooks/useAnchor';
@@ -146,7 +147,7 @@ export function RecordDetailPage() {
               {error || 'The requested record does not exist or you do not have permission to view it.'}
             </p>
             <Button onClick={() => navigate(ROUTES.DASHBOARD)}>
-              <Shield className="mr-2 h-4 w-4" />
+              <ArkovaIcon className="mr-2 h-4 w-4" />
               Back to Dashboard
             </Button>
           </CardContent>

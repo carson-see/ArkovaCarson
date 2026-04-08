@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { getAppBaseUrl } from '@/lib/routes';
@@ -29,15 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Shield,
-  Loader2,
-  Copy,
-  Check,
-  CheckCircle,
-  Briefcase,
-  ExternalLink,
-} from 'lucide-react';
+import { Loader2, Copy, Check, CheckCircle, Briefcase, ExternalLink } from 'lucide-react';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = supabase as any;
@@ -296,7 +289,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
                 {attestations.length > 0 && (
                   <div>
                     <Label className="flex items-center gap-1 mb-2">
-                      <Shield className="h-3 w-3 text-[#00d4ff]" />
+                      <ArkovaIcon className="h-3 w-3 text-[#00d4ff]" />
                       Attestations
                     </Label>
                     <div className="space-y-2 max-h-40 overflow-y-auto border border-border/50 rounded-md p-2">
@@ -337,7 +330,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
                 {anchors.length > 0 && (
                   <div>
                     <Label className="flex items-center gap-1 mb-2">
-                      <Shield className="h-3 w-3 text-[#00d4ff]" />
+                      <ArkovaIcon className="h-3 w-3 text-[#00d4ff]" />
                       Anchored Records
                     </Label>
                     <div className="space-y-2 max-h-40 overflow-y-auto border border-border/50 rounded-md p-2">

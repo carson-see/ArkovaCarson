@@ -9,16 +9,8 @@
  */
 
 import { useEffect, useState } from 'react';
-import {
-  ShieldAlert,
-  CheckCircle2,
-  Search,
-  AlertTriangle,
-  ArrowUpCircle,
-  XCircle,
-  Filter,
-  RefreshCw,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { CheckCircle2, Search, AlertTriangle, ArrowUpCircle, XCircle, Filter, RefreshCw } from 'lucide-react';
 import { useReviewQueue } from '@/hooks/useReviewQueue';
 import type { ReviewAction, ReviewStatus } from '@/hooks/useReviewQueue';
 import { IntegrityScoreBadge } from '@/components/anchor/IntegrityScoreBadge';
@@ -111,7 +103,7 @@ export function ReviewQueue() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
-            <ShieldAlert className="h-5 w-5 text-primary" />
+            <ArkovaIcon className="h-5 w-5 text-primary" />
           </div>
           <div>
             <h2 className="font-semibold">Review Queue</h2>
@@ -179,7 +171,7 @@ export function ReviewQueue() {
         </div>
       ) : items.length === 0 ? (
         <div className="glass-card rounded-xl p-8 text-center">
-          <ShieldAlert className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
+          <ArkovaIcon className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
           <p className="text-sm text-muted-foreground">No items in the review queue</p>
         </div>
       ) : (

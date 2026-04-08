@@ -5,7 +5,8 @@
  */
 
 import { useState } from 'react';
-import { Shield, FileText, Loader2, CheckCircle, Copy, Check } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { FileText, Loader2, CheckCircle, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -158,7 +159,7 @@ export function ConfirmAnchorModal({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Shield className="h-5 w-5 text-primary" />
+            <ArkovaIcon className="h-5 w-5 text-primary" />
             Confirm Anchor
           </DialogTitle>
           <DialogDescription>
@@ -238,7 +239,7 @@ export function ConfirmAnchorModal({
               </>
             ) : (
               <>
-                <Shield className="mr-2 h-4 w-4" />
+                <ArkovaIcon className="mr-2 h-4 w-4" />
                 Create Anchor
               </>
             )}

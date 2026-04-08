@@ -8,7 +8,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Search, Shield, CheckCircle, XCircle, Loader2, FileText, Upload } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Search, CheckCircle, XCircle, Loader2, FileText, Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -315,7 +316,7 @@ function VerificationResultDisplay({ result }: Readonly<{ result: VerificationRe
       <CardContent className="py-6">
         <div className="flex flex-col items-center text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
-            <Shield className="h-7 w-7 text-muted-foreground" />
+            <ArkovaIcon className="h-7 w-7 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-semibold mb-1">
             No Record Found

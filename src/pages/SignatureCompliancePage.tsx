@@ -13,17 +13,8 @@
  */
 
 import { useState } from 'react';
-import {
-  Shield,
-  Download,
-  FileText,
-  FileCheck,
-  Scale,
-  Lock,
-  BarChart3,
-  AlertCircle,
-  Loader2,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Download, FileText, FileCheck, Scale, Lock, BarChart3, AlertCircle, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -114,7 +105,7 @@ export default function SignatureCompliancePage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
-          <Shield className="h-6 w-6 text-cyan-400" />
+          <ArkovaIcon className="h-6 w-6 text-cyan-400" />
           Signature Compliance Center
         </h1>
         <p className="text-gray-400 mt-1">

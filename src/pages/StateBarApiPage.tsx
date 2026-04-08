@@ -7,17 +7,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import {
-  Scale,
-  CheckCircle,
-  Search,
-  FileText,
-  Shield,
-  ArrowRight,
-  Building2,
-  Clock,
-  BarChart3,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Scale, CheckCircle, Search, FileText, ArrowRight, Building2, Clock, BarChart3 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Badge } from '@/components/ui/badge';
 import { ROUTES } from '@/lib/routes';
@@ -93,7 +84,7 @@ export function StateBarApiPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#00d4ff]/10">
-                    <Shield className="h-5 w-5 text-[#00d4ff]" />
+                    <ArkovaIcon className="h-5 w-5 text-[#00d4ff]" />
                   </div>
                   <span className="text-xs font-mono text-[#859398]">STEP 2</span>
                 </div>
@@ -225,7 +216,7 @@ export function StateBarApiPage() {
                 </div>
               </div>
               <div className="flex gap-4">
-                <Shield className="h-6 w-6 text-[#00d4ff] shrink-0 mt-1" />
+                <ArkovaIcon className="h-6 w-6 text-[#00d4ff] shrink-0 mt-1" />
                 <div>
                   <h3 className="font-bold mb-1">Tamper-Proof Records</h3>
                   <p className="text-sm text-[#bbc9cf]">Every credit is anchored to an immutable network. Cannot be altered, backdated, or fabricated after submission.</p>

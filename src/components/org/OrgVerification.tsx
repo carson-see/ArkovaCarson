@@ -10,10 +10,8 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
-import {
-  Building2, Loader2, CheckCircle, Globe, ShieldCheck, Send,
-  AlertCircle, Hash,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, Loader2, CheckCircle, Globe, Send, AlertCircle, Hash } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -349,7 +347,7 @@ export function OrgVerification({
           <>
             <Separator />
             <div className="flex items-center gap-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
-              <ShieldCheck className="h-5 w-5 text-emerald-500" />
+              <ArkovaIcon className="h-5 w-5 text-emerald-500" />
               <div>
                 <p className="text-sm font-medium text-emerald-400">Verified Organization</p>
                 <p className="text-xs text-muted-foreground">

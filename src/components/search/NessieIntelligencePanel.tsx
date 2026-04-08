@@ -15,23 +15,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import {
-  Brain,
-  Search,
-  ExternalLink,
-  ShieldCheck,
-  AlertTriangle,
-  Loader2,
-  Sparkles,
-  ChevronDown,
-  ChevronUp,
-  FileSearch,
-  Scale,
-  Lightbulb,
-  GitCompare,
-  Info,
-  CheckCircle,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Brain, Search, ExternalLink, AlertTriangle, Loader2, Sparkles, ChevronDown, ChevronUp, FileSearch, Scale, Lightbulb, GitCompare, Info, CheckCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -288,7 +273,7 @@ export function NessieIntelligencePanel() {
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <ShieldCheck className="h-3 w-3 text-muted-foreground" />
+                  <ArkovaIcon className="h-3 w-3 text-muted-foreground" />
                   <span className="text-muted-foreground">{NESSIE_LABELS.CONFIDENCE_DETAIL_ANCHORED}:</span>
                   <span className="font-mono font-medium">
                     {(response.confidence_decomposition.anchoredCitationRate * 100).toFixed(0)}%
@@ -367,7 +352,7 @@ export function NessieIntelligencePanel() {
                     key={citation.record_id}
                     className="flex items-start gap-3 p-3 rounded-md border border-border bg-card hover:bg-muted/30 transition-colors"
                   >
-                    <ShieldCheck className="h-4 w-4 text-[#00d4ff] shrink-0 mt-0.5" />
+                    <ArkovaIcon className="h-4 w-4 text-[#00d4ff] shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0 space-y-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-sm font-medium text-foreground truncate">
@@ -402,7 +387,7 @@ export function NessieIntelligencePanel() {
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 text-[#00d4ff] hover:underline"
                           >
-                            <ShieldCheck className="h-3 w-3" />
+                            <ArkovaIcon className="h-3 w-3" />
                             {NESSIE_LABELS.VERIFY}
                           </a>
                         )}

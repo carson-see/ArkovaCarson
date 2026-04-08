@@ -8,16 +8,9 @@
  */
 
 import { useState, useCallback } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import {
-  Shield,
-  CheckCircle,
-  XCircle,
-  Loader2,
-  FileText,
-  ArrowLeft,
-  Download,
-} from 'lucide-react';
+import { CheckCircle, XCircle, Loader2, FileText, ArrowLeft, Download } from 'lucide-react';
 import { AppShell } from '@/components/layout/AppShell';
 import { FileUpload } from '@/components/anchor/FileUpload';
 import { Button } from '@/components/ui/button';
@@ -113,7 +106,7 @@ export function VerifyMyRecordPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
-              <Shield className="h-5 w-5 text-primary" />
+              <ArkovaIcon className="h-5 w-5 text-primary" />
               Document Verification
             </CardTitle>
             <CardDescription>

@@ -13,11 +13,9 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, Link } from 'react-router-dom';
-import {
-  Search, Loader2, Building2, Shield, CheckCircle, XCircle, User,
-  ArrowLeft, Upload, FileSearch, Building, Hash, ExternalLink,
-} from 'lucide-react';
+import { Search, Loader2, Building2, CheckCircle, XCircle, User, ArrowLeft, Upload, FileSearch, Building, Hash, ExternalLink } from 'lucide-react';
 import { isSearchSubdomain } from '@/App';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { Button } from '@/components/ui/button';
@@ -684,7 +682,7 @@ function FingerprintResultCard({ result, fileName, onViewRecord }: Readonly<Fing
       <CardContent className="py-8">
         <div className="flex flex-col items-center text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted mb-4">
-            <Shield className="h-7 w-7 text-muted-foreground" />
+            <ArkovaIcon className="h-7 w-7 text-muted-foreground" />
           </div>
           <h3 className="text-lg font-semibold mb-1">
             {SEARCH_LABELS.FINGERPRINT_NOT_FOUND}

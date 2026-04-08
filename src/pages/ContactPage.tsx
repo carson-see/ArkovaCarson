@@ -5,7 +5,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import { Shield, Mail, MessageSquare } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Mail, MessageSquare } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -21,7 +22,7 @@ export function ContactPage() {
         <div className="mx-auto flex max-w-3xl items-center gap-2 px-6 py-4">
           <Link to="/" className="flex items-center gap-2 text-foreground hover:opacity-80 transition-opacity">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Shield className="h-4 w-4 text-primary" />
+              <ArkovaIcon className="h-4 w-4 text-primary" />
             </div>
             <span className="font-semibold">Arkova</span>
           </Link>

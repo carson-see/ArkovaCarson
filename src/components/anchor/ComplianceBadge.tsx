@@ -8,7 +8,8 @@
  */
 
 import { useState } from 'react';
-import { ShieldCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   getComplianceControls,
   getComplianceFrameworks,
@@ -44,7 +45,7 @@ export function ComplianceBadge({
             key={fw}
             className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium bg-muted text-muted-foreground"
           >
-            <ShieldCheck className="h-3 w-3" />
+            <ArkovaIcon className="h-3 w-3" />
             {fw}
           </span>
         ))}
@@ -60,7 +61,7 @@ export function ComplianceBadge({
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <div className="flex items-center gap-2">
-          <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+          <ArkovaIcon className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
           <span className="text-sm font-medium">
             Compliance Controls
           </span>

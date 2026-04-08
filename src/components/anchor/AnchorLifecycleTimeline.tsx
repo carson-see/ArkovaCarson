@@ -9,13 +9,8 @@
  * @see P4-TS-02 — Anchor lifecycle UI
  */
 
-import {
-  Clock,
-  XCircle,
-  AlertTriangle,
-  FileCheck,
-  Shield,
-} from 'lucide-react';
+import { Clock, XCircle, AlertTriangle, FileCheck } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { cn } from '@/lib/utils';
 import { LIFECYCLE_LABELS } from '@/lib/copy';
 
@@ -70,7 +65,7 @@ function buildLifecycleEvents(data: AnchorLifecycleData): LifecycleEvent[] {
     events.push({
       label: LIFECYCLE_LABELS.SECURED,
       timestamp: data.securedAt ?? null,
-      icon: Shield,
+      icon: ArkovaIcon,
       status: data.status === 'SECURED' ? 'current' : 'completed',
     });
   }

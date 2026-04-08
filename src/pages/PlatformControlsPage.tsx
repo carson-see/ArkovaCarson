@@ -9,18 +9,8 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import {
-  Shield,
-  AlertTriangle,
-  Power,
-  RefreshCw,
-  Database,
-  Cpu,
-  Loader2,
-  History,
-  ToggleLeft,
-  ToggleRight,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { AlertTriangle, Power, RefreshCw, Database, Cpu, Loader2, History, ToggleLeft, ToggleRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -50,7 +40,8 @@ interface FlagHistoryEntry {
 }
 
 // Categorize flags for UI grouping
-const FLAG_CATEGORIES: Record<string, { label: string; icon: typeof Shield; flags: string[] }> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const FLAG_CATEGORIES: Record<string, { label: string; icon: any; flags: string[] }> = {
   pipeline: {
     label: 'Data Pipeline',
     icon: Database,
@@ -63,7 +54,7 @@ const FLAG_CATEGORIES: Record<string, { label: string; icon: typeof Shield; flag
   },
   network: {
     label: 'Network & Chain',
-    icon: Shield,
+    icon: ArkovaIcon,
     flags: [
       'ENABLE_PROD_NETWORK_ANCHORING',
       'ENABLE_BATCH_ANCHORING',
@@ -259,7 +250,7 @@ export function PlatformControlsPage() {
                 }}
                 disabled={toggling !== null}
               >
-                <Shield className="h-4 w-4 mr-1" />
+                <ArkovaIcon className="h-4 w-4 mr-1" />
                 {flags.find(f => f.flag_key === 'ENABLE_PUBLIC_RECORD_ANCHORING')?.enabled
                   ? 'Stop Anchoring'
                   : 'Start Anchoring'}

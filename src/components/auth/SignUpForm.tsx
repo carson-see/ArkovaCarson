@@ -10,7 +10,8 @@
  */
 
 import { useState, FormEvent } from 'react';
-import { User, Mail, Lock, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { User, Mail, Lock, AlertCircle, Loader2 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -103,7 +104,7 @@ export function SignUpForm({ onSuccess, onLoginClick }: Readonly<SignUpFormProps
     return (
       <form onSubmit={handleInviteSubmit} className="space-y-5">
         <div className="text-center space-y-2">
-          <ShieldCheck className="h-8 w-8 mx-auto text-primary" />
+          <ArkovaIcon className="h-8 w-8 mx-auto text-primary" />
           <p className="text-sm text-muted-foreground">
             {BETA_GATE_LABELS.DESCRIPTION}
           </p>

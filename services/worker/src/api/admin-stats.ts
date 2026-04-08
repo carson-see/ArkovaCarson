@@ -60,8 +60,9 @@ export async function handlePlatformStats(
       // 2: Total orgs
       db.from('organizations').select('*', { count: 'exact', head: true })
         .is('deleted_at', null),
-      // 3: Anchor status counts via RPC (replaces queries 3-7)
-      db.rpc('get_anchor_status_counts'),
+      // 3: Anchor status counts via fast RPC (reltuples + exact small-status counts)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any).rpc('get_anchor_status_counts_fast'),
       // 4: Anchors in last 24h
       db.from('anchors').select('*', { count: 'exact', head: true })
         .is('deleted_at', null)
@@ -91,7 +92,7 @@ export async function handlePlatformStats(
       statusCounts = rpcResult.data as Record<string, number>;
     } else {
       // RPC failed — fall back to direct count queries
-      logger.warn({ error: rpcResult?.error }, 'get_anchor_status_counts RPC failed, using fallback counts');
+      logger.warn({ error: rpcResult?.error }, 'get_anchor_status_counts_fast RPC failed, using fallback counts');
       const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'] as const;
       const fallbackResults = await Promise.allSettled(
         statuses.map(s =>

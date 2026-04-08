@@ -15,18 +15,8 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import {
-  Shield,
-  Loader2,
-  Award,
-  CheckCircle,
-  Copy,
-  Check,
-  ExternalLink,
-  Plus,
-  FileText,
-  Sparkles,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Loader2, Award, CheckCircle, Copy, Check, ExternalLink, Plus, FileText, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -589,7 +579,7 @@ export function IssueCredentialForm({
               {/* Status notice */}
               {file && fingerprint && (
                 <Alert>
-                  <Shield className="h-4 w-4" />
+                  <ArkovaIcon className="h-4 w-4" />
                   <AlertDescription>
                     {ISSUE_CREDENTIAL_LABELS.PENDING_NOTICE}
                   </AlertDescription>

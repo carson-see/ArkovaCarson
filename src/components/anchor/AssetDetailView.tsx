@@ -5,24 +5,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import {
-  Shield,
-  FileText,
-  CheckCircle,
-  XCircle,
-  AlertTriangle,
-  Clock,
-  Copy,
-  Check,
-  RefreshCw,
-  Download,
-  ArrowLeft,
-  Hash,
-  Share2,
-  ExternalLink,
-  GitBranch,
-  Pencil,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { ComplianceBadge } from './ComplianceBadge';
 import { Button } from '@/components/ui/button';
@@ -704,7 +688,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
-              <Shield className="h-4 w-4" />
+              <ArkovaIcon className="h-4 w-4" />
               Verification QR Code
             </CardTitle>
             <CardDescription>

@@ -6,8 +6,9 @@
  */
 
 import { Component } from 'react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import type { ErrorInfo, ReactNode } from 'react';
-import { Shield, RefreshCw } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface ErrorBoundaryProps {
@@ -52,7 +53,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
           <div className="flex max-w-md flex-col items-center space-y-6 text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-destructive/10">
-              <Shield className="h-8 w-8 text-destructive" />
+              <ArkovaIcon className="h-8 w-8 text-destructive" />
             </div>
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold tracking-tight">

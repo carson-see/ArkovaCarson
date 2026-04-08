@@ -5,7 +5,8 @@
  * Uses approved terminology (Network Receipt, not Transaction).
  */
 
-import { Download, Shield, FileText, Calendar, ExternalLink, Copy, Check } from 'lucide-react';
+import { Download, FileText, Calendar, ExternalLink, Copy, Check } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -51,7 +52,7 @@ export function ProofDownload({
         <div className="flex items-start justify-between">
           <div>
             <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5 text-success" />
+              <ArkovaIcon className="h-5 w-5 text-success" />
               Proof of Record
             </CardTitle>
             <CardDescription>

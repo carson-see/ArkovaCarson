@@ -6,24 +6,8 @@
  */
 
 import { Link } from 'react-router-dom';
-import {
-  Building2,
-  Code2,
-  Layers,
-  Webhook,
-  KeyRound,
-  Headphones,
-  ShieldCheck,
-  Anchor,
-  Lock,
-  Database,
-  Terminal,
-  BookOpen,
-  Bot,
-  Bell,
-  ArrowRight,
-  CheckCircle2,
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Building2, Code2, Layers, Webhook, KeyRound, Headphones, Anchor, Lock, Database, Terminal, BookOpen, Bot, Bell, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { ENTERPRISE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -35,7 +19,7 @@ const FEATURES = [
   { icon: Webhook, title: ENTERPRISE_LABELS.FEAT_WEBHOOKS_TITLE, description: ENTERPRISE_LABELS.FEAT_WEBHOOKS_DESC },
   { icon: KeyRound, title: ENTERPRISE_LABELS.FEAT_SSO_TITLE, description: ENTERPRISE_LABELS.FEAT_SSO_DESC },
   { icon: Headphones, title: ENTERPRISE_LABELS.FEAT_SUPPORT_TITLE, description: ENTERPRISE_LABELS.FEAT_SUPPORT_DESC },
-  { icon: ShieldCheck, title: ENTERPRISE_LABELS.FEAT_SLA_TITLE, description: ENTERPRISE_LABELS.FEAT_SLA_DESC },
+  { icon: ArkovaIcon, title: ENTERPRISE_LABELS.FEAT_SLA_TITLE, description: ENTERPRISE_LABELS.FEAT_SLA_DESC },
 ];
 
 const TRUST_ITEMS = [

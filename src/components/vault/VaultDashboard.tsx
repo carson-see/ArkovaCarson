@@ -7,17 +7,8 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import {
-  FileText,
-  CheckCircle,
-  Clock,
-  Plus,
-  Shield,
-  Eye,
-  EyeOff,
-  Building2,
-  Users
-} from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { FileText, CheckCircle, Clock, Plus, Eye, EyeOff, Building2, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
@@ -160,7 +151,7 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
             </div>
             <div className="mt-4 pt-4 border-t">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Shield className="h-4 w-4" />
+                <ArkovaIcon className="h-4 w-4" />
                 <span>
                   {isPublicProfile
                     ? 'Your records can be verified by anyone with the fingerprint'
@@ -245,7 +236,7 @@ export function VaultDashboard({ onSignOut, onViewAssetDetail }: Readonly<VaultD
           <CardContent className="flex items-center justify-between py-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-                <Shield className="h-5 w-5 text-primary" />
+                <ArkovaIcon className="h-5 w-5 text-primary" />
               </div>
               <div>
                 <p className="text-sm font-medium">Account Type</p>

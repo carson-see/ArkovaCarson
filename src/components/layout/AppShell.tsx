@@ -9,7 +9,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Menu, ShieldCheck } from 'lucide-react';
+import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { Menu } from 'lucide-react';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { Button } from '@/components/ui/button';
@@ -91,7 +92,7 @@ export function AppShell({
         {/* VAI-04: Auditor mode banner */}
         {isAuditorMode && (
           <div className="flex items-center gap-2 px-4 py-1.5 bg-[#00d4ff]/10 border-b border-[#00d4ff]/20 text-xs text-[#00d4ff]">
-            <ShieldCheck className="h-3.5 w-3.5" />
+            <ArkovaIcon className="h-3.5 w-3.5" />
             <span className="font-medium">Auditor Mode</span>
             <span className="text-[#00d4ff]/60">— Read-only compliance view. Write actions are hidden.</span>
           </div>
