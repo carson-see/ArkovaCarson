@@ -85,7 +85,25 @@ export async function handlePlatformStats(
 
     // Anchor status counts from RPC
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const statusCounts = (val<{ data: any }>(3)?.data ?? {}) as Record<string, number>;
+    const rpcResult = val<{ data: any; error: any }>(3);
+    let statusCounts: Record<string, number> = {};
+    if (rpcResult?.data && !rpcResult.error) {
+      statusCounts = rpcResult.data as Record<string, number>;
+    } else {
+      // RPC failed — fall back to direct count queries
+      logger.warn({ error: rpcResult?.error }, 'get_anchor_status_counts RPC failed, using fallback counts');
+      const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'] as const;
+      const fallbackResults = await Promise.allSettled(
+        statuses.map(s =>
+          db.from('anchors').select('*', { count: 'exact', head: true })
+            .eq('status', s).is('deleted_at', null)
+        )
+      );
+      for (let i = 0; i < statuses.length; i++) {
+        const r = fallbackResults[i];
+        statusCounts[statuses[i]] = r.status === 'fulfilled' ? ((r.value as { count: number }).count ?? 0) : 0;
+      }
+    }
     const pendingAnchors = statusCounts.PENDING ?? 0;
     const securedAnchors = statusCounts.SECURED ?? 0;
     const revokedAnchors = statusCounts.REVOKED ?? 0;

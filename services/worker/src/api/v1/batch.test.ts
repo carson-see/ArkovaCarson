@@ -135,7 +135,7 @@ describe('processBatchSync', () => {
     expect(results[0].status).toBe('ACTIVE');
     expect(results[0].issuer_name).toBe('Test University');
     expect(results[0].credential_type).toBe('DIPLOMA');
-    expect(results[0].record_uri).toBe('https://app.arkova.io/verify/ARK-001');
+    expect(results[0].record_uri).toBe('https://app.arkova.ai/verify/ARK-001');
   });
 
   it('handles REVOKED anchors in batch', async () => {

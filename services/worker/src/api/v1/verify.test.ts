@@ -57,7 +57,7 @@ describe('buildVerificationResult', () => {
     expect(result.anchor_timestamp).toBe('2026-03-10T08:00:00Z');
     expect(result.bitcoin_block).toBe(204567);
     expect(result.network_receipt_id).toBe('b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57');
-    expect(result.record_uri).toBe('https://app.arkova.io/verify/ARK-2026-TEST-001');
+    expect(result.record_uri).toBe('https://app.arkova.ai/verify/ARK-2026-TEST-001');
   });
 
   it('returns verified=false for REVOKED anchor', () => {

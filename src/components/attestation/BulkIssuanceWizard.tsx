@@ -516,7 +516,7 @@ export function BulkIssuanceWizard({ open, onOpenChange, orgName }: Readonly<Pro
       r.public_id ?? '',
       r.status ?? '',
       r.fingerprint ?? '',
-      r.public_id ? `https://app.arkova.io/verify/attestation/${r.public_id}` : '',
+      r.public_id ? `https://app.arkova.ai/verify/attestation/${r.public_id}` : '',
       r.error ?? '',
     ]);
     const csvContent = [headers.join(','), ...csvRows.map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');

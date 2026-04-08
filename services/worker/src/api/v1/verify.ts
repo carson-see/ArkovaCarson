@@ -96,7 +96,7 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     bitcoin_block: anchor.chain_block_height ?? null,
     network_receipt_id: anchor.chain_tx_id ?? null,
     merkle_proof_hash: anchor.merkle_root ?? null,
-    record_uri: `https://app.arkova.io/verify/${anchor.public_id}`,
+    record_uri: `https://app.arkova.ai/verify/${anchor.public_id}`,
   };
 
   if (anchor.credential_type) {

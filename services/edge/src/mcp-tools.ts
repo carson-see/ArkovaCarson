@@ -258,7 +258,7 @@ export async function handleVerifyCredential(
       expiry_date: (data?.expires_at as string | null) ?? null,
       anchor_timestamp: (data?.created_at as string) ?? '',
       network_receipt_id: (data?.chain_tx_id as string | null) ?? null,
-      record_uri: `https://app.arkova.io/verify/${input.public_id}`,
+      record_uri: `https://app.arkova.ai/verify/${input.public_id}`,
       ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
     });
   } catch (error) {
@@ -307,7 +307,7 @@ export async function handleSearchCredentials(
       credential_type: r.credential_type,
       status: mapStatus(r.status as string),
       anchor_timestamp: r.created_at,
-      record_uri: `https://app.arkova.io/verify/${r.public_id}`,
+      record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
     }));
 
     return textResult({ query: input.query, total: mapped.length, results: mapped });

@@ -61,7 +61,7 @@ describe('buildAnchorSecuredEmail', () => {
   const baseData = {
     recipientEmail: 'student@example.com',
     credentialLabel: 'Bachelor of Science',
-    verificationUrl: 'https://app.arkova.io/verify/pub-123',
+    verificationUrl: 'https://app.arkova.ai/verify/pub-123',
     organizationName: 'University of Michigan',
   };
 

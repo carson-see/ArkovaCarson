@@ -150,14 +150,14 @@ export function useTreasuryBalance() {
         }
       }
 
-      // If ALL mempool calls failed, fall back to worker API
-      const allFailed = !addressRes?.ok && !feeRes?.ok;
-      if (allFailed && isMountedRef.current) {
+      // If balance fetch from mempool failed, fall back to worker API
+      const balanceFailed = !addressRes?.ok;
+      if (balanceFailed && isMountedRef.current) {
         try {
           const response = await workerFetch('/api/treasury/status', { method: 'GET' });
           if (response.ok && isMountedRef.current) {
             const data = await response.json() as {
-              wallet?: { balanceSats: number };
+              wallet?: { balanceSats: number; utxoCount?: number };
               fees?: { currentRateSatPerVbyte: number };
             };
             if (data.wallet) {
@@ -169,10 +169,14 @@ export function useTreasuryBalance() {
                 totalUsd: null,
               });
             }
-            if (data.fees) {
+            if (data.fees && !feeRes?.ok) {
               const rate = data.fees.currentRateSatPerVbyte;
               setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
             }
+            // Clear error since worker fallback succeeded
+            if (isMountedRef.current) setError(null);
+          } else if (isMountedRef.current) {
+            setError(`Treasury API returned ${response.status}. Check worker logs.`);
           }
         } catch (workerErr) {
           if (isMountedRef.current) {
