@@ -34,5 +34,5 @@ export const queryClient = new QueryClient({
 export const queryKeys = {
   profile: (userId: string) => ['profile', userId] as const,
   organization: (orgId: string) => ['organization', orgId] as const,
-  anchors: (userId: string) => ['anchors', userId] as const,
+  anchors: (userId: string, orgId?: string | null) => ['anchors', userId, orgId ?? 'none'] as const,
 } as const;

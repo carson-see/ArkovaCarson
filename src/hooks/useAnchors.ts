@@ -108,7 +108,7 @@ export function useAnchors(): UseAnchorsReturn {
     isLoading: queryLoading,
     error: queryError,
   } = useQuery({
-    queryKey: queryKeys.anchors(user?.id ?? ''),
+    queryKey: queryKeys.anchors(user?.id ?? '', profile?.org_id),
     queryFn: () => fetchAnchorsData(user!.id, profile?.org_id, profile?.role),
     enabled: !!user,
   });
@@ -154,7 +154,7 @@ export function useAnchors(): UseAnchorsReturn {
   const handleRealtimePayload = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (payload: { eventType: string; new: any; old: any }) => {
-      const key = queryKeys.anchors(user?.id ?? '');
+      const key = queryKeys.anchors(user?.id ?? '', profile?.org_id);
 
       if (payload.eventType === 'UPDATE') {
         const updated = payload.new as AnchorRow;
@@ -179,7 +179,7 @@ export function useAnchors(): UseAnchorsReturn {
         }
       }
     },
-    [user?.id, fireStatusToast, qc],
+    [user?.id, profile?.org_id, fireStatusToast, qc],
   );
 
   // Realtime subscription for anchor changes (BETA-01)
@@ -202,7 +202,7 @@ export function useAnchors(): UseAnchorsReturn {
       .subscribe((status) => {
         // Refetch on reconnect to catch any missed updates (C4)
         if (status === 'SUBSCRIBED' && channelRef.current) {
-          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
+          qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
         }
       });
 
@@ -218,9 +218,9 @@ export function useAnchors(): UseAnchorsReturn {
 
   const refreshAnchors = useCallback(async () => {
     if (user) {
-      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id) });
+      await qc.invalidateQueries({ queryKey: queryKeys.anchors(user.id, profile?.org_id) });
     }
-  }, [user, qc]);
+  }, [user, profile?.org_id, qc]);
 
   if (queryError) {
     toast.error(TOAST.RECORDS_FETCH_FAILED);
