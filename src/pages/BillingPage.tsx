@@ -42,9 +42,13 @@ export function BillingPage() {
       if (!session) return;
 
       const workerUrl = WORKER_URL;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
       const response = await fetch(`${workerUrl}/api/billing/status`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();

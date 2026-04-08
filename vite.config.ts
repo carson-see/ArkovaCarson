@@ -17,6 +17,10 @@ export default defineConfig({
           'vendor-query': ['@tanstack/react-query'],
           'vendor-supabase': ['@supabase/supabase-js'],
           'vendor-ui': ['lucide-react', 'sonner', 'class-variance-authority', 'clsx', 'tailwind-merge'],
+          // Heavy libs — dynamically imported only during document upload.
+          // Named chunks give stable filenames for CDN cache hits.
+          'vendor-ai-ner': ['@huggingface/transformers'],
+          'vendor-pdf': ['pdfjs-dist'],
         },
       },
     },
