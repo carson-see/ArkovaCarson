@@ -13,16 +13,14 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, Link } from 'react-router-dom';
-import { Search, Loader2, Building2, CheckCircle, XCircle, User, ArrowLeft, Upload, FileSearch, Building, Hash, ExternalLink } from 'lucide-react';
+import { Search, Loader2, Building2, CheckCircle, XCircle, ArrowLeft, Upload } from 'lucide-react';
 import { isSearchSubdomain } from '@/App';
-import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
+import { ArkovaLogo, ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { IssuerCard } from '@/components/search/IssuerCard';
 import { usePublicSearch } from '@/hooks/usePublicSearch';
 import { SEARCH_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
@@ -50,11 +48,6 @@ interface FingerprintResult {
   publicId?: string;
 }
 
-const EXAMPLE_QUERIES = [
-  { label: 'Arkova', mode: 'issuers' as SearchMode },
-  { label: 'patent', mode: 'credentials' as SearchMode },
-  { label: 'federal', mode: 'credentials' as SearchMode },
-];
 
 export function SearchPage() {
   const navigate = useNavigate();
@@ -66,7 +59,7 @@ export function SearchPage() {
   }, []);
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<SearchType>('issuer');
-  const [searchMode, setSearchMode] = useState<SearchMode>('issuers');
+  const [, setSearchMode] = useState<SearchMode>('issuers');
   const [hasSearched, setHasSearched] = useState(false);
   const { issuerResults, searching, error, searchIssuers } = usePublicSearch();
 
@@ -201,6 +194,7 @@ export function SearchPage() {
     }
 
     setSearchType('issuer');
+    setSearchMode('issuers');
     await Promise.all([
       searchIssuers(trimmed),
       searchPerson(trimmed),
@@ -262,330 +256,205 @@ export function SearchPage() {
     e.target.value = '';
   }, [handleFileDrop]);
 
-  const handleExampleClick = useCallback(async (example: typeof EXAMPLE_QUERIES[0]) => {
-    setQuery(example.label);
-    setSearchMode(example.mode);
-    const trimmed = example.label.trim();
-    if (!trimmed) return;
-    setHasSearched(true);
-    setSearchType('issuer');
-    await Promise.all([
-      searchIssuers(trimmed),
-      ...(example.mode !== 'issuers' ? [searchPerson(trimmed)] : []),
-    ]);
-  }, [searchIssuers, searchPerson]);
-
   const isSearching = searching || fpSearching || personSearching || verifyingFile;
   const displayError = error || fpError || personError;
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container max-w-3xl mx-auto px-4 py-8">
+    <div
+      className="min-h-screen bg-background"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <div className="container max-w-2xl mx-auto px-4">
         {/* Back navigation — hidden on standalone search subdomain */}
         {!standalone && (
           <Link
             to={ROUTES.DASHBOARD}
-            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mb-6 transition-colors"
+            className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mt-6 mb-4 transition-colors"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to Dashboard
           </Link>
         )}
 
-        {/* Header */}
-        <div className="text-center mb-10 animate-in-view">
-          <div className="flex justify-center mb-4">
-            <ArkovaLogo size={64} />
+        {/* Google-style centered layout — push down when no results */}
+        <div className={`flex flex-col items-center transition-all duration-300 ${
+          hasSearched ? 'pt-8' : 'pt-[18vh]'
+        }`}>
+          {/* Logo + title */}
+          <div className="flex flex-col items-center mb-8">
+            <ArkovaLogo size={hasSearched ? 48 : 72} className="mb-3" />
+            {!hasSearched && (
+              <h1 className="text-[22px] font-semibold tracking-tight text-center">
+                Search &amp; Verify
+              </h1>
+            )}
           </div>
-          <h1 className="text-[28px] font-bold tracking-tight">
-            {standalone ? 'Arkova Search' : SEARCH_LABELS.PAGE_TITLE}
-          </h1>
-          <p className="text-[13px] text-white/45 mt-2 max-w-md mx-auto">
-            {standalone
-              ? 'Verify credentials with immutable proof of authenticity'
-              : 'Search by issuer name, verification ID, or document fingerprint'}
-          </p>
+
+          {/* Single search box */}
+          <div className="w-full max-w-xl mb-6">
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
+                <Input
+                  placeholder="Search issuers, credentials, or paste a verification ID..."
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  autoFocus
+                  className="pl-10 h-11 bg-[#192028] border-[#3c494e]/30 focus:ring-[#00d4ff]/30 focus:border-[#00d4ff]/50 rounded-full text-sm"
+                />
+              </div>
+              <Button
+                onClick={handleSearch}
+                disabled={isSearching || !query.trim()}
+                size="lg"
+                className="bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md font-semibold px-6 h-11"
+              >
+                {isSearching ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
+
+            {/* Drag hint + file verify link */}
+            {!hasSearched && (
+              <div className="flex items-center justify-center gap-3 mt-3 text-xs text-muted-foreground">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 text-[#00d4ff]/70 hover:text-[#00d4ff] transition-colors"
+                >
+                  <Upload className="h-3 w-3" />
+                  Drop or browse a file to verify
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={handleFileInput}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Search type tabs */}
-        <Tabs value={searchMode} onValueChange={(v) => {
-          setSearchMode(v as SearchMode);
-          // BUG-UAT-05 / SCRUM-492: Clear all stale results when switching tabs
-          setHasSearched(false);
-          setQuery('');
-          setFpResult(null);
-          setFpError(null);
-          setPersonResults([]);
-          setPersonError(null);
-        }} className="mb-4">
-          <TabsList className="w-full grid grid-cols-3">
-            <TabsTrigger value="issuers" className="gap-1.5">
-              <Building className="h-3.5 w-3.5" />
-              Issuers
-            </TabsTrigger>
-            <TabsTrigger value="credentials" className="gap-1.5">
-              <Hash className="h-3.5 w-3.5" />
-              Credentials
-            </TabsTrigger>
-            <TabsTrigger value="verify" className="gap-1.5">
-              <FileSearch className="h-3.5 w-3.5" />
-              Verify Document
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-
-        {/* Search form (for issuers + credentials tabs) */}
-        {searchMode !== 'verify' && (
-          <Card className="bg-transparent border-[#00d4ff]/15 mb-4 animate-in-view stagger-1">
-            <CardContent className="p-6">
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
-                  <Input
-                    placeholder={searchMode === 'issuers'
-                      ? 'Search by issuer name...'
-                      : 'Search by name, verification ID, or fingerprint...'
-                    }
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    className="pl-9 bg-[#192028] border-[#3c494e]/30 focus:ring-[#00d4ff]/30 rounded-full"
-                  />
-                </div>
-                <Button
-                  onClick={handleSearch}
-                  disabled={isSearching || !query.trim()}
-                  className="bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md font-semibold"
-                >
-                  {isSearching ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Search className="mr-2 h-4 w-4" />
-                  )}
-                  {SEARCH_LABELS.SEARCH_BUTTON}
-                </Button>
-              </div>
-
-              {/* Example queries */}
-              {!hasSearched && (
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <span className="text-xs text-muted-foreground">Try:</span>
-                  {EXAMPLE_QUERIES.map((ex) => (
-                    <button
-                      key={ex.label}
-                      onClick={() => handleExampleClick(ex)}
-                      className="text-xs text-[#00d4ff] hover:text-[#00d4ff]/80 border border-[#00d4ff]/20 rounded-full px-2.5 py-0.5 hover:bg-[#00d4ff]/5 transition-colors"
-                    >
-                      {ex.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {/* Drag overlay */}
+        {dragActive && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm pointer-events-none">
+            <div className="flex flex-col items-center gap-3 text-[#00d4ff]">
+              <Upload className="h-12 w-12" />
+              <p className="text-sm font-medium">Drop to verify document</p>
+            </div>
+          </div>
         )}
 
-        {/* Drag-to-verify dropzone (for verify tab) */}
-        {searchMode === 'verify' && (
-          <Card
-            className={`mb-4 transition-all duration-200 ${
-              dragActive
-                ? 'border-[#00d4ff] bg-[#00d4ff]/5 shadow-glow-md'
-                : 'bg-transparent border-[#00d4ff]/15 border-dashed'
-            }`}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-          >
-            <CardContent className="flex flex-col items-center justify-center py-12 px-6">
-              {verifyingFile ? (
-                <div className="flex flex-col items-center gap-3">
-                  <Loader2 className="h-10 w-10 animate-spin text-[#00d4ff]" />
-                  <p className="text-sm font-medium">Computing fingerprint...</p>
-                  {verifyFileName && (
-                    <p className="text-xs text-muted-foreground">{verifyFileName}</p>
-                  )}
-                </div>
-              ) : (
-                <>
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[#192028] mb-4">
-                    <Upload className="h-8 w-8 text-[#00d4ff]" />
-                  </div>
-                  <p className="text-sm font-medium mb-1">
-                    Drop a document here to verify
-                  </p>
-                  <p className="text-xs text-muted-foreground mb-4 text-center max-w-sm">
-                    Your document never leaves your device. We compute a cryptographic fingerprint
-                    locally and search our records for a match.
-                  </p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="rounded-full"
-                  >
-                    <Upload className="mr-2 h-3.5 w-3.5" />
-                    Browse files
-                  </Button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    className="hidden"
-                    onChange={handleFileInput}
-                  />
-                </>
-              )}
-            </CardContent>
-          </Card>
+        {/* Verifying file indicator */}
+        {verifyingFile && (
+          <div className="flex flex-col items-center gap-3 py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-[#00d4ff]" />
+            <p className="text-sm">Computing fingerprint{verifyFileName ? ` for ${verifyFileName}` : ''}...</p>
+          </div>
         )}
 
         {/* Error */}
         {displayError && (
-          <Card className="border-destructive/50 mb-6">
-            <CardContent className="p-4 text-sm text-destructive">
-              {displayError}
-            </CardContent>
-          </Card>
+          <div className="max-w-xl mx-auto mb-6">
+            <Card className="border-destructive/50">
+              <CardContent className="p-4 text-sm text-destructive">
+                {displayError}
+              </CardContent>
+            </Card>
+          </div>
         )}
 
-        {/* Issuer results (shown for text queries) — hidden when error displayed */}
-        {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && !displayError && (
-          <div className="space-y-3">
-            {issuerResults.length > 0 && searchMode === 'issuers' ? (
-              issuerResults.map((issuer, i) => (
+        {/* Results area */}
+        <div className="max-w-xl mx-auto">
+          {/* Issuer results */}
+          {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && !displayError && (
+            <div className="space-y-3">
+              {issuerResults.length > 0 && issuerResults.map((issuer, i) => (
                 <div key={issuer.org_id} className={`stagger-${Math.min(i + 2, 8)}`}>
                   <IssuerCard issuer={issuer} />
                 </div>
-              ))
-            ) : personResults.length === 0 && (
-              <Card className="glass-card">
-                <CardContent className="py-12 text-center">
-                  <Building2 className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {searchMode === 'credentials' ? SEARCH_LABELS.NO_RESULTS : SEARCH_LABELS.NO_ISSUERS}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {searchMode === 'credentials' ? SEARCH_LABELS.NO_RESULTS_DESC : SEARCH_LABELS.NO_ISSUERS_DESC}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* Fingerprint results */}
-        {searchType === 'fingerprint' && hasSearched && !fpSearching && !verifyingFile && fpResult && (
-          <FingerprintResultCard result={fpResult} fileName={verifyFileName} onViewRecord={(id) => navigate(verifyPath(id))} />
-        )}
-
-        {/* Person results (shown for text queries alongside issuer results) */}
-        {hasSearched && !personSearching && personResults.length > 0 && searchType !== 'fingerprint' && (
-          <div className="space-y-3">
-            {personResults.length > 0 ? (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  {SEARCH_LABELS.PERSON_CREDENTIALS}
-                </p>
-                {personResults.map((result) => (
-                  <Card
-                    key={result.public_id}
-                    className="glass-card cursor-pointer hover:shadow-card-hover transition-shadow"
-                    onClick={() => navigate(verifyPath(result.public_id))}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {result.title || result.public_id || 'Untitled Record'}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            {result.credential_type && (
-                              <span className="text-xs text-muted-foreground">
-                                {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
-                              </span>
-                            )}
-                            <span className="text-xs text-muted-foreground">
-                              {new Date(result.created_at).toLocaleDateString()}
-                            </span>
-                          </div>
-                        </div>
-                        <Badge
-                          variant={result.status === 'SECURED' ? 'default' : 'secondary'}
-                          className={result.status === 'SECURED' ? 'bg-green-600' : ''}
-                        >
-                          {result.status === 'SECURED' ? 'Verified' : result.status}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </>
-            ) : (
-              <Card className="glass-card">
-                <CardContent className="py-12 text-center">
-                  <User className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
-                  <p className="text-sm font-medium text-muted-foreground">
-                    {SEARCH_LABELS.NO_PERSONS}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {SEARCH_LABELS.NO_PERSONS_DESC}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
-
-        {/* Loading state */}
-        {isSearching && !verifyingFile && (
-          <div className="flex justify-center py-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        )}
-
-        {/* GEO-16: Traction metrics — social proof for search visitors */}
-        {!hasSearched && (
-          <div className="flex flex-wrap justify-center gap-8 mt-12 text-center" aria-label="Platform metrics">
-            {[
-              { value: '1.39M+', label: 'Records Secured' },
-              { value: '320K+', label: 'Public Records' },
-              { value: '21', label: 'Credential Types' },
-              { value: '87.2%', label: 'AI Extraction F1' },
-            ].map((m) => (
-              <div key={m.label}>
-                <p className="text-2xl font-black text-[#00d4ff]">{m.value}</p>
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</p>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* GEO-17: Internal cross-links for SEO */}
-        {!hasSearched && (
-          <div className="flex flex-wrap justify-center gap-6 mt-8 text-xs text-muted-foreground">
-            <Link to={ROUTES.ABOUT} className="hover:text-[#00d4ff] transition-colors">Learn about Arkova</Link>
-            <Link to={ROUTES.DEVELOPERS} className="hover:text-[#00d4ff] transition-colors">Developer API</Link>
-            <Link to="/issuers" className="hover:text-[#00d4ff] transition-colors">Browse verified issuers</Link>
-          </div>
-        )}
-
-        {/* Standalone footer */}
-        {standalone && (
-          <div className="mt-16 pt-8 border-t border-[#3c494e]/30 text-center">
-            <p className="text-xs text-muted-foreground mb-3">
-              Powered by Arkova — tamper-proof document verification
-            </p>
-            <div className="flex justify-center gap-4 text-xs">
-              <a href="https://arkova.ai" target="_blank" rel="noopener noreferrer" className="text-[#00d4ff] hover:text-[#00d4ff]/80 inline-flex items-center gap-1">
-                arkova.ai <ExternalLink className="h-3 w-3" />
-              </a>
-              <Link to={ROUTES.ABOUT} className="text-muted-foreground hover:text-foreground">About</Link>
-              <Link to={ROUTES.DEVELOPERS} className="text-muted-foreground hover:text-foreground">Developers</Link>
-              <Link to={ROUTES.PRIVACY} className="text-muted-foreground hover:text-foreground">Privacy</Link>
-              <Link to={ROUTES.TERMS} className="text-muted-foreground hover:text-foreground">Terms</Link>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+
+          {/* Fingerprint results */}
+          {searchType === 'fingerprint' && hasSearched && !fpSearching && !verifyingFile && fpResult && (
+            <FingerprintResultCard result={fpResult} fileName={verifyFileName} onViewRecord={(id) => navigate(verifyPath(id))} />
+          )}
+
+          {/* Credential results */}
+          {hasSearched && !personSearching && personResults.length > 0 && searchType !== 'fingerprint' && (
+            <div className="space-y-3 mt-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">
+                {SEARCH_LABELS.PERSON_CREDENTIALS}
+              </p>
+              {personResults.map((result) => (
+                <Card
+                  key={result.public_id}
+                  className="glass-card cursor-pointer hover:shadow-card-hover transition-shadow"
+                  onClick={() => navigate(verifyPath(result.public_id))}
+                >
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {result.title || result.public_id || 'Untitled Record'}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {result.credential_type && (
+                            <span className="text-xs text-muted-foreground">
+                              {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
+                            </span>
+                          )}
+                          <span className="text-xs text-muted-foreground">
+                            {new Date(result.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      <Badge
+                        variant={result.status === 'SECURED' ? 'default' : 'secondary'}
+                        className={result.status === 'SECURED' ? 'bg-green-600' : ''}
+                      >
+                        {result.status === 'SECURED' ? 'Verified' : result.status}
+                      </Badge>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+
+          {/* No results state */}
+          {hasSearched && !isSearching && !displayError && searchType === 'issuer'
+            && issuerResults.length === 0 && personResults.length === 0 && (
+            <div className="text-center py-12">
+              <Building2 className="mx-auto h-8 w-8 text-muted-foreground/30 mb-3" />
+              <p className="text-sm text-muted-foreground">{SEARCH_LABELS.NO_RESULTS}</p>
+              <p className="text-xs text-muted-foreground mt-1">{SEARCH_LABELS.NO_RESULTS_DESC}</p>
+            </div>
+          )}
+
+          {/* Loading state */}
+          {isSearching && !verifyingFile && (
+            <div className="flex justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-[#00d4ff]" />
+            </div>
+          )}
+        </div>
+
+        {/* Footer links — minimal, always visible */}
+        <div className="flex flex-wrap justify-center gap-6 mt-16 mb-8 text-xs text-muted-foreground">
+          <Link to={ROUTES.ABOUT} className="hover:text-[#00d4ff] transition-colors">About</Link>
+          <Link to={ROUTES.DEVELOPERS} className="hover:text-[#00d4ff] transition-colors">Developer API</Link>
+          <Link to={ROUTES.PRIVACY} className="hover:text-[#00d4ff] transition-colors">Privacy</Link>
+          <Link to={ROUTES.TERMS} className="hover:text-[#00d4ff] transition-colors">Terms</Link>
+        </div>
       </div>
     </div>
   );
