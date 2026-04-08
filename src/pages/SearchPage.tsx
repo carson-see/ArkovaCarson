@@ -294,23 +294,21 @@ export function SearchPage() {
 
           {/* Single search box */}
           <div className="w-full max-w-xl mb-6">
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
-                <Input
-                  placeholder="Search issuers, credentials, or paste a verification ID..."
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  autoFocus
-                  className="pl-10 h-11 bg-[#192028] border-[#3c494e]/30 focus:ring-[#00d4ff]/30 focus:border-[#00d4ff]/50 rounded-full text-sm"
-                />
-              </div>
+            <div className="relative">
+              <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#859398]" />
+              <Input
+                placeholder="Search issuers, credentials, or paste a verification ID..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                autoFocus
+                className="pl-11 pr-14 h-12 bg-[#192028] border-[#3c494e]/30 focus:ring-[#00d4ff]/30 focus:border-[#00d4ff]/50 rounded-full text-sm"
+              />
               <Button
                 onClick={handleSearch}
                 disabled={isSearching || !query.trim()}
-                size="lg"
-                className="bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md font-semibold px-6 h-11"
+                size="icon"
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md h-9 w-9"
               >
                 {isSearching ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
