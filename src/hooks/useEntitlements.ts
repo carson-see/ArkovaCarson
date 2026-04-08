@@ -60,12 +60,12 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     setError(null);
 
     try {
-      // 1. Fetch subscription + plans + anchor count in parallel
+      // 1. Fetch subscription + all plans + anchor count in parallel (no waterfall)
       const monthStart = new Date();
       monthStart.setDate(1);
       monthStart.setHours(0, 0, 0, 0);
 
-      const [subResult, freePlanResult, countResult] = await Promise.all([
+      const [subResult, plansResult, countResult] = await Promise.all([
         supabase
           .from('subscriptions')
           .select('plan_id, current_period_start, status')
@@ -73,9 +73,7 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
           .maybeSingle(),
         supabase
           .from('plans')
-          .select('records_per_month, name')
-          .eq('id', 'free')
-          .single(),
+          .select('id, records_per_month, name'),
         supabase
           .from('anchors')
           .select('id', { count: 'exact', head: true })
@@ -84,24 +82,19 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
       ]);
 
       if (subResult.error) throw subResult.error;
-      if (freePlanResult.error) throw freePlanResult.error;
+      if (plansResult.error) throw plansResult.error;
       if (countResult.error) throw countResult.error;
 
       const subData = subResult.data;
+      const plans = plansResult.data ?? [];
+      const freePlan = plans.find(p => p.id === 'free');
       let name: string;
 
       if (subData?.plan_id && subData.status === 'active') {
-        // Fetch active plan details (only when needed)
-        const { data: planData, error: planError } = await supabase
-          .from('plans')
-          .select('records_per_month, name')
-          .eq('id', subData.plan_id)
-          .single();
-
-        if (planError) throw planError;
-        name = planData.name;
+        const activePlan = plans.find(p => p.id === subData.plan_id);
+        name = activePlan?.name ?? freePlan?.name ?? 'Free';
       } else {
-        name = freePlanResult.data.name;
+        name = freePlan?.name ?? 'Free';
       }
 
       const count = countResult.count;

@@ -304,15 +304,9 @@ export function PipelineAdminPage() {
         const types = (data as Array<{ record_type: string }>).map((r) => r.record_type).sort();
         setAvailableTypes(types);
       } else {
-        // Fallback: fetch minimal data to extract types
-        const { data: fallbackData } = await dbAny
-          .from('public_records')
-          .select('record_type')
-          .limit(1000);
-        if (fallbackData) {
-          const types = [...new Set((fallbackData as Array<{ record_type: string }>).map((r) => r.record_type))].sort();
-          setAvailableTypes(types);
-        }
+        // Fallback removed — direct public_records query times out on 1.4M rows.
+        // get_distinct_record_types RPC is the only path (migration 0175).
+        setAvailableTypes([]);
       }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -321,31 +315,20 @@ export function PipelineAdminPage() {
   const fetchRecords = useCallback(async (page: number, currentFilters: RecordFilters) => {
     setRecordsLoading(true);
     try {
-      let query = dbAny
-        .from('public_records')
-        .select('*', { count: 'exact' });
+      // Use server-side paginated RPC to avoid RLS timeout on 1.4M row table (migration 0175)
+      const { data: rpcResult, error: rpcError } = await dbAny.rpc('get_public_records_page', {
+        p_page: page + 1, // RPC uses 1-based pages
+        p_page_size: PAGE_SIZE,
+        p_source: currentFilters.source !== 'all' ? currentFilters.source : null,
+        p_record_type: currentFilters.recordType !== 'all' ? currentFilters.recordType : null,
+        p_anchor_status: currentFilters.anchorStatus !== 'all' ? currentFilters.anchorStatus : null,
+      });
 
-      if (currentFilters.source !== 'all') {
-        query = query.eq('source', currentFilters.source);
-      }
-      if (currentFilters.recordType !== 'all') {
-        query = query.eq('record_type', currentFilters.recordType);
-      }
-      if (currentFilters.anchorStatus === 'anchored') {
-        query = query.not('anchor_id', 'is', null);
-      } else if (currentFilters.anchorStatus === 'unanchored') {
-        query = query.is('anchor_id', null);
-      }
-      if (currentFilters.search.trim()) {
-        query = query.or(`title.ilike.%${currentFilters.search.trim()}%,source_id.ilike.%${currentFilters.search.trim()}%`);
-      }
+      if (rpcError) throw rpcError;
 
-      const { data, count } = await query
-        .order('created_at', { ascending: false })
-        .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-
-      setRecords((data ?? []) as PublicRecord[]);
-      setRecordsTotal(count ?? 0);
+      const result = rpcResult as { data: PublicRecord[]; total: number };
+      setRecords(result.data ?? []);
+      setRecordsTotal(result.total ?? 0);
     } catch {
       // Records fetch failed silently
     } finally {

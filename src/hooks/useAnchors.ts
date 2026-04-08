@@ -57,11 +57,15 @@ function mapAnchorToRecord(anchor: AnchorPartial): Record {
   };
 }
 
-/** Fetch anchors from Supabase — extracted for React Query */
-async function fetchAnchorsData(): Promise<Record[]> {
+/** Fetch anchors from Supabase — extracted for React Query.
+ *  PERF: Always filter by user_id so Postgres uses
+ *  idx_anchors_user_nopipeline_created instead of scanning 1.4M rows
+ *  through RLS (critical for platform admin accounts). */
+async function fetchAnchorsData(userId: string): Promise<Record[]> {
   const { data, error } = await supabase
     .from('anchors')
     .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
+    .eq('user_id', userId)
     .is('deleted_at', null)
     .is('metadata->pipeline_source', null)
     .order('created_at', { ascending: false })
@@ -90,7 +94,7 @@ export function useAnchors(): UseAnchorsReturn {
     error: queryError,
   } = useQuery({
     queryKey: queryKeys.anchors(user?.id ?? ''),
-    queryFn: fetchAnchorsData,
+    queryFn: () => fetchAnchorsData(user!.id),
     enabled: !!user,
   });
 

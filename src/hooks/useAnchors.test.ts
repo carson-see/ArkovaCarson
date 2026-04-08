@@ -89,7 +89,9 @@ describe('useAnchors', () => {
     });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: mockIs,
+        eq: vi.fn().mockReturnValue({
+          is: mockIs,
+        }),
       }),
     });
 
@@ -126,7 +128,9 @@ describe('useAnchors', () => {
     });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: mockIs,
+        eq: vi.fn().mockReturnValue({
+          is: mockIs,
+        }),
       }),
     });
 
@@ -164,7 +168,9 @@ describe('useAnchors', () => {
     });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: mockIs,
+        eq: vi.fn().mockReturnValue({
+          is: mockIs,
+        }),
       }),
     });
 

@@ -50,7 +50,7 @@ export function useAnchorStats() {
         const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'];
         const countResults = await Promise.all(
           statuses.map(s =>
-            dbAny.from('anchors').select('*', { count: 'exact', head: true }).eq('status', s)
+            dbAny.from('anchors').select('id', { count: 'exact', head: true }).eq('status', s)
           )
         );
         for (let i = 0; i < statuses.length; i++) {

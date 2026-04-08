@@ -58,7 +58,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
 
     const { data, error: fetchError } = await supabase
       .from('credential_templates')
-      .select('*')
+      .select('id, org_id, name, description, credential_type, default_metadata, is_active, is_system, created_by, created_at, updated_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
@@ -119,7 +119,8 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_CREATED);
-      await fetchTemplates();
+      // Optimistic: append new template locally instead of full refetch
+      setTemplates(prev => [data, ...prev]);
       return data;
     },
     [orgId, fetchTemplates]
@@ -161,7 +162,8 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_UPDATED);
-      await fetchTemplates();
+      // Optimistic: update template in local state instead of full refetch
+      setTemplates(prev => prev.map(t => t.id === id ? { ...t, ...params, default_metadata: params.default_metadata === undefined ? t.default_metadata : (params.default_metadata ?? {}) } as CredentialTemplate : t));
       return true;
     },
     [orgId, fetchTemplates]
@@ -197,7 +199,8 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_DELETED);
-      await fetchTemplates();
+      // Optimistic: remove template from local state instead of full refetch
+      setTemplates(prev => prev.filter(t => t.id !== id));
       return true;
     },
     [orgId, fetchTemplates]

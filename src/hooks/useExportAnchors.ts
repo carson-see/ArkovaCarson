@@ -63,7 +63,7 @@ export function useExportAnchors(): UseExportAnchorsReturn {
     // Capped at 5000 rows to prevent browser OOM on large orgs
     const { data, error: fetchError } = await supabase
       .from('anchors')
-      .select('*')
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, file_mime, created_at, updated_at, chain_timestamp, revoked_at, revocation_reason, expires_at, legal_hold')
       .eq('org_id', orgId)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
@@ -77,7 +77,7 @@ export function useExportAnchors(): UseExportAnchorsReturn {
       throw new Error('No records to export.');
     }
 
-    const csvContent = generateCsv(data, anchorColumns);
+    const csvContent = generateCsv(data as Anchor[], anchorColumns);
     const filename = generateExportFilename('org-records');
     downloadCsv(csvContent, filename);
 

@@ -1,5 +1,40 @@
 # Testing Reference
-_Extracted from CLAUDE.md Sections 11 — 2026-03-17_
+_Last updated: 2026-04-08 | Session 32_
+
+> Full details: [docs/confluence/18_testing_quality_standards.md](../confluence/18_testing_quality_standards.md)
+
+## TDD Enforcement
+
+TDD is **not optional**. Enforced at two gates:
+
+1. **Pre-commit hook** — blocks `git commit` if production files changed without test files
+2. **CI gate** (`tdd-enforcement` job) — blocks merge to main/develop
+
+Setup for new developers:
+```bash
+git config core.hooksPath .githooks
+```
+
+Emergency skip (visible in git log):
+```bash
+SKIP_TDD_CHECK=1 git commit -m "fix: emergency hotfix"
+```
+
+---
+
+## Custom ESLint Rules (`eslint-plugin-arkova`)
+
+Three rules enforce test quality. Run automatically via `npm run lint`.
+
+| Rule | Severity | What It Catches |
+|------|----------|----------------|
+| `arkova/no-unscoped-service-test` | warn | Tests mock `supabase.from()` but never assert `user_id`/`org_id` scoping |
+| `arkova/require-error-code-assertion` | warn | Error tests check "it failed" without asserting the specific error code/status |
+| `arkova/no-mock-echo` | warn | Tests assert the exact literal values they put into the mock (proves nothing) |
+
+Suppress with `// eslint-disable-next-line arkova/rule-name` (must justify in comment).
+
+---
 
 ## RLS Tests
 ```typescript
@@ -30,9 +65,14 @@ const mockChain: IAnchorPublisher = {
 
 | Email | Password | Role | Org |
 |-------|----------|------|-----|
-| admin_demo@arkova.local | demo_password_123 | ORG_ADMIN | Arkova |
-| user_demo@arkova.local | demo_password_123 | INDIVIDUAL | None |
-| beta_admin@betacorp.local | demo_password_123 | ORG_ADMIN | Beta Corp |
+| admin@umich-demo.arkova.io | Demo1234! | ORG_ADMIN | UMich Registrar |
+| registrar@umich-demo.arkova.io | Demo1234! | ORG_MEMBER | UMich Registrar |
+| admin@midwest-medical.arkova.io | Demo1234! | ORG_ADMIN | Midwest Medical Board |
+| individual@demo.arkova.io | Demo1234! | INDIVIDUAL | None |
+
+## Coverage Thresholds
+
+80% on critical paths: `fileHasher.ts`, `validators.ts`, `proofPackage.ts`, `chain/`, `webhooks/`, `stripe/`.
 
 ## Verification API Frozen Response Schema
 

@@ -116,14 +116,14 @@ export function MemberDetailPage() {
     // Fetch anchors created by this member within the org
     const { data: anchorData } = await supabase
       .from('anchors')
-      .select('*')
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height')
       .eq('user_id', memberId)
       .eq('org_id', profile.org_id)
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(200);
 
-    setAnchors(anchorData ?? []);
+    setAnchors((anchorData ?? []) as typeof anchors);
     setLoading(false);
   }, [memberId, profile?.org_id]);
 
