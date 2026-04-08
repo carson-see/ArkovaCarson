@@ -89,7 +89,7 @@ export async function checkAnchorDelays(): Promise<number> {
     // Group by org
     const orgMap = new Map<string, number>();
     for (const anchor of staleAnchors) {
-      orgMap.set(anchor.org_id, (orgMap.get(anchor.org_id) || 0) + 1);
+      if (anchor.org_id) orgMap.set(anchor.org_id, (orgMap.get(anchor.org_id) || 0) + 1);
     }
 
     for (const [orgId, count] of orgMap) {

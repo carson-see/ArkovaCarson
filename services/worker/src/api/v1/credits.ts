@@ -50,7 +50,7 @@ creditsRouter.get('/', async (req: Request, res: Response) => {
 
   try {
     const { data, error } = await db.rpc('check_unified_credits', {
-      p_org_id: orgId ?? null,
+      p_org_id: orgId as string,
       p_user_id: userId,
     });
 
@@ -107,7 +107,7 @@ creditsRouter.post('/purchase', async (req: Request, res: Response) => {
     if (!config.stripeSecretKey && config.nodeEnv !== 'production') {
       // Direct credit grant for development/testing only — NEVER in production
       const { error: grantError } = await db.rpc('deduct_unified_credits', {
-        p_org_id: orgId ?? null,
+        p_org_id: orgId as string,
         p_user_id: userId,
         p_amount: -pack.credits, // negative deduction = grant
       });

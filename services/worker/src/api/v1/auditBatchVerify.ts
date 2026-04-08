@@ -98,7 +98,7 @@ router.post('/', async (req: Request, res: Response) => {
       const rng = seededRandom(seed || Date.now());
       const sampleSize = Math.ceil(allAnchors.length * (sample_percentage / 100));
       const shuffled = [...allAnchors].sort(() => rng() - 0.5);
-      targetIds = shuffled.slice(0, sampleSize).map(a => a.public_id);
+      targetIds = shuffled.slice(0, sampleSize).map(a => a.public_id).filter((id): id is string => id != null);
     }
 
     // Batch verify
@@ -107,7 +107,7 @@ router.post('/', async (req: Request, res: Response) => {
     // Fetch all anchors in one query
     const { data: anchors } = await db
       .from('anchors')
-      .select('public_id, status, fingerprint, secured_at, tx_id, created_at, submitted_at')
+      .select('public_id, status, fingerprint, chain_timestamp, chain_tx_id, created_at')
       .in('public_id', targetIds)
       .is('deleted_at', null);
 
@@ -131,8 +131,8 @@ router.post('/', async (req: Request, res: Response) => {
       const anomalies: string[] = [];
 
       // Anomaly: anchor delay >24h
-      if (anchor.submitted_at && anchor.secured_at) {
-        const delay = new Date(anchor.secured_at).getTime() - new Date(anchor.submitted_at).getTime();
+      if (anchor.created_at && anchor.chain_timestamp) {
+        const delay = new Date(anchor.chain_timestamp).getTime() - new Date(anchor.created_at).getTime();
         if (delay > 24 * 3600_000) {
           anomalies.push(`Anchor delay: ${Math.round(delay / 3600_000)}h between submission and confirmation`);
         }
@@ -157,12 +157,12 @@ router.post('/', async (req: Request, res: Response) => {
       }
 
       results.push({
-        public_id: anchor.public_id,
+        public_id: anchor.public_id!,
         status: anchor.status === 'SECURED' ? 'PASS' : 'FAIL',
         anchor_status: anchor.status,
         fingerprint: anchor.fingerprint,
-        secured_at: anchor.secured_at,
-        tx_id: anchor.tx_id,
+        secured_at: anchor.chain_timestamp ?? null,
+        tx_id: anchor.chain_tx_id ?? null,
         anomalies,
       });
     }
@@ -170,16 +170,16 @@ router.post('/', async (req: Request, res: Response) => {
     // Audit event
     await db.from('audit_events').insert({
       event_type: 'AUDIT_BATCH_VERIFY',
+      event_category: 'SYSTEM',
       org_id: membership.org_id,
-      resource_type: 'audit',
-      metadata: {
+      details: JSON.stringify({
         total_verified: results.length,
         passed: results.filter(r => r.status === 'PASS').length,
         failed: results.filter(r => r.status === 'FAIL').length,
         not_found: results.filter(r => r.status === 'NOT_FOUND').length,
         anomalies_found: results.filter(r => r.anomalies.length > 0).length,
         sampling: sample_percentage ? { percentage: sample_percentage, seed } : undefined,
-      },
+      }),
     });
 
     const totalPopulation = sample_percentage

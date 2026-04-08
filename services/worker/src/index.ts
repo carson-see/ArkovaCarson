@@ -56,10 +56,16 @@ if (config.nodeEnv === 'production') {
 // ─── X-Request-Id on every response (DX-6) ───
 app.use(correlationIdMiddleware);
 
+// ─── Global CORS (BUG-UAT-12 / SCRUM-499) ───
+// Apply CORS middleware globally so OPTIONS preflights are handled
+// for ALL routes (health, billing, admin, anchor, cron, api/v1, etc.).
+// Previously corsMiddleware was per-route which missed OPTIONS preflight.
+app.use(corsMiddleware);
+
 // ─── Health check — always available, no auth (Constitution 1.9) ───
 // P7-TS-06: Enhanced with subsystem checks (anchoring, KMS, fee rate)
-// BUG-UAT-12: CORS enabled so frontend System Health page can reach /health
-app.get('/health', corsMiddleware, async (req, res) => {
+// BUG-UAT-12: CORS handled globally above (SCRUM-499)
+app.get('/health', async (req, res) => {
   const detailed = req.query.detailed === 'true';
 
   const deps: HealthCheckDeps = {
@@ -161,9 +167,9 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 });
 
 // Identity & org verification — internal (frontend-facing), not behind feature gate
-app.use('/api/v1/identity', corsMiddleware, rateLimiters.api, requireAuthMw, identityRouter);
-app.use('/api/v1/org', corsMiddleware, rateLimiters.api, requireAuthMw, orgVerificationRouter);
-app.use('/api/v1/org/sub-orgs', corsMiddleware, rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
+app.use('/api/v1/identity', rateLimiters.api, requireAuthMw, identityRouter);
+app.use('/api/v1/org', rateLimiters.api, requireAuthMw, orgVerificationRouter);
+app.use('/api/v1/org/sub-orgs', rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);

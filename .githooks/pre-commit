@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook: TDD enforcement + lint + typecheck
+#
+# Install: git config core.hooksPath .githooks
+#
+
+set -euo pipefail
+
+echo "=== Pre-commit: TDD enforcement ==="
+scripts/enforce-tdd.sh --staged
+
+echo "=== Pre-commit: TypeCheck ==="
+npx tsc --noEmit
+
+echo "=== Pre-commit: Lint ==="
+npm run lint
+
+echo "=== Pre-commit: All checks passed ==="

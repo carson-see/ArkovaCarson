@@ -10,8 +10,11 @@
  * Story: PH3-ESIG-01 (SCRUM-422)
  */
 
+// @ts-ignore — asn1js has no compatible type declarations
 import * as asn1js from 'asn1js';
+// @ts-ignore — pkijs has no compatible type declarations
 import * as pkijs from 'pkijs';
+// @ts-ignore — pvtsutils has no compatible type declarations
 import * as pvtsutils from 'pvtsutils';
 import type { SignatureLevel, LtvData } from '../types.js';
 import { ETSI_PROFILE, OID } from '../constants.js';

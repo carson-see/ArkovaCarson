@@ -203,7 +203,7 @@ export async function analyzeFeedbackForPromptImprovement(
         rejectionRate,
         editRate,
         totalFeedback: s.totalSuggestions,
-        commonCorrections: [], // Populated by getCommonCorrections if available
+        commonCorrections: [] as Array<{ original: string; corrected: string; count: number }>, // Populated by getCommonCorrections if available
         suggestion,
       };
     })

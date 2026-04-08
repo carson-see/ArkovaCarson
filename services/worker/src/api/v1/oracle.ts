@@ -97,7 +97,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     }
 
     // Resolve org names for all unique org_ids
-    const orgIds = [...new Set((anchors ?? []).map((a) => a.org_id).filter(Boolean))];
+    const orgIds = [...new Set((anchors ?? []).map((a) => a.org_id).filter((id): id is string => id != null))];
     const orgNameMap = new Map<string, string>();
     if (orgIds.length > 0) {
       const { data: orgs } = await db

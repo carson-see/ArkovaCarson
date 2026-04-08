@@ -20,6 +20,7 @@ import { useChecklist } from '@/hooks/useChecklist';
 import { AppShell } from '@/components/layout';
 import { StatCard, EmptyState } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
+import { IssueCredentialForm } from '@/components/organization';
 import { RecordsList, type Record } from '@/components/records';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ROUTES, recordDetailPath, orgProfilePath } from '@/lib/routes';
+import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -55,6 +56,7 @@ export function DashboardPage() {
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
 
@@ -156,25 +158,35 @@ export function DashboardPage() {
     setCurrentPage(1);
   }, []);
 
-  // BUG-UAT-01 / SCRUM-488: Use count queries for ORG_ADMIN so stats reflect
-  // all org records, not just the 100-record paginated fetch from useAnchors.
+  // PERF: Use SECURITY DEFINER RPCs (migration 0176) instead of 3 separate
+  // count queries through RLS. Single RPC call bypasses RLS, uses indexes,
+  // returns in <100ms instead of 5s+ timeout on 1.4M row table.
   const [orgStats, setOrgStats] = useState<{ total: number; secured: number; pending: number } | null>(null);
   useEffect(() => {
-    if (profile?.role !== 'ORG_ADMIN' || !user) return;
-    async function fetchOrgStats() {
-      const [totalRes, securedRes, pendingRes] = await Promise.all([
-        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null),
-        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'SECURED'),
-        supabase.from('anchors').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('status', 'PENDING'),
-      ]);
+    if (!user) return;
+    async function fetchStats() {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rpcName = profile?.role === 'ORG_ADMIN' && profile?.org_id
+        ? 'get_org_anchor_stats'
+        : 'get_user_anchor_stats';
+      const rpcParam = profile?.role === 'ORG_ADMIN' && profile?.org_id
+        ? { p_org_id: profile.org_id }
+        : { p_user_id: user!.id };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase as any).rpc(rpcName, rpcParam);
+      if (rpcError) {
+        console.error('Dashboard stats RPC error:', rpcError);
+        return;
+      }
+      const result = data ?? {};
       setOrgStats({
-        total: totalRes.count ?? 0,
-        secured: securedRes.count ?? 0,
-        pending: pendingRes.count ?? 0,
+        total: result.total ?? 0,
+        secured: result.secured ?? 0,
+        pending: result.pending ?? 0,
       });
     }
-    fetchOrgStats();
-  }, [profile?.role, user]);
+    fetchStats();
+  }, [profile?.role, profile?.org_id, user]);
 
   const stats = orgStats ?? {
     total: records.length,
@@ -301,7 +313,7 @@ export function DashboardPage() {
           <CardTitle className="text-[17px] font-semibold">My Records</CardTitle>
           <Button onClick={() => {
             if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-              navigate(orgProfilePath(profile.org_id));
+              setIssueDialogOpen(true);
             } else {
               setSecureDialogOpen(true);
             }
@@ -357,7 +369,7 @@ export function DashboardPage() {
                 : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
               onAction={() => {
                 if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-                  navigate(orgProfilePath(profile.org_id));
+                  setIssueDialogOpen(true);
                 } else {
                   setSecureDialogOpen(true);
                 }
@@ -460,6 +472,13 @@ export function DashboardPage() {
       <SecureDocumentDialog
         open={secureDialogOpen}
         onOpenChange={setSecureDialogOpen}
+        onSuccess={handleSecureSuccess}
+      />
+
+      {/* SCRUM-500: Issue Credential dialog for ORG_ADMIN users */}
+      <IssueCredentialForm
+        open={issueDialogOpen}
+        onOpenChange={setIssueDialogOpen}
         onSuccess={handleSecureSuccess}
       />
 

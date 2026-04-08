@@ -212,7 +212,7 @@ export async function hybridSearch(
       ...(filters?.source ? { p_source_filter: filters.source } : {}),
     }).catch((err: unknown) => {
       logger.warn({ error: err }, 'BM25 search failed, falling back to dense-only');
-      return { data: null, error: err };
+      return { data: null as null, error: err };
     }),
 
     // Dense: Embedding cosine similarity search
@@ -242,7 +242,7 @@ export async function hybridSearch(
     return denseHits.slice(0, limit).map((hit, i) => ({
       public_record_id: hit.public_record_id,
       rrf_score: hit.score,
-      bm25_rank: null,
+      bm25_rank: null as number | null,
       dense_rank: i + 1,
       dense_score: hit.score,
     }));

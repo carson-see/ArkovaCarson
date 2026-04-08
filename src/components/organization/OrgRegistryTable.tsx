@@ -148,11 +148,13 @@ export function OrgRegistryTable({
     setLoading(true);
 
     // SCRUM-493: Use 'exact' count since 'estimated' can return 0 for filtered queries on large tables.
+    // Push pipeline_source filter to DB level to avoid fetching 1.4M+ pipeline records client-side.
     let query = supabase
       .from('anchors')
-      .select('*', { count: 'exact' })
+      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata', { count: 'exact' })
       .eq('org_id', orgId)
       .is('deleted_at', null)
+      .is('metadata->pipeline_source', null)
       .order('created_at', { ascending: false })
       .range((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE - 1);
 
@@ -184,13 +186,9 @@ export function OrgRegistryTable({
     if (error) {
       console.error('Error fetching anchors:', error);
     } else {
-      // Exclude pipeline-generated anchors (pipeline_source in metadata)
-      const userAnchors = (data || []).filter((a) => {
-        const meta = a.metadata as { pipeline_source?: string } | null;
-        return !meta?.pipeline_source;
-      });
-      setAnchors(userAnchors);
-      setTotalCount(userAnchors.length < PAGE_SIZE ? userAnchors.length + (currentPage - 1) * PAGE_SIZE : (count || 0));
+      // Pipeline records already excluded at DB level via metadata->pipeline_source IS NULL
+      setAnchors((data || []) as typeof anchors);
+      setTotalCount(count || 0);
     }
 
     setLoading(false);

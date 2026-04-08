@@ -178,7 +178,7 @@ export async function processPublicRecordAnchoring(
       if (chunk.length < chunkSize) break;
     }
   }
-  const fetchError = null;
+  const fetchError: Error | null = null;
 
   if (fetchError) {
     logger.error({ error: fetchError }, 'Failed to fetch unanchored public records');

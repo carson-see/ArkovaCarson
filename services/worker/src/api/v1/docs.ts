@@ -11,7 +11,8 @@ import swaggerUi from 'swagger-ui-express';
 const router = Router();
 
 /** OpenAPI 3.0 specification for the Verification API */
-export const openApiSpec = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const openApiSpec: Record<string, any> = {
   openapi: '3.0.3',
   info: {
     title: 'Arkova Verification API',

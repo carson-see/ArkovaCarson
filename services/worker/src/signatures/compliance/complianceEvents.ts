@@ -89,10 +89,10 @@ export async function checkAnchorDelays(orgId: string): Promise<ComplianceEvent[
 
   const { data: stale } = await db
     .from('anchors')
-    .select('public_id, submitted_at')
+    .select('public_id, created_at')
     .eq('org_id', orgId)
     .eq('status', 'SUBMITTED')
-    .lt('submitted_at', oneHourAgo)
+    .lt('created_at', oneHourAgo)
     .is('deleted_at', null);
 
   if (stale && stale.length > 0) {
@@ -102,7 +102,7 @@ export async function checkAnchorDelays(orgId: string): Promise<ComplianceEvent[
       severity: 'warning',
       data: {
         delayed_count: stale.length,
-        oldest_submission: stale[0].submitted_at,
+        oldest_submission: stale[0].created_at,
         public_ids: stale.slice(0, 10).map(a => a.public_id),
       },
     });
@@ -159,7 +159,7 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
             endpoint_id: ep.id,
             event_type: event.event_type,
             event_id: crypto.randomUUID(),
-            payload: event.data,
+            payload: event.data as any,
             status: 'pending',
           }).then(() => {}, () => {});
         }

@@ -54,7 +54,7 @@ router.get('/', async (req: Request, res: Response) => {
     // Fetch all anchors in period
     const { data: anchors } = await db
       .from('anchors')
-      .select('status, created_at, submitted_at, secured_at')
+      .select('status, created_at, chain_timestamp')
       .eq('org_id', orgId)
       .gte('created_at', from)
       .lte('created_at', to)
@@ -113,8 +113,8 @@ router.get('/', async (req: Request, res: Response) => {
       const b = ensureBucket(getBucket(a.created_at));
       b.anchor_count++;
       if (a.status === 'SECURED') b.secured_count++;
-      if (a.submitted_at && a.secured_at) {
-        b.total_delay_ms += new Date(a.secured_at).getTime() - new Date(a.submitted_at).getTime();
+      if (a.created_at && a.chain_timestamp) {
+        b.total_delay_ms += new Date(a.chain_timestamp).getTime() - new Date(a.created_at).getTime();
         b.delay_count++;
       }
     }

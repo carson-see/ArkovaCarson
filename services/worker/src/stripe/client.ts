@@ -66,18 +66,20 @@ export function verifyWebhookSignature(
 export async function createCheckoutSession(params: {
   priceId: string;
   userId: string;
-  customerEmail: string;
-  successUrl: string;
-  cancelUrl: string;
+  customerEmail?: string;
+  successUrl?: string;
+  cancelUrl?: string;
+  mode?: 'payment' | 'subscription';
+  metadata?: Record<string, string>;
 }): Promise<{ sessionId: string; url: string }> {
   if (config.useMocks) {
     const result = await mockStripeClient.createCheckoutSession({
       line_items: [{ price: params.priceId, quantity: 1 }],
-      success_url: params.successUrl,
-      cancel_url: params.cancelUrl,
+      success_url: params.successUrl ?? '',
+      cancel_url: params.cancelUrl ?? '',
       metadata: { user_id: params.userId, price_id: params.priceId },
     });
-    return { sessionId: result.id, url: result.url };
+    return { sessionId: result.id, url: result.url ?? '' };
   }
 
   const session = await stripe.checkout.sessions.create({

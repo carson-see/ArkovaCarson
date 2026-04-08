@@ -28,6 +28,10 @@ import type {
   SignatureFormat,
   SignatureLevel,
   RevocationReason,
+  KmsProvider,
+  KeyAlgorithm,
+  CertificateStatus,
+  TrustLevel,
 } from '../../signatures/types.js';
 import { getAdesEngine } from '../../signatures/engineFactory.js';
 
@@ -181,18 +185,20 @@ router.post('/sign', async (req: Request, res: Response) => {
     }
 
     // Generate public ID
-    const { data: orgData } = await db
+    // short_code not yet in generated types
+    const { data: orgData } = await (db as any)
       .from('organizations')
       .select('short_code')
       .eq('id', orgId)
       .single();
 
-    const shortCode = orgData?.short_code || 'ORG';
+    const shortCode = (orgData as Record<string, unknown> | null)?.short_code || 'ORG';
     const uniqueSuffix = crypto.randomBytes(4).toString('hex').toUpperCase();
     const publicId = `ARK-${shortCode}-SIG-${uniqueSuffix}`;
 
     // Create the signature record (PENDING — engine processes async or inline)
-    const { data: sigRecord, error: insertErr } = await db
+    // signatures table not yet fully in generated types — cast to any
+    const { data: sigRecord, error: insertErr } = await (db as any)
       .from('signatures')
       .insert({
         public_id: publicId,
@@ -234,19 +240,19 @@ router.post('/sign', async (req: Request, res: Response) => {
       fingerprintSha256: cert.fingerprint_sha256,
       certificatePem: cert.certificate_pem,
       chainPem: cert.chain_pem || [],
-      kmsProvider: cert.kms_provider,
+      kmsProvider: cert.kms_provider as KmsProvider,
       kmsKeyId: cert.kms_key_id,
-      keyAlgorithm: cert.key_algorithm,
+      keyAlgorithm: cert.key_algorithm as KeyAlgorithm,
       notBefore: new Date(cert.not_before),
       notAfter: new Date(cert.not_after),
-      status: cert.status,
-      trustLevel: cert.trust_level,
+      status: cert.status as CertificateStatus,
+      trustLevel: cert.trust_level as TrustLevel,
       qtspName: cert.qtsp_name,
       euTrustedListEntry: cert.eu_trusted_list_entry,
       createdAt: new Date(cert.created_at),
       updatedAt: new Date(cert.updated_at),
       createdBy: cert.created_by,
-      metadata: cert.metadata || {},
+      metadata: (cert.metadata || {}) as Record<string, unknown>,
     };
 
     const signResult = await engine.sign(
@@ -276,7 +282,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     }
 
     // Update signature record with engine result
-    const { error: updateErr } = await db
+    const { error: updateErr } = await (db as any)
       .from('signatures')
       .update({
         status: signResult.status,
@@ -298,17 +304,18 @@ router.post('/sign', async (req: Request, res: Response) => {
     // Emit audit event
     await db.from('audit_events').insert({
       event_type: signResult.status === 'COMPLETE' ? 'signature.completed' : 'signature.created',
+      event_category: 'SYSTEM',
       org_id: orgId,
-      resource_type: 'signature',
-      resource_id: sigRecord.id,
-      metadata: {
+      target_type: 'signature',
+      target_id: sigRecord.id,
+      details: JSON.stringify({
         public_id: publicId,
         format: body.format,
         level: body.level,
         status: signResult.status,
         certificate_id: body.signer_certificate_id,
         ltv_embedded: signResult.ltvDataEmbedded,
-      },
+      }),
     });
 
     // Return response
@@ -344,7 +351,7 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const { data: sig, error } = await db
+    const { data: sig, error } = await (db as any)
       .from('signatures')
       .select('*, signing_certificates(subject_cn, subject_org, fingerprint_sha256)')
       .eq('public_id', id)
@@ -408,7 +415,7 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
     const body = parsed.data;
 
     // Find the signature
-    let query = db.from('signatures').select('*');
+    let query = (db as any).from('signatures').select('*');
 
     if (body.signature_id) {
       query = query.eq('public_id', body.signature_id);
@@ -495,9 +502,10 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
     if (req.authUserId) {
       await db.from('audit_events').insert({
         event_type: 'signature.verified',
-        resource_type: 'signature',
-        resource_id: sig.id,
-        metadata: { valid, checks_passed: Object.values(checks).filter(c => c.status === 'PASS').length },
+        event_category: 'SYSTEM',
+        target_type: 'signature',
+        target_id: sig.id,
+        details: JSON.stringify({ valid, checks_passed: Object.values(checks).filter(c => c.status === 'PASS').length }),
       });
     }
 
@@ -548,7 +556,7 @@ router.get('/signatures', async (req: Request, res: Response) => {
       return;
     }
 
-    let query = db
+    let query = (db as any)
       .from('signatures')
       .select('public_id, format, level, status, jurisdiction, document_fingerprint, signer_name, signer_org, signed_at, created_at')
       .eq('org_id', membership.org_id)
@@ -612,7 +620,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     const { reason, detail } = parsed.data;
 
     // Find the signature and verify ownership
-    const { data: sig, error: findErr } = await db
+    const { data: sig, error: findErr } = await (db as any)
       .from('signatures')
       .select('id, public_id, status, org_id')
       .eq('public_id', id)
@@ -643,7 +651,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     }
 
     // Revoke
-    const { error: updateErr } = await db
+    const { error: updateErr } = await (db as any)
       .from('signatures')
       .update({
         status: 'REVOKED',
@@ -661,10 +669,11 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     // Emit audit event
     await db.from('audit_events').insert({
       event_type: 'signature.revoked',
+      event_category: 'SYSTEM',
       org_id: sig.org_id,
-      resource_type: 'signature',
-      resource_id: sig.id,
-      metadata: { reason, detail, public_id: sig.public_id },
+      target_type: 'signature',
+      target_id: sig.id,
+      details: JSON.stringify({ reason, detail, public_id: sig.public_id }),
     });
 
     res.json({

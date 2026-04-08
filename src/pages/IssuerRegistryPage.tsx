@@ -172,10 +172,15 @@ export function IssuerRegistryPage() {
                   </span>
                 )}
                 {profile.domain && (
-                  <span className="inline-flex items-center gap-1">
+                  <a
+                    href={profile.domain.startsWith('http') ? profile.domain : `https://${profile.domain}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 hover:text-[#00d4ff] transition-colors"
+                  >
                     <Globe className="h-3 w-3" />
                     {profile.domain}
-                  </span>
+                  </a>
                 )}
               </div>
 

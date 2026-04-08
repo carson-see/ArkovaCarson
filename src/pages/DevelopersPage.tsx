@@ -209,8 +209,8 @@ export function DevelopersPage() {
           </div>
         </section>
 
-        {/* Feature Grid */}
-        <section className="px-6 py-20 max-w-7xl mx-auto">
+        {/* Feature Grid — BUG-UAT5-05: reduced top padding to close gap after hero metrics */}
+        <section className="px-6 pt-4 pb-12 max-w-7xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <div className="bg-[#192028] p-8 rounded-lg group hover:bg-[#242b32] transition-colors">
               <div className="text-[#a8e8ff] mb-6">
