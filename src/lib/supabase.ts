@@ -31,8 +31,9 @@ export const supabase = createClient<Database>(supabaseUrl, safeKey, {
 // SCRUM-371: Strip URL fragment after Supabase has read it to prevent
 // access_token from persisting in the address bar or appearing in
 // subsequent console error logs / Sentry breadcrumbs.
+// Use a delayed cleanup to avoid racing with detectSessionInUrl.
 if (typeof window !== 'undefined' && window.location.hash?.includes('access_token')) {
-  queueMicrotask(() => {
+  setTimeout(() => {
     window.history.replaceState(null, '', window.location.pathname + window.location.search);
-  });
+  }, 2000);
 }
