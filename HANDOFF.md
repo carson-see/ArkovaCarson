@@ -12,7 +12,7 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0180, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0180 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 20 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
+**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0181, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00240-wtm with admin-stats RPC optimization). **All migrations through 0181 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
 
 ### Open Blockers
 
@@ -20,12 +20,26 @@
 |----|-------|----------|--------|-------------|
 | **SCRUM-502** | **Security Remediation (BIA Assessment)** | **HIGHEST** | **OPEN** | Epic: Upstash rate limiting, FileVault, incident response, SOC 2 framework. |
 | **SCRUM-490** | **Attestation stuck 15+ days** | **HIGH** | **OPEN** | Anchoring pipeline not processing attestations. |
-| **BUG-S33-02** | **Billing page skeleton timeout** | **MEDIUM** | **OPEN** | Worker billing endpoint times out. Investigate `/api/billing/status`. |
-| **BUG-S33-03** | **Admin Overview skeleton timeout** | **MEDIUM** | **FIX READY** | Worker admin-stats.ts optimized (uses RPCs). Needs worker deploy. |
+| ~~BUG-S33-02~~ | ~~Billing page skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Added 8s AbortController timeout; falls back to Supabase count. |
+| ~~BUG-S33-03~~ | ~~Admin Overview skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Worker revision 00240-wtm deployed with RPC-based admin-stats. |
 
 ### Jira Status (2026-04-07)
 
 37 open issues (37 To Do, 5 Blocked). 5 Jira issues transitioned to Done today (4 GEO + 1 duplicate). See Jira SCRUM board for full backlog.
+
+### Recent Changes (2026-04-08, Session 34 — Worker Deploy + Bug Fixes + Merge)
+
+**Worker deployed. All 4 UAT bugs resolved. Branch merged to main. 42 stale branches cleaned.**
+
+| Change | Detail |
+|--------|--------|
+| **Worker deploy** | Fixed GCP secrets issue (placeholder "placeholder" failed Zod URL validation). Removed `bitcoin-rpc-url` and `openstates-api-key` from Cloud Run env (both optional). Revision 00240-wtm serving 100% traffic with admin-stats RPC optimization. |
+| **BUG-S33-01 fix** | Migration 0181: `search_public_issuers` now excludes pipeline records + uses `profiles.is_public_profile` instead of non-existent `organizations.is_public`. Credential count: 1.4M → 51. Dropped stale 2-arg overload from 0177. |
+| **BUG-S33-02 fix** | BillingPage fetch now has 8s AbortController timeout. Falls back to Supabase anchor count instead of hanging. |
+| **BUG-S33-04 fix** | `useAnchorStats` maps both formats: cached (`pending_count`) and aggregated (`PENDING`). Treasury pipeline status now shows real data. |
+| **Bundle optimization** | Named `manualChunks` for `@huggingface/transformers` (vendor-ai-ner) and `pdfjs-dist` (vendor-pdf). Stable CDN cache filenames. Both already dynamically imported — no static import issues found. |
+| **PR #337 merged** | Squash-merged `fix/remaining-uat-bugs` → `main`. 117 files changed, 4,615 insertions. |
+| **Branch cleanup** | 42 stale local branches deleted, 17 worktrees removed. Only `main` remains. |
 
 ### Recent Changes (2026-04-08, Session 33 — Dashboard Performance + UAT Testing)
 
