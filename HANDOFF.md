@@ -12,20 +12,35 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 180 migration files (0001-0179, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0173 applied (0174-0179 are renumbered duplicates already applied under old numbers).** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 20 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
+**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0180, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (166K+ SECURED, 1.41M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run. **All migrations through 0180 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 20 merged branches deleted, 9 worktrees removed, 8 stashes cleared.
 
 ### Open Blockers
 
 | ID | Issue | Severity | Status | Next Action |
 |----|-------|----------|--------|-------------|
-| **SCRUM-499** | **Worker CORS not configured** | **HIGHEST** | **OPEN** | Blocks all frontend-to-worker API calls. Configure CORS on Cloud Run worker. |
 | **SCRUM-502** | **Security Remediation (BIA Assessment)** | **HIGHEST** | **OPEN** | Epic: Upstash rate limiting, FileVault, incident response, SOC 2 framework. |
 | **SCRUM-490** | **Attestation stuck 15+ days** | **HIGH** | **OPEN** | Anchoring pipeline not processing attestations. |
-| **SCRUM-500** | **Dashboard "Issue Credential" wrong dialog** | **HIGH** | **OPEN** | Opens Secure Document instead of credential issuance. |
+| **BUG-S33-02** | **Billing page skeleton timeout** | **MEDIUM** | **OPEN** | Worker billing endpoint times out. Investigate `/api/billing/status`. |
+| **BUG-S33-03** | **Admin Overview skeleton timeout** | **MEDIUM** | **FIX READY** | Worker admin-stats.ts optimized (uses RPCs). Needs worker deploy. |
 
 ### Jira Status (2026-04-07)
 
 37 open issues (37 To Do, 5 Blocked). 5 Jira issues transitioned to Done today (4 GEO + 1 duplicate). See Jira SCRUM board for full backlog.
+
+### Recent Changes (2026-04-08, Session 33 — Dashboard Performance + UAT Testing)
+
+**Critical performance fixes for 1.4M row anchors table. Comprehensive UAT click-through testing.**
+
+| Change | Detail |
+|--------|--------|
+| **useAnchors perf fix** | Added explicit user_id/org_id filter to bypass full-table RLS scan. Dashboard load: 10s+ → <500ms. Query key includes org_id to prevent stale empty state. |
+| **Public Issuer RPC fix** | Migration 0180: get_public_org_profile + get_public_issuer_registry exclude pipeline records. Public issuer page: infinite spinner → <1s. |
+| **Admin stats optimization** | Worker admin-stats.ts: 11 queries → 3 using SECURITY DEFINER RPCs. Code ready, needs worker deploy. |
+| **Search fix** | Carson's profile set to is_public_profile=true. "Arkova" issuer search now works. |
+| **UAT results** | 24 pages tested. 21 PASS, 3 with issues (Billing skeleton, Admin Overview skeleton, search count includes pipeline). |
+| **Migration 0180** | Applied to production. Pipeline filter on public RPCs + statement_timeout. |
+| **Vercel deploys** | 3 deploys (perf fix, org_id fix, query key fix). All auto-deployed. |
+| **Worker deploy** | Build succeeded but deploy failed — missing GCP secrets (openstates-api-key, bitcoin-rpc-url). Active revision: 00234-gxl. |
 
 ### Recent Changes (2026-04-07, Session 31 — Record Details + RLS Performance + Description Backfill)
 
