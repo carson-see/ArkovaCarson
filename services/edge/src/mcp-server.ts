@@ -169,7 +169,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
           '  list_agents          — List registered AI agents for the organization',
           '',
           'Authentication: API key (X-API-Key header) or OAuth Bearer token.',
-          'Get your API key at https://app.arkova.io/settings/api-keys',
+          'Get your API key at https://app.arkova.ai/settings/api-keys',
           '',
           'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
         ].join('\n'),
@@ -363,7 +363,7 @@ function handleProtectedResourceMetadata(baseUrl: string): Response {
     authorization_servers: [`${baseUrl}/auth`],
     scopes_supported: ['mcp:verify', 'mcp:search', 'mcp:anchor'],
     bearer_methods_supported: ['header'],
-    resource_documentation: 'https://app.arkova.io/docs/mcp',
+    resource_documentation: 'https://app.arkova.ai/docs/mcp',
   }), {
     headers: {
       'Content-Type': 'application/json',
@@ -422,7 +422,7 @@ export async function handleMcpRequest(
       JSON.stringify({
         error: 'Unauthorized',
         message: 'Valid API key (X-API-Key header) or OAuth Bearer token required.',
-        docs: 'https://app.arkova.io/settings/api-keys',
+        docs: 'https://app.arkova.ai/settings/api-keys',
       }),
       {
         status: 401,

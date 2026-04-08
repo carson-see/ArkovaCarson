@@ -17,7 +17,7 @@
       "authentication": {
         "type": "api_key",
         "headerName": "X-API-Key",
-        "instructions": "Get your API key at https://app.arkova.io/settings/api-keys"
+        "instructions": "Get your API key at https://app.arkova.ai/settings/api-keys"
       }
     }
   ],

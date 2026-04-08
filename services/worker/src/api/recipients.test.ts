@@ -26,7 +26,7 @@ const {
   });
   const mockDbFrom = vi.fn();
   const mockConfig = {
-    frontendUrl: 'https://app.arkova.io',
+    frontendUrl: 'https://app.arkova.ai',
     resendApiKey: 'test-key',
     emailFrom: 'noreply@arkova.ai',
   };

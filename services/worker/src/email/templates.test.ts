@@ -14,7 +14,7 @@ describe('buildActivationEmail', () => {
   const baseData = {
     recipientEmail: 'student@example.com',
     organizationName: 'University of Michigan',
-    activationUrl: 'https://app.arkova.io/activate?token=abc123',
+    activationUrl: 'https://app.arkova.ai/activate?token=abc123',
   };
 
   it('returns subject and HTML', () => {

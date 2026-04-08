@@ -107,7 +107,7 @@ describe('verify', () => {
         expiry_date: null,
         anchor_timestamp: '2026-01-01T00:00:00Z',
         network_receipt_id: 'tx-abc',
-        record_uri: 'https://app.arkova.io/verify/ARK-2026-001',
+        record_uri: 'https://app.arkova.ai/verify/ARK-2026-001',
       }),
     });
 

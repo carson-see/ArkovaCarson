@@ -319,7 +319,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     });
 
     // Return response
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.io';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.ai';
     const response: SignResponse = {
       signatureId: publicId,
       status: signResult.status,
@@ -362,7 +362,7 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
       return;
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.io';
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.ai';
 
     const response: Record<string, unknown> = {
       signature_id: sig.public_id,
