@@ -127,7 +127,8 @@ export function OrgProfilePage() {
         .from('anchors')
         .select('id', { count: 'exact', head: true })
         .eq('org_id', orgId)
-        .is('deleted_at', null);
+        .is('deleted_at', null)
+        .is('metadata->pipeline_source', null);
       if (!countError && count !== null) {
         setRecordsCount(count);
       }

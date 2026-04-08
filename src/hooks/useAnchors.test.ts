@@ -80,13 +80,16 @@ describe('useAnchors', () => {
       },
     ];
 
+    const mockIs = vi.fn();
+    mockIs.mockReturnValue({
+      is: mockIs,
+      order: vi.fn().mockReturnValue({
+        limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+      }),
+    });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: vi.fn().mockReturnValue({
-          order: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
-          }),
-        }),
+        is: mockIs,
       }),
     });
 
@@ -111,16 +114,19 @@ describe('useAnchors', () => {
   });
 
   it('sets error when fetch fails', async () => {
+    const mockIs = vi.fn();
+    mockIs.mockReturnValue({
+      is: mockIs,
+      order: vi.fn().mockReturnValue({
+        limit: vi.fn().mockResolvedValue({
+          data: null,
+          error: { message: 'RLS policy violation' },
+        }),
+      }),
+    });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: vi.fn().mockReturnValue({
-          order: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({
-              data: null,
-              error: { message: 'RLS policy violation' },
-            }),
-          }),
-        }),
+        is: mockIs,
       }),
     });
 
@@ -149,13 +155,16 @@ describe('useAnchors', () => {
       },
     ];
 
+    const mockIs = vi.fn();
+    mockIs.mockReturnValue({
+      is: mockIs,
+      order: vi.fn().mockReturnValue({
+        limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
+      }),
+    });
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
-        is: vi.fn().mockReturnValue({
-          order: vi.fn().mockReturnValue({
-            limit: vi.fn().mockResolvedValue({ data: mockAnchors, error: null }),
-          }),
-        }),
+        is: mockIs,
       }),
     });
 

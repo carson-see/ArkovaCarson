@@ -18,9 +18,16 @@ interface CredentialCardProps {
   anchor: IssuerRegistryAnchor;
 }
 
-/** Strip HTML tags from labels that may contain raw markup from source data */
+/** Strip HTML tags and decode HTML entities from labels (SCRUM-501) */
 function stripHtmlTags(text: string): string {
-  return text.replace(/<[^>]*>/g, '');
+  const stripped = text.replace(/<[^>]*>/g, '');
+  // Decode HTML entities (&amp; &lt; &gt; &#8211; etc.)
+  const textarea = typeof document !== 'undefined' ? document.createElement('textarea') : null;
+  if (textarea) {
+    textarea.innerHTML = stripped;
+    return textarea.value;
+  }
+  return stripped.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'");
 }
 
 export function CredentialCard({ anchor }: Readonly<CredentialCardProps>) {

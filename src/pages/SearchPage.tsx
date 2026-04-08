@@ -54,8 +54,8 @@ interface FingerprintResult {
 
 const EXAMPLE_QUERIES = [
   { label: 'Arkova', mode: 'issuers' as SearchMode },
-  { label: 'SEC filing', mode: 'credentials' as SearchMode },
-  { label: 'Federal Register', mode: 'credentials' as SearchMode },
+  { label: 'patent', mode: 'credentials' as SearchMode },
+  { label: 'federal', mode: 'credentials' as SearchMode },
 ];
 
 export function SearchPage() {
@@ -299,9 +299,13 @@ export function SearchPage() {
         {/* Search type tabs */}
         <Tabs value={searchMode} onValueChange={(v) => {
           setSearchMode(v as SearchMode);
-          // BUG-UAT-05: Clear stale results when switching tabs
+          // BUG-UAT-05 / SCRUM-492: Clear all stale results when switching tabs
           setHasSearched(false);
           setQuery('');
+          setFpResult(null);
+          setFpError(null);
+          setPersonResults([]);
+          setPersonError(null);
         }} className="mb-4">
           <TabsList className="w-full grid grid-cols-3">
             <TabsTrigger value="issuers" className="gap-1.5">

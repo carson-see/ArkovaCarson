@@ -20,6 +20,7 @@ import { useChecklist } from '@/hooks/useChecklist';
 import { AppShell } from '@/components/layout';
 import { StatCard, EmptyState } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
+import { IssueCredentialForm } from '@/components/organization';
 import { RecordsList, type Record } from '@/components/records';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,7 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { ROUTES, recordDetailPath, orgProfilePath } from '@/lib/routes';
+import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -55,6 +56,7 @@ export function DashboardPage() {
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+  const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
 
@@ -301,7 +303,7 @@ export function DashboardPage() {
           <CardTitle className="text-[17px] font-semibold">My Records</CardTitle>
           <Button onClick={() => {
             if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-              navigate(orgProfilePath(profile.org_id));
+              setIssueDialogOpen(true);
             } else {
               setSecureDialogOpen(true);
             }
@@ -357,7 +359,7 @@ export function DashboardPage() {
                 : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
               onAction={() => {
                 if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-                  navigate(orgProfilePath(profile.org_id));
+                  setIssueDialogOpen(true);
                 } else {
                   setSecureDialogOpen(true);
                 }
@@ -460,6 +462,13 @@ export function DashboardPage() {
       <SecureDocumentDialog
         open={secureDialogOpen}
         onOpenChange={setSecureDialogOpen}
+        onSuccess={handleSecureSuccess}
+      />
+
+      {/* SCRUM-500: Issue Credential dialog for ORG_ADMIN users */}
+      <IssueCredentialForm
+        open={issueDialogOpen}
+        onOpenChange={setIssueDialogOpen}
         onSuccess={handleSecureSuccess}
       />
 
