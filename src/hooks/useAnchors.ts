@@ -24,6 +24,7 @@ import { TOAST, REALTIME_TOAST_LABELS } from '@/lib/copy';
 import { queryKeys } from '@/lib/queryClient';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
+import { useProfile } from './useProfile';
 import type { Database } from '@/types/database.types';
 import type { Record } from '@/components/records';
 import type { RealtimeChannel } from '@supabase/supabase-js';
@@ -58,14 +59,27 @@ function mapAnchorToRecord(anchor: AnchorPartial): Record {
 }
 
 /** Fetch anchors from Supabase — extracted for React Query.
- *  PERF: Always filter by user_id so Postgres uses
- *  idx_anchors_user_nopipeline_created instead of scanning 1.4M rows
- *  through RLS (critical for platform admin accounts). */
-async function fetchAnchorsData(userId: string): Promise<Record[]> {
-  const { data, error } = await supabase
+ *  PERF: Filter by user_id or org_id so Postgres uses indexes instead of
+ *  scanning 1.4M rows through RLS (critical for platform admin accounts).
+ *  - INDIVIDUAL users: filter by user_id (idx_anchors_user_nopipeline_created)
+ *  - ORG_ADMIN users: filter by org_id (idx_anchors_org_deleted_created) */
+async function fetchAnchorsData(
+  userId: string,
+  orgId?: string | null,
+  role?: string | null,
+): Promise<Record[]> {
+  let query = supabase
     .from('anchors')
-    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata')
-    .eq('user_id', userId)
+    .select('id, filename, fingerprint, status, created_at, chain_timestamp, file_size, credential_type, chain_tx_id, chain_block_height, public_id, metadata');
+
+  // ORG_ADMIN: show all org records; INDIVIDUAL/platform admin: show own records
+  if (role === 'ORG_ADMIN' && orgId) {
+    query = query.eq('org_id', orgId);
+  } else {
+    query = query.eq('user_id', userId);
+  }
+
+  const { data, error } = await query
     .is('deleted_at', null)
     .is('metadata->pipeline_source', null)
     .order('created_at', { ascending: false })
@@ -85,6 +99,7 @@ interface UseAnchorsReturn {
 
 export function useAnchors(): UseAnchorsReturn {
   const { user, loading: authLoading } = useAuth();
+  const { profile } = useProfile();
   const qc = useQueryClient();
   const channelRef = useRef<RealtimeChannel | null>(null);
 
@@ -94,7 +109,7 @@ export function useAnchors(): UseAnchorsReturn {
     error: queryError,
   } = useQuery({
     queryKey: queryKeys.anchors(user?.id ?? ''),
-    queryFn: () => fetchAnchorsData(user!.id),
+    queryFn: () => fetchAnchorsData(user!.id, profile?.org_id, profile?.role),
     enabled: !!user,
   });
 

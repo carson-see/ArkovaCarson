@@ -33,6 +33,14 @@ vi.mock('@/lib/supabase', () => ({
 
 vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
+vi.mock('./useProfile', () => ({
+  useProfile: () => ({
+    profile: { role: 'INDIVIDUAL', org_id: null },
+    loading: false,
+    updateProfile: vi.fn(),
+  }),
+}));
+
 describe('useAnchors', () => {
   beforeEach(() => {
     vi.clearAllMocks();
