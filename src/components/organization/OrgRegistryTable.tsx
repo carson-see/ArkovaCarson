@@ -154,7 +154,7 @@ export function OrgRegistryTable({
       .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height, metadata', { count: 'exact' })
       .eq('org_id', orgId)
       .is('deleted_at', null)
-      .is('metadata->pipeline_source', null)
+      .is('metadata->>pipeline_source', null)
       .order('created_at', { ascending: false })
       .range((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE - 1);
 

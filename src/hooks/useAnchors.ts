@@ -81,7 +81,7 @@ async function fetchAnchorsData(
 
   const { data, error } = await query
     .is('deleted_at', null)
-    .is('metadata->pipeline_source', null)
+    .is('metadata->>pipeline_source', null)
     .order('created_at', { ascending: false })
     .limit(100);
 

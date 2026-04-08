@@ -193,6 +193,9 @@ export function DashboardPage() {
     secured: records.filter(r => r.status === 'SECURED').length,
     pending: records.filter(r => r.status === 'PENDING').length,
   };
+  // PERF: Stat cards use their own loading state (RPC is <100ms).
+  // Don't block on the records query which can take 5s+ through RLS.
+  const statsLoading = profileLoading || (!orgStats && recordsLoading);
 
   const loading = profileLoading || recordsLoading;
   const hasRecords = records.length > 0;
@@ -244,28 +247,28 @@ export function DashboardPage() {
           value={stats.total}
           icon={FileText}
           variant="primary"
-          loading={loading}
+          loading={statsLoading}
         />
         <StatCard
           label="Secured"
           value={stats.secured}
           icon={CheckCircle}
           variant="success"
-          loading={loading}
+          loading={statsLoading}
         />
         <StatCard
           label="Pending"
           value={stats.pending}
           icon={Clock}
           variant="warning"
-          loading={loading}
+          loading={statsLoading}
         />
         <StatCard
           label="Attestations"
           value={attestationCount}
           icon={FileCheck}
           variant="default"
-          loading={loading}
+          loading={statsLoading}
           onClick={() => navigate(ROUTES.ATTESTATIONS)}
         />
       </div>
