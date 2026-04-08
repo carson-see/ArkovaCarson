@@ -17,11 +17,13 @@ vi.mock('@/lib/supabase', () => ({
       select: () => ({
         eq: () => ({
           is: () => ({
-            order: () => ({
-              range: () => ({
-                or: () => ({
-                  gte: () => ({
-                    lte: () => Promise.resolve({ data: [], count: 0, error: null }),
+            filter: () => ({
+              order: () => ({
+                range: () => ({
+                  or: () => ({
+                    gte: () => ({
+                      lte: () => Promise.resolve({ data: [], count: 0, error: null }),
+                    }),
                   }),
                 }),
               }),

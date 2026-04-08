@@ -35,6 +35,19 @@ Every UI task must conclude with UAT: dev server at desktop (1280px) and mobile 
 ### BACKLOG MANDATE
 Single source of truth: `docs/BACKLOG.md`. Every backlog item must exist there + have story docs in `docs/stories/`.
 
+### JIRA MANDATE
+Every task MUST update its Jira ticket. Required fields: Definition of Ready (DoR), Definition of Done (DoD), Confluence doc links, status transitions. No task is complete until Jira reflects reality.
+
+### CONFLUENCE MANDATE
+Every task that changes schema, security, API, flows, or architecture MUST update the corresponding Confluence doc (see Doc Update Matrix in Section 4). This is not optional — it is part of Definition of Done.
+
+### BUG LOG MANDATE
+Every bug created or fixed MUST be logged in the master bug tracker spreadsheet: https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0
+No exceptions. Bug found? Log it. Bug fixed? Update the row. This is the single source of truth for bugs.
+
+### CLAUDE.MD MANDATE
+CLAUDE.md must stay accurate and organized. If a task introduces new rules, patterns, env vars, migrations, or changes story status — update CLAUDE.md. Don't just append; consolidate and clean up stale content. The header stats (migrations, tests, stories) must reflect reality. Every edit should leave this file leaner and more useful.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
@@ -166,12 +179,14 @@ Anonymous: 100 req/min/IP. API key: 1,000 req/min. Batch: 10 req/min. Headers on
 - [ ] Confirm dependencies met
 - [ ] Read `agents.md` in folders you will touch
 - [ ] State your plan
+- [ ] **TESTS FIRST** — Write failing test(s) for the change BEFORE any production code (TDD MANDATE)
 
 ### While writing code
 - [ ] One story at a time
 - [ ] New tables: migration + rollback + RLS + `database.types.ts` + seed
 - [ ] New components: `src/components/<domain>/` with barrel export
 - [ ] Validators in `src/lib/validators.ts`. UI strings in `src/lib/copy.ts`.
+- [ ] **Tests pass** — Green before moving on. No skipping, no `test.skip`, no "will add later"
 
 ### After writing code
 ```bash
@@ -180,17 +195,36 @@ npm run gen:types    # if schema changed
 npm run test:e2e     # if user-facing flow changed
 ```
 
-Update `docs/confluence/` if schema/security/API changed. Update story docs + `agents.md` in modified folders.
+### MANDATORY COMPLETION GATES (every single task, no exceptions)
 
-### Definition of Done
-- All acceptance criteria met, tests passing, `typecheck` + `lint` + `test` + `lint:copy` green
-- UAT verified at desktop + mobile
-- No regressions
+**GATE 1 — Tests (TDD MANDATE)**
+- [ ] Tests written FIRST, saw them fail, then made them pass
+- [ ] `typecheck` + `lint` + `test` + `lint:copy` all green
+- [ ] Coverage thresholds met on changed files
 
-### Bug Documentation
-- **Production blockers** -> CLAUDE.md Section 8 Critical Blockers
-- **All other bugs** -> MEMORY.md Bug Tracker
-- Required: steps to reproduce, expected vs actual, root cause, actions taken, resolution, regression test
+**GATE 2 — Jira (JIRA MANDATE)**
+- [ ] Jira ticket updated: status, DoR checklist, DoD checklist
+- [ ] Confluence doc links attached to ticket
+- [ ] Acceptance criteria checked off in ticket
+
+**GATE 3 — Confluence (CONFLUENCE MANDATE)**
+- [ ] All changed areas have corresponding Confluence docs updated (see Doc Update Matrix)
+- [ ] Story docs in `docs/stories/` updated
+
+**GATE 4 — Bug Log (BUG LOG MANDATE)**
+- [ ] Any bugs found during this task: logged in [Bug Tracker Spreadsheet](https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0)
+- [ ] Any bugs fixed during this task: row updated with resolution + regression test reference
+- [ ] Production blockers also noted in CLAUDE.md Section 8
+
+**GATE 5 — agents.md**
+- [ ] `agents.md` updated in every modified folder
+
+**GATE 6 — CLAUDE.md (CLAUDE.MD MANDATE)**
+- [ ] If the task introduced new rules, patterns, conventions, tools, env vars, migrations, or story status changes: update CLAUDE.md
+- [ ] Keep CLAUDE.md organized — consolidate, remove stale info, don't just append. Every edit should leave the file cleaner than you found it.
+- [ ] Migration count, test count, story stats in the header must reflect reality after schema/test/story changes
+
+> **A task is NOT complete until all 6 gates are passed.** Announce gate status at end of every task.
 
 ---
 
