@@ -11,7 +11,6 @@
 import { config } from '../config.js';
 import { addressFromWif } from '../chain/wallet.js';
 import { createUtxoProvider } from '../chain/utxo-provider.js';
-import { createFeeEstimator } from '../chain/fee-estimator.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 
@@ -35,7 +34,9 @@ export interface TreasuryCacheData {
   error: string | null;
 }
 
-const MEMPOOL_API = 'https://mempool.space/api';
+function mempoolApiUrl(): string {
+  return config.mempoolApiUrl || 'https://mempool.space/api';
+}
 
 export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
   const data: TreasuryCacheData = {
@@ -58,91 +59,91 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
     error: null,
   };
 
-  // 1. Fetch wallet balance from mempool.space
+  const apiBase = mempoolApiUrl();
   let address: string | null = null;
+
   if (config.bitcoinTreasuryWif) {
     try {
       address = addressFromWif(config.bitcoinTreasuryWif);
-      const res = await fetch(`${MEMPOOL_API}/address/${address}`, {
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.ok) {
-        const body = await res.json() as {
-          chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
-          mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
-        };
-        data.balance_confirmed_sats = body.chain_stats.funded_txo_sum - body.chain_stats.spent_txo_sum;
-        data.balance_unconfirmed_sats = body.mempool_stats.funded_txo_sum - body.mempool_stats.spent_txo_sum;
-      }
     } catch (err) {
-      logger.warn({ error: err }, 'Treasury cache: failed to fetch balance from mempool');
-    }
-
-    // UTXO count
-    try {
-      const utxoProvider = createUtxoProvider({
-        type: 'mempool',
-        mempoolApiUrl: config.mempoolApiUrl,
-        network: config.bitcoinNetwork,
-      });
-      const utxos = await utxoProvider.listUnspent(address!);
-      data.utxo_count = utxos.length;
-    } catch (err) {
-      logger.warn({ error: err }, 'Treasury cache: failed to fetch UTXOs');
+      logger.warn({ error: err }, 'Treasury cache: failed to derive address from WIF');
     }
   }
 
-  // 2. BTC price
-  try {
-    const res = await fetch(`${MEMPOOL_API}/v1/prices`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const body = await res.json() as { USD: number };
-      data.btc_price_usd = body.USD;
-    }
-  } catch (err) {
-    logger.warn({ error: err }, 'Treasury cache: failed to fetch BTC price');
+  // Create UTXO provider once for reuse
+  const utxoProvider = createUtxoProvider({
+    type: 'mempool',
+    mempoolApiUrl: config.mempoolApiUrl,
+    network: config.bitcoinNetwork,
+  });
+
+  // Fetch balance, price, fees, UTXOs, and network info in parallel
+  const [balanceResult, priceResult, feeResult, utxoResult, networkResult] = await Promise.allSettled([
+    // 1. Balance from mempool.space
+    address
+      ? fetch(`${apiBase}/address/${address}`, { signal: AbortSignal.timeout(15_000) })
+          .then(res => res.ok ? res.json() as Promise<{
+            chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
+            mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
+          }> : null)
+      : Promise.resolve(null),
+    // 2. BTC price
+    fetch(`${apiBase}/v1/prices`, { signal: AbortSignal.timeout(10_000) })
+      .then(res => res.ok ? res.json() as Promise<{ USD: number }> : null),
+    // 3. Fee rates
+    fetch(`${apiBase}/v1/fees/recommended`, { signal: AbortSignal.timeout(10_000) })
+      .then(res => res.ok ? res.json() as Promise<{
+        fastestFee: number; halfHourFee: number; hourFee: number;
+        economyFee: number; minimumFee: number;
+      }> : null),
+    // 4. UTXO count
+    address
+      ? utxoProvider.listUnspent(address).then(utxos => utxos.length)
+      : Promise.resolve(0),
+    // 5. Network info
+    utxoProvider.getBlockchainInfo(),
+  ]);
+
+  // Process results
+  if (balanceResult.status === 'fulfilled' && balanceResult.value) {
+    const body = balanceResult.value;
+    data.balance_confirmed_sats = body.chain_stats.funded_txo_sum - body.chain_stats.spent_txo_sum;
+    data.balance_unconfirmed_sats = body.mempool_stats.funded_txo_sum - body.mempool_stats.spent_txo_sum;
+  } else if (balanceResult.status === 'rejected') {
+    logger.warn({ error: balanceResult.reason }, 'Treasury cache: failed to fetch balance');
   }
 
-  // 3. Fee rates
-  try {
-    const res = await fetch(`${MEMPOOL_API}/v1/fees/recommended`, {
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (res.ok) {
-      const fees = await res.json() as {
-        fastestFee: number;
-        halfHourFee: number;
-        hourFee: number;
-        economyFee: number;
-        minimumFee: number;
-      };
-      data.fee_fastest = fees.fastestFee;
-      data.fee_half_hour = fees.halfHourFee;
-      data.fee_hour = fees.hourFee;
-      data.fee_economy = fees.economyFee;
-      data.fee_minimum = fees.minimumFee;
-    }
-  } catch (err) {
-    logger.warn({ error: err }, 'Treasury cache: failed to fetch fee rates');
+  if (priceResult.status === 'fulfilled' && priceResult.value) {
+    data.btc_price_usd = priceResult.value.USD;
+  } else if (priceResult.status === 'rejected') {
+    logger.warn({ error: priceResult.reason }, 'Treasury cache: failed to fetch BTC price');
   }
 
-  // 4. Network info
-  try {
-    const utxoProvider = createUtxoProvider({
-      type: 'mempool',
-      mempoolApiUrl: config.mempoolApiUrl,
-      network: config.bitcoinNetwork,
-    });
-    const info = await utxoProvider.getBlockchainInfo();
-    data.block_height = info.blocks;
-    data.network_name = info.chain;
-  } catch (err) {
-    logger.warn({ error: err }, 'Treasury cache: failed to fetch network info');
+  if (feeResult.status === 'fulfilled' && feeResult.value) {
+    const fees = feeResult.value;
+    data.fee_fastest = fees.fastestFee;
+    data.fee_half_hour = fees.halfHourFee;
+    data.fee_hour = fees.hourFee;
+    data.fee_economy = fees.economyFee;
+    data.fee_minimum = fees.minimumFee;
+  } else if (feeResult.status === 'rejected') {
+    logger.warn({ error: feeResult.reason }, 'Treasury cache: failed to fetch fee rates');
   }
 
-  // 5. Anchor stats from Supabase
+  if (utxoResult.status === 'fulfilled') {
+    data.utxo_count = utxoResult.value;
+  } else {
+    logger.warn({ error: utxoResult.reason }, 'Treasury cache: failed to fetch UTXOs');
+  }
+
+  if (networkResult.status === 'fulfilled') {
+    data.block_height = networkResult.value.blocks;
+    data.network_name = networkResult.value.chain;
+  } else {
+    logger.warn({ error: networkResult.reason }, 'Treasury cache: failed to fetch network info');
+  }
+
+  // Anchor stats from Supabase
   try {
     const [
       { count: securedCount },
@@ -170,7 +171,7 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
     logger.warn({ error: err }, 'Treasury cache: failed to fetch anchor stats');
   }
 
-  // 6. Upsert into treasury_cache (singleton, id=1)
+  // Upsert into treasury_cache (singleton, id=1)
   const { error: upsertError } = await db
     .from('treasury_cache')
     .upsert({

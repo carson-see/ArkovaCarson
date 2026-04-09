@@ -69,13 +69,14 @@ interface TreasuryCacheRow {
 
 export function useTreasuryBalance() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
-  const [receipts, setTransactions] = useState<MempoolReceipt[]>([]);
+  const [receipts, setReceipts] = useState<MempoolReceipt[]>([]);
   const [feeRates, setFeeRates] = useState<MempoolFeeRates | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBalanceRef = useRef<TreasuryBalance | null>(null);
+  const lastCacheTimestampRef = useRef<string | null>(null);
 
   const fetchFromCache = useCallback(async (): Promise<boolean> => {
     try {
@@ -89,6 +90,10 @@ export function useTreasuryBalance() {
       const row = data as unknown as TreasuryCacheRow;
 
       if (!isMountedRef.current) return true;
+
+      // Skip state updates if cache hasn't changed since last poll
+      if (row.updated_at === lastCacheTimestampRef.current) return true;
+      lastCacheTimestampRef.current = row.updated_at;
 
       const confirmed = row.balance_confirmed_sats;
       const unconfirmed = row.balance_unconfirmed_sats;
@@ -227,7 +232,7 @@ export function useTreasuryBalance() {
         });
 
         if (isMountedRef.current) {
-          setTransactions(parsed);
+          setReceipts(parsed);
         }
       }
 

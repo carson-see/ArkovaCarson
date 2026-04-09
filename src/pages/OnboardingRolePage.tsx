@@ -132,7 +132,8 @@ export function OnboardingRolePage() {
 
       // 2. Now set role — this may trigger RouteGuard redirect via refreshProfile,
       //    but the plan is already saved at this point.
-      await setRole(pendingRole);
+      const roleResult = await setRole(pendingRole);
+      if (!roleResult) throw new Error('Failed to set role');
 
       await refreshProfile();
     } catch (err) {

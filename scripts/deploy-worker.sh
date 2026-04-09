@@ -152,12 +152,6 @@ fi
 # ─── Read current env vars from Cloud Run ────────────────────────────
 info "Reading current env vars from Cloud Run..."
 
-CURRENT_ENV=$($GCLOUD run services describe "$SERVICE_NAME" \
-  --region="$REGION" \
-  --project="$PROJECT_ID" \
-  --format='export' 2>/dev/null | grep -oP 'env:\K.*' || echo "")
-
-# Parse current env vars into associative array
 declare -A CURRENT_VARS
 while IFS= read -r line; do
   # Extract KEY=VALUE pairs from the service description
@@ -173,7 +167,6 @@ done < <($GCLOUD run services describe "$SERVICE_NAME" \
 
 # ─── Validate required values ────────────────────────────────────────
 info "Validating critical env vars..."
-VALIDATION_FAILED=false
 
 for var in "${!REQUIRED_VALUES[@]}"; do
   EXPECTED="${REQUIRED_VALUES[$var]}"
