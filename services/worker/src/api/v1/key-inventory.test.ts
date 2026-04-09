@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildKeyInventory, type KeyInventoryEntry } from './key-inventory.js';
+import { buildKeyInventory } from './key-inventory.js';
 
 vi.mock('../../utils/db.js', () => ({
   db: {

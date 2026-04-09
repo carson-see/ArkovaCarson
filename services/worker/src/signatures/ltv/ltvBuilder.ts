@@ -10,7 +10,7 @@
 
 import { logger } from '../../utils/logger.js';
 import type { LtvData, OcspResponse, CrlEntry } from '../types.js';
-import type { CertificateManager, CertificateInfo } from '../pki/certificateManager.js';
+import type { CertificateManager } from '../pki/certificateManager.js';
 import type { OcspClient } from '../pki/ocspClient.js';
 import type { CrlManager } from '../pki/crlManager.js';
 

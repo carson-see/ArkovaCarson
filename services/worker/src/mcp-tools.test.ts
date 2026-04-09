@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+ 
 // @ts-nocheck — edge source is outside worker rootDir; Vitest resolves it fine at runtime
 import {
   handleNessieQuery,

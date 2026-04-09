@@ -165,7 +165,6 @@ export function DashboardPage() {
   useEffect(() => {
     if (!user) return;
     async function fetchStats() {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rpcName = profile?.role === 'ORG_ADMIN' && profile?.org_id
         ? 'get_org_anchor_stats'
         : 'get_user_anchor_stats';

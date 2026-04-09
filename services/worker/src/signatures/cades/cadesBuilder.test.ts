@@ -5,7 +5,6 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import * as crypto from 'crypto';
 import { buildCadesSignature, type CadesSignatureParams } from './cadesBuilder.js';
 import { ETSI_PROFILE } from '../constants.js';
 

@@ -20,8 +20,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 import type {
+  SignResponse,
   SigningCertificate,
   Jurisdiction,
+  SignatureFormat,
+  SignatureLevel,
   KmsProvider,
   KeyAlgorithm,
   CertificateStatus,

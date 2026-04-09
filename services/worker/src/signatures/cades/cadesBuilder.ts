@@ -124,7 +124,7 @@ export function buildCadesSignature(params: CadesSignatureParams): CadesSignatur
 
 function buildSignedAttributes(
   params: CadesSignatureParams,
-  signerCert: pkijs.Certificate,
+  _signerCert: pkijs.Certificate,
 ): pkijs.SignedAndUnsignedAttributes {
   const attrs: pkijs.Attribute[] = [];
 
