@@ -331,8 +331,8 @@ describe('processBatchAnchors', () => {
 
   // ---- Constants ----
 
-  it('exports BATCH_SIZE as 100 (increased per audit)', () => {
-    expect(BATCH_SIZE).toBe(100);
+  it('exports BATCH_SIZE as 10000 (SCRUM-542: batch scaling)', () => {
+    expect(BATCH_SIZE).toBe(10000);
   });
 
   it('exports MIN_BATCH_SIZE as 1 (INEFF-2: all anchors benefit from Merkle batching)', () => {

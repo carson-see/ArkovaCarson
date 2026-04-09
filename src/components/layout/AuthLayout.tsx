@@ -33,8 +33,8 @@ export function AuthLayout({ children, title, description, wide = false }: Reado
       </div>
 
       {/* Main content */}
-      <main className="flex-1 flex items-center justify-center px-4 py-12 sm:px-6 lg:px-8">
-        <div className={`w-full ${wide ? 'max-w-3xl' : 'max-w-md'} space-y-8`}>
+      <main className="flex-1 flex items-start sm:items-center justify-center px-4 py-8 sm:py-12 sm:px-6 lg:px-8 overflow-y-auto">
+        <div className={`w-full ${wide ? 'max-w-4xl' : 'max-w-md'} space-y-8`}>
           {/* Logo and branding */}
           <div className="flex flex-col items-center text-center">
             <div className="mb-4">

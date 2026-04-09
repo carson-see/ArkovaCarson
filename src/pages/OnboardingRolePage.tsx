@@ -110,7 +110,9 @@ export function OnboardingRolePage() {
     }
   };
 
-  // BUG-1: Handle plan selection for Individual users
+  // BUG-1 + SCRUM-527: Handle plan selection for Individual users
+  // Save plan BEFORE setting role to prevent race condition where role
+  // update triggers RouteGuard redirect before plan persists.
   // Uses set_onboarding_plan RPC (migration 0153) to bypass
   // protect_privileged_profile_fields trigger and CHECK constraint.
   const handlePlanSelect = async (plan: string) => {
@@ -118,18 +120,20 @@ export function OnboardingRolePage() {
     setPlanLoading(true);
 
     try {
-      // Set role first — may return null if already set (retry/back-button), which is fine.
-      await setRole(pendingRole);
-
-      // Always save the plan, even if role was already set from a prior attempt.
+      // 1. Save plan FIRST — this is safe because the RPC only needs auth.uid()
+      //    and doesn't require role to be set. Saving plan before role prevents
+      //    the race where role-set triggers a redirect before plan persists.
       const tier = PLAN_TO_TIER[plan] ?? 'free';
-      // Use SECURITY DEFINER RPC to bypass protect_privileged_profile_fields trigger.
-      // RPC: migration 0153. Types not yet regenerated, hence the cast.
       const { error: planError } = await (supabase.rpc as CallableFunction)(
         'set_onboarding_plan', { p_tier: tier },
       );
 
       if (planError) throw planError;
+
+      // 2. Now set role — this may trigger RouteGuard redirect via refreshProfile,
+      //    but the plan is already saved at this point.
+      await setRole(pendingRole);
+
       await refreshProfile();
     } catch (err) {
       console.error('[OnboardingRolePage] Plan selection failed:', err);

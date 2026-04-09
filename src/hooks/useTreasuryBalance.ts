@@ -1,14 +1,19 @@
 /**
- * useTreasuryBalance — Live BTC balance from mempool.space API
+ * useTreasuryBalance — Treasury data from server-side cache (SCRUM-546)
  *
- * Fetches balance + recent receipts for the treasury address
- * directly from mempool.space (display only — all broadcasting
- * goes through our GetBlock RPC node).
+ * Reads from the treasury_cache Supabase table, which is refreshed
+ * every 10 minutes by the worker cron job. This eliminates direct
+ * mempool.space calls from the browser (which get rate-limited or
+ * blocked by browser extensions).
+ *
+ * Falls back to direct mempool.space fetch if cache is unavailable
+ * (e.g., migration not applied yet).
  *
  * Auto-refreshes every 60 seconds.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 import { TREASURY_ADDRESS, MEMPOOL_BASE_URL } from '@/lib/platform';
 import { workerFetch } from '@/lib/workerClient';
 
@@ -43,6 +48,23 @@ export interface MempoolFeeRates {
   minimum: number;
 }
 
+interface TreasuryCacheRow {
+  balance_confirmed_sats: number;
+  balance_unconfirmed_sats: number;
+  utxo_count: number;
+  btc_price_usd: number | null;
+  fee_fastest: number | null;
+  fee_half_hour: number | null;
+  fee_hour: number | null;
+  fee_economy: number | null;
+  fee_minimum: number | null;
+  total_secured: number;
+  total_pending: number;
+  last_24h_count: number;
+  updated_at: string;
+  error: string | null;
+}
+
 export function useTreasuryBalance() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [receipts, setTransactions] = useState<MempoolReceipt[]>([]);
@@ -52,14 +74,50 @@ export function useTreasuryBalance() {
   const isMountedRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const fetchAll = useCallback(async () => {
+  const fetchFromCache = useCallback(async (): Promise<boolean> => {
     try {
-      // Fetch balance, receipts, BTC price, and fee rates in parallel
-      // 10s timeout to prevent hanging if mempool.space is blocked by browser extensions
+      // Cast: treasury_cache table added in migration 0185, types not yet regenerated
+      const { data, error: queryError } = await (supabase.from as CallableFunction)(
+        'treasury_cache',
+      ).select('*').eq('id', 1).single();
+
+      if (queryError || !data) return false;
+
+      const row = data as unknown as TreasuryCacheRow;
+
+      if (!isMountedRef.current) return true;
+
+      const confirmed = row.balance_confirmed_sats;
+      const unconfirmed = row.balance_unconfirmed_sats;
+      const total = confirmed + unconfirmed;
+      const totalBtc = total / 1e8;
+      const btcPrice = row.btc_price_usd;
+      const totalUsd = btcPrice ? totalBtc * btcPrice : null;
+
+      setBalance({ confirmed, unconfirmed, total, btcPrice, totalUsd });
+
+      if (row.fee_fastest != null) {
+        setFeeRates({
+          fastest: row.fee_fastest,
+          halfHour: row.fee_half_hour ?? row.fee_fastest,
+          hour: row.fee_hour ?? row.fee_fastest,
+          economy: row.fee_economy ?? row.fee_fastest,
+          minimum: row.fee_minimum ?? row.fee_fastest,
+        });
+      }
+
+      setError(null);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const fetchDirectFromMempool = useCallback(async () => {
+    try {
       const fetchWithTimeout = (url: string) =>
         fetch(url, { signal: AbortSignal.timeout(10_000) });
 
-      // Use allSettled so one failing call doesn't break all cards
       const [addressResult, txResult, priceResult, feeResult] = await Promise.allSettled([
         fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}`),
         fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}/txs`),
@@ -74,7 +132,6 @@ export function useTreasuryBalance() {
 
       if (!isMountedRef.current) return;
 
-      // Parse address balance
       if (addressRes?.ok) {
         const data = await addressRes.json() as {
           chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
@@ -83,7 +140,6 @@ export function useTreasuryBalance() {
         const confirmed = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
         const unconfirmed = data.mempool_stats.funded_txo_sum - data.mempool_stats.spent_txo_sum;
 
-        // Parse BTC price
         let btcPrice: number | null = null;
         if (priceRes?.ok) {
           const priceData = await priceRes.json() as { USD: number };
@@ -99,7 +155,6 @@ export function useTreasuryBalance() {
         }
       }
 
-      // Parse receipts
       if (txRes?.ok) {
         const txData = await txRes.json() as Array<{
           txid: string;
@@ -130,7 +185,6 @@ export function useTreasuryBalance() {
         }
       }
 
-      // Parse fee rates
       if (feeRes?.ok) {
         const fees = await feeRes.json() as {
           fastestFee: number;
@@ -173,7 +227,6 @@ export function useTreasuryBalance() {
               const rate = data.fees.currentRateSatPerVbyte;
               setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
             }
-            // Clear error since worker fallback succeeded
             if (isMountedRef.current) setError(null);
           } else if (isMountedRef.current) {
             setError(`Treasury API returned ${response.status}. Check worker logs.`);
@@ -190,12 +243,24 @@ export function useTreasuryBalance() {
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Failed to fetch treasury data');
       }
+    }
+  }, []);
+
+  const fetchAll = useCallback(async () => {
+    try {
+      // Try server-side cache first (fast, no rate limits)
+      const cacheHit = await fetchFromCache();
+
+      if (!cacheHit) {
+        // Fallback: direct mempool.space fetch (for pre-migration compatibility)
+        await fetchDirectFromMempool();
+      }
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [fetchFromCache, fetchDirectFromMempool]);
 
   useEffect(() => {
     isMountedRef.current = true;
