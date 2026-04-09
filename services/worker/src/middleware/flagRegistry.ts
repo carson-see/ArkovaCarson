@@ -21,10 +21,9 @@ interface FlagState {
   lastChecked: number;
 }
 
-const _FLAG_CACHE_TTL_MS = 60_000; // 60 seconds
-
 // All known flags and their sources
-const _ENV_FLAGS = [
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used in FlagName type
+const ENV_FLAGS = [
   'USE_MOCKS',
   'ENABLE_PROD_NETWORK_ANCHORING',
   'ENABLE_AI_FALLBACK',
@@ -39,7 +38,7 @@ const DB_FLAGS = [
   'ENABLE_ADES_SIGNATURES',
 ] as const;
 
-type FlagName = typeof _ENV_FLAGS[number] | typeof DB_FLAGS[number];
+type FlagName = typeof ENV_FLAGS[number] | typeof DB_FLAGS[number];
 
 class FeatureFlagRegistry {
   private flags = new Map<string, FlagState>();
