@@ -31,13 +31,6 @@ vi.mock('../chain/utxo-provider.js', () => ({
   })),
 }));
 
-vi.mock('../chain/fee-estimator.js', () => ({
-  createFeeEstimator: vi.fn(() => ({
-    name: 'mempool',
-    estimateFee: vi.fn(async () => 5),
-  })),
-}));
-
 vi.mock('../utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
