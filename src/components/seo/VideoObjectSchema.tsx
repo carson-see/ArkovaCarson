@@ -5,6 +5,8 @@
  * Improves discoverability in Google, Gemini, and AI search engines.
  */
 
+import { getAppBaseUrl } from '@/lib/routes';
+
 export interface VideoObjectProps {
   name: string;
   description: string;
@@ -41,7 +43,7 @@ export function VideoObjectSchema({
       name: publisher,
       logo: {
         '@type': 'ImageObject',
-        url: 'https://app.arkova.ai/arkova-icon.png',
+        url: `${getAppBaseUrl()}/arkova-icon.png`,
       },
     },
   };

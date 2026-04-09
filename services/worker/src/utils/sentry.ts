@@ -172,7 +172,8 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) {
     // AUDIT-22: console.log intentional here — logger imports config, which
     // creates a circular dependency. These bootstrap messages fire once at startup.
-    console.log('[Sentry] No DSN configured — skipping initialization');  
+    // console.log used intentionally — logger import would create circular dependency (AUDIT-22)
+    console.log('[Sentry] No DSN configured — skipping initialization');
     return;
   }
 
@@ -198,7 +199,8 @@ export function initSentry(dsn: string | undefined, environment: string): void {
     sendDefaultPii: false,
   });
 
-  console.log(`[Sentry] Initialized for ${environment}`);  
+  // console.log used intentionally — logger import would create circular dependency (AUDIT-22)
+  console.log(`[Sentry] Initialized for ${environment}`);
 }
 
 // ---------------------------------------------------------------------------

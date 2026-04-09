@@ -33,7 +33,7 @@ import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
-import { issuerRegistryPath } from '@/lib/routes';
+import { issuerRegistryPath, getAppBaseUrl } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
@@ -605,7 +605,7 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
     '@type': isEducational ? 'EducationalOccupationalCredential' : 'CreativeWork',
     'name': data.filename,
     'credentialCategory': credentialType.toLowerCase().replace(/_/g, ' '),
-    'url': `https://app.arkova.ai/verify/${data.public_id}`,
+    'url': `${getAppBaseUrl()}/verify/${data.public_id}`,
     'identifier': data.public_id,
   };
 

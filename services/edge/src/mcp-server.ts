@@ -439,6 +439,7 @@ export async function handleMcpRequest(
   const config: SupabaseConfig = {
     supabaseUrl: env.SUPABASE_URL,
     supabaseKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    frontendUrl: env.FRONTEND_URL,
   };
 
   try {

@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 249 stories (203 complete, ~80%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 270 stories (214 complete, ~79%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -289,9 +289,13 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
+| Compliance Mapping (CML) | 5/5 | 0 | 0 | 100% |
+| Verifiable AI (VAI) | 3/5 | 0 | 2 | 60% |
+| Phase III eSignatures | 0/3 | 0 | 3 | 0% |
+| Compliance Audit (COMP) | 6/8 | 0 | 2 | 75% |
 | Dependency Hardening | 1/10 | 0 | 9 | 10% |
 | International Compliance | 0/28 | 0 | 28 | 0% |
-| **Total** | **203/254** | **2/254** | **49/254** | **~80%** |
+| **Total** | **214/270** | **4/270** | **52/270** | **~79%** |
 
 ### Incomplete Stories
 
@@ -528,5 +532,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 249 stories (203 complete, ~80%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 270 stories (214 complete, ~79%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

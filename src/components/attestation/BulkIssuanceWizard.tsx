@@ -21,6 +21,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getAppBaseUrl } from '@/lib/routes';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
@@ -516,7 +517,7 @@ export function BulkIssuanceWizard({ open, onOpenChange, orgName }: Readonly<Pro
       r.public_id ?? '',
       r.status ?? '',
       r.fingerprint ?? '',
-      r.public_id ? `https://app.arkova.ai/verify/attestation/${r.public_id}` : '',
+      r.public_id ? `${getAppBaseUrl()}/verify/attestation/${r.public_id}` : '',
       r.error ?? '',
     ]);
     const csvContent = [headers.join(','), ...csvRows.map((row) => row.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))].join('\n');

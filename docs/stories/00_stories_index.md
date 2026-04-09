@@ -31,15 +31,15 @@ For a new developer joining the project, read in this order:
 | P7 | Go-Live | 13 | 11 | 0 | 2 | [08_p7_go_live.md](./08_p7_go_live.md) |
 | P4.5 | Verification API | 13 | 13 | 0 | 0 | [09_p45_verification_api.md](./09_p45_verification_api.md) |
 | DH | Deferred Hardening | 12 | 12 | 0 | 0 | [10_deferred_hardening.md](./10_deferred_hardening.md) |
-| MVP | Launch Gaps | 27 | 24 | 0 | 3 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
+| MVP | Launch Gaps | 27 | 25 | 0 | 2 | [11_mvp_launch_gaps.md](./11_mvp_launch_gaps.md) |
 | P8 | AI Intelligence | 19 | 19 | 0 | 0 | [12_p8_ai_intelligence.md](./12_p8_ai_intelligence.md) |
 | INFRA | Infrastructure & Edge | 8 | 7 | 1 | 0 | [13_infrastructure_edge.md](./13_infrastructure_edge.md) |
 | UAT | Bug Fix Sprints (5+6) | 17 | 17 | 0 | 0 | [14_uat_sprints.md](./14_uat_sprints.md) |
 | UF | User Flow Gaps | 10 | 10 | 0 | 0 | [14_user_flow_gaps.md](./14_user_flow_gaps.md) |
-| GEO | GEO & SEO Optimization | 17 | 7 | 3 | 7 | [15_geo_seo.md](./15_geo_seo.md) |
+| GEO | GEO & SEO Optimization | 17 | 12 | 2 | 3 | [15_geo_seo.md](./15_geo_seo.md) |
 | BETA | Beta Readiness | 13 | 13 | 0 | 0 | [16_beta_readiness.md](./16_beta_readiness.md) |
 | PH1.5 | Phase 1.5 Foundation | 16 | 15 | 1 | 0 | [17_phase1_5_foundation.md](./17_phase1_5_foundation.md) |
-| ATT | ATS & Background Checks | 8 | 0 | 0 | 8 | [18_ats_background_checks.md](./18_ats_background_checks.md) |
+| ATT | ATS & Background Checks | 8 | 8 | 0 | 0 | [18_ats_background_checks.md](./18_ats_background_checks.md) |
 | CML | Compliance Mapping Layer | 5 | 5 | 0 | 0 | [19_compliance_mapping.md](./19_compliance_mapping.md) |
 | VAI | Verifiable AI | 5 | 3 | 0 | 2 | [20_verifiable_ai.md](./20_verifiable_ai.md) |
 | NMT | Nessie Model Training | 6 | 5 | 0 | 1 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
@@ -47,7 +47,7 @@ For a new developer joining the project, read in this order:
 | COMP | Compliance Audit Readiness | 8 | 6 | 0 | 2 | [24_compliance_audit_readiness.md](./24_compliance_audit_readiness.md) |
 | DEP | Dependency Hardening | 10 | 1 | 0 | 9 | [26_dependency_hardening.md](./26_dependency_hardening.md) |
 | REG | International Regulatory Compliance | 28 | 0 | 0 | 28 | [27_international_compliance.md](./27_international_compliance.md) |
-| **Total** | | **260** | **190** | **3** | **67** | |
+| **Total** | | **270** | **214** | **4** | **52** | |
 
 ### All Stories by ID
 

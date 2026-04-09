@@ -33,6 +33,7 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // ARCH-5/DEBT-3: Prevent circular dependencies
       'import/no-cycle': ['error', { maxDepth: 4 }],
     },
   },

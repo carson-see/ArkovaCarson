@@ -24,6 +24,7 @@ export interface Env {
   // Authentication (AUDIT-03)
   CRON_SECRET: string;
   ALLOWED_ORIGINS: string; // comma-separated list of allowed CORS origins
+  FRONTEND_URL?: string; // e.g., https://app.arkova.ai — used in record_uri links
 
   // x402 Facilitator (Item #16, RISK-7)
   BASE_RPC_URL: string;
