@@ -590,7 +590,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | NCE-22 | Corpus expansion (320K → 1M+) | P2 | NOT STARTED | Medium |
 | NCE-23 | Client-side Nessie (WebLLM, 1-3B) | P3 | NOT STARTED | XL |
 
-**Cost:** ~$465 (Phases 1-4) + ~$50-100/month serving | **Revenue:** Drives Free→Individual→Professional→Organization upgrades
+**Cost:** ~$465 (Phases 1-4) + ~$50-100/month serving
 
 ---
 
