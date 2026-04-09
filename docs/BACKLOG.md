@@ -21,7 +21,7 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
 | **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
-| **Gemini Migration (GME)** | **20** | **0** | **20** | **YES (June 17 deadline)** |
+| **Gemini Migration + Quality (GME)** | **26** | **0** | **26** | **YES (June 17 deadline)** |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
@@ -539,6 +539,17 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | GME-18 | Flash Lite for lightweight tasks | P2 | NOT STARTED | Small |
 | GME-19 | Multi-model fallback chain | P2 | NOT STARTED | Medium |
 | GME-20 | Model version pinning | P1 | NOT STARTED | Small |
+
+### Phase 7: Extraction Quality — Templates & Labeling
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-21 | Credential type parity (align 23 UI vs 20 extraction) | P0 | NOT STARTED | Medium |
+| GME-22 | Expand starter templates (3 → 23 types) | P1 | NOT STARTED | Medium |
+| GME-23 | Type-specific field validation (stop cross-contamination) | P1 | NOT STARTED | Medium |
+| GME-24 | Fraud signal calibration (stop over-flagging) | P0 | NOT STARTED | Medium |
+| GME-25 | Smart type suggestion for OTHER (reduce catch-all) | P1 | NOT STARTED | Small |
+| GME-26 | Template reconstruction quality gate | P1 | NOT STARTED | Small |
 
 **Cost:** ~$195 | **Risk:** Fine-tuning may not be available for Gemini 3 by June — fallback is few-shot prompting
 

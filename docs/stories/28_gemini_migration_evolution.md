@@ -1,7 +1,7 @@
 # Story Group 28: Gemini Migration & Evolution — 2.5 Flash Sunset to Gemini 3
 
 > **Created:** 2026-04-09 | **Epic:** Gemini Migration & Evolution (GME)
-> **Jira Epic:** SCRUM-612 | **Stories:** SCRUM-613–628 | **Priority:** P0 — CRITICAL (deadline-driven)
+> **Jira Epic:** SCRUM-612 | **Stories:** SCRUM-613–634 | **Priority:** P0 — CRITICAL (deadline-driven)
 > **Deadline:** June 17, 2026 (69 days) — `gemini-2.5-flash` shutdown
 > **Depends on:** Existing Gemini infrastructure (gemini.ts, golden finetune, embedding pipeline)
 > **Reference:** [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
@@ -421,6 +421,124 @@ Pin to specific model versions (not aliases) to prevent silent quality changes.
 - [ ] Document exact model version in extraction manifests (already tracked via `model_version`)
 - [ ] Test: verify extraction manifest records correct model version string
 - [ ] Ops runbook: "How to upgrade Gemini model version"
+
+---
+
+## Phase 7: Extraction Quality — Templates & Labeling (Weeks 3-6)
+
+> **Goal:** Fix the fragmented labeling system. UI promises 23 types, extraction handles 20, starter templates cover 3. Close every gap.
+
+### GME-21: Credential Type Parity — Align UI, Extraction Prompt, and Templates (P0)
+**Effort:** Medium (3-5 days) | **Dependencies:** GME-02
+
+The UI defines 23 credential types (copy.ts), but the extraction prompt only handles 20. CHARITY, FINANCIAL_ADVISOR, and BUSINESS_ENTITY have no extraction guidance — they fall to OTHER. Fix this.
+
+**Acceptance Criteria:**
+- [ ] Audit: list every credential type in copy.ts vs extraction.ts vs template-reconstruction.ts
+- [ ] Add extraction rules for CHARITY, FINANCIAL_ADVISOR, BUSINESS_ENTITY to extraction prompt
+  - CHARITY: org name, EIN/registration number, jurisdiction, formation date, tax-exempt status, governing body
+  - FINANCIAL_ADVISOR: advisor name, CRD number, firm, license type (Series 7/63/65/66), FINRA registration, jurisdictions
+  - BUSINESS_ENTITY: entity name, entity type (LLC/Corp/LP), state of formation, formation date, EIN, registered agent, good standing status
+- [ ] Add matching template reconstruction rules for all 3 types
+- [ ] Add golden dataset entries for each new type (min 10 per type)
+- [ ] Update copy.ts descriptions if too vague
+- [ ] Eval: extraction accuracy on new types >85% F1
+- [ ] No regression on existing types
+
+---
+
+### GME-22: Expand Starter Templates — Cover All 23 Credential Types (P1)
+**Effort:** Medium (2-3 days) | **Dependencies:** GME-21
+
+Only 3 of 23 credential types have starter templates (Diploma, Certificate, License). Users selecting any other type get a blank form. Fix this.
+
+**Acceptance Criteria:**
+- [ ] Add starter templates for ALL remaining credential types:
+  - TRANSCRIPT: institution, student name, GPA, degree program, dates attended, credit hours
+  - SEC_FILING: filing type (10-K/10-Q/8-K/S-1), CIK, company, filing date, period, EDGAR URL
+  - LEGAL: case number, court, jurisdiction, parties, filing date, case type, status
+  - PATENT: patent number, title, inventors, assignee, filing date, grant date, USPTO URL
+  - CLE: provider, activity name, credit hours, credit type, approval number, completion date
+  - PUBLICATION: title, authors, journal/conference, DOI, publication date, abstract
+  - MEDICAL: license type, NPI number, provider name, specialty, state, expiration
+  - MILITARY: branch, rank, service dates, discharge type, MOS/rating, awards
+  - IDENTITY: document type, issuing authority, document number, expiration
+  - REGULATION: regulation number, title, agency, effective date, CFR citation
+  - INSURANCE: policy type, carrier, policy number, coverage amount, effective/expiry dates
+  - ACCREDITATION: accrediting body, institution, scope, award date, expiry, standards version
+  - RESUME: candidate name, current title, years experience, key skills, education summary
+  - EMPLOYMENT: employer, position, start/end dates, supervisor, employment type
+  - EDUCATION: institution, program, enrollment dates, completion status, credits earned
+  - CHARITY, FINANCIAL_ADVISOR, BUSINESS_ENTITY: (fields from GME-21)
+  - OTHER: generic fields (document title, issuer, date, description)
+- [ ] Template fields match extraction prompt field definitions
+- [ ] Visual builder (TemplateSchemaBuilder) works for all types
+- [ ] Tests for each template
+
+---
+
+### GME-23: Type-Specific Field Validation — Stop Cross-Contamination (P1)
+**Effort:** Medium (2-3 days) | **Dependencies:** GME-21
+
+CLE fields leak into non-CLE credentials. License numbers appear on degrees. The extraction prompt says don't, but there's no enforcement.
+
+**Acceptance Criteria:**
+- [ ] Define field allowlists per credential type (which fields are valid for each type)
+- [ ] Post-extraction validation: strip fields that don't belong to the credential type
+- [ ] Log stripped fields as warnings (not errors) for monitoring
+- [ ] Add to extraction manifest: `fieldsStripped[]` for audit trail
+- [ ] Track metric: field cross-contamination rate (target: <1%)
+- [ ] Tests: extract DEGREE → verify no CLE fields; extract CLE → verify CLE fields present
+- [ ] Existing CLE sanitization in gemini.ts consolidated with new validation
+
+---
+
+### GME-24: Fraud Signal Calibration — Stop Over-Flagging (P0)
+**Effort:** Medium (3-5 days) | **Dependencies:** GME-02
+
+The extraction prompt explicitly admits: "You are currently MASSIVELY over-flagging fraud." If 50% of documents show fraud signals, the signal is useless.
+
+**Acceptance Criteria:**
+- [ ] Measure current fraud flag rate across production data (query anchors with fraud signals)
+- [ ] Target: <10% of documents should have non-empty fraudSignals (per prompt guidance: ~90% should be empty)
+- [ ] Add calibration examples to extraction prompt: 5 clean documents per type showing empty fraud signals
+- [ ] Add negative examples: "This is NOT fraud: [example of normal formatting variation]"
+- [ ] Tighten fraud signal definitions — only flag objectively suspicious signals:
+  - Font inconsistency within same field
+  - Metadata date != visible date
+  - Resolution mismatch between regions
+  - Known diploma mill issuers (from public records)
+- [ ] Remove vague signals: "unusual formatting," "non-standard layout" (these are normal)
+- [ ] Post-fix eval: fraud flag rate on golden dataset clean docs should be <5%
+- [ ] Review queue impact: fewer false positives = more trust in flagged items
+
+---
+
+### GME-25: Smart Type Suggestion for OTHER — Reduce Catch-All Usage (P1)
+**Effort:** Small (1-2 days) | **Dependencies:** GME-21
+
+When Gemini classifies something as OTHER, suggest the closest real type instead of just dumping it in "Unclassified."
+
+**Acceptance Criteria:**
+- [ ] When extraction returns `credentialType: 'OTHER'`, include `suggestedType` field with best guess + confidence
+- [ ] UI shows: "Classified as Unclassified — did you mean [License]?" with one-click reclassify
+- [ ] Track: OTHER classification rate (target: <5% of uploads)
+- [ ] Add to extraction prompt: "If no type fits perfectly, choose the closest match and set confidence lower. Only use OTHER as absolute last resort."
+- [ ] Log reclassification events for training data feedback
+
+---
+
+### GME-26: Template Reconstruction Quality Gate (P1)
+**Effort:** Small (1-2 days) | **Dependencies:** GME-23
+
+Templates currently render polished output even when extraction was bad. Add a quality gate.
+
+**Acceptance Criteria:**
+- [ ] Template reconstruction checks extraction confidence — if <0.5, show warning banner: "Low confidence — please review extracted fields"
+- [ ] Highlight fields that were inferred vs directly extracted
+- [ ] If fraud signals present: show them prominently in template (not hidden)
+- [ ] If fields were stripped by validation (GME-23): note what was removed and why
+- [ ] User can edit any field before finalizing template
 
 ---
 
