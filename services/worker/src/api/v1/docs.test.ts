@@ -72,7 +72,7 @@ describe('OpenAPI spec', () => {
   });
 
   it('has all four tags', () => {
-    const tagNames = openApiSpec.tags.map((t) => t.name);
+    const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');
     expect(tagNames).toContain('Jobs');
     expect(tagNames).toContain('Usage');
