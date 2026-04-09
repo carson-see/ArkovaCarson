@@ -50,23 +50,6 @@ export interface MempoolFeeRates {
   minimum: number;
 }
 
-interface TreasuryCacheRow {
-  balance_confirmed_sats: number;
-  balance_unconfirmed_sats: number;
-  utxo_count: number;
-  btc_price_usd: number | null;
-  fee_fastest: number | null;
-  fee_half_hour: number | null;
-  fee_hour: number | null;
-  fee_economy: number | null;
-  fee_minimum: number | null;
-  total_secured: number;
-  total_pending: number;
-  last_24h_count: number;
-  updated_at: string;
-  error: string | null;
-}
-
 export function useTreasuryBalance() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [receipts, setReceipts] = useState<MempoolReceipt[]>([]);
@@ -80,16 +63,21 @@ export function useTreasuryBalance() {
 
   const fetchFromCache = useCallback(async (): Promise<boolean> => {
     try {
-      // Cast: treasury_cache table added in migration 0186, types not yet regenerated
-      const { data, error: queryError } = await (supabase.from as CallableFunction)(
-        'treasury_cache',
-      ).select('*').eq('id', 1).single();
+      const { data, error: queryError } = await supabase
+        .from('treasury_cache')
+        .select('*')
+        .eq('id', 1)
+        .single();
 
       if (queryError || !data) return false;
 
-      const row = data as unknown as TreasuryCacheRow;
+      const row = data;
 
       if (!isMountedRef.current) return true;
+
+      // Fall through to direct fetch if cache is older than 30 minutes
+      const cacheAge = Date.now() - new Date(row.updated_at).getTime();
+      if (cacheAge > 30 * 60 * 1000) return false;
 
       // Skip state updates if cache hasn't changed since last poll
       if (row.updated_at === lastCacheTimestampRef.current) return true;

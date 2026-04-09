@@ -2826,6 +2826,69 @@ export type Database = {
           },
         ]
       }
+      treasury_cache: {
+        Row: {
+          balance_confirmed_sats: number
+          balance_unconfirmed_sats: number
+          block_height: number | null
+          btc_price_usd: number | null
+          error: string | null
+          fee_economy: number | null
+          fee_fastest: number | null
+          fee_half_hour: number | null
+          fee_hour: number | null
+          fee_minimum: number | null
+          id: number
+          last_24h_count: number
+          last_secured_at: string | null
+          network_name: string | null
+          total_pending: number
+          total_secured: number
+          updated_at: string
+          utxo_count: number
+        }
+        Insert: {
+          balance_confirmed_sats?: number
+          balance_unconfirmed_sats?: number
+          block_height?: number | null
+          btc_price_usd?: number | null
+          error?: string | null
+          fee_economy?: number | null
+          fee_fastest?: number | null
+          fee_half_hour?: number | null
+          fee_hour?: number | null
+          fee_minimum?: number | null
+          id?: number
+          last_24h_count?: number
+          last_secured_at?: string | null
+          network_name?: string | null
+          total_pending?: number
+          total_secured?: number
+          updated_at?: string
+          utxo_count?: number
+        }
+        Update: {
+          balance_confirmed_sats?: number
+          balance_unconfirmed_sats?: number
+          block_height?: number | null
+          btc_price_usd?: number | null
+          error?: string | null
+          fee_economy?: number | null
+          fee_fastest?: number | null
+          fee_half_hour?: number | null
+          fee_hour?: number | null
+          fee_minimum?: number | null
+          id?: number
+          last_24h_count?: number
+          last_secured_at?: string | null
+          network_name?: string | null
+          total_pending?: number
+          total_secured?: number
+          updated_at?: string
+          utxo_count?: number
+        }
+        Relationships: []
+      }
       unified_credits: {
         Row: {
           billing_cycle_start: string
@@ -3314,6 +3377,7 @@ export type Database = {
       }
       generate_public_id: { Args: never; Returns: string }
       get_anchor_status_counts: { Args: never; Returns: Json }
+      get_anchor_status_counts_fast: { Args: never; Returns: Json }
       get_anchor_tx_stats: { Args: never; Returns: Json }
       get_anchor_type_counts: {
         Args: never
@@ -3321,6 +3385,13 @@ export type Database = {
           count: number
           credential_type: string
           status: string
+        }[]
+      }
+      get_caller_role: { Args: never; Returns: string }
+      get_distinct_record_types: {
+        Args: never
+        Returns: {
+          record_type: string
         }[]
       }
       get_edgar_shard_counts: { Args: never; Returns: Json }
@@ -3361,6 +3432,7 @@ export type Database = {
           status: string
         }[]
       }
+      get_org_anchor_stats: { Args: { p_org_id: string }; Returns: Json }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -3414,6 +3486,16 @@ export type Database = {
           website_url: string
         }[]
       }
+      get_public_records_page: {
+        Args: {
+          p_anchor_status?: string
+          p_page?: number
+          p_page_size?: number
+          p_record_type?: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       get_public_records_stats: { Args: never; Returns: Json }
       get_public_template: {
         Args: { p_credential_type: string; p_org_id: string }
@@ -3434,6 +3516,7 @@ export type Database = {
           title: string
         }[]
       }
+      get_user_anchor_stats: { Args: { p_user_id: string }; Returns: Json }
       get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }
@@ -3575,12 +3658,14 @@ export type Database = {
         Returns: Json[]
       }
       search_public_issuers: {
-        Args: { p_limit?: number; p_query: string }
+        Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: {
           credential_count: number
-          org_domain: string
-          org_id: string
-          org_name: string
+          display_name: string
+          id: string
+          legal_name: string
+          public_id: string
+          verified: boolean
         }[]
       }
       search_public_record_embeddings: {
