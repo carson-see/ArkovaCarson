@@ -85,7 +85,7 @@ export function useAnchorStats() {
       // PostgREST may return the JSON object directly or wrapped — handle both
       const txRaw = txStatsResult.data;
       const txData = parseRpcData(txRaw);
-      const txRpcHasData = txRaw != null && !txStatsResult.error && typeof txData.distinct_tx_count === 'number';
+      const txRpcHasData = txRaw != null && !txStatsResult.error && txData.distinct_tx_count != null;
       let distinctTxIds = 0;
       let avgAnchorsPerTx = 0;
       let lastAnchorTime: string | null = null;
