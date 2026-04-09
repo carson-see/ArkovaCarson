@@ -125,10 +125,6 @@ export class DefaultAdesEngine implements AdesEngine {
     }
 
     // 3. Build signed attributes
-    const _fingerprintHash = Buffer.from(
-      request.fingerprint.replace('sha256:', ''),
-      'hex',
-    );
 
     const signingTime = new Date();
     const certDigest = crypto.createHash('sha256')

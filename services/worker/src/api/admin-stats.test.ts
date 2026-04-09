@@ -61,20 +61,6 @@ function mockRes(): Response & { statusCode: number; body: unknown } {
   return res as unknown as Response & { statusCode: number; body: unknown };
 }
 
-// Chain builder for .from().select().is().gte() etc.
-function _chainBuilder(result: { count?: number; data?: unknown[]; error?: null }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const chain: any = {};
-  chain.select = vi.fn().mockReturnValue(chain);
-  chain.is = vi.fn().mockReturnValue(chain);
-  chain.gte = vi.fn().mockReturnValue(chain);
-  chain.eq = vi.fn().mockReturnValue(chain);
-  chain.in = vi.fn().mockReturnValue(chain);
-  chain.filter = vi.fn().mockReturnValue(chain);
-  chain.then = (resolve: (v: unknown) => void) => resolve(result);
-  return chain;
-}
-
 describe('handlePlatformStats', () => {
   beforeEach(() => {
     vi.clearAllMocks();
