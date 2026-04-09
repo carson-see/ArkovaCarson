@@ -28,7 +28,7 @@ import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
-import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
 
 const TOGETHER_API_BASE = 'https://api.together.xyz/v1';
 const DEFAULT_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
@@ -117,11 +117,14 @@ export class TogetherProvider implements IAIProvider {
       Math.max(0, result.confidence + groundingReport.confidenceAdjustment),
     );
 
-    // Strip CLE-only fields from non-CLE results (hard guardrail)
-    const strippedFields = sanitizeCLEFields(result.fields);
-    if (strippedFields.length > 0) {
-      logger.info({ strippedFields, credentialType: result.fields.credentialType },
-        'Together AI: Sanitized CLE-only fields from non-CLE extraction');
+    // Validate fields against per-type allowlists (parity with GeminiProvider)
+    const validation = validateFieldsForType(result.fields);
+    if (validation.stripped.length > 0) {
+      logger.info({ strippedFields: validation.stripped, credentialType: result.fields.credentialType },
+        'Together AI: Stripped invalid fields for credential type');
+    }
+    for (const key of validation.stripped) {
+      delete (result.fields as Record<string, unknown>)[key];
     }
 
     // Cross-field consistency fraud checks (parity with GeminiProvider)
