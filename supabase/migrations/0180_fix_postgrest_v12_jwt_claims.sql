@@ -346,3 +346,59 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Fix get_anchor_status_counts_fast — use exact counts, not pg_class estimate
+-- The old version used reltuples (stale after bulk ops) and derived
+-- SECURED by subtraction, compounding the error.
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION get_anchor_status_counts_fast()
+RETURNS json
+LANGUAGE plpgsql
+STABLE SECURITY DEFINER
+SET search_path = public
+SET statement_timeout TO '10s'
+AS $$
+DECLARE
+  v_result json;
+BEGIN
+  IF NOT (
+    get_caller_role() = 'service_role'
+    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_platform_admin = true)
+  ) THEN
+    RAISE EXCEPTION 'Access denied: platform admin required';
+  END IF;
+
+  SELECT json_object_agg(status, cnt) INTO v_result
+  FROM (
+    SELECT status, count(*) as cnt
+    FROM anchors
+    WHERE deleted_at IS NULL
+    GROUP BY status
+  ) counts;
+
+  RETURN json_build_object(
+    'PENDING', COALESCE((v_result->>'PENDING')::bigint, 0),
+    'SUBMITTED', COALESCE((v_result->>'SUBMITTED')::bigint, 0),
+    'BROADCASTING', COALESCE((v_result->>'BROADCASTING')::bigint, 0),
+    'SECURED', COALESCE((v_result->>'SECURED')::bigint, 0),
+    'REVOKED', COALESCE((v_result->>'REVOKED')::bigint, 0),
+    'total', (SELECT count(*) FROM anchors WHERE deleted_at IS NULL)
+  );
+END;
+$$;
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Drop conflicting get_flag overload (PostgREST v12 can't disambiguate)
+-- ═══════════════════════════════════════════════════════════════════
+
+DROP FUNCTION IF EXISTS get_flag(text);
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Partial index for batch anchor claim performance (SCALE-4)
+-- ═══════════════════════════════════════════════════════════════════
+
+CREATE INDEX IF NOT EXISTS idx_anchors_pending_claim
+ON anchors (created_at ASC)
+WHERE status = 'PENDING' AND deleted_at IS NULL;
