@@ -17,11 +17,11 @@ The competitive moat: every answer Nessie gives traces back to cryptographically
 
 | Capability | User Value | Revenue Impact |
 |-----------|-----------|----------------|
-| **Compliance Score** | "You're 72% compliant for California" | Justifies $199/mo Pro tier |
+| **Compliance Score** | "You're 72% compliant for California" | Differentiator for Professional ($49/mo) |
 | **Gap Analysis** | "You're missing a W-9 and professional liability insurance" | Drives document uploads → more anchors |
-| **Proactive Alerts** | "Your CPA license expires in 30 days" | Retention + upsell to alerts tier |
-| **Jurisdiction Intelligence** | "In Texas, you also need Form XYZ" | Enterprise value — $999/mo+ |
-| **Audit-Ready Reports** | One-click SOC 2 / FERPA / HIPAA evidence bundle | $2,999/mo Enterprise tier |
+| **Proactive Alerts** | "Your CPA license expires in 30 days" | Retention + upsell from Individual → Professional |
+| **Jurisdiction Intelligence** | "In Texas, you also need Form XYZ" | Organization tier differentiator (custom pricing) |
+| **Audit-Ready Reports** | One-click SOC 2 / FERPA / HIPAA evidence bundle | Organization tier — enterprise sales driver |
 | **Benchmarking** | "Orgs in your industry average 89% — you're at 72%" | Competitive pressure → upgrades |
 
 ### Architecture: How Nessie Gets Smart
@@ -670,7 +670,7 @@ NCE-02 (Gemini v2 Retrain) ─┘                                     │
 | Gap analysis → document upload conversion | >20% | Funnel tracking |
 | Nessie chat queries/week | >100 within 60 days of launch | API logs |
 | Expiry alert → renewal action | >30% | Email click-through |
-| Enterprise tier conversion | 3+ orgs at $999+/mo within 90 days | Stripe |
+| Organization tier conversion | 3+ orgs on Organization plan within 90 days | Stripe |
 | Time to audit-ready report | <5 minutes (vs hours manually) | User feedback |
 
 ## Risk Mitigation
