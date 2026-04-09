@@ -79,10 +79,8 @@ export function useChecklist(
       const attestResult = results[2].status === 'fulfilled' ? results[2].value : null;
 
       setState({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         hasTemplates: ((templateResult as Record<string, unknown>)?.count as number ?? 0) > 0,
         hasBillingPlan: !!(subResult as unknown as Record<string, unknown>)?.data,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         attestationCount: (attestResult as Record<string, unknown>)?.count as number ?? 0,
         loading: false,
       });

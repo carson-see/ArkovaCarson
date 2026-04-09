@@ -10,7 +10,6 @@
  * Story: PH3-ESIG-02 (SCRUM-423)
  */
 
-import * as crypto from 'crypto';
 import { logger } from '../../utils/logger.js';
 import type { TimestampToken, TimestampVerificationStatus } from '../types.js';
 import type { TrustStore } from '../pki/trustStore.js';

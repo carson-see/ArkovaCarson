@@ -10,7 +10,6 @@
 import * as crypto from 'crypto';
 import { logger } from '../../utils/logger.js';
 import type {
-  SigningCertificate,
   CertificateChainValidationResult,
   KeyAlgorithm,
 } from '../types.js';

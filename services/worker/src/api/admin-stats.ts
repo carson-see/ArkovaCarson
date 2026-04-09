@@ -116,7 +116,7 @@ export async function handlePlatformStats(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const subscriptionData = val<{ data: any[] }>(5)?.data ?? [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const txStats = (val<{ data: any }>(6)?.data ?? {}) as Record<string, unknown>;
+    const _txStats = (val<{ data: any }>(6)?.data ?? {}) as Record<string, unknown>;
 
     // Log any failed queries for debugging (don't crash the endpoint)
     for (let i = 0; i < results.length; i++) {

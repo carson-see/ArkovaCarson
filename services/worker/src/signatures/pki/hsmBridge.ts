@@ -12,7 +12,6 @@
 import { logger } from '../../utils/logger.js';
 import type {
   KmsProvider,
-  KeyAlgorithm,
   HsmSignRequest,
   HsmSignResponse,
 } from '../types.js';

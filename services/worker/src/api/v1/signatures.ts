@@ -20,15 +20,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 import type {
-  SignRequest,
   SignResponse,
-  VerifySignatureResponse,
-  SignatureRecord,
   SigningCertificate,
   Jurisdiction,
   SignatureFormat,
   SignatureLevel,
-  RevocationReason,
   KmsProvider,
   KeyAlgorithm,
   CertificateStatus,

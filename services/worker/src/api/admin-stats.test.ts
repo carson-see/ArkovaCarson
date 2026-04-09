@@ -62,7 +62,7 @@ function mockRes(): Response & { statusCode: number; body: unknown } {
 }
 
 // Chain builder for .from().select().is().gte() etc.
-function chainBuilder(result: { count?: number; data?: unknown[]; error?: null }) {
+function _chainBuilder(result: { count?: number; data?: unknown[]; error?: null }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const chain: any = {};
   chain.select = vi.fn().mockReturnValue(chain);

@@ -7,7 +7,7 @@
  * deduplication, domain coverage, JSONL format, and hyperparameter correctness.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // Module under test — will be implemented after tests
 import {
