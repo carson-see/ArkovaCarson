@@ -199,8 +199,31 @@ All gates must pass before merge to `main` or `develop`.
 
 ---
 
+## 6. Jira Integration — DoR/DoD Checklists
+
+All testing and quality standards in this document are codified as **mandatory Jira checklists** in `docs/process_enforcement.md`. Every ticket must include:
+
+- **Definition of Ready (DoR)** — verified before work begins (§2 of process_enforcement.md)
+- **Definition of Done (DoD)** — all 6 gates verified before ticket moves to DONE (§3 of process_enforcement.md)
+
+The DoD includes explicit checkboxes for:
+- TDD (tests written first, saw them fail)
+- All 4 CI commands green (`typecheck`, `lint`, `test`, `lint:copy`)
+- Coverage thresholds met
+- Security review (RLS, PII, injection)
+- Documentation updated (Confluence, story docs, agents.md, CLAUDE.md)
+- Bug tracker updated
+- UAT verified (if UI changed)
+
+**These are non-negotiable.** No ticket moves to DONE without 100% of the DoD checklist completed.
+
+See: [`docs/process_enforcement.md`](../process_enforcement.md) for the full copy-paste checklists.
+
+---
+
 ## Change Log
 
 | Date | Story | Change |
 |------|-------|--------|
 | 2026-04-08 | Session 32 | Created: TDD enforcement hook + CI gate, 3 custom ESLint rules, escalation plan |
+| 2026-04-09 | DEP-05 | Added §6: Jira DoR/DoD integration. Cross-referenced process_enforcement.md |

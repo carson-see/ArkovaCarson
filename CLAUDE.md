@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 249 stories (203 complete, ~80%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -289,7 +289,9 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
-| **Total** | **202/216** | **2/216** | **12/216** | **~94%** |
+| Dependency Hardening | 1/10 | 0 | 9 | 10% |
+| International Compliance | 0/28 | 0 | 28 | 0% |
+| **Total** | **203/254** | **2/254** | **49/254** | **~80%** |
 
 ### Incomplete Stories
 
@@ -338,6 +340,30 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - NMT-05 (P2): Upload model weights to HuggingFace — not started
 - ~~NMT-06 (P2): Nessie v5 training + condensed prompt~~ — **DONE** (v5 trained, 87.2% F1, condensed prompt deployed)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
+
+**Dependency Hardening (10 not started) — Release R-DEP-01:**
+- DEP-01 (P0): Supabase Disaster Recovery Plan & Cold Standby
+- DEP-02 (P0): Cloudflare Tunnel Failover Procedure
+- DEP-03 (P0): Document Missing Security-Critical Dependencies
+- DEP-04 (P1): Upgrade Express to v5
+- DEP-05 (P1): Upgrade ESLint to v9 + Flat Config
+- DEP-06 (P1): Pin Security-Critical Dependency Versions
+- DEP-07 (P2): Email Delivery Monitoring
+- DEP-08 (P2): Dependency Update Cadence & Policy
+- DEP-09 (P2): SBOM Generation in CI
+- DEP-10 (P2): License Audit — GPL Compatibility Review
+- See `docs/stories/26_dependency_hardening.md` and `docs/BACKLOG.md` for details
+
+**International Regulatory Compliance (28 not started) — Release R-REG-01:**
+- REG-01–04 (FERPA): Disclosure log, directory info opt-out, DUA template, requester verification
+- REG-05–10 (HIPAA): MFA enforcement, session timeout, audit report, BAA template, breach notification, emergency access
+- REG-11–14 (Shared): Data subject rights workflow, SCC framework, breach procedures, privacy notices
+- REG-15–16 (Kenya): ODPC registration, DPIA
+- REG-17–19 (Australia): APP 8 assessment, NDB procedure, data correction
+- REG-20–22 (South Africa): Information Regulator registration, POPIA Section 72, privacy notice
+- REG-23–25 (Nigeria): NDPC registration, SCCs, privacy notice
+- REG-26–28 (Dashboard): Compliance mapping update, international badges, DPO designation
+- See `docs/stories/27_international_compliance.md` and `docs/BACKLOG.md` for details
 
 ### Remaining Production Blockers
 
@@ -502,5 +528,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 249 stories (203 complete, ~80%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
