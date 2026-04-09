@@ -73,7 +73,7 @@ export async function handleTreasuryStatus(
     try {
       const address = addressFromWif(config.bitcoinTreasuryWif);
       const utxoProvider = createUtxoProvider({
-        type: config.bitcoinUtxoProvider as 'rpc' | 'mempool',
+        type: config.bitcoinUtxoProvider as 'rpc' | 'mempool' | 'getblock',
         rpcUrl: config.bitcoinRpcUrl,
         rpcAuth: config.bitcoinRpcAuth,
         mempoolApiUrl: config.mempoolApiUrl,

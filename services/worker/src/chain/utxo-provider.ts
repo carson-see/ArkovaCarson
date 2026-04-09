@@ -455,8 +455,22 @@ export class GetBlockHybridProvider implements UtxoProvider {
     this.mempool = new MempoolUtxoProvider({ baseUrl: config.mempoolBaseUrl ?? MEMPOOL_URLS.mainnet });
   }
 
-  /** Delegate UTXO listing to mempool.space (read-only, public data) */
+  /** Try RPC node for UTXO listing first, fall back to mempool.space */
   async listUnspent(address: string): Promise<Utxo[]> {
+    try {
+      const rpcUtxos = (await rpcCall(this.rpcUrl, 'listunspent', [1, 9999999, [address]], this.rpcAuth)) as Array<{ txid: string; vout: number; amount: number }>;
+      if (rpcUtxos && rpcUtxos.length >= 0) {
+        return rpcUtxos.map((u) => ({
+          txid: u.txid,
+          vout: u.vout,
+          valueSats: Math.round(u.amount * 1e8),
+          rawTxHex: '',
+        }));
+      }
+    } catch {
+      // RPC node may not support listunspent (shared nodes) — fall back to mempool
+      logger.debug('GetBlockHybridProvider.listUnspent: RPC fallback to mempool.space');
+    }
     return this.mempool.listUnspent(address);
   }
 
