@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Version:** 2026-04-09 (Session 39) | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 185 migrations | 3,901 tests (1,476 frontend + 2,425 worker) | 216 stories (205 complete, ~95%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -258,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 182 files (0001-0180, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0179 renumbered from duplicates). All migrations applied to production through 0180. Migration 0180 also applied directly to production (PostgREST v12 JWT claim fix + batch anchor scaling indexes).
+**Current:** 185 files (0001-0185, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0179 renumbered from duplicates). All migrations applied to production through 0185. Migration 0185 (treasury_cache) applied via Supabase MCP in Session 39.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -381,6 +381,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | `current_setting('request.jwt.claim.role', true)` in DB functions | Use `get_caller_role()` helper — supports both PostgREST v11 and v12+ JWT claim formats |
 | Function overloads differing only by DEFAULT params | PostgREST v12 can't disambiguate — use single function with DEFAULT |
 | Deploying DB function changes without `NOTIFY pgrst, 'reload schema'` | Always reload PostgREST schema cache after function DDL changes |
+| Manual `gcloud run deploy --source=.` without env preservation | Use `scripts/deploy-worker.sh` — it preserves critical env vars and auto-rolls back on failure |
+| `--set-env-vars` on Cloud Run (wipes all existing vars) | Use `--update-env-vars` instead |
 
 ---
 
@@ -502,5 +504,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-09 (Session 39) | 185 migrations | 3,901 tests (1,476 frontend + 2,425 worker) | 216 stories (205 complete, ~95%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | 25 Cloud Scheduler jobs_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

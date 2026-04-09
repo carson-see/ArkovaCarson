@@ -12,7 +12,7 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 182 migration files (0001-0180). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (1.41M+ SECURED, 0 PENDING). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00268-k4b, mempool UTXO provider, 10K batch, 1GiB, min-instances=1). **All migrations through 0180 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
+**Overall progress:** 216 stories (205 complete, ~95%). **3,901 tests** (1,476 frontend + 2,425 worker, all green). 185 migration files (0001-0185). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (1.41M+ SECURED, 0 PENDING). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00277-hsp, mempool UTXO provider, 10K batch, 1GiB, min-instances=1). **All migrations through 0185 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. 25 Cloud Scheduler jobs. Safe deploy script: `scripts/deploy-worker.sh`.
 
 ### Open Blockers
 
@@ -21,9 +21,9 @@
 | **SCRUM-502** | **Security Remediation (BIA Assessment)** | **HIGHEST** | **OPEN** | Epic: Upstash rate limiting, FileVault, incident response, SOC 2 framework. |
 | ~~SCRUM-490~~ | ~~Attestation stuck 15+ days~~ | ~~HIGH~~ | **RESOLVED** | Root cause: BITCOIN_UTXO_PROVIDER=getblock but BITCOIN_RPC_URL removed. Fixed: set mempool provider, deployed rev 00246-lrb. |
 | **BUG-S35-04** | **Google OAuth login broken** | **CRITICAL** | **CODE FIXED** | AuthCallbackPage didn't handle INITIAL_SESSION event. Fix deployed pending Vercel build. |
-| BUG-S35-01 | Plan selection layout broken | MEDIUM | OPEN | Cards cut off, pricing text truncated during onboarding. |
+| ~~BUG-S35-01~~ | ~~Plan selection layout broken~~ | ~~MEDIUM~~ | **RESOLVED** | SCRUM-526: Widened to max-w-4xl, responsive sm:grid-cols-3. SCRUM-527: Plan persistence race fixed (save plan before role). |
 | BUG-S35-07 | Admin Overview stats all zeros | MEDIUM | OPEN | Records by Status + Total Records show 0 despite 1.39M records. |
-| BUG-S35-08 | Treasury balance fetch fails | MEDIUM | OPEN | "Unable to fetch balance" on treasury page. |
+| ~~BUG-S35-08~~ | ~~Treasury balance fetch fails~~ | ~~MEDIUM~~ | **RESOLVED** | SCRUM-546: Server-side treasury cache (migration 0185). Worker cron refreshes every 10 min. Frontend reads from Supabase. |
 | ~~BUG-S33-02~~ | ~~Billing page skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Added 8s AbortController timeout; falls back to Supabase count. |
 | ~~BUG-S33-03~~ | ~~Admin Overview skeleton timeout~~ | ~~MEDIUM~~ | **RESOLVED** | Worker revision 00240-wtm deployed with RPC-based admin-stats. |
 
