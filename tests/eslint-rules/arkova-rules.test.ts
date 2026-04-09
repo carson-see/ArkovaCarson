@@ -9,12 +9,14 @@ import { describe, it, expect } from 'vitest';
 // @ts-ignore — no @types/eslint needed for RuleTester usage
 import { RuleTester } from 'eslint';
 
-// ESLint v8 RuleTester needs parser config for TS
+// ESLint v9 flat config RuleTester uses languageOptions
 const ruleTester = new RuleTester({
-  parser: require.resolve('@typescript-eslint/parser'),
-  parserOptions: {
-    ecmaVersion: 2022,
-    sourceType: 'module',
+  languageOptions: {
+    parser: require('@typescript-eslint/parser'),
+    parserOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+    },
   },
 });
 

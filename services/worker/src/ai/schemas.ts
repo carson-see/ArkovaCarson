@@ -29,6 +29,22 @@ export const ExtractedFieldsSchema = z.object({
   activityNumber: z.string().optional(),
   providerName: z.string().optional(),
   approvedBy: z.string().optional(),
+  // CHARITY-specific fields (GME-21)
+  einNumber: z.string().optional(),
+  taxExemptStatus: z.string().optional(),
+  governingBody: z.string().optional(),
+  // FINANCIAL_ADVISOR-specific fields (GME-21)
+  crdNumber: z.string().optional(),
+  firmName: z.string().optional(),
+  finraRegistration: z.string().optional(),
+  seriesLicenses: z.string().optional(),
+  // BUSINESS_ENTITY-specific fields (GME-21)
+  entityType: z.string().optional(),
+  stateOfFormation: z.string().optional(),
+  registeredAgent: z.string().optional(),
+  goodStandingStatus: z.string().optional(),
+  // Smart type suggestion for OTHER (GME-25)
+  suggestedType: z.string().optional(),
   // Fraud signals (Session 10)
   fraudSignals: z.array(z.string()).optional(),
 }).strict();

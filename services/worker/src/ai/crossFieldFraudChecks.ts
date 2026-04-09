@@ -178,17 +178,15 @@ function parseDate(dateStr: string | undefined): Date | null {
   return isNaN(d.getTime()) ? null : d;
 }
 
+// Pre-compiled regex for US state abbreviation matching (avoids 51 RegExp allocations per call)
+const US_STATE_ABBR_REGEX = new RegExp(`\\b(${[...US_STATE_ABBREVIATIONS].join('|')})\\b`, 'i');
+
 function containsUSState(text: string): boolean {
   const lower = text.toLowerCase();
   for (const state of US_STATES) {
     if (lower.includes(state)) return true;
   }
-  // Check abbreviations — only match as whole words
-  for (const abbr of US_STATE_ABBREVIATIONS) {
-    const regex = new RegExp(`\\b${abbr}\\b`, 'i');
-    if (regex.test(text)) return true;
-  }
-  return false;
+  return US_STATE_ABBR_REGEX.test(text);
 }
 
 function containsForeignCountry(text: string): boolean {
@@ -346,6 +344,17 @@ function checkJurisdiction(fields: ExtractedFields, result: CrossFieldCheckResul
  * Check license number format validity.
  * Many fake credentials use placeholder or obviously invalid license numbers.
  */
+// Pre-compiled placeholder patterns for license number validation
+const LICENSE_PLACEHOLDER_PATTERNS = [
+  /^[0]{5,}$/,                    // All zeros: 000000
+  /^1234/,                        // Sequential: 1234...
+  /^(XX|xx|NA|na|N\/A|TBD)/,     // Explicit placeholders
+  /^\[.*\]$/,                     // Bracketed: [REDACTED], [NUMBER]
+  /^test/i,                       // Test values
+  /^sample/i,                     // Sample values
+  /^example/i,                    // Example values
+];
+
 function checkLicenseFormat(fields: ExtractedFields, result: CrossFieldCheckResult): void {
   const type = fields.credentialType?.toUpperCase();
   if (type !== 'LICENSE' && type !== 'PROFESSIONAL') return;
@@ -353,18 +362,7 @@ function checkLicenseFormat(fields: ExtractedFields, result: CrossFieldCheckResu
   const licenseNumber = fields.licenseNumber;
   if (!licenseNumber) return;
 
-  // Check for obvious placeholder patterns
-  const placeholderPatterns = [
-    /^[0]{5,}$/,                    // All zeros: 000000
-    /^1234/,                        // Sequential: 1234...
-    /^(XX|xx|NA|na|N\/A|TBD)/,     // Explicit placeholders
-    /^\[.*\]$/,                     // Bracketed: [REDACTED], [NUMBER]
-    /^test/i,                       // Test values
-    /^sample/i,                     // Sample values
-    /^example/i,                    // Example values
-  ];
-
-  if (placeholderPatterns.some(p => p.test(licenseNumber.trim()))) {
+  if (LICENSE_PLACEHOLDER_PATTERNS.some(p => p.test(licenseNumber.trim()))) {
     result.additionalFraudSignals.push('FORMAT_ANOMALY');
     result.confidenceAdjustment -= 0.10;
     result.warnings.push(`License number "${licenseNumber}" appears to be a placeholder`);
@@ -473,7 +471,78 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
 }
 
 // =============================================================================
-// CLE-ONLY FIELD SANITIZER
+// PER-TYPE FIELD VALIDATOR (GME-23)
+// =============================================================================
+
+/** Base fields present on every credential type. */
+const BASE_FIELDS = ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fraudSignals', 'suggestedType'];
+
+/** Per-type field extensions beyond BASE_FIELDS. Keep in sync with ExtractedFields in types.ts. */
+const FIELD_EXTENSIONS: Record<string, string[]> = {
+  DEGREE: ['fieldOfStudy', 'degreeLevel', 'accreditingBody', 'jurisdiction'],
+  LICENSE: ['fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction'],
+  CERTIFICATE: ['fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction'],
+  TRANSCRIPT: ['fieldOfStudy', 'degreeLevel', 'accreditingBody', 'jurisdiction'],
+  PROFESSIONAL: ['fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction'],
+  CLE: ['fieldOfStudy', 'accreditingBody', 'jurisdiction', 'creditHours', 'creditType', 'barNumber', 'activityNumber', 'providerName', 'approvedBy'],
+  BADGE: ['fieldOfStudy', 'accreditingBody', 'jurisdiction'],
+  ATTESTATION: ['fieldOfStudy', 'degreeLevel', 'jurisdiction'],
+  FINANCIAL: ['fieldOfStudy', 'accreditingBody', 'jurisdiction'],
+  LEGAL: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  INSURANCE: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  SEC_FILING: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  PATENT: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  REGULATION: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  PUBLICATION: ['fieldOfStudy', 'licenseNumber', 'jurisdiction'],
+  RESUME: ['fieldOfStudy', 'jurisdiction'],
+  MEDICAL: ['fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction'],
+  MILITARY: ['fieldOfStudy', 'jurisdiction'],
+  IDENTITY: ['licenseNumber', 'jurisdiction'],
+  CHARITY: ['fieldOfStudy', 'jurisdiction', 'einNumber', 'taxExemptStatus', 'governingBody'],
+  FINANCIAL_ADVISOR: ['fieldOfStudy', 'jurisdiction', 'crdNumber', 'firmName', 'finraRegistration', 'seriesLicenses'],
+  BUSINESS_ENTITY: ['fieldOfStudy', 'jurisdiction', 'entityType', 'stateOfFormation', 'einNumber', 'registeredAgent', 'goodStandingStatus'],
+};
+
+/** Pre-built Set allowlists for O(1) field lookups. */
+const FIELD_ALLOWLIST: Record<string, Set<string>> = Object.fromEntries(
+  Object.entries(FIELD_EXTENSIONS).map(([k, v]) => [k, new Set([...BASE_FIELDS, ...v])]),
+);
+
+/**
+ * Validate extracted fields against per-type allowlists.
+ * Strips fields that don't belong to the detected credential type.
+ */
+export function validateFieldsForType(fields: ExtractedFields): { stripped: string[]; fields: ExtractedFields } {
+  const type = (fields.credentialType ?? 'OTHER').toUpperCase();
+  const allowed = FIELD_ALLOWLIST[type];
+
+  // OTHER or unknown type: allow all fields
+  if (!allowed) {
+    return { stripped: [], fields };
+  }
+
+  // Find keys to strip
+  const stripped: string[] = [];
+  for (const key of Object.keys(fields)) {
+    if (!allowed.has(key) && fields[key] !== undefined) {
+      stripped.push(key);
+    }
+  }
+
+  // Only allocate a copy if we're actually stripping
+  if (stripped.length === 0) {
+    return { stripped: [], fields };
+  }
+
+  const cleaned = { ...fields };
+  for (const key of stripped) {
+    delete (cleaned as Record<string, unknown>)[key];
+  }
+  return { stripped, fields: cleaned };
+}
+
+// =============================================================================
+// CLE-ONLY FIELD SANITIZER (legacy — kept for backward compatibility)
 // =============================================================================
 
 /**

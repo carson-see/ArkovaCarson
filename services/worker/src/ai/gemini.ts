@@ -30,7 +30,7 @@ import {
 } from './prompts/template-reconstruction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
-import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
 import { computeAdjustedConfidence } from './confidence-model.js';
 import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
@@ -165,11 +165,14 @@ export class GeminiProvider implements IAIProvider {
       Math.max(0, result.confidence + groundingReport.confidenceAdjustment),
     );
 
-    // Strip CLE-only fields from non-CLE results (hard guardrail against hallucination)
-    const strippedFields = sanitizeCLEFields(result.fields);
-    if (strippedFields.length > 0) {
-      logger.info({ strippedFields, credentialType: result.fields.credentialType },
-        'Sanitized CLE-only fields from non-CLE extraction');
+    // Validate fields against per-type allowlists (replaces CLE-only sanitization)
+    const validation = validateFieldsForType(result.fields);
+    if (validation.stripped.length > 0) {
+      logger.info({ strippedFields: validation.stripped, credentialType: result.fields.credentialType },
+        'Stripped invalid fields for credential type');
+    }
+    for (const key of validation.stripped) {
+      delete (result.fields as Record<string, unknown>)[key];
     }
 
     // Cross-field consistency fraud checks

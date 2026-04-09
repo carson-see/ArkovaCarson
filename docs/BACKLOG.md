@@ -20,6 +20,8 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
+| **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
+| **Gemini Migration + Quality (GME)** | **26** | **0** | **26** | **YES (June 17 deadline)** |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
@@ -491,6 +493,68 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 ---
 
+## TIER 0F: GEMINI MIGRATION & EVOLUTION (GME) — DEADLINE: JUNE 17, 2026
+
+> **CRITICAL:** `gemini-2.5-flash` shuts down June 17, 2026. Every Gemini call breaks.
+> Jira Epic: SCRUM-612 | Stories: SCRUM-613–628
+> Story doc: [28_gemini_migration_evolution.md](stories/28_gemini_migration_evolution.md)
+> Ref: [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
+
+### Phase 1: Emergency Migration (MUST ship before June 17)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-01 | Centralize all model references into config | P0 | NOT STARTED | Small |
+| GME-02 | Migrate to Gemini 3 Flash (extraction + fraud) | P0 | NOT STARTED | Medium |
+| GME-03 | Migrate embedding model (eval gemini-embedding-2) | P0 | NOT STARTED | Small |
+| GME-04 | Tuned model migration (90.4% F1 at risk) | P0 | NOT STARTED | Large |
+| GME-05 | Deprecation monitoring & alerts | P1 | NOT STARTED | Small |
+
+### Phase 2: Eval & Quality Assurance
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-06 | Full golden dataset eval on Gemini 3 (1,605 entries) | P0 | NOT STARTED | Medium |
+| GME-07 | Fraud detection eval on Gemini 3 vision | P1 | NOT STARTED | Small |
+| GME-08 | Embedding quality benchmark (100-query NDCG) | P1 | NOT STARTED | Small |
+
+### Phase 3: Training Infrastructure Update
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-09 | Update all training/eval scripts to Gemini 3 | P1 | NOT STARTED | Medium |
+| GME-10 | Gemini Golden v2 retrain on Gemini 3 base | P0 | NOT STARTED | Large |
+| GME-11 | Gemini Golden v3 — expanded dataset (2,000+) | P1 | NOT STARTED | Large |
+
+### Phase 4-6: Advanced, Optimization, Future-Proofing
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-12 | Multimodal embedding for document images | P2 | NOT STARTED | Medium |
+| GME-13 | Enhanced fraud detection with Gemini 3 vision | P1 | NOT STARTED | Medium |
+| GME-14 | Structured output schema validation | P1 | NOT STARTED | Small |
+| GME-15 | Context window optimization | P2 | NOT STARTED | Medium |
+| GME-16 | Latency & cost benchmarking (Gemini 3 vs 2.5) | P1 | NOT STARTED | Small |
+| GME-17 | Batch processing optimization | P2 | NOT STARTED | Medium |
+| GME-18 | Flash Lite for lightweight tasks | P2 | NOT STARTED | Small |
+| GME-19 | Multi-model fallback chain | P2 | NOT STARTED | Medium |
+| GME-20 | Model version pinning | P1 | NOT STARTED | Small |
+
+### Phase 7: Extraction Quality — Templates & Labeling
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-21 | Credential type parity (align 23 UI vs 20 extraction) | P0 | NOT STARTED | Medium |
+| GME-22 | Expand starter templates (3 → 23 types) | P1 | NOT STARTED | Medium |
+| GME-23 | Type-specific field validation (stop cross-contamination) | P1 | NOT STARTED | Medium |
+| GME-24 | Fraud signal calibration (stop over-flagging) | P0 | NOT STARTED | Medium |
+| GME-25 | Smart type suggestion for OTHER (reduce catch-all) | P1 | NOT STARTED | Small |
+| GME-26 | Template reconstruction quality gate | P1 | NOT STARTED | Small |
+
+**Cost:** ~$195 | **Risk:** Fine-tuning may not be available for Gemini 3 by June — fallback is few-shot prompting
+
+---
+
 ## TIER 0D: NESSIE MODEL TRAINING & EVALUATION (Session 19 — 2026-03-30)
 
 > Source: Model comparison eval (MLX 4-bit, 50 samples). Story doc: [21_nessie_model_training.md](stories/21_nessie_model_training.md)
@@ -524,6 +588,72 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 **Key findings:** Nessie v5 achieves 87.2% weighted F1 (+21.6pp over v4), only 3.2pp behind Gemini Golden. v5 confidence correlation (0.539) exceeds Gemini (0.426). fp16 ≈ 4-bit quantization (model quality is bottleneck, not precision). Fine-tuned models MUST use condensed prompt (full 58K prompt = 0% F1).
 
 **CRITICAL ROLE DISTINCTION (2026-04-03):** Gemini Golden = metadata extraction engine (templates, fields, fraud). Nessie = compliance intelligence engine (analyzes documents, makes recommendations with verified citations). Nessie v5 was trained as extraction — NMT-07 pivots to intelligence training data. See strategy docs: Arkova-Verified-Intelligence-SLM-Analysis, Arkova Strategic Blueprint.
+
+---
+
+## TIER 0E: NESSIE COMPLIANCE ENGINE (NCE) — Session 39+
+
+> Source: Strategic Blueprint, SLM Analysis, Verification Bootstrap Strategy
+> Jira Epic: SCRUM-590 | Stories: SCRUM-591–611
+> Story doc: [27_nessie_compliance_engine.md](stories/27_nessie_compliance_engine.md)
+> Depends on: NMT-07 (intelligence pipeline), Phase 1.5 RAG, 320K+ public records
+
+**Vision:** Nessie becomes the compliance copilot every org needs — reads anchored documents, gives jurisdiction-aware compliance scores, identifies missing documents, generates audit-ready reports. Every recommendation backed by Bitcoin-anchored evidence.
+
+### Phase 1: Train Intelligence Model (Weeks 1-3)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-01 | Enable embedding corpus (320K+ records) | P0 | NOT STARTED | Small |
+| NCE-02 | Gemini Golden v2 retrain (1,605 entries) | P0 | NOT STARTED | Small |
+| NCE-03 | Distill intelligence training data (1,150+ examples) | P0 | NOT STARTED | Large |
+| NCE-04 | Fine-tune Nessie Intelligence v1 | P0 | NOT STARTED | Medium |
+| NCE-05 | Intelligence eval benchmark (100 Q&A) | P0 | NOT STARTED | Medium |
+
+### Phase 2: Compliance Scoring Engine (Weeks 3-5)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-06 | Jurisdiction rule engine (10 US states) | P0 | NOT STARTED | Large |
+| NCE-07 | Compliance score calculator (0-100, A-F) | P0 | NOT STARTED | Large |
+| NCE-08 | Gap detector — "What's missing?" | P0 | NOT STARTED | Medium |
+| NCE-09 | Expiry & renewal alerts | P1 | NOT STARTED | Medium |
+
+### Phase 3: Frontend Intelligence UI (Weeks 5-7)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-10 | Compliance dashboard (score + gaps + recs) | P0 | NOT STARTED | Large |
+| NCE-11 | Nessie chat interface (Q&A with citations) | P1 | NOT STARTED | Large |
+| NCE-12 | Compliance score widget on org dashboard | P1 | NOT STARTED | Small |
+
+### Phase 4: DPO + Advanced Training (Weeks 6-8)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-13 | DPO training for citation accuracy (>98%) | P1 | NOT STARTED | Large |
+| NCE-14 | Jurisdiction-specific LoRA adapters (CA, NY, Fed) | P1 | NOT STARTED | Large |
+| NCE-15 | Cross-reference engine (doc consistency) | P1 | NOT STARTED | Medium |
+
+### Phase 5: Enterprise & Scale (Weeks 8-12)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-16 | Compliance API (programmatic access) | P1 | NOT STARTED | Medium |
+| NCE-17 | Industry benchmarking (anonymous compare) | P2 | NOT STARTED | Medium |
+| NCE-18 | Audit-ready reports (SOC 2/FERPA/HIPAA) | P1 | NOT STARTED | Large |
+| NCE-19 | Nessie MCP tools for agent frameworks | P2 | NOT STARTED | Medium |
+| NCE-20 | Upload Intelligence model to HuggingFace | P2 | NOT STARTED | Small |
+
+### Phase 6: Self-Improving (Months 3-6)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NCE-21 | Feedback loop — learn from user actions | P2 | NOT STARTED | Large |
+| NCE-22 | Corpus expansion (320K → 1M+) | P2 | NOT STARTED | Medium |
+| NCE-23 | Client-side Nessie (WebLLM, 1-3B) | P3 | NOT STARTED | XL |
+
+**Cost:** ~$465 (Phases 1-4) + ~$50-100/month serving
 
 ---
 

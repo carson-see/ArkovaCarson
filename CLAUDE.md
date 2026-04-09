@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned, ~77%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -502,5 +502,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 211 stories (200 complete, ~95%) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

@@ -85,6 +85,9 @@ DOCUMENT TYPE LABELS (use these exact strings):
 - PATENT → "Patent Document"
 - REGULATION → "Regulatory Document"
 - PUBLICATION → "Academic Publication"
+- CHARITY → "Charitable Organization"
+- FINANCIAL_ADVISOR → "Financial Advisor Credential"
+- BUSINESS_ENTITY → "Business Entity Filing"
 - OTHER → "Unclassified Document"`;
 
 /**

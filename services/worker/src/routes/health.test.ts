@@ -20,6 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Request, Response } from 'express';
 import { buildHealthResponse, type HealthCheckDeps } from './health.js';
 
+
 function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDeps {
   return {
     isDbHealthy: () => true,
@@ -57,6 +58,12 @@ function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDe
   };
 }
 
+/** Cast checks to typed accessor to avoid TS18046 on Record<string, unknown>. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper: health checks have dynamic shape per subsystem
+function checks(result: { body: { checks: Record<string, unknown> } }): Record<string, any> {
+  return result.body.checks as Record<string, any>;
+}
+
 describe('buildHealthResponse (P7-TS-06)', () => {
   describe('basic response structure', () => {
     it('returns healthy status with all subsystem checks', async () => {
@@ -75,9 +82,9 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, false);
 
       expect(result.body.checks).toBeDefined();
-      expect(result.body.checks.database).toBeDefined();
-      expect(result.body.checks.anchoring).toBeDefined();
-      expect(result.body.checks.kms).toBeDefined();
+      expect(checks(result).database).toBeDefined();
+      expect(checks(result).anchoring).toBeDefined();
+      expect(checks(result).kms).toBeDefined();
     });
 
     it('includes compact check statuses by default', async () => {
@@ -85,7 +92,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, false);
 
       // Compact mode: just status strings
-      expect(result.body.checks.database).toBe('ok');
+      expect(checks(result).database).toBe('ok');
     });
 
     it('includes detailed check info when detailed=true', async () => {
@@ -93,10 +100,10 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, true);
 
       // Detailed mode: objects with status + metadata
-      expect(result.body.checks.database).toMatchObject({
+      expect(checks(result).database).toMatchObject({
         status: 'ok',
       });
-      expect(typeof result.body.checks.database.latencyMs).toBe('number');
+      expect(typeof checks(result).database.latencyMs).toBe('number');
     });
   });
 
@@ -105,7 +112,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.database.status).toBe('ok');
+      expect(checks(result).database.status).toBe('ok');
     });
 
     it('reports error when DB query fails', async () => {
@@ -116,8 +123,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
 
       expect(result.statusCode).toBe(503);
       expect(result.body.status).toBe('degraded');
-      expect(result.body.checks.database.status).toBe('error');
-      expect(result.body.checks.database.message).toBe('connection refused');
+      expect(checks(result).database.status).toBe('error');
+      expect(checks(result).database.message).toBe('connection refused');
     });
 
     it('reports error when circuit breaker is open', async () => {
@@ -132,8 +139,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, true);
 
       expect(result.statusCode).toBe(503);
-      expect(result.body.checks.database.status).toBe('error');
-      expect(result.body.checks.database.message).toContain('Circuit breaker open');
+      expect(checks(result).database.status).toBe('error');
+      expect(checks(result).database.message).toContain('Circuit breaker open');
     });
 
     it('reports error when DB query throws', async () => {
@@ -143,8 +150,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, true);
 
       expect(result.statusCode).toBe(503);
-      expect(result.body.checks.database.status).toBe('error');
-      expect(result.body.checks.database.message).toBe('Network unreachable');
+      expect(checks(result).database.status).toBe('error');
+      expect(checks(result).database.message).toBe('Network unreachable');
     });
   });
 
@@ -153,21 +160,21 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.lastSecuredAt).toBe('2026-03-14T00:00:00Z');
+      expect(checks(result).anchoring.lastSecuredAt).toBe('2026-03-14T00:00:00Z');
     });
 
     it('includes last batch anchor timestamp', async () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.lastBatchAt).toBe('2026-03-14T01:00:00Z');
+      expect(checks(result).anchoring.lastBatchAt).toBe('2026-03-14T01:00:00Z');
     });
 
     it('includes pending anchor queue depth', async () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.pendingCount).toBe(5);
+      expect(checks(result).anchoring.pendingCount).toBe(5);
     });
 
     it('handles null last anchor gracefully', async () => {
@@ -177,8 +184,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.lastSecuredAt).toBeNull();
-      expect(result.body.checks.anchoring.lastBatchAt).toBeNull();
+      expect(checks(result).anchoring.lastSecuredAt).toBeNull();
+      expect(checks(result).anchoring.lastBatchAt).toBeNull();
     });
 
     it('handles anchor query errors gracefully without degrading overall status', async () => {
@@ -189,8 +196,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const result = await buildHealthResponse(deps, true);
 
       // Anchor query failures are informational, not critical
-      expect(result.body.checks.anchoring.lastSecuredAt).toBeNull();
-      expect(result.body.checks.anchoring.pendingCount).toBeNull();
+      expect(checks(result).anchoring.lastSecuredAt).toBeNull();
+      expect(checks(result).anchoring.pendingCount).toBeNull();
       // Overall status still healthy if DB is reachable
       expect(result.body.status).toBe('healthy');
     });
@@ -201,8 +208,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.kms.status).toBe('ok');
-      expect(result.body.checks.kms.provider).toBe('gcp');
+      expect(checks(result).kms.status).toBe('ok');
+      expect(checks(result).kms.provider).toBe('gcp');
     });
 
     it('reports KMS as configured when AWS KMS key is set', async () => {
@@ -222,8 +229,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.kms.status).toBe('ok');
-      expect(result.body.checks.kms.provider).toBe('aws');
+      expect(checks(result).kms.status).toBe('ok');
+      expect(checks(result).kms.provider).toBe('aws');
     });
 
     it('reports KMS as unconfigured when no key is available', async () => {
@@ -243,8 +250,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.kms.status).toBe('warning');
-      expect(result.body.checks.kms.message).toContain('No signing key configured');
+      expect(checks(result).kms.status).toBe('warning');
+      expect(checks(result).kms.message).toContain('No signing key configured');
     });
 
     it('reports WIF as signing method on non-mainnet', async () => {
@@ -264,8 +271,8 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.kms.status).toBe('ok');
-      expect(result.body.checks.kms.provider).toBe('wif');
+      expect(checks(result).kms.status).toBe('ok');
+      expect(checks(result).kms.provider).toBe('wif');
     });
   });
 
@@ -274,7 +281,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.feeRateSatVb).toBe(2.5);
+      expect(checks(result).anchoring.feeRateSatVb).toBe(2.5);
     });
 
     it('handles fee rate fetch failure gracefully', async () => {
@@ -283,7 +290,7 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       });
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.checks.anchoring.feeRateSatVb).toBeNull();
+      expect(checks(result).anchoring.feeRateSatVb).toBeNull();
     });
   });
 
@@ -337,11 +344,12 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, true);
 
-      expect(result.body.info).toBeDefined();
-      expect(result.body.info.stripe).toMatchObject({ configured: true });
-      expect(result.body.info.sentry).toMatchObject({ configured: true });
-      expect(result.body.info.ai).toMatchObject({ configured: true });
-      expect(result.body.info.prodAnchoring).toBeDefined();
+      const info = result.body.info as Record<string, unknown>;
+      expect(info).toBeDefined();
+      expect(info.stripe).toMatchObject({ configured: true });
+      expect(info.sentry).toMatchObject({ configured: true });
+      expect(info.ai).toMatchObject({ configured: true });
+      expect(info.prodAnchoring).toBeDefined();
     });
 
     it('does not include info in compact mode', async () => {
