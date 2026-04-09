@@ -14,6 +14,7 @@ import { workerFetch } from '@/lib/workerClient';
 
 const MEMPOOL_API = `${MEMPOOL_BASE_URL}/api`;
 const POLL_INTERVAL_MS = 60_000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 export interface TreasuryBalance {
   confirmed: number;
@@ -51,13 +52,13 @@ export function useTreasuryBalance() {
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastBalanceRef = useRef<TreasuryBalance | null>(null);
 
   const fetchAll = useCallback(async () => {
     try {
       // Fetch balance, receipts, BTC price, and fee rates in parallel
-      // 10s timeout to prevent hanging if mempool.space is blocked by browser extensions
       const fetchWithTimeout = (url: string) =>
-        fetch(url, { signal: AbortSignal.timeout(10_000) });
+        fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 
       // Use allSettled so one failing call doesn't break all cards
       const [addressResult, txResult, priceResult, feeResult] = await Promise.allSettled([
@@ -95,7 +96,9 @@ export function useTreasuryBalance() {
         const totalUsd = btcPrice ? totalBtc * btcPrice : null;
 
         if (isMountedRef.current) {
-          setBalance({ confirmed, unconfirmed, total, btcPrice, totalUsd });
+          const bal = { confirmed, unconfirmed, total, btcPrice, totalUsd };
+          setBalance(bal);
+          lastBalanceRef.current = bal;
         }
       }
 
@@ -161,13 +164,15 @@ export function useTreasuryBalance() {
               fees?: { currentRateSatPerVbyte: number };
             };
             if (data.wallet) {
-              setBalance({
+              const bal: TreasuryBalance = {
                 confirmed: data.wallet.balanceSats,
                 unconfirmed: 0,
                 total: data.wallet.balanceSats,
                 btcPrice: null,
                 totalUsd: null,
-              });
+              };
+              setBalance(bal);
+              lastBalanceRef.current = bal;
             }
             if (data.fees && !feeRes?.ok) {
               const rate = data.fees.currentRateSatPerVbyte;
@@ -176,11 +181,22 @@ export function useTreasuryBalance() {
             // Clear error since worker fallback succeeded
             if (isMountedRef.current) setError(null);
           } else if (isMountedRef.current) {
-            setError(`Treasury API returned ${response.status}. Check worker logs.`);
+            // Use cached balance if available so the page isn't blank
+            if (lastBalanceRef.current) {
+              setBalance(lastBalanceRef.current);
+              setError('Balance may be stale — network data temporarily unavailable.');
+            } else {
+              setError('Unable to fetch balance. The network data provider may be rate-limiting requests.');
+            }
           }
         } catch (workerErr) {
           if (isMountedRef.current) {
-            setError(workerErr instanceof Error ? workerErr.message : 'Failed to fetch treasury data');
+            if (lastBalanceRef.current) {
+              setBalance(lastBalanceRef.current);
+              setError('Balance may be stale — network data temporarily unavailable.');
+            } else {
+              setError('Unable to fetch balance. Please try again shortly.');
+            }
           }
         }
       } else if (isMountedRef.current) {

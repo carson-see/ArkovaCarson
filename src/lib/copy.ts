@@ -895,6 +895,7 @@ export const ORG_PAGE_LABELS = {
   PROMOTE_TO_ADMIN: 'Promote to Admin',
   DEMOTE_TO_MEMBER: 'Demote to Member',
   RECIPIENT: 'Recipient',
+  ABOUT: 'About',
 } as const;
 
 // =============================================================================

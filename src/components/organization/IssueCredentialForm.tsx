@@ -607,7 +607,21 @@ export function IssueCredentialForm({
               <Button variant="outline" onClick={handleClose} disabled={creating}>
                 Cancel
               </Button>
-              <Button onClick={handleSubmit} disabled={!canSubmit}>
+              <Button
+                onClick={() => {
+                  if (!canSubmit && !creating) {
+                    if (!file) {
+                      toast.error(ISSUE_CREDENTIAL_LABELS.HINT_UPLOAD_DOCUMENT);
+                    } else if (!credentialType) {
+                      toast.error(ISSUE_CREDENTIAL_LABELS.HINT_SELECT_TYPE);
+                    }
+                    return;
+                  }
+                  void handleSubmit();
+                }}
+                disabled={creating}
+                aria-disabled={!canSubmit}
+              >
                 {creating ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

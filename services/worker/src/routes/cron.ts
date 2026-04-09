@@ -45,6 +45,7 @@ import { fetchFccLicenses } from '../jobs/fccUlsFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
+import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 
 export const cronRouter = Router();
@@ -524,6 +525,17 @@ cronRouter.post('/check-attestation-expiry', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Attestation expiry check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Pipeline Health Monitor (SCALE-4 / SCRUM-548) ───
+cronRouter.post('/pipeline-health', async (_req, res) => {
+  try {
+    const result = await checkPipelineHealth();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Pipeline health check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
