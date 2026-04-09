@@ -30,7 +30,7 @@ import {
 } from './prompts/template-reconstruction.js';
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
-import { runCrossFieldChecks, sanitizeCLEFields, validateFieldsForType } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
 import { computeAdjustedConfidence } from './confidence-model.js';
 import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
@@ -171,9 +171,6 @@ export class GeminiProvider implements IAIProvider {
       logger.info({ strippedFields: validation.stripped, credentialType: result.fields.credentialType },
         'Stripped invalid fields for credential type');
     }
-    // Update fields with validated version
-    Object.assign(result.fields, validation.fields);
-    // Remove stripped keys from result.fields
     for (const key of validation.stripped) {
       delete (result.fields as Record<string, unknown>)[key];
     }
