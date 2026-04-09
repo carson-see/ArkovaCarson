@@ -86,4 +86,11 @@ export interface ChainClient {
    * Optional: MockChainClient always returns true.
    */
   hasFunds?(): Promise<boolean>;
+
+  /**
+   * Estimate current fee rate (sat/vB) without building a transaction.
+   * Used by batch processor to check fees BEFORE claiming anchors.
+   * Optional: implementations that don't support fee estimation return undefined.
+   */
+  estimateCurrentFee?(): Promise<number>;
 }

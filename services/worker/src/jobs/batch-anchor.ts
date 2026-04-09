@@ -19,6 +19,7 @@ import { logger } from '../utils/logger.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
+import { config } from '../config.js';
 
 /**
  * Max anchors per batch transaction — configurable via BATCH_ANCHOR_MAX_SIZE env (BTC-001).
@@ -35,6 +36,20 @@ export const BATCH_SIZE = Math.min(
  */
 export const MIN_BATCH_SIZE = 1;
 
+/**
+ * SCALE-1: Smart batch skipping — don't burn a UTXO + fee for tiny batches.
+ * Skip if fewer than this many anchors pending AND oldest is under MAX_ANCHOR_AGE_MS.
+ * Guarantees no anchor waits more than MAX_ANCHOR_AGE_MS regardless.
+ */
+const MIN_BATCH_THRESHOLD = 5;
+const MAX_ANCHOR_AGE_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * SCALE-2: Absolute hard cap for dynamic fee ceiling (sat/vB).
+ * Even during severe backlogs, never exceed this rate.
+ */
+const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
+
 export interface BatchAnchorResult {
   processed: number;
   batchId: string | null;
@@ -49,6 +64,12 @@ export interface BatchAnchorResult {
 const POSTGREST_ROW_LIMIT = 1000;
 
 /**
+ * SCALE-3: In-process mutex — prevents overlapping batch runs when cron fires
+ * faster than batch processing completes. Same pattern as confirmation checker.
+ */
+let batchProcessingRunning = false;
+
+/**
  * Process pending anchors as a batch using a Merkle tree.
  *
  * Uses claim-before-broadcast pattern:
@@ -56,21 +77,110 @@ const POSTGREST_ROW_LIMIT = 1000;
  * 2. Build Merkle tree from claimed anchors
  * 3. Publish Merkle root to chain
  * 4. Update each anchor: BROADCASTING → SUBMITTED with tx ID + proof
+ *
+ * SCALE-1: Smart skip — don't waste UTXOs on tiny batches
+ * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
+ * SCALE-3: In-process mutex prevents overlapping runs
  */
 export async function processBatchAnchors(): Promise<BatchAnchorResult> {
-  // Phase 0: Pre-flight UTXO check — skip immediately if treasury is empty.
-  // This prevents the costly claim-fail-revert cycle that causes 504 timeouts.
+  const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
+
+  // SCALE-3: Mutex — skip if already running
+  if (batchProcessingRunning) {
+    logger.info('Batch processing skipped — already in progress');
+    return EMPTY;
+  }
+  batchProcessingRunning = true;
   try {
-    const chainClient = getChainClient();
+    return await _processBatchAnchorsInner();
+  } finally {
+    batchProcessingRunning = false;
+  }
+}
+
+async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
+  const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
+
+  // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
+  const chainClient = getChainClient();
+  try {
     if (chainClient.hasFunds) {
       const funded = await chainClient.hasFunds();
       if (!funded) {
         logger.warn('Treasury empty — skipping batch anchor processing until funded');
-        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+        return EMPTY;
       }
     }
   } catch (err) {
     logger.warn({ error: err }, 'Pre-flight UTXO check failed — proceeding cautiously');
+  }
+
+  // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
+  let oldestPendingAgeMs = 0;
+  try {
+    const { data: stats } = await db
+      .from('anchors')
+      .select('created_at')
+      .eq('status', 'PENDING')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single();
+
+    if (!stats) {
+      logger.debug('No pending anchors — skipping batch');
+      return EMPTY;
+    }
+
+    oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
+
+    // Count pending (cheap — uses index)
+    const { count } = await db
+      .from('anchors')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'PENDING')
+      .is('deleted_at', null);
+
+    const pendingCount = count ?? 0;
+
+    if (pendingCount < MIN_BATCH_THRESHOLD && oldestPendingAgeMs < MAX_ANCHOR_AGE_MS) {
+      logger.debug(
+        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
+        'Below batch threshold and oldest anchor is fresh — deferring',
+      );
+      return EMPTY;
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'Smart batch skip check failed — proceeding with batch');
+  }
+
+  // Phase 0c: SCALE-2 — Pre-claim fee check with dynamic ceiling
+  try {
+    if (chainClient.estimateCurrentFee) {
+      const currentFee = await chainClient.estimateCurrentFee();
+      const baseCeiling = config.maxFeeThresholdSatPerVbyte ?? 50;
+
+      // Dynamic ceiling: pay more when backlog is aging
+      let effectiveCeiling = baseCeiling;
+      if (oldestPendingAgeMs > 60 * 60 * 1000) {
+        effectiveCeiling = baseCeiling * 4; // 4x if >1 hour old
+      } else if (oldestPendingAgeMs > 30 * 60 * 1000) {
+        effectiveCeiling = baseCeiling * 2; // 2x if >30 min old
+      }
+      effectiveCeiling = Math.min(effectiveCeiling, ABSOLUTE_FEE_CAP_SAT_PER_VB);
+
+      if (currentFee > effectiveCeiling) {
+        logger.warn(
+          { currentFee, effectiveCeiling, baseCeiling, oldestPendingAgeMs },
+          'Fee rate exceeds ceiling — deferring batch until fees drop',
+        );
+        return EMPTY;
+      }
+
+      logger.debug({ currentFee, effectiveCeiling }, 'Fee pre-check passed');
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'Pre-claim fee check failed — proceeding cautiously');
   }
 
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)

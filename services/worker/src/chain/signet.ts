@@ -896,6 +896,14 @@ export class BitcoinChainClient implements ChainClient {
       return false;
     }
   }
+
+  /**
+   * Estimate current fee rate without building a transaction.
+   * Used by batch processor to check fees BEFORE claiming anchors (SCALE-1).
+   */
+  async estimateCurrentFee(): Promise<number> {
+    return this.feeEstimator.estimateFee();
+  }
 }
 
 // ─── Backward-compatible alias ──────────────────────────────────────────
