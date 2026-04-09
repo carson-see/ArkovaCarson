@@ -22,11 +22,13 @@ import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 
 /**
- * Max anchors per batch transaction — configurable via BATCH_ANCHOR_MAX_SIZE env (BTC-001).
- * Default: 100. Range: 1–10,000.
+ * Max anchors per batch transaction (BTC-001).
+ * HARDCODED to 10,000. One Merkle root per TX covers unlimited anchors at the same
+ * Bitcoin cost. Small batches waste UTXOs and drain treasury.
+ * Env override only allowed to go LOWER (for testing), never below 100.
  */
 export const BATCH_SIZE = Math.min(
-  Math.max(parseInt(process.env.BATCH_ANCHOR_MAX_SIZE ?? '100', 10) || 100, 1),
+  Math.max(parseInt(process.env.BATCH_ANCHOR_MAX_SIZE ?? '10000', 10) || 10000, 100),
   10000,
 );
 
