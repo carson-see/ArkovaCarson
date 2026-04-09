@@ -21,6 +21,7 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
 | **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
+| **Gemini Migration (GME)** | **20** | **0** | **20** | **YES (June 17 deadline)** |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
@@ -489,6 +490,57 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 - Pipeline credential types: migration 0091 adds SEC_FILING, PATENT, REGULATION, PUBLICATION
 - ExtractedFieldsSchema: CLE fields + fraudSignals added (was silently rejecting Gemini responses)
 - Pipeline metadata display: arrays formatted, nulls hidden
+
+---
+
+## TIER 0F: GEMINI MIGRATION & EVOLUTION (GME) — DEADLINE: JUNE 17, 2026
+
+> **CRITICAL:** `gemini-2.5-flash` shuts down June 17, 2026. Every Gemini call breaks.
+> Jira Epic: SCRUM-612 | Stories: SCRUM-613–628
+> Story doc: [28_gemini_migration_evolution.md](stories/28_gemini_migration_evolution.md)
+> Ref: [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
+
+### Phase 1: Emergency Migration (MUST ship before June 17)
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-01 | Centralize all model references into config | P0 | NOT STARTED | Small |
+| GME-02 | Migrate to Gemini 3 Flash (extraction + fraud) | P0 | NOT STARTED | Medium |
+| GME-03 | Migrate embedding model (eval gemini-embedding-2) | P0 | NOT STARTED | Small |
+| GME-04 | Tuned model migration (90.4% F1 at risk) | P0 | NOT STARTED | Large |
+| GME-05 | Deprecation monitoring & alerts | P1 | NOT STARTED | Small |
+
+### Phase 2: Eval & Quality Assurance
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-06 | Full golden dataset eval on Gemini 3 (1,605 entries) | P0 | NOT STARTED | Medium |
+| GME-07 | Fraud detection eval on Gemini 3 vision | P1 | NOT STARTED | Small |
+| GME-08 | Embedding quality benchmark (100-query NDCG) | P1 | NOT STARTED | Small |
+
+### Phase 3: Training Infrastructure Update
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-09 | Update all training/eval scripts to Gemini 3 | P1 | NOT STARTED | Medium |
+| GME-10 | Gemini Golden v2 retrain on Gemini 3 base | P0 | NOT STARTED | Large |
+| GME-11 | Gemini Golden v3 — expanded dataset (2,000+) | P1 | NOT STARTED | Large |
+
+### Phase 4-6: Advanced, Optimization, Future-Proofing
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| GME-12 | Multimodal embedding for document images | P2 | NOT STARTED | Medium |
+| GME-13 | Enhanced fraud detection with Gemini 3 vision | P1 | NOT STARTED | Medium |
+| GME-14 | Structured output schema validation | P1 | NOT STARTED | Small |
+| GME-15 | Context window optimization | P2 | NOT STARTED | Medium |
+| GME-16 | Latency & cost benchmarking (Gemini 3 vs 2.5) | P1 | NOT STARTED | Small |
+| GME-17 | Batch processing optimization | P2 | NOT STARTED | Medium |
+| GME-18 | Flash Lite for lightweight tasks | P2 | NOT STARTED | Small |
+| GME-19 | Multi-model fallback chain | P2 | NOT STARTED | Medium |
+| GME-20 | Model version pinning | P1 | NOT STARTED | Small |
+
+**Cost:** ~$195 | **Risk:** Fine-tuning may not be available for Gemini 3 by June — fallback is few-shot prompting
 
 ---
 
