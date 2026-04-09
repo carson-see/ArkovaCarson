@@ -8,6 +8,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
+/** Parse RPC data that PostgREST may return as a JSON string or object */
+function parseRpcData(data: unknown): Record<string, unknown> {
+  if (data == null) return {};
+  if (typeof data === 'string') {
+    try { return JSON.parse(data); } catch { return {}; }
+  }
+  return data as Record<string, unknown>;
+}
+
 export interface AnchorStats {
   byStatus: Record<string, number>;
   totalAnchors: number;
@@ -42,7 +51,7 @@ export function useAnchorStats() {
       // PostgREST may return JSON as string — handle both
       const statusCounts: Record<string, number> = {};
       const statusRaw = statusResult.data;
-      const statusData = (typeof statusRaw === 'string' ? JSON.parse(statusRaw) : statusRaw) ?? {};
+      const statusData = parseRpcData(statusRaw);
       const rpcHasData = statusRaw != null && !statusResult.error;
 
       if (rpcHasData) {
@@ -55,7 +64,7 @@ export function useAnchorStats() {
           REVOKED: 'revoked_count',
         };
         for (const [status, cacheKey] of Object.entries(statusMap)) {
-          statusCounts[status] = statusData[status] ?? statusData[cacheKey] ?? 0;
+          statusCounts[status] = Number(statusData[status] ?? statusData[cacheKey]) || 0;
         }
       } else {
         // Fallback: direct count queries (same approach as PipelineAdminPage)
@@ -75,7 +84,7 @@ export function useAnchorStats() {
       // Process TX stats from RPC (accurate server-side aggregation)
       // PostgREST may return the JSON object directly or wrapped — handle both
       const txRaw = txStatsResult.data;
-      const txData = (typeof txRaw === 'string' ? JSON.parse(txRaw) : txRaw) ?? {};
+      const txData = parseRpcData(txRaw);
       const txRpcHasData = txRaw != null && !txStatsResult.error && typeof txData.distinct_tx_count === 'number';
       let distinctTxIds = 0;
       let avgAnchorsPerTx = 0;
@@ -83,11 +92,11 @@ export function useAnchorStats() {
       let lastTxTime: string | null = null;
 
       if (txRpcHasData) {
-        distinctTxIds = txData.distinct_tx_count ?? 0;
-        const anchorsWithTx = txData.anchors_with_tx ?? 0;
+        distinctTxIds = Number(txData.distinct_tx_count) || 0;
+        const anchorsWithTx = Number(txData.anchors_with_tx) || 0;
         avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTx / distinctTxIds) : 0;
-        lastAnchorTime = txData.last_anchor_time ?? null;
-        lastTxTime = txData.last_tx_time ?? null;
+        lastAnchorTime = (txData.last_anchor_time as string) ?? null;
+        lastTxTime = (txData.last_tx_time as string) ?? null;
       } else {
         // Fallback: count distinct chain_tx_id values via RPC
         try {

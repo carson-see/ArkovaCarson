@@ -36,7 +36,7 @@ const { mockFrom, mockSendEmail, mockLogger, mockConfig } = vi.hoisted(() => {
     mockFrom,
     mockSendEmail: vi.fn().mockResolvedValue({ success: true }),
     mockLogger,
-    mockConfig: { frontendUrl: 'http://localhost:5173' },
+    mockConfig: { frontendUrl: 'http://localhost:5173', emailFrom: 'noreply@arkova.ai' },
   };
 });
 
@@ -99,7 +99,7 @@ describe('checkPipelineHealth', () => {
     expect(result.totalStuck).toBeGreaterThan(0);
     expect(mockSendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'carson@arkova.ai',
+        to: 'noreply@arkova.ai',
         emailType: 'notification',
         subject: expect.stringContaining('stuck anchors detected'),
       })

@@ -1001,6 +1001,8 @@ export const TREASURY_LABELS = {
   LAST_24H: 'Last 24 Hours',
   WORKER_STATUS: 'Worker',
   CHAIN_CLIENT: 'Chain Client',
+  BALANCE_STALE: 'Balance may be stale — network data temporarily unavailable.',
+  BALANCE_UNAVAILABLE: 'Unable to fetch balance. Please try again shortly.',
 } as const;
 
 // =============================================================================

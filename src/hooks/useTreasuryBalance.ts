@@ -11,6 +11,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { TREASURY_ADDRESS, MEMPOOL_BASE_URL } from '@/lib/platform';
 import { workerFetch } from '@/lib/workerClient';
+import { TREASURY_LABELS } from '@/lib/copy';
 
 const MEMPOOL_API = `${MEMPOOL_BASE_URL}/api`;
 const POLL_INTERVAL_MS = 60_000;
@@ -184,18 +185,18 @@ export function useTreasuryBalance() {
             // Use cached balance if available so the page isn't blank
             if (lastBalanceRef.current) {
               setBalance(lastBalanceRef.current);
-              setError('Balance may be stale — network data temporarily unavailable.');
+              setError(TREASURY_LABELS.BALANCE_STALE);
             } else {
-              setError('Unable to fetch balance. The network data provider may be rate-limiting requests.');
+              setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
             }
           }
         } catch (workerErr) {
           if (isMountedRef.current) {
             if (lastBalanceRef.current) {
               setBalance(lastBalanceRef.current);
-              setError('Balance may be stale — network data temporarily unavailable.');
+              setError(TREASURY_LABELS.BALANCE_STALE);
             } else {
-              setError('Unable to fetch balance. Please try again shortly.');
+              setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
             }
           }
         }

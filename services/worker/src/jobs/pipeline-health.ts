@@ -19,7 +19,7 @@ interface StuckAnchorGroup {
   status: string;
   count: number;
   thresholdMinutes: number;
-  oldestCreatedAt: string | null;
+  oldestUpdatedAt: string | null;
 }
 
 export interface PipelineHealthResult {
@@ -71,7 +71,7 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
         status,
         count,
         thresholdMinutes,
-        oldestCreatedAt: oldest?.updated_at ?? null,
+        oldestUpdatedAt: oldest?.updated_at ?? null,
       });
     }
   }
@@ -85,11 +85,11 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
 
     try {
       const lines = stuckGroups.map(
-        (g) => `• ${g.count} anchors stuck in ${g.status} (>${g.thresholdMinutes}min, oldest: ${g.oldestCreatedAt ?? 'unknown'})`
+        (g) => `• ${g.count} anchors stuck in ${g.status} (>${g.thresholdMinutes}min, oldest: ${g.oldestUpdatedAt ?? 'unknown'})`
       );
 
       await sendEmail({
-        to: 'carson@arkova.ai',
+        to: config.emailFrom,
         subject: `[Arkova Alert] ${totalStuck} stuck anchors detected`,
         html: `
           <h2>Pipeline Health Alert</h2>
