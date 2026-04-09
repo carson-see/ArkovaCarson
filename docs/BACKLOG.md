@@ -336,9 +336,9 @@ _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integ
 |----|-------------|-------|
 | GEO-11 | YouTube explainers + VideoObject schema | External content creation |
 
-### Dependency Hardening (DEP) — Release R-DEP-01 — 0/10
+### Dependency Hardening (DEP) — Release R-DEP-01 — 1/10
 _Source: Dependency audit 2026-04-09 — cross-referenced [Dependency Sheet](https://docs.google.com/spreadsheets/d/1Wy_HgmsiBhaEcxoqUPjUmeG0xYstJuW2ARXFYEGXUp4) against package.json files_
-_Story doc: [26_dependency_hardening.md](stories/26_dependency_hardening.md) | Jira Epic: TBD_
+_Story doc: [26_dependency_hardening.md](stories/26_dependency_hardening.md) | Jira Epic: SCRUM-550 | Release: R-DEP-01_
 
 **Sprint 1 — Risk Reduction (P0)**
 
@@ -369,7 +369,7 @@ _Story doc: [26_dependency_hardening.md](stories/26_dependency_hardening.md) | J
 
 ### International Regulatory Compliance (REG) — Release R-REG-01 — 0/28
 _Source: Compliance dashboard gaps (FERPA/HIPAA) + international expansion (Kenya, Australia, South Africa, Nigeria)_
-_Story doc: [27_international_compliance.md](stories/27_international_compliance.md) | Jira Epic: TBD_
+_Story doc: [27_international_compliance.md](stories/27_international_compliance.md) | Jira Epic: SCRUM-551 | Release: R-REG-01_
 
 **Sprint 1 — Close Dashboard Gaps (P0: FERPA + HIPAA)**
 

@@ -33,7 +33,7 @@ _Legal basis: 20 U.S.C. Section 1232g; 34 CFR Part 99 (Sections 99.31-99.37)_
 
 ### REG-01: FERPA Disclosure Log (SCRUM-561)
 **Priority:** P0 | **Effort:** Medium | **Type:** Code + Migration
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-561 | **Depends on:** None
 
 **As a** university registrar,
 **I want** every disclosure of education records to be logged with FERPA-required fields,
@@ -58,7 +58,7 @@ Section 99.32 requires maintaining a record of each disclosure including: reques
 
 ### REG-02: Directory Information Opt-Out (SCRUM-562)
 **Priority:** P0 | **Effort:** Medium | **Type:** Code + Migration
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-562 | **Depends on:** None
 
 **As a** student whose education records are on Arkova,
 **I want** to opt out of directory information disclosure,
@@ -81,7 +81,7 @@ Section 99.32 requires maintaining a record of each disclosure including: reques
 
 ### REG-03: FERPA Data Use Agreement (SCRUM-563) Template
 **Priority:** P0 | **Effort:** Small | **Type:** Documentation + Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-563 | **Depends on:** None
 
 **As a** university compliance officer,
 **I want** a FERPA-compliant Data Use Agreement,
@@ -102,7 +102,7 @@ Section 99.32 requires maintaining a record of each disclosure including: reques
 
 ### REG-04: FERPA Requester Identity (SCRUM-568) Verification
 **Priority:** P1 | **Effort:** Medium | **Type:** Code + Process
-**Jira:** TBD | **Depends on:** REG-01
+**Jira:** SCRUM-568 | **Depends on:** REG-01
 
 **As a** platform operator,
 **I want** to verify that API consumers have a legitimate educational interest or fall under a Section 99.31 exception,
@@ -127,7 +127,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-05: HIPAA MFA Enforcement (SCRUM-564) for Healthcare Credentials
 **Priority:** P0 | **Effort:** Medium | **Type:** Code
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-564 | **Depends on:** None
 
 **As a** platform operator handling healthcare credentials,
 **I want** MFA enforced when accessing credentials of healthcare-related types,
@@ -148,7 +148,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-06: HIPAA Session Timeout (SCRUM-565)
 **Priority:** P0 | **Effort:** Small | **Type:** Code
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-565 | **Depends on:** None
 
 **As a** user accessing healthcare credentials,
 **I want** my session to automatically terminate after inactivity,
@@ -169,7 +169,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-07: HIPAA Audit Report (SCRUM-566) Generator
 **Priority:** P0 | **Effort:** Medium | **Type:** Code
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-566 | **Depends on:** None
 
 **As a** HIPAA compliance officer,
 **I want** an exportable audit report of all access to healthcare credentials,
@@ -191,7 +191,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-08: HIPAA BAA Template (SCRUM-567)
 **Priority:** P0 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-567 | **Depends on:** None
 
 **As a** healthcare organization evaluating Arkova,
 **I want** a HIPAA-compliant Business Associate Agreement,
@@ -210,7 +210,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-09: HIPAA Breach Notification (SCRUM-570) Procedure
 **Priority:** P1 | **Effort:** Small | **Type:** Documentation + Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-570 | **Depends on:** None
 
 **As a** platform operator,
 **I want** a documented breach notification procedure for HIPAA,
@@ -230,7 +230,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-10: HIPAA Emergency Access (SCRUM-571) Procedure
 **Priority:** P1 | **Effort:** Small | **Type:** Code + Documentation
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-571 | **Depends on:** None
 
 **As a** platform operator,
 **I want** a break-glass procedure for emergency ePHI access,
@@ -252,7 +252,7 @@ _Legal basis: 45 CFR Part 164, Subpart C (Security Rule), Section 164.312; Secti
 
 ### REG-11: Data Subject Rights (SCRUM-572) Workflow (Access + Portability)
 **Priority:** P1 | **Effort:** Medium | **Type:** Code
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-572 | **Depends on:** None
 
 **As a** data subject in any jurisdiction,
 **I want** to request access to and export all my personal data,
@@ -276,7 +276,7 @@ Arkova already has GDPR erasure (anonymization). This story adds the remaining d
 
 ### REG-12: Standard Contractual Clauses (SCRUM-573) Framework
 **Priority:** P1 | **Effort:** Medium | **Type:** Documentation + Legal
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-573 | **Depends on:** None
 
 **As a** legal/compliance team,
 **I want** a reusable SCC framework for cross-border data transfers,
@@ -295,7 +295,7 @@ Arkova already has GDPR erasure (anonymization). This story adds the remaining d
 
 ### REG-13: Unified Breach Notification (SCRUM-574) Procedure
 **Priority:** P1 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-09
+**Jira:** SCRUM-574 | **Depends on:** REG-09
 
 **As a** platform operator,
 **I want** a single breach notification procedure covering all jurisdictions,
@@ -320,7 +320,7 @@ Arkova already has GDPR erasure (anonymization). This story adds the remaining d
 
 ### REG-14: Jurisdiction-Specific Privacy (SCRUM-575) Notices
 **Priority:** P1 | **Effort:** Small | **Type:** Code + Documentation
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-575 | **Depends on:** None
 
 **As a** data subject,
 **I want** to see a privacy notice referencing my jurisdiction's law,
@@ -344,7 +344,7 @@ _Legal basis: Data Protection Act, No. 24 of 2019 (Kenya); Sections 25, 31-38, 4
 
 ### REG-15: ODPC Registration (SCRUM-576) (Kenya)
 **Priority:** P1 | **Effort:** Small | **Type:** Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-576 | **Depends on:** None
 
 **As a** platform operator processing Kenyan education/healthcare credentials,
 **I want** to register with the Office of the Data Protection Commissioner,
@@ -360,7 +360,7 @@ _Legal basis: Data Protection Act, No. 24 of 2019 (Kenya); Sections 25, 31-38, 4
 
 ### REG-16: Kenya Data Protection (SCRUM-577) Impact Assessment
 **Priority:** P1 | **Effort:** Medium | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-15
+**Jira:** SCRUM-577 | **Depends on:** REG-15
 
 **As a** compliance officer,
 **I want** a DPIA for processing Kenyan education/healthcare credentials,
@@ -380,7 +380,7 @@ _Legal basis: Privacy Act 1988 (Cth); Schedule 1 APPs; Part IIIC NDB scheme; Pri
 
 ### REG-17: APP 8 Cross-Border (SCRUM-578) Disclosure Assessment
 **Priority:** P1 | **Effort:** Medium | **Type:** Documentation + Legal
-**Jira:** TBD | **Depends on:** REG-12
+**Jira:** SCRUM-578 | **Depends on:** REG-12
 
 **As a** compliance officer,
 **I want** a documented APP 8 assessment for Australian data processed in the US,
@@ -399,7 +399,7 @@ Under Section 16C, Arkova remains **legally liable** for how overseas recipients
 
 ### REG-18: Australia Notifiable (SCRUM-579) Data Breach Procedure
 **Priority:** P1 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-13
+**Jira:** SCRUM-579 | **Depends on:** REG-13
 
 **As a** platform operator,
 **I want** an Australia-specific NDB procedure,
@@ -415,7 +415,7 @@ Under Section 16C, Arkova remains **legally liable** for how overseas recipients
 
 ### REG-19: Data Correction (SCRUM-580) Workflow (APP 13)
 **Priority:** P2 | **Effort:** Small | **Type:** Code
-**Jira:** TBD | **Depends on:** REG-11
+**Jira:** SCRUM-580 | **Depends on:** REG-11
 
 **As an** Australian data subject,
 **I want** to request correction of my personal information,
@@ -436,7 +436,7 @@ _Legal basis: Protection of Personal Information Act 4 of 2013; Sections 19-22, 
 
 ### REG-20: Information Regulator (SCRUM-581) Registration (South Africa)
 **Priority:** P2 | **Effort:** Small | **Type:** Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-581 | **Depends on:** None
 
 **As a** platform operator processing South African data,
 **I want** to register with the Information Regulator and designate an Information Officer,
@@ -452,7 +452,7 @@ _Legal basis: Protection of Personal Information Act 4 of 2013; Sections 19-22, 
 
 ### REG-21: POPIA Section 72 (SCRUM-582) Cross-Border Assessment
 **Priority:** P2 | **Effort:** Medium | **Type:** Documentation + Legal
-**Jira:** TBD | **Depends on:** REG-12
+**Jira:** SCRUM-582 | **Depends on:** REG-12
 
 **As a** compliance officer,
 **I want** a Section 72 adequacy assessment for US data processing,
@@ -469,7 +469,7 @@ _Legal basis: Protection of Personal Information Act 4 of 2013; Sections 19-22, 
 
 ### REG-22: South Africa Privacy (SCRUM-583) Notice
 **Priority:** P2 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-14
+**Jira:** SCRUM-583 | **Depends on:** REG-14
 
 **As a** South African data subject,
 **I want** a POPIA-compliant privacy notice,
@@ -488,7 +488,7 @@ _Legal basis: Nigeria Data Protection Act 2023; General Application and Implemen
 
 ### REG-23: NDPC Registration (SCRUM-584) (Nigeria)
 **Priority:** P2 | **Effort:** Small | **Type:** Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-584 | **Depends on:** None
 
 **As a** platform operator processing Nigerian data subjects,
 **I want** to register with the Nigeria Data Protection Commission,
@@ -503,7 +503,7 @@ _Legal basis: Nigeria Data Protection Act 2023; General Application and Implemen
 
 ### REG-24: Nigeria Cross-Border (SCRUM-585) Transfer SCCs
 **Priority:** P2 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-12
+**Jira:** SCRUM-585 | **Depends on:** REG-12
 
 **As a** compliance officer,
 **I want** NDPA-compliant SCCs for Nigerian data transfers,
@@ -520,7 +520,7 @@ US does NOT have NDPC adequacy status. SCCs are required.
 
 ### REG-25: Nigeria Privacy (SCRUM-586) Notice
 **Priority:** P2 | **Effort:** Small | **Type:** Documentation
-**Jira:** TBD | **Depends on:** REG-14
+**Jira:** SCRUM-586 | **Depends on:** REG-14
 
 **As a** Nigerian data subject,
 **I want** an NDPA-compliant privacy notice,
@@ -536,7 +536,7 @@ US does NOT have NDPC adequacy status. SCCs are required.
 
 ### REG-26: Update Compliance (SCRUM-587) Mapping for FERPA + HIPAA
 **Priority:** P1 | **Effort:** Medium | **Type:** Code
-**Jira:** TBD | **Depends on:** REG-01, REG-05
+**Jira:** SCRUM-587 | **Depends on:** REG-01, REG-05
 
 **As a** user viewing the Compliance Dashboard,
 **I want** FERPA and HIPAA to show as "evidenced" once their controls are implemented,
@@ -558,7 +558,7 @@ US does NOT have NDPC adequacy status. SCCs are required.
 
 ### REG-27: International Framework (SCRUM-588) Badges
 **Priority:** P2 | **Effort:** Small | **Type:** Code
-**Jira:** TBD | **Depends on:** REG-26
+**Jira:** SCRUM-588 | **Depends on:** REG-26
 
 **As a** user viewing the Compliance Dashboard,
 **I want** to see international framework badges (Kenya DPA, APP, POPIA, NDPA),
@@ -574,7 +574,7 @@ US does NOT have NDPC adequacy status. SCCs are required.
 
 ### REG-28: DPO/Information Officer (SCRUM-589) Designation
 **Priority:** P2 | **Effort:** Small | **Type:** Process
-**Jira:** TBD | **Depends on:** None
+**Jira:** SCRUM-589 | **Depends on:** None
 
 **As a** platform operator serving multiple African jurisdictions,
 **I want** a single DPO/Information Officer covering Kenya, South Africa, and Nigeria requirements,
