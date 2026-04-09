@@ -28,7 +28,7 @@ These stories are not feature work — they are **infrastructure hardening** tha
 
 ### DEP-01: Supabase Disaster Recovery Plan & Cold Standby (SCRUM-552)
 **Priority:** P0 | **Effort:** Large | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-552
 
 **As a** platform operator,
 **I want** a documented and tested disaster recovery plan for Supabase,
@@ -76,7 +76,7 @@ Supabase is a total single point of failure — auth, data, RLS, RPC all go down
 
 ### DEP-02: Cloudflare Tunnel Failover Procedure (SCRUM-553)
 **Priority:** P0 | **Effort:** Medium | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-553
 
 **As a** platform operator responding to a Cloudflare Tunnel outage,
 **I want** a documented failover procedure to restore worker connectivity,
@@ -121,7 +121,7 @@ The dependency sheet lists "direct Cloud Run URL bypass" as a fallback, but this
 
 ### DEP-03: Document Missing Security-Critical Dependencies (SCRUM-554)
 **Priority:** P0 | **Effort:** Small | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-554
 
 **As a** security auditor reviewing Arkova's dependency inventory,
 **I want** all security-critical dependencies documented in the dependency sheet,
@@ -157,7 +157,7 @@ The dependency audit found 7 significant dependencies in `package.json` files th
 
 ### DEP-04: Upgrade Express to v5 (SCRUM-555)
 **Priority:** P1 | **Effort:** Medium | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-555
 
 **As a** platform engineer,
 **I want** the worker to run Express 5,
@@ -202,7 +202,7 @@ Express 4 is in maintenance mode. Express 5 has been stable since late 2025 and 
 
 ### DEP-05: Upgrade ESLint to v9 + Flat Config
 **Priority:** P1 | **Effort:** Medium | **Depends on:** None | **Status:** COMPLETE
-**Jira:** TBD
+**Jira:** N/A (completed prior to Jira epic creation)
 
 **As a** developer,
 **I want** ESLint v9 with flat config and typescript-eslint v8,
@@ -248,7 +248,7 @@ Current `eslint@^8.56.0` and `@typescript-eslint/*@^6.0.0` are 2+ years old. ESL
 
 ### DEP-06: Pin Security-Critical Dependency Versions (SCRUM-556)
 **Priority:** P1 | **Effort:** Small | **Depends on:** DEP-03
-**Jira:** TBD
+**Jira:** SCRUM-556
 
 **As a** security engineer,
 **I want** exact version pins on crypto, auth, and payment dependencies,
@@ -285,7 +285,7 @@ Currently all deps use caret (`^`) ranges. For crypto/auth/payment libs, an unex
 
 ### DEP-07: Email Delivery Monitoring (SCRUM-557) (Replace Silent Failures)
 **Priority:** P2 | **Effort:** Small | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-557
 
 **As a** platform operator,
 **I want** email delivery failures to trigger alerts,
@@ -315,7 +315,7 @@ The dependency sheet documents Resend's fallback as "emails silently fail; core 
 
 ### DEP-08: Dependency Update Cadence (SCRUM-558) & Policy
 **Priority:** P2 | **Effort:** Small | **Depends on:** DEP-03
-**Jira:** TBD
+**Jira:** SCRUM-558
 
 **As a** platform engineer,
 **I want** a documented dependency update policy with audit dates,
@@ -343,7 +343,7 @@ The dependency sheet captures _what_ but not _when_ or _how often_. No policy ex
 
 ### DEP-09: SBOM Generation (SCRUM-559) in CI
 **Priority:** P2 | **Effort:** Small | **Depends on:** None
-**Jira:** TBD
+**Jira:** SCRUM-559
 
 **As a** compliance officer preparing for SOC 2 Type II,
 **I want** an automatically generated Software Bill of Materials (SBOM),
@@ -376,7 +376,7 @@ SOC 2 CC6.1 requires understanding of system components. An SBOM provides a mach
 
 ### DEP-10: License Audit (SCRUM-560) — GPL Compatibility Review
 **Priority:** P2 | **Effort:** Small | **Depends on:** DEP-03
-**Jira:** TBD
+**Jira:** SCRUM-560
 
 **As a** legal/compliance stakeholder,
 **I want** a review of all dependency licenses for compatibility with Arkova's distribution model,
