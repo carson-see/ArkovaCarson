@@ -36,7 +36,7 @@ const { mockFrom, mockSendEmail, mockLogger, mockConfig } = vi.hoisted(() => {
     mockFrom,
     mockSendEmail: vi.fn().mockResolvedValue({ success: true }),
     mockLogger,
-    mockConfig: { frontendUrl: 'http://localhost:5173', emailFrom: 'noreply@arkova.ai' },
+    mockConfig: { frontendUrl: 'http://localhost:5173' },
   };
 });
 
@@ -99,7 +99,7 @@ describe('checkPipelineHealth', () => {
     expect(result.totalStuck).toBeGreaterThan(0);
     expect(mockSendEmail).toHaveBeenCalledWith(
       expect.objectContaining({
-        to: 'noreply@arkova.ai',
+        to: 'carson@arkova.ai',
         emailType: 'notification',
         subject: expect.stringContaining('stuck anchors detected'),
       })
@@ -130,7 +130,7 @@ describe('checkPipelineHealth', () => {
     expect(mockLogger.error).toHaveBeenCalled();
   });
 
-  it('handles email send failure gracefully', async () => {
+  it('sets alertSent=false when sendEmail returns success:false', async () => {
     let fromCallCount = 0;
     mockFrom.mockImplementation(() => {
       fromCallCount++;
@@ -153,7 +153,42 @@ describe('checkPipelineHealth', () => {
       return chain;
     });
 
-    mockSendEmail.mockRejectedValueOnce(new Error('Resend API down'));
+    mockSendEmail.mockResolvedValueOnce({ success: false, error: 'Resend rate limited' });
+
+    const result = await checkPipelineHealth();
+
+    expect(result.healthy).toBe(false);
+    expect(result.alertSent).toBe(false);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Resend rate limited' }),
+      'Pipeline health: alert email delivery failed'
+    );
+  });
+
+  it('handles email send throw gracefully', async () => {
+    let fromCallCount = 0;
+    mockFrom.mockImplementation(() => {
+      fromCallCount++;
+      const chain: Record<string, unknown> = {};
+      if (fromCallCount === 1) {
+        Object.assign(chain, { data: null, count: 2, error: null });
+      } else if (fromCallCount === 2) {
+        Object.assign(chain, { data: { updated_at: '2026-04-09T09:00:00Z' }, count: 0, error: null });
+      } else {
+        Object.assign(chain, { data: null, count: 0, error: null });
+      }
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn(() => chain);
+      chain.lt = vi.fn(() => chain);
+      chain.is = vi.fn(() => chain);
+      chain.not = vi.fn(() => chain);
+      chain.order = vi.fn(() => chain);
+      chain.limit = vi.fn(() => chain);
+      chain.single = vi.fn(() => Promise.resolve(chain));
+      return chain;
+    });
+
+    mockSendEmail.mockRejectedValueOnce(new Error('Network error'));
 
     const result = await checkPipelineHealth();
 

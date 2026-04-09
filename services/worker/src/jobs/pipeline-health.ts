@@ -88,8 +88,8 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
         (g) => `• ${g.count} anchors stuck in ${g.status} (>${g.thresholdMinutes}min, oldest: ${g.oldestUpdatedAt ?? 'unknown'})`
       );
 
-      await sendEmail({
-        to: config.emailFrom,
+      const result = await sendEmail({
+        to: 'carson@arkova.ai',
         subject: `[Arkova Alert] ${totalStuck} stuck anchors detected`,
         html: `
           <h2>Pipeline Health Alert</h2>
@@ -100,7 +100,10 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
         `,
         emailType: 'notification',
       });
-      alertSent = true;
+      alertSent = result.success;
+      if (!result.success) {
+        logger.warn({ error: result.error }, 'Pipeline health: alert email delivery failed');
+      }
     } catch (emailErr) {
       logger.error({ error: emailErr }, 'Pipeline health: failed to send alert email');
     }
