@@ -43,10 +43,11 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
   for (const [status, thresholdMinutes] of Object.entries(THRESHOLDS)) {
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
 
+    const anchorStatus = status as 'PENDING' | 'SUBMITTED' | 'BROADCASTING';
     const { count, error } = await db
       .from('anchors')
       .select('id', { count: 'exact', head: true })
-      .eq('status', status)
+      .eq('status', anchorStatus)
       .lt('updated_at', cutoff)
       .is('deleted_at', null);
 
@@ -60,7 +61,7 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
       const { data: oldest } = await db
         .from('anchors')
         .select('updated_at')
-        .eq('status', status)
+        .eq('status', anchorStatus)
         .lt('updated_at', cutoff)
         .is('deleted_at', null)
         .order('updated_at', { ascending: true })
