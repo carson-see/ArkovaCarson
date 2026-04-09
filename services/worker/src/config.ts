@@ -166,7 +166,7 @@ function loadConfig(): Config {
     stripeSecretKey: process.env.STRIPE_SECRET_KEY,
     stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
     bitcoinNetwork: process.env.BITCOIN_NETWORK,
-    bitcoinRpcUrl: process.env.BITCOIN_RPC_URL,
+    bitcoinRpcUrl: process.env.BITCOIN_RPC_URL?.trim() && process.env.BITCOIN_RPC_URL.trim() !== 'placeholder' ? process.env.BITCOIN_RPC_URL.trim() : undefined,
     bitcoinRpcAuth: process.env.BITCOIN_RPC_AUTH,
     bitcoinTreasuryWif: process.env.BITCOIN_TREASURY_WIF,
     bitcoinUtxoProvider: process.env.BITCOIN_UTXO_PROVIDER,

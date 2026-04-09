@@ -54,14 +54,20 @@ export const generateTestnet4Keypair = generateSignetKeypair;
 
 /**
  * Derive the P2WPKH (SegWit) address from a WIF-encoded private key.
- * Validates the WIF is parseable for testnet-family networks (signet/testnet/testnet4).
+ * Auto-detects mainnet vs testnet from the WIF prefix:
+ *   - Mainnet WIF starts with 'K', 'L', or '5'
+ *   - Testnet WIF starts with 'c' or '9'
  */
 export function addressFromWif(wif: string): string {
-  const keyPair = ECPair.fromWIF(wif, SIGNET_NETWORK);
+  // Detect network from WIF prefix (mainnet: K/L/5, testnet: c/9)
+  const isMainnet = /^[KL5]/.test(wif);
+  const network = isMainnet ? bitcoin.networks.bitcoin : SIGNET_NETWORK;
+
+  const keyPair = ECPair.fromWIF(wif, network);
 
   const { address } = bitcoin.payments.p2wpkh({
     pubkey: Buffer.from(keyPair.publicKey),
-    network: SIGNET_NETWORK,
+    network,
   });
 
   if (!address) {

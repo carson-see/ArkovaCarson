@@ -61,10 +61,16 @@ describe('wallet utilities (P7-TS-11)', () => {
       expect(() => addressFromWif('not-a-valid-wif')).toThrow();
     });
 
-    it('throws on mainnet WIF (wrong network)', () => {
+    it('derives correct address from mainnet WIF', () => {
       const mainnetKey = ECPair.makeRandom({ network: bitcoin.networks.bitcoin });
       const mainnetWif = mainnetKey.toWIF();
-      expect(() => addressFromWif(mainnetWif)).toThrow();
+      const { address: expected } = bitcoin.payments.p2wpkh({
+        pubkey: Buffer.from(mainnetKey.publicKey),
+        network: bitcoin.networks.bitcoin,
+      });
+      const derived = addressFromWif(mainnetWif);
+      expect(derived).toBe(expected);
+      expect(derived).toMatch(/^bc1/); // mainnet P2WPKH prefix
     });
   });
 
