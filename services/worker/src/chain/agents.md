@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/chain/
 
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-09_
 
 ## What This Folder Contains
 
@@ -24,6 +24,8 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 | `signet.integration.test.ts` | Integration tests (8 tests) — real TX construction + signing with bitcoinjs-lib, broadcast skipped in CI |
 
 ## Recent Changes
+
+- **Session 38 (2026-04-09):** Added `estimateCurrentFee()` to `ChainClient` interface (`types.ts`) and `BitcoinChainClient` (`signet.ts`). Exposes fee estimator for pre-claim fee checks in batch anchor scaling (SCALE-4).
 
 - **Integration tests:** Added `signet.integration.test.ts` — 8 tests constructing and signing real Bitcoin Signet transactions end-to-end (keypair generation → funding tx → OP_RETURN anchor → sign → validate). Covers: valid tx from generated keypair, known test WIF, large UTXO values, dust change handling, invalid fingerprint rejection, different fingerprints → different txIds, scriptSig DER+pubkey validation, broadcast skip documentation. Total: 416 worker tests across 18 files.
 

@@ -12,7 +12,7 @@
 
 **Goal:** Enterprise-grade performance. Auth flows working. Phase 3 eSignatures next.
 **Methodology:** TDD (Red-Green-Refactor) + Architecture-first (sequential-thinking) + Security self-review + Playwright UI verification
-**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 181 migration files (0001-0181, 6 renumbered from duplicates). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (1.28M+ SECURED, 1.39M+ total). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00246-lrb with mempool UTXO provider fix). **All migrations through 0181 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
+**Overall progress:** 211 stories (200 complete, ~95%). **3,898 tests** (1,476 frontend + 2,422 worker, all green). 182 migration files (0001-0180). React Query caching layer added. P4.5 COMPLETE (13/13). P8: 19/19 (100%). Phase 1.5: 15/16 COMPLETE. AI infra: 6/6 COMPLETE (Nessie v5 87.2% F1, Gemini Golden 90.4% F1). GEO: 10/17 complete (4 transitioned to Done 2026-04-07). ATS: 8/8. CML: 5/5. **Phase II Agentic: 6/6 COMPLETE.** Phase III: 3/3 code complete (eSignatures). **COMP: 6/8 COMPLETE.** **24/24 audit findings + 9 pentest findings resolved.** Bitcoin: **MAINNET** (1.41M+ SECURED, 0 PENDING). Wikidata: Q138865713. Frontend on app.arkova.ai. Worker on GCP Cloud Run (revision 00268-k4b, mempool UTXO provider, 10K batch, 1GiB, min-instances=1). **All migrations through 0180 applied to production.** Resend domain (arkova.ai) DNS verified — email confirmations enabled. GitHub cleanup: 42 branches + 17 worktrees removed.
 
 ### Open Blockers
 
@@ -31,9 +31,22 @@
 
 See Jira SCRUM board for full backlog. Session 35 filed 11 new bugs in `docs/bugs/UAT_S35_bugs.md`.
 
-### Recent Changes (2026-04-08, Session 35 — Comprehensive UAT Click-Through + Critical Fixes)
+### Recent Changes (2026-04-09, Session 38 — PostgREST v12 Fix + Batch Scaling + UAT)
 
-**Full live UAT. Two CRITICAL bugs fixed. Worker redeployed. 11 bugs documented.**
+**Critical production fix: PostgREST v12 broke all service_role checks. 11,812 PENDING anchors cleared. Batch scaling to 10K/batch implemented.**
+
+| Change | Detail |
+|--------|--------|
+| **PostgREST v12 JWT fix** | Supabase upgraded to PG 17.6 + PostgREST v12 which deprecated `request.jwt.claim.role`. Created `get_caller_role()` helper, updated 7 functions. SCRUM-541. |
+| **Batch anchor pipeline fix** | `submit_batch_anchors` WHERE clause only matched BROADCASTING (not PENDING). Fixed + `prevent_metadata_edit_after_secured` now allows service_role. |
+| **Batch scaling** | 4 improvements: pre-claim fee check, in-process mutex, smart batch skip (<5 anchors), dynamic fee ceiling. SCRUM-542. |
+| **Worker redeployed** | Revision 00268-k4b: 10K batches, mempool UTXO provider, 1GiB memory, 600s timeout, min-instances=1. |
+| **Cloud Scheduler** | batch-anchors interval 2min → 5min. `get_flag` overload dropped (PostgREST v12 conflict). |
+| **DB changes** | Migration 0180. Partial index `idx_anchors_pending_claim`. Statement timeout on claim RPC. PostgREST schema cache reloaded. |
+| **11,812 PENDING cleared** | Full backlog drained in 2 batch cycles (~4 min) at 10K/batch. |
+| **UAT passed** | Secure Document flow (fingerprint + submit), Search ("patent", "federal") both verified on app.arkova.ai. |
+
+### Previous: Session 35 (2026-04-08)
 
 | Change | Detail |
 |--------|--------|
