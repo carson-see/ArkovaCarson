@@ -114,6 +114,7 @@ OTHER should be your LAST RESORT — only use it when absolutely no other type f
   - "DD Form 214 — Certificate of Release or Discharge" → MILITARY
   - "Certificate of Live Birth — County of..." → IDENTITY
   If you are tempted to use OTHER, ask: "Does this document have ANY identifiable purpose?" If yes, there is almost certainly a more specific type.
+- If you MUST use OTHER: you MUST also set "suggestedType" to your best guess for the closest matching type. Example: {"credentialType": "OTHER", "suggestedType": "INSURANCE", "confidence": 0.30}. This helps users reclassify quickly.
 
 SEC_FILING-SPECIFIC GUIDANCE (EDGAR / SEC Filings):
 - These are documents filed with the U.S. Securities and Exchange Commission (SEC) via the EDGAR system.
@@ -322,7 +323,7 @@ FIELDOFSTUDY NORMALIZATION (applies to ALL credential types):
 - OMIT fieldOfStudy ONLY when the document is truly generic with no subject matter (e.g., "Certificate" with no topic, pure financial/insurance documents, generic contracts).
 
 FIELDS TO EXTRACT:
-- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | ATTESTATION | FINANCIAL | LEGAL | INSURANCE | RESUME | MEDICAL | MILITARY | IDENTITY | SEC_FILING | PATENT | REGULATION | PUBLICATION | OTHER
+- credentialType: DEGREE | CERTIFICATE | LICENSE | TRANSCRIPT | PROFESSIONAL | CLE | BADGE | ATTESTATION | FINANCIAL | LEGAL | INSURANCE | RESUME | MEDICAL | MILITARY | IDENTITY | SEC_FILING | PATENT | REGULATION | PUBLICATION | CHARITY | FINANCIAL_ADVISOR | BUSINESS_ENTITY | OTHER
   CLASSIFICATION RULES (choose the MOST SPECIFIC type):
   - DEGREE: diplomas, bachelor's/master's/doctoral degrees, associate degrees, honorary degrees from universities
   - CERTIFICATE: professional certifications (AWS, CompTIA, PMP, etc.), course completion certificates, trade/vocational certs (OSHA, EPA), training program completions
@@ -343,6 +344,9 @@ FIELDS TO EXTRACT:
   - PATENT: patent grants, patent applications, patent office correspondence (USPTO, EPO, WIPO), provisional applications, patent certificates, notices of allowance
   - REGULATION: federal/state regulations, Federal Register notices, CFR sections, regulatory orders, compliance directives, agency rules, proposed rulemakings, state administrative code
   - PUBLICATION: peer-reviewed journal articles, conference papers, academic publications, research papers, preprints, book chapters, theses/dissertations (when presented as a publication rather than a degree)
+  - CHARITY: charitable organizations, nonprofits, 501(c)(3) registrations, tax-exempt status confirmations, charity registrations
+  - FINANCIAL_ADVISOR: FINRA BrokerCheck records, Series licenses, investment advisor registrations, CRD records
+  - BUSINESS_ENTITY: certificates of formation, good standing certificates, articles of incorporation/organization, business registrations, entity filings
   - OTHER: ONLY use when no other type fits. If you can identify the document purpose at all, use a specific type above
 - issuerName: Full official name of the issuing institution/organization
 - issuedDate: When issued (YYYY-MM-DD)
@@ -378,6 +382,53 @@ ONLY set a flag when the document TEXT contains an EXPLICIT contradiction or red
 - "JURISDICTION_MISMATCH": Set ONLY when the SAME document contains two EXPLICITLY contradictory jurisdictions (e.g., "California Board" + "Licensed in Ontario, Canada"). A credential from an unfamiliar jurisdiction is NOT a mismatch.
 
 WHEN IN DOUBT, DO NOT FLAG. An empty fraudSignals array is always the safer choice. False positives destroy user trust.
+
+THESE ARE NOT FRAUD — DO NOT FLAG:
+1. A degree from a small college you haven't heard of → NOT fraud. Many legitimate institutions are small, regional, or recently renamed. Unfamiliar ≠ fraudulent.
+2. A license with unusual formatting or layout → NOT fraud. License formats vary dramatically by state, country, and year of issue. Non-standard ≠ suspicious.
+3. A certificate missing optional fields (no expiry, no accreditor) → NOT fraud. Many legitimate certificates don't have expiration dates or separate accrediting bodies.
+4. An expired credential → NOT fraud. Expiration is a normal lifecycle event, not evidence of deception.
+5. A document in a foreign language → NOT fraud. Credentials from non-English-speaking countries are valid.
+6. A scanned document with low resolution or OCR artifacts → NOT fraud. Scanning artifacts ("Univeristy", broken words, garbled text) are normal for scanned documents.
+7. A credential with a watermark ("COPY", "OFFICIAL", "SPECIMEN") → NOT fraud. Watermarks are standard security features, not red flags.
+8. An attestation letter on plain letterhead → NOT fraud. Not all organizations have elaborate letterhead.
+9. A transcript with no GPA or incomplete courses → NOT fraud. Some transcripts legitimately omit GPA.
+10. A medical license from a US territory (Guam, Puerto Rico, USVI, American Samoa) → NOT fraud. US territories have legitimate licensing boards.
+11. A credential issued more than 20 years ago → NOT fraud. People archive historical credentials.
+12. A document with mixed languages (e.g., Spanish/English bilingual certificate) → NOT fraud. Bilingual documents are common in border states and international institutions.
+13. An accreditation from an unfamiliar accrediting body → NOT fraud. Many legitimate niche accreditors exist (e.g., ABET for engineering, ABA for law schools, LCME for medical schools).
+14. A professional membership card with minimal detail → NOT fraud. Membership cards are intentionally compact.
+15. A credential from a for-profit university (e.g., University of Phoenix, DeVry, Capella) → NOT fraud. These are regionally accredited institutions, regardless of reputation. Only flag KNOWN DIPLOMA MILLS from the explicit list.
+
+CHARITY-SPECIFIC GUIDANCE:
+- These are registered charitable organizations, nonprofits, and tax-exempt entities.
+- issuerName: The state agency or regulatory body (e.g., "California Attorney General's Office", "IRS Exempt Organizations").
+- fieldOfStudy: The charitable purpose (e.g., "Education", "Healthcare", "Environmental Conservation", "Poverty Relief").
+- jurisdiction: State of registration or "United States" for federal (IRS).
+- einNumber: The EIN/tax ID (e.g., "12-3456789"). Only extract if visible and not redacted.
+- taxExemptStatus: The exemption type (e.g., "501(c)(3)", "501(c)(4)", "501(c)(6)").
+- governingBody: The oversight body if different from issuer (e.g., "IRS", "State Attorney General").
+
+FINANCIAL_ADVISOR-SPECIFIC GUIDANCE:
+- These are credentials for registered financial advisors, brokers, and investment professionals.
+- issuerName: The registering body (e.g., "FINRA", "SEC", "State Securities Board").
+- fieldOfStudy: The advisory specialty (e.g., "Investment Advisory", "Securities Brokerage", "Financial Planning").
+- jurisdiction: State(s) of registration or "United States" for federal.
+- crdNumber: Central Registration Depository number (e.g., "1234567"). Only extract if visible.
+- firmName: The registered firm (e.g., "Morgan Stanley", "Edward Jones").
+- finraRegistration: Registration status (e.g., "Active", "Approved").
+- seriesLicenses: License types held (e.g., "Series 7, Series 66", "Series 63, Series 65").
+
+BUSINESS_ENTITY-SPECIFIC GUIDANCE:
+- These are business formation documents, certificates of good standing, and entity registrations.
+- issuerName: The filing authority (e.g., "Delaware Division of Corporations", "California Secretary of State").
+- fieldOfStudy: The business sector if identifiable (e.g., "Technology", "Real Estate", "Healthcare Services"). OMIT if generic.
+- jurisdiction: State of formation (e.g., "Delaware, USA", "Nevada, USA").
+- entityType: The legal entity type (e.g., "LLC", "Corporation", "Limited Partnership", "S-Corp", "Sole Proprietorship").
+- stateOfFormation: State where entity was formed (e.g., "Delaware", "Wyoming").
+- einNumber: Federal EIN if visible (e.g., "98-7654321").
+- registeredAgent: Name of registered agent if mentioned.
+- goodStandingStatus: Status (e.g., "Active", "Good Standing", "Dissolved", "Revoked").
 
 FEW-SHOT EXAMPLES:
 
@@ -901,7 +952,19 @@ Output: {"credentialType":"SEC_FILING","issuerName":"[COMPANY_REDACTED] Corp.","
 
 Example 130 — Notarized Character Reference (ATTESTATION):
 Input: "CHARACTER REFERENCE LETTER. Date: February 1, 2026. To the Honorable Judge of Immigration Court: I, [NAME_REDACTED], have known [NAME_REDACTED] for fifteen years as a neighbor, friend, and community member. [NAME_REDACTED] is a person of excellent moral character who has been an active volunteer at [ORGANIZATION_REDACTED]. This statement is made voluntarily and truthfully. Notarized by [NAME_REDACTED], Notary Public, State of New Jersey. Commission No. [REDACTED]."
-Output: {"credentialType":"ATTESTATION","issuerName":"[ORGANIZATION_REDACTED]","issuedDate":"2026-02-01","jurisdiction":"New Jersey, USA","fraudSignals":[],"confidence":0.80}`;
+Output: {"credentialType":"ATTESTATION","issuerName":"[ORGANIZATION_REDACTED]","issuedDate":"2026-02-01","jurisdiction":"New Jersey, USA","fraudSignals":[],"confidence":0.80}
+
+Example 131 — Charity Registration:
+Input: "State of California ... Franchise Tax Board ... Tax Exempt Status Confirmation ... Organization: [ORG_REDACTED] Foundation ... EIN: [REDACTED] ... Status: 501(c)(3) Tax Exempt ... Effective Date: January 1, 2020 ... Registered with Attorney General"
+Output: {"credentialType":"CHARITY","issuerName":"California Franchise Tax Board","issuedDate":"2020-01-01","taxExemptStatus":"501(c)(3)","jurisdiction":"California, USA","governingBody":"California Attorney General","fraudSignals":[],"confidence":0.85}
+
+Example 132 — Financial Advisor:
+Input: "FINRA BrokerCheck Report ... [NAME_REDACTED] ... CRD# 1234567 ... Firm: [FIRM_REDACTED] Wealth Management ... Licenses: Series 7 (General Securities), Series 66 (Uniform Combined) ... Status: Active ... Registered since 03/15/2018"
+Output: {"credentialType":"FINANCIAL_ADVISOR","issuerName":"FINRA","issuedDate":"2018-03-15","crdNumber":"1234567","firmName":"[FIRM_REDACTED] Wealth Management","seriesLicenses":"Series 7, Series 66","finraRegistration":"Active","jurisdiction":"United States","fraudSignals":[],"confidence":0.87}
+
+Example 133 — Business Entity:
+Input: "State of Delaware ... Division of Corporations ... Certificate of Good Standing ... Entity: [COMPANY_REDACTED] LLC ... File Number: 12345678 ... Formation Date: 06/01/2022 ... Status: Good Standing ... Registered Agent: CT Corporation System"
+Output: {"credentialType":"BUSINESS_ENTITY","issuerName":"Delaware Division of Corporations","issuedDate":"2022-06-01","entityType":"LLC","stateOfFormation":"Delaware","goodStandingStatus":"Good Standing","registeredAgent":"CT Corporation System","jurisdiction":"Delaware, USA","fraudSignals":[],"confidence":0.88}`;
 
 /**
  * Get a stable hash of the current extraction system prompt.
@@ -954,6 +1017,12 @@ export function buildExtractionPrompt(
     prompt += `This is a digital badge/micro-credential. Look for the issuing organization (as issuerName — e.g., "Amazon Web Services", "Google Cloud"), the skill topic (as fieldOfStudy), and the issue date. For vendor-issued badges, set accreditingBody to the same vendor.\n`;
   } else if (credentialType === 'LEGAL') {
     prompt += `This is a legal document. If it's case law (opinion, order, ruling), issuerName should be the COURT name. Look for case/docket numbers (as licenseNumber), decision date (as issuedDate), and legal area (as fieldOfStudy). If it's a contract/NDA, issuerName is the drafting party.\n`;
+  } else if (credentialType === 'CHARITY') {
+    prompt += `This is a charitable organization / nonprofit document. Extract einNumber, taxExemptStatus (e.g., "501(c)(3)"), governingBody, and jurisdiction. The issuerName is the registering authority, not the charity itself.\n`;
+  } else if (credentialType === 'FINANCIAL_ADVISOR') {
+    prompt += `This is a financial advisor credential. Extract crdNumber, firmName, finraRegistration status, and seriesLicenses. The issuerName is the registering body (e.g., "FINRA", "SEC").\n`;
+  } else if (credentialType === 'BUSINESS_ENTITY') {
+    prompt += `This is a business entity filing. Extract entityType (LLC, Corporation, etc.), stateOfFormation, einNumber if visible, registeredAgent, and goodStandingStatus. The issuerName is the filing authority (e.g., "Delaware Division of Corporations").\n`;
   }
 
   // JSON.stringify encodes the text as an inert data payload, preventing prompt injection

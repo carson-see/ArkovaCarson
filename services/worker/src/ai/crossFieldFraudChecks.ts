@@ -473,7 +473,64 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
 }
 
 // =============================================================================
-// CLE-ONLY FIELD SANITIZER
+// PER-TYPE FIELD VALIDATOR (GME-23)
+// =============================================================================
+
+/** Per-type field allowlists — defines which fields are valid for each credential type. */
+const FIELD_ALLOWLIST: Record<string, string[]> = {
+  DEGREE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'degreeLevel', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  LICENSE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  CERTIFICATE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  TRANSCRIPT: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'degreeLevel', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  PROFESSIONAL: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  CLE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'accreditingBody', 'jurisdiction', 'creditHours', 'creditType', 'barNumber', 'activityNumber', 'providerName', 'approvedBy', 'fraudSignals', 'suggestedType'],
+  BADGE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  ATTESTATION: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'degreeLevel', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  FINANCIAL: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  LEGAL: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  INSURANCE: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  SEC_FILING: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  PATENT: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  REGULATION: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  PUBLICATION: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  RESUME: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  MEDICAL: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  MILITARY: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  IDENTITY: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'licenseNumber', 'jurisdiction', 'fraudSignals', 'suggestedType'],
+  CHARITY: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'jurisdiction', 'einNumber', 'taxExemptStatus', 'governingBody', 'fraudSignals', 'suggestedType'],
+  FINANCIAL_ADVISOR: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'jurisdiction', 'crdNumber', 'firmName', 'finraRegistration', 'seriesLicenses', 'fraudSignals', 'suggestedType'],
+  BUSINESS_ENTITY: ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fieldOfStudy', 'jurisdiction', 'entityType', 'stateOfFormation', 'einNumber', 'registeredAgent', 'goodStandingStatus', 'fraudSignals', 'suggestedType'],
+};
+
+/**
+ * Validate extracted fields against per-type allowlists.
+ * Strips fields that don't belong to the detected credential type.
+ * Replaces the CLE-only sanitizeCLEFields with a general-purpose system.
+ */
+export function validateFieldsForType(fields: ExtractedFields): { stripped: string[]; fields: ExtractedFields } {
+  const type = (fields.credentialType ?? 'OTHER').toUpperCase();
+  const allowed = FIELD_ALLOWLIST[type];
+
+  // If type is OTHER or unknown, allow all fields (no stripping)
+  if (!allowed) {
+    return { stripped: [], fields };
+  }
+
+  const stripped: string[] = [];
+  const cleaned = { ...fields };
+
+  for (const key of Object.keys(cleaned)) {
+    if (!allowed.includes(key) && cleaned[key] !== undefined) {
+      stripped.push(key);
+      delete (cleaned as Record<string, unknown>)[key];
+    }
+  }
+
+  return { stripped, fields: cleaned };
+}
+
+// =============================================================================
+// CLE-ONLY FIELD SANITIZER (legacy — kept for backward compatibility)
 // =============================================================================
 
 /**

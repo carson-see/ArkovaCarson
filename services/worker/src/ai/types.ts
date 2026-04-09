@@ -39,6 +39,22 @@ export interface ExtractedFields {
   activityNumber?: string;
   providerName?: string;
   approvedBy?: string;
+  // CHARITY-specific fields
+  einNumber?: string;
+  taxExemptStatus?: string;
+  governingBody?: string;
+  // FINANCIAL_ADVISOR-specific fields
+  crdNumber?: string;
+  firmName?: string;
+  finraRegistration?: string;
+  seriesLicenses?: string;
+  // BUSINESS_ENTITY-specific fields
+  entityType?: string;
+  stateOfFormation?: string;
+  registeredAgent?: string;
+  goodStandingStatus?: string;
+  // Smart type suggestion for OTHER
+  suggestedType?: string;
   // Fraud signals
   fraudSignals?: string[];
   [key: string]: string | number | string[] | undefined;

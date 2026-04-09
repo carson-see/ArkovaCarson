@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { runCrossFieldChecks, sanitizeCLEFields } from './crossFieldFraudChecks.js';
+import { runCrossFieldChecks, sanitizeCLEFields, validateFieldsForType } from './crossFieldFraudChecks.js';
 import type { ExtractedFields } from './types.js';
 
 describe('crossFieldFraudChecks', () => {
@@ -368,5 +368,114 @@ describe('sanitizeCLEFields', () => {
     };
     const stripped = sanitizeCLEFields(fields);
     expect(stripped).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// validateFieldsForType (GME-23)
+// ===========================================================================
+
+describe('validateFieldsForType', () => {
+  it('strips creditHours from DEGREE extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'DEGREE',
+      issuerName: 'MIT',
+      fieldOfStudy: 'Computer Science',
+      creditHours: 3.0,
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toContain('creditHours');
+    expect(result.fields.creditHours).toBeUndefined();
+    expect(result.fields.issuerName).toBe('MIT');
+  });
+
+  it('preserves creditHours for CLE extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'CLE',
+      issuerName: 'State Bar',
+      creditHours: 6.5,
+      barNumber: '12345',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields.creditHours).toBe(6.5);
+    expect(result.fields.barNumber).toBe('12345');
+  });
+
+  it('preserves einNumber for CHARITY extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'CHARITY',
+      issuerName: 'California Franchise Tax Board',
+      einNumber: '12-3456789',
+      taxExemptStatus: '501(c)(3)',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields.einNumber).toBe('12-3456789');
+    expect(result.fields.taxExemptStatus).toBe('501(c)(3)');
+  });
+
+  it('preserves entityType for BUSINESS_ENTITY extraction', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'BUSINESS_ENTITY',
+      issuerName: 'Delaware Division of Corporations',
+      entityType: 'LLC',
+      stateOfFormation: 'Delaware',
+      goodStandingStatus: 'Active',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields.entityType).toBe('LLC');
+    expect(result.fields.stateOfFormation).toBe('Delaware');
+  });
+
+  it('allows all fields through for OTHER / unknown type', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'OTHER',
+      issuerName: 'Unknown Org',
+      creditHours: 5,
+      einNumber: '99-1234567',
+      entityType: 'LLC',
+      suggestedType: 'INSURANCE',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields.creditHours).toBe(5);
+    expect(result.fields.einNumber).toBe('99-1234567');
+  });
+
+  it('handles empty fields object without crashing', () => {
+    const fields: ExtractedFields = {};
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields).toEqual({});
+  });
+
+  it('strips CHARITY-specific fields from LICENSE', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'LICENSE',
+      issuerName: 'State Board',
+      einNumber: '12-3456789',
+      taxExemptStatus: '501(c)(3)',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toContain('einNumber');
+    expect(result.stripped).toContain('taxExemptStatus');
+    expect(result.fields.einNumber).toBeUndefined();
+  });
+
+  it('preserves FINANCIAL_ADVISOR-specific fields', () => {
+    const fields: ExtractedFields = {
+      credentialType: 'FINANCIAL_ADVISOR',
+      issuerName: 'FINRA',
+      crdNumber: '1234567',
+      firmName: 'Morgan Stanley',
+      seriesLicenses: 'Series 7, Series 66',
+      finraRegistration: 'Active',
+    };
+    const result = validateFieldsForType(fields);
+    expect(result.stripped).toHaveLength(0);
+    expect(result.fields.crdNumber).toBe('1234567');
+    expect(result.fields.firmName).toBe('Morgan Stanley');
   });
 });
