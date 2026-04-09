@@ -57,51 +57,77 @@ export function useTreasuryBalance() {
 
   const fetchAll = useCallback(async () => {
     try {
-      // Fetch balance, receipts, BTC price, and fee rates in parallel
       const fetchWithTimeout = (url: string) =>
         fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 
-      // Use allSettled so one failing call doesn't break all cards
-      const [addressResult, txResult, priceResult, feeResult] = await Promise.allSettled([
-        fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}`),
+      // 1. Balance: try worker API first (uses paid Bitcoin node), mempool.space as fallback
+      let balanceResolved = false;
+      try {
+        const response = await workerFetch('/api/treasury/status', { method: 'GET' });
+        if (response.ok && isMountedRef.current) {
+          const data = await response.json() as {
+            wallet?: { balanceSats: number; utxoCount?: number };
+            fees?: { currentRateSatPerVbyte: number };
+          };
+          if (data.wallet) {
+            const bal: TreasuryBalance = {
+              confirmed: data.wallet.balanceSats,
+              unconfirmed: 0,
+              total: data.wallet.balanceSats,
+              btcPrice: null,
+              totalUsd: null,
+            };
+            setBalance(bal);
+            lastBalanceRef.current = bal;
+            balanceResolved = true;
+          }
+          if (data.fees) {
+            const rate = data.fees.currentRateSatPerVbyte;
+            setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
+          }
+        }
+      } catch {
+        // Worker unavailable — will try mempool.space below
+      }
+
+      // 2. Supplementary data from mempool.space: receipts, price, fees (display-only)
+      //    Also try mempool for balance if worker didn't resolve it
+      const mempoolFetches = [
+        ...(balanceResolved ? [] : [fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}`)]),
         fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}/txs`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/prices`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/fees/recommended`),
-      ]);
-
-      const addressRes = addressResult.status === 'fulfilled' ? addressResult.value : null;
-      const txRes = txResult.status === 'fulfilled' ? txResult.value : null;
-      const priceRes = priceResult.status === 'fulfilled' ? priceResult.value : null;
-      const feeRes = feeResult.status === 'fulfilled' ? feeResult.value : null;
+      ];
+      const settled = await Promise.allSettled(mempoolFetches);
 
       if (!isMountedRef.current) return;
 
-      // Parse address balance
-      if (addressRes?.ok) {
-        const data = await addressRes.json() as {
-          chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
-          mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
-        };
-        const confirmed = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-        const unconfirmed = data.mempool_stats.funded_txo_sum - data.mempool_stats.spent_txo_sum;
-
-        // Parse BTC price
-        let btcPrice: number | null = null;
-        if (priceRes?.ok) {
-          const priceData = await priceRes.json() as { USD: number };
-          btcPrice = priceData.USD;
-        }
-
-        const total = confirmed + unconfirmed;
-        const totalBtc = total / 1e8;
-        const totalUsd = btcPrice ? totalBtc * btcPrice : null;
-
-        if (isMountedRef.current) {
-          const bal = { confirmed, unconfirmed, total, btcPrice, totalUsd };
-          setBalance(bal);
-          lastBalanceRef.current = bal;
+      // Parse results — indices shift based on whether balance fetch was included
+      const val = (i: number) => settled[i]?.status === 'fulfilled' ? (settled[i] as PromiseFulfilledResult<Response>).value : null;
+      let idx = 0;
+      if (!balanceResolved) {
+        const addressRes = val(idx);
+        idx++;
+        if (addressRes?.ok) {
+          const data = await addressRes.json() as {
+            chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
+            mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
+          };
+          const confirmed = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
+          const unconfirmed = data.mempool_stats.funded_txo_sum - data.mempool_stats.spent_txo_sum;
+          const total = confirmed + unconfirmed;
+          if (isMountedRef.current) {
+            const bal: TreasuryBalance = { confirmed, unconfirmed, total, btcPrice: null, totalUsd: null };
+            setBalance(bal);
+            lastBalanceRef.current = bal;
+            balanceResolved = true;
+          }
         }
       }
+
+      const txRes = val(idx); idx++;
+      const priceRes = val(idx); idx++;
+      const feeRes = val(idx);
 
       // Parse receipts
       if (txRes?.ok) {
@@ -134,71 +160,36 @@ export function useTreasuryBalance() {
         }
       }
 
-      // Parse fee rates
+      // Enrich balance with BTC price if available
+      if (priceRes?.ok && lastBalanceRef.current) {
+        const priceData = await priceRes.json() as { USD: number };
+        const btcPrice = priceData.USD;
+        const totalBtc = lastBalanceRef.current.total / 1e8;
+        const enriched = { ...lastBalanceRef.current, btcPrice, totalUsd: totalBtc * btcPrice };
+        setBalance(enriched);
+        lastBalanceRef.current = enriched;
+      }
+
+      // Parse fee rates from mempool (more granular than worker)
       if (feeRes?.ok) {
         const fees = await feeRes.json() as {
-          fastestFee: number;
-          halfHourFee: number;
-          hourFee: number;
-          economyFee: number;
-          minimumFee: number;
+          fastestFee: number; halfHourFee: number; hourFee: number; economyFee: number; minimumFee: number;
         };
         if (isMountedRef.current) {
           setFeeRates({
-            fastest: fees.fastestFee,
-            halfHour: fees.halfHourFee,
-            hour: fees.hourFee,
-            economy: fees.economyFee,
-            minimum: fees.minimumFee,
+            fastest: fees.fastestFee, halfHour: fees.halfHourFee,
+            hour: fees.hourFee, economy: fees.economyFee, minimum: fees.minimumFee,
           });
         }
       }
 
-      // If balance fetch from mempool failed, fall back to worker API
-      const balanceFailed = !addressRes?.ok;
-      if (balanceFailed && isMountedRef.current) {
-        try {
-          const response = await workerFetch('/api/treasury/status', { method: 'GET' });
-          if (response.ok && isMountedRef.current) {
-            const data = await response.json() as {
-              wallet?: { balanceSats: number; utxoCount?: number };
-              fees?: { currentRateSatPerVbyte: number };
-            };
-            if (data.wallet) {
-              const bal: TreasuryBalance = {
-                confirmed: data.wallet.balanceSats,
-                unconfirmed: 0,
-                total: data.wallet.balanceSats,
-                btcPrice: null,
-                totalUsd: null,
-              };
-              setBalance(bal);
-              lastBalanceRef.current = bal;
-            }
-            if (data.fees && !feeRes?.ok) {
-              const rate = data.fees.currentRateSatPerVbyte;
-              setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
-            }
-            // Clear error since worker fallback succeeded
-            if (isMountedRef.current) setError(null);
-          } else if (isMountedRef.current) {
-            // Use cached balance if available so the page isn't blank
-            if (lastBalanceRef.current) {
-              setBalance(lastBalanceRef.current);
-              setError(TREASURY_LABELS.BALANCE_STALE);
-            } else {
-              setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
-            }
-          }
-        } catch (workerErr) {
-          if (isMountedRef.current) {
-            if (lastBalanceRef.current) {
-              setBalance(lastBalanceRef.current);
-              setError(TREASURY_LABELS.BALANCE_STALE);
-            } else {
-              setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
-            }
-          }
+      // Final error state
+      if (!balanceResolved && isMountedRef.current) {
+        if (lastBalanceRef.current) {
+          setBalance(lastBalanceRef.current);
+          setError(TREASURY_LABELS.BALANCE_STALE);
+        } else {
+          setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
         }
       } else if (isMountedRef.current) {
         setError(null);
