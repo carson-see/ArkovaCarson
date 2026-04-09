@@ -314,18 +314,18 @@ export function DashboardPage() {
       <Card className="border-white/[0.06] bg-white/[0.015]">
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
           <CardTitle className="text-[17px] font-semibold">My Records</CardTitle>
-          <Button onClick={() => {
-            if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-              setIssueDialogOpen(true);
-            } else {
-              setSecureDialogOpen(true);
-            }
-          }} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc] font-medium text-[13px]">
-            <Plus className="mr-2 h-4 w-4" />
-            {profile?.role === 'ORG_ADMIN'
-              ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA
-              : SECURE_DIALOG_LABELS.TITLE}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc] font-medium text-[13px]">
+              <Plus className="mr-2 h-4 w-4" />
+              {SECURE_DIALOG_LABELS.TITLE}
+            </Button>
+            {profile?.role === 'ORG_ADMIN' && profile.org_id && (
+              <Button onClick={() => setIssueDialogOpen(true)} variant="outline" className="font-medium text-[13px]">
+                <Plus className="mr-2 h-4 w-4" />
+                {ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA}
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
         {/* Search + Filter controls (MVP-09) */}
