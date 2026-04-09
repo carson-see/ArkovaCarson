@@ -250,7 +250,7 @@ export async function fetchCourtOpinions(
     try {
       const headers: Record<string, string> = {
         Accept: 'application/json',
-        'User-Agent': 'Arkova/1.0 (contact@arkova.io)',
+        'User-Agent': 'Arkova/1.0 (contact@arkova.ai)',
       };
       // CourtListener v4 API requires authentication
       const clToken = process.env.COURTLISTENER_API_TOKEN;

@@ -48,6 +48,7 @@ import { fetchSamEntities, fetchSamExclusions } from '../jobs/samGovFetcher.js';
 import { fetchFccLicenses } from '../jobs/fccUlsFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
+import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
@@ -231,6 +232,18 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Treasury Cache (SCRUM-546) ───
+
+cronRouter.post('/refresh-treasury-cache', async (_req, res) => {
+  try {
+    const result = await refreshTreasuryCache();
+    res.json({ success: true, balance: result.balance_confirmed_sats, updated_at: result.updated_at });
+  } catch (error) {
+    logger.error({ error }, 'Treasury cache refresh failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
