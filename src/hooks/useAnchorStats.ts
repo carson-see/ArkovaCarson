@@ -8,6 +8,15 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 
+/** Parse RPC data that PostgREST may return as a JSON string or object */
+function parseRpcData(data: unknown): Record<string, unknown> {
+  if (data == null) return {};
+  if (typeof data === 'string') {
+    try { return JSON.parse(data); } catch { return {}; }
+  }
+  return data as Record<string, unknown>;
+}
+
 export interface AnchorStats {
   byStatus: Record<string, number>;
   totalAnchors: number;
@@ -39,9 +48,11 @@ export function useAnchorStats() {
       // Process status counts — RPC returns object or null
       // Production RPC reads from stats_cache with keys like "pending_count", "secured_count"
       // Local/original RPC uses json_object_agg with keys like "PENDING", "SECURED"
+      // PostgREST may return JSON as string — handle both
       const statusCounts: Record<string, number> = {};
-      const statusData = statusResult.data ?? {};
-      const rpcHasData = statusResult.data && !statusResult.error;
+      const statusRaw = statusResult.data;
+      const statusData = parseRpcData(statusRaw);
+      const rpcHasData = statusRaw != null && !statusResult.error;
 
       if (rpcHasData) {
         // Map from either format: cached ("pending_count") or aggregated ("PENDING")
@@ -53,7 +64,7 @@ export function useAnchorStats() {
           REVOKED: 'revoked_count',
         };
         for (const [status, cacheKey] of Object.entries(statusMap)) {
-          statusCounts[status] = statusData[status] ?? statusData[cacheKey] ?? 0;
+          statusCounts[status] = Number(statusData[status] ?? statusData[cacheKey]) || 0;
         }
       } else {
         // Fallback: direct count queries (same approach as PipelineAdminPage)
@@ -71,23 +82,23 @@ export function useAnchorStats() {
       const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
 
       // Process TX stats from RPC (accurate server-side aggregation)
-      const txData = txStatsResult.data ?? {};
-      const txRpcHasData = txStatsResult.data && !txStatsResult.error;
+      // PostgREST may return the JSON object directly or wrapped — handle both
+      const txRaw = txStatsResult.data;
+      const txData = parseRpcData(txRaw);
+      const txRpcHasData = txRaw != null && !txStatsResult.error && typeof txData.distinct_tx_count === 'number';
       let distinctTxIds = 0;
       let avgAnchorsPerTx = 0;
       let lastAnchorTime: string | null = null;
       let lastTxTime: string | null = null;
 
       if (txRpcHasData) {
-        distinctTxIds = txData.distinct_tx_count ?? 0;
-        const anchorsWithTx = txData.anchors_with_tx ?? 0;
+        distinctTxIds = Number(txData.distinct_tx_count) || 0;
+        const anchorsWithTx = Number(txData.anchors_with_tx) || 0;
         avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTx / distinctTxIds) : 0;
-        lastAnchorTime = txData.last_anchor_time ?? null;
-        lastTxTime = txData.last_tx_time ?? null;
+        lastAnchorTime = (txData.last_anchor_time as string) ?? null;
+        lastTxTime = (txData.last_tx_time as string) ?? null;
       } else {
         // Fallback: count distinct chain_tx_id values via RPC
-        // Supabase JS .select() with count counts rows, not distinct values,
-        // so we use a raw SQL query for accuracy
         try {
           const { data: txCountData } = await dbAny.rpc('get_distinct_tx_count');
           distinctTxIds = txCountData ?? 0;
@@ -99,7 +110,12 @@ export function useAnchorStats() {
             .not('chain_tx_id', 'is', null);
           distinctTxIds = txCount ?? 0;
         }
-        const anchorsWithTxFallback = statusCounts['SECURED'] ?? 0;
+        // Use anchors that actually have a TX, not just SECURED count
+        const { count: anchorsWithTxCount } = await dbAny
+          .from('anchors')
+          .select('id', { count: 'exact', head: true })
+          .not('chain_tx_id', 'is', null);
+        const anchorsWithTxFallback = anchorsWithTxCount ?? (statusCounts['SECURED'] ?? 0);
         avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTxFallback / distinctTxIds) : 0;
 
         const { data: lastRow } = await dbAny

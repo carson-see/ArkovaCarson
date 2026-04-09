@@ -895,6 +895,7 @@ export const ORG_PAGE_LABELS = {
   PROMOTE_TO_ADMIN: 'Promote to Admin',
   DEMOTE_TO_MEMBER: 'Demote to Member',
   RECIPIENT: 'Recipient',
+  ABOUT: 'About',
 } as const;
 
 // =============================================================================
@@ -1000,6 +1001,8 @@ export const TREASURY_LABELS = {
   LAST_24H: 'Last 24 Hours',
   WORKER_STATUS: 'Worker',
   CHAIN_CLIENT: 'Chain Client',
+  BALANCE_STALE: 'Balance may be stale — network data temporarily unavailable.',
+  BALANCE_UNAVAILABLE: 'Unable to fetch balance. Please try again shortly.',
 } as const;
 
 // =============================================================================

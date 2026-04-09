@@ -429,8 +429,16 @@ export function OrgProfilePage() {
             </TabsList>
           </div>
 
-        {/* Home Tab — Records (like LinkedIn posts feed) */}
+        {/* Home Tab — About + Records (like LinkedIn posts feed) */}
         <TabsContent value="home" className="p-4 md:p-6">
+          {/* About section — shown when org has a description */}
+          {orgDescription && (
+            <div className="mb-6 rounded-lg border bg-card p-4">
+              <h2 className="text-sm font-semibold text-muted-foreground mb-2">{ORG_PAGE_LABELS.ABOUT}</h2>
+              <p className="text-sm leading-relaxed whitespace-pre-line">{orgDescription}</p>
+            </div>
+          )}
+
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">Records</h2>
             {isAdmin && (
