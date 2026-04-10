@@ -363,7 +363,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - REG-20–22 (South Africa): Information Regulator registration, POPIA Section 72, privacy notice
 - REG-23–25 (Nigeria): NDPC registration, SCCs, privacy notice
 - REG-26–28 (Dashboard): Compliance mapping update, international badges, DPO designation
-- See `docs/stories/27_international_compliance.md` and `docs/BACKLOG.md` for details
+- See `docs/stories/29_international_compliance.md` and `docs/BACKLOG.md` for details
 
 ### Remaining Production Blockers
 

@@ -371,7 +371,7 @@ _Story doc: [26_dependency_hardening.md](stories/26_dependency_hardening.md) | J
 
 ### International Regulatory Compliance (REG) — Release R-REG-01 — 0/28
 _Source: Compliance dashboard gaps (FERPA/HIPAA) + international expansion (Kenya, Australia, South Africa, Nigeria)_
-_Story doc: [27_international_compliance.md](stories/27_international_compliance.md) | Jira Epic: SCRUM-551 | Release: R-REG-01_
+_Story doc: [29_international_compliance.md](stories/29_international_compliance.md) | Jira Epic: SCRUM-551 | Release: R-REG-01_
 
 **Sprint 1 — Close Dashboard Gaps (P0: FERPA + HIPAA)**
 

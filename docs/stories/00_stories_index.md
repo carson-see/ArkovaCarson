@@ -46,7 +46,7 @@ For a new developer joining the project, read in this order:
 | PH3 | Phase III eSignatures | 3 | 0 | 0 | 3 | [23_phase3_esignatures.md](./23_phase3_esignatures.md) |
 | COMP | Compliance Audit Readiness | 8 | 6 | 0 | 2 | [24_compliance_audit_readiness.md](./24_compliance_audit_readiness.md) |
 | DEP | Dependency Hardening | 10 | 1 | 0 | 9 | [26_dependency_hardening.md](./26_dependency_hardening.md) |
-| REG | International Regulatory Compliance | 28 | 0 | 0 | 28 | [27_international_compliance.md](./27_international_compliance.md) |
+| REG | International Regulatory Compliance | 28 | 0 | 0 | 28 | [29_international_compliance.md](./29_international_compliance.md) |
 | **Total** | | **260** | **190** | **3** | **67** | |
 
 ### All Stories by ID
