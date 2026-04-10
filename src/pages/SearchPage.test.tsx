@@ -50,7 +50,6 @@ vi.mock('@/lib/fileHasher', () => ({
   generateFingerprint: vi.fn().mockResolvedValue('a'.repeat(64)),
 }));
 
-// Mock ArkovaLogo (has ArkovaIcon named export too)
 vi.mock('@/components/layout/ArkovaLogo', () => ({
   ArkovaLogo: ({ size }: { size?: number }) => (
     <svg data-testid="arkova-logo" width={size} height={size} />
