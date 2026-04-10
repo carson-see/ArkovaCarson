@@ -1,5 +1,5 @@
 # Data Model
-_Last updated: 2026-04-01 | Migrations: 0001-0157 + 0024 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 161 files). Migrations through 0157 applied to production. Migration 0024 (RLS perf fix) applied directly to production DB (not via supabase db push). Additional production-only changes: anchors_select_platform_admin policy optimized, authenticated role statement_timeout increased to 30s, bulk_create_anchors function timeout set to 60s._
+_Last updated: 2026-04-10 | Migrations: 0001-0185 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches, 190 files). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a production hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after the column was dropped in 0170._
 
 ## Overview
 
@@ -150,15 +150,14 @@ Document fingerprint records (NO document content stored).
 
 Append-only audit log. UPDATE and DELETE blocked by triggers.
 
+> **GDPR PII-01 (migration 0170):** `actor_email`, `actor_ip`, and `actor_user_agent` columns were dropped for data minimization. Migration 0185 (SCRUM-635) completed the rewrite of SECURITY DEFINER functions that still referenced `actor_email` (`bulk_create_anchors`, `create_pending_recipient`, legacy `revoke_anchor(uuid)`). Never add PII columns back to this table — use `actor_id` and join `profiles` if needed.
+
 | Column | Type | Nullable | Default | Description |
 |--------|------|----------|---------|-------------|
 | `id` | uuid | NO | gen_random_uuid() | Primary key |
 | `event_type` | text | NO | — | Specific event (e.g., anchor.created) |
 | `event_category` | text | NO | — | AUTH / ANCHOR / PROFILE / ORG / ADMIN / SYSTEM |
 | `actor_id` | uuid | YES | NULL | User who performed action |
-| `actor_email` | text | YES | NULL | Actor's email |
-| `actor_ip` | inet | YES | NULL | Client IP address |
-| `actor_user_agent` | text | YES | NULL | Client user agent |
 | `target_type` | text | YES | NULL | Affected entity type |
 | `target_id` | uuid | YES | NULL | Affected entity ID |
 | `org_id` | uuid | YES | NULL | Organization context |

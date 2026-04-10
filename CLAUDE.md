@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned, ~77%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned, ~77%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -258,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 182 files (0001-0180, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0179 renumbered from duplicates). All migrations applied to production through 0180. Migration 0180 also applied directly to production (PostgREST v12 JWT claim fix + batch anchor scaling indexes).
+**Current:** 190 files (0001-0185, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -502,5 +502,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-09 | 182 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-10 | 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 260 stories (200 complete + 49 NCE/GME planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
