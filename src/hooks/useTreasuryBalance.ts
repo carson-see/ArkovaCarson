@@ -190,7 +190,7 @@ export function useTreasuryBalance() {
               setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
             }
           }
-        } catch (workerErr) {
+        } catch {
           if (isMountedRef.current) {
             if (lastBalanceRef.current) {
               setBalance(lastBalanceRef.current);
