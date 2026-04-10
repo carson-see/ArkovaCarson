@@ -358,42 +358,52 @@ describe('worker server', () => {
   });
 
   describe('cron job setup', () => {
-    it('registers 12 cron jobs (1 recovery + 6 original + 5 chain maintenance)', () => {
-      expect(cronCalls).toHaveLength(12);
-    });
+    it('registers the expected set of cron schedules', () => {
+      const patterns = cronCalls.map((c) => c[0] as string);
+      const countPattern = (p: string) => patterns.filter((x) => x === p).length;
 
-    it('registers broadcast recovery at every 2 minutes (RACE-1)', () => {
-      expect(cronCalls[0][0]).toBe('*/2 * * * *');
-    });
+      // Shared patterns
+      // '*/2 * * * *' → broadcast recovery (RACE-1), confirmation check (BETA-01), webhook retries
+      expect(countPattern('*/2 * * * *')).toBe(3);
+      // '*/10 * * * *' → batch anchors, reorg detection, stuck TX monitor, fee monitoring
+      expect(countPattern('*/10 * * * *')).toBe(4);
 
-    it('registers anchor processing at every minute', () => {
-      expect(cronCalls[1][0]).toBe('* * * * *');
-    });
-
-    it('registers confirmation checking at every 2 minutes (BETA-01)', () => {
-      expect(cronCalls[2][0]).toBe('*/2 * * * *');
-    });
-
-    it('registers revocation processing at every 5 minutes (BETA-02)', () => {
-      expect(cronCalls[3][0]).toBe('*/5 * * * *');
-    });
-
-    it('registers webhook retries at every 2 minutes', () => {
-      expect(cronCalls[4][0]).toBe('*/2 * * * *');
-    });
-
-    it('registers monthly reset on 1st at midnight', () => {
-      expect(cronCalls[5][0]).toBe('0 0 1 * *');
-    });
-
-    it('registers GDPR data retention cleanup at 2 AM daily (PII-03)', () => {
-      expect(cronCalls[6][0]).toBe('0 2 * * *');
+      // Unique patterns
+      expect(patterns).toContain('* * * * *');   // anchor processing
+      expect(patterns).toContain('*/5 * * * *'); // revocation (BETA-02)
+      expect(patterns).toContain('0 0 1 * *');   // monthly credit allocation
+      expect(patterns).toContain('0 2 * * *');   // GDPR cleanup (PII-03)
+      expect(patterns).toContain('0 */6 * * *'); // rebroadcast dropped TXs
+      expect(patterns).toContain('0 4 * * *');   // UTXO consolidation
     });
   });
 
   describe('scheduled job error handling', () => {
+    // Probe each cron with the given pattern and return the callback that
+    // triggers the target mock. Robust to reordering of cron registrations,
+    // unlike positional indices.
+    const findCronByMock = async (
+      pattern: string,
+      targetMock: ReturnType<typeof vi.fn>,
+    ): Promise<() => Promise<void>> => {
+      const candidates = cronCalls.filter((c) => c[0] === pattern);
+      for (const [, cb] of candidates) {
+        targetMock.mockClear();
+        targetMock.mockResolvedValue(0);
+        try {
+          await (cb as () => Promise<void>)();
+        } catch {
+          // Swallow — we're only inspecting which mock was touched.
+        }
+        if (targetMock.mock.calls.length > 0) {
+          return cb as () => Promise<void>;
+        }
+      }
+      throw new Error(`No '${pattern}' cron invokes the given mock`);
+    };
+
     it('anchor processing cron catches and logs errors', async () => {
-      const anchorCallback = cronCalls[1][1] as () => Promise<void>;
+      const anchorCallback = await findCronByMock('* * * * *', mockProcessPendingAnchors);
       mockProcessPendingAnchors.mockRejectedValue(new Error('cron fail'));
 
       await anchorCallback();
@@ -405,7 +415,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron catches and logs errors', async () => {
-      const webhookCallback = cronCalls[4][1] as () => Promise<void>;
+      const webhookCallback = await findCronByMock('*/2 * * * *', mockProcessWebhookRetries);
       mockProcessWebhookRetries.mockRejectedValue(new Error('retry fail'));
 
       await webhookCallback();
@@ -417,7 +427,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron logs count when retries processed', async () => {
-      const webhookCallback = cronCalls[4][1] as () => Promise<void>;
+      const webhookCallback = await findCronByMock('*/2 * * * *', mockProcessWebhookRetries);
       mockProcessWebhookRetries.mockResolvedValue(5);
 
       await webhookCallback();
@@ -471,7 +481,10 @@ describe('worker server', () => {
 
   describe('monthly credit allocation cron', () => {
     it('logs monthly credit allocation message', async () => {
-      const monthlyCallback = cronCalls[5][1] as () => Promise<void>;
+      // '0 0 1 * *' is the unique monthly-credits pattern
+      const monthly = cronCalls.find((c) => c[0] === '0 0 1 * *');
+      expect(monthly).toBeDefined();
+      const monthlyCallback = monthly![1] as () => Promise<void>;
 
       await monthlyCallback();
 

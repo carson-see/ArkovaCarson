@@ -14,18 +14,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 // Forbidden terms (case-insensitive)
+// Use custom boundaries (?<![-\w]) / (?![-\w]) rather than \b so that hyphenated
+// CSS values like "inline-block" / "flex-block" are NOT flagged as the word "block".
 const FORBIDDEN_TERMS = [
   'wallet',
   'gas',
-  String.raw`\bhash\b`, // \b for word boundary to avoid matching 'hashmap', etc in code
-  String.raw`\bblock\b`,
+  String.raw`(?<![-\w])hash(?![-\w])`,
+  String.raw`(?<![-\w])block(?![-\w])`,
   'transaction',
   'crypto',
   'cryptocurrency',
   'bitcoin',
   'blockchain',
   'mining',
-  String.raw`\btoken\b`,
+  String.raw`(?<![-\w])token(?![-\w])`,
 ];
 
 // File patterns to check (UI-facing files)
