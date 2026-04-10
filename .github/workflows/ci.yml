@@ -309,7 +309,10 @@ jobs:
 
       - name: Install TLA+ tools (tla2tools.jar)
         if: steps.tla-changed.outputs.changed == 'true'
-        run: npx tla-precheck setup
+        # `tla-precheck setup` prompts "Download TLC tla2tools.jar? (Y/n)"
+        # and "Install skill to Claude Code + Codex? (Y/n)"; piping `yes`
+        # keeps CI non-interactive.
+        run: yes | npx tla-precheck setup || true
 
       - name: Run TLA+ PreCheck verification
         if: steps.tla-changed.outputs.changed == 'true'
