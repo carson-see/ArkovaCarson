@@ -1147,7 +1147,10 @@ describe('cron routes', () => {
   describe('GET /cron/smoke-test/history', () => {
     it('returns smoke test history from audit_events', async () => {
       const mockHistory = [
-        { created_at: '2026-04-01T00:00:00Z', metadata: { passed: 5, failed: 0, total: 5, results: [] } },
+        {
+          created_at: '2026-04-01T00:00:00Z',
+          details: JSON.stringify({ passed: 5, failed: 0, total: 5, results: [] }),
+        },
       ];
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({

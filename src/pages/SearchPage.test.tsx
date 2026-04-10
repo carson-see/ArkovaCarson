@@ -1,9 +1,9 @@
 /**
  * Tests for SearchPage
  *
- * Session 10: Updated for search type tabs + drag-to-verify.
- *
- * @see UF-02, GAP-03 — Unified search with auto-detection
+ * Google-style unified search UI: single input box with auto-detection of
+ * query type (verification ID, fingerprint, issuer name), drag-to-verify
+ * file drop zone, and a "Back to Dashboard" link.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -50,6 +50,15 @@ vi.mock('@/lib/fileHasher', () => ({
   generateFingerprint: vi.fn().mockResolvedValue('a'.repeat(64)),
 }));
 
+vi.mock('@/components/layout/ArkovaLogo', () => ({
+  ArkovaLogo: ({ size }: { size?: number }) => (
+    <svg data-testid="arkova-logo" width={size} height={size} />
+  ),
+  ArkovaIcon: ({ className }: { className?: string }) => (
+    <svg data-testid="arkova-icon" className={className} />
+  ),
+}));
+
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
@@ -72,40 +81,30 @@ describe('SearchPage', () => {
     vi.clearAllMocks();
   });
 
-  it('renders the page title', () => {
+  it('renders the "Search & Verify" heading', () => {
     renderSearchPage();
-    expect(screen.getByText('Search Credentials')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /search & verify/i })).toBeInTheDocument();
   });
 
-  it('renders search type tabs (Issuers, Credentials, Verify Document)', () => {
+  it('renders the Arkova logo', () => {
     renderSearchPage();
-    expect(screen.getByRole('tab', { name: /issuers/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /credentials/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /verify document/i })).toBeInTheDocument();
+    expect(screen.getByTestId('arkova-logo')).toBeInTheDocument();
   });
 
-  it('renders search input on issuers tab by default', () => {
+  it('renders the unified search input with placeholder', () => {
     renderSearchPage();
-    expect(screen.getByPlaceholderText(/issuer name/i)).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(/search issuers, credentials, or paste a verification id/i),
+    ).toBeInTheDocument();
   });
 
-  it('renders search button', () => {
+  it('renders the drop-or-browse file verification affordance', () => {
     renderSearchPage();
-    expect(screen.getByRole('button', { name: /search/i })).toBeInTheDocument();
-  });
-
-  it('shows subtitle mentioning fingerprint', () => {
-    renderSearchPage();
-    expect(screen.getByText(/fingerprint/i)).toBeInTheDocument();
+    expect(screen.getByText(/drop or browse a file to verify/i)).toBeInTheDocument();
   });
 
   it('renders back to dashboard link', () => {
     renderSearchPage();
-    expect(screen.getByText('Back to Dashboard')).toBeInTheDocument();
-  });
-
-  it('renders example query buttons', () => {
-    renderSearchPage();
-    expect(screen.getByText('Arkova')).toBeInTheDocument();
+    expect(screen.getByText(/back to dashboard/i)).toBeInTheDocument();
   });
 });

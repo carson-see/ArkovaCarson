@@ -47,6 +47,13 @@ REVOKE ALL ON activation_tokens FROM anon, authenticated;
 -- 4. Marks token as used
 -- 5. Emits audit event
 
+-- Drop the 0069 version of the function first: it used parameter name
+-- `p_password` which differs from the `p_claim_key` below, and
+-- CREATE OR REPLACE FUNCTION cannot rename input parameters. Without
+-- this DROP, `supabase db reset` fails on fresh CI databases with
+-- "ERROR: cannot change name of input parameter "p_password" (SQLSTATE 42P13)".
+DROP FUNCTION IF EXISTS activate_user(text, text);
+
 CREATE OR REPLACE FUNCTION activate_user(
   p_token    text,
   p_claim_key text  -- SHA-256 hex of recovery phrase (64 chars)

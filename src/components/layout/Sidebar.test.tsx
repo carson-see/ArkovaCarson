@@ -17,6 +17,9 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
   ArkovaLogo: ({ size }: { size?: number }) => (
     <svg data-testid="arkova-logo" width={size} height={size} />
   ),
+  ArkovaIcon: ({ className }: { className?: string }) => (
+    <svg data-testid="arkova-icon" className={className} />
+  ),
 }));
 
 function renderSidebar(props = {}) {
