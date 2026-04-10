@@ -300,6 +300,17 @@ jobs:
         if: steps.tla-changed.outputs.changed == 'true'
         run: npm ci
 
+      - name: Set up Java (for TLC model checker)
+        if: steps.tla-changed.outputs.changed == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install TLA+ tools (tla2tools.jar)
+        if: steps.tla-changed.outputs.changed == 'true'
+        run: npx tla-precheck setup
+
       - name: Run TLA+ PreCheck verification
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
