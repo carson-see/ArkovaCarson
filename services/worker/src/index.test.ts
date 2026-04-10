@@ -358,8 +358,8 @@ describe('worker server', () => {
   });
 
   describe('cron job setup', () => {
-    it('registers 12 cron jobs (1 recovery + 6 original + 5 chain maintenance)', () => {
-      expect(cronCalls).toHaveLength(12);
+    it('registers 13 cron jobs (1 recovery + 2 anchor + 5 original + 5 chain maintenance)', () => {
+      expect(cronCalls).toHaveLength(13);
     });
 
     it('registers broadcast recovery at every 2 minutes (RACE-1)', () => {
@@ -370,24 +370,28 @@ describe('worker server', () => {
       expect(cronCalls[1][0]).toBe('* * * * *');
     });
 
+    it('registers batch anchor processing every 10 minutes', () => {
+      expect(cronCalls[2][0]).toBe('*/10 * * * *');
+    });
+
     it('registers confirmation checking at every 2 minutes (BETA-01)', () => {
-      expect(cronCalls[2][0]).toBe('*/2 * * * *');
+      expect(cronCalls[3][0]).toBe('*/2 * * * *');
     });
 
     it('registers revocation processing at every 5 minutes (BETA-02)', () => {
-      expect(cronCalls[3][0]).toBe('*/5 * * * *');
+      expect(cronCalls[4][0]).toBe('*/5 * * * *');
     });
 
     it('registers webhook retries at every 2 minutes', () => {
-      expect(cronCalls[4][0]).toBe('*/2 * * * *');
+      expect(cronCalls[5][0]).toBe('*/2 * * * *');
     });
 
     it('registers monthly reset on 1st at midnight', () => {
-      expect(cronCalls[5][0]).toBe('0 0 1 * *');
+      expect(cronCalls[6][0]).toBe('0 0 1 * *');
     });
 
     it('registers GDPR data retention cleanup at 2 AM daily (PII-03)', () => {
-      expect(cronCalls[6][0]).toBe('0 2 * * *');
+      expect(cronCalls[7][0]).toBe('0 2 * * *');
     });
   });
 
@@ -405,7 +409,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron catches and logs errors', async () => {
-      const webhookCallback = cronCalls[4][1] as () => Promise<void>;
+      const webhookCallback = cronCalls[5][1] as () => Promise<void>;
       mockProcessWebhookRetries.mockRejectedValue(new Error('retry fail'));
 
       await webhookCallback();
@@ -417,7 +421,7 @@ describe('worker server', () => {
     });
 
     it('webhook retry cron logs count when retries processed', async () => {
-      const webhookCallback = cronCalls[4][1] as () => Promise<void>;
+      const webhookCallback = cronCalls[5][1] as () => Promise<void>;
       mockProcessWebhookRetries.mockResolvedValue(5);
 
       await webhookCallback();
@@ -471,7 +475,7 @@ describe('worker server', () => {
 
   describe('monthly credit allocation cron', () => {
     it('logs monthly credit allocation message', async () => {
-      const monthlyCallback = cronCalls[5][1] as () => Promise<void>;
+      const monthlyCallback = cronCalls[6][1] as () => Promise<void>;
 
       await monthlyCallback();
 

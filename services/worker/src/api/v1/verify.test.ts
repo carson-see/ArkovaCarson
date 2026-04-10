@@ -16,7 +16,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'signet' },
+  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
 }));
 
 import { buildVerificationResult, type AnchorByPublicId } from './verify.js';

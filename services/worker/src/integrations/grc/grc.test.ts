@@ -10,6 +10,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// Mock config so adapters.ts import doesn't require full env validation
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import { VantaAdapter, DrataAdapter, AnecdotesAdapter, createGrcAdapter, loadGrcCredentials } from './adapters.js';
 import type { GrcEvidencePayload } from './types.js';
 import type { GrcPlatformCredentials } from './adapters.js';

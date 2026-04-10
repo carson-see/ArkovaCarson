@@ -21,6 +21,11 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
+// Mock config so tests don't require full env validation
+vi.mock('../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 // Mock fetch globally before importing module
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);

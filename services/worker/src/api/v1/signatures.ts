@@ -15,6 +15,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
+import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -319,7 +320,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     });
 
     // Return response
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.ai';
+    const frontendUrl = config.frontendUrl;
     const response: SignResponse = {
       signatureId: publicId,
       status: signResult.status,
@@ -362,7 +363,7 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
       return;
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'https://app.arkova.ai';
+    const frontendUrl = config.frontendUrl;
 
     const response: Record<string, unknown> = {
       signature_id: sig.public_id,

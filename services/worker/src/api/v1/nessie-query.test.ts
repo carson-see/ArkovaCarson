@@ -55,6 +55,11 @@ vi.mock('@google/generative-ai', () => {
   };
 });
 
+// Mock config so nessie-query.ts import doesn't require full env validation
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import express from 'express';
 import request from 'supertest';
 import { nessieQueryRouter, clearContextCache } from './nessie-query.js';
