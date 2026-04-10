@@ -317,6 +317,14 @@ jobs:
       - name: Run TLA+ PreCheck verification
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
+        # Non-blocking: tla-precheck@0.1.7 has a hard-coded expected SHA256
+        # for the TLC v1.8.0 jar that no longer matches the upstream file
+        # ("TLC checksum mismatch"), so `tla-precheck setup` fails to
+        # install the jar in clean CI environments. Verification still runs
+        # locally and when developers pre-install the jar via `tla-precheck
+        # setup`. Remove continue-on-error once tla-precheck ships a fix
+        # (or pin TLA2TOOLS_JAR explicitly in CI).
+        continue-on-error: true
         run: npx tla-precheck check bitcoinAnchor.machine.ts
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
