@@ -151,6 +151,18 @@ const ConfigSchema = z.object({
       path: ['apiKeyHmacSecret'],
     });
   }
+
+  // SCRUM-534: frontendUrl defaults to http://localhost:5173 for dev convenience,
+  // but that default would generate broken user-facing links (verify URLs, invite
+  // emails, GRC evidence URLs) if it ever reached production. Require FRONTEND_URL
+  // to be set explicitly in production.
+  if (cfg.nodeEnv === 'production' && !process.env.FRONTEND_URL) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Production requires FRONTEND_URL — verify/invite URLs would fall back to http://localhost:5173',
+      path: ['frontendUrl'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
