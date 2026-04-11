@@ -1,6 +1,6 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-09 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
 > **Stats:** 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned, ~67%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
@@ -453,7 +453,7 @@ GCP_KMS_PROJECT_ID=                 # optional — defaults to application defau
 WORKER_PORT=3001
 NODE_ENV=development
 LOG_LEVEL=info
-FRONTEND_URL=http://localhost:5173
+FRONTEND_URL=http://localhost:5173  # REQUIRED in production (SCRUM-534 / PR #347) — worker fails loudly if NODE_ENV=production and FRONTEND_URL is unset. No localhost fallback.
 USE_MOCKS=false
 ENABLE_PROD_NETWORK_ANCHORING=false
 BATCH_ANCHOR_INTERVAL_MINUTES=10    # batch processing interval
