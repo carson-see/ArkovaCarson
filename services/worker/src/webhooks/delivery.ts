@@ -108,6 +108,12 @@ export async function isPrivateUrlResolved(url: string): Promise<boolean> {
     if (ipv4Results.status === 'fulfilled') allIps.push(...ipv4Results.value);
     if (ipv6Results.status === 'fulfilled') allIps.push(...ipv6Results.value);
 
+    // ARK-SEC-002: fail CLOSED when both resolvers reject (no IPs resolved).
+    // Originally this fell through to `.some()` which returns false for an empty
+    // array, letting the caller treat an unresolvable host as "public / safe" —
+    // exactly the opposite of the intended DNS-rebinding defense.
+    if (allIps.length === 0) return true;
+
     // Block if ANY resolved IP is private
     return allIps.some(isPrivateIp);
   } catch {
@@ -217,9 +223,11 @@ interface WebhookEndpoint {
 }
 
 /**
- * Sign a webhook payload with HMAC-SHA256
+ * Sign a webhook payload with HMAC-SHA256. The `payload` is expected to
+ * already be the concatenated `${timestamp}.${rawBody}` string — callers
+ * are responsible for building that input so this stays a pure function.
  */
-function signPayload(payload: string, secret: string): string {
+export function signPayload(payload: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(payload).digest('hex');
 }
 
