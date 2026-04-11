@@ -162,7 +162,7 @@ router.get('/', async (req: Request, res: Response) => {
 
 // ─── GET /api/v1/agents/:agentId — Get agent details ────────────
 
-router.get('/:agentId', async (req: Request, res: Response) => {
+router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
 
@@ -191,7 +191,7 @@ router.get('/:agentId', async (req: Request, res: Response) => {
 
 // ─── PATCH /api/v1/agents/:agentId — Update agent ───────────────
 
-router.patch('/:agentId', async (req: Request, res: Response) => {
+router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
 
@@ -246,7 +246,7 @@ router.patch('/:agentId', async (req: Request, res: Response) => {
 
 // ─── DELETE /api/v1/agents/:agentId — Revoke agent ──────────────
 
-router.delete('/:agentId', async (req: Request, res: Response) => {
+router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
 

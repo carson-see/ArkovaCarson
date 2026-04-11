@@ -108,7 +108,7 @@ export function buildProvenanceTimeline(
 
 const router = Router();
 
-router.get('/:publicId/provenance', async (req: Request, res: Response) => {
+router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, res: Response) => {
   try {
     const { publicId } = req.params;
 
