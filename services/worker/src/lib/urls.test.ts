@@ -89,3 +89,20 @@ describe('URL builders', () => {
     });
   });
 });
+
+// Separate module-load test: verifies the stripTrailingSlashes path handles
+// URLs with one or many trailing slashes. Uses vi.resetModules + doMock so we
+// can re-import urls.ts with a different config mock than the outer describe.
+describe('URL builders — base URL normalization', () => {
+  it.each([
+    ['https://app.arkova.ai/', 'https://app.arkova.ai/verify/x'],
+    ['https://app.arkova.ai///', 'https://app.arkova.ai/verify/x'],
+    ['https://app.arkova.ai', 'https://app.arkova.ai/verify/x'],
+  ])('strips trailing slashes from frontendUrl=%s', async (frontendUrl, expected) => {
+    vi.resetModules();
+    vi.doMock('../config.js', () => ({ config: { frontendUrl } }));
+    const { buildVerifyUrl } = await import('./urls.js');
+    expect(buildVerifyUrl('x')).toBe(expected);
+    vi.doUnmock('../config.js');
+  });
+});

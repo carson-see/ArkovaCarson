@@ -13,11 +13,23 @@
 import { config } from '../config.js';
 
 /**
+ * Strip any trailing slashes without a regex. SonarCloud S5852 flags
+ * `replace(/\/+$/, '')` as potentially backtracking-vulnerable (false positive
+ * here — trusted env-validated input, runs once — but the non-regex form is
+ * equally clear and avoids the warning entirely).
+ */
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* ASCII '/' */) end--;
+  return s.slice(0, end);
+}
+
+/**
  * Normalized frontend base URL — trailing slash stripped once at module load.
  * config.frontendUrl is immutable after startup, so this does not need to be
  * recomputed on every URL build.
  */
-const BASE = config.frontendUrl.replace(/\/+$/, '');
+const BASE = stripTrailingSlashes(config.frontendUrl);
 
 /** Public verification page for an anchor, keyed by its `public_id`. */
 export function buildVerifyUrl(publicId: string): string {
