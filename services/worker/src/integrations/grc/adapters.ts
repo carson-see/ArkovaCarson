@@ -13,7 +13,7 @@
  *   - 1.4: OAuth tokens handled server-side only
  */
 
-import { config } from '../../config.js';
+import { buildVerifyUrl } from '../../lib/urls.js';
 import type { IGrcAdapter, GrcPlatform, GrcOAuthTokens, GrcEvidencePayload, GrcPushResult } from './types.js';
 
 const FETCH_TIMEOUT_MS = 15_000;
@@ -99,7 +99,7 @@ export class VantaAdapter implements IGrcAdapter {
       resource_type: 'ARKOVA_VERIFICATION',
       display_name: evidence.title,
       description: `Arkova verification: ${evidence.fingerprint.slice(0, 16)}... (${evidence.credential_type ?? 'CREDENTIAL'})`,
-      resource_url: `${config.frontendUrl}/verify/${evidence.verification_id}`,
+      resource_url: buildVerifyUrl(evidence.verification_id),
       metadata: {
         fingerprint: evidence.fingerprint,
         credential_type: evidence.credential_type,
@@ -207,7 +207,7 @@ export class DrataAdapter implements IGrcAdapter {
       external_id: evidence.verification_id,
       name: evidence.title,
       description: `Blockchain-verified credential (${evidence.credential_type ?? 'CREDENTIAL'}). Fingerprint: ${evidence.fingerprint.slice(0, 16)}...`,
-      evidence_url: `${config.frontendUrl}/verify/${evidence.verification_id}`,
+      evidence_url: buildVerifyUrl(evidence.verification_id),
       controls: evidence.compliance_controls.map(c => ({
         control_id: c,
         framework: c.split('-')[0],
@@ -317,7 +317,7 @@ export class AnecdotesAdapter implements IGrcAdapter {
       external_id: evidence.verification_id,
       title: evidence.title,
       description: `Arkova blockchain-anchored verification for ${evidence.credential_type ?? 'credential'}`,
-      evidence_url: `${config.frontendUrl}/verify/${evidence.verification_id}`,
+      evidence_url: buildVerifyUrl(evidence.verification_id),
       controls: evidence.compliance_controls,
       frameworks: evidence.frameworks,
       collected_date: evidence.secured_at ?? evidence.created_at,

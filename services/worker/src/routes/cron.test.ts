@@ -340,6 +340,61 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/process-anchors');
       expect(res.status).toBe(401);
     });
+
+    // SCRUM-640: Regression — revisions deployed with CRON_OIDC_AUDIENCE but
+    // without CRON_SECRET used to 401 unconditionally because the middleware
+    // returned early at `!config.cronSecret` instead of falling through to
+    // the OIDC verification path. Now the middleware must allow either method.
+    it('SCRUM-640: does not log "CRON_SECRET not configured" when OIDC audience is set', async () => {
+      const { logger } = await import('../utils/logger.js');
+      const errorSpy = logger.error as ReturnType<typeof vi.fn>;
+      errorSpy.mockClear();
+
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      (config as { cronSecret?: string }).cronSecret = undefined;
+      // cronOidcAudience is still set from the default mock
+      const app = createApp();
+
+      // No credentials at all — will still 401, but critically should NOT
+      // hit the early-bail "CRON_SECRET not configured" error path.
+      const res = await request(app).post('/cron/process-anchors');
+      expect(res.status).toBe(401);
+
+      const loggedMessages = errorSpy.mock.calls.map((c) => JSON.stringify(c));
+      expect(loggedMessages.some((m) => m.includes('CRON_SECRET not configured'))).toBe(false);
+
+      // Restore for subsequent tests
+      (config as { cronSecret?: string }).cronSecret = 'test-cron-secret-1234';
+    });
+
+    // SCRUM-640: Verifies Method 1 (header) still works when OIDC audience is set.
+    it('SCRUM-640: still accepts valid X-Cron-Secret header when cronSecret is configured', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      (config as { cronSecret?: string }).cronSecret = 'test-cron-secret-1234';
+      (config as { cronOidcAudience?: string }).cronOidcAudience = 'https://arkova-worker.run.app';
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('X-Cron-Secret', 'test-cron-secret-1234');
+      expect(res.status).toBe(200);
+    });
+
+    it('SCRUM-640: rejects cron if neither CRON_SECRET nor CRON_OIDC_AUDIENCE configured', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      (config as { cronSecret?: string }).cronSecret = undefined;
+      (config as { cronOidcAudience?: string }).cronOidcAudience = undefined;
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('Authorization', 'Bearer some-token');
+      expect(res.status).toBe(401);
+
+      // Restore
+      (config as { cronSecret?: string }).cronSecret = 'test-cron-secret-1234';
+      (config as { cronOidcAudience?: string }).cronOidcAudience = 'https://arkova-worker.run.app';
+    });
   });
 
   // ═══════════════════════════════════════

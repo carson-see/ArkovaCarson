@@ -12,7 +12,7 @@
  * Returns the frozen verification schema (CLAUDE.md Section 10).
  */
 
-import { config } from '../config.js';
+import { buildVerifyUrl } from '../lib/urls.js';
 
 /** Valid SHA-256 hex: exactly 64 lowercase hex characters */
 const SHA256_REGEX = /^[a-f0-9]{64}$/;
@@ -102,7 +102,7 @@ export async function verifyAnchorByFingerprint(
 
   // Include record URI if public_id exists
   if (anchor.public_id) {
-    result.record_uri = `${config.frontendUrl}/verify/${anchor.public_id}`;
+    result.record_uri = buildVerifyUrl(anchor.public_id);
   }
 
   // Optional fields from enriched lookup

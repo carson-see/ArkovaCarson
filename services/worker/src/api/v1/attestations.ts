@@ -18,6 +18,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
+import { buildVerifyUrl, buildAttestationVerifyUrl } from '../../lib/urls.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 
 const router = Router();
@@ -229,7 +230,7 @@ router.post('/', async (req: Request, res: Response) => {
       status: attestation.status,
       fingerprint: attestation.fingerprint,
       created_at: attestation.created_at,
-      verify_url: `${config.frontendUrl}/verify/attestation/${attestation.public_id}`,
+      verify_url: buildAttestationVerifyUrl(attestation.public_id),
     });
   } catch (error) {
     logger.error({ error }, 'Attestation creation failed');
@@ -294,7 +295,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
           public_id: anchor.public_id,
           credential_type: anchor.credential_type,
           verification_status: anchor.status === 'SECURED' ? 'VERIFIED' : anchor.status,
-          verify_url: `${config.frontendUrl}/verify/${anchor.public_id}`,
+          verify_url: buildVerifyUrl(anchor.public_id),
         };
       }
     }
@@ -336,7 +337,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       revocation_reason: attestation.revocation_reason,
       created_at: attestation.created_at,
       // URI
-      verify_url: `${config.frontendUrl}/verify/attestation/${attestation.public_id}`,
+      verify_url: buildAttestationVerifyUrl(attestation.public_id),
     });
   } catch (error) {
     logger.error({ error, publicId }, 'Attestation lookup failed');
@@ -400,7 +401,7 @@ router.get('/', async (req: Request, res: Response) => {
     res.json({
       attestations: resultItems.map((a: Record<string, unknown>) => ({
         ...a,
-        verify_url: `${config.frontendUrl}/verify/attestation/${a.public_id}`,
+        verify_url: buildAttestationVerifyUrl(String(a.public_id)),
       })),
       total: count ?? 0,
       page: cursor ? undefined : page,

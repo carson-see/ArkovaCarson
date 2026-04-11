@@ -12,7 +12,11 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { createCheckoutSession, createBillingPortalSession } from '../stripe/client.js';
-import { config } from '../config.js';
+import {
+  buildBillingSuccessUrl,
+  buildBillingCancelUrl,
+  buildBillingPortalReturnUrl,
+} from '../lib/urls.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 
 export const billingRouter = Router();
@@ -90,8 +94,8 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
       priceId: plan.stripe_price_id,
       userId,
       customerEmail: profile.email,
-      successUrl: `${config.frontendUrl}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancelUrl: `${config.frontendUrl}/billing/cancel`,
+      successUrl: buildBillingSuccessUrl(),
+      cancelUrl: buildBillingCancelUrl(),
     });
 
     logger.info({ userId, planId, sessionId: session.sessionId }, 'Checkout session created');
@@ -128,7 +132,7 @@ billingRouter.post('/billing/portal', rateLimiters.checkout, async (req, res) =>
 
     const portal = await createBillingPortalSession({
       customerId: subscription.stripe_customer_id,
-      returnUrl: `${config.frontendUrl}/settings`,
+      returnUrl: buildBillingPortalReturnUrl(),
     });
 
     logger.info({ userId }, 'Billing portal session created');

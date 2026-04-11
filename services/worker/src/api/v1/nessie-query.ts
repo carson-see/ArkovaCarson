@@ -21,7 +21,7 @@ import { createEmbeddingProvider } from '../../ai/factory.js';
 import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
-import { config } from '../../config.js';
+import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
@@ -327,9 +327,7 @@ router.get('/', async (req: Request, res: Response) => {
               explorer_url: anchor.chain_tx_id
                 ? `${explorerBase}/tx/${anchor.chain_tx_id}`
                 : null,
-              verify_url: anchor.public_id
-                ? `${config.frontendUrl}/verify/${anchor.public_id}`
-                : null,
+              verify_url: anchor.public_id ? buildVerifyUrl(anchor.public_id) : null,
             }
           : null,
         metadata: {

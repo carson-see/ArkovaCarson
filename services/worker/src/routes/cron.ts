@@ -11,6 +11,7 @@
 
 import { Router, Request } from 'express';
 import crypto from 'node:crypto';
+import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rateLimit } from '../utils/rateLimit.js';
@@ -64,12 +65,33 @@ const cronJobsLimiter = rateLimit({
 cronRouter.use(cronJobsLimiter);
 
 /**
- * Verify cron job authentication (AUTH-01 hardening).
+ * Memoized Google OIDC JWKS fetcher (SCRUM-640).
+ *
+ * `createRemoteJWKSet` returns a function that caches keys in its closure.
+ * Previously this was created per-request, meaning every cron invocation
+ * re-fetched Google's cert bundle. Lifting it to module scope lets the
+ * cache survive across requests.
+ */
+let cachedJwks: JWTVerifyGetKey | null = null;
+function getGoogleJwks(): JWTVerifyGetKey {
+  if (!cachedJwks) {
+    cachedJwks = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
+  }
+  return cachedJwks;
+}
+
+/**
+ * Verify cron job authentication (AUTH-01 hardening, SCRUM-640 fix).
  *
  * Supports three auth methods:
  * 1. CRON_SECRET header — constant-time comparison
- * 2. OIDC Bearer token — Google-signed JWT verified via JWKS
- * 3. Platform admin Bearer token — Supabase JWT for admin dashboard triggers
+ * 2. Platform admin Bearer token — Supabase JWT for admin dashboard triggers
+ * 3. OIDC Bearer token — Google-signed JWT verified via JWKS
+ *
+ * SCRUM-640: Either CRON_SECRET *or* CRON_OIDC_AUDIENCE is sufficient for
+ * production auth. Previously this middleware bailed at `!config.cronSecret`
+ * even when OIDC was configured, producing persistent 401s on revisions
+ * deployed with OIDC-only auth (observed on revisions 00286-00290).
  *
  * Non-production: open for local development.
  */
@@ -77,15 +99,22 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
   // SEC-028: Only bypass auth in local development, not staging/preview
   if (config.nodeEnv === 'development' || config.nodeEnv === 'test') return true;
 
-  // ARK-SEC-CRON: Fail secure if CRON_SECRET not configured in production
-  if (!config.cronSecret) {
-    logger.error('CRON_SECRET not configured in production — rejecting all cron requests');
+  // SCRUM-640: Fail secure only if NEITHER auth method is configured.
+  // Either CRON_SECRET or CRON_OIDC_AUDIENCE alone is sufficient.
+  if (!config.cronSecret && !config.cronOidcAudience) {
+    logger.error(
+      'Neither CRON_SECRET nor CRON_OIDC_AUDIENCE configured in production — rejecting all cron requests',
+    );
     return false;
   }
 
   // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual)
   const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
   if (cronSecretHeader) {
+    if (!config.cronSecret) {
+      logger.warn('X-Cron-Secret header sent but CRON_SECRET not configured');
+      return false;
+    }
     const expected = Buffer.from(config.cronSecret);
     const actual = Buffer.from(cronSecretHeader);
     if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {
@@ -112,14 +141,12 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
   }
 
   // Method 3: OIDC Bearer token from Cloud Scheduler
+  if (!config.cronOidcAudience) {
+    logger.warn('OIDC audience not configured — rejecting Bearer token');
+    return false;
+  }
   try {
-    const { createRemoteJWKSet, jwtVerify } = await import('jose');
-    const JWKS = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
-    if (!config.cronOidcAudience) {
-      logger.warn('OIDC audience not configured — rejecting Bearer token');
-      return false;
-    }
-    const { payload } = await jwtVerify(token, JWKS, {
+    const { payload } = await jwtVerify(token, getGoogleJwks(), {
       issuer: 'https://accounts.google.com',
       audience: config.cronOidcAudience,
     });

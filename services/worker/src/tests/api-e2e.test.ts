@@ -58,6 +58,7 @@ vi.mock('../config.js', () => ({
     aiProvider: 'mock',
     sentryDsn: '',
     stripeSecretKey: '',
+    frontendUrl: 'https://app.arkova.ai',
   },
 }));
 
