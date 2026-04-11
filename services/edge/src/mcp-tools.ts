@@ -1,5 +1,5 @@
 /**
- * Arkova MCP Tool Definitions and Handlers (P8-S19 + PH1-SDK-03)
+ * Arkova MCP Tool Definitions and Handlers (P8-S19 + PH1-SDK-03 + INT-02)
  *
  * Shared logic for MCP server tools. Used by both the Cloudflare Worker
  * MCP endpoint and tests.
@@ -7,12 +7,19 @@
  * Tools:
  *   - verify_credential: Verify a credential by public ID
  *   - search_credentials: Semantic search across credentials
- *   - nessie_query: RAG query with verified citations (PH1-SDK-03)
- *   - anchor_document: Anchor a document hash (PH1-SDK-03)
- *   - verify_document: Verify a document by content hash (PH1-SDK-03)
+ *   - nessie_query:      RAG query with verified citations (PH1-SDK-03)
+ *   - anchor_document:   Anchor a document hash (PH1-SDK-03)
+ *   - verify_document:   Verify a document by content hash (PH1-SDK-03)
+ *   - verify_batch:      Verify up to 100 credentials in one call (INT-02)
  *
  * Constitution 1.4: No raw PII in responses. Only hashed identifiers.
  * Constitution 1.3: No banned UI terms in tool descriptions.
+ *
+ * INT-02 follow-up: `cle_verify` MCP tool was scoped but removed before
+ * merge — the /rest/v1/rpc/cle_verify RPC does not exist in the schema.
+ * The HTTP route (services/worker/src/api/v1/cle-verify.ts) is live, but
+ * exposing it through MCP requires threading caller API keys through the
+ * edge handler context. Tracked as follow-up story INT-02b.
  */
 
 /** Request timeout for all Supabase fetch calls (ms) */
@@ -62,6 +69,10 @@ export interface AnchorDocumentInput {
 
 export interface VerifyDocumentInput {
   content_hash: string;
+}
+
+export interface VerifyBatchInput {
+  public_ids: string[];
 }
 
 export interface SupabaseConfig {
@@ -219,6 +230,23 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['content_hash'],
     },
   },
+  {
+    name: 'verify_batch',
+    description:
+      'Verify multiple credentials in a single call. Accepts up to 100 public IDs ' +
+      'and returns each result in input order. Use this when an agent needs to validate ' +
+      'a list of credentials (e.g., a candidate portfolio, a screening pipeline batch).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_ids: {
+          type: 'array',
+          description: 'Array of credential public identifiers (max 100). Each is verified individually.',
+        },
+      },
+      required: ['public_ids'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -226,7 +254,41 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 // ---------------------------------------------------------------------------
 
 /**
- * Verify a credential by its public ID.
+ * Shape a `get_public_anchor` RPC row into the public verification envelope.
+ * Pure mapping function — no network, no error handling. Used by both
+ * `handleVerifyCredential` (single) and `handleVerifyBatch` so the output
+ * schema cannot drift between the two code paths.
+ *
+ * When `publicId` is provided, the result includes a `public_id` echo key
+ * (batch uses this to identify rows). When omitted, the single-record
+ * contract is preserved.
+ */
+function shapeAnchorRow(
+  data: Record<string, unknown>,
+  publicId?: string,
+): Record<string, unknown> {
+  const status = data?.status as string | null | undefined;
+  const resolvedPublicId = publicId ?? (data?.public_id as string | undefined) ?? '';
+  return {
+    ...(publicId !== undefined ? { public_id: publicId } : {}),
+    verified: status === 'SECURED' || status === 'ACTIVE',
+    status: mapStatus(status),
+    issuer_name: (data?.org_name as string) ?? 'Unknown',
+    recipient_identifier: (data?.recipient_hash as string) ?? '',
+    credential_type: (data?.credential_type as string) ?? 'UNKNOWN',
+    issued_date: (data?.issued_at as string | null) ?? null,
+    expiry_date: (data?.expires_at as string | null) ?? null,
+    anchor_timestamp: (data?.created_at as string) ?? '',
+    network_receipt_id: (data?.chain_tx_id as string | null) ?? null,
+    record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
+    ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
+  };
+}
+
+/**
+ * Verify a credential by its public ID. Catastrophic failures (abort,
+ * network) return an MCP error result; a 404 returns a normal textResult
+ * with `verified: false` — matching the pre-INT-02 contract.
  */
 export async function handleVerifyCredential(
   input: VerifyInput,
@@ -246,21 +308,8 @@ export async function handleVerifyCredential(
       return textResult({ verified: false, error: `Credential "${input.public_id}" not found.` });
     }
 
-    const data = await response.json() as Record<string, unknown>;
-
-    return textResult({
-      verified: data?.status === 'SECURED' || data?.status === 'ACTIVE',
-      status: mapStatus(data?.status as string | null | undefined),
-      issuer_name: (data?.org_name as string) ?? 'Unknown',
-      recipient_identifier: (data?.recipient_hash as string) ?? '',
-      credential_type: (data?.credential_type as string) ?? 'UNKNOWN',
-      issued_date: (data?.issued_at as string | null) ?? null,
-      expiry_date: (data?.expires_at as string | null) ?? null,
-      anchor_timestamp: (data?.created_at as string) ?? '',
-      network_receipt_id: (data?.chain_tx_id as string | null) ?? null,
-      record_uri: `https://app.arkova.ai/verify/${input.public_id}`,
-      ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
-    });
+    const data = (await response.json()) as Record<string, unknown>;
+    return textResult(shapeAnchorRow(data));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Verification lookup timed out'
@@ -472,6 +521,53 @@ export async function handleVerifyDocument(
       : `Document verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
   }
+}
+
+/**
+ * Verify multiple credentials in a single call (INT-02).
+ *
+ * Fans out per-ID and catches per-ID failures so one bad ID never poisons
+ * the batch. Uses `shapeAnchorRow` for the success path so batch and
+ * single handlers return identical per-record shapes.
+ */
+export async function handleVerifyBatch(
+  input: VerifyBatchInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  if (!Array.isArray(input.public_ids) || input.public_ids.length === 0) {
+    return errorResult('Error: public_ids must be a non-empty array');
+  }
+
+  if (input.public_ids.length > 100) {
+    return errorResult('Error: verify_batch accepts at most 100 public_ids per call');
+  }
+
+  const sanitized = input.public_ids.map((id) => (typeof id === 'string' ? id.trim() : ''));
+  if (sanitized.some((id) => id.length === 0)) {
+    return errorResult('Error: every public_id must be a non-empty string');
+  }
+
+  const lookups = sanitized.map(async (publicId) => {
+    try {
+      const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+        method: 'POST',
+        body: JSON.stringify({ p_public_id: publicId }),
+      });
+      if (!response.ok) {
+        return { public_id: publicId, verified: false, error: `Credential "${publicId}" not found.` };
+      }
+      const data = (await response.json()) as Record<string, unknown>;
+      return shapeAnchorRow(data, publicId);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        return { public_id: publicId, verified: false, error: 'Verification lookup timed out' };
+      }
+      return { public_id: publicId, verified: false, error: 'Verification lookup failed' };
+    }
+  });
+
+  const results = await Promise.all(lookups);
+  return textResult({ total: results.length, results });
 }
 
 /** Map internal status to public-facing status */
