@@ -107,6 +107,13 @@ All 4 cron jobs created 2026-03-16 via `gcloud scheduler jobs create http`. All 
 
 **Auth:** OIDC token with audience `https://arkova-worker-kvojbeutfa-uc.a.run.app`, service account `270018525501-compute@developer.gserviceaccount.com`.
 
+**Auth fallback (SCRUM-640, PR #356):** The worker's `verifyCronAuth` middleware accepts **either** auth method:
+
+1. `X-Cron-Secret` header (matched against `CRON_SECRET` env var, constant-time comparison)
+2. `Authorization: Bearer <OIDC token>` (verified against Google JWKS with audience = `CRON_OIDC_AUDIENCE`)
+
+Production fails secure only if **neither** `CRON_SECRET` nor `CRON_OIDC_AUDIENCE` is configured. Previously the middleware bailed at `!config.cronSecret` even when OIDC was set, causing persistent 401s on revisions 00286–00290. Google JWKS is memoized at module scope to avoid re-fetching on every request.
+
 **Management:**
 
 ```bash

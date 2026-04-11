@@ -48,6 +48,15 @@ This directory contains 20 architecture and design documents for the Arkova plat
 | 17 | `17_data_classification.md` | Data classification policy — L1-L4 levels, handling requirements, retention schedule, PII scrubbing rules |
 | 18 | `18_testing_quality_standards.md` | Testing & quality standards — TDD enforcement, custom ESLint rules, CI gates, coverage thresholds, escalation plan |
 
+### International Regulatory Compliance (R-REG-01)
+
+| File | Description |
+|------|-------------|
+| `../compliance/kenya/README.md` | Kenya DPA 2019 compliance tracker (REG-15/16 index) |
+| `../compliance/kenya/odpc-registration.md` | ODPC registration application packet (REG-15, SCRUM-576) |
+| `../compliance/kenya/dpia.md` | Kenya Data Protection Impact Assessment v0.1 (REG-16, SCRUM-577) |
+| `../compliance/kenya/privacy-notice.md` | Kenya-specific privacy notice (DPA Section 29) |
+
 ### Audit Documents
 
 | File | Description |
