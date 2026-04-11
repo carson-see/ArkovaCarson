@@ -1,6 +1,56 @@
 /**
- * SDK Types (PH1-SDK-01)
+ * SDK Types (PH1-SDK-01 + INT-01)
  */
+
+/** Webhook event types (INT-09) */
+export type WebhookEventType = 'anchor.secured' | 'anchor.revoked' | 'anchor.expired';
+
+/** Webhook endpoint metadata (INT-09) */
+export interface WebhookEndpoint {
+  id: string;
+  url: string;
+  events: WebhookEventType[];
+  isActive: boolean;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Webhook endpoint with signing secret — returned ONLY at creation time (INT-09) */
+export interface WebhookEndpointWithSecret extends WebhookEndpoint {
+  /** 64-char hex HMAC-SHA256 signing secret. Save it now — shown ONCE. */
+  secret: string;
+  warning: string;
+}
+
+/** Input for creating a webhook endpoint */
+export interface CreateWebhookInput {
+  /** HTTPS URL to receive events. Must be publicly resolvable. */
+  url: string;
+  /** Events to subscribe to. Default: ['anchor.secured', 'anchor.revoked'] */
+  events?: WebhookEventType[];
+  /** Free-text label, max 500 chars */
+  description?: string;
+  /** If true, Arkova sends a verification ping; the endpoint must echo a challenge */
+  verify?: boolean;
+}
+
+/** Input for updating a webhook endpoint */
+export interface UpdateWebhookInput {
+  url?: string;
+  events?: WebhookEventType[];
+  description?: string | null;
+  isActive?: boolean;
+}
+
+/** Pagination metadata for list operations */
+export interface PaginatedWebhooks {
+  webhooks: WebhookEndpoint[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 
 /** SDK configuration */
 export interface ArkovaConfig {
