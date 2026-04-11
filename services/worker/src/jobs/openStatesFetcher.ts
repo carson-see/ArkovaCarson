@@ -158,7 +158,7 @@ export async function fetchStateBills(
         headers: {
           'X-API-KEY': apiKey,
           Accept: 'application/json',
-          'User-Agent': 'Arkova/1.0 (contact@arkova.io)',
+          'User-Agent': 'Arkova/1.0 (contact@arkova.ai)',
         },
       });
     } catch (err) {

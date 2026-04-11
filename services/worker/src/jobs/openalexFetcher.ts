@@ -33,7 +33,7 @@ const PER_PAGE = 200;
 const MAX_PAGES_PER_RUN = 50;
 
 /** Contact email for polite pool access */
-const POLITE_EMAIL = 'contact@arkova.io';
+const POLITE_EMAIL = 'contact@arkova.ai';
 
 interface OpenAlexWork {
   id: string; // e.g. "https://openalex.org/W2741809807"

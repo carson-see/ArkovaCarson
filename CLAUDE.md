@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 190 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 191 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -258,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 190 files (0001-0185, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170.
+**Current:** 191 files (0001-0186, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170. Migration 0186 (SCRUM-546, v1.4.0 operational stability) adds the `treasury_cache` singleton table for server-side caching of balance/fee data — pending production apply.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -529,5 +529,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-11 | 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-11 | 191 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

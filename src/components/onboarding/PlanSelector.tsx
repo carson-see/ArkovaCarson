@@ -106,7 +106,7 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3" role="radiogroup" aria-label={PLAN_SELECTOR_LABELS.TITLE}>
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3" role="radiogroup" aria-label={PLAN_SELECTOR_LABELS.TITLE}>
         {PLANS.map((plan) => (
           <Card
             key={plan.id}

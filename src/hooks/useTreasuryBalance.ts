@@ -1,14 +1,19 @@
 /**
- * useTreasuryBalance — Live BTC balance from mempool.space API
+ * useTreasuryBalance — Treasury data with tiered fetch strategy
  *
- * Fetches balance + recent receipts for the treasury address
- * directly from mempool.space (display only — all broadcasting
- * goes through our GetBlock RPC node).
+ * 1. Server-side cache (treasury_cache Supabase table, refreshed every 10min
+ *    by worker cron) — fastest path, no rate limits
+ * 2. Worker API fallback (paid Bitcoin node via /api/treasury/status)
+ * 3. Direct mempool.space (display-only supplementary data)
+ *
+ * Cache hit returns balance + feeRates immediately (no receipts).
+ * Cache miss falls through to the worker-first, mempool-fallback path.
  *
  * Auto-refreshes every 60 seconds.
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 import { TREASURY_ADDRESS, MEMPOOL_BASE_URL } from '@/lib/platform';
 import { workerFetch } from '@/lib/workerClient';
 import { TREASURY_LABELS } from '@/lib/copy';
@@ -47,16 +52,75 @@ export interface MempoolFeeRates {
 
 export function useTreasuryBalance() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
-  const [receipts, setTransactions] = useState<MempoolReceipt[]>([]);
+  const [receipts, setReceipts] = useState<MempoolReceipt[]>([]);
   const [feeRates, setFeeRates] = useState<MempoolFeeRates | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBalanceRef = useRef<TreasuryBalance | null>(null);
+  const lastCacheTimestampRef = useRef<string | null>(null);
+
+  const fetchFromCache = useCallback(async (): Promise<boolean> => {
+    try {
+      const { data, error: queryError } = await supabase
+        .from('treasury_cache')
+        .select('*')
+        .eq('id', 1)
+        .single();
+
+      if (queryError || !data) return false;
+
+      const row = data;
+
+      if (!isMountedRef.current) return true;
+
+      // Fall through to direct fetch if cache is older than 30 minutes
+      const cacheAge = Date.now() - new Date(row.updated_at).getTime();
+      if (cacheAge > 30 * 60 * 1000) return false;
+
+      // Skip state updates if cache hasn't changed since last poll
+      if (row.updated_at === lastCacheTimestampRef.current) return true;
+      lastCacheTimestampRef.current = row.updated_at;
+
+      const confirmed = row.balance_confirmed_sats;
+      const unconfirmed = row.balance_unconfirmed_sats;
+      const total = confirmed + unconfirmed;
+      const totalBtc = total / 1e8;
+      const btcPrice = row.btc_price_usd;
+      const totalUsd = btcPrice ? totalBtc * btcPrice : null;
+
+      const bal: TreasuryBalance = { confirmed, unconfirmed, total, btcPrice, totalUsd };
+      setBalance(bal);
+      lastBalanceRef.current = bal;
+
+      if (row.fee_fastest != null) {
+        setFeeRates({
+          fastest: row.fee_fastest,
+          halfHour: row.fee_half_hour ?? row.fee_fastest,
+          hour: row.fee_hour ?? row.fee_fastest,
+          economy: row.fee_economy ?? row.fee_fastest,
+          minimum: row.fee_minimum ?? row.fee_fastest,
+        });
+      }
+
+      setError(null);
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
 
   const fetchAll = useCallback(async () => {
     try {
+      // 0. Try server-side cache first (fastest, no rate limits).
+      //    Cache provides balance + feeRates; receipts still require mempool.space.
+      const cacheHit = await fetchFromCache();
+      if (cacheHit) {
+        if (isMountedRef.current) setLoading(false);
+        return;
+      }
+
       const fetchWithTimeout = (url: string) =>
         fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 
@@ -156,7 +220,7 @@ export function useTreasuryBalance() {
         });
 
         if (isMountedRef.current) {
-          setTransactions(parsed);
+          setReceipts(parsed);
         }
       }
 

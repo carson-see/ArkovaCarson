@@ -102,7 +102,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
     try {
       response = await fetch(`${FR_API_URL}?${params.toString()}`, {
         headers: {
-          'User-Agent': 'Arkova contact@arkova.io',
+          'User-Agent': 'Arkova contact@arkova.ai',
           Accept: 'application/json',
         },
       });

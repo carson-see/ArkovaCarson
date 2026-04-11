@@ -110,7 +110,7 @@ function delay(ms: number): Promise<void> {
  * Must contain company name + contact email.
  */
 function getEdgarUserAgent(): string {
-  return config.edgarUserAgent || 'Arkova contact@arkova.io';
+  return config.edgarUserAgent || 'Arkova contact@arkova.ai';
 }
 
 /**
