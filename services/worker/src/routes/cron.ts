@@ -2,7 +2,10 @@
  * Cron Job HTTP Routes
  *
  * Cloud Scheduler (MVP-28) + dev manual trigger endpoints.
- * Authenticated via OIDC Bearer token or CRON_SECRET in production.
+ * Authenticated in production via any of three methods (see verifyCronAuth):
+ *   1. X-Cron-Secret header (CRON_SECRET)
+ *   2. Platform admin Supabase JWT
+ *   3. Google OIDC Bearer token (CRON_OIDC_AUDIENCE)
  * Rate-limited to prevent replay/abuse.
  *
  * Extracted from index.ts as part of ARCH-1 refactor.
@@ -108,13 +111,13 @@ async function verifyCronAuth(req: Request): Promise<boolean> {
     return false;
   }
 
-  // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual)
+  // Method 1: Shared secret header (SEC-030: use crypto.timingSafeEqual).
+  // SCRUM-640: Only evaluate this path if CRON_SECRET is actually configured.
+  // If a stale X-Cron-Secret header reaches an OIDC-only deployment (e.g. from
+  // a legacy scheduler config or proxy), fall through to the Bearer/OIDC path
+  // instead of 401-ing. Otherwise we'd reintroduce the very bug this story fixes.
   const cronSecretHeader = req.headers['x-cron-secret'] as string | undefined;
-  if (cronSecretHeader) {
-    if (!config.cronSecret) {
-      logger.warn('X-Cron-Secret header sent but CRON_SECRET not configured');
-      return false;
-    }
+  if (cronSecretHeader && config.cronSecret) {
     const expected = Buffer.from(config.cronSecret);
     const actual = Buffer.from(cronSecretHeader);
     if (expected.length === actual.length && crypto.timingSafeEqual(expected, actual)) {

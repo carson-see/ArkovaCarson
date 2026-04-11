@@ -380,6 +380,28 @@ describe('cron routes', () => {
       expect(res.status).toBe(200);
     });
 
+    it('SCRUM-640: ignores stale X-Cron-Secret header on OIDC-only deploy and falls through to Bearer', async () => {
+      // Scenario: legacy Cloud Scheduler job (or proxy) still attaches an
+      // X-Cron-Secret header on a revision where CRON_SECRET was removed and
+      // CRON_OIDC_AUDIENCE is the only configured auth. Must not 401 early —
+      // must fall through to the Authorization: Bearer path.
+      const mutable = config as { nodeEnv: string; cronSecret?: string };
+      mutable.nodeEnv = 'production';
+      mutable.cronSecret = undefined;
+
+      // Simulate a valid platform admin Bearer token as the "Method 2"
+      // fallthrough (so we don't need to mock Google JWKS in a unit test).
+      (verifyAuthToken as ReturnType<typeof vi.fn>).mockResolvedValue('admin-user');
+      (isPlatformAdmin as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('X-Cron-Secret', 'stale-header-from-legacy-scheduler')
+        .set('Authorization', 'Bearer admin-jwt-token');
+      expect(res.status).toBe(200);
+    });
+
     it('SCRUM-640: rejects cron if neither CRON_SECRET nor CRON_OIDC_AUDIENCE configured', async () => {
       const mutable = config as {
         nodeEnv: string;
