@@ -66,12 +66,13 @@ router.post('/', async (req: Request, res: Response) => {
       .maybeSingle();
 
     if (existing) {
+      const existingPublicId = existing.public_id ?? '';
       const receipt: AnchorReceipt = {
-        public_id: existing.public_id ?? '',
+        public_id: existingPublicId,
         fingerprint: existing.fingerprint,
         status: 'PENDING',
         created_at: existing.created_at,
-        record_uri: buildVerifyUrl(existing.public_id),
+        record_uri: buildVerifyUrl(existingPublicId),
       };
       res.status(200).json(receipt);
       return;

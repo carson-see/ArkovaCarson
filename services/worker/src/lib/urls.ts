@@ -12,52 +12,46 @@
 
 import { config } from '../config.js';
 
-/** Remove trailing slash so builders can unconditionally prefix with `/`. */
-function base(): string {
-  return config.frontendUrl.replace(/\/+$/, '');
-}
-
 /**
- * Public verification page for an anchor, keyed by its `public_id`.
- *
- * Null/undefined are tolerated (coerced to '') to match the pre-existing
- * anchor-submit.ts pattern: `${config.frontendUrl}/verify/${existing.public_id ?? ''}`.
+ * Normalized frontend base URL — trailing slash stripped once at module load.
+ * config.frontendUrl is immutable after startup, so this does not need to be
+ * recomputed on every URL build.
  */
-export function buildVerifyUrl(publicId: string | null | undefined): string {
-  return `${base()}/verify/${publicId ?? ''}`;
+const BASE = config.frontendUrl.replace(/\/+$/, '');
+
+/** Public verification page for an anchor, keyed by its `public_id`. */
+export function buildVerifyUrl(publicId: string): string {
+  return `${BASE}/verify/${publicId}`;
 }
 
 /** Public verification page for an attestation (separate route from anchor verify). */
 export function buildAttestationVerifyUrl(publicId: string): string {
-  return `${base()}/verify/attestation/${publicId}`;
+  return `${BASE}/verify/attestation/${publicId}`;
+}
+
+/** Public verification page for a digital signature. */
+export function buildSignatureVerifyUrl(publicId: string): string {
+  return `${BASE}/verify/signature/${publicId}`;
 }
 
 /** Internal record page (uses the internal anchor UUID, not public_id). */
 export function buildRecordUrl(anchorId: string): string {
-  return `${base()}/records/${anchorId}`;
+  return `${BASE}/records/${anchorId}`;
 }
 
 /** Recipient activation link with activation token as query param. */
 export function buildActivateUrl(token: string): string {
-  return `${base()}/activate?token=${encodeURIComponent(token)}`;
+  return `${BASE}/activate?token=${encodeURIComponent(token)}`;
 }
 
 /** Stripe Checkout success redirect — `{CHECKOUT_SESSION_ID}` is a literal Stripe placeholder. */
-export function buildBillingSuccessUrl(): string {
-  return `${base()}/billing/success?session_id={CHECKOUT_SESSION_ID}`;
-}
+export const BILLING_SUCCESS_URL = `${BASE}/billing/success?session_id={CHECKOUT_SESSION_ID}`;
 
 /** Stripe Checkout cancel redirect. */
-export function buildBillingCancelUrl(): string {
-  return `${base()}/billing/cancel`;
-}
+export const BILLING_CANCEL_URL = `${BASE}/billing/cancel`;
 
 /** Stripe customer portal return URL. */
-export function buildBillingPortalReturnUrl(): string {
-  return `${base()}/settings`;
-}
+export const BILLING_PORTAL_RETURN_URL = `${BASE}/settings`;
 
 /** Admin pipeline health dashboard (used in pipeline-health alert emails). */
-export function buildPipelineDashboardUrl(): string {
-  return `${base()}/admin/pipeline`;
-}
+export const PIPELINE_DASHBOARD_URL = `${BASE}/admin/pipeline`;

@@ -13,7 +13,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { sendEmail } from '../email/sender.js';
-import { buildPipelineDashboardUrl } from '../lib/urls.js';
+import { PIPELINE_DASHBOARD_URL } from '../lib/urls.js';
 
 interface StuckAnchorGroup {
   status: string;
@@ -97,7 +97,7 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
           <p>${totalStuck} anchor(s) are stuck beyond expected thresholds:</p>
           <ul>${lines.map((l) => `<li>${l}</li>`).join('')}</ul>
           <p>Checked at: ${checkedAt}</p>
-          <p><a href="${buildPipelineDashboardUrl()}">View Pipeline Dashboard</a></p>
+          <p><a href="${PIPELINE_DASHBOARD_URL}">View Pipeline Dashboard</a></p>
         `,
         emailType: 'notification',
       });

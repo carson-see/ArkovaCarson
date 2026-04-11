@@ -15,7 +15,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
-import { config } from '../../config.js';
+import { buildSignatureVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -316,7 +316,6 @@ router.post('/sign', async (req: Request, res: Response) => {
     });
 
     // Return response
-    const frontendUrl = config.frontendUrl;
     const response: SignResponse = {
       signatureId: publicId,
       status: signResult.status,
@@ -328,7 +327,7 @@ router.post('/sign', async (req: Request, res: Response) => {
       },
       signedAt: signResult.signedAt.toISOString(),
       ltvEmbedded: signResult.ltvDataEmbedded,
-      verificationUrl: `${frontendUrl}/verify/signature/${publicId}`,
+      verificationUrl: buildSignatureVerifyUrl(publicId),
     };
 
     res.status(201).json(response);
@@ -359,8 +358,6 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
       return;
     }
 
-    const frontendUrl = config.frontendUrl;
-
     const response: Record<string, unknown> = {
       signature_id: sig.public_id,
       status: sig.status,
@@ -376,7 +373,7 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
       ltv: {
         embedded: sig.ltv_data_embedded,
       },
-      verification_url: `${frontendUrl}/verify/signature/${sig.public_id}`,
+      verification_url: buildSignatureVerifyUrl(sig.public_id),
       created_at: sig.created_at,
     };
 

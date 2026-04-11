@@ -6,7 +6,7 @@
  * verify, GRC adapters, recipients, pipeline-health, etc.).
  */
 
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../config.js', () => ({
   config: { frontendUrl: 'https://app.arkova.ai' },
@@ -15,38 +15,38 @@ vi.mock('../config.js', () => ({
 import {
   buildVerifyUrl,
   buildAttestationVerifyUrl,
+  buildSignatureVerifyUrl,
   buildRecordUrl,
   buildActivateUrl,
-  buildBillingSuccessUrl,
-  buildBillingCancelUrl,
-  buildBillingPortalReturnUrl,
-  buildPipelineDashboardUrl,
+  BILLING_SUCCESS_URL,
+  BILLING_CANCEL_URL,
+  BILLING_PORTAL_RETURN_URL,
+  PIPELINE_DASHBOARD_URL,
 } from './urls.js';
 
 describe('URL builders', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
   describe('buildVerifyUrl', () => {
     it('builds a verify URL from a public_id', () => {
       expect(buildVerifyUrl('pub_abc123')).toBe('https://app.arkova.ai/verify/pub_abc123');
     });
 
-    it('tolerates empty public_id (matches existing anchor-submit.ts behaviour)', () => {
-      expect(buildVerifyUrl('')).toBe('https://app.arkova.ai/verify/');
-    });
-
-    it('coerces null/undefined to empty string', () => {
-      expect(buildVerifyUrl(null)).toBe('https://app.arkova.ai/verify/');
-      expect(buildVerifyUrl(undefined)).toBe('https://app.arkova.ai/verify/');
+    it('builds a verify URL from an ARK-prefixed public_id', () => {
+      expect(buildVerifyUrl('ARK-SEC-A7X9K2')).toBe('https://app.arkova.ai/verify/ARK-SEC-A7X9K2');
     });
   });
 
   describe('buildAttestationVerifyUrl', () => {
     it('builds an attestation verify URL', () => {
       expect(buildAttestationVerifyUrl('att_xyz')).toBe(
-        'https://app.arkova.ai/verify/attestation/att_xyz'
+        'https://app.arkova.ai/verify/attestation/att_xyz',
+      );
+    });
+  });
+
+  describe('buildSignatureVerifyUrl', () => {
+    it('builds a signature verify URL', () => {
+      expect(buildSignatureVerifyUrl('sig_abc')).toBe(
+        'https://app.arkova.ai/verify/signature/sig_abc',
       );
     });
   });
@@ -64,34 +64,28 @@ describe('URL builders', () => {
 
     it('URL-encodes tokens with special characters', () => {
       expect(buildActivateUrl('a b+c/d')).toBe(
-        'https://app.arkova.ai/activate?token=a%20b%2Bc%2Fd'
+        'https://app.arkova.ai/activate?token=a%20b%2Bc%2Fd',
       );
     });
   });
 
-  describe('buildBillingSuccessUrl', () => {
-    it('includes the Stripe session_id placeholder', () => {
-      expect(buildBillingSuccessUrl()).toBe(
-        'https://app.arkova.ai/billing/success?session_id={CHECKOUT_SESSION_ID}'
+  describe('billing + pipeline constants', () => {
+    it('BILLING_SUCCESS_URL includes the Stripe session_id placeholder', () => {
+      expect(BILLING_SUCCESS_URL).toBe(
+        'https://app.arkova.ai/billing/success?session_id={CHECKOUT_SESSION_ID}',
       );
     });
-  });
 
-  describe('buildBillingCancelUrl', () => {
-    it('builds the billing cancel URL', () => {
-      expect(buildBillingCancelUrl()).toBe('https://app.arkova.ai/billing/cancel');
+    it('BILLING_CANCEL_URL points at /billing/cancel', () => {
+      expect(BILLING_CANCEL_URL).toBe('https://app.arkova.ai/billing/cancel');
     });
-  });
 
-  describe('buildBillingPortalReturnUrl', () => {
-    it('points at /settings', () => {
-      expect(buildBillingPortalReturnUrl()).toBe('https://app.arkova.ai/settings');
+    it('BILLING_PORTAL_RETURN_URL points at /settings', () => {
+      expect(BILLING_PORTAL_RETURN_URL).toBe('https://app.arkova.ai/settings');
     });
-  });
 
-  describe('buildPipelineDashboardUrl', () => {
-    it('points at /admin/pipeline', () => {
-      expect(buildPipelineDashboardUrl()).toBe('https://app.arkova.ai/admin/pipeline');
+    it('PIPELINE_DASHBOARD_URL points at /admin/pipeline', () => {
+      expect(PIPELINE_DASHBOARD_URL).toBe('https://app.arkova.ai/admin/pipeline');
     });
   });
 });

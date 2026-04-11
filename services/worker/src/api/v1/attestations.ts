@@ -290,7 +290,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
         .select('public_id, credential_type, status, chain_tx_id')
         .eq('id', attestation.anchor_id)
         .single();
-      if (anchor) {
+      if (anchor && anchor.public_id) {
         linkedCredential = {
           public_id: anchor.public_id,
           credential_type: anchor.credential_type,
