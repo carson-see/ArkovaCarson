@@ -45,7 +45,9 @@ For a new developer joining the project, read in this order:
 | NMT | Nessie Model Training | 6 | 5 | 0 | 1 | [21_nessie_model_training.md](./21_nessie_model_training.md) |
 | PH3 | Phase III eSignatures | 3 | 0 | 0 | 3 | [23_phase3_esignatures.md](./23_phase3_esignatures.md) |
 | COMP | Compliance Audit Readiness | 8 | 6 | 0 | 2 | [24_compliance_audit_readiness.md](./24_compliance_audit_readiness.md) |
-| **Total** | | **222** | **189** | **3** | **30** | |
+| DEP | Dependency Hardening | 10 | 1 | 0 | 9 | [26_dependency_hardening.md](./26_dependency_hardening.md) |
+| REG | International Regulatory Compliance | 28 | 0 | 0 | 28 | [29_international_compliance.md](./29_international_compliance.md) |
+| **Total** | | **260** | **190** | **3** | **67** | |
 
 ### All Stories by ID
 
@@ -221,6 +223,17 @@ For a new developer joining the project, read in this order:
 | NMT-04 | Full-Precision GPU Eval | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-337 |
 | NMT-05 | Upload Model Weights to HuggingFace | READY TO SHIP | [NMT](./21_nessie_model_training.md) | — |
 | NMT-06 | Nessie v5 Training + Condensed Prompt | COMPLETE | [NMT](./21_nessie_model_training.md) | SCRUM-339 |
+
+| DEP-01 | Supabase Disaster Recovery Plan & Cold Standby | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-02 | Cloudflare Tunnel Failover Procedure | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-03 | Document Missing Security-Critical Dependencies | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-04 | Upgrade Express to v5 | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-05 | Upgrade ESLint to v9 + Flat Config | COMPLETE | [DEP](./26_dependency_hardening.md) | — |
+| DEP-06 | Pin Security-Critical Dependency Versions | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-07 | Email Delivery Monitoring | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-08 | Dependency Update Cadence & Policy | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-09 | SBOM Generation in CI | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
+| DEP-10 | License Audit — GPL Compatibility Review | NOT STARTED | [DEP](./26_dependency_hardening.md) | — |
 
 ## Bug Cross-Reference
 

@@ -25,6 +25,8 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
+| Dependency Hardening (DEP) | 10 | 1 | 9 | No |
+| International Compliance (REG) | 28 | 0 | 28 | No |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -38,7 +40,7 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **42** | |
+| **Total Open Items** | | | **79** | |
 
 ---
 
@@ -335,6 +337,86 @@ _All P8 stories complete including Phase II: P8-S6 (feedback loop), P8-S8 (integ
 | ID | Description | Notes |
 |----|-------------|-------|
 | GEO-11 | YouTube explainers + VideoObject schema | External content creation |
+
+### Dependency Hardening (DEP) — Release R-DEP-01 — 1/10
+_Source: Dependency audit 2026-04-09 — cross-referenced [Dependency Sheet](https://docs.google.com/spreadsheets/d/1Wy_HgmsiBhaEcxoqUPjUmeG0xYstJuW2ARXFYEGXUp4) against package.json files_
+_Story doc: [26_dependency_hardening.md](stories/26_dependency_hardening.md) | Jira Epic: SCRUM-550 | Release: R-DEP-01_
+
+**Sprint 1 — Risk Reduction (P0)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 1 | DEP-01 | **P0** | Supabase Disaster Recovery Plan & Cold Standby | Large | NOT STARTED |
+| 2 | DEP-02 | **P0** | Cloudflare Tunnel Failover Procedure | Medium | NOT STARTED |
+| 3 | DEP-03 | **P0** | Document Missing Security-Critical Dependencies | Small | NOT STARTED |
+
+**Sprint 2 — Version Currency (P1)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 4 | DEP-04 | **P1** | Upgrade Express to v5 | Medium | NOT STARTED |
+| 5 | ~~DEP-05~~ | ~~**P1**~~ | ~~Upgrade ESLint to v9 + Flat Config~~ | ~~Medium~~ | **COMPLETE** |
+| 6 | DEP-06 | **P1** | Pin Security-Critical Dependency Versions | Small | NOT STARTED |
+
+**Sprint 3 — Operational Maturity (P2)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 7 | DEP-07 | **P2** | Email Delivery Monitoring (Replace Silent Failures) | Small | NOT STARTED |
+| 8 | DEP-08 | **P2** | Dependency Update Cadence & Policy | Small | NOT STARTED |
+| 9 | DEP-09 | **P2** | SBOM Generation in CI | Small | NOT STARTED |
+| 10 | DEP-10 | **P2** | License Audit — GPL Compatibility Review | Small | NOT STARTED |
+
+---
+
+### International Regulatory Compliance (REG) — Release R-REG-01 — 0/28
+_Source: Compliance dashboard gaps (FERPA/HIPAA) + international expansion (Kenya, Australia, South Africa, Nigeria)_
+_Story doc: [29_international_compliance.md](stories/29_international_compliance.md) | Jira Epic: SCRUM-551 | Release: R-REG-01_
+
+**Sprint 1 — Close Dashboard Gaps (P0: FERPA + HIPAA)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 1 | REG-01 | **P0** | FERPA Disclosure Log | Medium | NOT STARTED |
+| 2 | REG-02 | **P0** | Directory Information Opt-Out | Medium | NOT STARTED |
+| 3 | REG-03 | **P0** | FERPA Data Use Agreement Template | Small | NOT STARTED |
+| 4 | REG-05 | **P0** | HIPAA MFA Enforcement | Medium | NOT STARTED |
+| 5 | REG-06 | **P0** | HIPAA Session Timeout | Small | NOT STARTED |
+| 6 | REG-07 | **P0** | HIPAA Audit Report Generator | Medium | NOT STARTED |
+| 7 | REG-08 | **P0** | HIPAA BAA Template | Small | NOT STARTED |
+
+**Sprint 2 — Shared Infrastructure + Kenya + Australia (P1)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 8 | REG-04 | **P1** | FERPA Requester Identity Verification | Medium | NOT STARTED |
+| 9 | REG-09 | **P1** | HIPAA Breach Notification Procedure | Small | NOT STARTED |
+| 10 | REG-10 | **P1** | HIPAA Emergency Access Procedure | Small | NOT STARTED |
+| 11 | REG-11 | **P1** | Data Subject Rights Workflow (All jurisdictions) | Medium | NOT STARTED |
+| 12 | REG-12 | **P1** | Standard Contractual Clauses Framework | Medium | NOT STARTED |
+| 13 | REG-13 | **P1** | Unified Breach Notification Procedure | Small | NOT STARTED |
+| 14 | REG-14 | **P1** | Jurisdiction-Specific Privacy Notices | Small | NOT STARTED |
+| 15 | REG-15 | **P1** | Kenya ODPC Registration | Small | NOT STARTED |
+| 16 | REG-16 | **P1** | Kenya DPIA | Medium | NOT STARTED |
+| 17 | REG-17 | **P1** | Australia APP 8 Cross-Border Assessment | Medium | NOT STARTED |
+| 18 | REG-18 | **P1** | Australia NDB Procedure | Small | NOT STARTED |
+| 19 | REG-26 | **P1** | Compliance Dashboard Update (FERPA + HIPAA) | Medium | NOT STARTED |
+
+**Sprint 3 — South Africa + Nigeria + Polish (P2)**
+
+| # | ID | Priority | Story | Effort | Status |
+|---|-----|----------|-------|--------|--------|
+| 20 | REG-19 | **P2** | Data Correction Workflow (APP 13) | Small | NOT STARTED |
+| 21 | REG-20 | **P2** | South Africa Information Regulator Registration | Small | NOT STARTED |
+| 22 | REG-21 | **P2** | POPIA Section 72 Cross-Border Assessment | Medium | NOT STARTED |
+| 23 | REG-22 | **P2** | South Africa Privacy Notice | Small | NOT STARTED |
+| 24 | REG-23 | **P2** | Nigeria NDPC Registration | Small | NOT STARTED |
+| 25 | REG-24 | **P2** | Nigeria Cross-Border Transfer SCCs | Small | NOT STARTED |
+| 26 | REG-25 | **P2** | Nigeria Privacy Notice | Small | NOT STARTED |
+| 27 | REG-27 | **P2** | International Framework Badges | Small | NOT STARTED |
+| 28 | REG-28 | **P2** | DPO/Information Officer Designation | Small | NOT STARTED |
+
+---
 
 ### INFRA — 1 partial (code complete, needs env vars)
 | ID | Description | Remaining |
