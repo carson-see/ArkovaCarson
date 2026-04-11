@@ -2826,6 +2826,69 @@ export type Database = {
           },
         ]
       }
+      treasury_cache: {
+        Row: {
+          balance_confirmed_sats: number
+          balance_unconfirmed_sats: number
+          block_height: number | null
+          btc_price_usd: number | null
+          error: string | null
+          fee_economy: number | null
+          fee_fastest: number | null
+          fee_half_hour: number | null
+          fee_hour: number | null
+          fee_minimum: number | null
+          id: number
+          last_24h_count: number
+          last_secured_at: string | null
+          network_name: string | null
+          total_pending: number
+          total_secured: number
+          updated_at: string
+          utxo_count: number
+        }
+        Insert: {
+          balance_confirmed_sats?: number
+          balance_unconfirmed_sats?: number
+          block_height?: number | null
+          btc_price_usd?: number | null
+          error?: string | null
+          fee_economy?: number | null
+          fee_fastest?: number | null
+          fee_half_hour?: number | null
+          fee_hour?: number | null
+          fee_minimum?: number | null
+          id?: number
+          last_24h_count?: number
+          last_secured_at?: string | null
+          network_name?: string | null
+          total_pending?: number
+          total_secured?: number
+          updated_at?: string
+          utxo_count?: number
+        }
+        Update: {
+          balance_confirmed_sats?: number
+          balance_unconfirmed_sats?: number
+          block_height?: number | null
+          btc_price_usd?: number | null
+          error?: string | null
+          fee_economy?: number | null
+          fee_fastest?: number | null
+          fee_half_hour?: number | null
+          fee_hour?: number | null
+          fee_minimum?: number | null
+          id?: number
+          last_24h_count?: number
+          last_secured_at?: string | null
+          network_name?: string | null
+          total_pending?: number
+          total_secured?: number
+          updated_at?: string
+          utxo_count?: number
+        }
+        Relationships: []
+      }
       unified_credits: {
         Row: {
           billing_cycle_start: string
