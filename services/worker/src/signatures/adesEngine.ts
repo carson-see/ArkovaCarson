@@ -17,19 +17,15 @@
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger.js';
 import type {
-  SignatureFormat,
-  SignatureLevel,
   SignatureStatus,
   SignatureRecord,
   SigningCertificate,
   SignRequest,
-  SignResponse,
   VerifySignatureResponse,
   VerificationCheck,
   HsmSignRequest,
   TsaRequest,
   LtvData,
-  AdesEngineConfig,
 } from './types.js';
 import { LEVEL_REQUIREMENTS, EIDAS_COMPLIANCE, OID } from './constants.js';
 import type { HsmBridge } from './pki/hsmBridge.js';
@@ -91,7 +87,7 @@ export class DefaultAdesEngine implements AdesEngine {
     request: SignRequest,
     certificate: SigningCertificate,
     orgId: string,
-    userId: string,
+    _userId: string,
   ): Promise<AdesSignResult> {
     const reqs = LEVEL_REQUIREMENTS[request.level];
 
@@ -129,10 +125,6 @@ export class DefaultAdesEngine implements AdesEngine {
     }
 
     // 3. Build signed attributes
-    const fingerprintHash = Buffer.from(
-      request.fingerprint.replace('sha256:', ''),
-      'hex',
-    );
 
     const signingTime = new Date();
     const certDigest = crypto.createHash('sha256')

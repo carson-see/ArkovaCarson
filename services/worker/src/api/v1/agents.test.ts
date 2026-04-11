@@ -2,7 +2,7 @@
  * Unit tests for Agent Identity & Delegation API (PH2-AGENT-05)
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 
 const VALID_SCOPES = ['verify', 'verify:batch', 'usage:read', 'attest', 'oracle'] as const;

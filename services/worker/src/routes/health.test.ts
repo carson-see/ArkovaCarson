@@ -16,8 +16,7 @@
  *   - 1.7: No real Supabase/Bitcoin calls — mock everything
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Request, Response } from 'express';
+import { describe, it, expect, vi } from 'vitest';
 import { buildHealthResponse, type HealthCheckDeps } from './health.js';
 
 

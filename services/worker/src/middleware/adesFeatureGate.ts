@@ -7,7 +7,6 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
-import { logger } from '../utils/logger.js';
 
 interface FlagCache {
   value: boolean;

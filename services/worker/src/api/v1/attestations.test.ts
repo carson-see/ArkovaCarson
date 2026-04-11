@@ -150,7 +150,6 @@ describe('Attestation Public ID Format', () => {
   });
 
   it('generates unique 6-char suffix from UUID', () => {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const crypto = require('crypto');
     const uuid = crypto.randomUUID();
     const uniquePart = uuid.slice(0, 6).toUpperCase();
@@ -205,7 +204,6 @@ describe('Attestation ID Collision Handling', () => {
     const ids: string[] = [];
     for (let i = 0; i < MAX_RETRIES; i++) {
       attempts++;
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const id = `ARK-IND-VER-${require('crypto').randomUUID().slice(0, 6).toUpperCase()}`;
       ids.push(id);
     }
@@ -224,7 +222,6 @@ describe('Attestation ID Collision Handling', () => {
 // ─── Validation Tests ────────────────────────────────────
 
 describe('Attestation Validation', () => {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { z } = require('zod');
 
   const CreateAttestationSchema = z.object({

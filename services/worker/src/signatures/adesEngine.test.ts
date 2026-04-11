@@ -14,13 +14,13 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { DefaultAdesEngine, createAdesEngine } from './adesEngine.js';
+import { DefaultAdesEngine } from './adesEngine.js';
 import { createMockHsmBridge, MockHsmBridge } from './pki/hsmBridge.js';
 import { X509CertificateManager } from './pki/certificateManager.js';
 import { createMockOcspClient, MockOcspClient } from './pki/ocspClient.js';
 import { createMockCrlManager, MockCrlManager } from './pki/crlManager.js';
 import { createMockTrustStore, MockTrustStore } from './pki/trustStore.js';
-import { createMockRfc3161Client, MockRfc3161Client } from './timestamp/rfc3161Client.js';
+import { MockRfc3161Client } from './timestamp/rfc3161Client.js';
 import { createQtspProvider } from './timestamp/qtspProvider.js';
 import { createLtvBuilder, createLtvValidator } from './ltv/ltvBuilder.js';
 import type { SignRequest, SigningCertificate, SignatureRecord, TsaConfig } from './types.js';

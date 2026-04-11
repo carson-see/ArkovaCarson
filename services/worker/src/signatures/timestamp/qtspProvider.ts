@@ -9,7 +9,7 @@
 
 import * as crypto from 'crypto';
 import { logger } from '../../utils/logger.js';
-import type { TsaConfig, TsaRequest, TsaResponse, TimestampToken } from '../types.js';
+import type { TsaConfig, TsaRequest, TsaResponse } from '../types.js';
 import type { Rfc3161Client } from './rfc3161Client.js';
 import { DEFAULTS } from '../constants.js';
 

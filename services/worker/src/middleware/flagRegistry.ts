@@ -21,9 +21,8 @@ interface FlagState {
   lastChecked: number;
 }
 
-const _FLAG_CACHE_TTL_MS = 60_000; // 60 seconds
-
 // All known flags and their sources
+// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used in FlagName type
 const ENV_FLAGS = [
   'USE_MOCKS',
   'ENABLE_PROD_NETWORK_ANCHORING',
