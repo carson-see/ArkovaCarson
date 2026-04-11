@@ -1173,6 +1173,47 @@ export type Database = {
           },
         ]
       }
+      data_subject_requests: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          details: Json | null
+          id: string
+          request_type: string
+          requested_at: string
+          status: string
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          request_type: string
+          requested_at?: string
+          status?: string
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          details?: Json | null
+          id?: string
+          request_type?: string
+          requested_at?: string
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "data_subject_requests_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entitlements: {
         Row: {
           created_at: string
@@ -3275,6 +3316,7 @@ export type Database = {
       batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
       bulk_promote_confirmed: { Args: { p_tx_ids: string[] }; Returns: number }
+      can_export_user_data: { Args: { p_user_id: string }; Returns: boolean }
       check_ai_credits: {
         Args: { p_org_id?: string; p_user_id?: string }
         Returns: {
