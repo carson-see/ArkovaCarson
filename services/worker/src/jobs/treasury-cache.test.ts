@@ -41,7 +41,9 @@ vi.mock('../utils/logger.js', () => ({
 
 const mockUpsert = vi.fn().mockResolvedValue({ error: null });
 const mockSelect = vi.fn();
-const mockFrom = vi.fn((table: string) => {
+// Wide return type so `.mockImplementation(...)` can return the mockChain builder
+// below for the anchors table path without narrow-union incompatibility.
+const mockFrom = vi.fn((table: string): Record<string, unknown> => {
   if (table === 'treasury_cache') {
     return { upsert: mockUpsert };
   }
@@ -59,7 +61,7 @@ vi.mock('../utils/db.js', () => ({
 
 // Mock fetch globally
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+globalThis.fetch = mockFetch;
 
 describe('refreshTreasuryCache', () => {
   beforeEach(() => {
@@ -97,9 +99,22 @@ describe('refreshTreasuryCache', () => {
       return { ok: false };
     });
 
-    // Mock anchor stats queries
-    const chainableWithCount = (count: number) => {
-      const chain = {
+    // Mock anchor stats queries.
+    //
+    // Supabase's query builder is thenable in production (`await db.from(...).select(...).eq(...)`
+    // resolves via PostgrestFilterBuilder's own `.then`). Tests must not reproduce that
+    // pattern by putting a `then` on a plain object — SonarCloud typescript:S7739 flags
+    // it because bespoke thenables are a common footgun. Instead, make the TERMINAL method
+    // of each chain return a Promise via `mockResolvedValue`. The chain's intermediate
+    // methods are `mockReturnThis` for composition.
+    //
+    // Terminals per query (see refreshTreasuryCache):
+    //   1. secured  count: `.eq().is()`          — terminal is `is`
+    //   2. pending  count: `.eq().is()`          — terminal is `is`
+    //   3. lastSecured row: `.eq().is().order().limit(1)` — terminal is `limit`
+    //   4. last24h  count: `.is().gte()`         — terminal is `gte`
+    const mockChain = (terminal: 'is' | 'limit' | 'gte', result: unknown) => {
+      const chain: Record<string, ReturnType<typeof vi.fn>> = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         is: vi.fn().mockReturnThis(),
@@ -107,24 +122,7 @@ describe('refreshTreasuryCache', () => {
         order: vi.fn().mockReturnThis(),
         limit: vi.fn().mockReturnThis(),
       };
-      // Resolve with count when awaited
-      Object.defineProperty(chain, 'then', {
-        value: (resolve: (v: unknown) => void) => resolve({ count, data: null, error: null }),
-      });
-      return chain;
-    };
-
-    const chainableWithData = (data: unknown[]) => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-      };
-      Object.defineProperty(chain, 'then', {
-        value: (resolve: (v: unknown) => void) => resolve({ data, error: null }),
-      });
+      chain[terminal] = vi.fn().mockResolvedValue(result);
       return chain;
     };
 
@@ -135,10 +133,10 @@ describe('refreshTreasuryCache', () => {
       }
       // anchors table — returns different results for each call
       callCount++;
-      if (callCount === 1) return chainableWithCount(1412000); // secured
-      if (callCount === 2) return chainableWithCount(0);        // pending
-      if (callCount === 3) return chainableWithData([{ chain_timestamp: '2026-04-09T12:00:00Z' }]); // last secured
-      return chainableWithCount(150); // last 24h
+      if (callCount === 1) return mockChain('is', { count: 1412000, data: null, error: null });
+      if (callCount === 2) return mockChain('is', { count: 0, data: null, error: null });
+      if (callCount === 3) return mockChain('limit', { data: [{ chain_timestamp: '2026-04-09T12:00:00Z' }], error: null });
+      return mockChain('gte', { count: 150, data: null, error: null });
     });
   });
 

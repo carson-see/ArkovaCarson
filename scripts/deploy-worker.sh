@@ -69,10 +69,10 @@ for arg in "$@"; do
 done
 
 # ─── Helpers ─────────────────────────────────────────────────────────
-info()  { echo -e "\033[0;36m[INFO]\033[0m  $*"; }
-warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*"; }
-error() { echo -e "\033[0;31m[ERROR]\033[0m $*"; }
-ok()    { echo -e "\033[0;32m[OK]\033[0m    $*"; }
+info()  { echo -e "\033[0;36m[INFO]\033[0m  $*"; return; }
+warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*" >&2; return; }
+error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; return; }
+ok()    { echo -e "\033[0;32m[OK]\033[0m    $*"; return; }
 
 # ─── Pre-flight checks ──────────────────────────────────────────────
 info "Pre-flight checks..."
