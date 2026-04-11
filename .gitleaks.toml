@@ -23,6 +23,8 @@ useDefault = true
     '''ak_test_[a-f0-9]{16,}''',
     # Mock/test HMAC secrets used in test fixtures
     '''test-hmac-secret''',
+    # Mock/test CRON secrets used in test fixtures (SCRUM-534 config tests)
+    '''test-cron-secret''',
     # Supabase local dev URL
     '''http://127\.0\.0\.1:54321''',
   ]

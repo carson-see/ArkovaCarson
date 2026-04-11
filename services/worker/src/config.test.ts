@@ -95,6 +95,45 @@ describe('loadConfig validation', () => {
     Object.assign(process.env, saved);
     vi.resetModules();
   });
+
+  it('rejects production without FRONTEND_URL (SCRUM-534)', async () => {
+    const saved = { ...process.env };
+
+    process.env.NODE_ENV = 'production';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    delete process.env.FRONTEND_URL;
+
+    vi.resetModules();
+
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts production when FRONTEND_URL is set (SCRUM-534)', async () => {
+    const saved = { ...process.env };
+
+    process.env.NODE_ENV = 'production';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+
+    vi.resetModules();
+
+    const mod = await import('./config.js');
+    expect(mod.config.frontendUrl).toBe('https://app.arkova.ai');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
 });
 
 describe('config singleton', () => {

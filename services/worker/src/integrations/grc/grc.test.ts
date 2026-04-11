@@ -10,6 +10,11 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import { VantaAdapter, DrataAdapter, AnecdotesAdapter, createGrcAdapter, loadGrcCredentials } from './adapters.js';
 import type { GrcEvidencePayload } from './types.js';
 import type { GrcPlatformCredentials } from './adapters.js';

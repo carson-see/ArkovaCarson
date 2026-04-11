@@ -55,6 +55,10 @@ vi.mock('@google/generative-ai', () => {
   };
 });
 
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import express from 'express';
 import request from 'supertest';
 import { nessieQueryRouter, clearContextCache } from './nessie-query.js';

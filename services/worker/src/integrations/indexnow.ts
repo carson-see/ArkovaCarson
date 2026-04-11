@@ -10,10 +10,11 @@
  * @see https://www.indexnow.org/documentation
  */
 
+import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 const INDEXNOW_KEY = process.env.INDEXNOW_KEY || '';
-const SITE_URL = process.env.FRONTEND_URL || 'https://app.arkova.ai';
+const SITE_URL = config.frontendUrl;
 
 const INDEXNOW_ENDPOINTS = [
   'https://api.indexnow.org/indexnow',

@@ -15,7 +15,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'signet' },
+  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
 }));
 
 function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
