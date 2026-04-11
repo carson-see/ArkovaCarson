@@ -12,16 +12,10 @@
 
 import { config } from '../config.js';
 
-/**
- * Strip any trailing slashes without a regex. SonarCloud S5852 flags
- * `replace(/\/+$/, '')` as potentially backtracking-vulnerable (false positive
- * here — trusted env-validated input, runs once — but the non-regex form is
- * equally clear and avoids the warning entirely).
- */
+/** Strip any trailing slashes. Non-regex form avoids SonarCloud S5852. */
 function stripTrailingSlashes(s: string): string {
-  let end = s.length;
-  while (end > 0 && s.charCodeAt(end - 1) === 47 /* ASCII '/' */) end--;
-  return s.slice(0, end);
+  while (s.endsWith('/')) s = s.slice(0, -1);
+  return s;
 }
 
 /**

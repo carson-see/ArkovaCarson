@@ -6,7 +6,7 @@
  * verify, GRC adapters, recipients, pipeline-health, etc.).
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../config.js', () => ({
   config: { frontendUrl: 'https://app.arkova.ai' },
@@ -90,10 +90,12 @@ describe('URL builders', () => {
   });
 });
 
-// Separate module-load test: verifies the stripTrailingSlashes path handles
-// URLs with one or many trailing slashes. Uses vi.resetModules + doMock so we
-// can re-import urls.ts with a different config mock than the outer describe.
 describe('URL builders — base URL normalization', () => {
+  afterEach(() => {
+    vi.doUnmock('../config.js');
+    vi.resetModules();
+  });
+
   it.each([
     ['https://app.arkova.ai/', 'https://app.arkova.ai/verify/x'],
     ['https://app.arkova.ai///', 'https://app.arkova.ai/verify/x'],
@@ -103,6 +105,5 @@ describe('URL builders — base URL normalization', () => {
     vi.doMock('../config.js', () => ({ config: { frontendUrl } }));
     const { buildVerifyUrl } = await import('./urls.js');
     expect(buildVerifyUrl('x')).toBe(expected);
-    vi.doUnmock('../config.js');
   });
 });
