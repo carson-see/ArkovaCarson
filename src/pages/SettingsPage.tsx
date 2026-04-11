@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS, PROFILE_LABELS } from '@/lib/copy';
 import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
+import { ExportDataButton } from '@/components/auth/ExportDataButton';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
@@ -485,6 +486,24 @@ export function SettingsPage() {
             </CardContent>
           </Card>
         )}
+
+        <Separator />
+
+        {/* Your Data Rights — REG-11 (SCRUM-572): GDPR Art. 15 + 20, Kenya DPA s. 31, APP 12, POPIA s. 23, NDPA */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              Your data rights
+            </CardTitle>
+            <CardDescription>
+              Download a machine-readable copy of everything Arkova stores about you. Includes your profile, credentials, and audit trail. Limited to one download per 24 hours.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ExportDataButton />
+          </CardContent>
+        </Card>
 
         <Separator />
 
