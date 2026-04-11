@@ -17,6 +17,7 @@ import { corsMiddleware, extractAuthUserId } from './middleware.js';
 import { verifyAnchorByFingerprint } from '../api/verify-anchor.js';
 import { createPendingRecipient } from '../api/recipients.js';
 import { handleAccountDelete } from '../api/account-delete.js';
+import { handleAccountExport } from '../api/account-export.js';
 import { sendEmail } from '../email/sender.js';
 import { buildInvitationEmail } from '../email/templates.js';
 
@@ -204,5 +205,26 @@ anchorRouter.delete('/account', rateLimiters.checkout, async (req, res) => {
   } catch (error) {
     logger.error({ error }, 'Account deletion failed');
     sendError(res, 500, 'internal_error', 'Account deletion failed');
+  }
+});
+
+/**
+ * GET /api/account/export
+ * Data Subject Rights — Access + Portability (REG-11 / SCRUM-572)
+ * GDPR Art. 15 + Art. 20, Kenya DPA s. 31, Australia APP 12, POPIA s. 23, NDPA.
+ * Rate-limited to 1 export per 24h at the DB layer via can_export_user_data().
+ */
+anchorRouter.get('/account/export', rateLimiters.checkout, async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    sendError(res, 401, 'authentication_required', 'Authentication required');
+    return;
+  }
+
+  try {
+    await handleAccountExport(userId, { db, logger }, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Data export failed');
+    sendError(res, 500, 'internal_error', 'Data export failed');
   }
 });
