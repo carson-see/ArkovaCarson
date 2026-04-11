@@ -696,6 +696,148 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    // ── Webhook CRUD (INT-09) ─────────────────────────────────────────────
+    '/webhooks': {
+      post: {
+        summary: 'Register a webhook endpoint',
+        description:
+          'Register a new webhook endpoint programmatically. Returns the HMAC signing secret ONCE — save it immediately, it cannot be retrieved later. The URL must be HTTPS and is validated against private/internal/cloud-metadata IPs (SSRF protection) with full DNS resolution. Pass `verify: true` to require a synchronous verification ping (the endpoint must echo a challenge token before registration succeeds).',
+        operationId: 'createWebhookEndpoint',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['url'],
+                properties: {
+                  url: { type: 'string', format: 'uri', example: 'https://api.example.com/webhooks/arkova' },
+                  events: {
+                    type: 'array',
+                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired'] },
+                    default: ['anchor.secured', 'anchor.revoked'],
+                  },
+                  description: { type: 'string', maxLength: 500, example: 'Production HR system' },
+                  verify: { type: 'boolean', description: 'Send a verification ping before persisting' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Webhook endpoint registered. Secret returned ONCE.',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/WebhookEndpointWithSecret' },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '429': { $ref: '#/components/responses/RateLimited' },
+        },
+      },
+      get: {
+        summary: 'List webhook endpoints',
+        description: "List all webhook endpoints registered to the API key's organization. Paginated. Secrets are never returned.",
+        operationId: 'listWebhookEndpoints',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [
+          { name: 'limit', in: 'query', schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 } },
+          { name: 'offset', in: 'query', schema: { type: 'integer', minimum: 0, default: 0 } },
+        ],
+        responses: {
+          '200': {
+            description: 'List of webhook endpoints',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    webhooks: { type: 'array', items: { $ref: '#/components/schemas/WebhookEndpoint' } },
+                    total: { type: 'integer' },
+                    limit: { type: 'integer' },
+                    offset: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+        },
+      },
+    },
+    '/webhooks/{id}': {
+      get: {
+        summary: 'Get a webhook endpoint',
+        description: 'Retrieve metadata for a single webhook endpoint. Secrets are never returned.',
+        operationId: 'getWebhookEndpoint',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '200': {
+            description: 'Webhook endpoint metadata',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookEndpoint' } } },
+          },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+      patch: {
+        summary: 'Update a webhook endpoint',
+        description: 'Partially update a webhook endpoint. Provide any subset of {url, events, description, is_active}. Updating the URL re-validates SSRF protection. The signing secret cannot be rotated via this endpoint — delete and re-register instead.',
+        operationId: 'updateWebhookEndpoint',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  url: { type: 'string', format: 'uri' },
+                  events: {
+                    type: 'array',
+                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired'] },
+                  },
+                  description: { type: 'string', maxLength: 500, nullable: true },
+                  is_active: { type: 'boolean' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Updated webhook endpoint',
+            content: { 'application/json': { schema: { $ref: '#/components/schemas/WebhookEndpoint' } } },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+      delete: {
+        summary: 'Delete a webhook endpoint',
+        description: 'Permanently delete a webhook endpoint. Cascades to delivery logs.',
+        operationId: 'deleteWebhookEndpoint',
+        tags: ['Webhooks'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: {
+          '204': { description: 'Webhook endpoint deleted' },
+          '401': { $ref: '#/components/responses/Unauthorized' },
+          '404': { $ref: '#/components/responses/NotFound' },
+        },
+      },
+    },
     // ── Webhook Management ────────────────────────────────────────────────
     '/webhooks/test': {
       post: {
@@ -908,6 +1050,39 @@ export const openApiSpec: Record<string, any> = {
           created_at: { type: 'string', format: 'date-time' },
           next_retry_at: { type: 'string', format: 'date-time', nullable: true },
         },
+      },
+      WebhookEndpoint: {
+        type: 'object',
+        description: 'Webhook endpoint metadata. Signing secret is never returned on read.',
+        properties: {
+          id: { type: 'string', format: 'uuid' },
+          url: { type: 'string', format: 'uri' },
+          events: {
+            type: 'array',
+            items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired'] },
+          },
+          is_active: { type: 'boolean' },
+          description: { type: 'string', nullable: true },
+          created_at: { type: 'string', format: 'date-time' },
+          updated_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      WebhookEndpointWithSecret: {
+        type: 'object',
+        description: 'Webhook endpoint with the HMAC signing secret. Returned ONLY by POST /webhooks at creation time. The secret cannot be retrieved later.',
+        allOf: [
+          { $ref: '#/components/schemas/WebhookEndpoint' },
+          {
+            type: 'object',
+            properties: {
+              secret: {
+                type: 'string',
+                description: '64-char hex HMAC-SHA256 signing secret. Save it now — it is shown once.',
+              },
+              warning: { type: 'string' },
+            },
+          },
+        ],
       },
       // ── AI Intelligence Schemas (P8) ────────────────────────────────────
       ExtractionRequest: {

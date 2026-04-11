@@ -257,7 +257,9 @@ router.use('/grc', grcFeatureGate(), requireAuth, grcRouter);
 router.use('/webhooks/ats', atsWebhookRouter);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
-router.use('/webhooks', webhooksRouter);
+// INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
+// (10 req/min per key) per Constitution 1.10 and the webhook docs contract.
+router.use('/webhooks', batchRateLimiter, webhooksRouter);
 
 // ─── Agent Identity & Delegation — Phase II Agentic Layer (PH2-AGENT-05) ───
 // JWT auth required — agents are org-managed resources
