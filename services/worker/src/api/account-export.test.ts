@@ -32,19 +32,23 @@ function mockDb(tables: Record<string, unknown>) {
   return {
     from: vi.fn((table: string) => {
       const payload = tables[table] ?? [];
-      const builder: Record<string, unknown> = {
+      // Terminal: both list queries in account-export.ts end with `.limit(N)`,
+      // so we make .limit() resolve to the payload directly. The intermediate
+      // methods (.select, .eq, .is, .order) chain via mockReturnThis so the
+      // caller can compose them freely.
+      const builder = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         is: vi.fn().mockReturnThis(),
         order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
+        // .limit() is the terminal call — it returns a Promise directly
+        // instead of a thenable object (SonarCloud typescript:S7739).
+        limit: vi.fn().mockResolvedValue({ data: payload, error: null }),
+        // .single() is the terminal for profile / single-row reads
         single: vi.fn().mockResolvedValue({
           data: Array.isArray(payload) ? payload[0] : payload,
           error: null,
         }),
-        // Awaited list queries (anchors, audit_events) resolve via `then`
-        then: (resolve: (v: { data: unknown; error: null }) => void) =>
-          resolve({ data: payload, error: null }),
         // `.insert(...).select().single()` chain for data_subject_requests
         insert: vi.fn().mockReturnValue({
           select: vi.fn().mockReturnValue({
@@ -211,21 +215,21 @@ describe('handleAccountExport', () => {
           }),
         };
       }
-      // Default stub for everything else
+      // Default stub for everything else. Terminal is .limit() (anchors,
+      // audit_events) or .single() (profiles). No `then` on the object —
+      // see SonarCloud typescript:S7739.
       return {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         is: vi.fn().mockReturnThis(),
         order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
+        limit: vi.fn().mockResolvedValue({ data: [], error: null }),
         single: vi.fn().mockResolvedValue({
           data: table === 'profiles'
             ? { id: 'user-123', email: 'a@b.c', full_name: null, role: null, org_id: null, created_at: 't', updated_at: 't' }
             : null,
           error: null,
         }),
-        then: (resolve: (v: { data: unknown; error: null }) => void) =>
-          resolve({ data: [], error: null }),
       };
     });
     void insertSpy;
