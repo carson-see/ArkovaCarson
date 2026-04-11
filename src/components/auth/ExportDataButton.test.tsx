@@ -10,7 +10,6 @@ vi.mock('@/lib/workerClient', () => ({
   workerFetch: vi.fn(),
 }));
 
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 const workerClientMock = await import('@/lib/workerClient');
 
 describe('ExportDataButton', () => {
