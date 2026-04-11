@@ -1,4 +1,4 @@
--- Migration: 0186_data_subject_requests.sql
+-- Migration: 0187_data_subject_requests.sql
 -- Description: Data subject rights request log (REG-11 / SCRUM-572)
 --              Durable audit record of every access/correction/erasure/restriction
 --              request under GDPR Art. 15/16/17/18, Kenya DPA s. 31, Australia APP 12,
