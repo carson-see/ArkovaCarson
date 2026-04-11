@@ -97,7 +97,7 @@ router.get('/stats', async (req: Request, res: Response) => {
 });
 
 // PATCH /:itemId — Apply review action
-router.patch('/:itemId', async (req: Request, res: Response) => {
+router.patch('/:itemId', async (req: Request<{ itemId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });

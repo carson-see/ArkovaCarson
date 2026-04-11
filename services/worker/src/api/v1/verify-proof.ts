@@ -104,7 +104,7 @@ export function buildProofResponse(
 /**
  * GET /api/v1/verify/:publicId/proof
  */
-router.get('/:publicId/proof', async (req: Request, res: Response) => {
+router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: Response) => {
   const { publicId } = req.params;
 
   if (!publicId || publicId.length < 3) {

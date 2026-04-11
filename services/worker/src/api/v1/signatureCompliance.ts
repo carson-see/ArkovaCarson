@@ -26,7 +26,7 @@ const router = Router();
  * GET /api/v1/signatures/:id/audit-proof
  * Generate a comprehensive audit proof package for a signature.
  */
-router.get('/signatures/:id/audit-proof', async (req: Request, res: Response) => {
+router.get('/signatures/:id/audit-proof', async (req: Request<{ id: string }>, res: Response) => {
   try {
     const { id } = req.params;
 

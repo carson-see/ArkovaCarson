@@ -102,7 +102,7 @@ router.get('/', async (req: Request, res: Response) => {
 });
 
 // GET /:reportId — Get single report
-router.get('/:reportId', async (req: Request, res: Response) => {
+router.get('/:reportId', async (req: Request<{ reportId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });

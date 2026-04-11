@@ -19,7 +19,7 @@ import { logger } from '../../utils/logger.js';
 const router = Router();
 
 /** GET /api/v1/ai/provenance/:fingerprint */
-router.get('/:fingerprint', async (req: Request, res: Response) => {
+router.get('/:fingerprint', async (req: Request<{ fingerprint: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });

@@ -101,7 +101,7 @@ router.post('/compute', async (req: Request, res: Response) => {
 });
 
 // GET /:anchorId — Get integrity score
-router.get('/:anchorId', async (req: Request, res: Response) => {
+router.get('/:anchorId', async (req: Request<{ anchorId: string }>, res: Response) => {
   const userId = req.authUserId;
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });
