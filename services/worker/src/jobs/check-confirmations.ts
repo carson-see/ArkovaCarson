@@ -15,6 +15,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { buildVerifyUrl, buildRecordUrl } from '../lib/urls.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { isSemanticSearchEnabled } from '../middleware/aiFeatureGate.js';
 import { generateAndStoreEmbedding } from '../ai/embeddings.js';
@@ -590,9 +591,7 @@ async function trySendSecuredEmail(
   }
 
   // Build verification URL
-  const verificationUrl = publicId
-    ? `${config.frontendUrl}/verify/${publicId}`
-    : `${config.frontendUrl}/records/${anchorId}`;
+  const verificationUrl = publicId ? buildVerifyUrl(publicId) : buildRecordUrl(anchorId);
 
   const emailData = buildAnchorSecuredEmail({
     recipientEmail: profile.email,

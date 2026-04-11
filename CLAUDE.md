@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned, ~67%) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 190 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -290,7 +290,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
 | Dependency Hardening | 1/10 | 0 | 9 | 10% |
-| International Compliance | 0/28 | 0 | 28 | 0% |
+| International Compliance | 0/28 | 2 | 26 | 7% |
 | **Total** | **203/254** | **2/254** | **49/254** | **~80%** |
 
 ### Incomplete Stories
@@ -354,11 +354,12 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - DEP-10 (P2): License Audit — GPL Compatibility Review
 - See `docs/stories/26_dependency_hardening.md` and `docs/BACKLOG.md` for details
 
-**International Regulatory Compliance (28 not started) — Release R-REG-01:**
+**International Regulatory Compliance (2 partial, 26 not started) — Release R-REG-01:**
 - REG-01–04 (FERPA): Disclosure log, directory info opt-out, DUA template, requester verification
 - REG-05–10 (HIPAA): MFA enforcement, session timeout, audit report, BAA template, breach notification, emergency access
 - REG-11–14 (Shared): Data subject rights workflow, SCC framework, breach procedures, privacy notices
-- REG-15–16 (Kenya): ODPC registration, DPIA
+- ~~REG-15 (Kenya): ODPC registration~~ — **DRAFT COMPLETE, COUNSEL ENGAGED** (2026-04-11; `docs/compliance/kenya/odpc-registration.md` + README + privacy notice; blocked only on DPO + fee payment + portal submission)
+- ~~REG-16 (Kenya): DPIA~~ — **DRAFT COMPLETE** (v0.1 at `docs/compliance/kenya/dpia.md`, 10-risk register, awaiting DPO review)
 - REG-17–19 (Australia): APP 8 assessment, NDB procedure, data correction
 - REG-20–22 (South Africa): Information Regulator registration, POPIA Section 72, privacy notice
 - REG-23–25 (Nigeria): NDPC registration, SCCs, privacy notice

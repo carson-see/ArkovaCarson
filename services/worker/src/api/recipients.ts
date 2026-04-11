@@ -12,7 +12,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { config } from '../config.js';
+import { buildActivateUrl } from '../lib/urls.js';
 import { sendEmail, buildActivationEmail } from '../email/index.js';
 
 export interface CreateRecipientRequest {
@@ -102,8 +102,8 @@ export async function createPendingRecipient(
 
   const orgName = org?.display_name ?? 'Your organization';
 
-  // Build activation URL
-  const activationUrl = `${config.frontendUrl}/activate?token=${activationToken}`;
+  // Build activation URL (hex token is URL-safe; buildActivateUrl also encodes defensively)
+  const activationUrl = buildActivateUrl(activationToken);
 
   // Send activation email
   const emailResult = await sendEmail({

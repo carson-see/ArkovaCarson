@@ -243,8 +243,16 @@ function createApp() {
 describe('cron routes', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default: development mode (auth bypassed)
-    (config as { nodeEnv: string }).nodeEnv = 'development';
+    // Reset all mutated config fields back to defaults so each test starts clean.
+    // If a test fails mid-run, the next test still gets a known-good config.
+    const mutableConfig = config as {
+      nodeEnv: string;
+      cronSecret?: string;
+      cronOidcAudience?: string;
+    };
+    mutableConfig.nodeEnv = 'development';
+    mutableConfig.cronSecret = 'test-cron-secret-1234';
+    mutableConfig.cronOidcAudience = 'https://arkova-worker.run.app';
   });
 
   // ═══════════════════════════════════════
@@ -338,6 +346,76 @@ describe('cron routes', () => {
       const app = createApp();
 
       const res = await request(app).post('/cron/process-anchors');
+      expect(res.status).toBe(401);
+    });
+
+    // SCRUM-640: Revisions deployed with CRON_OIDC_AUDIENCE but without
+    // CRON_SECRET used to 401 unconditionally because the middleware bailed
+    // at `!config.cronSecret` instead of falling through to OIDC. These
+    // three tests pin the post-fix contract.
+    it('SCRUM-640: does not log "CRON_SECRET not configured" when OIDC audience is set', async () => {
+      const { logger } = await import('../utils/logger.js');
+      const errorSpy = logger.error as ReturnType<typeof vi.fn>;
+      errorSpy.mockClear();
+
+      const mutable = config as { nodeEnv: string; cronSecret?: string };
+      mutable.nodeEnv = 'production';
+      mutable.cronSecret = undefined;
+      const app = createApp();
+
+      const res = await request(app).post('/cron/process-anchors');
+      expect(res.status).toBe(401);
+
+      const loggedMessages = errorSpy.mock.calls.map((c) => JSON.stringify(c));
+      expect(loggedMessages.some((m) => m.includes('CRON_SECRET not configured'))).toBe(false);
+    });
+
+    it('SCRUM-640: still accepts valid X-Cron-Secret header when cronSecret is configured', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('X-Cron-Secret', 'test-cron-secret-1234');
+      expect(res.status).toBe(200);
+    });
+
+    it('SCRUM-640: ignores stale X-Cron-Secret header on OIDC-only deploy and falls through to Bearer', async () => {
+      // Scenario: legacy Cloud Scheduler job (or proxy) still attaches an
+      // X-Cron-Secret header on a revision where CRON_SECRET was removed and
+      // CRON_OIDC_AUDIENCE is the only configured auth. Must not 401 early —
+      // must fall through to the Authorization: Bearer path.
+      const mutable = config as { nodeEnv: string; cronSecret?: string };
+      mutable.nodeEnv = 'production';
+      mutable.cronSecret = undefined;
+
+      // Simulate a valid platform admin Bearer token as the "Method 2"
+      // fallthrough (so we don't need to mock Google JWKS in a unit test).
+      (verifyAuthToken as ReturnType<typeof vi.fn>).mockResolvedValue('admin-user');
+      (isPlatformAdmin as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('X-Cron-Secret', 'stale-header-from-legacy-scheduler')
+        .set('Authorization', 'Bearer admin-jwt-token');
+      expect(res.status).toBe(200);
+    });
+
+    it('SCRUM-640: rejects cron if neither CRON_SECRET nor CRON_OIDC_AUDIENCE configured', async () => {
+      const mutable = config as {
+        nodeEnv: string;
+        cronSecret?: string;
+        cronOidcAudience?: string;
+      };
+      mutable.nodeEnv = 'production';
+      mutable.cronSecret = undefined;
+      mutable.cronOidcAudience = undefined;
+      const app = createApp();
+
+      const res = await request(app)
+        .post('/cron/process-anchors')
+        .set('Authorization', 'Bearer some-token');
       expect(res.status).toBe(401);
     });
   });

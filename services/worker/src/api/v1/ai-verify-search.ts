@@ -17,7 +17,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createAIProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
-import { config } from '../../config.js';
+import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { callRpc } from '../../utils/rpc.js';
@@ -132,7 +132,7 @@ router.get('/', async (req: Request, res: Response) => {
         issued_date: m.issued_date,
         expiry_date: m.expiry_date,
         anchor_timestamp: m.anchor_timestamp,
-        record_uri: `${config.frontendUrl}/verify/${m.public_id}`,
+        record_uri: buildVerifyUrl(m.public_id),
         similarity: m.similarity,
       }),
     );

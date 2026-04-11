@@ -1,5 +1,5 @@
 # International Regulatory Compliance — Story Documentation
-_Created: 2026-04-09 | Status: NOT STARTED (0/28 stories)_
+_Created: 2026-04-09 | Status: IN PROGRESS (2/28 stories — Kenya workstream started)_
 _Epic: REG (Regulatory Compliance)_
 _Jira Epic: SCRUM-551_
 _Release: R-REG-01 — International Compliance v1 (Jira version 10054)_
@@ -342,35 +342,49 @@ Arkova already has GDPR erasure (anonymization). This story adds the remaining d
 
 _Legal basis: Data Protection Act, No. 24 of 2019 (Kenya); Sections 25, 31-38, 41, 48, 56-57_
 
-### REG-15: ODPC Registration (SCRUM-576) (Kenya)
+### REG-15: ODPC Registration (SCRUM-576) (Kenya) — DRAFT COMPLETE, COUNSEL ENGAGED
 **Priority:** P1 | **Effort:** Small | **Type:** Process
 **Jira:** SCRUM-576 | **Depends on:** None
+**Status:** Registration packet drafted 2026-04-11; **Kenyan legal counsel engaged** same day. Awaiting counsel review of the Section 58 representative appointment, DPO appointment (REG-28), fee payment, and portal submission. Keep ticket open until registration number is issued by ODPC.
 
 **As a** platform operator processing Kenyan education/healthcare credentials,
 **I want** to register with the Office of the Data Protection Commissioner,
 **so that** we comply with Kenya DPA Sections 56-57.
 
 #### Acceptance Criteria
-- [ ] Registration application submitted to ODPC
+- [x] Registration documentation drafted in `docs/compliance/kenya/odpc-registration.md` (all 11 sections of the ODPC portal form)
+- [x] Kenya compliance tracker scaffolded (`docs/compliance/kenya/README.md`)
+- [x] Kenya-specific privacy notice drafted (`docs/compliance/kenya/privacy-notice.md`)
+- [x] **Kenyan legal counsel engaged** (2026-04-11) to review the Section 58 appointed-representative requirement
+- [ ] **BLOCKED:** DPO appointment (REG-28)
+- [ ] **BLOCKED:** Fee paid (KES 25,000) and application submitted to ODPC via https://odpc.go.ke/online-registration/
 - [ ] Registration number obtained and displayed in Kenya privacy notice
-- [ ] Annual renewal calendar reminder set
-- [ ] Registration documentation stored in `docs/compliance/kenya/`
+- [ ] Annual renewal calendar reminder set (24-month validity, 60-day lead time)
+
+#### What's in place
+All remote-doable work is complete. The remaining checklist items require external actions: Kenyan counsel engagement, DPO hire, and portal submission.
 
 ---
 
-### REG-16: Kenya Data Protection (SCRUM-577) Impact Assessment
+### REG-16: Kenya Data Protection (SCRUM-577) Impact Assessment — DRAFT COMPLETE
 **Priority:** P1 | **Effort:** Medium | **Type:** Documentation
 **Jira:** SCRUM-577 | **Depends on:** REG-15
+**Status:** DPIA v0.1 drafted 2026-04-11 at `docs/compliance/kenya/dpia.md`; awaiting DPO review
 
 **As a** compliance officer,
 **I want** a DPIA for processing Kenyan education/healthcare credentials,
 **so that** we can demonstrate compliance to the ODPC and identify risks.
 
 #### Acceptance Criteria
-- [ ] DPIA covering: processing activities, lawful basis (Section 25), cross-border transfer assessment (Section 48), security measures (Section 41), data subject rights implementation
-- [ ] Risk assessment for sensitive personal data categories
-- [ ] Submitted to ODPC if high-risk processing identified
-- [ ] Stored in `docs/compliance/kenya/dpia.md`
+- [x] DPIA covering processing activities, lawful basis (Section 30), cross-border transfer assessment (Section 48), security measures (Section 41), data subject rights implementation
+- [x] Risk register of 10 identified risks with inherent + residual ratings (R1-R10)
+- [x] Section 30(1)(f) legitimate interests balancing test documented
+- [x] Section 46 sensitive-data exception analysis
+- [x] Stored in `docs/compliance/kenya/dpia.md`
+- [x] Action plan (A1-A8) with owners and dependencies on other REG stories
+- [ ] **BLOCKED:** DPO review and signoff (REG-28 dependency)
+- [ ] **BLOCKED:** Executive approval signature
+- [ ] **CONDITIONAL:** Submitted to ODPC alongside REG-15 registration if high-risk processing identified (current assessment: residual risk = medium, pre-consultation not required)
 
 ---
 

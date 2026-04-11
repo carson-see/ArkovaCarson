@@ -12,6 +12,7 @@ import { Router } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
+import { buildVerifyUrl } from '../../lib/urls.js';
 
 const router = Router();
 
@@ -96,7 +97,7 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     bitcoin_block: anchor.chain_block_height ?? null,
     network_receipt_id: anchor.chain_tx_id ?? null,
     merkle_proof_hash: anchor.merkle_root ?? null,
-    record_uri: `${config.frontendUrl}/verify/${anchor.public_id}`,
+    record_uri: buildVerifyUrl(anchor.public_id),
   };
 
   if (anchor.credential_type) {
