@@ -24,6 +24,11 @@ export default defineConfig({
       external: [],
       output: {
         globals: {},
+        // Named exports only — index.ts exposes `mount`, `autoInit`, and the
+        // types, and attaches `window.ArkovaEmbed = { mount, autoInit }` at
+        // load time. The `export default` there is for ESM ergonomics; the
+        // UMD/IIFE consumers shouldn't have to unwrap `.default`.
+        exports: 'named',
       },
     },
     minify: 'esbuild',
