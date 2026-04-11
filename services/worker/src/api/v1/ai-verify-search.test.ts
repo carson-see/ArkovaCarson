@@ -52,6 +52,10 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import { Request, Response } from 'express';
 import { aiVerifySearchRouter } from './ai-verify-search.js';
 import { db } from '../../utils/db.js';

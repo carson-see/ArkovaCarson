@@ -10,6 +10,7 @@
 
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
+import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -70,7 +71,7 @@ router.post('/', async (req: Request, res: Response) => {
         fingerprint: existing.fingerprint,
         status: 'PENDING',
         created_at: existing.created_at,
-        record_uri: `https://app.arkova.ai/verify/${existing.public_id ?? ''}`,
+        record_uri: `${config.frontendUrl}/verify/${existing.public_id ?? ''}`,
       };
       res.status(200).json(receipt);
       return;
@@ -113,7 +114,7 @@ router.post('/', async (req: Request, res: Response) => {
       fingerprint: anchor.fingerprint,
       status: 'PENDING',
       created_at: anchor.created_at,
-      record_uri: `https://app.arkova.ai/verify/${anchor.public_id ?? publicId}`,
+      record_uri: `${config.frontendUrl}/verify/${anchor.public_id ?? publicId}`,
     };
 
     logger.info({ publicId, fingerprint: fingerprint.slice(0, 12) }, 'Anchor submitted via API');

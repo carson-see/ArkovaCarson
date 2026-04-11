@@ -157,7 +157,7 @@ anchorRouter.post('/send-invitation-email', rateLimiters.checkout, async (req, r
     }
 
     // Build the invite URL — links to the app's signup/login page with invitation context
-    const frontendUrl = config.frontendUrl || 'https://arkova-26.vercel.app';
+    const frontendUrl = config.frontendUrl;
     const inviteUrl = `${frontendUrl}/login?invite=true&org=${encodeURIComponent(orgId)}`;
 
     const { subject, html } = buildInvitationEmail({

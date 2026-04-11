@@ -17,10 +17,11 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { createAIProvider, createEmbeddingProvider, getProviderName } from '../../ai/factory.js';
+import { createEmbeddingProvider } from '../../ai/factory.js';
 import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
+import { config } from '../../config.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { monitorQuery } from '../../utils/queryMonitor.js';
@@ -327,7 +328,7 @@ router.get('/', async (req: Request, res: Response) => {
                 ? `${explorerBase}/tx/${anchor.chain_tx_id}`
                 : null,
               verify_url: anchor.public_id
-                ? `https://app.arkova.ai/verify/${anchor.public_id}`
+                ? `${config.frontendUrl}/verify/${anchor.public_id}`
                 : null,
             }
           : null,

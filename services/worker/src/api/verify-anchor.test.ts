@@ -9,6 +9,11 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+
+vi.mock('../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai' },
+}));
+
 import { verifyAnchorByFingerprint } from './verify-anchor.js';
 import { createHash } from 'crypto';
 
