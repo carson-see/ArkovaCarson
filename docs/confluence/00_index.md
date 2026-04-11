@@ -50,12 +50,20 @@ This directory contains 20 architecture and design documents for the Arkova plat
 
 ### International Regulatory Compliance (R-REG-01)
 
-| File | Description |
-|------|-------------|
-| `../compliance/kenya/README.md` | Kenya DPA 2019 compliance tracker (REG-15/16 index) |
-| `../compliance/kenya/odpc-registration.md` | ODPC registration application packet (REG-15, SCRUM-576) |
-| `../compliance/kenya/dpia.md` | Kenya Data Protection Impact Assessment v0.1 (REG-16, SCRUM-577) |
-| `../compliance/kenya/privacy-notice.md` | Kenya-specific privacy notice (DPA Section 29) |
+Confluence hierarchy (synced 2026-04-11):
+- **Africa parent:** https://arkova.atlassian.net/wiki/spaces/A/pages/8847361 (id 8847361)
+- **Kenya parent:** https://arkova.atlassian.net/wiki/spaces/A/pages/8880129 (id 8880129)
+
+| File | Confluence page id | Description |
+|------|-------------------|-------------|
+| `../compliance/kenya/README.md` | 8814595 | Kenya DPA 2019 compliance tracker (REG-15/16 index) |
+| `../compliance/kenya/odpc-registration.md` | 8880149 | ODPC registration application packet (REG-15, SCRUM-576) |
+| `../compliance/kenya/dpia.md` | 8945665 | Kenya Data Protection Impact Assessment v0.1 (REG-16, SCRUM-577) |
+| `../compliance/kenya/privacy-notice.md` | 8912918 | Kenya-specific privacy notice (DPA Section 29) |
+
+### Story Archive (all 30 epic groups)
+
+Every `docs/stories/*.md` file is mirrored as a child of [Story Archive](https://arkova.atlassian.net/wiki/spaces/A/pages/8912898) (id 8912898). Source-of-truth is the repo; Confluence is a read-only mirror for PM/audit/legal access.
 
 ### Audit Documents
 

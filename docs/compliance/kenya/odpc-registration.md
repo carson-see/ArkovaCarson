@@ -33,10 +33,11 @@ _Status: DRAFT — awaiting legal review + submission_
 
 Because Arkova has no physical establishment in Kenya, the DPA requires appointing a local representative to receive ODPC correspondence.
 
-**TODO — awaiting legal:**
-- [ ] Identify candidate firm (suggested: Bowmans Kenya, Anjarwalla & Khanna, or Daly & Inamdar)
+**Status: Kenyan legal counsel engaged as of 2026-04-11.** Representative details + signed letter of appointment to be filled in by counsel before portal submission.
+
+- [x] Kenyan legal counsel engaged
+- [ ] Representative firm named and contact details recorded
 - [ ] Signed letter of appointment
-- [ ] Representative contact details
 
 ### 3. Data Protection Officer (DPA Section 24)
 
@@ -160,6 +161,7 @@ Payable via bank transfer to the National Bank of Kenya account specified on the
 
 ## Action checklist
 
+- [x] **Kenyan legal counsel engaged** (2026-04-11)
 - [ ] **Legal review** — outside Kenyan counsel confirms all fields
 - [ ] **Appoint Kenya representative** — required before submission
 - [ ] **Appoint DPO** — part of REG-28

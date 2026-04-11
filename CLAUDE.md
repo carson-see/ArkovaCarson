@@ -358,7 +358,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - REG-01–04 (FERPA): Disclosure log, directory info opt-out, DUA template, requester verification
 - REG-05–10 (HIPAA): MFA enforcement, session timeout, audit report, BAA template, breach notification, emergency access
 - REG-11–14 (Shared): Data subject rights workflow, SCC framework, breach procedures, privacy notices
-- ~~REG-15 (Kenya): ODPC registration~~ — **DRAFT COMPLETE** (`docs/compliance/kenya/odpc-registration.md` + README + privacy notice; blocked on Kenyan counsel + DPO + portal submission)
+- ~~REG-15 (Kenya): ODPC registration~~ — **DRAFT COMPLETE, COUNSEL ENGAGED** (2026-04-11; `docs/compliance/kenya/odpc-registration.md` + README + privacy notice; blocked only on DPO + fee payment + portal submission)
 - ~~REG-16 (Kenya): DPIA~~ — **DRAFT COMPLETE** (v0.1 at `docs/compliance/kenya/dpia.md`, 10-risk register, awaiting DPO review)
 - REG-17–19 (Australia): APP 8 assessment, NDB procedure, data correction
 - REG-20–22 (South Africa): Information Regulator registration, POPIA Section 72, privacy notice

@@ -342,10 +342,10 @@ Arkova already has GDPR erasure (anonymization). This story adds the remaining d
 
 _Legal basis: Data Protection Act, No. 24 of 2019 (Kenya); Sections 25, 31-38, 41, 48, 56-57_
 
-### REG-15: ODPC Registration (SCRUM-576) (Kenya) — DRAFT COMPLETE
+### REG-15: ODPC Registration (SCRUM-576) (Kenya) — DRAFT COMPLETE, COUNSEL ENGAGED
 **Priority:** P1 | **Effort:** Small | **Type:** Process
 **Jira:** SCRUM-576 | **Depends on:** None
-**Status:** Registration packet drafted 2026-04-11; awaiting Kenyan legal counsel + DPO appointment before submission
+**Status:** Registration packet drafted 2026-04-11; **Kenyan legal counsel engaged** same day. Awaiting counsel review of the Section 58 representative appointment, DPO appointment (REG-28), fee payment, and portal submission. Keep ticket open until registration number is issued by ODPC.
 
 **As a** platform operator processing Kenyan education/healthcare credentials,
 **I want** to register with the Office of the Data Protection Commissioner,
@@ -355,7 +355,7 @@ _Legal basis: Data Protection Act, No. 24 of 2019 (Kenya); Sections 25, 31-38, 4
 - [x] Registration documentation drafted in `docs/compliance/kenya/odpc-registration.md` (all 11 sections of the ODPC portal form)
 - [x] Kenya compliance tracker scaffolded (`docs/compliance/kenya/README.md`)
 - [x] Kenya-specific privacy notice drafted (`docs/compliance/kenya/privacy-notice.md`)
-- [ ] **BLOCKED:** Kenyan legal counsel engagement to review appointed-representative requirement (Section 58)
+- [x] **Kenyan legal counsel engaged** (2026-04-11) to review the Section 58 appointed-representative requirement
 - [ ] **BLOCKED:** DPO appointment (REG-28)
 - [ ] **BLOCKED:** Fee paid (KES 25,000) and application submitted to ODPC via https://odpc.go.ke/online-registration/
 - [ ] Registration number obtained and displayed in Kenya privacy notice

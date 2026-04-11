@@ -21,8 +21,9 @@ _Stories: REG-15 (SCRUM-576), REG-16 (SCRUM-577)_
 
 | Requirement | DPA Section | Status | Owner | Due |
 |-------------|------------|--------|-------|-----|
-| ODPC registration (data controller) | 56-57 | **DRAFT — NOT SUBMITTED** | Legal | — |
-| DPIA for sensitive personal data | 31 | **DRAFT** | Compliance | — |
+| Kenyan legal counsel engagement | 58 (appointed representative) | **ENGAGED** (2026-04-11) | Legal | Done |
+| ODPC registration (data controller) | 56-57 | **DRAFT — AWAITING COUNSEL REVIEW + PORTAL SUBMISSION** | Legal + Counsel | — |
+| DPIA for sensitive personal data | 31 | **DRAFT v0.1 — AWAITING DPO REVIEW** | Compliance | — |
 | Data subject rights workflow | 26, 31-38 | Pending REG-11 | Engineering | — |
 | Cross-border transfer assessment | 48-49 | Covered in DPIA | Compliance | — |
 | Breach notification procedure (72h to ODPC, reasonable time to subject) | 43 | Pending REG-13 | SRE | — |
