@@ -46,6 +46,8 @@ git config core.hooksPath .githooks
 
 ## 2. Custom ESLint Rules (`eslint-plugin-arkova`)
 
+> **ESLint v9 + flat config** — As of 2026-04-11 (PR #353 / SCRUM-636 / DEP-05), the repo runs **ESLint 9.39.4 with flat config** (`eslint.config.js` at the repo root and in `services/worker/`). The legacy `.eslintrc.cjs` has been removed. `typescript-eslint` is on v8.x. The custom `eslint-plugin-arkova` rule suite is loaded via flat config and the `RuleTester` unit tests under `tests/eslint-rules/` run on every `npm test` (previously excluded as a temporary unblock in PR #351 — that exclusion is now gone).
+
 Three rules enforce test quality standards. Located in `eslint-rules/`.
 
 ### Rule 1: `arkova/no-unscoped-service-test` (warn)

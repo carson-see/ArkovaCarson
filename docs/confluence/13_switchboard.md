@@ -1,5 +1,7 @@
 # Production Switchboard
-_Last updated: 2026-03-29 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20), GAP-07 (3 AI flags added)_
+_Last updated: 2026-04-11 | Story: P7-TS-01 (migration 0021), p_flag_key fix (2026-03-20), GAP-07 (3 AI flags added), SCRUM-534 / PR #347 (FRONTEND_URL prod requirement)_
+
+> **Related: Production env vars.** This document covers the *runtime* feature flags stored in the `switchboard_flags` DB table. For environment variables required at container startup (including the **required-in-production** `FRONTEND_URL` introduced by SCRUM-534 / PR #347), see CLAUDE.md §7. The worker will fail loudly on boot if `NODE_ENV=production` and `FRONTEND_URL` is unset — there is no localhost fallback.
 
 ## Overview
 
