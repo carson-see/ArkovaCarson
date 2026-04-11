@@ -639,6 +639,45 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 ---
 
+## TIER 0G: INTEGRATION SURFACE & PACKAGING (INT) — TOP PRIORITY (2026-04-11)
+
+> **Source:** Arkova Integration Strategy v2 (Google Doc `1wP7pkOmf7rVdStIHaA9V4QxKPg4hoVB6`)
+> **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
+> **Story doc:** [30_integration_surface.md](stories/30_integration_surface.md)
+> **Priority:** P0 — **AHEAD OF NCE AND GME** (per 2026-04-11 prioritization)
+
+**Vision:** Core infrastructure is done. The gap is packaging and distribution — SDKs, MCP agent tools, embeddable components, vertical connectors. Three days of Claude Code = YC demo readiness.
+
+### R-INT-01: YC Demo Critical (P0 — Build Now)
+
+| ID | Jira | Story | Pts | Status |
+|----|------|-------|-----|--------|
+| INT-01 | SCRUM-642 | TypeScript SDK (`@arkova/sdk`) | 5 | NOT STARTED |
+| INT-02 | SCRUM-643 | MCP Server Tool Enhancement | 3 | NOT STARTED |
+| INT-03 | SCRUM-644 | Embeddable Verification Bundle (`embed.js`) | 5 | NOT STARTED |
+| INT-09 | SCRUM-645 | Webhook CRUD via API | 3 | NOT STARTED |
+
+**Total:** 16 points | **YC demo path:** 3 days Claude Code
+
+### R-INT-02: SDK & Automation (P1)
+
+| ID | Jira | Story | Pts | Status |
+|----|------|-------|-----|--------|
+| INT-04 | SCRUM-646 | Python SDK (`arkova-python`) | 3 | NOT STARTED |
+| INT-05 | SCRUM-647 | Zapier / Make.com Integration | 5 | NOT STARTED (LOI-gated) |
+
+### R-INT-03: Vertical Connectors (P2 — LOI-gated)
+
+| ID | Jira | Story | Pts | Build Trigger |
+|----|------|-------|-----|---------------|
+| INT-06 | SCRUM-648 | Clio (Law Firm DMS) | 8 | First law firm pilot signed |
+| INT-07 | SCRUM-649 | Bullhorn Marketplace App | 8 | First staffing pilot converts to paid |
+| INT-08 | SCRUM-650 | Screening Report Embed Template | 3 | CredentialCheck/equivalent LOI |
+
+**Total INT epic:** 43 points | **9 stories** | **3 release trains**
+
+---
+
 ## TIER 0D: NESSIE MODEL TRAINING & EVALUATION (Session 19 — 2026-03-30)
 
 > Source: Model comparison eval (MLX 4-bit, 50 samples). Story doc: [21_nessie_model_training.md](stories/21_nessie_model_training.md)

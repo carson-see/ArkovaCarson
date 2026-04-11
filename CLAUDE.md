@@ -1,8 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 192 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 304 stories (203 complete + 20 NCE + 22 GME + 10 DEP + 28 REG + 4 INT + 17 residual) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
-> **Active releases:** R-NCE-01 (21) · R-GME-01 (18) · R-DEP-01 (11) · R-REG-01 (29) · R-INT-01 (5) · v1.4.0 (12) · v1.5.0 (9) · v1.7.0 (8) · v2.0.0 (0, residual polish)
+> **Stats:** 190 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -259,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 192 files (0001-0187, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170. Migration 0186 (SCRUM-546, v1.4.0 operational stability) adds the `treasury_cache` singleton table for server-side caching of balance/fee data — pending production apply. Migration 0187 (SCRUM-572 / REG-11) adds the `data_subject_requests` audit log table for GDPR Art. 30 / Kenya DPA Part VI / POPIA s. 23 records-of-processing compliance — pending production apply.
+**Current:** 190 files (0001-0185, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -290,14 +289,28 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
-| R-DEP-01 Dependency Hardening | 1/10 | 0 | 9 | 10% |
-| R-REG-01 International Compliance | 1/28 | 2 | 25 | 4% |
-| R-NCE-01 Nessie Compliance Engine | 0/20 | 0 | 20 | 0% |
-| R-GME-01 Gemini 3 Migration | 5/22 | 0 | 17 | 23% |
-| R-INT-01 Integration Surface | 0/4 | 0 | 4 | 0% |
-| **Total** | **210/312** | **2/312** | **100/312** | **~67%** |
+| Dependency Hardening | 1/10 | 0 | 9 | 10% |
+| International Compliance | 0/28 | 2 | 26 | 7% |
+| **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
+| **Total** | **207/263** | **4/263** | **52/263** | **~79%** |
 
 ### Incomplete Stories
+
+**Integration Surface (INT) — TOP PRIORITY (ahead of NCE/GME) — 9 not started — Release: R-INT-01/02/03:**
+> **Source:** Arkova Integration Strategy v2 (Google Doc) — story doc: `docs/stories/30_integration_surface.md`
+> **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
+- **R-INT-01 (P0 — YC Demo, 16 pts):** ★ **CODE COMPLETE — IN PR REVIEW**
+  - ~~INT-01 (SCRUM-642): TypeScript SDK `@arkova/sdk`~~ — **CODE COMPLETE** (verifyBatch, webhooks namespace, jsonOrThrow, mapVerificationResult, README rewrite)
+  - ~~INT-02 (SCRUM-643): MCP Server Tool Enhancement~~ — **CODE COMPLETE** (verify_batch tool; cle_verify deferred to INT-02b)
+  - ~~INT-03 (SCRUM-644): Embeddable JS Bundle (`embed.js`)~~ — **CODE COMPLETE** (`packages/embed/`, vite lib mode, 21 tests)
+  - ~~INT-09 (SCRUM-645): Webhook CRUD via API~~ — **CODE COMPLETE** (POST/GET/PATCH/DELETE, ORG_ADMIN gate, batch rate limit, SSRF+audit fixes)
+- **R-INT-02 (P1, 8 pts):**
+  - INT-04 (SCRUM-646): Python SDK `arkova-python` — 3 pts
+  - INT-05 (SCRUM-647): Zapier / Make.com — 5 pts (LOI-gated: 3+ staffing agencies)
+- **R-INT-03 (P2 — LOI-gated, 19 pts):**
+  - INT-06 (SCRUM-648): Clio (law firm DMS) — 8 pts (first law firm pilot signed)
+  - INT-07 (SCRUM-649): Bullhorn Marketplace — 8 pts (first staffing pilot paid)
+  - INT-08 (SCRUM-650): Screening Report Embed Template — 3 pts (CredentialCheck LOI)
 
 **P7 Go-Live (2 not started):**
 - P7-TS-04, P7-TS-06: No individual scope defined
@@ -533,5 +546,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-11 | 192 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 312 stories (210 complete + 20 NCE + 17 GME open + 9 DEP open + 25 REG open + 4 INT + 27 residual) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-11 | 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
