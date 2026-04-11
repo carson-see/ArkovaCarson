@@ -15,8 +15,8 @@
 
 import { logger } from '../../utils/logger.js';
 import { db } from '../../utils/db.js';
-import { EIDAS_COMPLIANCE, ETSI_STANDARD, LEVEL_REQUIREMENTS } from '../constants.js';
-import type { SignatureRecord, Jurisdiction } from '../types.js';
+import { EIDAS_COMPLIANCE, ETSI_STANDARD } from '../constants.js';
+import type { Jurisdiction } from '../types.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -138,7 +138,6 @@ export async function generateAuditProof(
   }
 
   const cert = sig.signing_certificates;
-  const reqs = LEVEL_REQUIREMENTS[sig.level as keyof typeof LEVEL_REQUIREMENTS];
 
   // Build evidence layers
   const layers: string[] = [];

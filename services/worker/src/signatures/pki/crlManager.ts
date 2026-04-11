@@ -7,7 +7,6 @@
  * Story: PH3-ESIG-01 (SCRUM-422)
  */
 
-import * as crypto from 'crypto';
 import { logger } from '../../utils/logger.js';
 import type { CrlEntry } from '../types.js';
 import { DEFAULTS } from '../constants.js';

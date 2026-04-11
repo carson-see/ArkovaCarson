@@ -8,11 +8,7 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
-    // tests/eslint-rules/* exercises the custom eslint-plugin-arkova via
-    // ESLint's RuleTester with flat-config (v9) API. ESLint v9 is introduced
-    // in DEP-05 (PR #348); until that lands, running it against v8 throws
-    // "Cannot find module '../rules'". Re-enable when DEP-05 merges.
-    exclude: ['tests/rls/**', 'tests/load/**', 'tests/eslint-rules/**'],
+    exclude: ['tests/rls/**', 'tests/load/**'],
     setupFiles: ['./src/test/setup.ts'],
     coverage: {
       provider: 'v8',

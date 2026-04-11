@@ -20,15 +20,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 import type {
-  SignRequest,
   SignResponse,
-  VerifySignatureResponse,
-  SignatureRecord,
   SigningCertificate,
   Jurisdiction,
   SignatureFormat,
   SignatureLevel,
-  RevocationReason,
   KmsProvider,
   KeyAlgorithm,
   CertificateStatus,
@@ -274,8 +270,8 @@ router.post('/sign', async (req: Request, res: Response) => {
     );
 
     // Store timestamp token if acquired
-    let timestampTokenId: string | null = null;
-    let archiveTimestampId: string | null = null;
+    const timestampTokenId: string | null = null;
+    const archiveTimestampId: string | null = null;
 
     if (signResult.timestampTokenId && signResult.ltvData) {
       // Timestamp tokens stored separately — will be populated when QTSP integration is live

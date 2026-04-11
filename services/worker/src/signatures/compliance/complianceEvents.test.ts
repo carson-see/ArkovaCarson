@@ -18,7 +18,6 @@ import {
   checkCertificateExpiry,
   checkAnchorDelays,
   buildSignatureRevokedEvent,
-  fireComplianceEvents,
 } from './complianceEvents.js';
 
 describe('Compliance Event Emitters (COMP-08)', () => {

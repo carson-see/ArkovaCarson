@@ -55,7 +55,6 @@ export function NetworkInfo({ feeRates, balance, loading }: Readonly<NetworkInfo
   const feeHistory = useFeeHistory(feeRates);
 
   // Determine network from env (internal config, not user-facing copy)
-  // eslint-disable-next-line -- env var name contains technical term
   const networkEnv = import.meta.env.VITE_BITCOIN_NETWORK ?? 'mainnet';
   const isMainnet = networkEnv !== 'signet' && networkEnv !== 'testnet' && networkEnv !== 'testnet4';
 
@@ -135,7 +134,6 @@ export function NetworkInfo({ feeRates, balance, loading }: Readonly<NetworkInfo
                   : 'bg-amber-500/10 text-amber-700 border-amber-500/30'
                 }
               >
-                {/* eslint-disable-next-line -- lint:copy exempt: internal network display */}
                 {isMainnet ? 'Production Network' : 'Test Environment'}
               </Badge>
             </div>

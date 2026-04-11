@@ -9,7 +9,6 @@
  */
 
 import type { SignatureLevel, LtvData } from '../types.js';
-import type { TimestampToken } from '../types.js';
 import { XMLNS, ETSI_PROFILE } from '../constants.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────

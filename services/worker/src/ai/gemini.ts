@@ -445,7 +445,7 @@ export class GeminiProvider implements IAIProvider {
     //   - Endpoint path: projects/{p}/locations/{l}/endpoints/{endpointId}
     //   - Model path: projects/{p}/locations/{l}/models/{modelId}[@version]
     // Both use :generateContent on the v1beta1 API.
-    let resourcePath = this.tunedModelPath;
+    const resourcePath = this.tunedModelPath;
     if (resourcePath.includes('/models/') && !resourcePath.includes('/endpoints/')) {
       // Strip @version suffix for endpoint lookup — caller should use endpoint path
       logger.warn(

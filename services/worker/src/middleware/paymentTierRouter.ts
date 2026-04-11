@@ -15,7 +15,6 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
-import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 
 export type PaymentTier = 'credits' | 'stripe_metered' | 'x402' | 'admin_bypass' | 'beta_unlimited';

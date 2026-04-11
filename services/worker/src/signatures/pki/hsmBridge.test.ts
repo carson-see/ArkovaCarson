@@ -14,7 +14,7 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { MockHsmBridge, createMockHsmBridge, createHsmBridge } from './hsmBridge.js';
+import { createMockHsmBridge, createHsmBridge } from './hsmBridge.js';
 import type { HsmSignRequest } from '../types.js';
 
 describe('HSM Bridge', () => {

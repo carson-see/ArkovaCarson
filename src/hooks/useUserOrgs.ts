@@ -78,10 +78,9 @@ export function useUserOrgs(): UseUserOrgsReturn {
     // Step 2: Fetch org details via SECURITY DEFINER RPC (direct table query
     // restricted by RLS to user's primary org only — insufficient for multi-org)
     const orgIds = rows.map((m) => m.org_id);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const orgResults = await Promise.all(
       orgIds.map((orgId) =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC not in generated types
         (supabase as any).rpc('get_public_org_profiles', { p_org_id: orgId, p_limit: 1 })
       )
     );

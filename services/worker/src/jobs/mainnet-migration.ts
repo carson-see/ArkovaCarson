@@ -33,7 +33,7 @@ export async function runMainnetMigration(): Promise<MigrationResult> {
 
   logger.info('Starting mainnet migration — resetting anchors to PENDING');
 
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     // Fetch a batch of anchors that haven't been migrated yet
     // Exclude PENDING (already ready for mainnet) and any already flagged

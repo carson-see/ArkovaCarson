@@ -81,10 +81,8 @@ describe('QTSP Provider', () => {
 
     it('should open circuit breaker after threshold failures', async () => {
       // Make only primary fail, secondary succeeds
-      let callCount = 0;
       const origTimestamp = client.timestamp.bind(client);
       client.timestamp = async (config, request) => {
-        callCount++;
         if (config.url === primaryTsa.url) {
           throw new Error('Primary TSA down');
         }
@@ -97,7 +95,6 @@ describe('QTSP Provider', () => {
       await provider.requestTimestamp(testRequest);
 
       // Third call: primary circuit should be open, goes straight to secondary
-      const prevCount = callCount;
       await provider.requestTimestamp(testRequest);
 
       // Should have called only secondary (primary circuit open)
@@ -139,7 +136,7 @@ describe('QTSP Provider', () => {
     it('should track failure counts', async () => {
       client.shouldFail = true;
 
-      try { await provider.requestTimestamp(testRequest); } catch {}
+      try { await provider.requestTimestamp(testRequest); } catch { /* expected */ }
 
       const status = provider.getHealthStatus();
       expect(status[0].failureCount).toBeGreaterThan(0);
@@ -150,8 +147,8 @@ describe('QTSP Provider', () => {
     it('should reset circuit after timeout', async () => {
       // Open the circuit
       client.shouldFail = true;
-      try { await provider.requestTimestamp(testRequest); } catch {}
-      try { await provider.requestTimestamp(testRequest); } catch {}
+      try { await provider.requestTimestamp(testRequest); } catch { /* expected */ }
+      try { await provider.requestTimestamp(testRequest); } catch { /* expected */ }
 
       // Wait for reset timeout (1000ms in test config)
       await new Promise(resolve => setTimeout(resolve, 1100));

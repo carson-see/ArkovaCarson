@@ -10,11 +10,11 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { DefaultLtvBuilder, DefaultLtvValidator, createLtvBuilder, createLtvValidator } from './ltvBuilder.js';
+import { DefaultLtvBuilder, DefaultLtvValidator } from './ltvBuilder.js';
 import { X509CertificateManager } from '../pki/certificateManager.js';
 import { createMockOcspClient, MockOcspClient } from '../pki/ocspClient.js';
 import { createMockCrlManager, MockCrlManager } from '../pki/crlManager.js';
-import type { LtvData, OcspResponse } from '../types.js';
+import type { LtvData } from '../types.js';
 
 describe('LTV Builder', () => {
   let certManager: X509CertificateManager;

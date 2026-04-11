@@ -137,10 +137,8 @@ export function computeRealisticConfidence(
 
   // Key field presence — each adds 0.08
   // 6 key fields × 0.08 = +0.48 max → base 0.40 + 0.48 = 0.88 with all fields
-  let keyFieldCount = 0;
   for (const key of KEY_FIELDS) {
     if (fields[key] !== undefined && fields[key] !== null && fields[key] !== '') {
-      keyFieldCount++;
       score += 0.08;
     }
   }
