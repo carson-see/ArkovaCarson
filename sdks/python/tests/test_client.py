@@ -183,7 +183,7 @@ class TestVerify:
 
     @respx.mock
     def test_verify_data(self, client):
-        respx.post(f"{BASE_URL}/api/v1/verify-anchor").mock(
+        respx.post(f"{BASE_URL}/api/verify-anchor").mock(
             return_value=Response(200, json={
                 "verified": True,
                 "status": "ACTIVE",
