@@ -26,8 +26,11 @@ Flags are seeded in migration 0021 and re-seeded by `seed.sql`. Additional flags
 | `ENABLE_AI_FALLBACK` | `false` | Enable Cloudflare AI fallback provider | No |
 | `ENABLE_X402_PAYMENTS` | `false` | Enable x402 protocol payments (USDC micropayments) | Yes |
 | `ENABLE_BATCH_ANCHORING` | `false` | Enable Merkle-tree batch anchoring (multiple anchors per TX) | Yes |
+| `ENABLE_ADES_SIGNATURES` | `false` | Enable AdES electronic signatures (Phase III) | No |
+| `ENABLE_EXPIRY_ALERTS` | `false` | Enable daily credential expiry alerts cron + email (NCE-09) | No |
+| `ENABLE_COMPLIANCE_ENGINE` | `false` | Enable NCE compliance scoring, gap analysis, intelligence (NCE) | No |
 
-> **Note:** Total flag count: 13+. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI extraction/search/fraud/reports, x402, batch anchoring).
+> **Note:** Total flag count: 16. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI extraction/search/fraud/reports, x402, batch anchoring).
 
 ### flagRegistry Unified Initialization
 

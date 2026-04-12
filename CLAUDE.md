@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 190 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Version:** 2026-04-12 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 298 stories (222 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -258,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 190 files (0001-0185, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after column drop in 0170.
+**Current:** 196 files (0001-0196, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). Migrations 0190-0193: RLS caching, BRIN indexes, pg_stat_statements, job queue (PERF sprint). **Migrations 0194-0196: NCE compliance engine** (jurisdiction_rules, compliance_scores, feature flags). All migrations applied to production through 0185; 0186-0196 pending deploy.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -288,11 +288,12 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | GEO & SEO | 12/17 | 2 | 3 | 71% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
+| **NCE Compliance Engine** | **20/20** | **0** | **0** | **100%** |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
 | Dependency Hardening | 1/10 | 0 | 9 | 10% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
 | **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
-| **Total** | **207/263** | **4/263** | **52/263** | **~79%** |
+| **Total** | **227/283** | **4/283** | **52/283** | **~80%** |
 
 ### Incomplete Stories
 
@@ -546,5 +547,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-11 | 190 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-12 | 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 298 stories (222 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NCE: 20/20 complete_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

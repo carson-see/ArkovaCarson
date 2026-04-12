@@ -1,5 +1,15 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-04-07 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**, **0169 (permanent RLS performance: SECURITY DEFINER helpers for 1.4M+ records)**_
+_Last updated: 2026-04-12 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**, **0169 (permanent RLS performance: SECURITY DEFINER helpers for 1.4M+ records)**, **0194-0195 (NCE: jurisdiction_rules + compliance_scores)**_
+
+### NCE Tables (2026-04-12)
+
+**jurisdiction_rules** (migration 0194):
+- `Anyone can read jurisdiction rules` — SELECT for all (public reference data)
+- `Platform admins can manage rules` — ALL for PLATFORM_ADMIN profiles
+
+**compliance_scores** (migration 0195):
+- `Org members can read their org scores` — SELECT where org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid())
+- No INSERT/UPDATE/DELETE for users — worker writes via service_role
 
 ## Overview
 

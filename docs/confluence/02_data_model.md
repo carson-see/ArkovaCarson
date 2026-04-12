@@ -1,5 +1,45 @@
 # Data Model
-_Last updated: 2026-04-12 | Migrations: 0001-0189 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches, 192 files). Migration 0188 adds `ferpa_disclosure_log` table (REG-01/SCRUM-561). Migration 0189 adds FERPA fields to `api_keys` (REG-04/SCRUM-568)._
+_Last updated: 2026-04-12 | Migrations: 0001-0196 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches). Migration 0190: RLS subquery caching. 0191: BRIN indexes. 0192: pg_stat_statements. 0193: job_queue table. **0194: `jurisdiction_rules` table (NCE-06).** **0195: `compliance_scores` table (NCE-07).** **0196: `ENABLE_COMPLIANCE_ENGINE` + `ENABLE_EXPIRY_ALERTS` switchboard flags (NCE-09).**_
+
+### New Tables (NCE Sprint — 2026-04-12)
+
+#### jurisdiction_rules (NCE-06, migration 0194)
+Per-jurisdiction, per-industry document requirements. Public read, platform admin write.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID PK | |
+| jurisdiction_code | TEXT | e.g., US-CA, US-NY |
+| industry_code | TEXT | e.g., accounting, legal, nursing |
+| rule_name | TEXT | Human-readable rule name |
+| required_credential_types | TEXT[] | Required credential types for compliance |
+| optional_credential_types | TEXT[] | Recommended but not required |
+| regulatory_reference | TEXT | Citation to law/regulation |
+| effective_date | DATE | When rule takes effect |
+| expiry_date | DATE | When rule expires (null = indefinite) |
+| details | JSONB | Additional metadata (CE hours, cycles, etc.) |
+
+**RLS:** Public SELECT, platform admin ALL. Index on (jurisdiction_code, industry_code).
+
+#### compliance_scores (NCE-07, migration 0195)
+Cached compliance scores per org, per jurisdiction+industry.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID PK | |
+| org_id | UUID FK→organizations | |
+| user_id | UUID FK→auth.users | Optional |
+| jurisdiction_code | TEXT | |
+| industry_code | TEXT | |
+| score | SMALLINT 0-100 | Weighted compliance score |
+| grade | TEXT (A/B/C/D/F) | Letter grade |
+| present_documents | JSONB | Documents matched to requirements |
+| missing_documents | JSONB | Documents still needed |
+| expiring_documents | JSONB | Documents expiring within 90 days |
+| recommendations | JSONB | Nessie intelligence recommendations |
+| last_calculated | TIMESTAMPTZ | Cache freshness (1hr TTL) |
+
+**RLS:** Org members SELECT only. UNIQUE on (org_id, jurisdiction_code, industry_code). Worker writes via service_role.
 
 ## Overview
 
