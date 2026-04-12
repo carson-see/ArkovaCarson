@@ -33,6 +33,12 @@ import { NessieIntelligencePanel } from '@/components/search/NessieIntelligenceP
 import { cn } from '@/lib/utils';
 import { COMPLIANCE_CONTROLS, getComplianceControls } from '@/lib/complianceMapping';
 import type { Database } from '@/types/database.types';
+import { ComplianceScoreGauge } from '@/components/compliance/ComplianceScoreGauge';
+import { GradeBadge } from '@/components/compliance/GradeBadge';
+import { MissingDocumentsCard } from '@/components/compliance/MissingDocumentsCard';
+import { ExpiringDocumentsCard } from '@/components/compliance/ExpiringDocumentsCard';
+import { RecommendationsCard } from '@/components/compliance/RecommendationsCard';
+import { useComplianceScore, useJurisdictionRules } from '@/hooks/useComplianceScore';
 
 type Attestation = Database['public']['Tables']['attestations']['Row'];
 
@@ -153,6 +159,12 @@ export function ComplianceDashboardPage() {
   const [coverageData, setCoverageData] = useState<{ securedCount: number; controlIds: Set<string>; typeCounts: Map<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'csv' | null>(null);
+
+  // NCE: Compliance scoring state
+  const [selectedJurisdiction, setSelectedJurisdiction] = useState('US-CA');
+  const [selectedIndustry, setSelectedIndustry] = useState('accounting');
+  const { jurisdictions, industries } = useJurisdictionRules();
+  const { scoreData, gapData, loading: scoreLoading } = useComplianceScore(selectedJurisdiction, selectedIndustry);
 
   const fetchData = useCallback(async () => {
     if (!orgId) return;
@@ -385,6 +397,74 @@ export function ComplianceDashboardPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {COMPLIANCE_LABELS.PAGE_SUBTITLE}
           </p>
+        </div>
+
+        {/* NCE: Compliance Score Section */}
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
+              {/* Score gauge */}
+              <div className="flex-shrink-0">
+                {scoreLoading ? (
+                  <Skeleton className="h-[120px] w-[120px] rounded-full" />
+                ) : scoreData ? (
+                  <ComplianceScoreGauge score={scoreData.score} grade={scoreData.grade} size="md" />
+                ) : (
+                  <div className="h-[120px] w-[120px] rounded-full bg-muted/50 flex items-center justify-center text-sm text-muted-foreground">
+                    No data
+                  </div>
+                )}
+              </div>
+
+              {/* Score details + selectors */}
+              <div className="flex-1 space-y-3">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg font-semibold">Compliance Score</h2>
+                  {scoreData && <GradeBadge grade={scoreData.grade} />}
+                </div>
+                {scoreData && (
+                  <p className="text-sm text-muted-foreground">
+                    {scoreData.total_present} of {scoreData.total_required} required documents present
+                  </p>
+                )}
+
+                {/* Jurisdiction + Industry selectors */}
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={selectedJurisdiction}
+                    onChange={(e) => setSelectedJurisdiction(e.target.value)}
+                    className="text-sm border rounded-md px-2 py-1 bg-background"
+                  >
+                    {jurisdictions.map(j => (
+                      <option key={j} value={j}>{j}</option>
+                    ))}
+                    {jurisdictions.length === 0 && <option value="US-CA">US-CA</option>}
+                  </select>
+                  <select
+                    value={selectedIndustry}
+                    onChange={(e) => setSelectedIndustry(e.target.value)}
+                    className="text-sm border rounded-md px-2 py-1 bg-background"
+                  >
+                    {industries.map(i => (
+                      <option key={i} value={i}>{i}</option>
+                    ))}
+                    {industries.length === 0 && <option value="accounting">accounting</option>}
+                  </select>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* NCE: Gap Analysis + Expiring + Recommendations */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <MissingDocumentsCard documents={scoreData?.missing_documents ?? []} />
+          <ExpiringDocumentsCard documents={scoreData?.expiring_documents ?? []} />
+          <RecommendationsCard
+            missingRequired={gapData?.missing_required ?? []}
+            missingRecommended={gapData?.missing_recommended ?? []}
+            summary={gapData?.summary ?? 'Loading compliance analysis...'}
+          />
         </div>
 
         {/* Section 0: Nessie Intelligence Query */}

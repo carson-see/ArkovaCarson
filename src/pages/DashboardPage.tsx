@@ -39,6 +39,7 @@ import { isPlatformAdmin } from '@/lib/platform';
 import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
+import { ComplianceScoreCard } from '@/components/compliance/ComplianceScoreCard';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
@@ -272,8 +273,9 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* Usage tracking (UF-06) + Credit usage (MVP-25) */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 mb-8">
+      {/* Compliance Score Widget (NCE-12) + Usage + Credit */}
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
+        <ComplianceScoreCard />
         <UsageWidget />
         <CreditUsageWidget />
       </div>

@@ -132,4 +132,52 @@ function getDefault(): DomainAdapter {
   };
 }
 
-export { ROUTER_CONFIG };
+/**
+ * Jurisdiction-specific LoRA adapters (NCE-14)
+ *
+ * Trained on jurisdiction-specific compliance Q&A.
+ * When a jurisdiction is specified, these take precedence over domain routing.
+ * Adapter IDs will be populated after Together AI fine-tuning.
+ */
+const JURISDICTION_ADAPTERS: Record<string, DomainAdapter> = {
+  'US-CA': {
+    domain: 'jurisdiction-ca',
+    label: 'California Compliance',
+    modelId: '', // Populated after NCE-14 training
+  },
+  'US-NY': {
+    domain: 'jurisdiction-ny',
+    label: 'New York Compliance',
+    modelId: '', // Populated after NCE-14 training
+  },
+  'US-FED': {
+    domain: 'jurisdiction-fed',
+    label: 'Federal Compliance (SEC/IRS)',
+    modelId: '', // Populated after NCE-14 training
+  },
+};
+
+/**
+ * Route with jurisdiction preference (NCE-14).
+ *
+ * If a jurisdiction adapter is available and has a model ID,
+ * prefer it. Otherwise fall back to standard domain routing.
+ */
+export function routeWithJurisdiction(
+  jurisdiction?: string,
+  credentialType?: string,
+  queryText?: string,
+): DomainAdapter {
+  // Jurisdiction adapter takes priority when available
+  if (jurisdiction && JURISDICTION_ADAPTERS[jurisdiction]) {
+    const adapter = JURISDICTION_ADAPTERS[jurisdiction];
+    if (adapter.modelId) {
+      return adapter;
+    }
+  }
+
+  // Fall back to standard domain routing
+  return routeToDomain(credentialType, queryText);
+}
+
+export { ROUTER_CONFIG, JURISDICTION_ADAPTERS };

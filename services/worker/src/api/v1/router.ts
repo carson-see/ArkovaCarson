@@ -66,6 +66,11 @@ import { provenanceRouter } from './provenance.js';
 import { complianceTrendsRouter } from './complianceTrends.js';
 import { signatureComplianceRouter } from './signatureCompliance.js';
 import { keyInventoryRouter } from './key-inventory.js';
+import { complianceRulesRouter } from './compliance-rules.js';
+import { complianceScoreRouter } from './compliance-score.js';
+import { complianceGapRouter } from './compliance-gap.js';
+import { complianceCrossRefRouter } from './compliance-cross-ref.js';
+import { complianceHistoryRouter } from './compliance-history.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -321,5 +326,17 @@ router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimit
 
 // ─── Regulatory change monitoring alerts (NMT-REG) ───
 router.use('/regulatory/alerts', aiRateLimiter, regulatoryAlertsRouter);
+
+// ─── Nessie Compliance Engine (NCE-06+) ───
+// Jurisdiction rules — public read (no auth required)
+router.use('/compliance/rules', complianceRulesRouter);
+// Compliance score — JWT auth required (NCE-07)
+router.use('/compliance/score', requireAuth, aiRateLimiter, complianceScoreRouter);
+// Gap analysis — JWT auth required (NCE-08)
+router.use('/compliance/gap-analysis', requireAuth, aiRateLimiter, complianceGapRouter);
+// Cross-reference — JWT auth required (NCE-15)
+router.use('/compliance/cross-reference', requireAuth, aiRateLimiter, complianceCrossRefRouter);
+// Score history — JWT auth required (NCE-16)
+router.use('/compliance/history', requireAuth, aiRateLimiter, complianceHistoryRouter);
 
 export { router as apiV1Router };

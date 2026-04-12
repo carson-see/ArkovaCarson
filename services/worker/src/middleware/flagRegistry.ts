@@ -36,6 +36,8 @@ const DB_FLAGS = [
   'ENABLE_AI_FRAUD',
   'ENABLE_AI_REPORTS',
   'ENABLE_ADES_SIGNATURES',
+  'ENABLE_EXPIRY_ALERTS',
+  'ENABLE_COMPLIANCE_ENGINE',
 ] as const;
 
 type FlagName = typeof ENV_FLAGS[number] | typeof DB_FLAGS[number];
