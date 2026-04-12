@@ -29,8 +29,8 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 EDGE_DIR="$REPO_ROOT/services/edge"
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-  echo "ERROR: CLOUDFLARE_API_TOKEN is not set"
-  echo "Export it with Workers edit permissions before running this script."
+  echo "ERROR: CLOUDFLARE_API_TOKEN is not set" >&2
+  echo "Export it with Workers edit permissions before running this script." >&2
   exit 1
 fi
 
@@ -56,6 +56,6 @@ sleep 3
 if curl -sf -m 10 https://edge.arkova.ai/.well-known/mcp.json > /dev/null; then
   echo "   OK"
 else
-  echo "   WARNING: /.well-known/mcp.json did not return 2xx within 10s"
-  echo "   Check the deployment via: wrangler deployments list"
+  echo "   WARNING: /.well-known/mcp.json did not return 2xx within 10s" >&2
+  echo "   Check the deployment via: wrangler deployments list" >&2
 fi

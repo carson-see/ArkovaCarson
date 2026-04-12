@@ -297,7 +297,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 ### Incomplete Stories
 
 **Integration Surface (INT) — TOP PRIORITY (ahead of NCE/GME) — 9 not started — Release: R-INT-01/02/03:**
-> **Source:** Arkova Integration Strategy v2 (Google Doc) — story doc: `docs/stories/30_integration_surface.md`
+> **Source:** Arkova Integration Strategy v2 (Google Doc) — story doc: `docs/stories/31_integration_surface.md`
 > **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
 - **R-INT-01 (P0 — YC Demo, 16 pts):** ★ **CODE COMPLETE — IN PR REVIEW**
   - ~~INT-01 (SCRUM-642): TypeScript SDK `@arkova/sdk`~~ — **CODE COMPLETE** (verifyBatch, webhooks namespace, jsonOrThrow, mapVerificationResult, README rewrite)

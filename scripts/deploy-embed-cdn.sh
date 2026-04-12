@@ -40,13 +40,13 @@ npx vite build
 echo "== Verifying bundle sizes (budget: ${SIZE_BUDGET_GZIPPED} bytes gzipped)"
 for bundle in dist/embed.iife.js dist/embed.umd.js dist/embed.es.js; do
   if [[ ! -f "$bundle" ]]; then
-    echo "  ERROR: $bundle not produced by vite build"
+    echo "  ERROR: $bundle not produced by vite build" >&2
     exit 1
   fi
   raw=$(wc -c < "$bundle" | tr -d ' ')
   gzipped=$(gzip -c "$bundle" | wc -c | tr -d ' ')
   if [[ "$gzipped" -gt "$SIZE_BUDGET_GZIPPED" ]]; then
-    echo "  ERROR: $bundle is ${gzipped}B gzipped — over ${SIZE_BUDGET_GZIPPED}B budget"
+    echo "  ERROR: $bundle is ${gzipped}B gzipped — over ${SIZE_BUDGET_GZIPPED}B budget" >&2
     exit 1
   fi
   printf "  OK  %-24s raw=%6dB  gzipped=%6dB\n" "$bundle" "$raw" "$gzipped"
@@ -61,7 +61,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
-  echo "ERROR: CLOUDFLARE_API_TOKEN is not set"
+  echo "ERROR: CLOUDFLARE_API_TOKEN is not set" >&2
   exit 1
 fi
 

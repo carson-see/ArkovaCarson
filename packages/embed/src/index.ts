@@ -30,6 +30,13 @@ import { renderLoading, renderError, renderWidget } from './render';
 const DEFAULT_API_BASE = 'https://arkova-worker-270018525501.us-central1.run.app';
 const DEFAULT_APP_BASE = 'https://app.arkova.ai';
 
+/** Strip trailing slash characters without regex (avoids ReDoS). */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) end--;
+  return end === url.length ? url : url.slice(0, end);
+}
+
 /** Resolve a config to its concrete defaults. */
 function resolveConfig(config: ArkovaEmbedConfig): Required<Omit<ArkovaEmbedConfig, 'target'>> & {
   target: HTMLElement | null;
@@ -38,8 +45,8 @@ function resolveConfig(config: ArkovaEmbedConfig): Required<Omit<ArkovaEmbedConf
     publicId: config.publicId,
     mode: config.mode ?? 'full',
     target: config.target ?? null,
-    apiBaseUrl: (config.apiBaseUrl ?? DEFAULT_API_BASE).replace(/\/+$/, ''),
-    appBaseUrl: (config.appBaseUrl ?? DEFAULT_APP_BASE).replace(/\/+$/, ''),
+    apiBaseUrl: stripTrailingSlashes(config.apiBaseUrl ?? DEFAULT_API_BASE),
+    appBaseUrl: stripTrailingSlashes(config.appBaseUrl ?? DEFAULT_APP_BASE),
     disableAnalytics: config.disableAnalytics ?? false,
   };
 }
@@ -75,7 +82,7 @@ function logEmbedEvent(apiBaseUrl: string, publicId: string, result: 'verified' 
 
 /** Render a subtree into the target element, replacing any prior content. */
 function renderInto(target: HTMLElement, mode: EmbedMode, child: HTMLElement): void {
-  child.setAttribute('data-arkova-mode', mode);
+  child.dataset.arkovaMode = mode;
   target.replaceChildren(child);
 }
 
@@ -130,14 +137,14 @@ export async function mount(config: ArkovaEmbedConfig): Promise<void> {
 export function autoInit(): void {
   const elements = document.querySelectorAll<HTMLElement>('[data-arkova-credential]');
   elements.forEach((el) => {
-    if (el.getAttribute('data-arkova-initialized') === 'true') return;
-    el.setAttribute('data-arkova-initialized', 'true');
+    if (el.dataset.arkovaInitialized === 'true') return;
+    el.dataset.arkovaInitialized = 'true';
 
-    const publicId = el.getAttribute('data-arkova-credential') ?? '';
-    const modeAttr = el.getAttribute('data-arkova-mode');
+    const publicId = el.dataset.arkovaCredential ?? '';
+    const modeAttr = el.dataset.arkovaMode;
     const mode: EmbedMode = modeAttr === 'compact' ? 'compact' : 'full';
-    const apiBaseUrl = el.getAttribute('data-arkova-api-base') ?? undefined;
-    const appBaseUrl = el.getAttribute('data-arkova-app-base') ?? undefined;
+    const apiBaseUrl = el.dataset.arkovaApiBase ?? undefined;
+    const appBaseUrl = el.dataset.arkovaAppBase ?? undefined;
 
     void mount({ publicId, target: el, mode, apiBaseUrl, appBaseUrl });
   });
@@ -156,7 +163,7 @@ if (typeof document !== 'undefined') {
 
 // ─── Public exports ────────────────────────────────────────────────────────
 
-export type { ArkovaEmbedConfig, AnchorData, EmbedMode };
+export type { ArkovaEmbedConfig, AnchorData, EmbedMode } from './types';
 
 const ArkovaEmbed = { mount, autoInit };
 

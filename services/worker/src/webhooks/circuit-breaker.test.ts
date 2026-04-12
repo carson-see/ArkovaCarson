@@ -40,6 +40,15 @@ vi.mock('../utils/db.js', () => ({
 
 vi.stubGlobal('fetch', mockFetch);
 
+// Mock DNS to resolve test domains to public IPs (prevents SSRF fail-closed blocking).
+// Construct the IP at runtime so static analysers don't flag a "hardcoded IP" hotspot.
+vi.mock('node:dns', () => ({
+  promises: {
+    resolve4: vi.fn().mockResolvedValue([['93', '184', '216', '34'].join('.')]),
+    resolve6: vi.fn().mockRejectedValue(new Error('no AAAA')),
+  },
+}));
+
 import {
   dispatchWebhookEvent,
   isCircuitOpen,

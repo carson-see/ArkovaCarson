@@ -643,7 +643,7 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 > **Source:** Arkova Integration Strategy v2 (Google Doc `1wP7pkOmf7rVdStIHaA9V4QxKPg4hoVB6`)
 > **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
-> **Story doc:** [30_integration_surface.md](stories/30_integration_surface.md)
+> **Story doc:** [31_integration_surface.md](stories/31_integration_surface.md)
 > **Priority:** P0 — **AHEAD OF NCE AND GME** (per 2026-04-11 prioritization)
 
 **Vision:** Core infrastructure is done. The gap is packaging and distribution — SDKs, MCP agent tools, embeddable components, vertical connectors. Three days of Claude Code = YC demo readiness.
