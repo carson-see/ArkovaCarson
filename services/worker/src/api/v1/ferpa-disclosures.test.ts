@@ -195,7 +195,6 @@ describe('FERPA Disclosure Log API', () => {
 
   describe('GET /api/v1/ferpa/disclosures/export', () => {
     beforeEach(() => {
-      // Mock the export query chain
       const mockFrom = vi.mocked(db.from);
       mockFrom.mockReturnValue({
         select: vi.fn().mockReturnValue({
@@ -229,7 +228,7 @@ describe('FERPA Disclosure Log API', () => {
             }),
           }),
         }),
-      } as ReturnType<typeof db.from>);
+      } as never);
     });
 
     it('returns 400 when x-org-id header is missing', async () => {

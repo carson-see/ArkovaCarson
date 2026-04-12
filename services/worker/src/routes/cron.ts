@@ -581,6 +581,94 @@ cronRouter.post('/check-attestation-expiry', async (_req, res) => {
   }
 });
 
+// ─── Credential Expiry Alerts (NCE-09 / SCRUM-600) ───
+cronRouter.post('/check-credential-expiry', async (_req, res) => {
+  try {
+    const { flagRegistry } = await import('../middleware/flagRegistry.js');
+    if (!flagRegistry.getFlag('ENABLE_EXPIRY_ALERTS')) {
+      res.json({ skipped: true, reason: 'ENABLE_EXPIRY_ALERTS flag is disabled' });
+      return;
+    }
+    const { categorizeExpiringDocuments, groupByOrg } = await import('../compliance/expiry-checker.js');
+
+    // Query anchors with expiry dates within 90 days
+    const cutoff = new Date(Date.now() + 90 * 86_400_000).toISOString();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = db as any;
+    const { data: expiring, error } = await dbAny
+      .from('anchors')
+      .select('id, org_id, credential_type, document_title, not_after')
+      .eq('status', 'SECURED')
+      .not('not_after', 'is', null)
+      .gt('not_after', new Date().toISOString())
+      .lte('not_after', cutoff);
+
+    if (error) {
+      logger.error({ error }, 'Failed to query expiring credentials');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    const anchors = (expiring ?? []).map((a: Record<string, unknown>) => ({
+      id: a.id as string,
+      org_id: a.org_id as string,
+      credential_type: (a.credential_type as string) ?? 'OTHER',
+      title: (a.title as string) ?? null,
+      expiry_date: a.not_after as string,
+    }));
+
+    const categories = categorizeExpiringDocuments(anchors);
+    const urgentAnchors = categories.get('7_day') ?? [];
+    const orgGroups = groupByOrg(urgentAnchors);
+
+    let emailsSent = 0;
+    let webhooksSent = 0;
+
+    const { dispatchWebhookEvent } = await import('../webhooks/delivery.js');
+    const now = Date.now();
+
+    for (const [orgId, orgAnchors] of orgGroups) {
+      try {
+        const results = await Promise.allSettled(
+          orgAnchors.map(anchor => {
+            const daysRemaining = Math.ceil((new Date(anchor.expiry_date).getTime() - now) / 86_400_000);
+            const eventId = `expiry-${anchor.id}-${Date.now()}`;
+            return dispatchWebhookEvent(
+              orgId,
+              'compliance.document_expiring',
+              eventId,
+              {
+                anchor_id: anchor.id,
+                credential_type: anchor.credential_type,
+                title: anchor.title,
+                expiry_date: anchor.expiry_date,
+                days_remaining: daysRemaining,
+                warning_level: '7_day',
+              },
+            );
+          })
+        );
+        webhooksSent += results.filter(r => r.status === 'fulfilled').length;
+        emailsSent++;
+      } catch (err) {
+        logger.warn({ error: err, orgId }, 'Failed to send expiry alert');
+      }
+    }
+
+    const totalExpiring = {
+      '7_day': (categories.get('7_day') ?? []).length,
+      '30_day': (categories.get('30_day') ?? []).length,
+      '60_day': (categories.get('60_day') ?? []).length,
+      '90_day': (categories.get('90_day') ?? []).length,
+    };
+
+    res.json({ processed: anchors.length, categories: totalExpiring, emailsSent, webhooksSent });
+  } catch (error) {
+    logger.error({ error }, 'Credential expiry check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── Pipeline Health Monitor (SCALE-4 / SCRUM-548) ───
 cronRouter.post('/pipeline-health', async (_req, res) => {
   try {
