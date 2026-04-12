@@ -1,7 +1,8 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-11 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 192 migrations | 3,926 tests (1,476 frontend + 2,450 worker) | 298 stories (203 complete + 49 NCE/GME + 36 DEP/REG planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 192 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 304 stories (203 complete + 20 NCE + 22 GME + 10 DEP + 28 REG + 4 INT + 17 residual) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Active releases:** R-NCE-01 (21) · R-GME-01 (18) · R-DEP-01 (11) · R-REG-01 (29) · R-INT-01 (5) · v1.4.0 (12) · v1.5.0 (9) · v1.7.0 (8) · v2.0.0 (0, residual polish)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -289,9 +290,12 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | Nessie Model Training | 5/6 | 0 | 1 | 83% |
-| Dependency Hardening | 1/10 | 0 | 9 | 10% |
-| International Compliance | 0/28 | 2 | 26 | 7% |
-| **Total** | **203/254** | **2/254** | **49/254** | **~80%** |
+| R-DEP-01 Dependency Hardening | 1/10 | 0 | 9 | 10% |
+| R-REG-01 International Compliance | 1/28 | 2 | 25 | 4% |
+| R-NCE-01 Nessie Compliance Engine | 0/20 | 0 | 20 | 0% |
+| R-GME-01 Gemini 3 Migration | 5/22 | 0 | 17 | 23% |
+| R-INT-01 Integration Surface | 0/4 | 0 | 4 | 0% |
+| **Total** | **210/312** | **2/312** | **100/312** | **~67%** |
 
 ### Incomplete Stories
 
@@ -529,5 +533,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-11 | 192 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 298 stories (201 complete + 49 NCE/GME + 38 DEP/REG planned) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
+_Directive version: 2026-04-11 | 192 migrations | 3,898 tests (1,476 frontend + 2,422 worker) | 312 stories (210 complete + 20 NCE + 17 GME open + 9 DEP open + 25 REG open + 4 INT + 27 residual) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

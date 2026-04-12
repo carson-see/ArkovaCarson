@@ -578,7 +578,9 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 ## TIER 0F: GEMINI MIGRATION & EVOLUTION (GME) — DEADLINE: JUNE 17, 2026
 
 > **CRITICAL:** `gemini-2.5-flash` shuts down June 17, 2026. Every Gemini call breaks.
-> Jira Epic: SCRUM-612 | Stories: SCRUM-613–628
+> Jira Epic: SCRUM-612 | Stories: SCRUM-613–617, 618–628, 629–634 (22 children)
+> Jira Release: **R-GME-01 Gemini 3 Model Upgrade** (17 open stories) | v1.4.0 (5 Done stories GME-21–25)
+> Note: SCRUM-651 was a duplicate GME epic — consolidated into SCRUM-612 on 2026-04-11; its 11 children (SCRUM-618–628) were re-parented under SCRUM-612.
 > Story doc: [28_gemini_migration_evolution.md](stories/28_gemini_migration_evolution.md)
 > Ref: [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
 
@@ -622,16 +624,16 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | GME-19 | Multi-model fallback chain | P2 | NOT STARTED | Medium |
 | GME-20 | Model version pinning | P1 | NOT STARTED | Small |
 
-### Phase 7: Extraction Quality — Templates & Labeling
+### Phase 7: Extraction Quality — Templates & Labeling (shipped in v1.4.0)
 
 | ID | Story | Priority | Status | Effort |
 |----|-------|----------|--------|--------|
-| GME-21 | Credential type parity (align 23 UI vs 20 extraction) | P0 | NOT STARTED | Medium |
-| GME-22 | Expand starter templates (3 → 23 types) | P1 | NOT STARTED | Medium |
-| GME-23 | Type-specific field validation (stop cross-contamination) | P1 | NOT STARTED | Medium |
-| GME-24 | Fraud signal calibration (stop over-flagging) | P0 | NOT STARTED | Medium |
-| GME-25 | Smart type suggestion for OTHER (reduce catch-all) | P1 | NOT STARTED | Small |
-| GME-26 | Template reconstruction quality gate | P1 | NOT STARTED | Small |
+| ~~GME-21~~ | ~~Credential type parity (align 23 UI vs 20 extraction)~~ | P0 | **DONE** (SCRUM-629, v1.4.0) | Medium |
+| ~~GME-22~~ | ~~Expand starter templates (3 → 23 types)~~ | P1 | **DONE** (SCRUM-630, v1.4.0) | Medium |
+| ~~GME-23~~ | ~~Type-specific field validation (stop cross-contamination)~~ | P1 | **DONE** (SCRUM-631, v1.4.0) | Medium |
+| ~~GME-24~~ | ~~Fraud signal calibration (stop over-flagging)~~ | P0 | **DONE** (SCRUM-632, v1.4.0) | Medium |
+| ~~GME-25~~ | ~~Smart type suggestion for OTHER (reduce catch-all)~~ | P1 | **DONE** (SCRUM-633, v1.4.0) | Small |
+| GME-26 | Template reconstruction quality gate | P1 | NOT STARTED (SCRUM-634, R-GME-01) | Small |
 
 **Cost:** ~$195 | **Risk:** Fine-tuning may not be available for Gemini 3 by June — fallback is few-shot prompting
 
@@ -676,7 +678,8 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 ## TIER 0E: NESSIE COMPLIANCE ENGINE (NCE) — Session 39+
 
 > Source: Strategic Blueprint, SLM Analysis, Verification Bootstrap Strategy
-> Jira Epic: SCRUM-590 | Stories: SCRUM-591–611
+> Jira Epic: SCRUM-590 | Stories: SCRUM-591–611 (SCRUM-599 closed as duplicate of SCRUM-598)
+> Jira Release: **R-NCE-01 Nessie Compliance Engine v1** (20 open stories + epic)
 > Story doc: [27_nessie_compliance_engine.md](stories/27_nessie_compliance_engine.md)
 > Depends on: NMT-07 (intelligence pipeline), Phase 1.5 RAG, 320K+ public records
 
