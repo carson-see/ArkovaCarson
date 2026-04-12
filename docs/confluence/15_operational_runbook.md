@@ -626,3 +626,148 @@ curl -f https://worker.arkova.ai/health
 | 2026-03-16 | Added OPS-01 through OPS-04 sections with exact commands: migration apply, demo seed strip, Sentry DSN setup, source map upload. |
 | 2026-03-24 | Updated migration tracking to 109 migrations (0090-0109 range added). Added Railway deployment instructions (Section 7). Added fee spike monitoring procedure (Section 8). Updated Cloud Run references to include Railway as deployment target. |
 | 2026-04-12 | DEP-01: Added Supabase DR plan (Section 10) — RTO 4h, RPO 24h, GCS backup, restore runbook. DEP-02: Added Cloudflare Tunnel failover procedure (Section 11) — direct Cloud Run bypass with security compensating controls. |
+| 2026-04-12 | REG-09: Added HIPAA Breach Notification Procedure (Section 12). REG-10: Added HIPAA Emergency Access Procedure (Section 13). |
+
+---
+
+## 12. HIPAA Breach Notification Procedure (REG-09)
+
+_Legal reference: 45 CFR Section 164.410 (BA notification to CE); Section 164.404 (CE notification to individuals)_
+
+### 12.1 Overview
+
+Business Associate (Arkova) must notify Covered Entity of any Breach of Unsecured PHI **within 60 calendar days** of discovery. This section documents the procedure, templates, and integration points.
+
+### 12.2 Timeline
+
+| Phase | Timeline | Action | Owner |
+|-------|----------|--------|-------|
+| **Discovery** | T+0 | Security incident detected via Sentry alert, audit log anomaly, or external report | On-call engineer |
+| **Assessment** | T+0 to T+24h | Determine if incident constitutes a Breach per 45 CFR 164.402 (presumption of Breach unless low probability of compromise) | Security Lead |
+| **Internal Escalation** | T+24h | Brief CEO, DPO, and legal counsel. Begin risk assessment per 4-factor test | Security Lead |
+| **Risk Assessment** | T+24h to T+72h | Apply 4-factor test: (1) nature/extent of PHI involved, (2) unauthorized person, (3) whether PHI was actually acquired/viewed, (4) extent of risk mitigation | Legal + Security |
+| **CE Notification** | T+72h to T+60 days | Notify affected Covered Entity(ies) with breach details | DPO |
+| **Remediation** | Ongoing | Patch vulnerability, rotate credentials, update security controls | Engineering |
+| **Documentation** | T+90 days | Complete incident report, update runbook if needed, schedule post-mortem | Security Lead |
+
+### 12.3 Four-Factor Risk Assessment (45 CFR 164.402(2))
+
+For each incident, assess:
+
+1. **Nature and extent of PHI involved:** Does it include identifiers? What types of PHI?
+2. **Unauthorized person who used the PHI or to whom the disclosure was made:** Known/unknown? Internal/external?
+3. **Whether PHI was actually acquired or viewed:** Was data accessed or merely exposed?
+4. **Extent to which risk to PHI has been mitigated:** What steps were taken to reduce harm?
+
+If the risk assessment shows **low probability that PHI was compromised**, the Breach exception applies and notification is not required. Document the assessment regardless.
+
+### 12.4 Notification Template — Business Associate to Covered Entity
+
+```
+Subject: HIPAA Breach Notification — [Incident Reference]
+
+Dear [Covered Entity Contact],
+
+Arkova, Inc. is writing to notify you of a security incident involving
+Protected Health Information (PHI) that may affect your organization.
+
+INCIDENT SUMMARY:
+- Date of Discovery: [Date]
+- Date of Breach (if known): [Date]
+- Description: [Brief description of what happened]
+
+INFORMATION INVOLVED:
+- Types of PHI: [e.g., credential type, issuer names, dates]
+- Number of records affected: [Count]
+- Individuals potentially affected: [Count or "under investigation"]
+
+ACTIONS TAKEN:
+- [Remediation step 1]
+- [Remediation step 2]
+- [Remediation step 3]
+
+RECOMMENDED STEPS FOR AFFECTED INDIVIDUALS:
+- [Recommendation 1]
+- [Recommendation 2]
+
+CONTACT INFORMATION:
+For questions, contact our Data Protection Officer at:
+  Email: dpo@arkova.ai
+  Phone: [Phone]
+
+Arkova remains committed to protecting the privacy and security of all
+information entrusted to us. We apologize for any inconvenience.
+
+Sincerely,
+Carson Seeger
+CEO, Arkova, Inc.
+```
+
+### 12.5 Sentry Integration
+
+- **Alert Rules:** Sentry alerts for `SECURITY` category events with severity >= HIGH trigger PagerDuty on-call
+- **Dashboard:** Sentry project `arkova-worker` has a "Security Incidents" dashboard monitoring:
+  - Authentication failures (brute force detection)
+  - RLS policy violations (cross-tenant access attempts)
+  - Unusual data access patterns (bulk credential views)
+  - API key abuse (rate limit violations)
+
+### 12.6 Tabletop Exercise Schedule
+
+Per BAA requirements, tabletop exercises must be conducted quarterly:
+
+| Quarter | Date | Scenario | Status |
+|---------|------|----------|--------|
+| Q2 2026 | 2026-04-12 | RLS bypass, credential theft, insider threat | COMPLETE (see `docs/compliance/tabletop-exercise-2026-04-12.md`) |
+| Q3 2026 | 2026-07-XX | TBD | Scheduled |
+| Q4 2026 | 2026-10-XX | TBD | Scheduled |
+| Q1 2027 | 2027-01-XX | TBD | Scheduled |
+
+---
+
+## 13. HIPAA Emergency Access Procedure (REG-10)
+
+_Legal reference: 45 CFR Section 164.312(a)(2)(ii) — Emergency access procedure_
+
+### 13.1 Overview
+
+Arkova implements a break-glass mechanism for emergency access to healthcare credentials when normal authentication or authorization is unavailable (e.g., system failure, natural disaster, patient safety emergency).
+
+### 13.2 Access Grant Parameters
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| **Maximum duration** | 4 hours | Sufficient for emergency response; minimizes exposure window |
+| **Minimum duration** | 30 minutes | Shortest reasonable emergency window |
+| **Approval** | Dual-control (different person than requester) | Prevents unauthorized self-grant |
+| **Scope** | Healthcare credentials within requesting org | Least-privilege principle |
+| **Audit** | Full audit trail: who, what, why, duration, approver | Accountability and compliance evidence |
+| **Auto-revocation** | Grant expires at `expires_at` timestamp | No forgotten open access |
+
+### 13.3 Procedure
+
+| Step | Action | Who |
+|------|--------|-----|
+| 1 | Request emergency access via API (`POST /api/v1/emergency-access`) with reason and duration | Requesting user |
+| 2 | Notification sent to org admins for approval | System |
+| 3 | Org admin reviews request and approves via API (`PATCH /api/v1/emergency-access/:id/approve`) | Approving admin (different person) |
+| 4 | Access granted — grantee can access healthcare credentials for the approved duration | System |
+| 5 | Access automatically revoked when duration expires | System |
+| 6 | If needed, admin can manually revoke early (`PATCH /api/v1/emergency-access/:id/revoke`) | Any org admin |
+
+### 13.4 Audit Events
+
+| Event | Logged Data |
+|-------|-------------|
+| `EMERGENCY_ACCESS_REQUESTED` | grantee_id, org_id, reason, scope, duration, expires_at |
+| `EMERGENCY_ACCESS_APPROVED` | approver_id, grantee_id, expires_at |
+| `EMERGENCY_ACCESS_REVOKED` | revoker_id, revoke_reason, original grant details |
+| `EMERGENCY_ACCESS_EXPIRED` | grant_id, original grant details (auto-logged by cron) |
+
+### 13.5 Post-Incident Review
+
+After every emergency access grant:
+1. Review the reason for emergency access
+2. Assess whether normal access controls should be updated
+3. Document findings in the quarterly security review
+4. Update this procedure if gaps are identified

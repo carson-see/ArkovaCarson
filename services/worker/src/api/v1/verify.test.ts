@@ -38,6 +38,7 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     jurisdiction: null,
     merkle_root: null,
     description: null,
+    directory_info_opt_out: false,
     ...overrides,
   };
 }
@@ -230,5 +231,88 @@ describe('buildVerificationResult', () => {
     const result = buildVerificationResult(anchor);
 
     expect(result).not.toHaveProperty('ferpa_notice');
+  });
+
+  // REG-02: Directory Information Opt-Out (FERPA Section 99.37)
+  describe('directory_info_opt_out', () => {
+    it('suppresses directory fields for education type when opt-out is true', () => {
+      const anchor = createAnchor({
+        credential_type: 'DEGREE',
+        directory_info_opt_out: true,
+        org_name: 'University of Michigan',
+        recipient_hash: 'sha256:student@edu',
+        issued_at: '2026-01-15T00:00:00Z',
+        expires_at: '2030-01-15T00:00:00Z',
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.verified).toBe(true);
+      expect(result.credential_type).toBe('DEGREE');
+      // Directory fields suppressed
+      expect(result).not.toHaveProperty('issuer_name');
+      expect(result).not.toHaveProperty('recipient_identifier');
+      expect(result).not.toHaveProperty('issued_date');
+      expect(result).not.toHaveProperty('expiry_date');
+      expect(result.directory_info_suppressed).toBe(true);
+    });
+
+    it('does not suppress fields when opt-out is false', () => {
+      const anchor = createAnchor({
+        credential_type: 'DEGREE',
+        directory_info_opt_out: false,
+        org_name: 'University of Michigan',
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.issuer_name).toBe('University of Michigan');
+      expect(result).not.toHaveProperty('directory_info_suppressed');
+    });
+
+    it('does not suppress fields for non-education types even when opt-out is true', () => {
+      const anchor = createAnchor({
+        credential_type: 'INSURANCE',
+        directory_info_opt_out: true,
+        org_name: 'Aetna Health',
+        recipient_hash: 'sha256:patient@health',
+      });
+      const result = buildVerificationResult(anchor);
+
+      // Non-education type — opt-out does not apply
+      expect(result.issuer_name).toBe('Aetna Health');
+      expect(result.recipient_identifier).toBe('sha256:patient@health');
+      expect(result).not.toHaveProperty('directory_info_suppressed');
+    });
+
+    it('suppresses for TRANSCRIPT type with opt-out', () => {
+      const anchor = createAnchor({
+        credential_type: 'TRANSCRIPT',
+        directory_info_opt_out: true,
+        org_name: 'Stanford University',
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result).not.toHaveProperty('issuer_name');
+      expect(result.directory_info_suppressed).toBe(true);
+    });
+
+    it('suppresses for CERTIFICATE type with opt-out', () => {
+      const anchor = createAnchor({
+        credential_type: 'CERTIFICATE',
+        directory_info_opt_out: true,
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.directory_info_suppressed).toBe(true);
+    });
+
+    it('suppresses for CLE type with opt-out', () => {
+      const anchor = createAnchor({
+        credential_type: 'CLE',
+        directory_info_opt_out: true,
+      });
+      const result = buildVerificationResult(anchor);
+
+      expect(result.directory_info_suppressed).toBe(true);
+    });
   });
 });

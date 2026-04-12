@@ -53,6 +53,7 @@ describe('Oracle endpoint', () => {
         jurisdiction: null,
         merkle_root: null,
         description: 'Bachelor of Science',
+        directory_info_opt_out: false,
       });
 
       expect(result.verified).toBe(true);
@@ -80,6 +81,7 @@ describe('Oracle endpoint', () => {
         jurisdiction: null,
         merkle_root: null,
         description: null,
+        directory_info_opt_out: false,
       });
 
       expect(result.verified).toBe(false);
@@ -103,6 +105,7 @@ describe('Oracle endpoint', () => {
         jurisdiction: null,
         merkle_root: null,
         description: null,
+        directory_info_opt_out: false,
       });
 
       expect(result.verified).toBe(false);

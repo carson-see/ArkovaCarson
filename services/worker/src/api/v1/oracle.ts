@@ -132,6 +132,7 @@ router.post('/verify', async (req: Request, res: Response) => {
         jurisdiction: null,
         merkle_root: null,
         description: (raw.description as string) ?? null,
+        directory_info_opt_out: (raw.directory_info_opt_out as boolean) ?? false,
       };
 
       const full = buildVerificationResult(anchor);
