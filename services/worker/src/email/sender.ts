@@ -14,6 +14,7 @@
  */
 
 import { Resend } from 'resend';
+import * as Sentry from '@sentry/node';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { config } from '../config.js';
@@ -91,7 +92,13 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
         'Email send failed',
       );
 
-      // Audit log the failure — non-fatal
+      // DEP-07: Sentry alert on Resend API errors (no PII — Constitution 1.4)
+      Sentry.captureException(new Error(`Email delivery failed: ${error.message}`), {
+        tags: { email_type: options.emailType },
+        extra: { statusCode: (error as { statusCode?: number }).statusCode },
+      });
+
+      // Audit log the failure with dedicated event type
       await logEmailAudit(options, false, undefined, error.message);
 
       return { success: false, error: error.message };
@@ -114,6 +121,11 @@ export async function sendEmail(options: SendEmailOptions): Promise<SendResult> 
       'Email send threw',
     );
 
+    // DEP-07: Sentry alert on thrown errors (no PII — Constitution 1.4)
+    Sentry.captureException(err, {
+      tags: { email_type: options.emailType },
+    });
+
     await logEmailAudit(options, false, undefined, errorMessage);
 
     return { success: false, error: errorMessage };
@@ -132,7 +144,7 @@ async function logEmailAudit(
 ): Promise<void> {
   try {
     await db.from('audit_events').insert({
-      event_type: 'EMAIL_SENT',
+      event_type: success ? 'EMAIL_SENT' : 'EMAIL_DELIVERY_FAILED',
       event_category: 'NOTIFICATION',
       actor_id: options.actorId ?? null,
       org_id: options.orgId ?? null,

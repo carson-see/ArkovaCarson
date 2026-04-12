@@ -36,10 +36,12 @@ import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
 import { stripJsonComments } from './strip-json-comments.js';
 
-// GAP-5: Pin to specific model versions to prevent silent quality drift.
+// GAP-5: Model versions centralized in gemini-config.ts (GME-01).
 // Before upgrading: run eval suite, compare F1, document delta, update pin.
-const DEFAULT_MODEL = 'gemini-2.5-flash';
-const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
+import {
+  GEMINI_GENERATION_MODEL,
+  GEMINI_EMBEDDING_MODEL,
+} from './gemini-config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
 
@@ -81,8 +83,8 @@ export class GeminiProvider implements IAIProvider {
     }
     this.apiKey = key;
     this.client = new GoogleGenerativeAI(key);
-    this.modelName = model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
-    this.embeddingModelName = embeddingModel ?? process.env.GEMINI_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+    this.modelName = model ?? GEMINI_GENERATION_MODEL;
+    this.embeddingModelName = embeddingModel ?? GEMINI_EMBEDDING_MODEL;
     this.tunedModelPath = process.env.GEMINI_TUNED_MODEL ?? null;
 
     if (this.tunedModelPath) {

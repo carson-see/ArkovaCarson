@@ -114,7 +114,7 @@ describe('ai-provenance endpoint', () => {
       id: '00000000-0000-0000-0000-000000000010',
       fingerprint: VALID_FINGERPRINT,
       model_id: 'gemini',
-      model_version: 'gemini-2.5-flash',
+      model_version: 'gemini-3-flash-preview',
       extracted_fields: { credentialType: 'DEGREE', issuerName: 'MIT' },
       confidence_scores: { overall: 0.87, grounding: 0.92 },
       manifest_hash: 'b'.repeat(64),
@@ -158,7 +158,7 @@ describe('ai-provenance endpoint', () => {
     const chain = res.body.provenanceChain[0];
     expect(chain.sourceHash).toBe(VALID_FINGERPRINT);
     expect(chain.extraction.modelId).toBe('gemini');
-    expect(chain.extraction.modelVersion).toBe('gemini-2.5-flash');
+    expect(chain.extraction.modelVersion).toBe('gemini-3-flash-preview');
     expect(chain.extraction.manifestHash).toBe('b'.repeat(64));
     expect(chain.extraction.extractedFields.issuerName).toBe('MIT');
     expect(chain.extraction.confidenceScores.overall).toBe(0.87);

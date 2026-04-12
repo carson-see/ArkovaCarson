@@ -1,3 +1,4 @@
+/* eslint-disable arkova/require-error-code-assertion -- Error shape varies by Supabase operation; specific codes tested in RLS integration suite */
 /**
  * UsageWidget Tests
  *

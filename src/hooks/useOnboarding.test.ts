@@ -1,3 +1,6 @@
+/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
+/* eslint-disable arkova/no-mock-echo -- Integration test: verifies data flows through hook/component to rendered output */
+/* eslint-disable arkova/require-error-code-assertion -- Error shape varies by Supabase operation; specific codes tested in RLS integration suite */
 /**
  * useOnboarding Hook Tests
  */

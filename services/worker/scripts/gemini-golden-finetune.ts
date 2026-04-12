@@ -35,6 +35,7 @@ import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js
 import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';
 import { GOLDEN_DATASET_PHASE12 } from '../src/ai/eval/golden-dataset-phase12.js';
 import { computeRealisticConfidence } from '../src/ai/training/nessie-v4-data.js';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import type { GoldenDatasetEntry } from '../src/ai/eval/types.js';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
   };
 
   const requestBody = {
-    baseModel: 'gemini-2.5-flash',
+    baseModel: GEMINI_GENERATION_MODEL,
     supervisedTuningSpec: {
       trainingDatasetUri: trainUri,
       validationDatasetUri: valUri,
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
   };
 
   console.log('Config:');
-  console.log(`  Base model:    gemini-2.5-flash`);
+  console.log(`  Base model:    ${GEMINI_GENERATION_MODEL}`);
   console.log(`  Epochs:        ${EPOCHS}`);
   console.log(`  LR multiplier: ${LR_MULTIPLIER}`);
   console.log(`  Adapter size:  ${adapterMap[ADAPTER_SIZE]}`);

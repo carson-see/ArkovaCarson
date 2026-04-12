@@ -31,6 +31,7 @@ import { resolve } from 'node:path';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, createReadStream, createWriteStream, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
@@ -52,7 +53,7 @@ const DRY_RUN = getFlag('dry-run');
 const EPOCHS = parseInt(getArg('epochs', '4'), 10);
 const ADAPTER_SIZE = parseInt(getArg('adapter-size', '4'), 10);
 const LR_MULTIPLIER = parseFloat(getArg('lr-multiplier', '1.0'));
-const BASE_MODEL = getArg('base-model', 'gemini-2.5-flash');
+const BASE_MODEL = getArg('base-model', GEMINI_GENERATION_MODEL);
 const MAX_EXAMPLES = parseInt(getArg('max-examples', '0'), 10); // 0 = unlimited
 const VALIDATION_SPLIT = parseFloat(getArg('validation-split', '0.1'));
 

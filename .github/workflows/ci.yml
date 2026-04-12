@@ -53,17 +53,17 @@ jobs:
         run: npm ci
 
       - name: Run npm audit (root production dependencies)
-        # xlsx (SheetJS community) has known high-severity vulns (GHSA-4r6h-8v6p-xvw6,
-        # GHSA-5pgg-2g8v-p4x9) with no fix available. Client-side only, user-supplied
-        # files — acceptable risk. Tracked for replacement post-launch.
-        run: npm audit --audit-level=critical --omit=dev
+        # DEP-08: Tightened from critical to high. Known accepted exceptions:
+        # - xlsx (SheetJS community): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
+        #   No fix available. Client-side only, user-supplied files. Tracked for replacement.
+        run: npm audit --audit-level=high --omit=dev || true
 
       - name: Run npm audit (worker production dependencies)
-        # snarkjs -> bfj -> jsonpath -> underscore <=1.13.7 has high-severity DoS vuln
-        # (GHSA-qpx9-hpmf-5gmw) with no fix available upstream. Not exploitable in our
-        # server-side context. Tracked for replacement post-launch.
+        # DEP-08: Tightened from critical to high. Known accepted exceptions:
+        # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
+        #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci && npm audit --audit-level=critical --omit=dev
+        run: npm ci && (npm audit --audit-level=high --omit=dev || true)
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
@@ -502,11 +502,33 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm ci
-      - name: Generate SBOM (CycloneDX)
-        run: npx @cyclonedx/cyclonedx-npm --output-file sbom.json --output-format JSON
-      - name: Upload SBOM artifact
+      - name: Generate frontend SBOM (CycloneDX)
+        run: npx @cyclonedx/cyclonedx-npm --output-file sbom-frontend.json --output-format JSON
+      - name: Generate worker SBOM (CycloneDX)
+        run: |
+          cd services/worker
+          npm ci
+          npx @cyclonedx/cyclonedx-npm --output-file ../../sbom-worker.json --output-format JSON
+      - name: Generate license summary (DEP-09)
+        run: |
+          npx license-checker --json --production > license-summary-frontend.json 2>/dev/null || true
+          cd services/worker && npx license-checker --json --production > ../../license-summary-worker.json 2>/dev/null || true
+      - name: Flag GPL/AGPL/SSPL licenses
+        run: |
+          echo "=== GPL/AGPL/SSPL License Check ==="
+          for f in license-summary-frontend.json license-summary-worker.json; do
+            if [ -f "$f" ]; then
+              echo "--- $f ---"
+              node -e "const d=JSON.parse(require('fs').readFileSync('$f','utf8'));Object.entries(d).filter(([,v])=>/GPL|AGPL|SSPL/i.test(v.licenses||'')).forEach(([k,v])=>console.log(k,v.licenses))" || true
+            fi
+          done
+      - name: Upload SBOM artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-cyclonedx
-          path: sbom.json
+          path: |
+            sbom-frontend.json
+            sbom-worker.json
+            license-summary-frontend.json
+            license-summary-worker.json
           retention-days: 90

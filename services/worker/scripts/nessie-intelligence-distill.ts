@@ -20,6 +20,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
@@ -129,7 +130,7 @@ async function callGeminiTeacher(
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY required for distillation');
 
-  const model = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+  const model = GEMINI_GENERATION_MODEL;
   const { GoogleGenerativeAI } = await import('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(apiKey);
   const gemini = genAI.getGenerativeModel({

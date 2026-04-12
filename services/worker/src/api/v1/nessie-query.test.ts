@@ -112,7 +112,7 @@ describe('GET /nessie/query', () => {
     // Default embedding mock
     mockGenerateEmbedding.mockResolvedValue({
       embedding: new Array(768).fill(0.1),
-      model: 'gemini-embedding-001',
+      model: 'text-embedding-004',
     });
 
     // Default: feature flag enabled + search results

@@ -1,3 +1,5 @@
+/* eslint-disable arkova/no-mock-echo -- Integration test: verifies data flows through hook/component to rendered output */
+/* eslint-disable arkova/require-error-code-assertion -- Error shape varies by Supabase operation; specific codes tested in RLS integration suite */
 /**
  * useBulkAnchors Hook Tests
  */

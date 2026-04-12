@@ -14,7 +14,7 @@ import {
 const SAMPLE_INPUT: ExtractionManifestInput = {
   fingerprint: 'a'.repeat(64),
   modelId: 'gemini',
-  modelVersion: 'gemini-2.5-flash',
+  modelVersion: 'gemini-3-flash-preview',
   extractedFields: {
     credentialType: 'DEGREE',
     issuerName: 'MIT',
@@ -42,7 +42,7 @@ describe('extraction-manifest', () => {
 
       expect(manifest.fingerprint).toBe('a'.repeat(64));
       expect(manifest.modelId).toBe('gemini');
-      expect(manifest.modelVersion).toBe('gemini-2.5-flash');
+      expect(manifest.modelVersion).toBe('gemini-3-flash-preview');
       expect(manifest.extractedFields).toEqual(SAMPLE_INPUT.extractedFields);
       expect(manifest.confidenceScores).toEqual(SAMPLE_INPUT.confidenceScores);
       expect(manifest.promptVersion).toBe('abc123def456');
@@ -148,7 +148,7 @@ describe('extraction-manifest', () => {
       const hash = computeManifestHash({
         fingerprint: 'a'.repeat(64),
         modelId: 'gemini',
-        modelVersion: 'gemini-2.5-flash',
+        modelVersion: 'gemini-3-flash-preview',
         extractedFields: { credentialType: 'DEGREE' },
         confidenceScores: { overall: 0.87 },
         extractionTimestamp: '2026-03-29T12:00:00.000Z',

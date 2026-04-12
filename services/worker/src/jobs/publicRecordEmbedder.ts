@@ -2,7 +2,7 @@
  * Public Record Batch Embedder Job (PH1-INT-01)
  *
  * Generates vector embeddings for public records that don't yet have them.
- * Uses the existing AI provider abstraction (Gemini gemini-embedding-001).
+ * Uses the existing AI provider abstraction (Gemini embedding model from gemini-config.ts).
  *
  * Gated by ENABLE_PUBLIC_RECORD_EMBEDDINGS switchboard flag.
  * Processes in batches of 500 records per run.
@@ -11,6 +11,7 @@
  */
 
 import { createEmbeddingProvider } from '../ai/factory.js';
+import { GEMINI_EMBEDDING_MODEL } from '../ai/gemini-config.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -117,7 +118,7 @@ export async function embedPublicRecords(
         .insert({
           public_record_id: record.id,
           embedding: embeddingResult.embedding,
-          model_version: process.env.GEMINI_EMBEDDING_MODEL ?? 'gemini-embedding-001',
+          model_version: GEMINI_EMBEDDING_MODEL,
         });
 
       if (insertError) {
