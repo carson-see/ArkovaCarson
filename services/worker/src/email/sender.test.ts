@@ -6,7 +6,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---- Hoisted mocks ----
 
-const { mockLogger, mockAuditInsert, mockResendSend, mockConfig } = vi.hoisted(() => {
+const { mockLogger, mockAuditInsert, mockResendSend, mockConfig, mockSentryCaptureException } = vi.hoisted(() => {
+  const mockSentryCaptureException = vi.fn();
   const mockLogger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -20,7 +21,7 @@ const { mockLogger, mockAuditInsert, mockResendSend, mockConfig } = vi.hoisted((
     emailFrom: 'noreply@arkova.ai',
   };
 
-  return { mockLogger, mockAuditInsert, mockResendSend, mockConfig };
+  return { mockLogger, mockAuditInsert, mockResendSend, mockConfig, mockSentryCaptureException };
 });
 
 // ---- Module mocks ----
@@ -39,6 +40,10 @@ vi.mock('../utils/db.js', () => ({
       insert: mockAuditInsert,
     })),
   },
+}));
+
+vi.mock('@sentry/node', () => ({
+  captureException: mockSentryCaptureException,
 }));
 
 vi.mock('resend', () => {
@@ -140,6 +145,53 @@ describe('sendEmail', () => {
     expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'notification' }),
       expect.stringContaining('skipped'),
+    );
+  });
+
+  // DEP-07: Sentry capture tests
+  it('captures Sentry exception when Resend returns error', async () => {
+    mockResendSend.mockResolvedValue({ data: null, error: { message: 'Invalid API key', statusCode: 403 } });
+
+    await sendEmail(baseOptions);
+
+    expect(mockSentryCaptureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: { email_type: 'notification' },
+      }),
+    );
+  });
+
+  it('captures Sentry exception when Resend throws', async () => {
+    const thrownError = new Error('Network timeout');
+    mockResendSend.mockRejectedValue(thrownError);
+
+    await sendEmail(baseOptions);
+
+    expect(mockSentryCaptureException).toHaveBeenCalledWith(
+      thrownError,
+      expect.objectContaining({
+        tags: { email_type: 'notification' },
+      }),
+    );
+  });
+
+  it('does NOT capture Sentry on success', async () => {
+    await sendEmail(baseOptions);
+
+    expect(mockSentryCaptureException).not.toHaveBeenCalled();
+  });
+
+  it('logs EMAIL_DELIVERY_FAILED audit event on failure', async () => {
+    mockResendSend.mockResolvedValue({ data: null, error: { message: 'Rate limited' } });
+
+    await sendEmail(baseOptions);
+
+    expect(mockAuditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'EMAIL_DELIVERY_FAILED',
+        event_category: 'NOTIFICATION',
+      }),
     );
   });
 

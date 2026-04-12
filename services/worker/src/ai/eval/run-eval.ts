@@ -81,7 +81,7 @@ async function main() {
   const result = await runEval({
     provider,
     entries: evalEntries,
-    concurrency: providerArg === 'gemini' ? 1 : 10, // Rate limit for real API (gemini-2.5-flash needs concurrency 1)
+    concurrency: providerArg === 'gemini' ? 1 : 10, // Rate limit for real API (Gemini Flash needs concurrency 1)
     onProgress: (completed, total) => {
       const pct = ((completed / total) * 100).toFixed(0);
       process.stdout.write(`\r   Progress: ${completed}/${total} (${pct}%)`);

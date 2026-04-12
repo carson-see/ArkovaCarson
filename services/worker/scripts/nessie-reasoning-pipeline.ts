@@ -229,7 +229,7 @@ async function generateReasoningTrace(
   example: ReasoningExample,
 ): Promise<string> {
   const model = gemini.getGenerativeModel({
-    model: 'gemini-2.5-flash',
+    model: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
     systemInstruction: REASONING_TEACHER_PROMPT,
     generationConfig: {
       temperature: 0.3,

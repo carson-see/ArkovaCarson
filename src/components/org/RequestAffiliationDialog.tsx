@@ -50,7 +50,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 export function RequestAffiliationDialog({
   open,
   onOpenChange,
-  currentOrgId,
+  currentOrgId: _currentOrgId,
   onRequested,
 }: RequestAffiliationDialogProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,7 +82,7 @@ export function RequestAffiliationDialog({
     } finally {
       setSearching(false);
     }
-  }, [currentOrgId]);
+  }, []);
 
   // Reset state when dialog closes
   useEffect(() => {

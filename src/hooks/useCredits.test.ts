@@ -1,3 +1,4 @@
+/* eslint-disable arkova/no-mock-echo -- Integration test: verifies data flows through hook/component to rendered output */
 /**
  * useCredits Hook Tests
  *

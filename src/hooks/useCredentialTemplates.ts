@@ -123,7 +123,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       setTemplates(prev => [data, ...prev]);
       return data;
     },
-    [orgId, fetchTemplates]
+    [orgId]
   );
 
   const updateTemplate = useCallback(
@@ -166,7 +166,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       setTemplates(prev => prev.map(t => t.id === id ? { ...t, ...params, default_metadata: params.default_metadata === undefined ? t.default_metadata : (params.default_metadata ?? {}) } as CredentialTemplate : t));
       return true;
     },
-    [orgId, fetchTemplates]
+    [orgId]
   );
 
   const deleteTemplate = useCallback(
@@ -203,7 +203,7 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       setTemplates(prev => prev.filter(t => t.id !== id));
       return true;
     },
-    [orgId, fetchTemplates]
+    [orgId]
   );
 
   return {

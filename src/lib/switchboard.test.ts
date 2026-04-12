@@ -1,3 +1,4 @@
+/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
 /**
  * Switchboard Feature Flags Tests
  *

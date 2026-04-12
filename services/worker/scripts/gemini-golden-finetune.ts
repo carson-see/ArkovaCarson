@@ -283,7 +283,7 @@ async function main(): Promise<void> {
   };
 
   const requestBody = {
-    baseModel: 'gemini-2.5-flash',
+    baseModel: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
     supervisedTuningSpec: {
       trainingDatasetUri: trainUri,
       validationDatasetUri: valUri,
@@ -297,7 +297,7 @@ async function main(): Promise<void> {
   };
 
   console.log('Config:');
-  console.log(`  Base model:    gemini-2.5-flash`);
+  console.log(`  Base model:    ${process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview'}`);
   console.log(`  Epochs:        ${EPOCHS}`);
   console.log(`  LR multiplier: ${LR_MULTIPLIER}`);
   console.log(`  Adapter size:  ${adapterMap[ADAPTER_SIZE]}`);

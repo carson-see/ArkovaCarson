@@ -214,7 +214,7 @@ export function useAnchors(): UseAnchorsReturn {
         channelRef.current = null;
       }
     };
-  }, [user, handleRealtimePayload, qc]);
+  }, [user, handleRealtimePayload, qc, profile?.org_id]);
 
   const refreshAnchors = useCallback(async () => {
     if (user) {

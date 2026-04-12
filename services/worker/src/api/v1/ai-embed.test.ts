@@ -12,7 +12,7 @@ vi.mock('../../ai/factory.js', () => {
     name: 'mock',
     generateEmbedding: vi.fn().mockResolvedValue({
       embedding: new Array(768).fill(0.1),
-      model: 'gemini-embedding-001',
+      model: 'text-embedding-004',
     }),
   };
   return {
@@ -24,7 +24,7 @@ vi.mock('../../ai/factory.js', () => {
 vi.mock('../../ai/embeddings.js', () => ({
   generateAndStoreEmbedding: vi.fn().mockResolvedValue({
     success: true,
-    model: 'gemini-embedding-001',
+    model: 'text-embedding-004',
   }),
   batchReEmbed: vi.fn().mockResolvedValue({
     total: 2,
@@ -99,7 +99,7 @@ describe('POST /api/v1/ai/embed', () => {
     await handler(req, res);
 
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ success: true, model: 'gemini-embedding-001' }),
+      expect.objectContaining({ success: true, model: 'text-embedding-004' }),
     );
     expect(generateAndStoreEmbedding).toHaveBeenCalled();
   });

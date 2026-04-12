@@ -69,7 +69,7 @@ const MOCK_MANIFEST = {
   id: '00000000-0000-0000-0000-000000000010',
   fingerprint: VALID_FINGERPRINT,
   model_id: 'gemini',
-  model_version: 'gemini-2.5-flash',
+  model_version: 'gemini-3-flash-preview',
   extracted_fields: { credentialType: 'DEGREE', issuerName: 'MIT', issuedDate: '2024-06-15' },
   confidence_scores: { overall: 0.87, grounding: 0.92, fields: { issuerName: 0.95 } },
   manifest_hash: 'b'.repeat(64),

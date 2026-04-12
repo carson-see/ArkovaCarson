@@ -218,7 +218,7 @@ async function callIntelligenceAPI(
   const { GoogleGenerativeAI } = await import('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(key);
   const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
+    model: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
     systemInstruction: systemPrompt,
     generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
   });

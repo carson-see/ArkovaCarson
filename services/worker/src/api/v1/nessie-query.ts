@@ -18,6 +18,7 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createEmbeddingProvider } from '../../ai/factory.js';
+import { GEMINI_GENERATION_MODEL } from '../../ai/gemini-config.js';
 import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
@@ -478,7 +479,7 @@ async function generateVerifiedContext(
       throw new Error('GEMINI_API_KEY required for verified context mode (no RAG-capable provider configured)');
     }
     const gemini = new GenAI(geminiKey);
-    modelName = process.env.GEMINI_MODEL ?? 'gemini-2.5-flash';
+    modelName = GEMINI_GENERATION_MODEL;
     const model = gemini.getGenerativeModel({
       model: modelName,
       systemInstruction: systemPrompt,

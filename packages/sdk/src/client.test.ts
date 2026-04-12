@@ -487,7 +487,7 @@ describe('ask', () => {
           },
         ],
         confidence: 0.88,
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3-flash-preview',
         query: 'apple revenue 2025',
       }),
     });

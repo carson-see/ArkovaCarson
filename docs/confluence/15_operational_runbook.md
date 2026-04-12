@@ -439,6 +439,181 @@ Domains are added to Vercel but DNS records need to be set at the registrar (Nam
 3. Wait for DNS propagation (up to 48h, usually <1h)
 4. Verify: `dig app.arkova.ai` should return `76.76.21.21`
 
+## 10. Supabase Disaster Recovery Plan (DEP-01)
+
+**Priority:** P0 — Supabase is a total SPOF (auth, data, RLS, RPC all go down together).
+
+### 10.1 Recovery Targets
+
+| Metric | Target | Rationale |
+|--------|--------|-----------|
+| **RTO** (Recovery Time Objective) | 4 hours | Time to restore from backup to a new Supabase project |
+| **RPO** (Recovery Point Objective) | 24 hours | Nightly pg_dump — max 24h data loss |
+
+### 10.2 Backup Strategy
+
+**Layer 1: Supabase-managed backups + PITR** (automatic, included in Pro plan)
+- Daily backups retained for 7 days
+- Point-in-Time Recovery available
+- Limitation: lives inside Supabase infrastructure — not independent
+
+**Layer 2: Nightly pg_dump to GCS** (independent backup)
+
+```bash
+# GCS bucket: arkova-db-backups (arkova1 project, 90-day retention lifecycle policy)
+# Cloud Run job runs nightly at 03:00 UTC via Cloud Scheduler
+
+# Manual backup (emergency):
+pg_dump "$SUPABASE_POOLER_URL" \
+  --format=custom \
+  --no-owner \
+  --no-privileges \
+  -f "arkova-backup-$(date +%Y%m%d-%H%M%S).dump"
+
+# Upload to GCS:
+gsutil cp arkova-backup-*.dump gs://arkova-db-backups/manual/
+```
+
+### 10.3 Restore Procedure
+
+```bash
+# 1. Create a new Supabase project (or use disaster recovery project)
+#    Dashboard: https://supabase.com/dashboard → New Project
+
+# 2. Download the latest backup from GCS
+gsutil ls -l gs://arkova-db-backups/nightly/ | tail -5
+gsutil cp gs://arkova-db-backups/nightly/LATEST_BACKUP.dump .
+
+# 3. Restore to new project
+pg_restore \
+  --dbname="$NEW_SUPABASE_POOLER_URL" \
+  --no-owner \
+  --no-privileges \
+  --clean \
+  --if-exists \
+  LATEST_BACKUP.dump
+
+# 4. Verify row counts match expected
+psql "$NEW_SUPABASE_POOLER_URL" -c "
+  SELECT 'anchors' AS tbl, count(*) FROM anchors
+  UNION ALL SELECT 'organizations', count(*) FROM organizations
+  UNION ALL SELECT 'profiles', count(*) FROM profiles
+  UNION ALL SELECT 'audit_events', count(*) FROM audit_events;
+"
+
+# 5. Swap connection strings
+#    a. Update Cloud Run env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
+#    b. Update Vercel env vars: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY
+#    c. Redeploy both services
+
+# 6. Verify auth works (login with known test account)
+# 7. Verify anchoring pipeline (submit test anchor, confirm SECURED)
+```
+
+### 10.4 Monitoring
+
+- Backup job sends Sentry alert on failure (via Cloud Run job error handler)
+- GCS bucket has `nearline` storage class for cost efficiency
+- Monthly: verify backup integrity by restoring to a test project
+
+---
+
+## 11. Cloudflare Tunnel Failover Procedure (DEP-02)
+
+**Priority:** P0 — Cloudflare Tunnel (`cloudflared`) is the sole ingress path to the worker.
+
+### 11.1 Detecting a Tunnel Outage
+
+```bash
+# Check tunnel status via Cloudflare dashboard
+# Dashboard → Zero Trust → Networks → Tunnels → arkova-worker
+
+# Or from the worker host:
+cloudflared tunnel info arkova-worker
+
+# Health check (if tunnel is up, this succeeds):
+curl -f https://worker.arkova.ai/health
+# If 502/504/timeout → tunnel is down
+```
+
+### 11.2 Failover: Direct Cloud Run URL Bypass
+
+**When to use:** Cloudflare Tunnel is confirmed down, anchoring/billing is blocked, estimated tunnel recovery > 30 minutes.
+
+**Security trade-offs of bypass mode:**
+- Zero Trust access policies are bypassed
+- No Cloudflare WAF/DDoS protection
+- Cloud Run URL is publicly accessible (protected only by IAM)
+
+**Steps:**
+
+```bash
+# 1. Activate direct Cloud Run access (IAM allowlist)
+gcloud run services add-iam-policy-binding arkova-worker \
+  --project=arkova1 \
+  --region=us-central1 \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+
+# 2. Update cron jobs to target Cloud Run URL directly
+#    (instead of going through the tunnel)
+CLOUD_RUN_URL="https://arkova-worker-270018525501.us-central1.run.app"
+for JOB in process-anchors webhook-retries generate-reports credit-expiry \
+           batch-anchor batch-confirm embed-records fetch-sec fetch-court \
+           fetch-openstates fetch-sam expiry-alerts; do
+  gcloud scheduler jobs update http "$JOB" \
+    --project=arkova1 \
+    --location=us-central1 \
+    --uri="${CLOUD_RUN_URL}/cron/${JOB}"
+done
+
+# 3. Update FRONTEND_URL if needed (CORS)
+#    If the frontend calls the tunnel URL, temporarily update CORS_ALLOWED_ORIGINS
+gcloud run services update arkova-worker \
+  --project=arkova1 \
+  --region=us-central1 \
+  --update-env-vars "CORS_ALLOWED_ORIGINS=*"
+
+# 4. Verify worker is reachable
+curl "${CLOUD_RUN_URL}/health"
+```
+
+### 11.3 Rollback (Tunnel Recovered)
+
+```bash
+# 1. Verify tunnel is healthy
+curl -f https://worker.arkova.ai/health
+
+# 2. Revoke public access to Cloud Run
+gcloud run services remove-iam-policy-binding arkova-worker \
+  --project=arkova1 \
+  --region=us-central1 \
+  --member="allUsers" \
+  --role="roles/run.invoker"
+
+# 3. Restore cron job URLs to tunnel endpoint
+TUNNEL_URL="https://worker.arkova.ai"
+for JOB in process-anchors webhook-retries generate-reports credit-expiry \
+           batch-anchor batch-confirm embed-records fetch-sec fetch-court \
+           fetch-openstates fetch-sam expiry-alerts; do
+  gcloud scheduler jobs update http "$JOB" \
+    --project=arkova1 \
+    --location=us-central1 \
+    --uri="${TUNNEL_URL}/cron/${JOB}"
+done
+
+# 4. Restore CORS
+gcloud run services update arkova-worker \
+  --project=arkova1 \
+  --region=us-central1 \
+  --update-env-vars "CORS_ALLOWED_ORIGINS=https://app.arkova.ai"
+
+# 5. Verify end-to-end flow through tunnel
+curl -f https://worker.arkova.ai/health
+```
+
+---
+
 ## Change Log
 
 | Date | Change |
@@ -450,3 +625,4 @@ Domains are added to Vercel but DNS records need to be set at the registrar (Nam
 | 2026-03-16 | Bitcoin Testnet 4 migration: added Section 1.3 (Testnet 4 setup), renamed Section 1.3 → 1.4 (Signet legacy). Default network changed from signet to testnet4. |
 | 2026-03-16 | Added OPS-01 through OPS-04 sections with exact commands: migration apply, demo seed strip, Sentry DSN setup, source map upload. |
 | 2026-03-24 | Updated migration tracking to 109 migrations (0090-0109 range added). Added Railway deployment instructions (Section 7). Added fee spike monitoring procedure (Section 8). Updated Cloud Run references to include Railway as deployment target. |
+| 2026-04-12 | DEP-01: Added Supabase DR plan (Section 10) — RTO 4h, RPO 24h, GCS backup, restore runbook. DEP-02: Added Cloudflare Tunnel failover procedure (Section 11) — direct Cloud Run bypass with security compensating controls. |

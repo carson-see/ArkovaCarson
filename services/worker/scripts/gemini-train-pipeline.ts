@@ -52,7 +52,7 @@ const DRY_RUN = getFlag('dry-run');
 const EPOCHS = parseInt(getArg('epochs', '4'), 10);
 const ADAPTER_SIZE = parseInt(getArg('adapter-size', '4'), 10);
 const LR_MULTIPLIER = parseFloat(getArg('lr-multiplier', '1.0'));
-const BASE_MODEL = getArg('base-model', 'gemini-2.5-flash');
+const BASE_MODEL = getArg('base-model', process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview');
 const MAX_EXAMPLES = parseInt(getArg('max-examples', '0'), 10); // 0 = unlimited
 const VALIDATION_SPLIT = parseFloat(getArg('validation-split', '0.1'));
 

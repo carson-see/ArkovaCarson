@@ -25,7 +25,24 @@ export interface SystemHealth {
   memory: {
     heapUsedMB: number;
     heapTotalMB: number;
+    heapLimitMB?: number;
     rssMB: number;
+    externalMB?: number;
+    arrayBuffersMB?: number;
+    heapUtilizationPct?: number;
+  };
+  stores?: {
+    rateLimitEntries: number;
+    idempotencyEntries: number;
+    circuitBreakerEntries: number;
+  };
+  v8Heap?: {
+    totalPhysicalSize: number;
+    usedHeapSize: number;
+    heapSizeLimit: number;
+    mallocedMemory: number;
+    numberOfNativeContexts: number;
+    numberOfDetachedContexts: number;
   };
 }
 
@@ -86,7 +103,7 @@ export function useSmokeTestHistory() {
     setError(null);
 
     try {
-      const response = await workerFetch('/cron/smoke-test/history', { method: 'GET' });
+      const response = await workerFetch('/jobs/smoke-test/history', { method: 'GET' });
 
       if (!response.ok) {
         setError(`HTTP ${response.status}`);
@@ -108,7 +125,7 @@ export function useSmokeTestHistory() {
     setError(null);
 
     try {
-      const response = await workerFetch('/cron/smoke-test', { method: 'POST' });
+      const response = await workerFetch('/jobs/smoke-test', { method: 'POST' });
       const data = await response.json();
 
       if (data.results) {

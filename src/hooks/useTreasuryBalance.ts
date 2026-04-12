@@ -267,7 +267,7 @@ export function useTreasuryBalance() {
         setLoading(false);
       }
     }
-  }, []);
+  }, [fetchFromCache]);
 
   useEffect(() => {
     isMountedRef.current = true;

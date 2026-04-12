@@ -120,7 +120,7 @@ describe('publicRecordEmbedder', () => {
     expect(mockInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         public_record_id: 'rec-1',
-        model_version: 'gemini-embedding-001',
+        model_version: 'text-embedding-004',
       }),
     );
   });
