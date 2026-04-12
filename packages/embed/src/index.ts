@@ -164,6 +164,8 @@ if (typeof document !== 'undefined') {
 // ─── Public exports ────────────────────────────────────────────────────────
 
 export type { ArkovaEmbedConfig, AnchorData, EmbedMode } from './types';
+export { renderReportBlock, renderReportBlockFromData } from './report-block';
+export type { ReportBlockOptions, ReportFormat } from './report-block';
 
 const ArkovaEmbed = { mount, autoInit };
 

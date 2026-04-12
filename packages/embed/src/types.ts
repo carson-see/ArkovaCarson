@@ -33,5 +33,6 @@ export interface AnchorData {
   filename?: string | null;
   fingerprint?: string | null;
   public_id?: string | null;
+  chain_tx_id?: string | null;
   error?: string | null;
 }

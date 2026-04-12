@@ -1,0 +1,15 @@
+{
+  "name": "@arkova/bullhorn-integration",
+  "version": "1.0.0",
+  "description": "Arkova integration for Bullhorn — credential verification for staffing and recruitment",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
