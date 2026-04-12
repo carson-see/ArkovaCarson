@@ -12,6 +12,7 @@
 import 'dotenv/config';
 
 import express, { Request, Response } from 'express';
+import compression from 'compression';
 import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
@@ -36,12 +37,24 @@ import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
 import { setupScheduledJobs } from './routes/scheduled.js';
 import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
+import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
 import { correlationIdMiddleware } from './utils/correlationId.js';
 import { initUpstashRateLimiting } from './utils/upstashRateLimit.js';
+import { createUpstashIdempotencyStore } from './middleware/upstashIdempotency.js';
+import { setIdempotencyStore } from './middleware/idempotency.js';
+import { createFeeEstimator } from './chain/fee-estimator.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
 initSentry(config.sentryDsn, config.nodeEnv);
+
+// Static fee estimator singleton — avoids dynamic import on every /health request
+const feeEstimatorInstance = createFeeEstimator({
+  strategy: config.bitcoinFeeStrategy ?? 'static',
+  staticRate: config.bitcoinStaticFeeRate,
+  mempoolApiUrl: config.mempoolApiUrl,
+  fallbackRate: config.bitcoinFallbackFeeRate,
+});
 
 const app = express();
 
@@ -106,14 +119,7 @@ app.get('/health', async (req, res) => {
     getCurrentFeeRate: async () => {
       // Best-effort fee rate — returns null if not available
       try {
-        const { createFeeEstimator } = await import('./chain/fee-estimator.js');
-        const estimator = createFeeEstimator({
-          strategy: config.bitcoinFeeStrategy ?? 'static',
-          staticRate: config.bitcoinStaticFeeRate,
-          mempoolApiUrl: config.mempoolApiUrl,
-          fallbackRate: config.bitcoinFallbackFeeRate,
-        });
-        return await estimator.estimateFee();
+        return await feeEstimatorInstance.estimateFee();
       } catch {
         return null;
       }
@@ -150,6 +156,9 @@ app.post(
     }
   }
 );
+
+// Gzip/brotli compression — 70-90% bandwidth reduction for JSON responses
+app.use(compression({ threshold: 1024 }));
 
 // JSON body parser for all other routes
 app.use(express.json());
@@ -202,7 +211,16 @@ const server = app.listen(config.port, async () => {
   );
 
   // IDEM-2: Initialize Redis-backed rate limiting if Upstash is configured
-  initUpstashRateLimiting();
+  const redisRateInit = initUpstashRateLimiting();
+
+  // IDEM-3: Initialize Redis-backed idempotency store (eliminates biggest heap consumer)
+  const idempotencyRedisStore = createUpstashIdempotencyStore();
+  if (idempotencyRedisStore) {
+    setIdempotencyStore(idempotencyRedisStore);
+    logger.info('Upstash Redis idempotency store initialized');
+  } else if (!redisRateInit) {
+    logger.info('Upstash Redis not configured — using in-memory stores (rate limit + idempotency)');
+  }
 
   // ARCH-5: Initialize feature flag registry — logs all active flags
   await flagRegistry.init();
@@ -219,6 +237,8 @@ const server = app.listen(config.port, async () => {
 
   setupScheduledJobs(chainInitialized);
   setupGracefulShutdown(server);
+  startHeapMonitor();
+  logHeapStatus('startup');
 });
 
 export { app, server, trackOperation };

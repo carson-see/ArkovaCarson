@@ -35,7 +35,10 @@ export async function verifyAuthToken(
 
   // Prefer local JWT verification when secret is configured
   if (config.supabaseJwtSecret) {
-    return verifyJwtLocally(token, config.supabaseJwtSecret, logger);
+    const localResult = await verifyJwtLocally(token, config.supabaseJwtSecret, logger);
+    if (localResult) return localResult;
+    // Local verification failed — fall back to Supabase API (secret may be stale/wrong)
+    logger.warn('Local JWT verification failed — falling back to Supabase API');
   }
 
   // Fallback: network call to Supabase auth API

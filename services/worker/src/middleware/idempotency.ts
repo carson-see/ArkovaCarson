@@ -2,17 +2,19 @@
  * Idempotency-Key Middleware (DX-4)
  *
  * Accepts an Idempotency-Key header on POST endpoints. Stores the
- * response in a short-lived cache (in-memory, 24h TTL). On duplicate
- * key, returns the cached response. Follows the Stripe pattern.
+ * response in a short-lived cache. On duplicate key, returns the cached response.
+ * Follows the Stripe pattern.
  *
- * For production horizontal scaling, swap to Redis via setIdempotencyStore().
+ * Supports pluggable stores:
+ *   - In-memory Map (default, single instance)
+ *   - Upstash Redis (horizontal scaling — call setIdempotencyStore() at startup)
  */
 
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger.js';
 
-const IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const IDEMPOTENCY_MAX_SIZE = 100_000; // cap to prevent unbounded growth
+const IDEMPOTENCY_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
+const IDEMPOTENCY_MAX_SIZE = 10_000; // cap for in-memory store
 
 interface CachedResponse {
   statusCode: number;
@@ -21,13 +23,31 @@ interface CachedResponse {
   createdAt: number;
 }
 
-/** In-memory idempotency store (single instance). Swap to Redis for horizontal scaling. */
-const idempotencyStore = new Map<string, CachedResponse>();
+/**
+ * Pluggable idempotency store interface.
+ * Default: in-memory Map. For horizontal scaling: Upstash Redis adapter.
+ */
+export interface IIdempotencyStore {
+  get(key: string): CachedResponse | undefined | Promise<CachedResponse | undefined>;
+  set(key: string, entry: CachedResponse): void;
+  delete(key: string): void;
+  clear(): void;
+  readonly size: number;
+}
 
-// Cleanup expired entries every 10 minutes
+/** In-memory idempotency store (single instance). */
+let idempotencyStore: IIdempotencyStore = new Map<string, CachedResponse>();
+
+/** Swap the backing store (e.g., to Upstash Redis adapter). */
+export function setIdempotencyStore(store: IIdempotencyStore): void {
+  idempotencyStore = store;
+}
+
+// Cleanup expired entries every 10 minutes (in-memory only — Redis uses TTL)
 let idempotencyCleanupRef: ReturnType<typeof setInterval> | null = setInterval(() => {
+  if (!(idempotencyStore instanceof Map)) return; // Redis handles its own TTL
   const now = Date.now();
-  for (const [key, entry] of idempotencyStore.entries()) {
+  for (const [key, entry] of (idempotencyStore as Map<string, CachedResponse>).entries()) {
     if (now - entry.createdAt > IDEMPOTENCY_TTL_MS) {
       idempotencyStore.delete(key);
     }
@@ -79,47 +99,55 @@ export function idempotencyMiddleware() {
     const scopeId = req.apiKey?.keyId ?? req.ip ?? 'anon';
     const cacheKey = `${scopeId}:${idempotencyKey}`;
 
-    // Check cache
-    const cached = idempotencyStore.get(cacheKey);
-    if (cached) {
-      logger.debug({ idempotencyKey }, 'Idempotency cache hit — returning cached response');
-      res.setHeader('Idempotent-Replayed', 'true');
-      for (const [k, v] of Object.entries(cached.headers)) {
-        res.setHeader(k, v);
-      }
-      res.status(cached.statusCode).json(cached.body);
-      return;
-    }
-
-    // Intercept the response to cache it
-    const originalJson = res.json.bind(res);
-    res.json = function (body: unknown) {
-      // Cache the response
-      const headersToCache: Record<string, string> = {};
-      const xRequestId = res.getHeader('X-Request-Id');
-      if (xRequestId) headersToCache['X-Request-Id'] = String(xRequestId);
-
-      // Evict expired/oldest entries if at capacity
-      if (idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
-        const now = Date.now();
-        for (const [k, e] of idempotencyStore) {
-          if (e.createdAt < now - IDEMPOTENCY_TTL_MS || idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
-            idempotencyStore.delete(k);
-          }
-          if (idempotencyStore.size < IDEMPOTENCY_MAX_SIZE * 0.8) break;
+    // Check cache (may be async for Redis stores)
+    const result = idempotencyStore.get(cacheKey);
+    const handleCacheResult = (cached: CachedResponse | undefined) => {
+      if (cached) {
+        logger.debug({ idempotencyKey }, 'Idempotency cache hit — returning cached response');
+        res.setHeader('Idempotent-Replayed', 'true');
+        for (const [k, v] of Object.entries(cached.headers)) {
+          res.setHeader(k, v);
         }
+        res.status(cached.statusCode).json(cached.body);
+        return;
       }
 
-      idempotencyStore.set(cacheKey, {
-        statusCode: res.statusCode,
-        headers: headersToCache,
-        body,
-        createdAt: Date.now(),
-      });
+      // Intercept the response to cache it
+      const originalJson = res.json.bind(res);
+      res.json = function (body: unknown) {
+        const headersToCache: Record<string, string> = {};
+        const xRequestId = res.getHeader('X-Request-Id');
+        if (xRequestId) headersToCache['X-Request-Id'] = String(xRequestId);
 
-      return originalJson(body);
+        // Evict expired/oldest entries if at capacity (in-memory only)
+        if (idempotencyStore instanceof Map && idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
+          const now = Date.now();
+          for (const [k, e] of idempotencyStore) {
+            if (e.createdAt < now - IDEMPOTENCY_TTL_MS || idempotencyStore.size >= IDEMPOTENCY_MAX_SIZE) {
+              idempotencyStore.delete(k);
+            }
+            if (idempotencyStore.size < IDEMPOTENCY_MAX_SIZE * 0.8) break;
+          }
+        }
+
+        idempotencyStore.set(cacheKey, {
+          statusCode: res.statusCode,
+          headers: headersToCache,
+          body,
+          createdAt: Date.now(),
+        });
+
+        return originalJson(body);
+      };
+
+      next();
     };
 
-    next();
+    // Support both sync (Map) and async (Redis) stores
+    if (result instanceof Promise) {
+      result.then(handleCacheResult).catch(() => next());
+    } else {
+      handleCacheResult(result);
+    }
   };
 }

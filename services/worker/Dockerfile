@@ -26,4 +26,8 @@ USER appuser
 
 ENV PORT=3001
 EXPOSE 3001
-CMD ["node", "--max-old-space-size=768", "dist/index.js"]
+# V8 tuning for Cloud Run (2GB container):
+#   --max-old-space-size=1536  — heap ceiling at 1.5GB (leaves 512MB for RSS overhead, native buffers)
+#   --max-semi-space-size=64   — double default young-gen (faster GC for short-lived objects like API responses)
+#   --optimize-for-size        — prefer smaller compiled code over peak speed (reduces code cache memory)
+CMD ["node", "--max-old-space-size=1536", "--max-semi-space-size=64", "--optimize-for-size", "dist/index.js"]

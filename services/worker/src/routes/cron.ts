@@ -52,6 +52,7 @@ import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
+import { logHeapStatus } from '../utils/heapMonitor.js';
 
 export const cronRouter = Router();
 
@@ -67,6 +68,14 @@ const cronJobsLimiter = rateLimit({
 });
 
 cronRouter.use(cronJobsLimiter);
+
+// Log heap status after every cron job completes (response finish event)
+cronRouter.use((_req, res, next) => {
+  res.on('finish', () => {
+    try { logHeapStatus(`cron:${_req.path}`); } catch { /* diagnostics-only — never fail a cron job */ }
+  });
+  next();
+});
 
 /**
  * Memoized Google OIDC JWKS fetcher (SCRUM-640).

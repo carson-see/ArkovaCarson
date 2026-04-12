@@ -31,7 +31,7 @@ export interface IRateLimitStore {
   readonly size: number;
 }
 
-const RATE_LIMIT_MAX_SIZE = 500_000; // cap to prevent unbounded growth
+const RATE_LIMIT_MAX_SIZE = 50_000; // cap to prevent unbounded growth (reduced from 500K — 50K covers ~800 unique IPs * ~60 paths)
 
 // In-memory store — works for single-instance deployments
 let rateLimitStore: IRateLimitStore = new Map<string, RateLimitEntry>();
