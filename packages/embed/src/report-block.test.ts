@@ -115,6 +115,29 @@ describe('renderReportBlockFromData (no fetch)', () => {
     expect(html).toContain('#dc2626'); // Red for revoked
   });
 
+  it('renders PENDING status correctly (not as Verified)', () => {
+    const pendingData: AnchorData = {
+      ...SAMPLE_DATA,
+      status: 'PENDING',
+      verified: false,
+    };
+    const html = renderReportBlockFromData(pendingData, 'ARK-2026-RPT-001');
+    expect(html).toContain('Pending');
+    expect(html).toContain('#d97706'); // Amber for pending
+    expect(html).not.toContain('#15803d'); // No green
+  });
+
+  it('renders PENDING as not verified in JSON', () => {
+    const pendingData: AnchorData = {
+      ...SAMPLE_DATA,
+      status: 'PENDING',
+      verified: false,
+    };
+    const jsonStr = renderReportBlockFromData(pendingData, 'ARK-001', { format: 'json' });
+    const parsed = JSON.parse(jsonStr);
+    expect(parsed.verified).toBe(false);
+  });
+
   it('hides fingerprint when option disabled', () => {
     const html = renderReportBlockFromData(SAMPLE_DATA, 'ARK-001', {
       showFingerprint: false,

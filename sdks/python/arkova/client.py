@@ -326,7 +326,7 @@ class ArkovaClient:
         fp = self.fingerprint(data)
         try:
             result = self._request(
-                "POST", "/api/v1/verify-anchor", json={"fingerprint": fp}
+                "POST", "/api/verify-anchor", json={"fingerprint": fp}
             )
         except ArkovaError:
             return VerificationResult(verified=False, error="Verification failed")

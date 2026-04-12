@@ -137,11 +137,13 @@ function renderHtmlBlock(
   appBase: string,
   opts: ReportBlockOptions,
 ): string {
+  const isVerified = data.status === 'ACTIVE' || data.status === 'SECURED';
   const isRevoked = data.status === 'REVOKED';
-  const statusColor = isRevoked ? '#dc2626' : '#15803d';
-  const statusBg = isRevoked ? '#fef2f2' : '#f0fdf4';
-  const statusLabel = isRevoked ? 'Revoked' : 'Verified';
-  const statusIcon = isRevoked ? '✕' : '✓';
+  const isPending = !isVerified && !isRevoked;
+  const statusColor = isRevoked ? '#dc2626' : isPending ? '#d97706' : '#15803d';
+  const statusBg = isRevoked ? '#fef2f2' : isPending ? '#fffbeb' : '#f0fdf4';
+  const statusLabel = isRevoked ? 'Revoked' : isPending ? 'Pending' : 'Verified';
+  const statusIcon = isRevoked ? '✕' : isPending ? '⏳' : '✓';
   const credLabel = CREDENTIAL_LABELS[data.credential_type ?? ''] ?? data.credential_type ?? 'Document';
   const brandText = opts.brandingText ?? 'Verified by Arkova';
   const showFp = opts.showFingerprint !== false;
@@ -201,7 +203,7 @@ function renderJsonBlock(
 ): string {
   const result: Record<string, unknown> = {
     public_id: publicId,
-    verified: data.status !== 'REVOKED',
+    verified: data.status === 'ACTIVE' || data.status === 'SECURED',
     status: data.status,
     credential_type: data.credential_type,
     issuer_name: data.issuer_name,
