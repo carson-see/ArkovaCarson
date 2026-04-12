@@ -13,6 +13,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
 
 const router = Router();
 
@@ -139,9 +140,8 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   }
 
   // REG-03: FERPA re-disclosure notice for education credential types
-  const educationTypes = ['DEGREE', 'TRANSCRIPT', 'CERTIFICATE', 'CLE'];
-  if (anchor.credential_type && educationTypes.includes(anchor.credential_type)) {
-    result.ferpa_notice = 'This verification result contains information from education records. Re-disclosure of personally identifiable information to third parties is prohibited under FERPA Section 99.33 unless an exception applies.';
+  if (anchor.credential_type && (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type)) {
+    result.ferpa_notice = FERPA_REDISCLOSURE_NOTICE;
   }
 
   return result;

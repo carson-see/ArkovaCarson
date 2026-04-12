@@ -19,19 +19,7 @@ import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 
 const router = Router();
 
-/** FERPA Section 99.31(a) exception categories (REG-04 / SCRUM-568) */
-const FERPA_EXCEPTION_CATEGORIES = [
-  '99.31(a)(1)', '99.31(a)(2)', '99.31(a)(3)', '99.31(a)(4)',
-  '99.31(a)(5)', '99.31(a)(6)', '99.31(a)(7)', '99.31(a)(8)',
-  '99.31(a)(9)', '99.31(a)(10)', '99.31(a)(11)', '99.31(a)(12)',
-  'other', 'not_applicable',
-] as const;
-
-const INSTITUTION_TYPES = [
-  'k12_school', 'university', 'community_college',
-  'employer', 'government', 'accreditor', 'financial_aid',
-  'research', 'legal', 'healthcare', 'other',
-] as const;
+import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/ferpa.js';
 
 /** Zod schema for key creation */
 const CreateKeySchema = z.object({
@@ -86,7 +74,8 @@ router.post('/', async (req, res) => {
     return;
   }
 
-  const { name, scopes, expires_in_days, ferpa_exception_category, institution_type, access_purpose } = parsed.data;
+  const { name, scopes, expires_in_days, ...ferpaFields } = parsed.data;
+  const { ferpa_exception_category, institution_type, access_purpose } = ferpaFields;
   const hmacSecret = req.hmacSecret;
   if (!hmacSecret) {
     logger.error('API_KEY_HMAC_SECRET not configured');
@@ -130,7 +119,6 @@ router.post('/', async (req, res) => {
         scopes,
         expires_at: expiresAt,
         created_by: userId,
-        // REG-04: FERPA requester identity verification fields
         ferpa_exception_category: ferpa_exception_category ?? null,
         institution_type: institution_type ?? null,
         access_purpose: access_purpose ?? null,

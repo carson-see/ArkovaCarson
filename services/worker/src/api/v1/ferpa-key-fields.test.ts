@@ -1,23 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-
-/**
- * Tests for FERPA requester identity fields on API key provisioning (REG-04 / SCRUM-568).
- * Validates the schema accepts FERPA fields and rejects invalid values.
- */
-
-const FERPA_EXCEPTION_CATEGORIES = [
-  '99.31(a)(1)', '99.31(a)(2)', '99.31(a)(3)', '99.31(a)(4)',
-  '99.31(a)(5)', '99.31(a)(6)', '99.31(a)(7)', '99.31(a)(8)',
-  '99.31(a)(9)', '99.31(a)(10)', '99.31(a)(11)', '99.31(a)(12)',
-  'other', 'not_applicable',
-] as const;
-
-const INSTITUTION_TYPES = [
-  'k12_school', 'university', 'community_college',
-  'employer', 'government', 'accreditor', 'financial_aid',
-  'research', 'legal', 'healthcare', 'other',
-] as const;
+import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/ferpa.js';
 
 const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),

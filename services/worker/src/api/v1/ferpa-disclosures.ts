@@ -13,27 +13,16 @@ import { logger } from '../../utils/logger.js';
 
 const router = Router();
 
+import { FERPA_PARTY_TYPES, FERPA_EXCEPTION_CATEGORIES } from '../../constants/ferpa.js';
+
 // ─── Validation Schemas ──────────────────────────────────────────────────────
-
-const FerpaPartyTypes = [
-  'school_official', 'employer', 'government', 'accreditor',
-  'financial_aid', 'research', 'health_safety', 'subpoena',
-  'directory_info', 'other',
-] as const;
-
-const FerpaExceptionCategories = [
-  '99.31(a)(1)', '99.31(a)(2)', '99.31(a)(3)', '99.31(a)(4)',
-  '99.31(a)(5)', '99.31(a)(6)', '99.31(a)(7)', '99.31(a)(8)',
-  '99.31(a)(9)', '99.31(a)(10)', '99.31(a)(11)', '99.31(a)(12)',
-  'other',
-] as const;
 
 const CreateDisclosureSchema = z.object({
   requesting_party_name: z.string().min(1).max(500),
-  requesting_party_type: z.enum(FerpaPartyTypes).default('other'),
+  requesting_party_type: z.enum(FERPA_PARTY_TYPES).default('other'),
   requesting_party_org: z.string().max(500).optional(),
   legitimate_interest: z.string().min(1).max(2000),
-  disclosure_exception: z.enum(FerpaExceptionCategories).default('other'),
+  disclosure_exception: z.enum(FERPA_EXCEPTION_CATEGORIES).default('other'),
   education_record_ids: z.array(z.string()).min(1),
   student_opt_out_checked: z.boolean().default(false),
   student_consent_obtained: z.boolean().default(false),
@@ -43,8 +32,8 @@ const CreateDisclosureSchema = z.object({
 const ListDisclosuresSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(50),
-  party_type: z.enum(FerpaPartyTypes).optional(),
-  exception: z.enum(FerpaExceptionCategories).optional(),
+  party_type: z.enum(FERPA_PARTY_TYPES).optional(),
+  exception: z.enum(FERPA_EXCEPTION_CATEGORIES).optional(),
   from_date: z.string().optional(),
   to_date: z.string().optional(),
 });
@@ -170,11 +159,14 @@ router.get('/disclosures/export', async (req, res) => {
     const from_date = req.query.from_date as string | undefined;
     const to_date = req.query.to_date as string | undefined;
 
+    const MAX_EXPORT_ROWS = 10000;
+
     let query = db
       .from('ferpa_disclosure_log')
       .select('*')
       .eq('org_id', orgId)
-      .order('disclosed_at', { ascending: false });
+      .order('disclosed_at', { ascending: false })
+      .limit(MAX_EXPORT_ROWS);
 
     if (from_date) query = query.gte('disclosed_at', from_date);
     if (to_date) query = query.lte('disclosed_at', to_date);

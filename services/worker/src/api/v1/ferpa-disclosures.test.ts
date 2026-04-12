@@ -201,6 +201,7 @@ describe('FERPA Disclosure Log API', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockReturnValue({
               gte: vi.fn().mockReturnValue({
                 lte: vi.fn().mockResolvedValue({
                   data: [
@@ -224,6 +225,7 @@ describe('FERPA Disclosure Log API', () => {
                 data: [],
                 error: null,
               }),
+            }),
             }),
           }),
         }),
