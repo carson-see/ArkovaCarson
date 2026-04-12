@@ -122,16 +122,15 @@ export class GeminiProvider implements IAIProvider {
         const timeout = setTimeout(() => controller.abort(), 30_000);
 
         try {
-          // GME-14: Pass Zod-derived JSON Schema for native structured output enforcement.
-          // The schema is typed as our GeminiSchema interface, cast to satisfy SDK types.
-          const responseSchema = getExtractionResponseSchema();
+          // GME-14: Zod-derived JSON Schema available via getExtractionResponseSchema()
+          // for native structured output enforcement. Currently using responseMimeType
+          // only — responseSchema causes over-generation of optional fields on Gemini 3.
+          // Re-enable once Gemini 3 GA handles optional schema fields correctly.
           const model = this.client.getGenerativeModel({
             model: this.modelName,
             systemInstruction: EXTRACTION_SYSTEM_PROMPT,
             generationConfig: {
               responseMimeType: 'application/json',
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              responseSchema: responseSchema as any,
               temperature: 0.1,
             },
           });

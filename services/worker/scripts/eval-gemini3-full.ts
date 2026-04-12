@@ -118,17 +118,17 @@ async function main() {
   const regressions: Array<{ type: string; current: number; baseline: number; delta: number }> = [];
 
   for (const typeMetrics of result.byCredentialType.sort((a, b) => b.weightedF1 - a.weightedF1)) {
-    const baseline = BASELINE_METRICS[typeMetrics.credentialType] ?? 0;
+    const baseline = BASELINE_METRICS[typeMetrics.scope] ?? BASELINE_METRICS[typeMetrics.scope.toUpperCase()] ?? 0;
     const current = typeMetrics.weightedF1 * 100;
     const delta = current - baseline;
     const status = delta < -REGRESSION_THRESHOLD_PP ? 'REGRESSION' : delta > REGRESSION_THRESHOLD_PP ? 'IMPROVED' : 'OK';
 
     console.log(
-      `  ${typeMetrics.credentialType.padEnd(22)}| ${current.toFixed(1).padStart(5)}% | ${String(typeMetrics.entryCount).padStart(4)} | ${baseline.toFixed(1).padStart(7)}% | ${(delta >= 0 ? '+' : '') + delta.toFixed(1).padStart(5)}pp | ${status}`,
+      `  ${typeMetrics.scope.padEnd(22)}| ${current.toFixed(1).padStart(5)}% | ${String(typeMetrics.totalEntries).padStart(4)} | ${baseline.toFixed(1).padStart(7)}% | ${(delta >= 0 ? '+' : '') + delta.toFixed(1).padStart(5)}pp | ${status}`,
     );
 
     if (delta < -REGRESSION_THRESHOLD_PP) {
-      regressions.push({ type: typeMetrics.credentialType, current, baseline, delta });
+      regressions.push({ type: typeMetrics.scope, current, baseline, delta });
     }
   }
   console.log('');
@@ -147,9 +147,10 @@ async function main() {
 
   // ECE calibration
   const calibration = analyzeCalibration(result.entryResults);
+  const eceValue = isNaN(calibration.ece) ? 0 : calibration.ece;
   console.log('=== Confidence Calibration (ECE) ===');
-  console.log(`  ECE: ${(calibration.ece * 100).toFixed(1)}% (target: <15%)`);
-  console.log(`  ${calibration.ece < 0.15 ? '✓ PASS' : '✗ FAIL — calibration needs improvement'}`);
+  console.log(`  ECE: ${(eceValue * 100).toFixed(1)}% (target: <15%)`);
+  console.log(`  ${eceValue < 0.15 ? '✓ PASS' : '✗ FAIL — calibration needs improvement'}`);
   console.log('');
 
   // Compare with previous results if provided
