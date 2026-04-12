@@ -1,9 +1,12 @@
 # Story Group 27: Nessie Compliance Engine — From Intelligence Model to "Compliance Copilot"
 
-> **Created:** 2026-04-09 | **Epic:** Nessie Compliance Engine (NCE)
+> **Created:** 2026-04-09 | **Updated:** 2026-04-12 (NCE-01–05 code complete)
+> **Epic:** Nessie Compliance Engine (NCE)
 > **Jira Epic:** SCRUM-590 | **Stories:** SCRUM-591–611 | **Priority:** P0 — Strategic
 > **Depends on:** NMT-07 (intelligence pipeline), Phase 1.5 RAG infrastructure, 320K+ public records corpus
 > **Strategy docs:** Arkova-Verified-Intelligence-SLM-Analysis, Strategic Blueprint — The Immutable Compliance Fabric, Verification Bootstrap Strategy
+>
+> **Phase 1 Status (2026-04-12):** NCE-01 through NCE-05 CODE COMPLETE. Embedding pipeline verified, Gemini Golden v2 finetune script validated (1,605 entries), intelligence distillation pipeline ready (5 domains × 5 task types), fine-tune config documented, eval benchmark expanded to 100 entries across 5 domains. 31 new tests passing.
 
 ---
 
