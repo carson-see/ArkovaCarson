@@ -32,6 +32,7 @@ vi.mock('./useAuth', () => ({
 }));
 
 import { renderHook, act, waitFor } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 import { useEntitlements } from './useEntitlements';
 
 // Helper to set up mock chain for subscription + plan + count queries
@@ -99,7 +100,7 @@ describe('useEntitlements', () => {
   it('should return unlimited for all users during beta', async () => {
     setupMocks({ count: 0 });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -117,7 +118,7 @@ describe('useEntitlements', () => {
       count: 42,
     });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -131,7 +132,7 @@ describe('useEntitlements', () => {
   it('should never block creation during beta', async () => {
     setupMocks({ count: 99999 });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -146,7 +147,7 @@ describe('useEntitlements', () => {
       count: 8,
     });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -162,7 +163,7 @@ describe('useEntitlements', () => {
       count: 500,
     });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -176,7 +177,7 @@ describe('useEntitlements', () => {
   it('canCreateCount should always return true during beta', async () => {
     setupMocks({ count: 1 });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -192,7 +193,7 @@ describe('useEntitlements', () => {
       count: 5000,
     });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -206,7 +207,7 @@ describe('useEntitlements', () => {
       count: 0,
     });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -217,7 +218,7 @@ describe('useEntitlements', () => {
   it('should handle no user (logged out)', async () => {
     mockUser.current = null;
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -229,7 +230,7 @@ describe('useEntitlements', () => {
   it('should set error on subscription fetch failure', async () => {
     setupMocks({ subError: new Error('Network error') });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -239,7 +240,7 @@ describe('useEntitlements', () => {
   it('should stay unlimited on fetch error during beta', async () => {
     setupMocks({ subError: new Error('DB connection lost') });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
@@ -252,7 +253,7 @@ describe('useEntitlements', () => {
   it('refresh should re-fetch entitlements', async () => {
     setupMocks({ count: 0 });
 
-    const { result } = renderHook(() => useEntitlements());
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.recordsUsed).toBe(0);
@@ -264,7 +265,8 @@ describe('useEntitlements', () => {
       await result.current.refresh();
     });
 
-    expect(result.current.recordsUsed).toBe(2);
+    // React Query refetch is async — wait for the new data
+    await waitFor(() => expect(result.current.recordsUsed).toBe(2));
   });
 
   // H5: Realtime subscription removed — plan changes are rare during beta.
@@ -273,7 +275,7 @@ describe('useEntitlements', () => {
     it('does not subscribe to subscription changes', async () => {
       setupMocks({ count: 0 });
 
-      renderHook(() => useEntitlements());
+      renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
       await waitFor(() => {
         expect(mockChannel.on).not.toHaveBeenCalled();
@@ -286,7 +288,7 @@ describe('useEntitlements', () => {
       mockChannel.on.mockClear();
       mockChannel.subscribe.mockClear();
 
-      renderHook(() => useEntitlements());
+      renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
       await waitFor(() => {
         expect(mockChannel.on).not.toHaveBeenCalled();

@@ -10,7 +10,7 @@
  * AUDIT-07: RouteErrorBoundary wraps route sections for graceful sub-route errors.
  */
 
-import React, { Suspense } from 'react';
+import React, { Suspense, useEffect } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
@@ -26,6 +26,7 @@ import { RouteGuard } from '@/components/auth/RouteGuard';
 import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/layout/RouteErrorBoundary';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
+import { prefetchCriticalRoutes } from '@/lib/prefetch';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
 const LoginPage = React.lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -144,6 +145,11 @@ export function isSearchSubdomain(): boolean {
 export function App() {
   // Apply theme at app root so all routes (including public/auth) get dark mode
   useTheme();
+
+  // PERF-11: Prefetch critical routes during idle time after initial render
+  useEffect(() => {
+    prefetchCriticalRoutes();
+  }, []);
 
   // VAI-04: Auditor mode state
   const auditorMode = useAuditorModeState();

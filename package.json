@@ -20,7 +20,8 @@
     "test:rls": "vitest run --config vitest.config.rls.ts",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
-    "test:load": "vitest run tests/load"
+    "test:load": "vitest run tests/load",
+    "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
@@ -89,6 +90,7 @@
     "globals": "^17.4.0",
     "jsdom": "^24.1.0",
     "postcss": "^8.4.32",
+    "rollup-plugin-visualizer": "^7.0.1",
     "supabase": "^2.78.1",
     "tailwindcss": "^3.4.0",
     "tsx": "^4.7.0",

@@ -8,6 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 
 const mockOrder = vi.hoisted(() => vi.fn());
 const mockLimit = vi.hoisted(() => vi.fn());
@@ -33,7 +34,7 @@ describe('useOrgMembers', () => {
   });
 
   it('returns empty members and stops loading when no orgId', async () => {
-    const { result } = renderHook(() => useOrgMembers(null));
+    const { result } = renderHook(() => useOrgMembers(null), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -57,7 +58,7 @@ describe('useOrgMembers', () => {
 
     mockLimit.mockResolvedValue({ data: mockProfiles, error: null });
 
-    const { result } = renderHook(() => useOrgMembers('org-1'));
+    const { result } = renderHook(() => useOrgMembers('org-1'), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -81,7 +82,7 @@ describe('useOrgMembers', () => {
       error: { message: 'Permission denied' },
     });
 
-    const { result } = renderHook(() => useOrgMembers('org-1'));
+    const { result } = renderHook(() => useOrgMembers('org-1'), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);

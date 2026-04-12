@@ -46,27 +46,27 @@ router.post('/', async (req: Request, res: Response) => {
   const { strippedText, credentialType, fingerprint, issuerHint } = parsed.data;
 
   try {
-    // Get org_id from profile
-    const { data: profile } = await db
-      .from('profiles')
-      .select('org_id')
-      .eq('id', userId)
-      .single();
+    // Parallel: fetch profile + check extraction cache simultaneously
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [profileResult, cacheResult] = await Promise.all([
+      db.from('profiles').select('org_id').eq('id', userId).single(),
+      (db as any)
+        .from('ai_usage_events')
+        .select('result_json, confidence')
+        .eq('fingerprint', fingerprint)
+        .eq('event_type', 'extraction')
+        .eq('success', true)
+        .not('result_json', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1),
+    ]);
 
+    const profile = profileResult.data;
     const orgId = profile?.org_id ?? undefined;
 
     // EFF-1: Check for cached extraction result by fingerprint before calling AI.
     // Saves ~30% of extraction costs from re-uploads, shared documents, error retries.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: cachedResult } = await (db as any)
-      .from('ai_usage_events')
-      .select('result_json, confidence')
-      .eq('fingerprint', fingerprint)
-      .eq('event_type', 'extraction')
-      .eq('success', true)
-      .not('result_json', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1);
+    const cachedResult = cacheResult.data;
 
     if (cachedResult && cachedResult.length > 0 && cachedResult[0].result_json) {
       logger.info(

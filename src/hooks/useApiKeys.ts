@@ -4,10 +4,13 @@
  * Manages API key CRUD via the worker Verification API endpoints.
  * Keys are created server-side with HMAC-SHA256 hashing.
  * Raw key is returned once at creation and never stored.
+ * Uses React Query for caching and deduplication.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { workerFetch } from '@/lib/workerClient';
+import { queryKeys } from '@/lib/queryClient';
 import { useAuth } from './useAuth';
 
 export interface ApiKeyMasked {
@@ -36,34 +39,55 @@ export interface ApiUsageData {
   keys: Array<{ key_prefix: string; name: string; used: number }>;
 }
 
+async function fetchKeysData(): Promise<ApiKeyMasked[]> {
+  const res = await workerFetch('/api/v1/keys');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Failed to fetch keys (${res.status})`);
+  }
+  const { keys } = await res.json();
+  return keys ?? [];
+}
+
+async function fetchUsageData(): Promise<ApiUsageData> {
+  const res = await workerFetch('/api/v1/usage');
+  if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      return {
+        used: 0,
+        limit: 'unlimited',
+        remaining: 'unlimited',
+        reset_date: new Date().toISOString(),
+        month: new Date().toISOString().slice(0, 7),
+        keys: [],
+      };
+    }
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Failed to fetch usage (${res.status})`);
+  }
+  return await res.json() as ApiUsageData;
+}
+
 export function useApiKeys() {
   const { user } = useAuth();
-  const [keys, setKeys] = useState<ApiKeyMasked[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchKeys = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await workerFetch('/api/v1/keys');
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `Failed to fetch keys (${res.status})`);
-      }
-      const { keys: fetchedKeys } = await res.json();
-      setKeys(fetchedKeys ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch API keys');
-    } finally {
-      setLoading(false);
+  const {
+    data: keys = [],
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.apiKeys(user?.id ?? ''),
+    queryFn: fetchKeysData,
+    enabled: !!user,
+    staleTime: 30_000,
+  });
+
+  const refresh = useCallback(async () => {
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiKeys(user.id) });
     }
-  }, [user]);
-
-  useEffect(() => {
-    fetchKeys();
-  }, [fetchKeys]);
+  }, [user, qc]);
 
   const createKey = useCallback(async (
     name: string,
@@ -84,9 +108,11 @@ export function useApiKeys() {
     }
 
     const created = await res.json();
-    await fetchKeys();
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiKeys(user.id) });
+    }
     return created as ApiKeyCreated;
-  }, [fetchKeys]);
+  }, [user, qc]);
 
   const revokeKey = useCallback(async (keyId: string) => {
     const res = await workerFetch(`/api/v1/keys/${keyId}`, {
@@ -99,8 +125,10 @@ export function useApiKeys() {
       throw new Error(parsed.error ?? 'Failed to revoke key');
     }
 
-    await fetchKeys();
-  }, [fetchKeys]);
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiKeys(user.id) });
+    }
+  }, [user, qc]);
 
   const deleteKey = useCallback(async (keyId: string) => {
     const res = await workerFetch(`/api/v1/keys/${keyId}`, {
@@ -112,52 +140,47 @@ export function useApiKeys() {
       throw new Error(parsed.error ?? 'Failed to delete key');
     }
 
-    await fetchKeys();
-  }, [fetchKeys]);
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiKeys(user.id) });
+    }
+  }, [user, qc]);
 
-  return { keys, loading, error, createKey, revokeKey, deleteKey, refresh: fetchKeys };
+  return {
+    keys,
+    loading: !user ? false : loading,
+    error: queryError ? (queryError as Error).message : null,
+    createKey,
+    revokeKey,
+    deleteKey,
+    refresh,
+  };
 }
 
 export function useApiUsage() {
   const { user } = useAuth();
-  const [usage, setUsage] = useState<ApiUsageData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchUsage = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await workerFetch('/api/v1/usage');
-      if (!res.ok) {
-        // 401/403: session expired or insufficient permissions — show empty usage instead of error
-        if (res.status === 401 || res.status === 403) {
-          setUsage({
-            used: 0,
-            limit: 'unlimited',
-            remaining: 'unlimited',
-            reset_date: new Date().toISOString(),
-            month: new Date().toISOString().slice(0, 7),
-            keys: [],
-          });
-          return;
-        }
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `Failed to fetch usage (${res.status})`);
-      }
-      const data = await res.json();
-      setUsage(data as ApiUsageData);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch usage');
-    } finally {
-      setLoading(false);
+  const {
+    data: usage = null,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.apiUsage(user?.id ?? ''),
+    queryFn: fetchUsageData,
+    enabled: !!user,
+    staleTime: 30_000,
+  });
+
+  const refresh = useCallback(async () => {
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.apiUsage(user.id) });
     }
-  }, [user]);
+  }, [user, qc]);
 
-  useEffect(() => {
-    fetchUsage();
-  }, [fetchUsage]);
-
-  return { usage, loading, error, refresh: fetchUsage };
+  return {
+    usage,
+    loading: !user ? false : loading,
+    error: queryError ? (queryError as Error).message : null,
+    refresh,
+  };
 }

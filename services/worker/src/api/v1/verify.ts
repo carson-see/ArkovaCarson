@@ -13,6 +13,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 
 const router = Router();
 
@@ -210,6 +211,29 @@ router.get('/:publicId', async (req, res) => {
   }
 
   try {
+    // PERF-12: Check Redis cache first
+    const cached = await getCachedVerification<VerificationResult>(publicId);
+    if (cached) {
+      // Fire-and-forget audit log for cached responses too
+      void db.from('audit_events').insert({
+        event_type: 'VERIFICATION_QUERIED',
+        event_category: 'ANCHOR',
+        target_type: 'anchor',
+        target_id: publicId,
+        details: JSON.stringify({
+          verified: cached.verified,
+          status: cached.status,
+          credential_type: cached.credential_type ?? null,
+          querying_ip: req.ip ?? null,
+          querying_agent: req.headers['user-agent']?.substring(0, 200) ?? null,
+          api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
+          cache_hit: true,
+        }),
+      });
+      res.json(cached);
+      return;
+    }
+
     const lookup = (req as unknown as { _testLookup?: PublicIdLookup })._testLookup ?? defaultLookup;
     const anchor = await lookup.lookupByPublicId(publicId);
 
@@ -222,6 +246,9 @@ router.get('/:publicId', async (req, res) => {
     }
 
     const result = buildVerificationResult(anchor);
+
+    // PERF-12: Cache the result (fire-and-forget)
+    void setCachedVerification(publicId, result);
 
     // PH2-AGENT-01: Log verification to audit trail (fire-and-forget)
     void db.from('audit_events').insert({

@@ -3,13 +3,16 @@
  *
  * Fetches the current user's subscription and plan data from Supabase.
  * Provides billing state for BillingOverview.
+ * Uses React Query for caching and deduplication.
  *
  * @see P7-TS-02
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { workerPostForUrl } from '../lib/workerClient';
+import { queryKeys } from '../lib/queryClient';
 import { useAuth } from './useAuth';
 import type { Database } from '../types/database.types';
 
@@ -33,109 +36,92 @@ interface BillingActions {
   refresh: () => Promise<void>;
 }
 
+interface BillingData {
+  subscription: Subscription | null;
+  plan: Plan | null;
+  plans: Plan[];
+}
+
+async function fetchBillingData(userId: string): Promise<BillingData> {
+  // Fetch all available plans
+  const { data: plansData, error: plansError } = await supabase
+    .from('plans')
+    .select('*')
+    .order('price_cents', { ascending: true });
+
+  if (plansError) throw plansError;
+  const plans = plansData ?? [];
+
+  // Fetch user's subscription
+  const { data: subData, error: subError } = await supabase
+    .from('subscriptions')
+    .select('*')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (subError) throw subError;
+
+  // Determine current plan
+  let plan: Plan | null = null;
+  if (subData?.plan_id) {
+    plan = plans.find(p => p.id === subData.plan_id) ?? null;
+  }
+  if (!plan) {
+    plan = plans.find(p => p.price_cents === 0) ?? null;
+  }
+
+  return { subscription: subData, plan, plans };
+}
+
 export function useBilling(): BillingState & BillingActions {
   const { user } = useAuth();
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [plans, setPlans] = useState<Plan[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchBilling = useCallback(async () => {
-    if (!user) {
-      setSubscription(null);
-      setPlan(null);
-      setPlans([]);
-      setLoading(false);
-      return;
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.billing(user?.id ?? ''),
+    queryFn: () => fetchBillingData(user!.id),
+    enabled: !!user,
+    staleTime: 60_000,
+  });
+
+  const error = queryError ? (queryError as Error).message : null;
+
+  const refresh = useCallback(async () => {
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.billing(user.id) });
     }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Fetch all available plans
-      const { data: plansData, error: plansError } = await supabase
-        .from('plans')
-        .select('*')
-        .order('price_cents', { ascending: true });
-
-      if (plansError) throw plansError;
-      setPlans(plansData ?? []);
-
-      // Fetch user's subscription
-      const { data: subData, error: subError } = await supabase
-        .from('subscriptions')
-        .select('*')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (subError) throw subError;
-      setSubscription(subData);
-
-      // Fetch the user's current plan
-      if (subData?.plan_id) {
-        const currentPlan = plansData?.find(p => p.id === subData.plan_id) ?? null;
-        setPlan(currentPlan);
-      } else {
-        // Default to free plan
-        const freePlan = plansData?.find(p => p.price_cents === 0) ?? null;
-        setPlan(freePlan);
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to load billing data';
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchBilling();
-  }, [fetchBilling]);
+  }, [user, qc]);
 
   const startCheckout = useCallback(async (planId: string): Promise<string | null> => {
-    if (!user) {
-      setError('You must be signed in to subscribe');
-      return null;
-    }
-
-    setError(null);
-
+    if (!user) return null;
     try {
       return await workerPostForUrl('/api/checkout/session', { planId });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to start checkout';
-      setError(message);
+    } catch {
       return null;
     }
   }, [user]);
 
   const openBillingPortal = useCallback(async (): Promise<string | null> => {
-    if (!user) {
-      setError('You must be signed in to manage billing');
-      return null;
-    }
-
-    setError(null);
-
+    if (!user) return null;
     try {
       return await workerPostForUrl('/api/billing/portal', {});
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to open billing portal';
-      setError(message);
+    } catch {
       return null;
     }
   }, [user]);
 
   return {
-    subscription,
-    plan,
-    plans,
-    loading,
+    subscription: data?.subscription ?? null,
+    plan: data?.plan ?? null,
+    plans: data?.plans ?? [],
+    loading: !user ? false : loading,
     error,
     startCheckout,
     openBillingPortal,
-    refresh: fetchBilling,
+    refresh,
   };
 }
