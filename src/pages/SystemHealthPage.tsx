@@ -423,9 +423,9 @@ export function SystemHealthPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Heap Total</span>
+                  <span className="text-muted-foreground">Heap Limit</span>
                   <span className="font-mono text-sm">
-                    {health.memory.heapTotalMB.toFixed(1)} MB
+                    {(health.memory.heapLimitMB ?? health.memory.heapTotalMB).toFixed(1)} MB
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
@@ -434,17 +434,39 @@ export function SystemHealthPage() {
                     {health.memory.rssMB.toFixed(1)} MB
                   </span>
                 </div>
-                {health.memory.heapTotalMB > 0 && (
-                  <div className="pt-2 border-t">
-                    <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-                      <span>Heap Utilization</span>
-                      <span>{((health.memory.heapUsedMB / health.memory.heapTotalMB) * 100).toFixed(0)}%</span>
+                {(() => {
+                  const limit = health.memory.heapLimitMB ?? health.memory.heapTotalMB;
+                  const pct = health.memory.heapUtilizationPct ?? (limit > 0 ? (health.memory.heapUsedMB / limit) * 100 : 0);
+                  const barColor = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-yellow-500' : 'bg-primary';
+                  return limit > 0 ? (
+                    <div className="pt-2 border-t">
+                      <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                        <span>Heap Utilization</span>
+                        <span>{pct.toFixed(0)}%</span>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${barColor} transition-all`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                      </div>
                     </div>
-                    <div className="h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-primary transition-all"
-                        style={{ width: `${Math.min((health.memory.heapUsedMB / health.memory.heapTotalMB) * 100, 100)}%` }}
-                      />
+                  ) : null;
+                })()}
+                {health.stores && (
+                  <div className="pt-2 border-t space-y-1">
+                    <div className="text-xs text-muted-foreground font-medium">In-Memory Stores</div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Rate Limit</span>
+                      <span className="font-mono">{health.stores.rateLimitEntries.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Idempotency</span>
+                      <span className="font-mono">{health.stores.idempotencyEntries.toLocaleString()}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Circuit Breaker</span>
+                      <span className="font-mono">{health.stores.circuitBreakerEntries.toLocaleString()}</span>
                     </div>
                   </div>
                 )}
