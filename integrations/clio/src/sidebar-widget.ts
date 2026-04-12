@@ -11,8 +11,8 @@
 
 import type { ClioConfig, ClioDocument, ClioAnchorResult } from './types';
 import { ClioConnector } from './connector';
-
-const ARKOVA_DEFAULT_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+import { computeFingerprint } from '../../shared/src/fingerprint';
+import { ARKOVA_DEFAULT_URL } from '../../shared/src/constants';
 
 export class ClioSidebarWidget {
   private readonly connector: ClioConnector;
@@ -36,15 +36,18 @@ export class ClioSidebarWidget {
     documentId: number,
     options?: { credentialType?: string; description?: string },
   ): Promise<ClioAnchorResult> {
-    // 1. Download document content from Clio
-    const content = await this.connector.downloadDocument(documentId);
+    // 1. Download document + get metadata in parallel (skip metadata if description provided)
+    const needsMeta = !options?.description;
+    const [content, doc] = await Promise.all([
+      this.connector.downloadDocument(documentId),
+      needsMeta ? this.connector.getDocument(documentId) : Promise.resolve(null),
+    ]);
 
     // 2. Compute SHA-256 fingerprint client-side
     const fingerprint = await computeFingerprint(content);
 
-    // 3. Get document metadata for description
-    const doc = await this.connector.getDocument(documentId);
-    const description = options?.description ?? `Clio document: ${doc.data.name}`;
+    // 3. Use provided description or document name
+    const description = options?.description ?? `Clio document: ${doc?.data.name ?? 'Unknown'}`;
 
     // 4. Submit fingerprint to Arkova (document never sent)
     const body: Record<string, string> = { fingerprint };
@@ -151,12 +154,3 @@ export class ClioSidebarWidget {
   }
 }
 
-/**
- * Compute SHA-256 fingerprint of an ArrayBuffer.
- * Uses Web Crypto API (available in browsers and Node.js 16+).
- */
-async function computeFingerprint(data: ArrayBuffer): Promise<string> {
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
-}

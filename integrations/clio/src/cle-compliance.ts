@@ -9,8 +9,7 @@
  */
 
 import type { CleStatus } from './types';
-
-const ARKOVA_DEFAULT_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
+import { ARKOVA_DEFAULT_URL } from '../../shared/src/constants';
 
 /** CLE requirements by jurisdiction (from Arkova CLE database) */
 export const CLE_REQUIREMENTS: Record<

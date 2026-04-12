@@ -51,14 +51,8 @@ const parsePayload = (z: any, bundle: any) => {
   ];
 };
 
-const performList = async (z: any, bundle: any) => {
-  // Polling fallback for testing in Zapier editor
-  const response = await z.request({
-    url: `${BASE_URL}/api/v1/verify/batch`,
-    method: 'POST',
-    headers: { 'X-API-Key': bundle.authData.apiKey },
-    body: { public_ids: [] },
-  });
+const performList = async (_z: any, _bundle: any) => {
+  // Polling fallback: return sample data for the Zapier editor
   return [
     {
       id: 'sample-1',

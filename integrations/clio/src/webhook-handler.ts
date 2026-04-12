@@ -106,9 +106,16 @@ export class ClioWebhookHandler {
       ['sign'],
     );
     const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(payload));
-    const computed = Array.from(new Uint8Array(sig))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    return computed === signature;
+    const computedBytes = new Uint8Array(sig);
+    const expectedBytes = new Uint8Array(
+      (signature.match(/.{2}/g) ?? []).map((h) => parseInt(h, 16)),
+    );
+    if (computedBytes.length !== expectedBytes.length) return false;
+    // Constant-time comparison to prevent timing attacks
+    let diff = 0;
+    for (let i = 0; i < computedBytes.length; i++) {
+      diff |= computedBytes[i] ^ expectedBytes[i];
+    }
+    return diff === 0;
   }
 }

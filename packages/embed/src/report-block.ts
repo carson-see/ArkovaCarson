@@ -42,22 +42,34 @@ const DEFAULT_APP_BASE = 'https://app.arkova.ai';
 const FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
+/**
+ * Credential type labels — kept in sync with render.ts and src/lib/copy.ts.
+ * The embed package cannot import from the main app (zero dependencies).
+ */
 const CREDENTIAL_LABELS: Record<string, string> = {
   DEGREE: 'Degree',
-  LICENSE: 'Professional License',
+  LICENSE: 'License',
   CERTIFICATE: 'Certificate',
-  TRANSCRIPT: 'Academic Transcript',
+  TRANSCRIPT: 'Transcript',
   PROFESSIONAL: 'Professional Credential',
   CLE: 'CLE Credit',
+  BADGE: 'Digital Badge',
+  ATTESTATION: 'Attestation',
   FINANCIAL: 'Financial Document',
   LEGAL: 'Legal Document',
   INSURANCE: 'Insurance Certificate',
   SEC_FILING: 'SEC Filing',
   PATENT: 'Patent',
+  REGULATION: 'Regulation',
+  PUBLICATION: 'Publication',
+  CHARITY: 'Charity',
+  FINANCIAL_ADVISOR: 'Financial Advisor',
+  BUSINESS_ENTITY: 'Business Entity',
   RESUME: 'Resume / CV',
   MEDICAL: 'Medical Record',
+  MILITARY: 'Military Record',
   IDENTITY: 'Identity Document',
-  OTHER: 'Document',
+  OTHER: 'Other',
 };
 
 /**
@@ -136,6 +148,7 @@ function renderHtmlBlock(
   publicId: string,
   appBase: string,
   opts: ReportBlockOptions,
+  isPdf = false,
 ): string {
   const isRevoked = data.status === 'REVOKED';
   const statusColor = isRevoked ? '#dc2626' : '#15803d';
@@ -146,6 +159,7 @@ function renderHtmlBlock(
   const brandText = opts.brandingText ?? 'Verified by Arkova';
   const showFp = opts.showFingerprint !== false;
   const showReceipt = opts.showNetworkReceipt !== false;
+  const maxWidthStyle = isPdf ? 'max-width:100%;width:480px;page-break-inside:avoid' : 'max-width:480px';
 
   const rows: string[] = [];
   if (data.filename) rows.push(detailRow('Document', escapeHtml(data.filename)));
@@ -160,7 +174,7 @@ function renderHtmlBlock(
     rows.push(detailRow('Network Receipt', receiptDisplay));
   }
 
-  return `<div style="font-family:${FONT_STACK};max-width:480px;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;background:#fff;color:#111827;line-height:1.5;">
+  return `<div style="font-family:${FONT_STACK};${maxWidthStyle};border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;background:#fff;color:#111827;line-height:1.5;">
   <div style="padding:12px 16px;background:${statusBg};display:flex;align-items:center;gap:8px;">
     <span style="color:${statusColor};font-size:18px;font-weight:bold;">${statusIcon}</span>
     <span style="font-size:16px;font-weight:600;color:${statusColor};">${statusLabel}</span>
@@ -185,12 +199,7 @@ function renderPdfBlock(
   appBase: string,
   opts: ReportBlockOptions,
 ): string {
-  // PDF format: same as HTML but with print-optimized styles
-  // - Explicit page-break-inside: avoid
-  // - Full width for PDF rendering
-  const html = renderHtmlBlock(data, publicId, appBase, opts);
-  return html
-    .replace('max-width:480px', 'max-width:100%;width:480px;page-break-inside:avoid');
+  return renderHtmlBlock(data, publicId, appBase, opts, true);
 }
 
 function renderJsonBlock(

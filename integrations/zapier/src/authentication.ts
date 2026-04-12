@@ -29,5 +29,9 @@ export const authentication = {
     }
     return { status: 'authenticated' };
   },
-  connectionLabel: 'Arkova ({{bundle.authData.apiKey}})',
+  connectionLabel: (z: any, bundle: any) => {
+    const key = bundle.authData?.apiKey ?? '';
+    const masked = key.length > 8 ? `${key.slice(0, 6)}...${key.slice(-4)}` : '****';
+    return `Arkova (${masked})`;
+  },
 };
