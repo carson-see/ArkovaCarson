@@ -14,8 +14,8 @@ import type {
   CandidateVerificationSummary,
 } from './types';
 import { BullhornConnector } from './connector';
-import { computeFingerprint } from '../../shared/src/fingerprint';
-import { ARKOVA_DEFAULT_URL } from '../../shared/src/constants';
+
+const ARKOVA_DEFAULT_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
 
 export class CandidateVerificationTab {
   private readonly connector: BullhornConnector;
@@ -68,10 +68,7 @@ export class CandidateVerificationTab {
       .map((c) => c.arkovaPublicId)
       .filter((id): id is string => !!id);
 
-    // Batch verify in chunks of 20 (sync limit)
-    const BATCH_LIMIT = 20;
-    for (let offset = 0; offset < publicIds.length; offset += BATCH_LIMIT) {
-      const chunk = publicIds.slice(offset, offset + BATCH_LIMIT);
+    if (publicIds.length > 0) {
       try {
         const response = await fetch(`${this.arkovaBaseUrl}/api/v1/verify/batch`, {
           method: 'POST',
@@ -79,13 +76,13 @@ export class CandidateVerificationTab {
             'Content-Type': 'application/json',
             'X-API-Key': this.arkovaApiKey,
           },
-          body: JSON.stringify({ public_ids: chunk }),
+          body: JSON.stringify({ public_ids: publicIds.slice(0, 20) }),
         });
 
         if (response.ok) {
           const data = (await response.json()) as { results: Array<{ verified: boolean; status: string }> };
           for (let i = 0; i < data.results.length; i++) {
-            const cred = credentials.find((c) => c.arkovaPublicId === chunk[i]);
+            const cred = credentials.find((c) => c.arkovaPublicId === publicIds[i]);
             if (cred) {
               const r = data.results[i];
               cred.arkovaStatus = r.status as BullhornCredential['arkovaStatus'];
@@ -93,7 +90,7 @@ export class CandidateVerificationTab {
           }
         }
       } catch {
-        // If batch verify fails for this chunk, leave statuses as PENDING
+        // If batch verify fails, leave statuses as PENDING
       }
     }
 
@@ -228,3 +225,9 @@ function parseStoredVerifications(
   }
 }
 
+/** Compute SHA-256 fingerprint via Web Crypto API */
+async function computeFingerprint(data: ArrayBuffer): Promise<string> {
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
