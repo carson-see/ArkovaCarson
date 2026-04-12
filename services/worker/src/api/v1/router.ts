@@ -71,6 +71,8 @@ import { complianceScoreRouter } from './compliance-score.js';
 import { complianceGapRouter } from './compliance-gap.js';
 import { complianceCrossRefRouter } from './compliance-cross-ref.js';
 import { complianceHistoryRouter } from './compliance-history.js';
+import { complianceBenchmarkRouter } from './compliance-benchmark.js';
+import { complianceReportRouter } from './compliance-report.js';
 // Identity & org verification routers moved to index.ts (not behind feature gate)
 
 const router = Router();
@@ -338,5 +340,9 @@ router.use('/compliance/gap-analysis', requireAuth, aiRateLimiter, complianceGap
 router.use('/compliance/cross-reference', requireAuth, aiRateLimiter, complianceCrossRefRouter);
 // Score history — JWT auth required (NCE-16)
 router.use('/compliance/history', requireAuth, aiRateLimiter, complianceHistoryRouter);
+// Industry benchmarking — JWT auth required (NCE-17)
+router.use('/compliance/benchmark', requireAuth, aiRateLimiter, complianceBenchmarkRouter);
+// Audit-ready report — JWT auth required (NCE-18)
+router.use('/compliance/report', requireAuth, batchRateLimiter, complianceReportRouter);
 
 export { router as apiV1Router };
