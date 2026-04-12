@@ -32,7 +32,7 @@ Usage:
 """
 
 import hashlib
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 from urllib.parse import quote
 
 import httpx
@@ -423,7 +423,7 @@ class ArkovaClient:
         json: Optional[Dict[str, object]] = None,
         params: Optional[Dict[str, str]] = None,
         expect_no_content: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> Dict:
         """Internal HTTP request wrapper with error handling."""
         response = self._client.request(method, path, json=json, params=params)
 
