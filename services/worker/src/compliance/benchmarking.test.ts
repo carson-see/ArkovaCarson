@@ -12,10 +12,11 @@ describe('computeBenchmark', () => {
       peerScores: [60, 65, 70, 80, 85, 90, 95],
     };
     const result = computeBenchmark(input);
-    expect(result.percentile).toBeGreaterThan(0);
-    expect(result.percentile).toBeLessThanOrEqual(100);
-    expect(result.industry_average).toBeGreaterThan(0);
-    expect(result.top_quartile_threshold).toBeGreaterThanOrEqual(result.industry_average);
+    expect(result).not.toBeNull();
+    expect(result!.percentile).toBeGreaterThan(0);
+    expect(result!.percentile).toBeLessThanOrEqual(100);
+    expect(result!.industry_average).toBeGreaterThan(0);
+    expect(result!.top_quartile_threshold).toBeGreaterThanOrEqual(result!.industry_average);
   });
 
   it('returns null when fewer than 5 peers (privacy threshold)', () => {

@@ -10,6 +10,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -29,31 +30,18 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { jurisdiction, industry, days } = parsed.data;
 
   try {
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
-
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
     const since = new Date(Date.now() - days * 86_400_000).toISOString();
 
     let query = dbAny
       .from('compliance_scores')
       .select('score, grade, jurisdiction_code, industry_code, last_calculated, present_documents, missing_documents')
-      .eq('org_id', membership.org_id)
+      .eq('org_id', orgId)
       .gte('last_calculated', since)
       .order('last_calculated', { ascending: false });
 

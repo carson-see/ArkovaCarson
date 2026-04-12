@@ -5,41 +5,35 @@
  * from the worker API for the current user's org.
  */
 
-import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabase';
-
-interface PresentDocument {
-  type: string;
-  anchor_id: string;
-  status: string;
-  title: string | null;
-  integrity_score: number | null;
-  expiry_date: string | null;
-}
-
-interface MissingDocument {
-  type: string;
-  requirement: string;
-  regulatory_reference: string | null;
-  score_impact: number;
-}
-
-interface ExpiringDocument {
-  type: string;
-  anchor_id: string;
-  title: string | null;
-  expiry_date: string;
-  days_remaining: number;
-}
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import { workerFetch, WORKER_URL } from '@/lib/workerClient';
 
 export interface ComplianceScoreData {
   score: number;
   grade: string;
   jurisdiction: string;
   industry: string;
-  present_documents: PresentDocument[];
-  missing_documents: MissingDocument[];
-  expiring_documents: ExpiringDocument[];
+  present_documents: Array<{
+    type: string;
+    anchor_id: string;
+    status: string;
+    title: string | null;
+    integrity_score: number | null;
+    expiry_date: string | null;
+  }>;
+  missing_documents: Array<{
+    type: string;
+    requirement: string;
+    regulatory_reference: string | null;
+    score_impact: number;
+  }>;
+  expiring_documents: Array<{
+    type: string;
+    anchor_id: string;
+    title: string | null;
+    expiry_date: string;
+    days_remaining: number;
+  }>;
   total_required: number;
   total_present: number;
   recommendations: unknown[];
@@ -47,19 +41,23 @@ export interface ComplianceScoreData {
   cached: boolean;
 }
 
-interface GapItem {
-  type: string;
-  requirement: string;
-  regulatory_reference: string | null;
-  score_impact: number;
-  peer_adoption_pct: number | null;
-}
-
 export interface GapAnalysisData {
   jurisdiction: string;
   industry: string;
-  missing_required: GapItem[];
-  missing_recommended: GapItem[];
+  missing_required: Array<{
+    type: string;
+    requirement: string;
+    regulatory_reference: string | null;
+    score_impact: number;
+    peer_adoption_pct: number | null;
+  }>;
+  missing_recommended: Array<{
+    type: string;
+    requirement: string;
+    regulatory_reference: string | null;
+    score_impact: number;
+    peer_adoption_pct: number | null;
+  }>;
   priority_order: string[];
   summary: string;
 }
@@ -87,41 +85,26 @@ export function useComplianceScore(jurisdiction: string, industry: string) {
     setError(null);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setError('Not authenticated');
-        return;
-      }
-
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
-      const headers = {
-        'Authorization': `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json',
-      };
-
-      // Fetch score and gap analysis in parallel
       const [scoreRes, gapRes] = await Promise.all([
-        fetch(`${workerUrl}/api/v1/compliance/score?jurisdiction=${encodeURIComponent(jurisdiction)}&industry=${encodeURIComponent(industry)}`, { headers }),
-        fetch(`${workerUrl}/api/v1/compliance/gap-analysis`, {
+        workerFetch(`/api/v1/compliance/score?jurisdiction=${encodeURIComponent(jurisdiction)}&industry=${encodeURIComponent(industry)}`),
+        workerFetch('/api/v1/compliance/gap-analysis', {
           method: 'POST',
-          headers,
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ jurisdiction, industry }),
         }),
       ]);
 
       if (scoreRes.ok) {
-        const data = await scoreRes.json();
-        setScoreData(data);
+        setScoreData(await scoreRes.json());
       } else if (scoreRes.status === 404) {
         setScoreData(null);
       } else {
         const err = await scoreRes.json().catch(() => ({}));
-        setError(err.error || 'Failed to fetch score');
+        setError((err as Record<string, string>).error || 'Failed to fetch score');
       }
 
       if (gapRes.ok) {
-        const data = await gapRes.json();
-        setGapData(data);
+        setGapData(await gapRes.json());
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Network error');
@@ -142,10 +125,10 @@ export function useJurisdictionRules() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function fetch() {
+    async function fetchRules() {
       try {
-        const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
-        const res = await globalThis.fetch(`${workerUrl}/api/v1/compliance/rules`);
+        // Rules endpoint is public — no auth needed, use raw fetch
+        const res = await globalThis.fetch(`${WORKER_URL}/api/v1/compliance/rules`);
         if (res.ok) {
           const data = await res.json();
           setRules(data.rules ?? []);
@@ -156,12 +139,11 @@ export function useJurisdictionRules() {
         setLoading(false);
       }
     }
-    fetch();
+    fetchRules();
   }, []);
 
-  // Derive available jurisdictions and industries
-  const jurisdictions = [...new Set(rules.map(r => r.jurisdiction_code))].sort();
-  const industries = [...new Set(rules.map(r => r.industry_code))].sort();
+  const jurisdictions = useMemo(() => [...new Set(rules.map(r => r.jurisdiction_code))].sort(), [rules]);
+  const industries = useMemo(() => [...new Set(rules.map(r => r.industry_code))].sort(), [rules]);
 
   return { rules, jurisdictions, industries, loading };
 }

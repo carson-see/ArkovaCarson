@@ -148,7 +148,7 @@ export function calculateComplianceScore(input: ComplianceScoreInput): Complianc
         type,
         requirement: `Required: ${type}`,
         regulatory_reference: ruleRef?.regulatory_reference ?? null,
-        score_impact: Math.round((weight / totalWeightedPoints) * 100),
+        score_impact: 0, // Recalculated after loop when totalWeightedPoints is known
       });
       continue;
     }

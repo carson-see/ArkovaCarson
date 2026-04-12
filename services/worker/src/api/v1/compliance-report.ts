@@ -14,6 +14,7 @@ import { calculateComplianceScore, type OrgAnchor, type JurisdictionRule } from 
 import { detectGaps, type GapAnchor } from '../../compliance/gap-detector.js';
 import { crossReferenceDocuments, type CrossRefAnchor } from '../../compliance/cross-reference.js';
 import { buildAuditReport, type ReportTemplate } from '../../compliance/audit-report.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -33,29 +34,12 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { jurisdiction, industry, template } = parsed.data;
 
   try {
-    // Get caller's org
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
-
-    const orgId = membership.org_id;
-
-    // Get org name
     const { data: org } = await dbAny
       .from('organizations')
       .select('name')

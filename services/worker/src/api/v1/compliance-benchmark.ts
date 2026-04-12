@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { computeBenchmark } from '../../compliance/benchmarking.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -29,48 +30,26 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { jurisdiction, industry } = parsed.data;
 
   try {
-    // Get caller's org
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
+    // Fetch own score + peer scores in parallel
+    const [ownResult, peerResult] = await Promise.all([
+      dbAny.from('compliance_scores').select('score').eq('org_id', orgId).eq('jurisdiction_code', jurisdiction).eq('industry_code', industry).single(),
+      dbAny.from('compliance_scores').select('score').eq('jurisdiction_code', jurisdiction).eq('industry_code', industry).neq('org_id', orgId).limit(500),
+    ]);
 
-    // Get caller's own score
-    const { data: ownScore } = await dbAny
-      .from('compliance_scores')
-      .select('score')
-      .eq('org_id', membership.org_id)
-      .eq('jurisdiction_code', jurisdiction)
-      .eq('industry_code', industry)
-      .single();
+    const { data: ownScore } = ownResult;
 
     if (!ownScore) {
       res.status(404).json({ error: 'No score calculated yet. Calculate your compliance score first.' });
       return;
     }
 
-    // Get all peer scores (anonymized — exclude caller's org)
-    const { data: peerData, error } = await dbAny
-      .from('compliance_scores')
-      .select('score')
-      .eq('jurisdiction_code', jurisdiction)
-      .eq('industry_code', industry)
-      .neq('org_id', membership.org_id);
-
+    const { data: peerData, error } = peerResult;
     if (error) {
       logger.error({ error }, 'Failed to fetch benchmark data');
       res.status(500).json({ error: 'Failed to fetch benchmark data' });

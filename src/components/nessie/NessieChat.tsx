@@ -12,7 +12,7 @@ import { Send, Bot, User, AlertTriangle, Shield, Lightbulb, Loader2 } from 'luci
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { supabase } from '@/lib/supabase';
+import { workerFetch } from '@/lib/workerClient';
 import { CitationCard } from './CitationCard';
 
 type QueryTask = 'compliance_qa' | 'risk_analysis' | 'recommendation';
@@ -76,15 +76,6 @@ export function NessieChat() {
     setSending(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMsg.id ? { ...m, content: 'Please sign in to use Nessie.', loading: false } : m
-        ));
-        return;
-      }
-
-      const workerUrl = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
       const params = new URLSearchParams({
         q: query,
         mode: 'context',
@@ -92,11 +83,7 @@ export function NessieChat() {
         limit: '10',
       });
 
-      const res = await fetch(`${workerUrl}/api/v1/nessie/query?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-        },
-      });
+      const res = await workerFetch(`/api/v1/nessie/query?${params}`);
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));

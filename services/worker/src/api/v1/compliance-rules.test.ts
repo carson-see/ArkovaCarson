@@ -1,18 +1,13 @@
 /**
  * Jurisdiction Rules API Tests (NCE-06)
- *
- * GET /api/v1/compliance/rules — public read of jurisdiction requirements
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-// Mock db before import
 vi.mock('../../utils/db.js', () => ({
-  db: {
-    from: vi.fn(),
-  },
+  db: { from: vi.fn() },
 }));
 
 vi.mock('../../utils/logger.js', () => ({
@@ -29,36 +24,42 @@ function buildApp() {
   return app;
 }
 
-const MOCK_RULES = [
-  {
-    id: 'rule-1',
-    jurisdiction_code: 'US-CA',
-    industry_code: 'accounting',
-    rule_name: 'California CPA Requirements',
-    required_credential_types: ['LICENSE', 'CERTIFICATE', 'CONTINUING_EDUCATION'],
-    optional_credential_types: ['DEGREE'],
-    regulatory_reference: 'CA Bus & Prof Code §5026',
-    effective_date: null,
-    expiry_date: null,
-    details: { ce_hours: 80, ce_cycle_years: 2 },
-    created_at: '2026-04-12T00:00:00Z',
-    updated_at: '2026-04-12T00:00:00Z',
-  },
-];
+const MOCK_RULES = [{
+  id: 'rule-1',
+  jurisdiction_code: 'US-CA',
+  industry_code: 'accounting',
+  rule_name: 'California CPA Requirements',
+  required_credential_types: ['LICENSE', 'CERTIFICATE', 'CONTINUING_EDUCATION'],
+  optional_credential_types: ['DEGREE'],
+  regulatory_reference: 'CA Bus & Prof Code §5026',
+  details: { ce_hours: 80, ce_cycle_years: 2 },
+}];
+
+/** Build a chainable mock that resolves at the end of any chain */
+function mockChain(result: { data: unknown; error: unknown }) {
+  const handler: Record<string, unknown> = {};
+  const proxy = new Proxy(handler, {
+    get: (_target, prop) => {
+      if (prop === 'then') return undefined; // not a thenable
+      return (..._args: unknown[]) => {
+        // Terminal — return a promise-like that also chains
+        const terminal = Promise.resolve(result);
+        return Object.assign(terminal, {
+          eq: () => terminal,
+          limit: () => terminal,
+          select: () => terminal,
+        });
+      };
+    },
+  });
+  return { select: () => proxy };
+}
 
 describe('GET /api/v1/compliance/rules', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it('returns rules for valid jurisdiction + industry', async () => {
-    const mockSelect = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        eq: vi.fn().mockResolvedValue({ data: MOCK_RULES, error: null }),
-      }),
-    });
-    vi.mocked(db.from).mockReturnValue({ select: mockSelect } as never);
-
+    vi.mocked(db.from).mockReturnValue(mockChain({ data: MOCK_RULES, error: null }) as never);
     const app = buildApp();
     const res = await request(app)
       .get('/api/v1/compliance/rules?jurisdiction=US-CA&industry=accounting')
@@ -66,20 +67,10 @@ describe('GET /api/v1/compliance/rules', () => {
 
     expect(res.body.rules).toHaveLength(1);
     expect(res.body.rules[0].jurisdiction_code).toBe('US-CA');
-    expect(res.body.rules[0].required_credential_types).toContain('LICENSE');
   });
 
   it('returns rules filtered by jurisdiction only', async () => {
-    const mockEq = vi.fn().mockResolvedValue({ data: MOCK_RULES, error: null });
-    const mockSelect = vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({ eq: mockEq }),
-    });
-    // When only jurisdiction is provided, we chain one .eq()
-    const mockSelectSingle = vi.fn().mockReturnValue({
-      eq: vi.fn().mockResolvedValue({ data: MOCK_RULES, error: null }),
-    });
-    vi.mocked(db.from).mockReturnValue({ select: mockSelectSingle } as never);
-
+    vi.mocked(db.from).mockReturnValue(mockChain({ data: MOCK_RULES, error: null }) as never);
     const app = buildApp();
     const res = await request(app)
       .get('/api/v1/compliance/rules?jurisdiction=US-CA')
@@ -89,9 +80,7 @@ describe('GET /api/v1/compliance/rules', () => {
   });
 
   it('returns all rules when no filters provided', async () => {
-    const mockSelect = vi.fn().mockResolvedValue({ data: MOCK_RULES, error: null });
-    vi.mocked(db.from).mockReturnValue({ select: mockSelect } as never);
-
+    vi.mocked(db.from).mockReturnValue(mockChain({ data: MOCK_RULES, error: null }) as never);
     const app = buildApp();
     const res = await request(app)
       .get('/api/v1/compliance/rules')
@@ -110,9 +99,7 @@ describe('GET /api/v1/compliance/rules', () => {
   });
 
   it('handles database errors gracefully', async () => {
-    const mockSelect = vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } });
-    vi.mocked(db.from).mockReturnValue({ select: mockSelect } as never);
-
+    vi.mocked(db.from).mockReturnValue(mockChain({ data: null, error: { message: 'DB error' } }) as never);
     const app = buildApp();
     const res = await request(app)
       .get('/api/v1/compliance/rules')

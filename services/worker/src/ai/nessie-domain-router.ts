@@ -139,22 +139,15 @@ function getDefault(): DomainAdapter {
  * When a jurisdiction is specified, these take precedence over domain routing.
  * Adapter IDs will be populated after Together AI fine-tuning.
  */
-const JURISDICTION_ADAPTERS: Record<string, DomainAdapter> = {
-  'US-CA': {
-    domain: 'jurisdiction-ca',
-    label: 'California Compliance',
-    modelId: '', // Populated after NCE-14 training
-  },
-  'US-NY': {
-    domain: 'jurisdiction-ny',
-    label: 'New York Compliance',
-    modelId: '', // Populated after NCE-14 training
-  },
-  'US-FED': {
-    domain: 'jurisdiction-fed',
-    label: 'Federal Compliance (SEC/IRS)',
-    modelId: '', // Populated after NCE-14 training
-  },
+interface JurisdictionAdapter extends DomainAdapter {
+  available: boolean;
+}
+
+/** Jurisdiction adapters — available=false until trained on Together AI */
+const JURISDICTION_ADAPTERS: Record<string, JurisdictionAdapter> = {
+  'US-CA': { domain: 'jurisdiction-ca', label: 'California Compliance', modelId: 'placeholder', available: false },
+  'US-NY': { domain: 'jurisdiction-ny', label: 'New York Compliance', modelId: 'placeholder', available: false },
+  'US-FED': { domain: 'jurisdiction-fed', label: 'Federal Compliance (SEC/IRS)', modelId: 'placeholder', available: false },
 };
 
 /**
@@ -171,7 +164,7 @@ export function routeWithJurisdiction(
   // Jurisdiction adapter takes priority when available
   if (jurisdiction && JURISDICTION_ADAPTERS[jurisdiction]) {
     const adapter = JURISDICTION_ADAPTERS[jurisdiction];
-    if (adapter.modelId) {
+    if (adapter.available) {
       return adapter;
     }
   }

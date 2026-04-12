@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { crossReferenceDocuments, type CrossRefAnchor } from '../../compliance/cross-reference.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -28,31 +29,16 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { anchor_ids } = parsed.data;
 
   try {
-    // Get caller's org for RLS scoping
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
-
-    // Load anchors with extracted metadata
     const { data: anchors, error } = await dbAny
       .from('anchors')
       .select('id, credential_type, title, extracted_metadata, org_id')
-      .eq('org_id', membership.org_id)
+      .eq('org_id', orgId)
       .in('id', anchor_ids);
 
     if (error) {

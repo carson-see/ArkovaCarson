@@ -12,6 +12,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { detectGaps, type GapAnchor } from '../../compliance/gap-detector.js';
 import type { JurisdictionRule } from '../../compliance/score-calculator.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -30,63 +31,33 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { jurisdiction, industry } = parsed.data;
 
   try {
-    // Get caller's org
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
+    const [rulesResult, anchorsResult, peerResult] = await Promise.all([
+      dbAny.from('jurisdiction_rules').select('*').eq('jurisdiction_code', jurisdiction).eq('industry_code', industry),
+      dbAny.from('anchors').select('id, credential_type, status').eq('org_id', orgId).eq('status', 'SECURED').limit(1000),
+      dbAny.from('compliance_scores').select('present_documents').eq('jurisdiction_code', jurisdiction).eq('industry_code', industry).neq('org_id', orgId).limit(500),
+    ]);
 
-    const orgId = membership.org_id;
-
-    // Load rules
-    const { data: rules, error: rulesError } = await dbAny
-      .from('jurisdiction_rules')
-      .select('*')
-      .eq('jurisdiction_code', jurisdiction)
-      .eq('industry_code', industry);
-
+    const { data: rules, error: rulesError } = rulesResult;
     if (rulesError || !rules?.length) {
       res.status(404).json({ error: `No rules found for ${jurisdiction} / ${industry}` });
       return;
     }
 
-    // Load org's SECURED anchors
-    const { data: anchors } = await dbAny
-      .from('anchors')
-      .select('id, credential_type, status')
-      .eq('org_id', orgId)
-      .eq('status', 'SECURED');
-
-    const orgAnchors: GapAnchor[] = (anchors ?? []).map((a: Record<string, unknown>) => ({
+    const orgAnchors: GapAnchor[] = (anchorsResult.data ?? []).map((a: Record<string, unknown>) => ({
       id: a.id as string,
       credential_type: (a.credential_type as string) ?? 'OTHER',
       status: a.status as string,
     }));
 
-    // Optional: aggregate data from other orgs in same jurisdiction+industry
     let aggregateData: Record<string, number> | null = null;
     try {
-      const { data: peerScores } = await dbAny
-        .from('compliance_scores')
-        .select('present_documents')
-        .eq('jurisdiction_code', jurisdiction)
-        .eq('industry_code', industry)
-        .neq('org_id', orgId);
-
+      const peerScores = peerResult.data;
       if (peerScores && peerScores.length >= 5) {
         const typeCounts: Record<string, number> = {};
         for (const score of peerScores) {

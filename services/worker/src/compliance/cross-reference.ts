@@ -36,18 +36,6 @@ export interface CrossRefResult {
 
 const SEVERITY_ORDER: Record<FindingSeverity, number> = { HIGH: 0, MEDIUM: 1, LOW: 2 };
 
-/**
- * Simple string similarity for name comparison.
- * Returns true if names differ but are similar (likely typos/variants).
- */
-function namesAreSimilarButDifferent(a: string, b: string): boolean {
-  const normA = a.trim().toLowerCase();
-  const normB = b.trim().toLowerCase();
-  if (normA === normB) return false; // Identical
-  if (normA.length === 0 || normB.length === 0) return false;
-  return true; // Any difference in names is flagged
-}
-
 export function crossReferenceDocuments(anchors: CrossRefAnchor[]): CrossRefResult {
   const findings: CrossRefFinding[] = [];
 

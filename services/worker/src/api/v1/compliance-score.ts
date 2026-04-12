@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { calculateComplianceScore, type OrgAnchor, type JurisdictionRule } from '../../compliance/score-calculator.js';
+import { getCallerOrgId } from '../../compliance/auth-helpers.js';
 
 const router = Router();
 
@@ -29,27 +30,11 @@ router.get('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!req.authUserId) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-
   const { jurisdiction, industry } = parsed.data;
 
   try {
-    // Get caller's org
-    const { data: membership } = await dbAny
-      .from('org_members')
-      .select('org_id')
-      .eq('user_id', req.authUserId)
-      .single();
-
-    if (!membership?.org_id) {
-      res.status(403).json({ error: 'Must belong to an organization' });
-      return;
-    }
-
-    const orgId = membership.org_id;
+    const orgId = await getCallerOrgId(req, res);
+    if (!orgId) return;
 
     // Check for cached score (less than 1hr old)
     const { data: cached } = await dbAny
@@ -79,25 +64,18 @@ router.get('/', async (req: Request, res: Response) => {
       }
     }
 
-    // Load jurisdiction rules
-    const { data: rules, error: rulesError } = await dbAny
-      .from('jurisdiction_rules')
-      .select('*')
-      .eq('jurisdiction_code', jurisdiction)
-      .eq('industry_code', industry);
+    const [rulesResult, anchorsResult] = await Promise.all([
+      dbAny.from('jurisdiction_rules').select('*').eq('jurisdiction_code', jurisdiction).eq('industry_code', industry),
+      dbAny.from('anchors').select('id, credential_type, status, integrity_score, fraud_flags, not_after, title').eq('org_id', orgId).eq('status', 'SECURED').limit(1000),
+    ]);
 
+    const { data: rules, error: rulesError } = rulesResult;
     if (rulesError || !rules?.length) {
       res.status(404).json({ error: `No rules found for ${jurisdiction} / ${industry}` });
       return;
     }
 
-    // Load org's SECURED anchors
-    const { data: anchors, error: anchorsError } = await dbAny
-      .from('anchors')
-      .select('id, credential_type, status, integrity_score, fraud_flags, not_after, title')
-      .eq('org_id', orgId)
-      .eq('status', 'SECURED');
-
+    const { data: anchors, error: anchorsError } = anchorsResult;
     if (anchorsError) {
       logger.error({ error: anchorsError }, 'Failed to load org anchors for scoring');
       res.status(500).json({ error: 'Failed to load documents' });

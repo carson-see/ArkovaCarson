@@ -13,6 +13,9 @@ import { logger } from '../../utils/logger.js';
 
 const router = Router();
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dbAny = db as any;
+
 import { FERPA_PARTY_TYPES, FERPA_EXCEPTION_CATEGORIES } from '../../constants/ferpa.js';
 
 // ─── Validation Schemas ──────────────────────────────────────────────────────
@@ -58,7 +61,7 @@ router.post('/disclosures', async (req, res) => {
 
     const disclosure = parsed.data;
 
-    const { data, error } = await db
+    const { data, error } = await dbAny
       .from('ferpa_disclosure_log')
       .insert({
         org_id: orgId,
@@ -70,7 +73,7 @@ router.post('/disclosures', async (req, res) => {
         education_record_ids: disclosure.education_record_ids,
         student_opt_out_checked: disclosure.student_opt_out_checked,
         student_consent_obtained: disclosure.student_consent_obtained,
-        api_key_id: (req as Record<string, unknown>).apiKeyId as string | undefined ?? null,
+        api_key_id: (req as unknown as Record<string, unknown>).apiKeyId as string | undefined ?? null,
         notes: disclosure.notes ?? null,
       })
       .select('id, disclosed_at')
@@ -114,7 +117,7 @@ router.get('/disclosures', async (req, res) => {
     const { page, limit, party_type, exception, from_date, to_date } = parsed.data;
     const offset = (page - 1) * limit;
 
-    let query = db
+    let query = dbAny
       .from('ferpa_disclosure_log')
       .select('*', { count: 'exact' })
       .eq('org_id', orgId)
@@ -161,7 +164,7 @@ router.get('/disclosures/export', async (req, res) => {
 
     const MAX_EXPORT_ROWS = 10000;
 
-    let query = db
+    let query = dbAny
       .from('ferpa_disclosure_log')
       .select('*')
       .eq('org_id', orgId)
@@ -195,7 +198,8 @@ router.get('/disclosures/export', async (req, res) => {
       'Notes',
     ];
 
-    const rows = records.map((r) => [
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = records.map((r: any) => [
       r.disclosed_at,
       r.requesting_party_name,
       r.requesting_party_type,
@@ -210,8 +214,8 @@ router.get('/disclosures/export', async (req, res) => {
 
     const csvContent = [
       headers.join(','),
-      ...rows.map((row) =>
-        row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','),
+      ...rows.map((row: string[]) =>
+        row.map((cell: string) => `"${String(cell).replace(/"/g, '""')}"`).join(','),
       ),
     ].join('\n');
 

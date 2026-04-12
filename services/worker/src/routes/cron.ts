@@ -593,9 +593,11 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
 
     // Query anchors with expiry dates within 90 days
     const cutoff = new Date(Date.now() + 90 * 86_400_000).toISOString();
-    const { data: expiring, error } = await db
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = db as any;
+    const { data: expiring, error } = await dbAny
       .from('anchors')
-      .select('id, org_id, credential_type, title, not_after')
+      .select('id, org_id, credential_type, document_title, not_after')
       .eq('status', 'SECURED')
       .not('not_after', 'is', null)
       .gt('not_after', new Date().toISOString())
@@ -622,18 +624,20 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
     let emailsSent = 0;
     let webhooksSent = 0;
 
-    // For 7-day urgency, send email alerts per org
+    const { dispatchWebhookEvent } = await import('../webhooks/delivery.js');
+    const now = Date.now();
+
     for (const [orgId, orgAnchors] of orgGroups) {
       try {
-        // Dispatch webhook for each expiring doc
-        for (const anchor of orgAnchors) {
-          const daysRemaining = Math.ceil((new Date(anchor.expiry_date).getTime() - Date.now()) / 86_400_000);
-          try {
-            const { dispatchWebhookEvent } = await import('../webhooks/delivery.js');
-            await dispatchWebhookEvent({
+        const results = await Promise.allSettled(
+          orgAnchors.map(anchor => {
+            const daysRemaining = Math.ceil((new Date(anchor.expiry_date).getTime() - now) / 86_400_000);
+            const eventId = `expiry-${anchor.id}-${Date.now()}`;
+            return dispatchWebhookEvent(
               orgId,
-              eventType: 'compliance.document_expiring',
-              payload: {
+              'compliance.document_expiring',
+              eventId,
+              {
                 anchor_id: anchor.id,
                 credential_type: anchor.credential_type,
                 title: anchor.title,
@@ -641,12 +645,10 @@ cronRouter.post('/check-credential-expiry', async (_req, res) => {
                 days_remaining: daysRemaining,
                 warning_level: '7_day',
               },
-            });
-            webhooksSent++;
-          } catch {
-            // Non-fatal
-          }
-        }
+            );
+          })
+        );
+        webhooksSent += results.filter(r => r.status === 'fulfilled').length;
         emailsSent++;
       } catch (err) {
         logger.warn({ error: err, orgId }, 'Failed to send expiry alert');
