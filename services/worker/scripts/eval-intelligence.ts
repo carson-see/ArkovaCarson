@@ -1,11 +1,14 @@
 /**
- * Nessie Intelligence Eval Runner (NMT-07, Phase E)
+ * Nessie Intelligence Eval Runner (NMT-07 → NCE-05)
  *
  * Evaluates Nessie Intelligence model against a dataset of compliance
  * questions with expected citations, key points, and risks.
  *
+ * NCE-05 expands the dataset from 8 to 100 entries across 5 domains.
+ * Use --dataset v2 to use the expanded 100-entry dataset.
+ *
  * Usage:
- *   npx tsx scripts/eval-intelligence.ts [--provider gemini|together] [--limit N]
+ *   npx tsx scripts/eval-intelligence.ts [--provider gemini|together] [--limit N] [--dataset v1|v2]
  *
  * Requires: GEMINI_API_KEY or (TOGETHER_API_KEY + NESSIE_INTELLIGENCE_MODEL)
  */
@@ -26,6 +29,7 @@ import type {
 } from '../src/ai/eval/intelligence-eval.js';
 import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../src/ai/prompts/intelligence.js';
+import { INTELLIGENCE_EVAL_DATASET_V2 } from '../src/ai/eval/intelligence-eval-dataset.js';
 
 // ---------------------------------------------------------------------------
 // Eval dataset — FCRA/employment compliance questions
@@ -344,9 +348,12 @@ async function main() {
   const limitIdx = args.indexOf('--limit');
 
   const provider = (providerIdx >= 0 ? args[providerIdx + 1] : 'gemini') as 'gemini' | 'together';
-  const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : INTELLIGENCE_EVAL_DATASET.length;
+  const datasetIdx = args.indexOf('--dataset');
+  const datasetVersion = datasetIdx >= 0 ? args[datasetIdx + 1] : 'v1';
+  const dataset = datasetVersion === 'v2' ? INTELLIGENCE_EVAL_DATASET_V2 : INTELLIGENCE_EVAL_DATASET;
+  const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : dataset.length;
 
-  const entries = INTELLIGENCE_EVAL_DATASET.slice(0, limit);
+  const entries = dataset.slice(0, limit);
   console.log(`Running intelligence eval: ${entries.length} entries, provider: ${provider}`);
 
   const results: IntelligenceEvalResult[] = [];

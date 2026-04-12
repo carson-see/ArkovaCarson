@@ -1,0 +1,134 @@
+{
+  "$schema": "https://www.make.com/en/api-documentation/module-schema",
+  "name": "arkova",
+  "label": "Arkova — Credential Verification",
+  "description": "Anchor documents to Bitcoin, verify credentials, and receive real-time webhook events via Arkova.",
+  "version": "1.0.0",
+  "baseUrl": "https://arkova-worker-270018525501.us-central1.run.app",
+  "authentication": {
+    "type": "apiKey",
+    "apiKey": {
+      "in": "header",
+      "name": "X-API-Key",
+      "prefix": ""
+    },
+    "test": {
+      "url": "/api/v1/health",
+      "method": "GET"
+    }
+  },
+  "modules": {
+    "triggers": [
+      {
+        "name": "watchAnchorSecured",
+        "label": "Watch Anchor Secured",
+        "description": "Triggers when a document reaches SECURED status on Bitcoin.",
+        "type": "webhook",
+        "webhook": {
+          "subscribe": {
+            "url": "/api/v1/webhooks",
+            "method": "POST",
+            "body": {
+              "url": "{{webhookUrl}}",
+              "events": ["anchor.secured"],
+              "description": "Make.com: anchor.secured"
+            }
+          },
+          "unsubscribe": {
+            "url": "/api/v1/webhooks/{{subscriptionId}}",
+            "method": "DELETE"
+          }
+        },
+        "output": [
+          { "name": "public_id", "type": "text", "label": "Public ID" },
+          { "name": "fingerprint", "type": "text", "label": "Fingerprint" },
+          { "name": "status", "type": "text", "label": "Status" },
+          { "name": "credential_type", "type": "text", "label": "Credential Type" },
+          { "name": "issuer_name", "type": "text", "label": "Issuer" },
+          { "name": "anchor_timestamp", "type": "date", "label": "Anchor Timestamp" },
+          { "name": "network_receipt_id", "type": "text", "label": "Network Receipt ID" },
+          { "name": "record_uri", "type": "url", "label": "Verification URL" }
+        ]
+      },
+      {
+        "name": "watchAnchorRevoked",
+        "label": "Watch Anchor Revoked",
+        "description": "Triggers when a secured anchor is revoked.",
+        "type": "webhook",
+        "webhook": {
+          "subscribe": {
+            "url": "/api/v1/webhooks",
+            "method": "POST",
+            "body": {
+              "url": "{{webhookUrl}}",
+              "events": ["anchor.revoked"],
+              "description": "Make.com: anchor.revoked"
+            }
+          },
+          "unsubscribe": {
+            "url": "/api/v1/webhooks/{{subscriptionId}}",
+            "method": "DELETE"
+          }
+        },
+        "output": [
+          { "name": "public_id", "type": "text", "label": "Public ID" },
+          { "name": "status", "type": "text", "label": "Status" },
+          { "name": "revoked_at", "type": "date", "label": "Revoked At" },
+          { "name": "reason", "type": "text", "label": "Reason" }
+        ]
+      }
+    ],
+    "actions": [
+      {
+        "name": "anchorDocument",
+        "label": "Anchor Document",
+        "description": "Submit a SHA-256 fingerprint for Bitcoin anchoring.",
+        "url": "/api/v1/anchor",
+        "method": "POST",
+        "input": [
+          { "name": "fingerprint", "type": "text", "label": "Fingerprint (SHA-256)", "required": true },
+          { "name": "credential_type", "type": "select", "label": "Credential Type", "required": false, "options": ["DEGREE","LICENSE","CERTIFICATE","TRANSCRIPT","PROFESSIONAL","CLE","FINANCIAL","LEGAL","INSURANCE","SEC_FILING","PATENT","REGULATION","PUBLICATION","RESUME","MEDICAL","IDENTITY","OTHER"] },
+          { "name": "description", "type": "text", "label": "Description", "required": false }
+        ],
+        "output": [
+          { "name": "public_id", "type": "text", "label": "Public ID" },
+          { "name": "fingerprint", "type": "text", "label": "Fingerprint" },
+          { "name": "status", "type": "text", "label": "Status" },
+          { "name": "created_at", "type": "date", "label": "Created At" },
+          { "name": "record_uri", "type": "url", "label": "Verification URL" }
+        ]
+      },
+      {
+        "name": "verifyCredential",
+        "label": "Verify Credential",
+        "description": "Verify a credential by its Arkova public ID.",
+        "url": "/api/v1/verify/{{public_id}}",
+        "method": "GET",
+        "input": [
+          { "name": "public_id", "type": "text", "label": "Public ID", "required": true }
+        ],
+        "output": [
+          { "name": "verified", "type": "boolean", "label": "Verified" },
+          { "name": "status", "type": "text", "label": "Status" },
+          { "name": "issuer_name", "type": "text", "label": "Issuer" },
+          { "name": "credential_type", "type": "text", "label": "Credential Type" },
+          { "name": "anchor_timestamp", "type": "date", "label": "Anchor Timestamp" },
+          { "name": "network_receipt_id", "type": "text", "label": "Network Receipt ID" }
+        ]
+      },
+      {
+        "name": "batchVerify",
+        "label": "Batch Verify Credentials",
+        "description": "Verify up to 20 credentials in a single request.",
+        "url": "/api/v1/verify/batch",
+        "method": "POST",
+        "input": [
+          { "name": "public_ids", "type": "array", "label": "Public IDs", "required": true, "spec": { "type": "text" } }
+        ],
+        "output": [
+          { "name": "results", "type": "array", "label": "Results" }
+        ]
+      }
+    ]
+  }
+}
