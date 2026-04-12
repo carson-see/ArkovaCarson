@@ -56,28 +56,14 @@ CREATE POLICY credit_transactions_select ON credit_transactions
   USING (user_id = (SELECT auth.uid()));
 
 -- =============================================================================
--- 5. reports — SELECT, INSERT, UPDATE policies
+-- 5. reports — SELECT policy (preserves admin guard from migration 0178)
 -- =============================================================================
-DROP POLICY IF EXISTS reports_select ON reports;
-CREATE POLICY reports_select ON reports
+DROP POLICY IF EXISTS reports_read_own_or_admin ON reports;
+CREATE POLICY reports_read_own_or_admin ON reports
   FOR SELECT TO authenticated
-  USING (user_id = (SELECT auth.uid()) OR org_id = get_user_org_id());
-
-DROP POLICY IF EXISTS reports_insert ON reports;
-CREATE POLICY reports_insert ON reports
-  FOR INSERT TO authenticated
-  WITH CHECK (
-    user_id = (SELECT auth.uid())
-  );
-
-DROP POLICY IF EXISTS reports_update ON reports;
-CREATE POLICY reports_update ON reports
-  FOR UPDATE TO authenticated
   USING (
-    id IN (
-      SELECT id FROM reports
-      WHERE user_id = (SELECT auth.uid()) OR org_id = get_user_org_id()
-    )
+    user_id = (SELECT auth.uid())
+    OR (org_id = get_user_org_id() AND is_org_admin())
   );
 
 -- =============================================================================

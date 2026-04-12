@@ -13,11 +13,15 @@ import { logger } from './logger.js';
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 const KEY_PREFIX = 'verify:';
 
+/** Module-level config cache — avoids process.env reads on every request */
+let _redisConfig: { url: string; token: string } | null | undefined;
+
 function getRedisConfig(): { url: string; token: string } | null {
+  if (_redisConfig !== undefined) return _redisConfig;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
-  if (!url || !token) return null;
-  return { url, token };
+  _redisConfig = (url && token) ? { url, token } : null;
+  return _redisConfig;
 }
 
 async function redisGet(key: string): Promise<string | null> {
@@ -29,7 +33,7 @@ async function redisGet(key: string): Promise<string | null> {
       headers: { Authorization: `Bearer ${config.token}` },
     });
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = await res.json() as { result?: string | null };
     return data.result ?? null;
   } catch (err) {
     logger.debug({ err, key }, 'Redis GET failed — falling back to DB');

@@ -19,6 +19,7 @@
 
 import { db } from '../utils/db.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
+import { invalidateVerificationCache } from '../utils/verifyCache.js';
 import { callRpc } from '../utils/rpc.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
@@ -100,6 +101,11 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
     if (updateError) {
       logger.error({ anchorId, error: updateError }, 'Failed to update revocation chain data');
       throw updateError;
+    }
+
+    // PERF-12: Invalidate verification cache on revocation
+    if (anchorRecord.public_id) {
+      void invalidateVerificationCache(anchorRecord.public_id);
     }
 
     // Log audit event — non-fatal

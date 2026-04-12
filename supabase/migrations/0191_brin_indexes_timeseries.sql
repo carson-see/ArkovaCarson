@@ -9,7 +9,7 @@
 -- =============================================================================
 -- 1. audit_events — time-range filtering on dashboards
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_brin_audit_events_created
+CREATE INDEX IF NOT EXISTS idx_brin_audit_events_created
   ON audit_events USING brin(created_at);
 
 -- =============================================================================
@@ -17,19 +17,19 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_brin_audit_events_created
 --    (btree idx already exists on user_id/created_at combo; BRIN covers
 --     pure time-range scans like "last 24h" used in admin dashboards)
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_brin_anchors_created
+CREATE INDEX IF NOT EXISTS idx_brin_anchors_created
   ON anchors USING brin(created_at);
 
 -- =============================================================================
 -- 3. credit_transactions — billing period lookups
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_brin_credit_transactions_created
+CREATE INDEX IF NOT EXISTS idx_brin_credit_transactions_created
   ON credit_transactions USING brin(created_at);
 
 -- =============================================================================
 -- 4. payments — date-range reporting
 -- =============================================================================
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_brin_payments_created
+CREATE INDEX IF NOT EXISTS idx_brin_payments_created
   ON payments USING brin(created_at);
 
 -- =============================================================================

@@ -51,10 +51,7 @@ export function usePlatformStats() {
   });
 
   const fetchStats = useCallback(async () => {
-    await qc.fetchQuery({
-      queryKey: queryKeys.platformStats(),
-      queryFn: fetchPlatformStatsData,
-    });
+    await qc.refetchQueries({ queryKey: queryKeys.platformStats() });
   }, [qc]);
 
   return {
