@@ -178,7 +178,12 @@ async function main() {
 
   // Markdown report
   const report = formatEvalReport(result);
-  const calReport = formatCalibrationReport(result.entryResults);
+  let calReport = '';
+  try {
+    calReport = formatCalibrationReport(result.entryResults);
+  } catch {
+    calReport = '## Calibration\n\nCalibration report unavailable.\n';
+  }
   writeFileSync(
     resolve(outputDir, `${baseName}.md`),
     report + '\n\n' + calReport,
