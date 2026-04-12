@@ -231,3 +231,82 @@ This register documents all third-party vendors that process, store, or transmit
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-03-23 | Arkova Security Team | Initial release |
+| 1.1 | 2026-04-12 | Carson (SCRUM-520) | Added Sentry + Upstash; SOC 2 report review; annual cadence formalized |
+
+---
+
+## 8. Additional Vendors (Added 2026-04-12)
+
+### 8.1 Sentry (Error Tracking & Observability)
+
+| Field | Value |
+|-------|-------|
+| **Vendor** | Sentry (Functional Software, Inc.) |
+| **Service** | Error tracking, performance monitoring, release health |
+| **Data Access Level** | INTERNAL |
+| **Risk Rating** | MEDIUM |
+| **Data Processed** | Error stack traces, performance metrics, release metadata. PII scrubbed per Constitution (no user emails, API keys, or document fingerprints). |
+| **Data Residency** | US |
+| **Certifications** | SOC 2 Type II, GDPR compliant |
+| **DPA Status** | Signed (Sentry DPA) |
+| **SOC 2 Report Available** | Yes (request via Sentry security page) |
+| **Encryption** | At rest: AES-256; In transit: TLS 1.2+ |
+| **Subprocessors** | Google Cloud (infrastructure) |
+| **Last Review** | 2026-04-12 |
+| **Next Review** | 2026-07-12 |
+| **Notes** | PII scrubbing configured per CLAUDE.md Constitution 1.4. Sample rate configurable via `SENTRY_SAMPLE_RATE`. No user emails, document fingerprints, or API keys in events. |
+
+### 8.2 Upstash (Redis Rate Limiting)
+
+| Field | Value |
+|-------|-------|
+| **Vendor** | Upstash, Inc. |
+| **Service** | Serverless Redis (REST API) for rate limiting and idempotency |
+| **Data Access Level** | INTERNAL |
+| **Risk Rating** | LOW |
+| **Data Processed** | Rate limit counters (IP hashes, API key prefixes), idempotency keys. No customer PII. |
+| **Data Residency** | US |
+| **Certifications** | SOC 2 Type II |
+| **DPA Status** | Signed (Upstash DPA) |
+| **SOC 2 Report Available** | Yes (request via Upstash) |
+| **Encryption** | At rest: encrypted; In transit: TLS 1.2+ (REST API) |
+| **Subprocessors** | AWS (infrastructure) |
+| **Last Review** | 2026-04-12 |
+| **Next Review** | 2026-07-12 |
+| **Notes** | Stores only ephemeral rate-limiting data (counters, TTL keys). No customer PII. Optional dependency — system degrades gracefully to in-memory rate limiting if unavailable. |
+
+---
+
+## 9. Annual Review Cadence (Formalized 2026-04-12, SCRUM-520)
+
+### Review Schedule
+
+| Quarter | Review Type | Scope | Owner |
+|---------|------------|-------|-------|
+| Q1 (Jan) | **Full Annual Review** | All vendors: re-request SOC 2 reports, verify DPAs, update risk ratings | Security Team |
+| Q2 (Apr) | Quarterly Check | Risk rating verification, new vendor additions, incident review | Security Team |
+| Q3 (Jul) | Quarterly Check | Risk rating verification, certification expiry check | Security Team |
+| Q4 (Oct) | Quarterly Check | Risk rating verification, budget planning for next year | Security Team |
+
+### SOC 2 Report Collection Status (2026-04-12)
+
+| Vendor | SOC 2 Type II | Report Obtained | Report Period | Notes |
+|--------|---------------|----------------|---------------|-------|
+| Supabase | Yes | Available on request | Annual | Request via dashboard |
+| Google Cloud | Yes | Publicly available | Annual | Compliance Reports Manager |
+| Vercel | Yes | Available on request | Annual | Request via support |
+| Cloudflare | Yes | Publicly available | Annual | Trust Hub |
+| Stripe | Yes | Available on request | Annual | Compliance page |
+| Resend | Yes | Available on request | Annual | Request via support |
+| GitHub | Yes | Available on request | Annual | Enterprise compliance |
+| Sentry | Yes | Available on request | Annual | Security page |
+| Upstash | Yes | Available on request | Annual | Request via support |
+| Mempool.space | N/A | N/A | N/A | Open source, public data only |
+
+**Action:** Request and file SOC 2 Type II reports from all CRITICAL and HIGH vendors before SOC 2 observation period begins (target: 2026-06-01). Store in `docs/compliance/vendor-soc2-reports/` (gitignored — confidential).
+
+### Calendar Reminders
+
+- **2027-01-15:** Full annual vendor review
+- **Quarterly (Apr/Jul/Oct):** Risk rating check
+- **Per vendor:** Next review dates listed in individual vendor sections above

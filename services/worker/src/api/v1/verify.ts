@@ -35,6 +35,8 @@ export interface VerificationResult {
   explorer_url?: string;
   /** BETA-12: Immutable description (additive, nullable — Constitution 1.8) */
   description?: string;
+  /** REG-03: FERPA re-disclosure notice for education credential types (additive, nullable — Constitution 1.8) */
+  ferpa_notice?: string;
   error?: string;
 }
 
@@ -134,6 +136,12 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // BETA-12: description (additive, nullable — Constitution 1.8)
   if (anchor.description) {
     result.description = anchor.description;
+  }
+
+  // REG-03: FERPA re-disclosure notice for education credential types
+  const educationTypes = ['DEGREE', 'TRANSCRIPT', 'CERTIFICATE', 'CLE'];
+  if (anchor.credential_type && educationTypes.includes(anchor.credential_type)) {
+    result.ferpa_notice = 'This verification result contains information from education records. Re-disclosure of personally identifiable information to third parties is prohibited under FERPA Section 99.33 unless an exception applies.';
   }
 
   return result;

@@ -496,3 +496,16 @@ Internal penetration test identified CVSS 9.8 Critical privilege escalation chai
 | CSP wildcards | MEDIUM | `*.run.app`, `*.railway.app` in connect-src | Pinned to exact Cloud Run domain |
 | Email autoconfirm | MEDIUM | Supabase dashboard setting | **MANUAL**: Disable in Supabase Dashboard |
 | OpenAPI schema exposure | LOW | Default Supabase API spec | Revoked unnecessary anon grants; dashboard config recommended |
+
+---
+
+## ferpa_disclosure_log RLS (Migration 0188 — REG-01)
+
+**Append-only table** — FERPA Section 99.32 requires disclosure records be retained as long as the education record exists. No UPDATE or DELETE policies exist.
+
+| Policy | Operation | Rule |
+|--------|-----------|------|
+| `ferpa_disclosure_select` | SELECT | `org_id IN (SELECT om.org_id FROM org_members om WHERE om.user_id = auth.uid() AND om.role IN ('owner', 'admin', 'compliance_officer'))` |
+| `ferpa_disclosure_insert` | INSERT | `get_caller_role() = 'service_role'` |
+
+**Design rationale:** Only service_role (worker) can insert disclosures, ensuring they are created through the API pipeline with proper validation. Org admins and compliance officers can read their org's disclosures. No mutation or deletion permitted.

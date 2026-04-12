@@ -1,5 +1,5 @@
 # Data Model
-_Last updated: 2026-04-10 | Migrations: 0001-0185 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches, 190 files). All migrations applied to production through 0185. Migration 0185 (SCRUM-635) is a production hotfix rewriting `bulk_create_anchors`, `create_pending_recipient`, and dropping `revoke_anchor(uuid)` overload to remove stale `actor_email` references after the column was dropped in 0170._
+_Last updated: 2026-04-12 | Migrations: 0001-0189 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches, 192 files). Migration 0188 adds `ferpa_disclosure_log` table (REG-01/SCRUM-561). Migration 0189 adds FERPA fields to `api_keys` (REG-04/SCRUM-568)._
 
 ## Overview
 
@@ -721,3 +721,41 @@ ATS (Applicant Tracking System) integration configurations.
 | 2026-03-12 | INFRA-08 | Added institution_ground_truth table (migration 0051). Enabled pgvector + pg_trgm extensions. 21 tables total. |
 | 2026-03-29 | GAP-03 | Added 9 tables from migrations 0100-0136 (payment_grace_periods, reconciliation_reports, financial_reports, unified_credits, merkle_batches, training_metrics, webhook_idempotency, credential_portfolios, ats_integrations). Added 25 columns to existing tables (anchors, organizations, profiles). Updated total table count to 47+. |
 | 2026-03-31 | GEO-14 | Added twitter_url and industry_tag (CHECK-constrained enum) to organizations (migration 0154). Updated get_public_org_profile RPC to return new columns (migration 0155). |
+| 2026-04-12 | REG-01 | Added `ferpa_disclosure_log` table (migration 0188). Append-only, RLS: org-scoped read for admin/compliance_officer, service_role-only insert. New enums: `ferpa_party_type`, `ferpa_exception_category`. GIN index on `education_record_ids`. |
+| 2026-04-12 | REG-04 | Added 4 columns to `api_keys`: `ferpa_exception_category`, `institution_type`, `access_purpose`, `ferpa_verified` (migration 0189). CHECK constraints validate enum values. |
+
+---
+
+## ferpa_disclosure_log (Migration 0188 — REG-01 / SCRUM-561)
+
+FERPA Section 99.32 disclosure log. Append-only (no UPDATE/DELETE policies). Retained as long as education records exist.
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `id` | uuid | NO | gen_random_uuid() | Primary key |
+| `org_id` | uuid | NO | — | FK → organizations(id) |
+| `requesting_party_name` | text | NO | — | Identity of requesting party |
+| `requesting_party_type` | ferpa_party_type | NO | 'other' | school_official, employer, government, etc. |
+| `requesting_party_org` | text | YES | — | Organization the requester represents |
+| `legitimate_interest` | text | NO | — | Description of legitimate educational interest |
+| `disclosure_exception` | ferpa_exception_category | NO | 'other' | FERPA Section 99.31(a) subsection |
+| `education_record_ids` | text[] | NO | '{}' | Anchor public_ids for disclosed records |
+| `student_opt_out_checked` | boolean | NO | false | Whether student opt-out was checked |
+| `student_consent_obtained` | boolean | NO | false | Whether student consent was obtained |
+| `api_key_id` | uuid | YES | — | FK → api_keys(id), if disclosure via API |
+| `verification_event_id` | uuid | YES | — | Link to verification_events |
+| `disclosed_at` | timestamptz | NO | now() | When the disclosure occurred |
+| `disclosed_by` | uuid | YES | — | FK → auth.users(id) |
+| `notes` | text | YES | — | Additional notes |
+| `created_at` | timestamptz | NO | now() | Record creation time |
+
+**RLS:** SELECT for org admin/compliance_officer, INSERT for service_role only. No UPDATE/DELETE.
+
+## api_keys FERPA Columns (Migration 0189 — REG-04 / SCRUM-568)
+
+| Column | Type | Nullable | Default | Description |
+|--------|------|----------|---------|-------------|
+| `ferpa_exception_category` | text | YES | — | Declared Section 99.31(a) exception |
+| `institution_type` | text | YES | — | k12_school, university, employer, etc. |
+| `access_purpose` | text | YES | — | Declared purpose of API access |
+| `ferpa_verified` | boolean | NO | false | Whether FERPA identity verification complete |

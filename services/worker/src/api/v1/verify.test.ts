@@ -187,4 +187,48 @@ describe('buildVerificationResult', () => {
 
     expect(result).not.toHaveProperty('description');
   });
+
+  // REG-03: FERPA re-disclosure notice tests
+  it('includes FERPA notice for DEGREE credential type', () => {
+    const anchor = createAnchor({ credential_type: 'DEGREE' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.ferpa_notice).toBeDefined();
+    expect(result.ferpa_notice).toContain('Section 99.33');
+  });
+
+  it('includes FERPA notice for TRANSCRIPT credential type', () => {
+    const anchor = createAnchor({ credential_type: 'TRANSCRIPT' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.ferpa_notice).toContain('education records');
+  });
+
+  it('includes FERPA notice for CERTIFICATE credential type', () => {
+    const anchor = createAnchor({ credential_type: 'CERTIFICATE' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.ferpa_notice).toBeDefined();
+  });
+
+  it('includes FERPA notice for CLE credential type', () => {
+    const anchor = createAnchor({ credential_type: 'CLE' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.ferpa_notice).toBeDefined();
+  });
+
+  it('omits FERPA notice for non-education credential types', () => {
+    const anchor = createAnchor({ credential_type: 'INSURANCE' });
+    const result = buildVerificationResult(anchor);
+
+    expect(result).not.toHaveProperty('ferpa_notice');
+  });
+
+  it('omits FERPA notice when credential_type is null', () => {
+    const anchor = createAnchor({ credential_type: null });
+    const result = buildVerificationResult(anchor);
+
+    expect(result).not.toHaveProperty('ferpa_notice');
+  });
 });
