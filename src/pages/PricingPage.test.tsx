@@ -10,6 +10,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { createTestQueryClient } from '@/tests/queryTestUtils';
 
 // =========================================================================
 // Mocks
@@ -52,9 +54,11 @@ import { BILLING_LABELS } from '@/lib/copy';
 
 function renderPage() {
   return render(
-    <MemoryRouter>
-      <PricingPage />
-    </MemoryRouter>,
+    <QueryClientProvider client={createTestQueryClient()}>
+      <MemoryRouter>
+        <PricingPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   );
 }
 

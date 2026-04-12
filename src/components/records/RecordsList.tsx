@@ -4,7 +4,8 @@
  * Displays a list of secured documents with status and actions.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, Loader2, RefreshCw, Mail, Copy, Check, ExternalLink } from 'lucide-react';
 import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS } from '@/lib/copy';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
@@ -137,54 +138,61 @@ export function RecordsList({
   );
 }
 
-/** Progressive rendering for large lists (Design Audit #20) */
+/** True virtual scrolling for large lists (PERF-09) — only visible rows are in DOM */
 function VirtualizedRecordsList({
   records,
   onViewRecord,
   onDownloadProof,
   onRevokeRecord,
 }: Readonly<Omit<RecordsListProps, 'loading'>>) {
-  const BATCH_SIZE = 50;
-  const [visibleCount, setVisibleCount] = useState(BATCH_SIZE);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
 
-  const loadMore = useCallback(() => {
-    setVisibleCount(prev => Math.min(prev + BATCH_SIZE, records.length));
-  }, [records.length]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) loadMore(); },
-      { rootMargin: '200px' }
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [loadMore]);
-
-  const visible = records.slice(0, visibleCount);
+  const virtualizer = useVirtualizer({
+    count: records.length,
+    getScrollElement: () => parentRef.current,
+    // Estimated row height — cards vary, virtualizer adjusts dynamically
+    estimateSize: () => 220,
+    overscan: 5,
+  });
 
   return (
-    <div className="space-y-1 pt-4">
-      {visible.map((record) => (
-        <RecordRow
-          key={record.id}
-          record={record}
-          onView={() => onViewRecord?.(record)}
-          onDownload={() => onDownloadProof?.(record)}
-          onRevoke={() => onRevokeRecord?.(record)}
-        />
-      ))}
-      {visibleCount < records.length && (
-        <div ref={sentinelRef} className="flex items-center justify-center py-4">
-          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-          <span className="ml-2 text-sm text-muted-foreground">
-            Showing {visibleCount} of {records.length} records
-          </span>
-        </div>
-      )}
+    <div
+      ref={parentRef}
+      className="pt-4 overflow-auto"
+      style={{ maxHeight: 'calc(100vh - 200px)' }}
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          width: '100%',
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualRow) => {
+          const record = records[virtualRow.index];
+          return (
+            <div
+              key={record.id}
+              data-index={virtualRow.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <RecordRow
+                record={record}
+                onView={() => onViewRecord?.(record)}
+                onDownload={() => onDownloadProof?.(record)}
+                onRevoke={() => onRevokeRecord?.(record)}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

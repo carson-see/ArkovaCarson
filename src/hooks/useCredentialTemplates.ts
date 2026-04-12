@@ -3,15 +3,18 @@
  *
  * Manages credential templates for an organization.
  * ORG_ADMIN users can create, read, update, and deactivate templates.
+ * Uses React Query for caching and deduplication.
  *
  * @see P5-TS-07
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { logAuditEvent } from '@/lib/auditLog';
 import { TOAST } from '@/lib/copy';
+import { queryKeys } from '@/lib/queryClient';
 import type { Database, Json } from '@/types/database.types';
 
 type CredentialTemplate = Database['public']['Tables']['credential_templates']['Row'];
@@ -41,52 +44,40 @@ interface UseCredentialTemplatesResult {
   refreshTemplates: () => Promise<void>;
 }
 
+async function fetchTemplatesData(orgId: string): Promise<CredentialTemplate[]> {
+  const { data, error } = await supabase
+    .from('credential_templates')
+    .select('id, org_id, name, description, credential_type, default_metadata, is_active, is_system, created_by, created_at, updated_at')
+    .eq('org_id', orgId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data ?? [];
+}
+
 export function useCredentialTemplates(orgId: string | null | undefined): UseCredentialTemplatesResult {
-  const [templates, setTemplates] = useState<CredentialTemplate[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchTemplates = useCallback(async () => {
-    if (!orgId) {
-      setTemplates([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const { data, error: fetchError } = await supabase
-      .from('credential_templates')
-      .select('id, org_id, name, description, credential_type, default_metadata, is_active, is_system, created_by, created_at, updated_at')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false });
-
-    if (fetchError) {
-      setError(fetchError.message);
-    } else {
-      setTemplates(data ?? []);
-    }
-
-    setLoading(false);
-  }, [orgId]);
-
-  useEffect(() => {
-    fetchTemplates();
-  }, [fetchTemplates]);
+  const {
+    data: templates = [],
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.credentialTemplates(orgId ?? ''),
+    queryFn: () => fetchTemplatesData(orgId!),
+    enabled: !!orgId,
+    staleTime: 60_000,
+  });
 
   const refreshTemplates = useCallback(async () => {
-    await fetchTemplates();
-  }, [fetchTemplates]);
+    if (orgId) {
+      await qc.invalidateQueries({ queryKey: queryKeys.credentialTemplates(orgId) });
+    }
+  }, [orgId, qc]);
 
   const createTemplate = useCallback(
     async (params: CreateTemplateParams): Promise<CredentialTemplate | null> => {
-      if (!orgId) {
-        setError('No organization');
-        return null;
-      }
-
-      setError(null);
+      if (!orgId) return null;
 
       const { data: user } = await supabase.auth.getUser();
 
@@ -104,7 +95,6 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         .single();
 
       if (insertError) {
-        setError(insertError.message);
         toast.error(TOAST.TEMPLATE_CREATE_FAILED);
         return null;
       }
@@ -119,21 +109,19 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_CREATED);
-      // Optimistic: append new template locally instead of full refetch
-      setTemplates(prev => [data, ...prev]);
+      // Optimistic: prepend new template to cache
+      qc.setQueryData<CredentialTemplate[]>(
+        queryKeys.credentialTemplates(orgId),
+        (prev) => [data, ...(prev ?? [])],
+      );
       return data;
     },
-    [orgId]
+    [orgId, qc]
   );
 
   const updateTemplate = useCallback(
     async (id: string, params: UpdateTemplateParams): Promise<boolean> => {
-      if (!orgId) {
-        setError('No organization');
-        return false;
-      }
-
-      setError(null);
+      if (!orgId) return false;
 
       const { error: updateError } = await supabase
         .from('credential_templates')
@@ -147,7 +135,6 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         .eq('org_id', orgId);
 
       if (updateError) {
-        setError(updateError.message);
         toast.error(TOAST.TEMPLATE_UPDATE_FAILED);
         return false;
       }
@@ -162,21 +149,23 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_UPDATED);
-      // Optimistic: update template in local state instead of full refetch
-      setTemplates(prev => prev.map(t => t.id === id ? { ...t, ...params, default_metadata: params.default_metadata === undefined ? t.default_metadata : (params.default_metadata ?? {}) } as CredentialTemplate : t));
+      // Optimistic: update in cache
+      qc.setQueryData<CredentialTemplate[]>(
+        queryKeys.credentialTemplates(orgId),
+        (prev) => (prev ?? []).map(t =>
+          t.id === id
+            ? { ...t, ...params, default_metadata: params.default_metadata === undefined ? t.default_metadata : (params.default_metadata ?? {}) } as CredentialTemplate
+            : t
+        ),
+      );
       return true;
     },
-    [orgId]
+    [orgId, qc]
   );
 
   const deleteTemplate = useCallback(
     async (id: string): Promise<boolean> => {
-      if (!orgId) {
-        setError('No organization');
-        return false;
-      }
-
-      setError(null);
+      if (!orgId) return false;
 
       const { error: deleteError } = await supabase
         .from('credential_templates')
@@ -185,7 +174,6 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
         .eq('org_id', orgId);
 
       if (deleteError) {
-        setError(deleteError.message);
         toast.error(TOAST.TEMPLATE_DELETE_FAILED);
         return false;
       }
@@ -199,17 +187,20 @@ export function useCredentialTemplates(orgId: string | null | undefined): UseCre
       });
 
       toast.success(TOAST.TEMPLATE_DELETED);
-      // Optimistic: remove template from local state instead of full refetch
-      setTemplates(prev => prev.filter(t => t.id !== id));
+      // Optimistic: remove from cache
+      qc.setQueryData<CredentialTemplate[]>(
+        queryKeys.credentialTemplates(orgId),
+        (prev) => (prev ?? []).filter(t => t.id !== id),
+      );
       return true;
     },
-    [orgId]
+    [orgId, qc]
   );
 
   return {
     templates,
-    loading,
-    error,
+    loading: !orgId ? false : loading,
+    error: queryError ? (queryError as Error).message : null,
     createTemplate,
     updateTemplate,
     deleteTemplate,

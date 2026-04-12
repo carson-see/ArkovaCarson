@@ -3,10 +3,13 @@
  *
  * Fetches aggregate platform metrics from the admin API.
  * Only accessible to platform admins.
+ * Uses React Query for caching.
  */
 
-import { useState, useCallback } from 'react';
+import { useCallback } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { workerFetch } from '@/lib/workerClient';
+import { queryKeys } from '@/lib/queryClient';
 
 export interface PlatformStats {
   users: { total: number; last7Days: number };
@@ -21,33 +24,40 @@ export interface PlatformStats {
   subscriptions: { byPlan: Record<string, number> };
 }
 
+async function fetchPlatformStatsData(): Promise<PlatformStats> {
+  const response = await workerFetch('/api/admin/platform-stats', { method: 'GET' });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(body.error ?? `HTTP ${response.status}`);
+  }
+
+  return await response.json() as PlatformStats;
+}
+
 export function usePlatformStats() {
-  const [stats, setStats] = useState<PlatformStats | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const {
+    data: stats = null,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.platformStats(),
+    queryFn: fetchPlatformStatsData,
+    staleTime: 30_000,
+    // Don't auto-fetch — admin page triggers manually
+    enabled: false,
+  });
 
   const fetchStats = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+    await qc.refetchQueries({ queryKey: queryKeys.platformStats() });
+  }, [qc]);
 
-    try {
-      const response = await workerFetch('/api/admin/platform-stats', { method: 'GET' });
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({ error: 'Request failed' }));
-        setError(body.error ?? `HTTP ${response.status}`);
-        setLoading(false);
-        return;
-      }
-
-      const data = await response.json();
-      setStats(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch platform stats');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  return { stats, loading, error, fetchStats };
+  return {
+    stats,
+    loading,
+    error: queryError ? (queryError as Error).message : null,
+    fetchStats,
+  };
 }

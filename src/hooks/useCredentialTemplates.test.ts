@@ -10,6 +10,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 
 const mockFrom = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -60,7 +61,7 @@ describe('useCredentialTemplates', () => {
 
   it('returns empty templates when orgId is null', async () => {
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates(null));
+    const { result } = renderHook(() => useCredentialTemplates(null), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -77,7 +78,7 @@ describe('useCredentialTemplates', () => {
     setupFetchMock(mockTemplates);
 
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates('org-1'));
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -90,7 +91,7 @@ describe('useCredentialTemplates', () => {
     setupFetchMock(null, { message: 'Permission denied' });
 
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates('org-1'));
+    const { result } = renderHook(() => useCredentialTemplates('org-1'), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -99,11 +100,11 @@ describe('useCredentialTemplates', () => {
     expect(result.current.error).toBe('Permission denied');
   });
 
-  it('createTemplate returns null and sets error when no orgId', async () => {
+  it('createTemplate returns null when no orgId', async () => {
     setupFetchMock([]);
 
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates(null));
+    const { result } = renderHook(() => useCredentialTemplates(null), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -118,14 +119,13 @@ describe('useCredentialTemplates', () => {
     });
 
     expect(created).toBeNull();
-    expect(result.current.error).toBe('No organization');
   });
 
   it('deleteTemplate returns false when no orgId', async () => {
     setupFetchMock([]);
 
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates(null));
+    const { result } = renderHook(() => useCredentialTemplates(null), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -137,14 +137,13 @@ describe('useCredentialTemplates', () => {
     });
 
     expect(deleted).toBe(false);
-    expect(result.current.error).toBe('No organization');
   });
 
   it('updateTemplate returns false when no orgId', async () => {
     setupFetchMock([]);
 
     const { useCredentialTemplates } = await import('./useCredentialTemplates');
-    const { result } = renderHook(() => useCredentialTemplates(null));
+    const { result } = renderHook(() => useCredentialTemplates(null), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -156,6 +155,5 @@ describe('useCredentialTemplates', () => {
     });
 
     expect(updated).toBe(false);
-    expect(result.current.error).toBe('No organization');
   });
 });

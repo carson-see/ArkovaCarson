@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 import { useBilling } from './useBilling';
 
 // Hoisted mocks
@@ -85,7 +86,7 @@ describe('useBilling', () => {
   it('loads plans and defaults to free plan when no subscription', async () => {
     setupSupabaseMock({ plans: { data: mockPlans, error: null }, subscription: { data: null, error: null } });
 
-    const { result } = renderHook(() => useBilling());
+    const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
 
     // Wait for loading to finish
     await vi.waitFor(() => expect(result.current.loading).toBe(false));
@@ -102,7 +103,7 @@ describe('useBilling', () => {
       subscription: { data: mockSubscription, error: null },
     });
 
-    const { result } = renderHook(() => useBilling());
+    const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
     await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.subscription?.status).toBe('active');
@@ -115,17 +116,17 @@ describe('useBilling', () => {
       subscription: { data: null, error: null },
     });
 
-    const { result } = renderHook(() => useBilling());
+    const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
     await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.error).toBe('Failed to load billing data');
+    expect(result.current.error).toBe('DB error');
     expect(result.current.plans).toHaveLength(0);
   });
 
   it('resets state when user is null', async () => {
     mockUseAuth.mockReturnValue({ user: null as unknown as { id: string; email: string } });
 
-    const { result } = renderHook(() => useBilling());
+    const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
     await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.plans).toHaveLength(0);
@@ -144,7 +145,7 @@ describe('useBilling', () => {
         json: () => Promise.resolve({ url: 'https://checkout.stripe.com/session_123' }),
       });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       let url: string | null = null;
@@ -166,14 +167,14 @@ describe('useBilling', () => {
       );
     });
 
-    it('sets error on failed checkout', async () => {
+    it('returns null on failed checkout', async () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 400,
         json: () => Promise.resolve({ error: 'Invalid plan' }),
       });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       let url: string | null = null;
@@ -182,13 +183,12 @@ describe('useBilling', () => {
       });
 
       expect(url).toBeNull();
-      expect(result.current.error).toBe('Invalid plan');
     });
 
     it('returns null when user is not signed in', async () => {
       mockUseAuth.mockReturnValue({ user: null as unknown as { id: string; email: string } });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       let url: string | null = null;
@@ -197,7 +197,6 @@ describe('useBilling', () => {
       });
 
       expect(url).toBeNull();
-      expect(result.current.error).toBe('You must be signed in to subscribe');
     });
   });
 
@@ -212,7 +211,7 @@ describe('useBilling', () => {
         json: () => Promise.resolve({ url: 'https://billing.stripe.com/portal_123' }),
       });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       let url: string | null = null;
@@ -223,14 +222,14 @@ describe('useBilling', () => {
       expect(url).toBe('https://billing.stripe.com/portal_123');
     });
 
-    it('sets error on failure', async () => {
+    it('returns null on failure', async () => {
       mockFetch.mockResolvedValue({
         ok: false,
         status: 500,
         json: () => Promise.resolve({ error: 'Portal error' }),
       });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       let url: string | null = null;
@@ -239,7 +238,6 @@ describe('useBilling', () => {
       });
 
       expect(url).toBeNull();
-      expect(result.current.error).toBe('Portal error');
     });
   });
 
@@ -247,7 +245,7 @@ describe('useBilling', () => {
     it('re-fetches billing data', async () => {
       setupSupabaseMock({ plans: { data: mockPlans, error: null }, subscription: { data: null, error: null } });
 
-      const { result } = renderHook(() => useBilling());
+      const { result } = renderHook(() => useBilling(), { wrapper: createQueryWrapper() });
       await vi.waitFor(() => expect(result.current.loading).toBe(false));
 
       expect(result.current.plan?.name).toBe('Free');
@@ -262,7 +260,8 @@ describe('useBilling', () => {
         await result.current.refresh();
       });
 
-      expect(result.current.plan?.name).toBe('Individual');
+      // React Query refetch is async — wait for new data
+      await vi.waitFor(() => expect(result.current.plan?.name).toBe('Individual'));
     });
   });
 });

@@ -51,28 +51,32 @@ router.get('/', async (req: Request, res: Response) => {
 
     const orgId = membership.org_id;
 
-    // Fetch all anchors in period
-    const { data: anchors } = await db
-      .from('anchors')
-      .select('status, created_at, chain_timestamp')
-      .eq('org_id', orgId)
-      .gte('created_at', from)
-      .lte('created_at', to)
-      .is('deleted_at', null);
-
-    // Fetch all signatures in period
-    const { data: signatures } = await db
-      .from('signatures')
-      .select('level, status, ltv_data_embedded, timestamp_token_id, created_at')
-      .eq('org_id', orgId)
-      .gte('created_at', from)
-      .lte('created_at', to);
-
-    // Fetch certificate health
-    const { data: certs } = await db
-      .from('signing_certificates')
-      .select('status, not_after')
-      .eq('org_id', orgId);
+    // Fetch anchors, signatures, and certs in parallel (eliminates sequential latency)
+    const [anchorsResult, signaturesResult, certsResult] = await Promise.all([
+      db
+        .from('anchors')
+        .select('status, created_at, chain_timestamp')
+        .eq('org_id', orgId)
+        .gte('created_at', from)
+        .lte('created_at', to)
+        .is('deleted_at', null)
+        .limit(50000),
+      db
+        .from('signatures')
+        .select('level, status, ltv_data_embedded, timestamp_token_id, created_at')
+        .eq('org_id', orgId)
+        .gte('created_at', from)
+        .lte('created_at', to)
+        .limit(50000),
+      db
+        .from('signing_certificates')
+        .select('status, not_after')
+        .eq('org_id', orgId)
+        .limit(1000),
+    ]);
+    const anchors = anchorsResult.data;
+    const signatures = signaturesResult.data;
+    const certs = certsResult.data;
 
     const anchorList = anchors || [];
     const sigList = signatures || [];

@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 
 const mockUser = { id: 'test-user-id' };
 
@@ -43,7 +44,7 @@ describe('useCredits', () => {
       error: null,
     });
 
-    const { result } = renderHook(() => useCredits());
+    const { result } = renderHook(() => useCredits(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -60,7 +61,7 @@ describe('useCredits', () => {
       error: { message: 'RPC failed' },
     });
 
-    const { result } = renderHook(() => useCredits());
+    const { result } = renderHook(() => useCredits(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -84,7 +85,7 @@ describe('useCredits', () => {
       error: null,
     });
 
-    const { result } = renderHook(() => useCredits());
+    const { result } = renderHook(() => useCredits(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.credits?.is_low).toBe(true);

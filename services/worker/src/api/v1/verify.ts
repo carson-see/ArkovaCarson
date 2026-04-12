@@ -14,6 +14,7 @@ import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
+import { getCachedVerification, setCachedVerification } from '../../utils/verifyCache.js';
 
 const router = Router();
 
@@ -147,6 +148,26 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   return result;
 }
 
+/** Fire-and-forget audit log for verification queries */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function logVerificationAudit(req: any, publicId: string, result: VerificationResult, cacheHit: boolean): void {
+  void db.from('audit_events').insert({
+    event_type: 'VERIFICATION_QUERIED',
+    event_category: 'ANCHOR',
+    target_type: 'anchor',
+    target_id: publicId,
+    details: JSON.stringify({
+      verified: result.verified,
+      status: result.status,
+      credential_type: result.credential_type ?? null,
+      querying_ip: req.ip ?? null,
+      querying_agent: req.headers?.['user-agent']?.substring(0, 200) ?? null,
+      api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
+      ...(cacheHit && { cache_hit: true }),
+    }),
+  });
+}
+
 /** Default DB-backed lookup */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
@@ -218,6 +239,14 @@ router.get('/:publicId', async (req, res) => {
   }
 
   try {
+    // PERF-12: Check Redis cache first
+    const cached = await getCachedVerification<VerificationResult>(publicId);
+    if (cached) {
+      logVerificationAudit(req, publicId, cached, true);
+      res.json(cached);
+      return;
+    }
+
     const lookup = (req as unknown as { _testLookup?: PublicIdLookup })._testLookup ?? defaultLookup;
     const anchor = await lookup.lookupByPublicId(publicId);
 
@@ -231,21 +260,10 @@ router.get('/:publicId', async (req, res) => {
 
     const result = buildVerificationResult(anchor);
 
-    // PH2-AGENT-01: Log verification to audit trail (fire-and-forget)
-    void db.from('audit_events').insert({
-      event_type: 'VERIFICATION_QUERIED',
-      event_category: 'ANCHOR',
-      target_type: 'anchor',
-      target_id: anchor.public_id,
-      details: JSON.stringify({
-        verified: result.verified,
-        status: result.status,
-        credential_type: result.credential_type ?? null,
-        querying_ip: req.ip ?? null,
-        querying_agent: req.headers['user-agent']?.substring(0, 200) ?? null,
-        api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
-      }),
-    });
+    // PERF-12: Cache the result (fire-and-forget)
+    void setCachedVerification(publicId, result);
+
+    logVerificationAudit(req, anchor.public_id, result, false);
 
     res.json(result);
   } catch (err) {

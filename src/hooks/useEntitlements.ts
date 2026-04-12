@@ -4,11 +4,15 @@
  * Checks the current user's plan quota and monthly anchor usage.
  * Provides canCreateAnchor, usage counts, and remaining quota.
  *
+ * Uses React Query for caching — entitlement data shared across pages instantly.
+ *
  * @see CRIT-3 — Entitlement enforcement
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
+import { queryKeys } from '../lib/queryClient';
 import { useAuth } from './useAuth';
 
 export interface EntitlementState {
@@ -39,90 +43,76 @@ interface EntitlementActions {
   canCreateCount: (count: number) => boolean;
 }
 
+interface EntitlementData {
+  recordsUsed: number;
+  recordsLimit: number | null;
+  planName: string;
+}
+
+async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  const [subResult, plansResult, countResult] = await Promise.all([
+    supabase
+      .from('subscriptions')
+      .select('plan_id, current_period_start, status')
+      .eq('user_id', userId)
+      .maybeSingle(),
+    supabase
+      .from('plans')
+      .select('id, records_per_month, name'),
+    supabase
+      .from('anchors')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .gte('created_at', monthStart.toISOString()),
+  ]);
+
+  if (subResult.error) throw subResult.error;
+  if (plansResult.error) throw plansResult.error;
+  if (countResult.error) throw countResult.error;
+
+  const subData = subResult.data;
+  const plans = plansResult.data ?? [];
+  const freePlan = plans.find(p => p.id === 'free');
+
+  let planName: string;
+  if (subData?.plan_id && subData.status === 'active') {
+    const activePlan = plans.find(p => p.id === subData.plan_id);
+    planName = activePlan?.name ?? freePlan?.name ?? 'Free';
+  } else {
+    planName = freePlan?.name ?? 'Free';
+  }
+
+  return {
+    recordsUsed: countResult.count ?? 0,
+    recordsLimit: null, // null = unlimited in beta
+    planName,
+  };
+}
+
 export function useEntitlements(): EntitlementState & EntitlementActions {
   const { user } = useAuth();
-  const [recordsUsed, setRecordsUsed] = useState(0);
-  const [recordsLimit, setRecordsLimit] = useState<number | null>(null);
-  const [planName, setPlanName] = useState('Free');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const qc = useQueryClient();
 
-  const fetchEntitlements = useCallback(async () => {
-    if (!user) {
-      setRecordsUsed(0);
-      setRecordsLimit(3); // Default free limit
-      setPlanName('Free');
-      setLoading(false);
-      return;
-    }
+  const {
+    data,
+    isLoading: loading,
+    error: queryError,
+  } = useQuery({
+    queryKey: queryKeys.entitlements(user?.id ?? ''),
+    queryFn: () => fetchEntitlementData(user!.id),
+    enabled: !!user,
+    staleTime: 60_000, // Entitlements rarely change — 1 min stale
+  });
 
-    setLoading(true);
-    setError(null);
-
-    try {
-      // 1. Fetch subscription + all plans + anchor count in parallel (no waterfall)
-      const monthStart = new Date();
-      monthStart.setDate(1);
-      monthStart.setHours(0, 0, 0, 0);
-
-      const [subResult, plansResult, countResult] = await Promise.all([
-        supabase
-          .from('subscriptions')
-          .select('plan_id, current_period_start, status')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-        supabase
-          .from('plans')
-          .select('id, records_per_month, name'),
-        supabase
-          .from('anchors')
-          .select('id', { count: 'exact', head: true })
-          .eq('user_id', user.id)
-          .gte('created_at', monthStart.toISOString()),
-      ]);
-
-      if (subResult.error) throw subResult.error;
-      if (plansResult.error) throw plansResult.error;
-      if (countResult.error) throw countResult.error;
-
-      const subData = subResult.data;
-      const plans = plansResult.data ?? [];
-      const freePlan = plans.find(p => p.id === 'free');
-      let name: string;
-
-      if (subData?.plan_id && subData.status === 'active') {
-        const activePlan = plans.find(p => p.id === subData.plan_id);
-        name = activePlan?.name ?? freePlan?.name ?? 'Free';
-      } else {
-        name = freePlan?.name ?? 'Free';
-      }
-
-      const count = countResult.count;
-
-      // Beta: set unlimited for all users — credit/quota enforcement disabled
-      setRecordsUsed(count ?? 0);
-      setRecordsLimit(null); // null = unlimited in beta
-      setPlanName(name);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to check plan quota';
-      setError(message);
-      // Fail closed: fall back to free tier defaults on error.
-      // Never leave recordsLimit as null (unlimited) when we can't verify the plan.
-      setRecordsLimit(null); // Beta: unlimited on error too
-      setPlanName('Beta');
-      setRecordsUsed(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    fetchEntitlements();
-  }, [fetchEntitlements]);
-
-  // H5: Removed realtime subscription on subscriptions table.
-  // Plan changes are rare (especially during beta with all quotas disabled).
-  // Use refresh() to manually re-fetch when needed (e.g., after checkout).
+  // When no user: return free tier defaults (not unlimited)
+  const recordsUsed = data?.recordsUsed ?? 0;
+  const recordsLimit = !user ? 3 : (queryError ? null : (data?.recordsLimit ?? null));
+  const planName = !user ? 'Free' : (queryError ? 'Beta' : (data?.planName ?? 'Free'));
+  const error = queryError ? (queryError as Error).message : null;
 
   const isUnlimited = recordsLimit === null;
   const remaining = isUnlimited ? null : Math.max(0, recordsLimit - recordsUsed);
@@ -138,7 +128,13 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     [isUnlimited, remaining],
   );
 
-  return {
+  const refresh = useCallback(async () => {
+    if (user) {
+      await qc.invalidateQueries({ queryKey: queryKeys.entitlements(user.id) });
+    }
+  }, [user, qc]);
+
+  return useMemo(() => ({
     canCreateAnchor,
     recordsUsed,
     recordsLimit,
@@ -146,9 +142,9 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
     percentUsed,
     isNearLimit,
     planName,
-    loading,
+    loading: !user ? false : loading,
     error,
-    refresh: fetchEntitlements,
+    refresh,
     canCreateCount,
-  };
+  }), [canCreateAnchor, recordsUsed, recordsLimit, remaining, percentUsed, isNearLimit, planName, user, loading, error, refresh, canCreateCount]);
 }

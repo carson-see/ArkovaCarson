@@ -13,6 +13,7 @@
  */
 
 import { db } from '../utils/db.js';
+import { invalidateVerificationCache } from '../utils/verifyCache.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
 import { buildVerifyUrl, buildRecordUrl } from '../lib/urls.js';
@@ -227,6 +228,11 @@ async function _checkAnchorConfirmation(anchor: {
   if (updateError) {
     logger.error({ anchorId: anchor.id, error: updateError }, 'Failed to promote anchor to SECURED');
     return false;
+  }
+
+  // PERF-12: Invalidate verification cache on status transition
+  if (anchor.public_id) {
+    void invalidateVerificationCache(anchor.public_id);
   }
 
   // Update chain index — non-fatal

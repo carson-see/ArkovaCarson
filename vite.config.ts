@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
+import { visualizer } from 'rollup-plugin-visualizer';
 import path from 'node:path';
 
 export default defineConfig({
@@ -39,6 +40,14 @@ export default defineConfig({
       // Disable in dev / when no auth token present
       disable: !process.env.SENTRY_AUTH_TOKEN,
     }),
+    // Bundle analysis — run `npm run analyze` to generate treemap
+    ...(process.env.ANALYZE ? [visualizer({
+      filename: 'dist/bundle-stats.html',
+      open: false,
+      gzipSize: true,
+      brotliSize: true,
+      template: 'treemap',
+    })] : []),
   ],
   server: {
     // SCRUM-354: frame-ancestors only works in HTTP headers, not meta tags.

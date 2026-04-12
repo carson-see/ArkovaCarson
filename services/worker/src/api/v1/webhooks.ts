@@ -159,17 +159,19 @@ function logWebhookAudit(
   endpointId: string,
   details: Record<string, unknown> = {},
 ): void {
-  void db
-    .from('audit_events')
-    .insert({
-      event_type: eventType,
-      event_category: 'WEBHOOK',
-      actor_id: actorProfileId,
-      org_id: orgId,
-      target_type: 'webhook_endpoint',
-      target_id: endpointId,
-      details: JSON.stringify(details),
-    })
+  void Promise.resolve(
+    db
+      .from('audit_events')
+      .insert({
+        event_type: eventType,
+        event_category: 'WEBHOOK',
+        actor_id: actorProfileId,
+        org_id: orgId,
+        target_type: 'webhook_endpoint',
+        target_id: endpointId,
+        details: JSON.stringify(details),
+      }),
+  )
     .then((result) => {
       if (result.error) logger.warn({ error: result.error, eventType, endpointId }, 'audit event insert failed');
     })

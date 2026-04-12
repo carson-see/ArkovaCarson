@@ -235,7 +235,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
                 <div className="flex items-center gap-3 min-w-0">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
                     {sub.logo_url ? (
-                      <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" />
+                      <img src={sub.logo_url} alt={`${sub.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" width={40} height={40} />
                     ) : (
                       <Building2 className="h-5 w-5 text-muted-foreground" />
                     )}

@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
+import { createQueryWrapper } from '@/tests/queryTestUtils';
 
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
@@ -44,7 +45,7 @@ describe('useMyCredentials', () => {
     });
 
     const { useMyCredentials } = await import('./useMyCredentials');
-    const { result } = renderHook(() => useMyCredentials());
+    const { result } = renderHook(() => useMyCredentials(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -78,7 +79,7 @@ describe('useMyCredentials', () => {
     mockRpc.mockResolvedValue({ data: mockData, error: null });
 
     const { useMyCredentials } = await import('./useMyCredentials');
-    const { result } = renderHook(() => useMyCredentials());
+    const { result } = renderHook(() => useMyCredentials(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -111,7 +112,7 @@ describe('useMyCredentials', () => {
     });
 
     const { useMyCredentials } = await import('./useMyCredentials');
-    const { result } = renderHook(() => useMyCredentials());
+    const { result } = renderHook(() => useMyCredentials(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
@@ -125,7 +126,7 @@ describe('useMyCredentials', () => {
     mockRpc.mockResolvedValue({ data: null, error: null });
 
     const { useMyCredentials } = await import('./useMyCredentials');
-    const { result } = renderHook(() => useMyCredentials());
+    const { result } = renderHook(() => useMyCredentials(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);

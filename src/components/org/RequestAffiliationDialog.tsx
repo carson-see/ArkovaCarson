@@ -149,7 +149,7 @@ export function RequestAffiliationDialog({
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
                   {selectedOrg.logo_url ? (
-                    <img src={selectedOrg.logo_url} alt={`${selectedOrg.display_name} organization logo`} className="h-full w-full object-cover rounded-md" />
+                    <img src={selectedOrg.logo_url} alt={`${selectedOrg.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" />
                   ) : (
                     <Building2 className="h-5 w-5 text-muted-foreground" />
                   )}
@@ -199,7 +199,7 @@ export function RequestAffiliationDialog({
                   >
                     <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
                       {org.logo_url ? (
-                        <img src={org.logo_url} alt={`${org.display_name} organization logo`} className="h-full w-full object-cover rounded-md" />
+                        <img src={org.logo_url} alt={`${org.display_name} organization logo`} className="h-full w-full object-cover rounded-md" loading="lazy" decoding="async" />
                       ) : (
                         <Building2 className="h-4 w-4 text-muted-foreground" />
                       )}
