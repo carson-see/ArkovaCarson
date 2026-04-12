@@ -26,7 +26,6 @@ import type {
 } from '../src/ai/eval/intelligence-eval.js';
 import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../src/ai/prompts/intelligence.js';
-import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 
 // ---------------------------------------------------------------------------
 // Eval dataset — FCRA/employment compliance questions
@@ -219,7 +218,7 @@ async function callIntelligenceAPI(
   const { GoogleGenerativeAI } = await import('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(key);
   const model = genAI.getGenerativeModel({
-    model: GEMINI_GENERATION_MODEL,
+    model: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
     systemInstruction: systemPrompt,
     generationConfig: { responseMimeType: 'application/json', temperature: 0.2 },
   });

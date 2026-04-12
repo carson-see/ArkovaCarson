@@ -30,7 +30,6 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -230,7 +229,7 @@ async function generateReasoningTrace(
   example: ReasoningExample,
 ): Promise<string> {
   const model = gemini.getGenerativeModel({
-    model: GEMINI_GENERATION_MODEL,
+    model: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
     systemInstruction: REASONING_TEACHER_PROMPT,
     generationConfig: {
       temperature: 0.3,
