@@ -166,6 +166,7 @@ if (typeof document !== 'undefined') {
 export type { ArkovaEmbedConfig, AnchorData, EmbedMode } from './types';
 export { renderReportBlock, renderReportBlockFromData } from './report-block';
 export type { ReportBlockOptions, ReportFormat } from './report-block';
+export { applyDarkTheme, applyLightTheme } from './themes';
 
 const ArkovaEmbed = { mount, autoInit };
 

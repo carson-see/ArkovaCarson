@@ -13,6 +13,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { FERPA_EDUCATION_TYPES, FERPA_REDISCLOSURE_NOTICE } from '../../constants/ferpa.js';
 
 const router = Router();
 
@@ -35,6 +36,8 @@ export interface VerificationResult {
   explorer_url?: string;
   /** BETA-12: Immutable description (additive, nullable — Constitution 1.8) */
   description?: string;
+  /** REG-03: FERPA re-disclosure notice for education credential types (additive, nullable — Constitution 1.8) */
+  ferpa_notice?: string;
   error?: string;
 }
 
@@ -134,6 +137,11 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // BETA-12: description (additive, nullable — Constitution 1.8)
   if (anchor.description) {
     result.description = anchor.description;
+  }
+
+  // REG-03: FERPA re-disclosure notice for education credential types
+  if (anchor.credential_type && (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type)) {
+    result.ferpa_notice = FERPA_REDISCLOSURE_NOTICE;
   }
 
   return result;
