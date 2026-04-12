@@ -3,9 +3,11 @@
  *
  * HARDENING-3: signPayload, getRetryDelay, deliverToEndpoint,
  * dispatchWebhookEvent, processWebhookRetries.
+ * ARK-SEC-002: isPrivateUrlResolved fail-closed semantics.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { signPayload } from './delivery.js';
 
 // ---- Hoisted mocks ----
 
@@ -106,6 +108,23 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
+// ARK-SEC-002: isPrivateUrlResolved now fails closed when DNS resolves to
+// nothing. Tests use fake public hostnames (e.g., "hooks.example.com") that
+// cannot be resolved in the test sandbox, so without mocking node:dns they
+// would all be blocked as "unresolvable → unsafe". Mock a benign public IP
+// so the SSRF guard sees every test URL as public and lets delivery proceed.
+vi.mock('node:dns', async () => {
+  const actual = await vi.importActual<typeof import('node:dns')>('node:dns');
+  return {
+    ...actual,
+    promises: {
+      ...actual.promises,
+      resolve4: vi.fn(async () => ['203.0.113.10']), // TEST-NET-3, documentation block
+      resolve6: vi.fn(async () => []),
+    },
+  };
+});
+
 // Mock global fetch
 vi.stubGlobal('fetch', mockFetch);
 
@@ -172,6 +191,29 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
     }
   });
 }
+
+// ================================================================
+// signPayload — direct pure-function tests (now exported for reuse)
+// ================================================================
+
+describe('signPayload (exported HMAC helper)', () => {
+  it('produces a 64-char hex digest', () => {
+    const sig = signPayload('1700000000.{"event":"test"}', 'secret');
+    expect(sig).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('is deterministic for identical input', () => {
+    expect(signPayload('x', 's')).toBe(signPayload('x', 's'));
+  });
+
+  it('changes when payload changes', () => {
+    expect(signPayload('a', 's')).not.toBe(signPayload('b', 's'));
+  });
+
+  it('changes when secret changes', () => {
+    expect(signPayload('x', 'a')).not.toBe(signPayload('x', 'b'));
+  });
+});
 
 // ================================================================
 // signPayload (tested indirectly through dispatchWebhookEvent)
@@ -421,9 +463,13 @@ describe('dispatchWebhookEvent', () => {
   it('delivers to multiple endpoints in parallel', async () => {
     mockRpc.mockResolvedValue({ data: true });
 
-    const endpoint2 = { ...MOCK_ENDPOINT, id: 'ep-002', url: 'https://hooks2.example.com/cb' };
+    // Use literal public IPs so the SSRF DNS resolution path is skipped
+    // (delivery.ts short-circuits on literal IPs via the `[\d.]+` regex).
+    // Both 198.51.100.x (TEST-NET-2) IPs are routable test documentation.
+    const endpoint1 = { ...MOCK_ENDPOINT, url: 'https://198.51.100.1/cb' };
+    const endpoint2 = { ...MOCK_ENDPOINT, id: 'ep-002', url: 'https://198.51.100.2/cb' };
     endpointsSelect.contains.mockResolvedValue({
-      data: [MOCK_ENDPOINT, endpoint2],
+      data: [endpoint1, endpoint2],
       error: null,
     });
 

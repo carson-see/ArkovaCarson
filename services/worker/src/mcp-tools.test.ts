@@ -16,6 +16,7 @@ import {
   handleVerifyDocument,
   handleVerifyCredential,
   handleSearchCredentials,
+  handleVerifyBatch,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
 
@@ -38,8 +39,8 @@ afterEach(() => {
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
 describe('TOOL_DEFINITIONS', () => {
-  it('exports 5 tool definitions', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(5);
+  it('exports 6 tool definitions (5 original + INT-02 verify_batch)', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(6);
   });
 
   it('all tools have name, description, and inputSchema', () => {
@@ -49,6 +50,11 @@ describe('TOOL_DEFINITIONS', () => {
       expect(tool.inputSchema.type).toBe('object');
       expect(tool.inputSchema.required.length).toBeGreaterThan(0);
     }
+  });
+
+  it('exposes verify_batch (INT-02)', () => {
+    const names = TOOL_DEFINITIONS.map((t) => t.name);
+    expect(names).toContain('verify_batch');
   });
 });
 
@@ -279,6 +285,113 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
     expect(parsed.verified).toBe(false);
     expect(parsed.status).toBe('PENDING');
     expect(parsed.anchor_proof).toBeNull();
+  });
+});
+
+// ── INT-02: handleVerifyBatch ─────────────────────────────────────────
+
+describe('handleVerifyBatch (INT-02)', () => {
+  it('returns error when public_ids is empty', async () => {
+    const result = await handleVerifyBatch({ public_ids: [] }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('non-empty');
+  });
+
+  it('returns error when public_ids exceeds 100', async () => {
+    const ids = Array.from({ length: 101 }, (_, i) => `ARK-${i}`);
+    const result = await handleVerifyBatch({ public_ids: ids }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('at most 100');
+  });
+
+  it('returns error when any id is empty/whitespace', async () => {
+    const result = await handleVerifyBatch({ public_ids: ['ARK-1', '   '] }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('non-empty');
+  });
+
+  it('verifies all credentials and returns results in input order', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        org_name: 'University of Michigan',
+        credential_type: 'DEGREE',
+        created_at: '2026-04-11T10:00:00Z',
+        chain_tx_id: 'tx-1',
+      }),
+    });
+
+    const result = await handleVerifyBatch(
+      { public_ids: ['ARK-2026-001', 'ARK-2026-002', 'ARK-2026-003'] },
+      CONFIG,
+    );
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(3);
+    expect(parsed.results).toHaveLength(3);
+    expect(parsed.results[0].public_id).toBe('ARK-2026-001');
+    expect(parsed.results[1].public_id).toBe('ARK-2026-002');
+    expect(parsed.results[2].public_id).toBe('ARK-2026-003');
+    expect(parsed.results[0].verified).toBe(true);
+    expect(parsed.results[0].status).toBe('ACTIVE');
+    expect(parsed.results[0].issuer_name).toBe('University of Michigan');
+  });
+
+  it('each batch result carries recipient_identifier field for shape parity with single handler', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        org_name: 'Org',
+        credential_type: 'DEGREE',
+        created_at: '2026-04-11T10:00:00Z',
+        recipient_hash: 'hash-123',
+      }),
+    });
+    const result = await handleVerifyBatch({ public_ids: ['ARK-1'] }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results[0]).toHaveProperty('recipient_identifier');
+    expect(parsed.results[0].recipient_identifier).toBe('hash-123');
+  });
+
+  it('marks individual lookup as not verified on HTTP failure', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+    });
+
+    const result = await handleVerifyBatch(
+      { public_ids: ['ARK-missing', 'ARK-found'] },
+      CONFIG,
+    );
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results[0].verified).toBe(false);
+    expect(parsed.results[0].error).toContain('not found');
+    expect(parsed.results[1].verified).toBe(true);
+  });
+
+  it('handles single-item batch', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+    });
+    const result = await handleVerifyBatch({ public_ids: ['ARK-1'] }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(1);
+  });
+
+  it('handles 100-item batch (max allowed)', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+    });
+    const ids = Array.from({ length: 100 }, (_, i) => `ARK-${i}`);
+    const result = await handleVerifyBatch({ public_ids: ids }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(100);
   });
 });
 

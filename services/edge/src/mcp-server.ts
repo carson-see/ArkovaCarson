@@ -22,6 +22,7 @@ import {
   handleNessieQuery,
   handleAnchorDocument,
   handleVerifyDocument,
+  handleVerifyBatch,
   type SupabaseConfig,
 } from './mcp-tools';
 import type { Env } from './env';
@@ -91,6 +92,21 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     TOOL_DESC['verify_document'],
     { content_hash: z.string().describe('SHA-256 fingerprint of the document to verify') },
     async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
+  );
+
+  // ── INT-02: Batch verification ────────────────────────────────────────
+
+  server.tool(
+    'verify_batch',
+    TOOL_DESC['verify_batch'],
+    {
+      public_ids: z
+        .array(z.string())
+        .min(1)
+        .max(100)
+        .describe('Array of credential public IDs (max 100). Results returned in input order.'),
+    },
+    async ({ public_ids }) => handleVerifyBatch({ public_ids }, config),
   );
 
   // ── Phase II Agentic Tools (PH2-AGENT-06) ─────────────────────────────

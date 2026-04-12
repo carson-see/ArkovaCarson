@@ -27,6 +27,6 @@
     }
   },
   "include": ["src", "tests", "scripts"],
-  "exclude": ["services", "tests/load"],
+  "exclude": ["services", "tests/load", "tests/eslint-rules"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

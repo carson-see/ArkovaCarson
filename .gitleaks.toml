@@ -27,4 +27,12 @@ useDefault = true
     '''test-cron-secret''',
     # Supabase local dev URL
     '''http://127\.0\.0\.1:54321''',
+    # Documentation placeholder API keys (ak_live_...)
+    '''ak_live_\.\.\.''',
+    # Documentation example webhook secret (dummy hex in example JSON response)
+    '''9f8e7d6c5b4a39281706f5e4d3c2b1a0''',
+  ]
+  paths = [
+    # API documentation contains example curl commands with placeholder credentials
+    '''docs/api/.*\.md$''',
   ]
