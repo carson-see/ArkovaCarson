@@ -16,6 +16,7 @@ import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import type { Json } from '@/types/database.types';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
 import { CheckCircle, AlertCircle, Loader2, Copy, Check, ExternalLink, Sparkles, SkipForward, RefreshCw, PenLine, Clock } from 'lucide-react';
+import { ExtractionQualityBanner } from './ExtractionQualityBanner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -567,6 +568,19 @@ export function SecureDocumentDialog({
 
               {extractionProgress?.stage === 'complete' && extractedFields.length > 0 && (
                 <>
+                  {/* GME-26: Quality gate — show confidence warnings and fraud signals */}
+                  <ExtractionQualityBanner
+                    confidence={overallConfidence}
+                    fraudSignals={(() => {
+                      const raw = extractedFields.find(f => f.key === 'fraudSignals')?.value;
+                      if (!raw) return [];
+                      try {
+                        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        return Array.isArray(parsed) ? parsed : [];
+                      } catch { return []; }
+                    })()}
+                  />
+
                   {/* Show auto-detected document type */}
                   {selectedTemplate && (
                     <div className="flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">

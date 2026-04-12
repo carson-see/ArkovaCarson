@@ -35,12 +35,14 @@ import { computeAdjustedConfidence } from './confidence-model.js';
 import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
 import { stripJsonComments } from './strip-json-comments.js';
+import { getExtractionResponseSchema } from './structured-output.js';
 
 // GAP-5: Model versions centralized in gemini-config.ts (GME-01).
 // Before upgrading: run eval suite, compare F1, document delta, update pin.
 import {
   GEMINI_GENERATION_MODEL,
   GEMINI_EMBEDDING_MODEL,
+  GEMINI_LITE_MODEL,
 } from './gemini-config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
@@ -120,11 +122,16 @@ export class GeminiProvider implements IAIProvider {
         const timeout = setTimeout(() => controller.abort(), 30_000);
 
         try {
+          // GME-14: Pass Zod-derived JSON Schema for native structured output enforcement.
+          // The schema is typed as our GeminiSchema interface, cast to satisfy SDK types.
+          const responseSchema = getExtractionResponseSchema();
           const model = this.client.getGenerativeModel({
             model: this.modelName,
             systemInstruction: EXTRACTION_SYSTEM_PROMPT,
             generationConfig: {
               responseMimeType: 'application/json',
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              responseSchema: responseSchema as any,
               temperature: 0.1,
             },
           });
@@ -247,8 +254,9 @@ export class GeminiProvider implements IAIProvider {
     const prompt = buildTagsPrompt(extractedFields);
 
     const result = await this.withRetry(async () => {
+      // GME-18: Route lightweight tasks to Flash Lite for cost savings
       const model = this.client.getGenerativeModel({
-        model: this.modelName,
+        model: GEMINI_LITE_MODEL,
         systemInstruction: TAGS_SYSTEM_PROMPT,
         generationConfig: {
           responseMimeType: 'application/json',

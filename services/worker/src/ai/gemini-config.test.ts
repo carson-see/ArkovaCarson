@@ -51,6 +51,7 @@ describe('gemini-config', () => {
       embeddingModel: 'text-embedding-004',
       visionModel: 'gemini-3-flash-preview',
       tunedModel: null,
+      liteModel: 'gemini-3-flash-lite-preview',
     });
   });
 

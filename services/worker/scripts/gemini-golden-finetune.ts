@@ -18,6 +18,7 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import { writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 
 // Import ALL golden dataset phases (1-11)
@@ -283,7 +284,7 @@ async function main(): Promise<void> {
   };
 
   const requestBody = {
-    baseModel: process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview',
+    baseModel: GEMINI_GENERATION_MODEL,
     supervisedTuningSpec: {
       trainingDatasetUri: trainUri,
       validationDatasetUri: valUri,
@@ -297,7 +298,7 @@ async function main(): Promise<void> {
   };
 
   console.log('Config:');
-  console.log(`  Base model:    ${process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview'}`);
+  console.log(`  Base model:    ${GEMINI_GENERATION_MODEL}`);
   console.log(`  Epochs:        ${EPOCHS}`);
   console.log(`  LR multiplier: ${LR_MULTIPLIER}`);
   console.log(`  Adapter size:  ${adapterMap[ADAPTER_SIZE]}`);

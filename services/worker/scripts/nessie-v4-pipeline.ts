@@ -29,6 +29,7 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve, dirname } from 'node:path';
+import { GEMINI_DISTILLATION_MODEL } from '../src/ai/gemini-config.js';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
@@ -311,7 +312,7 @@ async function distillWithGemini(
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY required');
 
-  const model = process.env.GEMINI_DISTILLATION_MODEL ?? process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview';
+  const model = GEMINI_DISTILLATION_MODEL;
 
   const userPrompt = buildDistillationPrompt(sourceText, credType);
   const systemPrompt = DOMAIN_SYSTEM_PROMPTS[domain] ?? DOMAIN_SYSTEM_PROMPTS.sec;

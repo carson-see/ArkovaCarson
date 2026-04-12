@@ -15,7 +15,7 @@
  *   --epochs N         Number of training epochs (default: 4)
  *   --adapter-size N   LoRA adapter size: 1,2,4,8,16 (default: 4)
  *   --lr-multiplier N  Learning rate multiplier (default: 1.0)
- *   --base-model NAME  Base model (default: gemini-2.0-flash-001)
+ *   --base-model NAME  Base model (default: from gemini-config.ts)
  *   --max-examples N   Cap training examples (default: unlimited)
  *   --validation-split N  Validation fraction 0.0-0.3 (default: 0.1)
  *
@@ -28,6 +28,7 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import { readFileSync, writeFileSync, mkdirSync, existsSync, createReadStream, createWriteStream, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -52,7 +53,7 @@ const DRY_RUN = getFlag('dry-run');
 const EPOCHS = parseInt(getArg('epochs', '4'), 10);
 const ADAPTER_SIZE = parseInt(getArg('adapter-size', '4'), 10);
 const LR_MULTIPLIER = parseFloat(getArg('lr-multiplier', '1.0'));
-const BASE_MODEL = getArg('base-model', process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview');
+const BASE_MODEL = getArg('base-model', GEMINI_GENERATION_MODEL);
 const MAX_EXAMPLES = parseInt(getArg('max-examples', '0'), 10); // 0 = unlimited
 const VALIDATION_SPLIT = parseFloat(getArg('validation-split', '0.1'));
 

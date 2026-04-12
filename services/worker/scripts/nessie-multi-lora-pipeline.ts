@@ -37,6 +37,7 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import {
   createReadStream,
   createWriteStream,
@@ -406,7 +407,7 @@ Return ONLY a JSON array. No markdown, no explanation, no code fences.`;
 
       try {
         const res = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${process.env.GEMINI_MODEL ?? 'gemini-3-flash-preview'}:generateContent?key=${GEMINI_API_KEY}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_GENERATION_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
