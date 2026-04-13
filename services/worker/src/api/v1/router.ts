@@ -349,16 +349,12 @@ router.use('/compliance/benchmark', requireAuth, aiRateLimiter, complianceBenchm
 // Audit-ready report — JWT auth required (NCE-18)
 router.use('/compliance/report', requireAuth, batchRateLimiter, complianceReportRouter);
 
-// ─── FERPA Compliance (REG-01, REG-02) ───
-// FERPA disclosure log — JWT auth required
-router.use('/ferpa', requireAuth, ferpaDisclosuresRouter);
-// Directory info opt-out — JWT auth required
-router.use('/directory-opt-out', requireAuth, directoryOptOutRouter);
+// ─── FERPA Compliance (REG-01, REG-02) — rate limited per Constitution 1.10 ───
+router.use('/ferpa', requireAuth, aiRateLimiter, ferpaDisclosuresRouter);
+router.use('/directory-opt-out', requireAuth, batchRateLimiter, directoryOptOutRouter);
 
-// ─── HIPAA Compliance (REG-07, REG-10) ───
-// HIPAA audit report — JWT auth required
-router.use('/hipaa/audit', requireAuth, hipaaAuditRouter);
-// Emergency access grants — JWT auth required
-router.use('/emergency-access', requireAuth, emergencyAccessRouter);
+// ─── HIPAA Compliance (REG-07, REG-10) — rate limited per Constitution 1.10 ───
+router.use('/hipaa/audit', requireAuth, aiRateLimiter, hipaaAuditRouter);
+router.use('/emergency-access', requireAuth, batchRateLimiter, emergencyAccessRouter);
 
 export { router as apiV1Router };

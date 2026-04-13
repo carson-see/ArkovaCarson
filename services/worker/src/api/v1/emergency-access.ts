@@ -111,7 +111,7 @@ emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) 
 
     const { data: grant, error: fetchError } = await dbAny
       .from('emergency_access_grants')
-      .select('grantee_id, expires_at, revoked_at')
+      .select('grantee_id, approver_id, expires_at, revoked_at')
       .eq('id', id)
       .eq('org_id', req.orgId)
       .single();
@@ -123,6 +123,11 @@ emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) 
 
     if (grant.grantee_id === approverId) {
       res.status(403).json({ error: 'Cannot approve your own emergency access request (dual-control requirement)' });
+      return;
+    }
+
+    if (grant.approver_id) {
+      res.status(409).json({ error: 'Grant has already been approved' });
       return;
     }
 

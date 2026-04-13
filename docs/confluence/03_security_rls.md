@@ -1,6 +1,15 @@
 # Security & Row Level Security (RLS)
 _Last updated: 2026-04-12 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**, **0169 (permanent RLS performance: SECURITY DEFINER helpers for 1.4M+ records)**, **0194-0195 (NCE: jurisdiction_rules + compliance_scores)**_
 
+### REG Tables (2026-04-12)
+
+**emergency_access_grants** (migration 0197):
+- `emergency_access_select` — SELECT for org members with owner/admin role (org-scoped)
+- `emergency_access_insert` — INSERT for service_role only (worker-managed)
+- `emergency_access_update` — UPDATE for service_role only (worker-managed)
+- No DELETE policy — grants are never deleted (revoked_at set instead)
+- `FORCE ROW LEVEL SECURITY` enabled
+
 ### NCE Tables (2026-04-12)
 
 **jurisdiction_rules** (migration 0194):

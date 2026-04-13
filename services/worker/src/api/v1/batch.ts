@@ -45,21 +45,10 @@ const orgNameCache = new Map<string, string | null>();
 /** Default DB-backed lookup (same as verify.ts) */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
-    const { data, error } = await db
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
       .from('anchors')
-      .select(`
-        public_id,
-        fingerprint,
-        status,
-        chain_tx_id,
-        chain_block_height,
-        chain_timestamp,
-        created_at,
-        credential_type,
-        issued_at,
-        expires_at,
-        org_id
-      `)
+      .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
@@ -96,6 +85,8 @@ const defaultLookup: PublicIdLookup = {
       expires_at: data.expires_at,
       jurisdiction: null,
       merkle_root: null,
+      description: data.description ?? null,
+      directory_info_opt_out: data.directory_info_opt_out ?? false,
     } as AnchorByPublicId;
   },
 };

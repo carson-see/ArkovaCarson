@@ -100,7 +100,12 @@ export function useIdleTimeout({
       setMinutesRemaining(remainingMinutes);
 
       if (elapsed >= timeoutMs) {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
         void handleTimeout();
+        return;
       } else if (elapsed >= timeoutMs - warningMs) {
         setIsWarning(true);
       } else {

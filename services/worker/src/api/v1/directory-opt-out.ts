@@ -12,6 +12,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { FERPA_EDUCATION_TYPES } from '../../constants/ferpa.js';
 import { requireOrgId } from '../../middleware/requireOrgId.js';
+import { invalidateVerificationCache } from '../../utils/verifyCache.js';
 
 const router = Router();
 
@@ -56,6 +57,9 @@ router.patch('/:publicId', async (req, res) => {
       res.status(404).json({ error: 'Record not found or not in your organization' });
       return;
     }
+
+    // Invalidate cached verification result so opt-out takes effect immediately
+    void invalidateVerificationCache(publicId);
 
     void dbAny.from('audit_events').insert({
       event_type: 'DIRECTORY_OPT_OUT_CHANGED',

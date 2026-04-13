@@ -180,6 +180,17 @@ Audit events are retained indefinitely by default. For compliance:
 2. No automatic deletion
 3. Legal hold on related anchors preserves event chain
 
+## REG Sprint Event Types (2026-04-12)
+
+| Event Type | Category | Source | Description |
+|-----------|----------|--------|-------------|
+| DIRECTORY_OPT_OUT_CHANGED | COMPLIANCE | directory-opt-out.ts | FERPA Section 99.37 opt-out toggled for a single anchor |
+| DIRECTORY_OPT_OUT_BULK_UPDATE | COMPLIANCE | directory-opt-out.ts | Bulk opt-out import (total + updated count) |
+| EMERGENCY_ACCESS_REQUESTED | SECURITY | emergency-access.ts | Break-glass access requested (grantee, reason, scope, duration) |
+| EMERGENCY_ACCESS_APPROVED | SECURITY | emergency-access.ts | Dual-control approval (approver, grantee, expiry) |
+| EMERGENCY_ACCESS_REVOKED | SECURITY | emergency-access.ts | Manual revocation (revoker, reason) |
+| SESSION_TIMEOUT | SECURITY | useIdleTimeout.ts | HIPAA session timeout (timeout_minutes) |
+
 ## Export
 
 For compliance reporting, export events:
