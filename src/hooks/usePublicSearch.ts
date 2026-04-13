@@ -80,7 +80,16 @@ export function usePublicSearch(): UsePublicSearchReturn {
         return;
       }
 
-      setIssuerResults((data ?? []) as IssuerResult[]);
+      // RPC returns { id, legal_name, display_name, public_id, verified, credential_count }
+      // Map to IssuerResult { org_id, org_name, org_domain, credential_count }
+      // Note: get_public_issuer_registry expects the UUID (id), not public_id
+      const mapped = ((data ?? []) as Record<string, unknown>[]).map((row) => ({
+        org_id: (row.id as string) ?? '',
+        org_name: (row.display_name as string) ?? (row.legal_name as string) ?? '',
+        org_domain: null,
+        credential_count: (row.credential_count as number) ?? 0,
+      }));
+      setIssuerResults(mapped);
     } catch {
       setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {

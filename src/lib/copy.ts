@@ -1303,6 +1303,12 @@ export const DEVELOPER_PAGE_LABELS = {
   API_DOCS_CARD_DESC: 'Explore the full API reference with interactive examples.',
   API_DOCS_CARD_BUTTON: 'Open API Docs',
   API_DOCS_CARD_LINK: 'View full developer overview',
+
+  // Sandbox
+  SANDBOX_ANON_HINT: 'GET endpoints work without an API key (100 req/min). For batch and write operations,',
+  SANDBOX_ANON_HINT_CTA: 'create an account',
+  SANDBOX_ANON_HINT_SUFFIX: 'to generate a key.',
+  SANDBOX_ERROR_UNREACHABLE: 'Could not connect to API server. The server may be unreachable or CORS may be blocking the request.',
 } as const;
 
 // =============================================================================

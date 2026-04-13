@@ -258,6 +258,8 @@ The following endpoints extend the identity and access surface for attestation, 
 
 | Method | Endpoint | Description | Auth |
 |--------|----------|-------------|------|
+| `GET` | `/verify/:publicId` | Public credential verification by public ID | Anonymous (100 req/min) or API key |
+| `POST` | `/verify/batch` | Batch credential verification (up to 100) | API key required |
 | `POST` | `/attestations` | Create a new attestation record | Authenticated |
 | `GET` | `/attestations` | List attestations (org-scoped) | Authenticated |
 | `PATCH` | `/attestations/:id` | Update attestation metadata | Authenticated (owner/ORG_ADMIN) |
@@ -281,3 +283,4 @@ The following endpoints extend the identity and access surface for attestation, 
 | 2026-03-10 | Audit session 3 | Added `_Last updated_` line. Added ORG_MEMBER role (migration 0022). Annotated flow diagram with CRIT-4 status. Expanded `update_profile_onboarding` docs with full signature, return value, and behavior from migration 0015. Added `public_id` to privileged fields (migration 0035). Corrected test file table — `useAuth.test.ts` and `useProfile.test.ts` do not exist. Marked Google OAuth as not configured. Added implementation status table. |
 | 2026-03-11 ~12:30 AM EST | Doc audit | Updated CRIT-4 references as resolved (commit a38b485). Flow diagram updated with correct page components. Onboarding route wiring marked Complete. |
 | 2026-03-24 | Doc update | Added API Endpoints section: attestation CRUD (POST/GET/PATCH /attestations), entity verification (/verify/entity), compliance check (/compliance/check), CLE verification (/cle), Nessie RAG query (/nessie/query). Updated endpoint count to 20+. |
+| 2026-04-13 | INT UAT | Added `GET /verify/:publicId` (anonymous, 100 req/min) and `POST /verify/batch` (API key required) to endpoint table. Anonymous GET access scoped to `/verify` only — all other API endpoints require API key or x402 payment. |

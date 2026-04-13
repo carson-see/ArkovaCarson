@@ -195,9 +195,19 @@ router.use('/verify', provenanceRouter);
 // Merkle proof endpoint — public, no payment required (BTC-003)
 router.use('/verify', verifyProofRouter);
 
-// Public verification — no auth required (API key optional for tracking)
-// x402 payment gate: returns 402 if no API key and no payment header
-router.use('/verify', requireScope('verify'), x402PaymentGate('/api/v1/verify'), verifyRouter);
+// Public verification — anonymous GET allowed (Constitution 1.10: 100 req/min).
+// Anonymous GET bypasses x402 gate to enable zero-friction developer onboarding.
+// POST and authenticated requests still go through x402 payment gate.
+const verifyPaymentGate = x402PaymentGate('/api/v1/verify');
+router.use('/verify', requireScope('verify'), (req: Request, res: Response, next: NextFunction) => {
+  // Allow anonymous GET for public credential lookup (rate-limited upstream at 100/min)
+  if (!req.apiKey && req.method === 'GET') {
+    next();
+    return;
+  }
+  // All other requests go through x402 payment gate
+  verifyPaymentGate(req, res, next);
+}, verifyRouter);
 // Job status polling — API key required
 router.use('/jobs', requireScope('verify:batch'), jobsRouter);
 

@@ -419,8 +419,7 @@ export function x402PaymentGate(endpoint: string) {
       return;
     }
 
-    // BUG-3 fix: If payTo address is not configured, don't offer x402 — fall through
-    // to let downstream handlers reject gracefully instead of returning a broken 402.
+    // When USDC address is not configured, fall back to requiring API key auth.
     const payeeAddress = config.arkovaUsdcAddress ?? '';
     if (!payeeAddress) {
       logger.warn('ARKOVA_USDC_ADDRESS not configured — x402 payments unavailable, rejecting unauthenticated request');
