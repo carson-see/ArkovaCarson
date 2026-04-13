@@ -54,7 +54,9 @@ export {
 } from './calibration.js';
 export type { CalibrationResult, CalibrationBucket, TypeCalibrationResult } from './calibration.js';
 
+export { GOLDEN_DATASET_PHASE12 } from './golden-dataset-phase12.js';
 export { GOLDEN_DATASET_PHASE13_FCRA } from './golden-dataset-phase13-fcra.js';
+export { GOLDEN_DATASET_PHASE14 } from './golden-dataset-phase14.js';
 
 export {
   scoreCitationAccuracy,
@@ -77,3 +79,17 @@ export {
   getFraudEntriesByType,
 } from './fraud-eval-dataset.js';
 export type { FraudEvalEntry } from './fraud-eval-dataset.js';
+
+export {
+  checkRegression,
+  formatRegressionReport,
+  NESSIE_V5_BASELINE,
+  GEMINI_GOLDEN_BASELINE,
+  DEFAULT_THRESHOLDS,
+} from './baseline-metrics.js';
+export type {
+  BaselineMetrics,
+  RegressionThresholds,
+  RegressionResult,
+  RegressionCheck,
+} from './baseline-metrics.js';

@@ -56,6 +56,17 @@ const ROUTER_CONFIG: RouterConfig = {
       label: 'Regulatory & Government',
       modelId: 'carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-regulatory-2ed0f4d7',
     },
+    // NMT-16: New domain groups (model IDs populated after training)
+    professional: {
+      domain: 'professional',
+      label: 'Professional Licenses & Certifications',
+      modelId: 'placeholder-professional', // Populated after NMT-16 training
+    },
+    identity: {
+      domain: 'identity',
+      label: 'Identity Documents & Military Records',
+      modelId: 'placeholder-identity', // Populated after NMT-16 training
+    },
   },
 };
 
@@ -77,6 +88,17 @@ const DOMAIN_KEYWORDS: Record<string, Set<string>> = {
     'publication', 'journal', 'research', 'doi', 'orcid',
     'accreditation', 'degree', 'university', 'patent', 'grant',
   ]),
+  // NMT-16: New domain keyword sets
+  professional: new Set([
+    'license', 'certification', 'cle', 'continuing education',
+    'board certified', 'practice', 'professional', 'certificate',
+    'pmp', 'cpa', 'pe ', 'badge', 'credential',
+  ]),
+  identity: new Set([
+    'passport', 'driver', 'national id', 'military', 'dd-214',
+    'service record', 'veteran', 'visa', 'immigration',
+    'birth certificate', 'social security', 'resume', 'cv',
+  ]),
 };
 
 /**
@@ -93,10 +115,13 @@ export function routeToDomain(
   // Pass 1: Credential type match
   if (credentialType) {
     const ct = credentialType.toUpperCase();
-    if (ct === 'SEC_FILING') return ROUTER_CONFIG.adapters.sec ?? getDefault();
+    if (ct === 'SEC_FILING' || ct === 'FINANCIAL' || ct === 'INSURANCE') return ROUTER_CONFIG.adapters.sec ?? getDefault();
     if (ct === 'LEGAL') return ROUTER_CONFIG.adapters.legal ?? getDefault();
-    if (ct === 'REGULATION' || ct === 'CERTIFICATE') return ROUTER_CONFIG.adapters.regulatory ?? getDefault();
-    if (ct === 'PUBLICATION' || ct === 'PROFESSIONAL') return ROUTER_CONFIG.adapters.academic ?? getDefault();
+    if (ct === 'REGULATION' || ct === 'CHARITY') return ROUTER_CONFIG.adapters.regulatory ?? getDefault();
+    if (ct === 'PUBLICATION' || ct === 'DEGREE' || ct === 'TRANSCRIPT' || ct === 'ACCREDITATION') return ROUTER_CONFIG.adapters.academic ?? getDefault();
+    // NMT-16: Route to new domain groups (placeholder models until trained)
+    if (ct === 'LICENSE' || ct === 'CERTIFICATE' || ct === 'CLE' || ct === 'BADGE' || ct === 'PROFESSIONAL' || ct === 'ATTESTATION') return ROUTER_CONFIG.adapters.professional ?? getDefault();
+    if (ct === 'IDENTITY' || ct === 'MILITARY' || ct === 'RESUME' || ct === 'MEDICAL' || ct === 'PATENT') return ROUTER_CONFIG.adapters.identity ?? getDefault();
   }
 
   // Pass 2: Keyword scoring
@@ -171,6 +196,21 @@ export function routeWithJurisdiction(
 
   // Fall back to standard domain routing
   return routeToDomain(credentialType, queryText);
+}
+
+/**
+ * Check if a domain adapter has been trained (not a placeholder).
+ * NMT-16: Professional and Identity adapters are placeholders until trained.
+ */
+export function isAdapterTrained(adapter: DomainAdapter): boolean {
+  return !adapter.modelId.startsWith('placeholder');
+}
+
+/**
+ * Get all trained (non-placeholder) domain adapters.
+ */
+export function getTrainedAdapters(): DomainAdapter[] {
+  return Object.values(ROUTER_CONFIG.adapters).filter(isAdapterTrained);
 }
 
 export { ROUTER_CONFIG, JURISDICTION_ADAPTERS };

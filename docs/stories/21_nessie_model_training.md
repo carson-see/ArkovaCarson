@@ -321,6 +321,176 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 
 ---
 
+---
+
+### NMT-09: Deploy Nessie v5 to RunPod Serverless (P0) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 2
+
+**Description:** The RunPod serverless endpoint `hmayoqhxvy5k5y` still serves Nessie v2. Production is using a model 22pp worse than v5 (87.2% F1). Deploy v5 and verify.
+
+**Acceptance Criteria:**
+- [ ] Create deployment script (`scripts/runpod-deploy-v5.ts`) that updates endpoint model
+- [ ] Smoke test: send 10-sample extraction via RunPod API, verify responses parse
+- [ ] Update `RUNPOD_ENDPOINT_ID` if new endpoint created
+- [ ] Verify latency <3s per request (v5 baseline: 1.5s on A6000)
+
+**Effort:** Small
+**Dependencies:** RunPod API key, v5 model on Together AI
+
+---
+
+### NMT-10: Execute HuggingFace Upload (P0) — NEW
+
+**Status:** NOT STARTED (script ready from NMT-05)
+**Jira:** TBD
+**Points:** 1
+
+**Description:** Execute the v5 HuggingFace upload script created in NMT-05. Weights on HF enable portable serving and backup.
+
+**Acceptance Criteria:**
+- [ ] Execute `services/worker/scripts/upload-hf-v5.sh --no-cleanup`
+- [ ] Verify model card renders on HuggingFace
+- [ ] Verify model loads on vLLM from HF repo
+- [ ] Update RunPod template to reference HF repo as model source
+
+**Effort:** Small (bandwidth-intensive — ~16GB)
+**Dependencies:** HF token, Together AI API key
+
+---
+
+### NMT-11: Intelligence Training Data Distillation (P0) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 5
+
+**Description:** NMT-07 built the intelligence pipeline (types, prompts, validation) but only has 5 seed Q&A pairs. Distill 500+ real examples from Gemini Golden as teacher, using public records as context.
+
+**Acceptance Criteria:**
+- [ ] Create distillation script (`scripts/nessie-intelligence-distill-v2.ts`)
+- [ ] Pull real document contexts from public records corpus (EDGAR, CourtListener, Federal Register)
+- [ ] Use Gemini Golden to generate intelligence responses across all 5 task types
+- [ ] Target: 500+ validated examples (100+ per task type)
+- [ ] Export to JSONL with dedup + validation
+- [ ] Store as `training-data/nessie-intelligence-v2.jsonl`
+- [ ] Tests for distillation pipeline (dedup, validation, export)
+
+**Effort:** Large
+**Dependencies:** Gemini API key, public records in Supabase
+
+---
+
+### NMT-12: Fine-Tune Nessie v6 Intelligence Model (P0) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 3
+
+**Description:** Fine-tune Nessie v6 on 500+ distilled intelligence examples. Current intelligence model v1 was trained on minimal data.
+
+**Acceptance Criteria:**
+- [ ] Create fine-tune submission script (`scripts/nessie-v6-intelligence-finetune.ts`)
+- [ ] Same hyperparams as v5 (LR=2e-4, 2 epochs, LoRA rank=16)
+- [ ] Submit to Together AI, track job ID
+- [ ] Evaluate against held-out intelligence test set
+- [ ] Deploy to RunPod as intelligence endpoint
+- [ ] Update `NESSIE_INTELLIGENCE_MODEL` env var
+
+**Effort:** Medium
+**Dependencies:** NMT-11 (intelligence training data)
+
+---
+
+### NMT-13: Automated Eval Regression Pipeline (P1) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 3
+
+**Description:** No automated way to detect model quality regression. Create a regression pipeline that runs a 50-sample eval and compares against stored baselines.
+
+**Acceptance Criteria:**
+- [ ] Create `scripts/nessie-eval-regression.ts`
+- [ ] Runs 50-sample eval against current RunPod endpoint
+- [ ] Compare against stored baseline metrics (F1, ECE, confidence correlation)
+- [ ] Fail (exit code 1) if weighted F1 drops >2pp or ECE increases >5pp
+- [ ] Output JSON report to `docs/eval/` with timestamp
+- [ ] Add npm script: `npm run eval:regression`
+- [ ] Store baseline metrics in `src/ai/eval/baseline-metrics.ts`
+- [ ] Tests for comparison logic (pass/fail threshold, report generation)
+
+**Effort:** Medium
+**Dependencies:** RunPod endpoint running v5 (NMT-09)
+
+---
+
+### NMT-14: Golden Dataset Phase 14 — Rare Type Expansion (P1) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 3
+
+**Description:** Several credential types have <50 golden examples. Expand with 150+ new entries targeting underrepresented types and edge cases.
+
+**Acceptance Criteria:**
+- [ ] Audit current type distribution across all phases
+- [ ] Generate 150+ entries for underrepresented types (CHARITY, ACCREDITATION, BADGE, ATTESTATION, MEDICAL)
+- [ ] Include edge cases: multi-credential documents, partial extractions, ambiguous types
+- [ ] Add as `src/ai/eval/golden-dataset-phase14.ts`
+- [ ] Register in `src/ai/eval/golden-dataset.ts` FULL_GOLDEN_DATASET
+- [ ] Tests: validate all entries have required fields, no duplicate IDs
+
+**Effort:** Medium
+**Dependencies:** None (data generation)
+
+---
+
+### NMT-15: Nessie v7 Extraction Retrain (P1) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 3
+
+**Description:** Retrain extraction model with expanded golden dataset (phases 1-14). Target >89% weighted F1 to close the 3.2pp gap to Gemini Golden.
+
+**Acceptance Criteria:**
+- [ ] Create export script (`scripts/nessie-v7-export.ts`) including all phases through 14
+- [ ] Export expanded training data with 25% general mix
+- [ ] Submit v7 fine-tune to Together AI
+- [ ] Run full 100-sample eval comparing v5 vs v7
+- [ ] If v7 > v5: update default model in `nessie.ts`, deploy to RunPod
+- [ ] Target: >89% weighted F1
+
+**Effort:** Medium
+**Dependencies:** NMT-14 (golden dataset expansion), Together AI credits
+
+---
+
+### NMT-16: Domain Adapter Routing (P2) — NEW
+
+**Status:** NOT STARTED
+**Jira:** TBD
+**Points:** 5
+
+**Description:** Extend the existing `nessie-domain-router.ts` with 4 domain-specific LoRA adapters for specialized extraction.
+
+**Acceptance Criteria:**
+- [ ] Define 4 domain groups: Legal, Academic, Professional, Identity
+- [ ] Create domain-filtered training data export for each group
+- [ ] Train 4 LoRA adapters on domain-filtered subsets via Together AI
+- [ ] Update `nessie-domain-router.ts` with new adapter model IDs
+- [ ] Ensemble fallback: use general v7 model if type unknown
+- [ ] Eval each adapter against domain-specific test sets
+- [ ] Tests for routing logic with new domains
+
+**Effort:** Large
+**Dependencies:** NMT-15 (v7 base model), Together AI credits
+
+---
+
 ## Infrastructure Reference
 
 ### Together AI
