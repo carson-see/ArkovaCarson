@@ -173,21 +173,4 @@ describe('nessie-v7-export (NMT-15)', () => {
     });
   });
 
-  describe('Together AI fine-tune config', () => {
-    it('should use correct base model', () => {
-      const baseModel = 'meta-llama/Meta-Llama-3.1-8B-Instruct-Reference';
-      expect(baseModel).toContain('Llama-3.1-8B');
-    });
-
-    it('should use 2 epochs (overfitting prevention)', () => {
-      const epochs = 2;
-      expect(epochs).toBeLessThanOrEqual(3);
-    });
-
-    it('should use LoRA rank 16 with alpha 32', () => {
-      const rank = 16;
-      const alpha = 32;
-      expect(alpha).toBe(rank * 2);
-    });
-  });
 });

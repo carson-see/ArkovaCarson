@@ -49,6 +49,7 @@ describe('nessie-v6-intelligence-finetune (NMT-12)', () => {
       const result = validateTrainingFile('/nonexistent/file.jsonl');
       expect(result.total).toBe(0);
       expect(result.errors.length).toBeGreaterThan(0);
+      expect(result.rawContent).toBeNull();
     });
 
     it('should validate correct JSONL', () => {

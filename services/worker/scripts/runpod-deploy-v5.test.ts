@@ -5,7 +5,7 @@
  * response parsing, and endpoint URL construction.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 // We test the script's core logic by verifying its exported-equivalent behavior.
 

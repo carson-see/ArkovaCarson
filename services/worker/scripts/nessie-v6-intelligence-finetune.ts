@@ -16,7 +16,8 @@
 
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
@@ -46,19 +47,23 @@ export const V6_TRAINING_CONFIG = {
 
 /**
  * Validate training file — ensure all lines are valid JSONL with 3-message format.
- * Returns { valid, invalid, total } counts.
+ * Returns counts + raw content buffer for reuse (avoids re-reading the file).
  */
 export function validateTrainingFile(filePath: string): {
   valid: number;
   invalid: number;
   total: number;
   errors: string[];
+  rawContent: Buffer | null;
 } {
-  if (!existsSync(filePath)) {
-    return { valid: 0, invalid: 0, total: 0, errors: [`File not found: ${filePath}`] };
+  let rawContent: Buffer;
+  try {
+    rawContent = readFileSync(filePath);
+  } catch {
+    return { valid: 0, invalid: 0, total: 0, errors: [`File not found: ${filePath}`], rawContent: null };
   }
 
-  const lines = readFileSync(filePath, 'utf-8').trim().split('\n');
+  const lines = rawContent.toString('utf-8').trim().split('\n');
   let valid = 0;
   let invalid = 0;
   const errors: string[] = [];
@@ -85,7 +90,7 @@ export function validateTrainingFile(filePath: string): {
     }
   }
 
-  return { valid, invalid, total: lines.length, errors };
+  return { valid, invalid, total: lines.length, errors, rawContent };
 }
 
 async function main(): Promise<void> {
@@ -126,8 +131,7 @@ async function main(): Promise<void> {
 
   if (DRY_RUN) {
     console.log('\n[DRY RUN] Would upload file and submit Together AI fine-tune job.');
-    const fileSize = readFileSync(TRAIN_FILE).length;
-    console.log(`File: ${TRAIN_FILE} (${validation.total} examples, ${(fileSize / 1024).toFixed(1)} KB)`);
+    console.log(`File: ${TRAIN_FILE} (${validation.total} examples, ${((validation.rawContent?.length ?? 0) / 1024).toFixed(1)} KB)`);
     return;
   }
 
@@ -138,9 +142,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Step 1: Upload training file
+  // Step 1: Upload training file (reuse buffer from validation)
   console.log('\n--- Step 1: Upload training file ---');
-  const fileContent = readFileSync(TRAIN_FILE);
+  const fileContent = validation.rawContent!;
   const formData = new FormData();
   formData.append(
     'file',
@@ -208,10 +212,7 @@ async function main(): Promise<void> {
 }
 
 // Only run when executed directly (not when imported for testing)
-const isDirectExecution = process.argv[1]?.endsWith('nessie-v6-intelligence-finetune.ts') ||
-  process.argv[1]?.endsWith('nessie-v6-intelligence-finetune.js');
-
-if (isDirectExecution) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((err) => {
     console.error('\nPIPELINE FAILED:', err instanceof Error ? err.message : err);
     process.exit(1);

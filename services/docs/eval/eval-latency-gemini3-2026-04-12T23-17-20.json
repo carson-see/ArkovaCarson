@@ -1,0 +1,22 @@
+{
+  "model": "gemini-3-flash-preview",
+  "embeddingModel": "gemini-embedding-001",
+  "requestCount": 20,
+  "extraction": {
+    "p50": 0,
+    "p95": 1346,
+    "p99": 1386,
+    "mean": 320.15,
+    "errors": 20
+  },
+  "embedding": {
+    "p50": 0,
+    "p95": 1,
+    "mean": 0.1
+  },
+  "cost": {
+    "totalTokens": 0,
+    "totalCost": 0,
+    "perExtraction": 0
+  }
+}
