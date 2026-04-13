@@ -550,5 +550,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-12 | 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 306 stories (222 complete + 29 GME + 36 DEP/REG planned + 8 NMT + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,905 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NCE: 20/20 complete_
+_Directive version: 2026-04-13 | 196 migrations | 4,078 tests (1,476 frontend + 2,602 worker) | 306 stories (230 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,887 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NMT: 14/14 complete | NCE: 20/20 complete_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
