@@ -125,10 +125,10 @@ export function DashboardPage() {
     setStatusFilter(filter);
     setCurrentPage(1);
     setRecordsExpanded(true);
-    // Scroll to records section after a tick so it's expanded
-    setTimeout(() => {
+    // requestAnimationFrame guarantees DOM has updated before scroll
+    requestAnimationFrame(() => {
       recordsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 50);
+    });
   }, []);
 
   // Filtered + searched records (MVP-09)
@@ -285,7 +285,7 @@ export function DashboardPage() {
       </div>
 
       {/* Widgets — Compliance Score only for ORG_ADMIN, Usage + Credit for all */}
-      <div className={`grid gap-4 grid-cols-1 ${profile?.role === 'ORG_ADMIN' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} mb-8`}>
+      <div className={`grid gap-4 grid-cols-1 mb-8 ${profile?.role === 'ORG_ADMIN' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
         {profile?.role === 'ORG_ADMIN' && <ComplianceScoreCard />}
         <UsageWidget />
         <CreditUsageWidget />

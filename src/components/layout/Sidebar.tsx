@@ -132,7 +132,7 @@ function AuditorModeToggle({ collapsed }: Readonly<{ collapsed: boolean }>) {
       aria-label={isAuditorMode ? 'Auditor Mode: On. Click to disable.' : 'Auditor Mode: Off. Click to enable.'}
     >
       <ArkovaIcon className="h-4 w-4 shrink-0" />
-      {!collapsed && <span className="ml-2">{isAuditorMode ? 'Auditor Mode' : 'Auditor Mode'}</span>}
+      {!collapsed && <span className="ml-2">Auditor Mode</span>}
       {!collapsed && isAuditorMode && (
         <span className="ml-auto text-[10px] font-mono text-[#00d4ff]">ON</span>
       )}
@@ -171,8 +171,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
   const [adminExpanded, setAdminExpanded] = useState(false);
   const location = useLocation();
 
-  // Simplified: Dashboard + Search only. Org Directory/Compliance removed from sidebar.
-  const mainNavItems: NavItem[] = BASE_NAV_ITEMS;
+  // Simplified: Dashboard + Search only (UAT Session 40).
 
   // Close mobile sidebar on navigation
   useEffect(() => {
@@ -264,7 +263,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
       <div className="flex-1 overflow-y-auto min-h-0">
         {/* Main Navigation — max 5 items */}
         <nav className="space-y-1 p-3">
-          {mainNavItems
+          {BASE_NAV_ITEMS
             .map((item) => (
             <SidebarNavLink
               key={item.label}
