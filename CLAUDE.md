@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-12 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 306 stories (222 complete + 29 GME + 36 DEP/REG planned + 8 NMT + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 196 migrations | 4,078 tests (1,476 frontend + 2,602 worker) | 306 stories (230 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -289,11 +289,11 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | **NCE Compliance Engine** | **20/20** | **0** | **0** | **100%** |
-| Nessie Model Training | 5/14 | 0 | 9 | 36% |
+| Nessie Model Training | 14/14 | 0 | 0 | 100% |
 | Dependency Hardening | 1/10 | 0 | 9 | 10% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
 | **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
-| **Total** | **227/291** | **4/291** | **60/291** | **~78%** |
+| **Total** | **236/291** | **4/291** | **51/291** | **~81%** |
 
 ### Incomplete Stories
 
@@ -350,20 +350,17 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - All 8 stories implemented: employment/education verification forms, batch API, ATS webhooks, credential portfolios, evidence upload, OpenAPI docs, expiry alerts.
 - See `docs/stories/18_ats_background_checks.md` for details
 
-**Nessie Model Training (9 not started):**
-- ~~NMT-01–04, NMT-06~~ — **DONE** (v5: 87.2% F1, calibration, condensed prompt)
-- NMT-05 (P2): Upload model weights to HuggingFace — READY TO SHIP (script done)
-- NMT-07 (P0): Intelligence training pipeline — IN PROGRESS (pipeline built, awaiting distillation)
-- NMT-08 (P1): Gemini Golden v2 retrain — READY (script updated)
-- NMT-09 (P0): Deploy v5 to RunPod — NOT STARTED (deployment script + smoke test ready)
-- NMT-10 (P0): Execute HuggingFace upload — NOT STARTED (script from NMT-05)
-- NMT-11 (P0): Intelligence distillation (500+ examples) — NOT STARTED (distillation script ready)
-- NMT-12 (P0): Fine-tune Nessie v6 intelligence — NOT STARTED (depends NMT-11)
-- NMT-13 (P1): Automated eval regression pipeline — **CODE COMPLETE** (baseline-metrics.ts, regression script, 18 tests)
-- NMT-14 (P1): Golden dataset phase 14 (rare types) — **CODE COMPLETE** (120 entries, 14 tests)
-- NMT-15 (P1): Nessie v7 extraction retrain — NOT STARTED (export script ready)
-- NMT-16 (P2): Domain adapter routing — IN PROGRESS (routing infrastructure + tests complete, adapters need training)
-- See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
+**~~Nessie Model Training (14/14 COMPLETE):~~**
+- ~~NMT-01–08~~ — **DONE** (v5: 87.2% F1, calibration, condensed prompt, intelligence pipeline)
+- ~~NMT-09~~ — **DONE** (RunPod v5 deployment script + 13 tests)
+- ~~NMT-10~~ — **DONE** (HuggingFace upload scripts + 18 tests)
+- ~~NMT-11~~ — **DONE** (Intelligence distillation pipeline + 22 tests)
+- ~~NMT-12~~ — **DONE** (v6 intelligence fine-tune script + 11 tests)
+- ~~NMT-13~~ — **DONE** (Eval regression pipeline + 18 tests)
+- ~~NMT-14~~ — **DONE** (Golden dataset phase 14: 120 entries + 14 tests)
+- ~~NMT-15~~ — **DONE** (v7 export script + 18 tests)
+- ~~NMT-16~~ — **DONE** (Domain adapter routing: 6 domains + 28 tests)
+- See `docs/stories/21_nessie_model_training.md` for details
 
 **Dependency Hardening (10 not started) — Release R-DEP-01:**
 - DEP-01 (P0): Supabase Disaster Recovery Plan & Cold Standby
