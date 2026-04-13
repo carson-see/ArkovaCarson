@@ -419,8 +419,16 @@ export function x402PaymentGate(endpoint: string) {
       return;
     }
 
-    // BUG-3 fix: If payTo address is not configured, don't offer x402 — fall through
-    // to let downstream handlers reject gracefully instead of returning a broken 402.
+    // Anonymous read-only access: allow GET requests to public verification endpoints
+    // without API key or payment. These are rate-limited at 100 req/min by the upstream
+    // anonymous rate limiter (Constitution 1.10). This enables zero-friction developer
+    // onboarding — a developer can verify credentials without signing up first.
+    if (req.method === 'GET') {
+      next();
+      return;
+    }
+
+    // For non-GET requests (POST batch, webhooks, etc.), require auth or payment.
     const payeeAddress = config.arkovaUsdcAddress ?? '';
     if (!payeeAddress) {
       logger.warn('ARKOVA_USDC_ADDRESS not configured — x402 payments unavailable, rejecting unauthenticated request');

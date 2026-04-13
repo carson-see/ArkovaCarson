@@ -281,7 +281,12 @@ export function ApiSandbox() {
         setResponse(text);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      const msg = err instanceof Error ? err.message : 'Request failed';
+      if (msg === 'Failed to fetch') {
+        setError('Could not connect to API server. The server may be unreachable or CORS may be blocking the request.');
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
@@ -365,13 +370,20 @@ export function ApiSandbox() {
           </button>
         </div>
         {authMode === 'apikey' ? (
-          <input
-            type="text"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="API key (e.g. ark_live_...)"
-            className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
-          />
+          <>
+            <input
+              type="text"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="API key (e.g. ark_live_...)"
+              className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
+            />
+            {!apiKey && (
+              <p className="mt-2 text-xs text-[#bbc9cf]">
+                GET endpoints work without an API key (100 req/min). For batch and write operations, <a href="/signup" className="text-[#00d4ff] hover:underline">create an account</a> to generate a key.
+              </p>
+            )}
+          </>
         ) : (
           <div className="bg-[#080f16] border border-[#3c494e]/30 rounded-lg p-4 text-sm text-[#bbc9cf] space-y-2">
             <p className="text-[#a8e8ff] font-semibold">x402 Payment Protocol</p>
