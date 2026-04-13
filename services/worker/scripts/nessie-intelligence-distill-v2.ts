@@ -43,8 +43,9 @@ import {
 // --- CLI ---
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes('--dry-run');
+const targetIdx = args.indexOf('--target');
 const TARGET_PER_TYPE = parseInt(
-  args[args.indexOf('--target') + 1] || '100',
+  (targetIdx >= 0 && args[targetIdx + 1]) ? args[targetIdx + 1] : '100',
   10,
 );
 
