@@ -22,9 +22,8 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-  TooltipProvider,
 } from '@/components/ui/tooltip';
-import { orgProfilePath } from '@/lib/routes';
+import { orgProfilePath, ROUTES } from '@/lib/routes';
 import type { Database } from '@/types/database.types';
 
 type Profile = Database['public']['Tables']['profiles']['Row'];
@@ -118,17 +117,15 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
                 {profile.full_name ?? 'User'}
               </h2>
               {profile.is_verified && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00d4ff]/[0.08] text-[#00d4ff] text-xs font-medium">
-                        <BadgeCheck className="h-3.5 w-3.5" />
-                        Verified
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>Identity verified on Arkova</TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00d4ff]/[0.08] text-[#00d4ff] text-xs font-medium">
+                      <BadgeCheck className="h-3.5 w-3.5" />
+                      Verified
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Identity verified on Arkova</TooltipContent>
+                </Tooltip>
               )}
             </div>
 
@@ -202,7 +199,7 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
               {/* Add socials hint if none set */}
               {!socials.linkedin && !socials.twitter && (
                 <Link
-                  to="/settings"
+                  to={ROUTES.SETTINGS}
                   className="text-[12px] text-muted-foreground/60 hover:text-muted-foreground transition-colors"
                 >
                   + Add social links
