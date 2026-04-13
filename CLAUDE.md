@@ -362,7 +362,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - NMT-13 (P1): Automated eval regression pipeline — **CODE COMPLETE** (baseline-metrics.ts, regression script, 18 tests)
 - NMT-14 (P1): Golden dataset phase 14 (rare types) — **CODE COMPLETE** (120 entries, 14 tests)
 - NMT-15 (P1): Nessie v7 extraction retrain — NOT STARTED (export script ready)
-- NMT-16 (P2): Domain adapter routing — **CODE COMPLETE** (professional + identity domains, 11 tests)
+- NMT-16 (P2): Domain adapter routing — IN PROGRESS (routing infrastructure + tests complete, adapters need training)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
 
 **Dependency Hardening (10 not started) — Release R-DEP-01:**

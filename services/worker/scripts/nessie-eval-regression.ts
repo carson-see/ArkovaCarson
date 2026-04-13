@@ -19,6 +19,7 @@
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
@@ -56,6 +57,18 @@ const STRICT_THRESHOLDS: RegressionThresholds = {
   maxLatencyFactor: 1.5,
 };
 
+/** Seeded Fisher-Yates shuffle for reproducible representative sampling. */
+function deterministicShuffle<T>(arr: T[], seed: string): T[] {
+  const copy = [...arr];
+  let hash = createHash('sha256').update(seed).digest();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = hash.readUInt32BE(0) % (i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    hash = createHash('sha256').update(hash).digest();
+  }
+  return copy;
+}
+
 async function main() {
   console.log('=== Nessie Eval Regression Pipeline (NMT-13) ===\n');
 
@@ -74,10 +87,8 @@ async function main() {
   const provider = createAIProvider();
   console.log(`Provider: ${provider.name}\n`);
 
-  // Sample from golden dataset (deterministic shuffle based on sample size)
-  const shuffled = [...FULL_GOLDEN_DATASET].sort(
-    (a, b) => a.id.localeCompare(b.id),
-  );
+  // Deterministic seeded shuffle for representative sampling across all phases
+  const shuffled = deterministicShuffle([...FULL_GOLDEN_DATASET], `eval-regression-${SAMPLE_SIZE}`);
   const entries = shuffled.slice(0, SAMPLE_SIZE);
   console.log(`Evaluating ${entries.length} entries...\n`);
 

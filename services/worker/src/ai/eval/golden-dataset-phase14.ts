@@ -1,17 +1,15 @@
 /**
  * Golden Dataset Phase 14 — Rare Type Expansion (NMT-14)
  *
- * 150 entries targeting credential types with <50 golden examples:
+ * 120 entries targeting credential types with <50 golden examples:
  * 1. CHARITY (20): nonprofit registrations, 501(c)(3), ACNC
  * 2. ACCREDITATION (20): institutional, programmatic, professional
  * 3. BADGE (20): digital badges, micro-credentials, open badges
  * 4. ATTESTATION (20): notarized statements, sworn declarations
  * 5. MEDICAL (20): board certs, DEA, residency completions
- * 6. IDENTITY (15): passports, national IDs, visa stamps
- * 7. MILITARY (15): service records, DD-214, VA documents
- * 8. Edge cases (20): multi-credential docs, ambiguous types, partial extraction
+ * 6. Edge cases (20): multi-credential docs, ambiguous types, partial extraction
  *
- * GD-1766 through GD-1915
+ * GD-1766 through GD-1885
  */
 
 import type { GoldenDatasetEntry } from './types.js';
