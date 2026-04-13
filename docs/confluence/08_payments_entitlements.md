@@ -183,6 +183,10 @@ Arkova supports the x402 payment protocol for pay-per-call API access using USDC
 4. Client retries request with payment proof header
 5. Server verifies payment and processes request
 
+### Anonymous GET Exception
+
+`GET /api/v1/verify/:publicId` allows anonymous access without API key or x402 payment. This enables zero-friction developer onboarding — a developer can verify credentials without signing up. Anonymous requests are rate-limited at 100 req/min per IP (Constitution 1.10). All other x402-gated endpoints (entity lookup, compliance check, regulatory lookup, CLE, Nessie query) still require API key or x402 payment for both GET and POST requests.
+
 ### Status
 
 | Component | Status | Notes |
@@ -215,3 +219,4 @@ This replaces the earlier per-table usage counting approach and enables cross-pa
 | 2026-03-10 | Audit | Rewrote: removed specific dollar amounts, fixed table references to match migration 0016 (plans/subscriptions/entitlements/billing_events), removed fake stripe_customer_id/stripe_subscription_id/anchor_count_this_month from profiles, documented implementation status |
 | 2026-03-24 | Doc refresh | Added x402 payment protocol section (PH1-PAY-01, USDC on Base L2, 8 priced endpoints). Added unified credits system (migration 0100+). |
 | 2026-04-05 | PAY-01/02/03 | Three-tier payment system: prepaid credit packs (1K/10K/100K/1M), Stripe metered billing, payment tier router (credits→Stripe→x402). Credit purchase via `/api/v1/credits/purchase`. Metered usage reporting via `/cron/report-metered-usage`. Rate limited at 10 req/min. Code review: fixed billing_events column names (payload not metadata), x402 replay prevention, production guard on dev credit grant. |
+| 2026-04-13 | INT UAT | Anonymous GET exception: `GET /verify/:publicId` bypasses x402 gate for zero-friction developer onboarding (100 req/min anonymous). All other x402-gated endpoints still require auth or payment. Bypass scoped in `router.ts`, not in the x402 middleware itself. |

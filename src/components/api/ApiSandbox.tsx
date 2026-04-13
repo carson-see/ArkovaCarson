@@ -18,6 +18,8 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
+import { DEVELOPER_PAGE_LABELS as L } from '@/lib/copy';
+import { ROUTES } from '@/lib/routes';
 
 // ── Endpoint definitions ────────────────────────────────────────────────────
 
@@ -281,7 +283,11 @@ export function ApiSandbox() {
         setResponse(text);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Request failed');
+      if (err instanceof TypeError) {
+        setError(L.SANDBOX_ERROR_UNREACHABLE);
+      } else {
+        setError(err instanceof Error ? err.message : 'Request failed');
+      }
     } finally {
       setLoading(false);
     }
@@ -365,13 +371,22 @@ export function ApiSandbox() {
           </button>
         </div>
         {authMode === 'apikey' ? (
-          <input
-            type="text"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="API key (e.g. ark_live_...)"
-            className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
-          />
+          <>
+            <input
+              type="text"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="API key (e.g. ark_live_...)"
+              className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
+            />
+            {!apiKey && (
+              <p className="mt-2 text-xs text-[#bbc9cf]">
+                {L.SANDBOX_ANON_HINT}{' '}
+                <a href={ROUTES.SIGNUP} className="text-[#00d4ff] hover:underline">{L.SANDBOX_ANON_HINT_CTA}</a>{' '}
+                {L.SANDBOX_ANON_HINT_SUFFIX}
+              </p>
+            )}
+          </>
         ) : (
           <div className="bg-[#080f16] border border-[#3c494e]/30 rounded-lg p-4 text-sm text-[#bbc9cf] space-y-2">
             <p className="text-[#a8e8ff] font-semibold">x402 Payment Protocol</p>
