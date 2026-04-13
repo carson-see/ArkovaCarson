@@ -43,11 +43,12 @@ export function useHipaaMfaGate(orgId: string | null): UseHipaaMfaGateResult {
     let cancelled = false;
 
     async function check() {
-      // Check org's HIPAA MFA setting
-      const { data: org } = await supabase
+      // Check org's HIPAA MFA setting (column from migration 0197, not yet in generated types)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: org } = await (supabase as any)
         .from('organizations')
         .select('hipaa_mfa_required')
-        .eq('id', orgId)
+        .eq('id', orgId!)
         .single();
 
       if (cancelled) return;

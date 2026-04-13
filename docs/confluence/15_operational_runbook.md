@@ -771,3 +771,140 @@ After every emergency access grant:
 2. Assess whether normal access controls should be updated
 3. Document findings in the quarterly security review
 4. Update this procedure if gaps are identified
+
+---
+
+## 14. Unified Multi-Jurisdiction Breach Notification Procedure (REG-13)
+
+_Jira: SCRUM-574 | Depends on: REG-09 (HIPAA breach procedure)_
+
+### 14.1 Overview
+
+Single incident response procedure covering all jurisdictions Arkova serves. When a breach affects data subjects in multiple jurisdictions, all applicable timelines must be met simultaneously.
+
+### 14.2 Jurisdiction Timeline Matrix
+
+| Jurisdiction | Law | Regulator | Processor → Controller | Controller → Regulator | Controller → Individuals |
+|-------------|-----|-----------|----------------------|----------------------|------------------------|
+| **US (HIPAA)** | 45 CFR 164.410 | HHS OCR | 60 calendar days | 60 calendar days | 60 calendar days |
+| **GDPR** | Art. 33, 34 | National DPA | Without undue delay | **72 hours** | Without undue delay (if high risk) |
+| **Kenya** | DPA 2019 s.43 | ODPC | **48 hours** | **72 hours** | As soon as reasonably practicable |
+| **Australia** | Privacy Act Part IIIC | OAIC | ASAP | After 30-day assessment | As soon as practicable |
+| **South Africa** | POPIA s.22 | Information Regulator | Immediately | **ASAP** (no fixed deadline) | ASAP |
+| **Nigeria** | NDPA 2023 | NDPC | **48 hours** | **72 hours** | As soon as practicable (if high risk) |
+
+**Critical path:** Kenya and Nigeria have the shortest processor-to-controller timeline (48 hours). Arkova's internal target is **48 hours** for all jurisdictions to meet the strictest requirement.
+
+### 14.3 Decision Tree: Which Regulators to Notify
+
+```
+Breach discovered
+  │
+  ├─ Affected data subjects in EU/EEA? ──→ Notify Lead DPA within 72h
+  │
+  ├─ Affected data subjects in Kenya? ──→ Notify ODPC within 72h
+  │
+  ├─ Affected data subjects in Australia? ──→ Begin 30-day NDB assessment
+  │     └─ Assessment: eligible data breach? ──→ Notify OAIC + individuals
+  │
+  ├─ Affected data subjects in South Africa? ──→ Notify Information Regulator ASAP
+  │
+  ├─ Affected data subjects in Nigeria? ──→ Notify NDPC within 72h
+  │
+  └─ Healthcare credentials (HIPAA)? ──→ Notify Covered Entity within 60 days
+        └─ CE notifies HHS OCR + individuals within 60 days of discovery
+```
+
+### 14.4 Notification Templates
+
+#### Template A: Regulator Notification (GDPR / Kenya / Nigeria)
+
+```
+Subject: Data Breach Notification — [Incident Reference]
+
+Dear [Regulator Name],
+
+We are writing to notify you of a personal data breach in accordance
+with [Applicable Law and Section].
+
+1. NATURE OF THE BREACH
+   - Date of breach: [Date or "under investigation"]
+   - Date of discovery: [Date]
+   - Description: [What happened]
+
+2. CATEGORIES AND APPROXIMATE NUMBER OF DATA SUBJECTS
+   - Categories: [students / employees / healthcare workers]
+   - Approximate number: [Count]
+
+3. CATEGORIES AND APPROXIMATE NUMBER OF DATA RECORDS
+   - Categories: [credential metadata / verification events]
+   - Approximate number: [Count]
+
+4. LIKELY CONSEQUENCES
+   - [Assessment of risk to data subjects]
+
+5. MEASURES TAKEN OR PROPOSED
+   - [Remediation steps]
+   - [Measures to mitigate possible adverse effects]
+
+6. CONTACT POINT
+   Data Protection Officer: dpo@arkova.ai
+   Phone: [Phone]
+
+Sincerely,
+[Name], Data Protection Officer
+Arkova, Inc.
+```
+
+#### Template B: Individual Notification
+
+```
+Subject: Important Information About Your Data Security
+
+Dear [Name / "Valued User"],
+
+We are writing to inform you of a security incident that may have
+affected your personal data held by Arkova.
+
+WHAT HAPPENED:
+[Clear, plain-language description]
+
+WHAT INFORMATION WAS INVOLVED:
+[Types of data affected — be specific]
+
+WHAT WE ARE DOING:
+[Steps taken to address the breach]
+[Steps taken to prevent recurrence]
+
+WHAT YOU CAN DO:
+[Specific, actionable steps for the individual]
+
+WHERE TO GET MORE INFORMATION:
+- Email: privacy@arkova.ai
+- Phone: [Phone]
+- Privacy page: https://app.arkova.ai/privacy
+
+[Jurisdiction-specific regulator contact]:
+- ODPC (Kenya): complaints@odpc.go.ke
+- OAIC (Australia): https://www.oaic.gov.au/privacy/privacy-complaints
+- Information Regulator (SA): complaints.IR@justice.gov.za
+- NDPC (Nigeria): https://ndpc.gov.ng/complaints
+
+We sincerely apologize for any concern this may cause.
+
+Sincerely,
+Carson Seeger
+CEO, Arkova, Inc.
+```
+
+### 14.5 Post-Breach Checklist
+
+- [ ] Root cause identified and documented
+- [ ] Vulnerability patched / access revoked
+- [ ] Credentials rotated (if applicable)
+- [ ] All applicable regulators notified within required timelines
+- [ ] Affected individuals notified (if required)
+- [ ] Post-mortem scheduled within 5 business days
+- [ ] Incident report filed in `docs/compliance/incidents/`
+- [ ] Tabletop exercise updated with lessons learned
+- [ ] CLAUDE.md and HANDOFF.md updated if any controls changed

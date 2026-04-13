@@ -7,6 +7,7 @@
 
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { JurisdictionPrivacyNotices } from '@/components/compliance/JurisdictionPrivacyNotices';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -99,6 +100,11 @@ export function PrivacyPage() {
               </a>.
             </p>
           </section>
+
+          {/* REG-14: Jurisdiction-Specific Privacy Notices */}
+          <div className="pt-6 border-t">
+            <JurisdictionPrivacyNotices />
+          </div>
 
           <p className="text-xs pt-6 border-t">
             This privacy policy is a placeholder and will be updated following legal review

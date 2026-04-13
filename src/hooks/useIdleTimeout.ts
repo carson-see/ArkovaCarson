@@ -66,13 +66,13 @@ export function useIdleTimeout({
       document.addEventListener(event, onActivity, { passive: true });
     }
 
-    // Visibility change — reset on return from background
+    // Visibility change — check if timed out while hidden
     function onVisibility() {
       if (document.visibilityState === 'visible') {
-        // Don't reset — check if timed out while hidden
         const elapsed = Date.now() - lastActivityRef.current;
         if (elapsed >= timeoutMs) {
-          void handleTimeout();
+          // Timeout occurred while tab was hidden — sign out
+          void supabase.auth.signOut();
         }
       }
     }
