@@ -1942,4 +1942,74 @@ export const COMPLIANCE_TREND_LABELS = {
   ERR_NETWORK: 'Network error',
 } as const;
 
+// =============================================================================
+// FERPA DIRECTORY INFO OPT-OUT (REG-02)
+// =============================================================================
 
+export const DIRECTORY_OPT_OUT_LABELS = {
+  TITLE: 'Directory Information Preferences',
+  DESCRIPTION: 'Control whether your name, degree type, and dates of attendance are shared when credentials are verified. This applies to education records only.',
+  OPT_OUT_TOGGLE: 'Opt out of directory information disclosure',
+  OPT_OUT_HELP: 'When enabled, verification responses will not include your name, degree type, or dates of attendance per FERPA Section 99.37.',
+  BULK_IMPORT_TITLE: 'Bulk Opt-Out Import',
+  BULK_IMPORT_DESCRIPTION: 'Upload a CSV file with student record IDs and opt-out preferences to update multiple records at once.',
+  SUPPRESSED_NOTICE: 'Some details have been withheld per the student\'s privacy preferences.',
+  SUCCESS: 'Directory information preferences updated.',
+  BULK_SUCCESS: 'Bulk opt-out import completed.',
+} as const;
+
+// =============================================================================
+// HIPAA COMPLIANCE (REG-05, REG-06, REG-07, REG-10)
+// =============================================================================
+
+export const HIPAA_LABELS = {
+  MFA_REQUIRED_TITLE: 'Additional Verification Required',
+  MFA_REQUIRED_DESCRIPTION: 'This organization requires multi-factor authentication to access healthcare credentials. Please enable two-factor authentication to continue.',
+  MFA_ENABLE_BUTTON: 'Enable Two-Factor Authentication',
+  MFA_CHALLENGE_TITLE: 'Verify Your Identity',
+  MFA_CHALLENGE_DESCRIPTION: 'Enter your authentication code to access healthcare credentials.',
+  SESSION_TIMEOUT_TITLE: 'Session Expired',
+  SESSION_TIMEOUT_DESCRIPTION: 'Your session has timed out due to inactivity. Please sign in again to continue.',
+  SESSION_TIMEOUT_SETTING: 'Inactivity Timeout',
+  SESSION_TIMEOUT_HELP: 'Automatically sign out users after this period of inactivity. Recommended: 15 minutes for organizations handling healthcare credentials.',
+  AUDIT_REPORT_TITLE: 'Healthcare Access Audit Report',
+  AUDIT_REPORT_DESCRIPTION: 'Comprehensive log of all access to healthcare credentials, including views, verifications, and exports.',
+  AUDIT_FILTER_DATE: 'Date Range',
+  AUDIT_FILTER_TYPE: 'Credential Type',
+  AUDIT_FILTER_USER: 'User',
+  AUDIT_FILTER_ACTION: 'Action',
+  AUDIT_EXPORT_CSV: 'Export as CSV',
+  AUDIT_EXPORT_PDF: 'Export as PDF',
+  EMERGENCY_ACCESS_TITLE: 'Emergency Access Request',
+  EMERGENCY_ACCESS_DESCRIPTION: 'Request time-limited emergency access to healthcare credentials. Requires approval from an organization administrator.',
+  EMERGENCY_ACCESS_REASON: 'Reason for Emergency Access',
+  EMERGENCY_ACCESS_DURATION: 'Access Duration',
+  EMERGENCY_ACCESS_GRANTED: 'Emergency access granted. Expires in {duration}.',
+  EMERGENCY_ACCESS_REVOKED: 'Emergency access has been revoked.',
+  EMERGENCY_ACCESS_EXPIRED: 'Emergency access has expired.',
+} as const;
+
+// =============================================================================
+// JURISDICTION PRIVACY NOTICES (REG-14)
+// =============================================================================
+
+export const PRIVACY_NOTICE_LABELS = {
+  TITLE: 'Privacy & Data Protection',
+  DESCRIPTION: 'Information about how your data is protected under applicable laws.',
+  FERPA_TITLE: 'FERPA (Family Educational Rights and Privacy Act)',
+  FERPA_DESCRIPTION: 'Applies to education records. Your records are protected under 34 CFR Part 99. You have the right to access, amend, and control disclosure of your education records.',
+  HIPAA_TITLE: 'HIPAA (Health Insurance Portability and Accountability Act)',
+  HIPAA_DESCRIPTION: 'Applies to healthcare credentials. Protected health information is handled per 45 CFR Part 164 with technical safeguards including encryption, access controls, and audit logging.',
+  KENYA_TITLE: 'Kenya Data Protection Act 2019',
+  KENYA_DESCRIPTION: 'Applies to data subjects in Kenya. Your personal data is processed lawfully under Sections 25-38. You have rights of access, correction, and erasure. Contact the ODPC for complaints.',
+  AUSTRALIA_TITLE: 'Australian Privacy Act 1988',
+  AUSTRALIA_DESCRIPTION: 'Applies to data subjects in Australia. Your personal information is handled per the Australian Privacy Principles (APPs). You have rights of access and correction under APP 12-13.',
+  SOUTH_AFRICA_TITLE: 'POPIA (Protection of Personal Information Act)',
+  SOUTH_AFRICA_DESCRIPTION: 'Applies to data subjects in South Africa. Your personal information is processed per POPIA Sections 19-22. You have rights of access, correction, and objection.',
+  NIGERIA_TITLE: 'Nigeria Data Protection Act 2023',
+  NIGERIA_DESCRIPTION: 'Applies to data subjects in Nigeria. Your personal data is protected under the NDPA. You have rights of access, rectification, and erasure.',
+  REGULATOR_LABEL: 'Regulator',
+  RIGHTS_LABEL: 'Your Rights',
+  TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
+  BREACH_TIMELINE_LABEL: 'Breach Notification Timeline',
+} as const;

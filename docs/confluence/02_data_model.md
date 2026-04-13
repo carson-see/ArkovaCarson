@@ -1,5 +1,38 @@
 # Data Model
-_Last updated: 2026-04-12 | Migrations: 0001-0196 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches). Migration 0190: RLS subquery caching. 0191: BRIN indexes. 0192: pg_stat_statements. 0193: job_queue table. **0194: `jurisdiction_rules` table (NCE-06).** **0195: `compliance_scores` table (NCE-07).** **0196: `ENABLE_COMPLIANCE_ENGINE` + `ENABLE_EXPIRY_ALERTS` switchboard flags (NCE-09).**_
+_Last updated: 2026-04-12 | Migrations: 0001-0197 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches). Migration 0190: RLS subquery caching. 0191: BRIN indexes. 0192: pg_stat_statements. 0193: job_queue table. **0194: `jurisdiction_rules` table (NCE-06).** **0195: `compliance_scores` table (NCE-07).** **0196: `ENABLE_COMPLIANCE_ENGINE` + `ENABLE_EXPIRY_ALERTS` switchboard flags (NCE-09).** **0197: REG-02/05/06/10 — directory opt-out, HIPAA org settings, emergency access grants.**_
+
+### New Tables (REG Sprint — 2026-04-12)
+
+#### emergency_access_grants (REG-10, migration 0197)
+HIPAA Section 164.312(a)(2)(ii) emergency access — time-limited, dual-control approved, fully logged.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | uuid PK | |
+| org_id | uuid FK → organizations | |
+| grantee_id | uuid FK → auth.users | Who requested access |
+| approver_id | uuid FK → auth.users | Who approved (dual-control) |
+| reason | text NOT NULL | Justification for emergency access |
+| scope | text DEFAULT 'healthcare_credentials' | What the grant covers |
+| granted_at | timestamptz | When granted |
+| expires_at | timestamptz NOT NULL | Auto-revocation time (max 4h) |
+| revoked_at | timestamptz | When manually revoked (null = active) |
+| revoked_by | uuid FK → auth.users | Who revoked |
+| revoke_reason | text | Reason for early revocation |
+
+### New Columns (REG Sprint — 2026-04-12)
+
+#### anchors
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| directory_info_opt_out | boolean | false | FERPA Section 99.37 — suppress directory-level fields in verification API |
+
+#### organizations
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| directory_info_fields | text[] | {name,degree_type,...} | Institution-configurable FERPA directory info fields |
+| hipaa_mfa_required | boolean | false | Enforce MFA for healthcare credential access |
+| session_timeout_minutes | integer | 0 | Inactivity timeout (0=disabled, 15 recommended for HIPAA) |
 
 ### New Tables (NCE Sprint — 2026-04-12)
 

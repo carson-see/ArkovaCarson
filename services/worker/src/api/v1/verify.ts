@@ -39,6 +39,8 @@ export interface VerificationResult {
   description?: string;
   /** REG-03: FERPA re-disclosure notice for education credential types (additive, nullable — Constitution 1.8) */
   ferpa_notice?: string;
+  /** REG-02: Indicates directory-level fields were suppressed per FERPA Section 99.37 opt-out (additive, nullable — Constitution 1.8) */
+  directory_info_suppressed?: boolean;
   error?: string;
 }
 
@@ -85,6 +87,8 @@ export interface AnchorByPublicId {
   merkle_root: string | null;
   /** BETA-12: Immutable description */
   description: string | null;
+  /** REG-02: FERPA Section 99.37 directory info opt-out */
+  directory_info_opt_out: boolean;
 }
 
 /**
@@ -104,19 +108,25 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     record_uri: buildVerifyUrl(anchor.public_id),
   };
 
+  // REG-02: When directory_info_opt_out is true for education types,
+  // suppress directory-level fields (name, degree type, dates) per FERPA Section 99.37
+  const isEducationType = anchor.credential_type &&
+    (FERPA_EDUCATION_TYPES as readonly string[]).includes(anchor.credential_type);
+  const suppressDirectory = anchor.directory_info_opt_out && isEducationType;
+
   if (anchor.credential_type) {
     result.credential_type = anchor.credential_type;
   }
-  if (anchor.org_name) {
+  if (anchor.org_name && !suppressDirectory) {
     result.issuer_name = anchor.org_name;
   }
-  if (anchor.recipient_hash) {
+  if (anchor.recipient_hash && !suppressDirectory) {
     result.recipient_identifier = anchor.recipient_hash;
   }
-  if (anchor.issued_at !== undefined) {
+  if (anchor.issued_at !== undefined && !suppressDirectory) {
     result.issued_date = anchor.issued_at;
   }
-  if (anchor.expires_at !== undefined) {
+  if (anchor.expires_at !== undefined && !suppressDirectory) {
     result.expiry_date = anchor.expires_at;
   }
   // Frozen schema: omit jurisdiction when null, never return null
@@ -138,6 +148,11 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
   // BETA-12: description (additive, nullable — Constitution 1.8)
   if (anchor.description) {
     result.description = anchor.description;
+  }
+
+  // REG-02: Signal when directory info was suppressed
+  if (suppressDirectory) {
+    result.directory_info_suppressed = true;
   }
 
   // REG-03: FERPA re-disclosure notice for education credential types
@@ -171,22 +186,11 @@ function logVerificationAudit(req: any, publicId: string, result: VerificationRe
 /** Default DB-backed lookup */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
-    const { data, error } = await db
+    // Cast to any — directory_info_opt_out column added by migration 0197 (not yet in generated types)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
       .from('anchors')
-      .select(`
-        public_id,
-        fingerprint,
-        status,
-        chain_tx_id,
-        chain_block_height,
-        chain_timestamp,
-        created_at,
-        credential_type,
-        issued_at,
-        expires_at,
-        org_id,
-        description
-      `)
+      .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
@@ -220,6 +224,7 @@ const defaultLookup: PublicIdLookup = {
       jurisdiction: null,
       merkle_root: null,
       description: data.description ?? null,
+      directory_info_opt_out: data.directory_info_opt_out ?? false,
     } as AnchorByPublicId;
   },
 };

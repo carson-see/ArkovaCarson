@@ -75,13 +75,10 @@ router.post('/verify', async (req: Request, res: Response) => {
 
   try {
     // Batch lookup anchors
-    const { data: anchors, error: fetchError } = await db
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: anchors, error: fetchError } = await (db as any)
       .from('anchors')
-      .select(`
-        public_id, fingerprint, status, chain_tx_id, chain_block_height,
-        chain_timestamp, created_at, credential_type, issued_at, expires_at,
-        org_id, description
-      `)
+      .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
       .in('public_id', public_ids)
       .is('deleted_at', null);
 
@@ -91,13 +88,14 @@ router.post('/verify', async (req: Request, res: Response) => {
       return;
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const anchorList = (anchors ?? []) as any[];
     const anchorMap = new Map<string, Record<string, unknown>>();
-    for (const a of (anchors ?? [])) {
+    for (const a of anchorList) {
       anchorMap.set(a.public_id as string, a);
     }
 
-    // Resolve org names for all unique org_ids
-    const orgIds = [...new Set((anchors ?? []).map((a) => a.org_id).filter((id): id is string => id != null))];
+    const orgIds = [...new Set(anchorList.map((a: any) => a.org_id).filter((id: any): id is string => id != null))] as string[];
     const orgNameMap = new Map<string, string>();
     if (orgIds.length > 0) {
       const { data: orgs } = await db
@@ -132,6 +130,7 @@ router.post('/verify', async (req: Request, res: Response) => {
         jurisdiction: null,
         merkle_root: null,
         description: (raw.description as string) ?? null,
+        directory_info_opt_out: (raw.directory_info_opt_out as boolean) ?? false,
       };
 
       const full = buildVerificationResult(anchor);
