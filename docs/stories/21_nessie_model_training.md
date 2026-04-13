@@ -1,7 +1,7 @@
 # Story Group 21: Nessie Model Training & Evaluation Pipeline
 
 > **Created:** 2026-03-30 | **Epic:** AI Model Training | **Priority:** HIGH
-> **Jira Epic:** SCRUM-312 | **Stories:** SCRUM-334–339
+> **Jira Epic:** SCRUM-312 | **Stories:** SCRUM-334–339, SCRUM-672–679
 > **Depends on:** AI-EVAL-01, AI-EVAL-02, P8 AI Intelligence (all complete)
 > **Blocked by:** RunPod/Together AI GPU capacity (external)
 
@@ -326,7 +326,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-09: Deploy Nessie v5 to RunPod Serverless (P0) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-672
 **Points:** 2
 
 **Description:** The RunPod serverless endpoint `hmayoqhxvy5k5y` still serves Nessie v2. Production is using a model 22pp worse than v5 (87.2% F1). Deploy v5 and verify.
@@ -345,7 +345,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-10: Execute HuggingFace Upload (P0) — NEW
 
 **Status:** NOT STARTED (script ready from NMT-05)
-**Jira:** TBD
+**Jira:** SCRUM-673
 **Points:** 1
 
 **Description:** Execute the v5 HuggingFace upload script created in NMT-05. Weights on HF enable portable serving and backup.
@@ -364,7 +364,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-11: Intelligence Training Data Distillation (P0) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-674
 **Points:** 5
 
 **Description:** NMT-07 built the intelligence pipeline (types, prompts, validation) but only has 5 seed Q&A pairs. Distill 500+ real examples from Gemini Golden as teacher, using public records as context.
@@ -386,7 +386,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-12: Fine-Tune Nessie v6 Intelligence Model (P0) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-675
 **Points:** 3
 
 **Description:** Fine-tune Nessie v6 on 500+ distilled intelligence examples. Current intelligence model v1 was trained on minimal data.
@@ -407,7 +407,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-13: Automated Eval Regression Pipeline (P1) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-676
 **Points:** 3
 
 **Description:** No automated way to detect model quality regression. Create a regression pipeline that runs a 50-sample eval and compares against stored baselines.
@@ -430,7 +430,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-14: Golden Dataset Phase 14 — Rare Type Expansion (P1) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-678
 **Points:** 3
 
 **Description:** Several credential types have <50 golden examples. Expand with 150+ new entries targeting underrepresented types and edge cases.
@@ -451,7 +451,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-15: Nessie v7 Extraction Retrain (P1) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-679
 **Points:** 3
 
 **Description:** Retrain extraction model with expanded golden dataset (phases 1-14). Target >89% weighted F1 to close the 3.2pp gap to Gemini Golden.
@@ -472,7 +472,7 @@ source .env  # loads HF_TOKEN + TOGETHER_API_KEY
 ### NMT-16: Domain Adapter Routing (P2) — NEW
 
 **Status:** NOT STARTED
-**Jira:** TBD
+**Jira:** SCRUM-677
 **Points:** 5
 
 **Description:** Extend the existing `nessie-domain-router.ts` with 4 domain-specific LoRA adapters for specialized extraction.

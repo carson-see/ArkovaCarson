@@ -31,7 +31,22 @@
 
 See Jira SCRUM board for full backlog. Session 35 filed 11 new bugs in `docs/bugs/UAT_S35_bugs.md`.
 
-### Recent Changes (2026-04-09, Session 38 — PostgREST v12 Fix + Batch Scaling + UAT)
+### Recent Changes (2026-04-13, Session 39 — Nessie NMT-09–16 Continuation)
+
+**8 new Nessie model training stories planned, code written, PR merged, Jira tickets filed.**
+
+| Change | Detail |
+|--------|--------|
+| **NMT-09–16 stories** | 8 new stories (25 pts) added to `docs/stories/21_nessie_model_training.md`. Jira: SCRUM-672–679 under epic SCRUM-312. |
+| **NMT-13: Eval regression** | CODE COMPLETE. `baseline-metrics.ts`, seeded shuffle sampling, `npm run eval:regression`. 18 tests. |
+| **NMT-14: Golden dataset phase 14** | CODE COMPLETE. 120 entries (CHARITY, ACCREDITATION, BADGE, ATTESTATION, MEDICAL, edge cases). Total golden dataset now 1,905. 14 tests. |
+| **NMT-16: Domain routing** | IN PROGRESS. Professional + Identity domain groups with typed Sets, placeholder fallback via `resolveAdapter()`. 11 tests. Adapters need training. |
+| **Prompt dedup** | Extracted `NESSIE_CONDENSED_PROMPT` to `src/ai/prompts/nessie-condensed.ts` (single source of truth). |
+| **PATENT routing fix** | Moved from identity → academic domain (was a bug). |
+| **Scripts ready** | `runpod-deploy-v5.ts`, `nessie-intelligence-distill-v2.ts`, `nessie-v7-export.ts` — all validated via dry-run. |
+| **PR #371** | Squash merged to main. 4 commits, 20 files, +3,004 lines. |
+
+### Previous: Session 38 (2026-04-09, PostgREST v12 Fix + Batch Scaling + UAT)
 
 **Critical production fix: PostgREST v12 broke all service_role checks. 11,812 PENDING anchors cleared. Batch scaling to 10K/batch implemented.**
 
