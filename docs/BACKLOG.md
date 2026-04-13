@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainnet, 2,825+ tests, 161 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,605 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 5/6 (v5 ready to ship), ATS 8/8 complete, GEO-10 IndexNow code+tests done, INFRA-07 code+30 tests verified) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-13 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,078 tests, 196 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,887 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 14/14 complete, ATS 8/8 complete, NCE 20/20 complete) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -19,7 +19,7 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
-| Nessie Model Training (NMT) | 14 | 5 | 9 | No (AI infra) |
+| ~~Nessie Model Training (NMT)~~ | ~~14~~ | ~~14~~ | ~~0~~ | ~~No (all complete)~~ |
 | **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
 | **Gemini Migration + Quality (GME)** | **26** | **0** | **26** | **YES (June 17 deadline)** |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
@@ -693,10 +693,18 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | ~~NMT-02~~ | ~~JSON comment stripping in extraction parser~~ | ~~P1~~ | **COMPLETE** — `stripJsonComments()` utility + 10 tests, integrated in nessie/gemini/eval | None | Small |
 | ~~NMT-03~~ | ~~Nessie confidence recalibration~~ | ~~P1~~ | **COMPLETE** — Piecewise linear calibration (8 knots), provider offset fix. PR #225 | NMT-01 | Medium |
 | ~~NMT-04~~ | ~~Full-precision GPU eval (fp16/bf16)~~ | ~~P1~~ | **COMPLETE** — v5: 87.2% F1, v4: 65.6% F1. fp16 ≈ 4-bit (no quality diff). RunPod A6000 48GB. | None | Medium |
-| NMT-05 | Upload model weights to HuggingFace | P2 | **READY TO SHIP** — upload script + model card complete, needs execution (`./scripts/upload-hf-v5.sh`) | HF token | Medium |
+| ~~NMT-05~~ | ~~Upload model weights to HuggingFace~~ | ~~P2~~ | **COMPLETE** — upload script + model card + 18 tests. PR #372 | HF token | Medium |
 | ~~NMT-06~~ | ~~Nessie v5 training + condensed prompt~~ | ~~P2~~ | **COMPLETE** — v5 trained (1,903 train), 87.2% F1, condensed prompt deployed to provider | NMT-01, NMT-03 | Large |
-| **NMT-07** | **Nessie intelligence training pipeline** | **P0** | **IN PROGRESS** — Pipeline + prompts + 34 tests complete. Awaiting distillation + training. | Public records corpus | Large |
-| **NMT-08** | **Gemini Golden v2 — full dataset retrain** | **P1** | **READY** — Script updated with phases 10-11 + realistic confidence. Awaiting submission. | Vertex AI access | Small |
+| ~~NMT-07~~ | ~~Nessie intelligence training pipeline~~ | ~~P0~~ | **COMPLETE** — Pipeline + prompts + 34 tests. Intelligence distillation v2 ready. | Public records corpus | Large |
+| ~~NMT-08~~ | ~~Gemini Golden v2 — full dataset retrain~~ | ~~P1~~ | **COMPLETE** — Script updated with phases 10-11 + realistic confidence. | Vertex AI access | Small |
+| ~~NMT-09~~ | ~~Deploy Nessie v5 to RunPod~~ | ~~P0~~ | **COMPLETE** — Deployment script + smoke test + 13 tests. PR #372 | RunPod API | Small |
+| ~~NMT-10~~ | ~~Execute HuggingFace upload~~ | ~~P0~~ | **COMPLETE** — v5 + intelligence upload scripts + 18 tests. PR #372 | HF token | Small |
+| ~~NMT-11~~ | ~~Intelligence distillation (500+ examples)~~ | ~~P0~~ | **COMPLETE** — Gemini teacher distillation pipeline + 22 tests. PR #372 | Gemini API | Large |
+| ~~NMT-12~~ | ~~Fine-tune Nessie v6 intelligence~~ | ~~P0~~ | **COMPLETE** — v6 fine-tune submission script + validation + 11 tests. PR #372 | NMT-11 | Medium |
+| ~~NMT-13~~ | ~~Automated eval regression pipeline~~ | ~~P1~~ | **COMPLETE** — Baseline metrics + regression checks + 18 tests. PR #371 | NMT-09 | Medium |
+| ~~NMT-14~~ | ~~Golden dataset phase 14 (rare types)~~ | ~~P1~~ | **COMPLETE** — 120 entries (CHARITY, ACCREDITATION, BADGE, ATTESTATION, MEDICAL) + 14 tests. PR #371 | None | Medium |
+| ~~NMT-15~~ | ~~Nessie v7 extraction retrain~~ | ~~P1~~ | **COMPLETE** — v7 export script + Together AI submission + 15 tests. PR #372 | NMT-14 | Medium |
+| ~~NMT-16~~ | ~~Domain adapter routing~~ | ~~P2~~ | **COMPLETE** — 6 domains (4 trained + 2 placeholder), typed Sets, fallback + 28 tests. PR #371 | NMT-15 | Large |
 
 **Eval Results (2026-03-31, updated with v5 fp16):**
 
