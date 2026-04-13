@@ -101,27 +101,51 @@ const DOMAIN_KEYWORDS: Record<string, Set<string>> = {
   ]),
 };
 
+/** Credential type → domain mapping. Typed Sets replace the if-chain. */
+const SEC_TYPES = new Set(['SEC_FILING', 'FINANCIAL', 'INSURANCE']);
+const LEGAL_TYPES = new Set(['LEGAL']);
+const REGULATORY_TYPES = new Set(['REGULATION', 'CHARITY']);
+const ACADEMIC_TYPES = new Set(['PUBLICATION', 'DEGREE', 'TRANSCRIPT', 'ACCREDITATION', 'PATENT']);
+const PROFESSIONAL_TYPES = new Set(['LICENSE', 'CERTIFICATE', 'CLE', 'BADGE', 'PROFESSIONAL', 'ATTESTATION']);
+const IDENTITY_TYPES = new Set(['IDENTITY', 'MILITARY', 'RESUME', 'MEDICAL']);
+
+const TYPE_TO_DOMAIN: Array<[Set<string>, string]> = [
+  [SEC_TYPES, 'sec'],
+  [LEGAL_TYPES, 'legal'],
+  [REGULATORY_TYPES, 'regulatory'],
+  [ACADEMIC_TYPES, 'academic'],
+  [PROFESSIONAL_TYPES, 'professional'],
+  [IDENTITY_TYPES, 'identity'],
+];
+
+/**
+ * Resolve adapter, falling back to default if the matched adapter is untrained.
+ */
+function resolveAdapter(domain: string): DomainAdapter {
+  const adapter = ROUTER_CONFIG.adapters[domain];
+  if (adapter && isAdapterTrained(adapter)) return adapter;
+  return getDefault();
+}
+
 /**
  * Route a query to the appropriate domain adapter.
  *
  * Two-pass classifier:
- * 1. Exact credential type match (fast path)
+ * 1. Credential type → domain Set lookup (fast path)
  * 2. Keyword scoring from query text (fallback)
+ *
+ * Falls back to default adapter if the matched adapter is untrained (placeholder).
  */
 export function routeToDomain(
   credentialType?: string,
   queryText?: string,
 ): DomainAdapter {
-  // Pass 1: Credential type match
+  // Pass 1: Credential type lookup
   if (credentialType) {
     const ct = credentialType.toUpperCase();
-    if (ct === 'SEC_FILING' || ct === 'FINANCIAL' || ct === 'INSURANCE') return ROUTER_CONFIG.adapters.sec ?? getDefault();
-    if (ct === 'LEGAL') return ROUTER_CONFIG.adapters.legal ?? getDefault();
-    if (ct === 'REGULATION' || ct === 'CHARITY') return ROUTER_CONFIG.adapters.regulatory ?? getDefault();
-    if (ct === 'PUBLICATION' || ct === 'DEGREE' || ct === 'TRANSCRIPT' || ct === 'ACCREDITATION') return ROUTER_CONFIG.adapters.academic ?? getDefault();
-    // NMT-16: Route to new domain groups (placeholder models until trained)
-    if (ct === 'LICENSE' || ct === 'CERTIFICATE' || ct === 'CLE' || ct === 'BADGE' || ct === 'PROFESSIONAL' || ct === 'ATTESTATION') return ROUTER_CONFIG.adapters.professional ?? getDefault();
-    if (ct === 'IDENTITY' || ct === 'MILITARY' || ct === 'RESUME' || ct === 'MEDICAL' || ct === 'PATENT') return ROUTER_CONFIG.adapters.identity ?? getDefault();
+    for (const [typeSet, domain] of TYPE_TO_DOMAIN) {
+      if (typeSet.has(ct)) return resolveAdapter(domain);
+    }
   }
 
   // Pass 2: Keyword scoring
@@ -141,8 +165,8 @@ export function routeToDomain(
       }
     }
 
-    if (bestScore > 0 && ROUTER_CONFIG.adapters[bestDomain]) {
-      return ROUTER_CONFIG.adapters[bestDomain];
+    if (bestScore > 0) {
+      return resolveAdapter(bestDomain);
     }
   }
 
@@ -213,4 +237,7 @@ export function getTrainedAdapters(): DomainAdapter[] {
   return Object.values(ROUTER_CONFIG.adapters).filter(isAdapterTrained);
 }
 
-export { ROUTER_CONFIG, JURISDICTION_ADAPTERS };
+export {
+  ROUTER_CONFIG, JURISDICTION_ADAPTERS,
+  SEC_TYPES, LEGAL_TYPES, REGULATORY_TYPES, ACADEMIC_TYPES, PROFESSIONAL_TYPES, IDENTITY_TYPES,
+};

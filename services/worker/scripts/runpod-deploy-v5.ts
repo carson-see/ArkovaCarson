@@ -33,8 +33,9 @@ if (!RUNPOD_ENDPOINT_ID) {
 // --- CLI ---
 const args = process.argv.slice(2);
 const SMOKE_ONLY = args.includes('--smoke-only');
+const sampleIdx = args.indexOf('--sample');
 const SAMPLE_SIZE = parseInt(
-  args[args.indexOf('--sample') + 1] || '10',
+  (sampleIdx >= 0 && args[sampleIdx + 1]) ? args[sampleIdx + 1] : '10',
   10,
 );
 
@@ -84,7 +85,7 @@ async function smokeTest(sampleSize: number): Promise<boolean> {
   console.log(`\n=== Smoke Test (${sampleSize} samples) ===\n`);
 
   // Import condensed prompt and golden dataset
-  const { NESSIE_CONDENSED_PROMPT } = await import('../src/ai/nessie.js');
+  const { NESSIE_CONDENSED_PROMPT } = await import('../src/ai/prompts/nessie-condensed.js');
   const { FULL_GOLDEN_DATASET } = await import('../src/ai/eval/golden-dataset.js');
 
   const entries = FULL_GOLDEN_DATASET

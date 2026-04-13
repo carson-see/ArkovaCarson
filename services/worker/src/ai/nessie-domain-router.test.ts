@@ -8,6 +8,7 @@ import {
   isAdapterTrained,
   getTrainedAdapters,
   ROUTER_CONFIG,
+  ACADEMIC_TYPES,
 } from './nessie-domain-router.js';
 
 describe('nessie-domain-router', () => {
@@ -44,37 +45,42 @@ describe('nessie-domain-router', () => {
       expect(routeToDomain('ACCREDITATION').domain).toBe('academic');
     });
 
-    // NMT-16: New domain groups
-    it('routes LICENSE to professional adapter', () => {
-      expect(routeToDomain('LICENSE').domain).toBe('professional');
+    // NMT-16: New domain groups (adapters are placeholder → fall back to default)
+    it('routes LICENSE to default (professional adapter untrained)', () => {
+      expect(routeToDomain('LICENSE').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes CLE to professional adapter', () => {
-      expect(routeToDomain('CLE').domain).toBe('professional');
+    it('routes CLE to default (professional adapter untrained)', () => {
+      expect(routeToDomain('CLE').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes BADGE to professional adapter', () => {
-      expect(routeToDomain('BADGE').domain).toBe('professional');
+    it('routes BADGE to default (professional adapter untrained)', () => {
+      expect(routeToDomain('BADGE').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes ATTESTATION to professional adapter', () => {
-      expect(routeToDomain('ATTESTATION').domain).toBe('professional');
+    it('routes ATTESTATION to default (professional adapter untrained)', () => {
+      expect(routeToDomain('ATTESTATION').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes MILITARY to identity adapter', () => {
-      expect(routeToDomain('MILITARY').domain).toBe('identity');
+    it('routes MILITARY to default (identity adapter untrained)', () => {
+      expect(routeToDomain('MILITARY').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes RESUME to identity adapter', () => {
-      expect(routeToDomain('RESUME').domain).toBe('identity');
+    it('routes RESUME to default (identity adapter untrained)', () => {
+      expect(routeToDomain('RESUME').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes MEDICAL to identity adapter', () => {
-      expect(routeToDomain('MEDICAL').domain).toBe('identity');
+    it('routes MEDICAL to default (identity adapter untrained)', () => {
+      expect(routeToDomain('MEDICAL').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes IDENTITY to identity adapter', () => {
-      expect(routeToDomain('IDENTITY').domain).toBe('identity');
+    it('routes PATENT to academic adapter', () => {
+      expect(routeToDomain('PATENT').domain).toBe('academic');
+    });
+
+    it('routes IDENTITY to default (identity adapter untrained)', () => {
+      // Identity adapter is placeholder, so falls back to default
+      expect(routeToDomain('IDENTITY').domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
     it('is case-insensitive', () => {
@@ -94,14 +100,14 @@ describe('nessie-domain-router', () => {
       expect(result.domain).toBe('legal');
     });
 
-    it('routes professional keywords to professional adapter', () => {
+    it('routes professional keywords to default (adapter untrained)', () => {
       const result = routeToDomain(undefined, 'CLE continuing education certificate for license');
-      expect(result.domain).toBe('professional');
+      expect(result.domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
-    it('routes identity keywords to identity adapter', () => {
+    it('routes identity keywords to default (adapter untrained)', () => {
       const result = routeToDomain(undefined, 'DD-214 military service record veteran');
-      expect(result.domain).toBe('identity');
+      expect(result.domain).toBe(ROUTER_CONFIG.defaultAdapter);
     });
 
     it('returns default adapter for unknown text', () => {
@@ -133,6 +139,12 @@ describe('nessie-domain-router', () => {
       const trained = getTrainedAdapters();
       expect(trained.length).toBe(4); // sec, academic, legal, regulatory
       expect(trained.every(a => !a.modelId.startsWith('placeholder'))).toBe(true);
+    });
+  });
+
+  describe('type sets', () => {
+    it('has PATENT in academic types (not identity)', () => {
+      expect(ACADEMIC_TYPES.has('PATENT')).toBe(true);
     });
   });
 
