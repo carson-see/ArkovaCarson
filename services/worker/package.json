@@ -23,7 +23,7 @@
     "@sentry/node": "^10.43.0",
     "@sentry/profiling-node": "^10.43.0",
     "@supabase/supabase-js": "2.100.1",
-    "@types/mime": "^3.0.4",
+    "@types/mime": "^4.0.0",
     "adm-zip": "^0.5.10",
     "asn1js": "^3.0.7",
     "bitcoinjs-lib": "6.1.7",
