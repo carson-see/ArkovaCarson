@@ -9,16 +9,16 @@
  * @see MVP-09 — Search, filter, and pagination
  */
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, CheckCircle, Clock, Plus, Search, ChevronLeft, ChevronRight, FileCheck } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Plus, Search, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchors } from '@/hooks/useAnchors';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useChecklist } from '@/hooks/useChecklist';
 import { AppShell } from '@/components/layout';
-import { StatCard, EmptyState } from '@/components/dashboard';
+import { StatCard, EmptyState, ProfileCard } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
 import { IssueCredentialForm } from '@/components/organization';
 import { RecordsList, type Record } from '@/components/records';
@@ -60,6 +60,8 @@ export function DashboardPage() {
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
+  const [recordsExpanded, setRecordsExpanded] = useState(true);
+  const recordsSectionRef = useRef<HTMLDivElement>(null);
 
   const needsDisclaimer = !disclaimerDismissed && !profileLoading && profile && !profile.disclaimer_accepted_at;
 
@@ -84,7 +86,7 @@ export function DashboardPage() {
   const [pageSize, setPageSize] = useState<number>(10);
 
   // DEBT-5: Consolidated checklist state (replaces 3 scattered useEffect blocks)
-  const { hasTemplates, hasBillingPlan, attestationCount } = useChecklist(
+  const { hasTemplates, hasBillingPlan } = useChecklist(
     user?.id,
     profile?.org_id,
     profile?.role,
@@ -112,6 +114,22 @@ export function DashboardPage() {
       await refreshAnchors();
     }
   }, [revokeAnchor, refreshAnchors]);
+
+  // Privacy toggle handler (ProfileCard)
+  const handleTogglePrivacy = useCallback(async (isPublic: boolean) => {
+    await updateProfile({ is_public_profile: isPublic });
+  }, [updateProfile]);
+
+  // Stat card click handlers — scroll to records and apply filter
+  const handleStatClick = useCallback((filter: StatusFilter) => {
+    setStatusFilter(filter);
+    setCurrentPage(1);
+    setRecordsExpanded(true);
+    // requestAnimationFrame guarantees DOM has updated before scroll
+    requestAnimationFrame(() => {
+      recordsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
 
   // Filtered + searched records (MVP-09)
   const filteredRecords = useMemo(() => {
@@ -230,24 +248,23 @@ export function DashboardPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Welcome section */}
-      <div className="mb-8">
-        <h1 className="text-[24px] font-bold tracking-tight text-foreground">
-          Welcome back{profile?.full_name ? `, ${profile.full_name.split(' ')[0]}` : ''}
-        </h1>
-        <p className="text-[13px] text-muted-foreground mt-1">
-          Here's what's happening with your credentials
-        </p>
-      </div>
+      {/* Profile Card — user profile + verified badge + privacy toggle + org link */}
+      <ProfileCard
+        profile={profile}
+        organization={organization}
+        loading={profileLoading}
+        onTogglePrivacy={handleTogglePrivacy}
+      />
 
-      {/* Stats grid */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 mb-8">
+      {/* Stats grid — clickable cards filter My Records */}
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
         <StatCard
           label="Total Records"
           value={stats.total}
           icon={FileText}
           variant="primary"
           loading={statsLoading}
+          onClick={() => handleStatClick('ALL')}
         />
         <StatCard
           label="Secured"
@@ -255,6 +272,7 @@ export function DashboardPage() {
           icon={CheckCircle}
           variant="success"
           loading={statsLoading}
+          onClick={() => handleStatClick('SECURED')}
         />
         <StatCard
           label="Pending"
@@ -262,20 +280,13 @@ export function DashboardPage() {
           icon={Clock}
           variant="warning"
           loading={statsLoading}
-        />
-        <StatCard
-          label="Attestations"
-          value={attestationCount}
-          icon={FileCheck}
-          variant="default"
-          loading={statsLoading}
-          onClick={() => navigate(ROUTES.ATTESTATIONS)}
+          onClick={() => handleStatClick('PENDING')}
         />
       </div>
 
-      {/* Compliance Score Widget (NCE-12) + Usage + Credit */}
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
-        <ComplianceScoreCard />
+      {/* Widgets — Compliance Score only for ORG_ADMIN, Usage + Credit for all */}
+      <div className={`grid gap-4 grid-cols-1 mb-8 ${profile?.role === 'ORG_ADMIN' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+        {profile?.role === 'ORG_ADMIN' && <ComplianceScoreCard />}
         <UsageWidget />
         <CreditUsageWidget />
       </div>
@@ -299,8 +310,6 @@ export function DashboardPage() {
         </div>
       )}
 
-      {/* Privacy toggle moved to Settings page (UX-P1.1) */}
-
       {/* Revoke error */}
       {revokeError && (
         <Alert variant="destructive" className="mb-4">
@@ -311,166 +320,180 @@ export function DashboardPage() {
         </Alert>
       )}
 
-      {/* Records section */}
-      <Card className="border-white/[0.06] bg-white/[0.015]">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-          <CardTitle className="text-[17px] font-semibold">My Records</CardTitle>
-          <div className="flex gap-2">
-            <Button onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc] font-medium text-[13px]">
-              <Plus className="mr-2 h-4 w-4" />
-              {SECURE_DIALOG_LABELS.TITLE}
-            </Button>
-            {profile?.role === 'ORG_ADMIN' && profile.org_id && (
-              <Button onClick={() => setIssueDialogOpen(true)} variant="outline" className="font-medium text-[13px]">
+      {/* Records section — collapsible */}
+      <div ref={recordsSectionRef}>
+        <Card className="border-white/[0.06] bg-white/[0.015]">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+            <button
+              onClick={() => setRecordsExpanded(!recordsExpanded)}
+              className="flex items-center gap-2 hover:text-[#00d4ff] transition-colors"
+            >
+              {recordsExpanded ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+              <CardTitle className="text-[17px] font-semibold">My Records</CardTitle>
+            </button>
+            <div className="flex gap-2">
+              <Button onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc] font-medium text-[13px]">
                 <Plus className="mr-2 h-4 w-4" />
-                {ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA}
+                {SECURE_DIALOG_LABELS.TITLE}
               </Button>
-            )}
-          </div>
-        </CardHeader>
-
-        {/* Search + Filter controls (MVP-09) */}
-        {hasRecords && (
-          <div className="px-6 pb-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  placeholder={RECORDS_LIST_LABELS.SEARCH_PLACEHOLDER}
-                  value={searchQuery}
-                  onChange={(e) => handleSearchChange(e.target.value)}
-                  className="pl-9"
-                />
-              </div>
-              <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
-                <SelectTrigger className="w-full sm:w-[160px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">{RECORDS_LIST_LABELS.FILTER_ALL}</SelectItem>
-                  <SelectItem value="PENDING">{RECORDS_LIST_LABELS.FILTER_PENDING}</SelectItem>
-                  <SelectItem value="SECURED">{RECORDS_LIST_LABELS.FILTER_SECURED}</SelectItem>
-                  <SelectItem value="REVOKED">{RECORDS_LIST_LABELS.FILTER_REVOKED}</SelectItem>
-                  <SelectItem value="EXPIRED">{RECORDS_LIST_LABELS.FILTER_EXPIRED}</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
-
-        <Separator />
-        <CardContent className="pt-0">
-          {!loading && !hasRecords ? (
-            <EmptyState
-              title={profile?.role === 'ORG_ADMIN'
-                ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS
-                : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS}
-              description={profile?.role === 'ORG_ADMIN'
-                ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_DESC
-                : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_DESC}
-              actionLabel={profile?.role === 'ORG_ADMIN'
-                ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA
-                : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
-              onAction={() => {
-                if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-                  setIssueDialogOpen(true);
-                } else {
-                  setSecureDialogOpen(true);
-                }
-              }}
-            />
-          ) : !loading && isFiltering && !hasFilteredResults ? (
-            <div className="py-12 text-center">
-              <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
-              <p className="text-sm font-medium text-muted-foreground">
-                {RECORDS_LIST_LABELS.NO_RESULTS}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                {RECORDS_LIST_LABELS.NO_RESULTS_DESC}
-              </p>
-            </div>
-          ) : (
-            <RecordsList
-              records={paginatedRecords}
-              loading={recordsLoading}
-              onViewRecord={handleViewRecord}
-              onDownloadProof={handleDownloadProof}
-              onRevokeRecord={handleRevokeRecord}
-            />
-          )}
-
-          {/* Pagination controls (MVP-09) */}
-          {hasRecords && !recordsLoading && filteredRecords.length > 0 && (
-            <div className="flex flex-col gap-3 border-t pt-4 mt-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span>
-                  {RECORDS_LIST_LABELS.SHOWING_RESULTS
-                    .replace('{start}', String(paginationStart))
-                    .replace('{end}', String(paginationEnd))
-                    .replace('{total}', String(filteredRecords.length))}
-                </span>
-                <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
-                  <SelectTrigger className="h-8 w-[70px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PAGE_SIZES.map(size => (
-                      <SelectItem key={size} value={String(size)}>{size}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <span className="text-xs">{RECORDS_LIST_LABELS.PAGE_SIZE_LABEL}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
-                  aria-label="Previous page"
-                >
-                  <ChevronLeft className="h-4 w-4" />
+              {profile?.role === 'ORG_ADMIN' && profile.org_id && (
+                <Button onClick={() => setIssueDialogOpen(true)} variant="outline" className="font-medium text-[13px]">
+                  <Plus className="mr-2 h-4 w-4" />
+                  {ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA}
                 </Button>
-                {Array.from({ length: totalPages }, (_, i) => i + 1)
-                  .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
-                  .reduce<(number | 'ellipsis-before')[]>((acc, p, idx, arr) => {
-                    if (idx > 0 && arr[idx - 1] !== p - 1) {
-                      acc.push(`ellipsis-before-${p}` as 'ellipsis-before');
-                    }
-                    acc.push(p as unknown as 'ellipsis-before');
-                    return acc;
-                  }, [])
-                  .map((item) =>
-                    typeof item === 'string' ? (
-                      <span key={item} className="px-2 text-sm text-muted-foreground">...</span>
-                    ) : (
+              )}
+            </div>
+          </CardHeader>
+
+          {recordsExpanded && (
+            <>
+              {/* Search + Filter controls (MVP-09) */}
+              {hasRecords && (
+                <div className="px-6 pb-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        placeholder={RECORDS_LIST_LABELS.SEARCH_PLACEHOLDER}
+                        value={searchQuery}
+                        onChange={(e) => handleSearchChange(e.target.value)}
+                        className="pl-9"
+                      />
+                    </div>
+                    <Select value={statusFilter} onValueChange={handleStatusFilterChange}>
+                      <SelectTrigger className="w-full sm:w-[160px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="ALL">{RECORDS_LIST_LABELS.FILTER_ALL}</SelectItem>
+                        <SelectItem value="PENDING">{RECORDS_LIST_LABELS.FILTER_PENDING}</SelectItem>
+                        <SelectItem value="SECURED">{RECORDS_LIST_LABELS.FILTER_SECURED}</SelectItem>
+                        <SelectItem value="REVOKED">{RECORDS_LIST_LABELS.FILTER_REVOKED}</SelectItem>
+                        <SelectItem value="EXPIRED">{RECORDS_LIST_LABELS.FILTER_EXPIRED}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              )}
+
+              <Separator />
+              <CardContent className="pt-0">
+                {!loading && !hasRecords ? (
+                  <EmptyState
+                    title={profile?.role === 'ORG_ADMIN'
+                      ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS
+                      : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS}
+                    description={profile?.role === 'ORG_ADMIN'
+                      ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_DESC
+                      : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_DESC}
+                    actionLabel={profile?.role === 'ORG_ADMIN'
+                      ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA
+                      : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
+                    onAction={() => {
+                      if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
+                        setIssueDialogOpen(true);
+                      } else {
+                        setSecureDialogOpen(true);
+                      }
+                    }}
+                  />
+                ) : !loading && isFiltering && !hasFilteredResults ? (
+                  <div className="py-12 text-center">
+                    <Search className="mx-auto h-8 w-8 text-muted-foreground/50 mb-3" />
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {RECORDS_LIST_LABELS.NO_RESULTS}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {RECORDS_LIST_LABELS.NO_RESULTS_DESC}
+                    </p>
+                  </div>
+                ) : (
+                  <RecordsList
+                    records={paginatedRecords}
+                    loading={recordsLoading}
+                    onViewRecord={handleViewRecord}
+                    onDownloadProof={handleDownloadProof}
+                    onRevokeRecord={handleRevokeRecord}
+                  />
+                )}
+
+                {/* Pagination controls (MVP-09) */}
+                {hasRecords && !recordsLoading && filteredRecords.length > 0 && (
+                  <div className="flex flex-col gap-3 border-t pt-4 mt-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <span>
+                        {RECORDS_LIST_LABELS.SHOWING_RESULTS
+                          .replace('{start}', String(paginationStart))
+                          .replace('{end}', String(paginationEnd))
+                          .replace('{total}', String(filteredRecords.length))}
+                      </span>
+                      <Select value={String(pageSize)} onValueChange={handlePageSizeChange}>
+                        <SelectTrigger className="h-8 w-[70px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAGE_SIZES.map(size => (
+                            <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs">{RECORDS_LIST_LABELS.PAGE_SIZE_LABEL}</span>
+                    </div>
+                    <div className="flex items-center gap-1">
                       <Button
-                        key={item}
-                        variant={(item as number) === safePage ? 'default' : 'outline'}
+                        variant="outline"
                         size="sm"
-                        className="h-8 w-8 p-0"
-                        onClick={() => setCurrentPage(item as number)}
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={safePage <= 1}
+                        aria-label="Previous page"
                       >
-                        {item as number}
+                        <ChevronLeft className="h-4 w-4" />
                       </Button>
-                    )
-                  )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
-                  aria-label="Next page"
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
-            </div>
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter(p => p === 1 || p === totalPages || Math.abs(p - safePage) <= 1)
+                        .reduce<(number | 'ellipsis-before')[]>((acc, p, idx, arr) => {
+                          if (idx > 0 && arr[idx - 1] !== p - 1) {
+                            acc.push(`ellipsis-before-${p}` as 'ellipsis-before');
+                          }
+                          acc.push(p as unknown as 'ellipsis-before');
+                          return acc;
+                        }, [])
+                        .map((item) =>
+                          typeof item === 'string' ? (
+                            <span key={item} className="px-2 text-sm text-muted-foreground">...</span>
+                          ) : (
+                            <Button
+                              key={item}
+                              variant={(item as number) === safePage ? 'default' : 'outline'}
+                              size="sm"
+                              className="h-8 w-8 p-0"
+                              onClick={() => setCurrentPage(item as number)}
+                            >
+                              {item as number}
+                            </Button>
+                          )
+                        )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={safePage >= totalPages}
+                        aria-label="Next page"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </>
           )}
-        </CardContent>
-      </Card>
-
-      {/* Account info removed — lives in Settings page (UX-P1.1) */}
+        </Card>
+      </div>
 
       {/* Secure Document Dialog */}
       <SecureDocumentDialog
