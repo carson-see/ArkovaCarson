@@ -32,6 +32,8 @@ const ALL_CREDENTIAL_TYPES = [
   'employment_screening', 'employment_verification', 'employment_authorization',
   'degree', 'license', 'certificate', 'medical_license', 'nursing_license',
   'cpa_license', 'teaching_license', 'real_estate_license', 'professional_certification',
+  // Phase 14 rare type expansion (NMT-14)
+  'CHARITY', 'ACCREDITATION',
 ] as const;
 
 describe('Golden Dataset Integrity', () => {

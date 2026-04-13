@@ -19,6 +19,7 @@ Express-based worker service handling privileged server-side operations: anchor 
 | 2026-03-11 | P7-TS-11 | Wallet utilities: `chain/wallet.ts` (generateSignetKeypair, addressFromWif, isValidSignetWif), CLI scripts, 13 tests. |
 | 2026-03-12 | P7-TS-12 | UTXO provider abstraction: `chain/utxo-provider.ts` (RpcUtxoProvider + MempoolUtxoProvider + factory), 35 tests. Broadcast tests added to signet.test.ts (3) and utxo-provider.test.ts (3). Integrated into SignetChainClient + getChainClient(). 363 total worker tests. |
 | 2026-03-14 | H3-01 | Deleted dead `src/jobs/webhook.ts` + `src/jobs/webhook.test.ts` (superseded by `webhooks/delivery.ts`). Removed `webhook.ts` coverage entry from `vitest.config.ts`. |
+| 2026-04-12 | NMT-09–16 | **Nessie continuation stories.** Eval regression pipeline (baseline-metrics.ts, 18 tests). Golden dataset phase 14 (120 entries, 14 tests). Domain router expanded with professional + identity groups (11 tests). Scripts: runpod-deploy-v5.ts, nessie-intelligence-distill-v2.ts, nessie-v7-export.ts. npm script: eval:regression. |
 | 2026-03-12 | INFRA-01 | **Zero Trust Docker transformation.** Dockerfile converted to multi-process (Express + cloudflared sidecar). `entrypoint.sh` process manager created. `tunnel-config.yml` reference spec. `config.ts` extended with `cloudflareTunnelToken` + `sentryDsn`. `scripts/deploy-tunnel.sh` deployment script. NO ports exposed — all ingress via Cloudflare Tunnel. ADR-002: `docs/confluence/15_zero_trust_edge_architecture.md`. |
 
 ## Test Coverage Status (Final — HARDENING-5)

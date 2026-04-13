@@ -56,6 +56,17 @@ const ROUTER_CONFIG: RouterConfig = {
       label: 'Regulatory & Government',
       modelId: 'carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-regulatory-2ed0f4d7',
     },
+    // NMT-16: New domain groups (model IDs populated after training)
+    professional: {
+      domain: 'professional',
+      label: 'Professional Licenses & Certifications',
+      modelId: 'placeholder-professional', // Populated after NMT-16 training
+    },
+    identity: {
+      domain: 'identity',
+      label: 'Identity Documents & Military Records',
+      modelId: 'placeholder-identity', // Populated after NMT-16 training
+    },
   },
 };
 
@@ -77,26 +88,64 @@ const DOMAIN_KEYWORDS: Record<string, Set<string>> = {
     'publication', 'journal', 'research', 'doi', 'orcid',
     'accreditation', 'degree', 'university', 'patent', 'grant',
   ]),
+  // NMT-16: New domain keyword sets
+  professional: new Set([
+    'license', 'certification', 'cle', 'continuing education',
+    'board certified', 'practice', 'professional', 'certificate',
+    'pmp', 'cpa', 'pe ', 'badge', 'credential',
+  ]),
+  identity: new Set([
+    'passport', 'driver', 'national id', 'military', 'dd-214',
+    'service record', 'veteran', 'visa', 'immigration',
+    'birth certificate', 'social security', 'resume', 'cv',
+  ]),
 };
+
+/** Credential type → domain mapping. Typed Sets replace the if-chain. */
+const SEC_TYPES = new Set(['SEC_FILING', 'FINANCIAL', 'INSURANCE']);
+const LEGAL_TYPES = new Set(['LEGAL']);
+const REGULATORY_TYPES = new Set(['REGULATION', 'CHARITY']);
+const ACADEMIC_TYPES = new Set(['PUBLICATION', 'DEGREE', 'TRANSCRIPT', 'ACCREDITATION', 'PATENT']);
+const PROFESSIONAL_TYPES = new Set(['LICENSE', 'CERTIFICATE', 'CLE', 'BADGE', 'PROFESSIONAL', 'ATTESTATION']);
+const IDENTITY_TYPES = new Set(['IDENTITY', 'MILITARY', 'RESUME', 'MEDICAL']);
+
+const TYPE_TO_DOMAIN: Array<[Set<string>, string]> = [
+  [SEC_TYPES, 'sec'],
+  [LEGAL_TYPES, 'legal'],
+  [REGULATORY_TYPES, 'regulatory'],
+  [ACADEMIC_TYPES, 'academic'],
+  [PROFESSIONAL_TYPES, 'professional'],
+  [IDENTITY_TYPES, 'identity'],
+];
+
+/**
+ * Resolve adapter, falling back to default if the matched adapter is untrained.
+ */
+function resolveAdapter(domain: string): DomainAdapter {
+  const adapter = ROUTER_CONFIG.adapters[domain];
+  if (adapter && isAdapterTrained(adapter)) return adapter;
+  return getDefault();
+}
 
 /**
  * Route a query to the appropriate domain adapter.
  *
  * Two-pass classifier:
- * 1. Exact credential type match (fast path)
+ * 1. Credential type → domain Set lookup (fast path)
  * 2. Keyword scoring from query text (fallback)
+ *
+ * Falls back to default adapter if the matched adapter is untrained (placeholder).
  */
 export function routeToDomain(
   credentialType?: string,
   queryText?: string,
 ): DomainAdapter {
-  // Pass 1: Credential type match
+  // Pass 1: Credential type lookup
   if (credentialType) {
     const ct = credentialType.toUpperCase();
-    if (ct === 'SEC_FILING') return ROUTER_CONFIG.adapters.sec ?? getDefault();
-    if (ct === 'LEGAL') return ROUTER_CONFIG.adapters.legal ?? getDefault();
-    if (ct === 'REGULATION' || ct === 'CERTIFICATE') return ROUTER_CONFIG.adapters.regulatory ?? getDefault();
-    if (ct === 'PUBLICATION' || ct === 'PROFESSIONAL') return ROUTER_CONFIG.adapters.academic ?? getDefault();
+    for (const [typeSet, domain] of TYPE_TO_DOMAIN) {
+      if (typeSet.has(ct)) return resolveAdapter(domain);
+    }
   }
 
   // Pass 2: Keyword scoring
@@ -116,8 +165,8 @@ export function routeToDomain(
       }
     }
 
-    if (bestScore > 0 && ROUTER_CONFIG.adapters[bestDomain]) {
-      return ROUTER_CONFIG.adapters[bestDomain];
+    if (bestScore > 0) {
+      return resolveAdapter(bestDomain);
     }
   }
 
@@ -173,4 +222,22 @@ export function routeWithJurisdiction(
   return routeToDomain(credentialType, queryText);
 }
 
-export { ROUTER_CONFIG, JURISDICTION_ADAPTERS };
+/**
+ * Check if a domain adapter has been trained (not a placeholder).
+ * NMT-16: Professional and Identity adapters are placeholders until trained.
+ */
+export function isAdapterTrained(adapter: DomainAdapter): boolean {
+  return !adapter.modelId.startsWith('placeholder');
+}
+
+/**
+ * Get all trained (non-placeholder) domain adapters.
+ */
+export function getTrainedAdapters(): DomainAdapter[] {
+  return Object.values(ROUTER_CONFIG.adapters).filter(isAdapterTrained);
+}
+
+export {
+  ROUTER_CONFIG, JURISDICTION_ADAPTERS,
+  SEC_TYPES, LEGAL_TYPES, REGULATORY_TYPES, ACADEMIC_TYPES, PROFESSIONAL_TYPES, IDENTITY_TYPES,
+};

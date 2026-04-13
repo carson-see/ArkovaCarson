@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-12 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 298 stories (222 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 306 stories (222 complete + 29 GME + 36 DEP/REG planned + 8 NMT + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -289,11 +289,11 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | **NCE Compliance Engine** | **20/20** | **0** | **0** | **100%** |
-| Nessie Model Training | 5/6 | 0 | 1 | 83% |
+| Nessie Model Training | 5/14 | 0 | 9 | 36% |
 | Dependency Hardening | 1/10 | 0 | 9 | 10% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
 | **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
-| **Total** | **227/283** | **4/283** | **52/283** | **~80%** |
+| **Total** | **227/291** | **4/291** | **60/291** | **~78%** |
 
 ### Incomplete Stories
 
@@ -350,13 +350,19 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - All 8 stories implemented: employment/education verification forms, batch API, ATS webhooks, credential portfolios, evidence upload, OpenAPI docs, expiry alerts.
 - See `docs/stories/18_ats_background_checks.md` for details
 
-**Nessie Model Training (1 not started):**
-- ~~NMT-01 (P0): Gemini Golden fine-tuned eval~~ — **DONE** (90.4% F1, deployed to Cloud Run)
-- ~~NMT-02 (P1): JSON comment stripping~~ — **DONE** (stripJsonComments utility, 447 tests)
-- ~~NMT-03 (P1): Nessie confidence recalibration~~ — **DONE** (piecewise linear calibration, 8 knots, PR #225)
-- ~~NMT-04 (P1): Full-precision GPU eval~~ — **DONE** (v5: 87.2% F1, v4: 65.6% F1, fp16 ≈ 4-bit)
-- NMT-05 (P2): Upload model weights to HuggingFace — not started
-- ~~NMT-06 (P2): Nessie v5 training + condensed prompt~~ — **DONE** (v5 trained, 87.2% F1, condensed prompt deployed)
+**Nessie Model Training (9 not started):**
+- ~~NMT-01–04, NMT-06~~ — **DONE** (v5: 87.2% F1, calibration, condensed prompt)
+- NMT-05 (P2): Upload model weights to HuggingFace — READY TO SHIP (script done)
+- NMT-07 (P0): Intelligence training pipeline — IN PROGRESS (pipeline built, awaiting distillation)
+- NMT-08 (P1): Gemini Golden v2 retrain — READY (script updated)
+- NMT-09 (P0): Deploy v5 to RunPod — NOT STARTED (deployment script + smoke test ready)
+- NMT-10 (P0): Execute HuggingFace upload — NOT STARTED (script from NMT-05)
+- NMT-11 (P0): Intelligence distillation (500+ examples) — NOT STARTED (distillation script ready)
+- NMT-12 (P0): Fine-tune Nessie v6 intelligence — NOT STARTED (depends NMT-11)
+- NMT-13 (P1): Automated eval regression pipeline — **CODE COMPLETE** (baseline-metrics.ts, regression script, 18 tests)
+- NMT-14 (P1): Golden dataset phase 14 (rare types) — **CODE COMPLETE** (120 entries, 14 tests)
+- NMT-15 (P1): Nessie v7 extraction retrain — NOT STARTED (export script ready)
+- NMT-16 (P2): Domain adapter routing — IN PROGRESS (routing infrastructure + tests complete, adapters need training)
 - See `docs/stories/21_nessie_model_training.md` and `docs/BACKLOG.md` for details
 
 **Dependency Hardening (10 not started) — Release R-DEP-01:**
@@ -547,5 +553,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-12 | 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 298 stories (222 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,665 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NCE: 20/20 complete_
+_Directive version: 2026-04-12 | 196 migrations | 3,985 tests (1,476 frontend + 2,509 worker) | 306 stories (222 complete + 29 GME + 36 DEP/REG planned + 8 NMT + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,905 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NCE: 20/20 complete_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

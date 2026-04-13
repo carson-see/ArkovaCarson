@@ -19,7 +19,7 @@ _Last updated: 2026-04-06 (320K+ public records, 166K+ SECURED anchors on mainne
 | P8 AI Intelligence | 19 | 19 | 0 | No (all complete) |
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
-| Nessie Model Training (NMT) | 6 | 5 | 1 | No (AI infra) |
+| Nessie Model Training (NMT) | 14 | 5 | 9 | No (AI infra) |
 | **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
 | **Gemini Migration + Quality (GME)** | **26** | **0** | **26** | **YES (June 17 deadline)** |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |

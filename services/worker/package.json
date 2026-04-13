@@ -11,7 +11,8 @@
     "lint": "eslint src/",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "eval:regression": "tsx scripts/nessie-eval-regression.ts"
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1007.0",
