@@ -8,39 +8,39 @@
  *
  * Section 164.312(a)(2)(ii): Emergency access procedure.
  * Time-limited, dual-control approved, fully logged.
- * Default: 4 hours maximum duration.
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { EMERGENCY_ACCESS_MAX_HOURS } from '../../constants/hipaa.js';
+import { requireOrgId } from '../../middleware/requireOrgId.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
 
 export const emergencyAccessRouter = Router();
 
-const MAX_DURATION_HOURS = 4;
+emergencyAccessRouter.use(requireOrgId);
 
-const RequestSchema = z.object({
+export const RequestSchema = z.object({
   reason: z.string().min(10).max(2000),
   scope: z.string().default('healthcare_credentials'),
-  duration_hours: z.number().min(0.5).max(MAX_DURATION_HOURS).default(MAX_DURATION_HOURS),
+  duration_hours: z.number().min(0.5).max(EMERGENCY_ACCESS_MAX_HOURS).default(EMERGENCY_ACCESS_MAX_HOURS),
 });
 
-const RevokeSchema = z.object({
+export const RevokeSchema = z.object({
   reason: z.string().min(1).max(2000).optional(),
 });
 
-// ─── POST /api/v1/emergency-access — Request ────────────────────────────────
+// ─── POST / — Request emergency access ──────────────────────────────────────
 
 emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
     const userId = req.authUserId;
-    if (!orgId || !userId) {
-      res.status(400).json({ error: 'x-org-id header and authentication required' });
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
       return;
     }
 
@@ -56,7 +56,7 @@ emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
     const { data, error } = await dbAny
       .from('emergency_access_grants')
       .insert({
-        org_id: orgId,
+        org_id: req.orgId,
         grantee_id: userId,
         reason,
         scope,
@@ -71,18 +71,17 @@ emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // Audit log
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_REQUESTED',
       event_category: 'SECURITY',
       actor_id: userId,
-      org_id: orgId,
+      org_id: req.orgId,
       target_type: 'emergency_access_grant',
       target_id: data.id,
       details: JSON.stringify({ reason, scope, duration_hours, expires_at: expiresAt }),
     });
 
-    logger.info({ grantId: data.id, userId, orgId }, 'Emergency access requested');
+    logger.info({ grantId: data.id, userId, orgId: req.orgId }, 'Emergency access requested');
 
     res.status(201).json({
       id: data.id,
@@ -98,25 +97,23 @@ emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
   }
 });
 
-// ─── PATCH /api/v1/emergency-access/:id/approve — Dual-control ──────────────
+// ─── PATCH /:id/approve — Dual-control approval ────────────────────────────
 
 emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
     const approverId = req.authUserId;
-    if (!orgId || !approverId) {
-      res.status(400).json({ error: 'x-org-id header and authentication required' });
+    if (!approverId) {
+      res.status(401).json({ error: 'Authentication required' });
       return;
     }
 
     const { id } = req.params;
 
-    // Fetch the grant
     const { data: grant, error: fetchError } = await dbAny
       .from('emergency_access_grants')
-      .select('*')
+      .select('grantee_id, expires_at, revoked_at')
       .eq('id', id)
-      .eq('org_id', orgId)
+      .eq('org_id', req.orgId)
       .single();
 
     if (fetchError || !grant) {
@@ -124,25 +121,21 @@ emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) 
       return;
     }
 
-    // Dual-control: approver must be different from grantee
     if (grant.grantee_id === approverId) {
       res.status(403).json({ error: 'Cannot approve your own emergency access request (dual-control requirement)' });
       return;
     }
 
-    // Check not already revoked
     if (grant.revoked_at) {
       res.status(409).json({ error: 'Grant has already been revoked' });
       return;
     }
 
-    // Check not expired
     if (new Date(grant.expires_at) < new Date()) {
       res.status(409).json({ error: 'Grant has expired' });
       return;
     }
 
-    // Approve
     const { error: updateError } = await dbAny
       .from('emergency_access_grants')
       .update({ approver_id: approverId })
@@ -154,39 +147,32 @@ emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) 
       return;
     }
 
-    // Audit log
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_APPROVED',
       event_category: 'SECURITY',
       actor_id: approverId,
-      org_id: orgId,
+      org_id: req.orgId,
       target_type: 'emergency_access_grant',
       target_id: id,
       details: JSON.stringify({ grantee_id: grant.grantee_id, expires_at: grant.expires_at }),
     });
 
-    logger.info({ grantId: id, approverId, orgId }, 'Emergency access approved');
+    logger.info({ grantId: id, approverId, orgId: req.orgId }, 'Emergency access approved');
 
-    res.json({
-      id,
-      status: 'approved',
-      approved_by: approverId,
-      expires_at: grant.expires_at,
-    });
+    res.json({ id, status: 'approved', approved_by: approverId, expires_at: grant.expires_at });
   } catch (err) {
     logger.error({ err }, 'Emergency access approve error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// ─── PATCH /api/v1/emergency-access/:id/revoke ──────────────────────────────
+// ─── PATCH /:id/revoke ─────────────────────────────────────────────────────
 
 emergencyAccessRouter.patch('/:id/revoke', async (req: Request, res: Response) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
     const revokerId = req.authUserId;
-    if (!orgId || !revokerId) {
-      res.status(400).json({ error: 'x-org-id header and authentication required' });
+    if (!revokerId) {
+      res.status(401).json({ error: 'Authentication required' });
       return;
     }
 
@@ -202,7 +188,7 @@ emergencyAccessRouter.patch('/:id/revoke', async (req: Request, res: Response) =
         revoke_reason: revokeReason ?? 'Manual revocation',
       })
       .eq('id', id)
-      .eq('org_id', orgId)
+      .eq('org_id', req.orgId)
       .is('revoked_at', null)
       .select('id, revoked_at')
       .single();
@@ -212,18 +198,17 @@ emergencyAccessRouter.patch('/:id/revoke', async (req: Request, res: Response) =
       return;
     }
 
-    // Audit log
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_REVOKED',
       event_category: 'SECURITY',
       actor_id: revokerId,
-      org_id: orgId,
+      org_id: req.orgId,
       target_type: 'emergency_access_grant',
       target_id: id,
       details: JSON.stringify({ revoke_reason: revokeReason }),
     });
 
-    logger.info({ grantId: id, revokerId, orgId }, 'Emergency access revoked');
+    logger.info({ grantId: id, revokerId, orgId: req.orgId }, 'Emergency access revoked');
 
     res.json({ id, status: 'revoked', revoked_at: data.revoked_at });
   } catch (err) {
@@ -232,20 +217,14 @@ emergencyAccessRouter.patch('/:id/revoke', async (req: Request, res: Response) =
   }
 });
 
-// ─── GET /api/v1/emergency-access ───────────────────────────────────────────
+// ─── GET / ──────────────────────────────────────────────────────────────────
 
 emergencyAccessRouter.get('/', async (req: Request, res: Response) => {
   try {
-    const orgId = req.headers['x-org-id'] as string;
-    if (!orgId) {
-      res.status(400).json({ error: 'x-org-id header required' });
-      return;
-    }
-
     const { data, error } = await dbAny
       .from('emergency_access_grants')
-      .select('*')
-      .eq('org_id', orgId)
+      .select('id, org_id, grantee_id, approver_id, scope, granted_at, expires_at, revoked_at, created_at')
+      .eq('org_id', req.orgId)
       .order('created_at', { ascending: false })
       .limit(100);
 

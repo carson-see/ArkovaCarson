@@ -3,31 +3,24 @@
  *
  * Client-side idle detection that terminates session after inactivity.
  * Section 164.312(a)(2)(iii): Automatic logoff.
- *
- * Tracks mouse, keyboard, touch, and visibility events.
- * When the configured timeout is reached, signs the user out.
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
 interface UseIdleTimeoutOptions {
-  /** Timeout in minutes. 0 = disabled. Default: 0. */
+  /** Timeout in minutes. 0 = disabled. */
   timeoutMinutes: number;
   /** Callback when session times out (before sign-out) */
   onTimeout?: () => void;
-  /** Whether to show a warning before timeout */
+  /** Minutes before timeout to show warning (default: 2) */
   warningMinutes?: number;
 }
 
 interface UseIdleTimeoutResult {
-  /** Whether the timeout is active */
   isActive: boolean;
-  /** Whether the warning period is active */
   isWarning: boolean;
-  /** Minutes remaining before timeout */
   minutesRemaining: number;
-  /** Reset the idle timer (e.g., after user interaction) */
   reset: () => void;
 }
 
@@ -53,25 +46,24 @@ export function useIdleTimeout({
     setMinutesRemaining(timeoutMinutes);
   }, [timeoutMinutes]);
 
-  // Handle activity events
+  // Activity event listeners
   useEffect(() => {
     if (!isActive) return;
 
     function onActivity() {
       lastActivityRef.current = Date.now();
       setIsWarning(false);
+      setMinutesRemaining(timeoutMinutes);
     }
 
     for (const event of ACTIVITY_EVENTS) {
       document.addEventListener(event, onActivity, { passive: true });
     }
 
-    // Visibility change — check if timed out while hidden
     function onVisibility() {
       if (document.visibilityState === 'visible') {
         const elapsed = Date.now() - lastActivityRef.current;
         if (elapsed >= timeoutMs) {
-          // Timeout occurred while tab was hidden — sign out
           void supabase.auth.signOut();
         }
       }
@@ -84,16 +76,14 @@ export function useIdleTimeout({
       }
       document.removeEventListener('visibilitychange', onVisibility);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive, timeoutMs]);
+  }, [isActive, timeoutMs, timeoutMinutes]);
 
-  // Check idle state on interval
+  // Interval check for timeout + warning
   useEffect(() => {
     if (!isActive) return;
 
     async function handleTimeout() {
       onTimeout?.();
-      // Log audit event (fire-and-forget via worker)
       await supabase.from('audit_events').insert({
         event_type: 'SESSION_TIMEOUT',
         event_category: 'SECURITY',
@@ -116,7 +106,7 @@ export function useIdleTimeout({
       } else {
         setIsWarning(false);
       }
-    }, 10_000); // Check every 10 seconds
+    }, 10_000);
 
     return () => {
       if (timerRef.current) {
@@ -125,10 +115,5 @@ export function useIdleTimeout({
     };
   }, [isActive, timeoutMs, warningMs, timeoutMinutes, onTimeout]);
 
-  return {
-    isActive,
-    isWarning,
-    minutesRemaining,
-    reset,
-  };
+  return { isActive, isWarning, minutesRemaining, reset };
 }

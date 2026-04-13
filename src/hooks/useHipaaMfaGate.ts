@@ -2,13 +2,10 @@
  * HIPAA MFA Enforcement Gate — REG-05 (SCRUM-564)
  *
  * Checks if the current org requires MFA for healthcare credential access.
- * When a user tries to access healthcare credential types (INSURANCE, MEDICAL_LICENSE, etc.)
- * in an org with hipaa_mfa_required=true, this hook blocks access until MFA is enrolled.
- *
  * Section 164.312(d): Person or entity authentication.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { supabase } from '@/lib/supabase';
 
 /** Credential types that trigger HIPAA MFA enforcement */
@@ -30,54 +27,50 @@ interface UseHipaaMfaGateResult {
 }
 
 export function useHipaaMfaGate(orgId: string | null): UseHipaaMfaGateResult {
-  const [status, setStatus] = useState<HipaaMfaStatus>('loading');
   const [orgRequiresMfa, setOrgRequiresMfa] = useState(false);
   const [mfaEnrolled, setMfaEnrolled] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!orgId) {
-      setStatus('not_required');
+      setLoaded(true);
       return;
     }
 
     let cancelled = false;
 
     async function check() {
-      // Check org's HIPAA MFA setting (column from migration 0197, not yet in generated types)
+      // Parallel fetch: org MFA setting + user MFA enrollment
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: org } = await (supabase as any)
-        .from('organizations')
-        .select('hipaa_mfa_required')
-        .eq('id', orgId!)
-        .single();
+      const [orgResult, factorsResult] = await Promise.all([
+        (supabase as any).from('organizations').select('hipaa_mfa_required').eq('id', orgId!).single(),
+        supabase.auth.mfa.listFactors(),
+      ]);
 
       if (cancelled) return;
 
-      const required = org?.hipaa_mfa_required ?? false;
+      const required = orgResult.data?.hipaa_mfa_required ?? false;
       setOrgRequiresMfa(required);
 
-      if (!required) {
-        setStatus('not_required');
-        return;
-      }
-
-      // Check MFA enrollment
-      const { data: factors } = await supabase.auth.mfa.listFactors();
-      if (cancelled) return;
-
-      const enrolled = (factors?.totp ?? []).some(f => f.status === 'verified');
+      const enrolled = (factorsResult.data?.totp ?? []).some(f => f.status === 'verified');
       setMfaEnrolled(enrolled);
-      setStatus(enrolled ? 'mfa_enrolled' : 'mfa_needed');
+      setLoaded(true);
     }
 
     void check();
     return () => { cancelled = true; };
   }, [orgId]);
 
+  // Derive status from state — no separate status useState that can drift
+  const status: HipaaMfaStatus = useMemo(() => {
+    if (!loaded) return 'loading';
+    if (!orgRequiresMfa) return 'not_required';
+    return mfaEnrolled ? 'mfa_enrolled' : 'mfa_needed';
+  }, [loaded, orgRequiresMfa, mfaEnrolled]);
+
   const checkCredentialAccess = useCallback((credentialType: string | null): boolean => {
     if (!credentialType) return true;
-    const isHealthcare = (HEALTHCARE_CREDENTIAL_TYPES as readonly string[]).includes(credentialType);
-    if (!isHealthcare) return true;
+    if (!isHealthcareCredentialType(credentialType)) return true;
     if (!orgRequiresMfa) return true;
     return mfaEnrolled;
   }, [orgRequiresMfa, mfaEnrolled]);
