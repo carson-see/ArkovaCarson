@@ -50,16 +50,20 @@ async function fetchCaNursing(
   let skipped = 0;
   let errors = 0;
 
+  // Resume from highest license number fetched (not row count — 404 gaps don't create rows)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { count: existingCount } = await (supabase as any)
+  const { data: lastRecord } = await (supabase as any)
     .from('public_records')
-    .select('id', { count: 'exact', head: true })
-    .eq('source', 'license_ca_nursing');
+    .select('metadata')
+    .eq('source', 'license_ca_nursing')
+    .order('created_at', { ascending: false })
+    .limit(1);
 
-  const startFrom = existingCount ?? 0;
+  const lastNum = lastRecord?.[0]?.metadata?.license_number
+    ? parseInt(String(lastRecord[0].metadata.license_number).replace(/^RN/, ''), 10)
+    : 0;
 
-  // CA BRN doesn't have a bulk API — license numbers are sequential (RN XXXXXXX)
-  for (let i = startFrom; i < startFrom + MAX_PER_RUN; i++) {
+  for (let i = lastNum; i < lastNum + MAX_PER_RUN; i++) {
     const licenseNum = `RN${String(i + 1).padStart(7, '0')}`;
 
     try {

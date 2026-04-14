@@ -371,6 +371,14 @@ export function PipelineAdminPage() {
     fcc: { icon: <Radio className="h-4 w-4" />, label: 'FCC License Registry', category: 'government' },
     sam_gov: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SAM.gov Contractors', category: 'government' },
     sam_gov_exclusions: { icon: <AlertTriangle className="h-4 w-4" />, label: 'SAM.gov Exclusions', category: 'government' },
+    // NPH-05–10 new fetcher sources
+    sos_de: { icon: <Building2 className="h-4 w-4" />, label: 'Delaware SOS', category: 'compliance' },
+    sos_ca: { icon: <Building2 className="h-4 w-4" />, label: 'California SOS', category: 'compliance' },
+    license_ca_nursing: { icon: <Stethoscope className="h-4 w-4" />, label: 'CA Nursing Board', category: 'medical' },
+    insurance_ca_cdi: { icon: <ShieldCheck className="h-4 w-4" />, label: 'CA Dept of Insurance', category: 'financial' },
+    cle_ny: { icon: <Scale className="h-4 w-4" />, label: 'NY CLE Board', category: 'compliance' },
+    cert_cfa: { icon: <TrendingUp className="h-4 w-4" />, label: 'CFA Institute', category: 'financial' },
+    ipeds: { icon: <GraduationCap className="h-4 w-4" />, label: 'IPEDS Education', category: 'academic' },
     mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other' },
   };
 
@@ -573,7 +581,7 @@ export function PipelineAdminPage() {
                 { path: 'fetch-calbar', label: 'Run CalBar Fetch', icon: <Scale className="h-4 w-4" /> },
                 { path: 'fetch-sec-iapd', label: 'Run SEC IAPD Fetch', icon: <TrendingUp className="h-4 w-4" /> },
                 { path: 'fetch-fcc', label: 'Run FCC Fetch', icon: <Radio className="h-4 w-4" /> },
-                { path: 'fetch-sam-gov', label: 'Run SAM.gov Fetch', icon: <ShieldCheck className="h-4 w-4" /> },
+                { path: 'fetch-sam-entities', label: 'Run SAM.gov Fetch', icon: <ShieldCheck className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
                 { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className="h-4 w-4" /> },
                 { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },
