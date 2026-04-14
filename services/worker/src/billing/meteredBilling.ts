@@ -150,10 +150,13 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
         continue;
       }
 
-      await stripeClient.subscriptionItems.createUsageRecord(meteredItem.id, {
-        quantity: totalUsage,
+      await stripeClient.billing.meterEvents.create({
+        event_name: 'credential_verification',
+        payload: {
+          stripe_customer_id: meteredItem.id,
+          value: String(totalUsage),
+        },
         timestamp: Math.floor(now.getTime() / 1000),
-        action: 'set', // Set total usage for this period
       });
 
       results.push({

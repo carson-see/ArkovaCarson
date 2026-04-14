@@ -195,7 +195,7 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
  * @see MVP-11
  */
 export async function handleSubscriptionUpdated(event: StripeEvent): Promise<void> {
-  const subscription = event.data.object as {
+  const subscription = event.data.object as unknown as {
     id: string;
     customer: string;
     status: string;
@@ -489,7 +489,7 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
 
   // Extract user_id from event metadata if available
   let userId: string | null = null;
-  const obj = event.data.object as Record<string, unknown>;
+  const obj = event.data.object as unknown as Record<string, unknown>;
   const metadata = obj.metadata as Record<string, string> | undefined;
   if (metadata?.user_id) {
     userId = metadata.user_id;

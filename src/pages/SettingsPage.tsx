@@ -9,7 +9,8 @@
 import { useState, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
-import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe, Linkedin, Github, Twitter } from 'lucide-react';
+import { Settings, User, Eye, EyeOff, Loader2, Check, Copy, Fingerprint, Key, Webhook, FileText, ChevronRight, Trash2, Globe } from 'lucide-react';
+import { LinkedinIcon as Linkedin, GithubIcon as Github, TwitterIcon as Twitter } from '@/components/shared/SocialIcons';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { SETTINGS_PAGE_LABELS } from '@/lib/copy';
