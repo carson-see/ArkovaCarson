@@ -42,7 +42,7 @@ module.exports = {
   },
 
   create(context) {
-    const filename = context.getFilename();
+    const filename = context.filename ?? context.getFilename();
     if (!filename.match(/\.(test|spec)\.(ts|tsx|js|jsx)$/)) return {};
 
     // Phase 1: Collect all literal values used in mock setup

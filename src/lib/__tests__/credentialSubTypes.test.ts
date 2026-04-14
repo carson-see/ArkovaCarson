@@ -1,17 +1,11 @@
-/**
- * GRE-01: Credential Sub-Type Taxonomy Tests
- *
- * Validates the sub-type taxonomy: every credential type has sub-types,
- * validation works correctly, and the taxonomy is consistent.
- */
-
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { describe, it, expect } from 'vitest';
 import {
   CREDENTIAL_TYPES,
   CREDENTIAL_SUB_TYPES,
   ALL_SUB_TYPES,
   isValidSubType,
-  type CredentialType,
 } from '../validators';
 
 describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
@@ -67,21 +61,18 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
   });
 
   it('key credential types have comprehensive sub-types', () => {
-    // DEGREE should cover common degree levels
     const degreeSubTypes = CREDENTIAL_SUB_TYPES.DEGREE;
     expect(degreeSubTypes).toContain('bachelor');
     expect(degreeSubTypes).toContain('master');
     expect(degreeSubTypes).toContain('doctorate');
     expect(degreeSubTypes).toContain('associate');
 
-    // TRANSCRIPT should cover official vs unofficial
     const transcriptSubTypes = CREDENTIAL_SUB_TYPES.TRANSCRIPT;
     expect(transcriptSubTypes).toContain('official_undergraduate');
     expect(transcriptSubTypes).toContain('official_graduate');
     expect(transcriptSubTypes).toContain('unofficial');
     expect(transcriptSubTypes).toContain('international_wes');
 
-    // LICENSE should cover major professions
     const licenseSubTypes = CREDENTIAL_SUB_TYPES.LICENSE;
     expect(licenseSubTypes).toContain('nursing_rn');
     expect(licenseSubTypes).toContain('law_bar_admission');
@@ -90,10 +81,24 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
     expect(licenseSubTypes).toContain('teaching');
     expect(licenseSubTypes).toContain('cpa');
 
-    // BUSINESS_ENTITY should cover formation lifecycle
     const bizSubTypes = CREDENTIAL_SUB_TYPES.BUSINESS_ENTITY;
     expect(bizSubTypes).toContain('articles_of_incorporation');
     expect(bizSubTypes).toContain('certificate_of_good_standing');
     expect(bizSubTypes).toContain('dissolution');
+  });
+
+  it('extraction prompt lists every credential type sub-type (drift guard)', () => {
+    const promptPath = resolve(__dirname, '../../../services/worker/src/ai/prompts/extraction.ts');
+    const promptSource = readFileSync(promptPath, 'utf-8');
+
+    for (const type of CREDENTIAL_TYPES) {
+      const subTypes = CREDENTIAL_SUB_TYPES[type];
+      for (const subType of subTypes) {
+        expect(
+          promptSource,
+          `extraction prompt missing ${type}.${subType} — update services/worker/src/ai/prompts/extraction.ts`,
+        ).toContain(subType);
+      }
+    }
   });
 });

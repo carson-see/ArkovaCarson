@@ -348,20 +348,30 @@ FIELDS TO EXTRACT:
   - FINANCIAL_ADVISOR: FINRA BrokerCheck records, Series licenses, investment advisor registrations, CRD records
   - BUSINESS_ENTITY: certificates of formation, good standing certificates, articles of incorporation/organization, business registrations, entity filings
   - OTHER: ONLY use when no other type fits. If you can identify the document purpose at all, use a specific type above
-- subType: Fine-grained sub-type WITHIN the credentialType. Examples by type:
+- subType: Fine-grained sub-type WITHIN the credentialType. Valid values by type:
   - DEGREE: associate | bachelor | master | doctorate | professional_jd | professional_md | professional_mba | honorary | postgraduate_diploma
   - LICENSE: nursing_rn | nursing_lpn | nursing_np | law_bar_admission | engineering_pe | engineering_fe | real_estate | teaching | medical_md | medical_do | cpa | insurance_producer | contractor | cdl
   - CERTIFICATE: professional_certification | completion_certificate | accreditation_certificate | digital_badge | continuing_education | trade_certification
   - TRANSCRIPT: official_undergraduate | official_graduate | unofficial | transfer_evaluation | international_wes | international_ece | high_school | vocational
+  - PROFESSIONAL: registration | membership | designation | fellowship
   - CLE: general_cle | ethics_cle | specialty_cle | new_attorney | federal_cle
   - BADGE: comptia | aws | cisco | pmi_pmp | pmi_capm | shrm | isc2_cissp | cfa | credly_open_badge
+  - ATTESTATION: self_attestation | employer_attestation | notarized_attestation | institutional_attestation
   - FINANCIAL: sec_registration | finra_broker | finra_advisor | cpa_license | audit_report | tax_filing | financial_statement
-  - LEGAL: court_opinion | court_order | enforcement_action | regulatory_decision | settlement
-  - MEDICAL: npi_registration | dea_registration | state_medical_license | board_certification | clinical_privilege
-  - BUSINESS_ENTITY: articles_of_incorporation | certificate_of_formation | certificate_of_good_standing | annual_report | operating_agreement | amendment | dissolution
-  - PATENT: utility_patent | design_patent | plant_patent | provisional_application
+  - LEGAL: court_opinion | court_order | plea_agreement | settlement | enforcement_action | regulatory_decision
+  - INSURANCE: property_casualty | life_health | surplus_lines | adjuster | reinsurance
+  - SEC_FILING: 10k | 10q | 8k | def14a | s1 | form_adv | form_d
+  - PATENT: utility_patent | design_patent | plant_patent | provisional_application | pct_application
   - REGULATION: federal_cfr | state_admin_code | executive_order | proposed_rule | final_rule | guidance_document
   - PUBLICATION: journal_article | book | book_chapter | conference_paper | dissertation | preprint | review | report
+  - CHARITY: registered_charity | tax_exempt_501c3 | foundation | charitable_trust
+  - FINANCIAL_ADVISOR: ria_registration | iapd_firm | iapd_individual | broker_dealer
+  - BUSINESS_ENTITY: articles_of_incorporation | certificate_of_formation | certificate_of_good_standing | annual_report | operating_agreement | amendment | dissolution
+  - RESUME: professional_resume | cv_academic | federal_resume
+  - MEDICAL: npi_registration | dea_registration | state_medical_license | board_certification | clinical_privilege
+  - MILITARY: dd214 | service_record | va_disability | military_id
+  - IDENTITY: passport | drivers_license | national_id | birth_certificate | social_security
+  - OTHER: unclassified
   Set to your best determination. If uncertain, omit — do NOT guess. NULL is better than wrong.
 - issuerName: Full official name of the issuing institution/organization
 - issuedDate: When issued (YYYY-MM-DD)

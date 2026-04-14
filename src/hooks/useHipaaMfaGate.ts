@@ -41,8 +41,8 @@ export function useHipaaMfaGate(orgId: string | null): UseHipaaMfaGateResult {
 
     async function check() {
       // Parallel fetch: org MFA setting + user MFA enrollment
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const [orgResult, factorsResult] = await Promise.all([
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (supabase as any).from('organizations').select('hipaa_mfa_required').eq('id', orgId!).single(),
         supabase.auth.mfa.listFactors(),
       ]);

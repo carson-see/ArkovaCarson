@@ -9,7 +9,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, AlertTriangle, Shield, Lightbulb, Loader2 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { workerFetch } from '@/lib/workerClient';
@@ -115,7 +115,7 @@ export function NessieChat() {
             }
           : m
       ));
-    } catch (err) {
+    } catch {
       setMessages(prev => prev.map(m =>
         m.id === assistantMsg.id
           ? { ...m, content: 'Network error. Please try again.', loading: false }

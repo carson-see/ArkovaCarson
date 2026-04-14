@@ -31,7 +31,7 @@ module.exports = {
   },
 
   create(context) {
-    const filename = context.getFilename();
+    const filename = context.filename ?? context.getFilename();
     if (!filename.match(/\.(test|spec)\.(ts|tsx|js|jsx)$/)) return {};
 
     // We analyze each it/test block separately

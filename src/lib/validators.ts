@@ -101,13 +101,7 @@ export const CREDENTIAL_SUB_TYPES: Record<CredentialType, readonly string[]> = {
   MILITARY: ['dd214', 'service_record', 'va_disability', 'military_id'],
   IDENTITY: ['passport', 'drivers_license', 'national_id', 'birth_certificate', 'social_security'],
   OTHER: ['unclassified'],
-  // Kenya-specific sub-types (KAU-05)
-  // DEGREE: + 'knec_kcpe', 'knec_kcse' — added via Kenya golden entries
-  // LICENSE: + 'tsc_teaching_ke', 'kmpdc_medical_ke', 'lsk_advocate_ke'
-  // Australia-specific sub-types (KAU-05)
-  // LICENSE: + 'ahpra_health_au', 'asqa_vet_au'
-  // ACCREDITATION: + 'teqsa_higher_ed_au'
-} as const;
+};
 
 /** All valid sub-type values (flat list for validation) */
 export const ALL_SUB_TYPES = Object.values(CREDENTIAL_SUB_TYPES).flat();

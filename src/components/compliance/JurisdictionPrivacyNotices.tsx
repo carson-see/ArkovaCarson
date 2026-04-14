@@ -6,7 +6,7 @@
  * All text sourced from copy.ts per Constitution 1.3.
  */
 
-import { Shield, Scale, Globe } from 'lucide-react';
+import { Shield, Globe } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PRIVACY_NOTICE_LABELS, PRIVACY_CONTACT_EMAIL } from '@/lib/copy';
