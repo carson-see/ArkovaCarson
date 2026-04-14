@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-13 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,078 tests, 196 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,887 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 14/14 complete, ATS 8/8 complete, NCE 20/20 complete) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-14 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,127 tests, 211 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,887 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 14/14 complete, ATS 8/8 complete, NCE 20/20 complete, DEP 4/23, GME 0/26 deadline June 17) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 

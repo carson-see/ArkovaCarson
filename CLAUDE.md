@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-12 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 196 migrations | 4,078 tests (1,476 frontend + 2,602 worker) | 306 stories (230 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Version:** 2026-04-14 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 299 stories (236 complete + 26 GME + 23 NCE + 14 other planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 
 Read this file before every task. Rules here override all other documents.
 
@@ -258,7 +258,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 196 files (0001-0196, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). Migrations 0190-0193: RLS caching, BRIN indexes, pg_stat_statements, job queue (PERF sprint). **Migrations 0194-0196: NCE compliance engine** (jurisdiction_rules, compliance_scores, feature flags). All migrations applied to production through 0185; 0186-0196 pending deploy.
+**Current:** 211 files (0001-0211, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). Migrations 0190-0193: RLS caching, BRIN indexes, pg_stat_statements, job queue (PERF sprint). Migrations 0194-0196: NCE compliance engine (jurisdiction_rules, compliance_scores, feature flags). **Migrations 0197-0211: REG compliance** (FERPA disclosure log, HIPAA MFA/audit, directory opt-out, emergency access, privacy notices, data subject rights). All migrations applied to production through 0185; 0186-0211 pending deploy.
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -290,10 +290,11 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
 | **NCE Compliance Engine** | **20/20** | **0** | **0** | **100%** |
 | Nessie Model Training | 14/14 | 0 | 0 | 100% |
-| Dependency Hardening | 1/10 | 0 | 9 | 10% |
+| Dependency Hardening | 4/23 | 0 | 19 | 17% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
 | **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
-| **Total** | **236/291** | **4/291** | **51/291** | **~81%** |
+| **Gemini Migration (GME)** ★ DEADLINE | 0/26 | 0 | 26 | 0% |
+| **Total** | **240/334** | **4/334** | **90/334** | **~72%** |
 
 ### Incomplete Stories
 
@@ -403,6 +404,19 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | DNS + custom domain | `app.arkova.io` or equivalent |
 | ~~Seed data strip~~ | ~~Remove demo users~~ — **DONE** (Session 6: OPS-02 executed) |
 | ~~SOC 2 evidence~~ | ~~Begin collection~~ — **DONE** (`docs/compliance/soc2-evidence.md` + branch protection CC6.1) |
+
+**Gemini Migration (GME) — DEADLINE: JUNE 17, 2026 — 26 stories — Release: R-GME-01:**
+> **Source:** Gemini 2.5-flash deprecation timeline | **Story doc:** `docs/stories/28_gemini_migration_evolution.md`
+> **Jira Epic:** SCRUM-612 | **Stories:** SCRUM-613–634
+- GME-01–05: Emergency migration (centralize refs, migrate to Gemini 3, embedding model, tuned model, deprecation alerts)
+- GME-06–08: Eval & QA (full golden eval, confidence recalibration, prompt regression)
+- GME-09–11: Training (retrain Nessie v6, updated golden dataset, eval benchmark)
+- GME-12–19: Advanced optimization (structured output, multi-modal, streaming, caching, batch, context window, model routing, cost dashboard)
+- GME-20: Extraction quality (already done in v1.4.0 as GME-21–25, 1 remaining)
+- See `docs/stories/28_gemini_migration_evolution.md` and `docs/BACKLOG.md` for details
+
+**Dependency Upgrades (13 new Jira tickets — SCRUM-684–696):**
+> Added 2026-04-14 from closed dependabot PRs. 3 completed (jsdom 29, @types/node 25, @types/mime 4). 10 remaining include TypeScript 6, Stripe 22, Zod 4, Vitest 4, ESLint 10, Lucide 1.x, node-cron 4, React 19, grouped bumps.
 
 ### Do NOT Start
 - MVP-13/14 (post-launch polish)
@@ -550,5 +564,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-13 | 196 migrations | 4,078 tests (1,476 frontend + 2,602 worker) | 306 stories (230 complete + 29 GME + 36 DEP/REG planned + 11 future) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,887 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NMT: 14/14 complete | NCE: 20/20 complete_
+_Directive version: 2026-04-14 | 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (240 complete + 26 GME + 23 NCE-strategic + 13 DEP-new + 28 REG + 4 other) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,887 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NMT: 14/14 complete | NCE: 20/20 complete | GME: 0/26 (deadline June 17)_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
