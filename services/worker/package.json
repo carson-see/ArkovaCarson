@@ -44,6 +44,7 @@
     "stripe": "^22.0.1",
     "swagger-ui-express": "^5.0.1",
     "tiny-secp256k1": "2.2.4",
+    "unzipper": "^0.12.3",
     "viem": "^2.47.6",
     "x402": "^1.1.0",
     "zod": "^3.25.76"
@@ -60,6 +61,7 @@
     "@types/supertest": "^7.2.0",
     "@types/swagger-ui-express": "^4.1.8",
     "@types/tiny-secp256k1": "^2.0.0",
+    "@types/unzipper": "^0.10.11",
     "@vitest/coverage-v8": "^4.0.18",
     "bip32": "^5.0.1",
     "bip39": "^3.1.0",

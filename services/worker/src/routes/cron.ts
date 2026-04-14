@@ -271,8 +271,8 @@ cronRouter.post('/fetch-edgar', async (_req, res) => {
 
 cronRouter.post('/fetch-uspto', async (_req, res) => {
   try {
-    await fetchUsptoPAtents(db);
-    res.json({ status: 'complete' });
+    const result = await fetchUsptoPAtents(db);
+    res.json(result);
   } catch (error) {
     logger.error({ error }, 'USPTO fetch failed');
     res.status(500).json({ error: 'Processing failed' });
