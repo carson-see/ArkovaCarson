@@ -2008,7 +2008,7 @@ export const DATA_CORRECTION_LABELS = {
   SUBMITTING: 'Submitting...',
   SUCCESS: 'Correction request submitted. We will respond within 30 days.',
   ERROR: 'Failed to submit correction request. Please try again.',
-  PENDING_LABEL: 'Pending correction requests',
+  PENDING_LABEL: 'Correction request history',
   NO_PENDING: 'No pending correction requests.',
   STATUS_PROCESSING: 'Processing',
   STATUS_COMPLETED: 'Completed',

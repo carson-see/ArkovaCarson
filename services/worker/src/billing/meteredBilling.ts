@@ -131,6 +131,12 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
       const stripe = (await import('stripe')).default;
       const stripeClient = new stripe(config.stripeSecretKey);
 
+      // Retrieve subscription to get the customer ID for meter events
+      const subscription = await stripeClient.subscriptions.retrieve(sub.stripe_subscription_id!);
+      const customerId = typeof subscription.customer === 'string'
+        ? subscription.customer
+        : subscription.customer.id;
+
       // Get subscription items to find the metered item
       const subscriptionItems = await stripeClient.subscriptionItems.list({
         subscription: sub.stripe_subscription_id!,
@@ -153,7 +159,7 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
       await stripeClient.billing.meterEvents.create({
         event_name: 'credential_verification',
         payload: {
-          stripe_customer_id: meteredItem.id,
+          stripe_customer_id: customerId,
           value: String(totalUsage),
         },
         timestamp: Math.floor(now.getTime() / 1000),
