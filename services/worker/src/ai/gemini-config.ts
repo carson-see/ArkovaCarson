@@ -18,8 +18,10 @@
 // GME-02: Migrated from gemini-2.5-flash to gemini-3-flash-preview (2026-04-12)
 // Previous: gemini-2.5-flash (deprecated June 17, 2026)
 const DEFAULT_GENERATION_MODEL = 'gemini-3-flash-preview';
-// GME-03: Migrated from gemini-embedding-001 (deprecated July 14, 2026) to text-embedding-004
-const DEFAULT_EMBEDDING_MODEL = 'text-embedding-004';
+// GME-03: text-embedding-004 does NOT exist in Gemini API (was hallucinated model name).
+// Available: gemini-embedding-001 (GA), gemini-embedding-2-preview (preview).
+// Using gemini-embedding-001 (stable GA) as default.
+const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
 const DEFAULT_VISION_MODEL = 'gemini-3-flash-preview';
 // Distillation also migrated to Gemini 3 (was gemini-2.0-flash, shut down June 1):
 const DEFAULT_DISTILLATION_MODEL = 'gemini-3-flash-preview';

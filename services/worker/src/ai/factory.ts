@@ -223,15 +223,12 @@ export function createExtractionProvider(source: DocumentSource = 'user_upload')
  * (e.g., NessieProvider is extraction-only).
  */
 export function createEmbeddingProvider(): IAIProvider {
-  const providerName = getProviderName();
-  // Nessie doesn't support embeddings — always use Gemini for embeddings
-  if (providerName === 'nessie') {
-    if (!geminiInstance) {
-      geminiInstance = new GeminiProvider();
-    }
-    return geminiInstance;
+  // Always use Gemini for embeddings — Nessie doesn't support them, and
+  // Together AI's embedding model (m2-bert-80M-8k-retrieval) was retired.
+  if (!geminiInstance) {
+    geminiInstance = new GeminiProvider();
   }
-  return createAIProvider();
+  return geminiInstance;
 }
 
 /** Reset cached provider instances (for testing only). */

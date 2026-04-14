@@ -1,7 +1,8 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-14 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 299 stories (236 complete + 26 GME + 23 NCE + 14 other planned) | 24/24 audit + 9 pentest findings resolved | AI: Gemini Golden v2 (98% type accuracy) / Nessie Intelligence v2 (5 domains) / Nessie v5 (87.2% F1) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (280 complete + 54 remaining) | 24/24 audit + 9 pentest findings resolved | AI: Gemini 3 Flash (migrated) / Gemini Golden v3 (2,000+ entries) / Nessie v5 (87.2% weighted F1, 75.7% macro F1) / Nessie Intelligence v2 (4 trained domains) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Nessie Reality Check:** fraudSignals 0% F1 | confidence correlation 0.539 (need >0.7) | 2/6 domain adapters placeholder | 8 credential types <5 golden entries | embedding NDCG never benchmarked | fraud audit never run
 
 Read this file before every task. Rules here override all other documents.
 
@@ -288,31 +289,82 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | GEO & SEO | 12/17 | 2 | 3 | 71% |
 | Beta (BETA-01–13) | 13/13 | 0 | 0 | 100% |
 | ATS & Background Checks | 8/8 | 0 | 0 | 100% |
-| **NCE Compliance Engine** | **20/20** | **0** | **0** | **100%** |
+| NCE Compliance Engine | 20/20 | 0 | 0 | 100% |
 | Nessie Model Training | 14/14 | 0 | 0 | 100% |
+| ~~Gemini Migration (GME)~~ | **20/20** | **0** | **0** | **100%** |
+| Integration Surface (INT) | 9/9 | 0 | 0 | 100% |
 | Dependency Hardening | 4/23 | 0 | 19 | 17% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
-| **Integration Surface (INT)** ★ TOP | 4/9 | 0 | 5 | 44% |
-| **Gemini Migration (GME)** ★ DEADLINE | 0/26 | 0 | 26 | 0% |
-| **Total** | **240/334** | **4/334** | **90/334** | **~72%** |
+| **Nessie Production Hardening** ★ NEW | **0/TBD** | **0** | **TBD** | **0%** |
+| **Total** | **~280/334+** | **4** | **~50+** | **~84%** |
+
+### ⚠ Nessie Production Hardening — THE REAL REMAINING WORK
+
+> **Jira says NMT and NCE are "Done." The eval data says otherwise.** Nessie has scaffolding and initial training complete, but is NOT production/enterprise-ready. The following gaps are measured from actual eval runs and codebase inspection, not estimates.
+
+**Model Quality Gaps (training needed):**
+
+| Gap | Evidence | What's Needed |
+|-----|----------|---------------|
+| **fraudSignals: 0% F1** | All eval runs (v4, v5, DPO) show 0% extraction | Hundreds of fraud-labeled training examples + dedicated fraud detection fine-tuning |
+| **Macro F1: 75.7%** | v5 eval on 100 samples (2026-03-31) | Target ≥85% macro F1 — requires more training on weak types |
+| **Confidence correlation: 0.539** | v5 eval | Target ≥0.7 — model doesn't know when it's wrong |
+| **BADGE: 67.6% F1** | v5 per-type breakdown | More BADGE training examples (only 8 in eval set) |
+| **OTHER: 54.8% F1** | v5 per-type breakdown | "OTHER" is a catch-all — needs better disambiguation training |
+| **MILITARY: 76.0% F1** | v5 per-type breakdown | Only 3 eval samples — unreliable metric, needs 50+ |
+| **PUBLICATION: 75.0% F1** | v5 per-type breakdown | Only 3 eval samples — unreliable metric, needs 50+ |
+| **v4 overconfidence: 29.7pp gap** | 90-100% confidence bucket = 65.8% actual accuracy | Confidence calibration needs retraining, not just post-hoc correction |
+
+**Golden Dataset Coverage Gaps (data needed):**
+
+| Credential Type | Golden Entries | Status |
+|----------------|---------------|--------|
+| MEDICAL | 1 | Statistically meaningless — need 50+ |
+| IDENTITY | 1 | Statistically meaningless — need 50+ |
+| RESUME | 2 | Unreliable — need 30+ |
+| FINANCIAL | 2 | Unreliable — need 30+ |
+| TRANSCRIPT | 2 | Unreliable — need 30+ |
+| CLE | 2 | Unreliable — need 30+ |
+| LEGAL | 3 | Unreliable — need 30+ |
+| MILITARY | 3 | Unreliable — need 30+ |
+| PUBLICATION | 3 | Unreliable — need 30+ |
+| INSURANCE | 4 | Marginal — need 20+ |
+| PATENT | 4 | Marginal — need 20+ |
+| REGULATION | 4 | Marginal — need 20+ |
+| CHARITY | ~0 | Phase 14 added some, but extraction rules missing |
+| FINANCIAL_ADVISOR | ~0 | Extraction rules missing |
+| BUSINESS_ENTITY | ~0 | Extraction rules missing |
+
+**Infrastructure Gaps:**
+
+| Gap | Status |
+|-----|--------|
+| Domain adapters: Professional | Placeholder model ID — NOT TRAINED |
+| Domain adapters: Identity | Placeholder model ID — NOT TRAINED |
+| Domain adapters: Legal, Regulatory | Trained but using DRY-RUN model IDs — NOT DEPLOYED to production |
+| Domain adapters: SEC, Academic | Trained (45K examples each) — deployed status unclear |
+| Embedding NDCG@10 benchmark | Framework exists, never executed — search quality unknown |
+| Fraud audit | Framework exists (fraud-audit.ts), never run — false positive rate unknown |
+| Cold start latency | Unmeasured — RunPod serverless, no benchmarks |
+| No Gemini fallback for extraction | Intelligence queries fall back to Gemini; extraction does NOT |
+| Production error rate monitoring | No metrics on extraction failures, circuit breaker trips |
+
+**What "Production-Ready Nessie" Actually Requires:**
+1. **~300+ hours of additional training** across expanded golden dataset, fraud signals, weak credential types
+2. **Golden dataset expansion** from 1,905 → ~5,000+ entries with balanced type distribution
+3. **Deploy trained domain adapters** (swap DRY-RUN IDs for real model IDs)
+4. **Train Professional + Identity adapters** (currently placeholder)
+5. **Build and run fraud signal training pipeline** (currently 0% F1)
+6. **Run NDCG@10 embedding benchmark** and iterate on retrieval quality
+7. **Confidence retraining** (not just post-hoc calibration) to get correlation >0.7
+8. **Add extraction fallback to Gemini** (parity with intelligence query path)
+9. **Production observability**: error rates, latency percentiles, circuit breaker dashboard
+10. **Cold start mitigation**: RunPod warming strategy or minimum worker count
 
 ### Incomplete Stories
 
-**Integration Surface (INT) — TOP PRIORITY (ahead of NCE/GME) — 9 not started — Release: R-INT-01/02/03:**
-> **Source:** Arkova Integration Strategy v2 (Google Doc) — story doc: `docs/stories/31_integration_surface.md`
-> **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
-- **R-INT-01 (P0 — YC Demo, 16 pts):** ★ **CODE COMPLETE — IN PR REVIEW**
-  - ~~INT-01 (SCRUM-642): TypeScript SDK `@arkova/sdk`~~ — **CODE COMPLETE** (verifyBatch, webhooks namespace, jsonOrThrow, mapVerificationResult, README rewrite)
-  - ~~INT-02 (SCRUM-643): MCP Server Tool Enhancement~~ — **CODE COMPLETE** (verify_batch tool; cle_verify deferred to INT-02b)
-  - ~~INT-03 (SCRUM-644): Embeddable JS Bundle (`embed.js`)~~ — **CODE COMPLETE** (`packages/embed/`, vite lib mode, 21 tests)
-  - ~~INT-09 (SCRUM-645): Webhook CRUD via API~~ — **CODE COMPLETE** (POST/GET/PATCH/DELETE, ORG_ADMIN gate, batch rate limit, SSRF+audit fixes)
-- **R-INT-02 (P1, 8 pts):**
-  - INT-04 (SCRUM-646): Python SDK `arkova-python` — 3 pts
-  - INT-05 (SCRUM-647): Zapier / Make.com — 5 pts (LOI-gated: 3+ staffing agencies)
-- **R-INT-03 (P2 — LOI-gated, 19 pts):**
-  - INT-06 (SCRUM-648): Clio (law firm DMS) — 8 pts (first law firm pilot signed)
-  - INT-07 (SCRUM-649): Bullhorn Marketplace — 8 pts (first staffing pilot paid)
-  - INT-08 (SCRUM-650): Screening Report Embed Template — 3 pts (CredentialCheck LOI)
+**~~Integration Surface (INT) — ALL 9 STORIES COMPLETE:~~**
+> Jira Epic SCRUM-641 + all children (SCRUM-642–650) are Done. TypeScript SDK, MCP tools, embed.js, webhook CRUD, Python SDK, Zapier/Make, Clio, Bullhorn, screening embed — all shipped.
 
 **P7 Go-Live (2 not started):**
 - P7-TS-04, P7-TS-06: No individual scope defined
@@ -328,12 +380,12 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - PH1-PAY-02: Self-hosted x402 facilitator — flag enabled, needs USDC address + facilitator deploy
 - ~~PH1-SDK-02: Python SDK~~ — **COMPLETE** (sdks/python/arkova/client.py)
 
-**AI Infrastructure (Session 12+ — ALL COMPLETE):**
-- AI-EVAL-01: Golden dataset + scoring engine (1,330 entries across 8 phases, 447 tests)
-- AI-EVAL-02: Live Gemini eval baseline (F1=82.1%, confidence r=0.426)
+**AI Infrastructure (Session 12+ — Jira COMPLETE, quality gaps remain):**
+- AI-EVAL-01: Golden dataset + scoring engine (1,905 entries across 14 phases) — **but 8 types have <5 entries**
+- AI-EVAL-02: Live Gemini eval baseline (F1=82.1%, confidence r=0.426) — **Nessie v5: 87.2% weighted, 75.7% macro**
 - AI-PROMPT-01: Prompt version tracking (migration 0092)
 - AI-PROMPT-02: Few-shot expansion (11→130 examples, covering all 21 credential types + OCR)
-- AI-FRAUD-01: Fraud audit CLI framework
+- AI-FRAUD-01: Fraud audit CLI framework — **framework only, never actually run against production data**
 - AI-OBS-01: Admin AI metrics dashboard (/admin/ai-metrics)
 
 **INFRA (1 partial):**
@@ -351,17 +403,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 - All 8 stories implemented: employment/education verification forms, batch API, ATS webhooks, credential portfolios, evidence upload, OpenAPI docs, expiry alerts.
 - See `docs/stories/18_ats_background_checks.md` for details
 
-**~~Nessie Model Training (14/14 COMPLETE):~~**
-- ~~NMT-01–08~~ — **DONE** (v5: 87.2% F1, calibration, condensed prompt, intelligence pipeline)
-- ~~NMT-09~~ — **DONE** (RunPod v5 deployment script + 13 tests)
-- ~~NMT-10~~ — **DONE** (HuggingFace upload scripts + 18 tests)
-- ~~NMT-11~~ — **DONE** (Intelligence distillation pipeline + 22 tests)
-- ~~NMT-12~~ — **DONE** (v6 intelligence fine-tune script + 11 tests)
-- ~~NMT-13~~ — **DONE** (Eval regression pipeline + 18 tests)
-- ~~NMT-14~~ — **DONE** (Golden dataset phase 14: 120 entries + 14 tests)
-- ~~NMT-15~~ — **DONE** (v7 export script + 18 tests)
-- ~~NMT-16~~ — **DONE** (Domain adapter routing: 6 domains + 28 tests)
-- See `docs/stories/21_nessie_model_training.md` for details
+**~~Nessie Model Training (14/14 Jira COMPLETE — but see Nessie Production Hardening above):~~**
+> NMT stories built the training pipeline, initial models, and eval framework. But eval results show Nessie is NOT production-ready: 75.7% macro F1, 0% fraud signal extraction, 0.539 confidence correlation, 2 placeholder domain adapters, 8 credential types with <5 golden entries. The pipeline works — the model needs hundreds more hours of training. See "Nessie Production Hardening" section above.
 
 **Dependency Hardening (10 not started) — Release R-DEP-01:**
 - DEP-01 (P0): Supabase Disaster Recovery Plan & Cold Standby
@@ -405,15 +448,8 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ~~Seed data strip~~ | ~~Remove demo users~~ — **DONE** (Session 6: OPS-02 executed) |
 | ~~SOC 2 evidence~~ | ~~Begin collection~~ — **DONE** (`docs/compliance/soc2-evidence.md` + branch protection CC6.1) |
 
-**Gemini Migration (GME) — DEADLINE: JUNE 17, 2026 — 26 stories — Release: R-GME-01:**
-> **Source:** Gemini 2.5-flash deprecation timeline | **Story doc:** `docs/stories/28_gemini_migration_evolution.md`
-> **Jira Epic:** SCRUM-612 | **Stories:** SCRUM-613–634
-- GME-01–05: Emergency migration (centralize refs, migrate to Gemini 3, embedding model, tuned model, deprecation alerts)
-- GME-06–08: Eval & QA (full golden eval, confidence recalibration, prompt regression)
-- GME-09–11: Training (retrain Nessie v6, updated golden dataset, eval benchmark)
-- GME-12–19: Advanced optimization (structured output, multi-modal, streaming, caching, batch, context window, model routing, cost dashboard)
-- GME-20: Extraction quality (already done in v1.4.0 as GME-21–25, 1 remaining)
-- See `docs/stories/28_gemini_migration_evolution.md` and `docs/BACKLOG.md` for details
+**~~Gemini Migration (GME) — ALL 20 STORIES COMPLETE:~~**
+> Jira Epic SCRUM-612 + all children (SCRUM-613–634) are Done. Migrated to Gemini 3 Flash, Golden v3 retrained (2,000+ entries), embedding model migrated, structured output, multimodal, batch optimization, latency benchmarking, model pinning — all shipped. See `docs/stories/28_gemini_migration_evolution.md`.
 
 **Dependency Upgrades (13 new Jira tickets — SCRUM-684–696):**
 > Added 2026-04-14 from closed dependabot PRs. 3 completed (jsdom 29, @types/node 25, @types/mime 4). 10 remaining include TypeScript 6, Stripe 22, Zod 4, Vitest 4, ESLint 10, Lucide 1.x, node-cron 4, React 19, grouped bumps.
@@ -539,8 +575,8 @@ SENTRY_SAMPLE_RATE=0.1
 # AI
 ENABLE_AI_FALLBACK=false
 GEMINI_API_KEY=
-GEMINI_MODEL=gemini-2.5-flash
-GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+GEMINI_MODEL=gemini-3-flash          # migrated from 2.5-flash (GME complete)
+GEMINI_EMBEDDING_MODEL=gemini-embedding-001  # text-embedding-004 does NOT exist; gemini-embedding-2-preview is available but preview-only
 AI_PROVIDER=mock                    # gemini | nessie | together | cloudflare | replicate | mock
 GEMINI_TUNED_MODEL=                 # optional — fine-tuned Gemini model path
 REPLICATE_API_TOKEN=                # QA only
@@ -564,5 +600,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-14 | 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (240 complete + 26 GME + 23 NCE-strategic + 13 DEP-new + 28 REG + 4 other) | 24/24 audit + 9 pentest resolved | Golden dataset: 1,887 entries | Gemini Golden v2: 98% type accuracy | Nessie Intelligence v2: 5 domains | NMT: 14/14 complete | NCE: 20/20 complete | GME: 0/26 (deadline June 17)_
+_Directive version: 2026-04-14 | 211 migrations | 4,127 tests | ~280/334 stories complete | GME: 20/20 DONE | NCE: 20/20 DONE | INT: 9/9 DONE | NMT: 14/14 DONE (pipeline built, model needs training) | Golden dataset: 1,905 entries (need ~5,000+) | Nessie v5: 87.2% weighted F1, 75.7% macro F1, 0% fraudSignals, 0.539 confidence correlation | Gemini 3 Flash migrated | Major remaining: Nessie production hardening, DEP (19 not started), REG (26 not started)_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
