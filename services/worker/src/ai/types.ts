@@ -59,13 +59,22 @@ export interface ExtractedFields {
   suggestedType?: string;
   // Fraud signals
   fraudSignals?: string[];
-  [key: string]: string | number | string[] | undefined;
+  // GRE-02: Chain-of-thought reasoning fields
+  /** Step-by-step reasoning explaining WHY this classification was chosen */
+  reasoning?: string;
+  /** Specific concerns about this credential (empty array if none) */
+  concerns?: string[];
+  /** Whether the issuer was found in Arkova's pipeline databases */
+  issuerVerified?: boolean;
+  [key: string]: string | number | boolean | string[] | undefined;
 }
 
 /** Result of a metadata extraction call. */
 export interface ExtractionResult {
   fields: ExtractedFields;
   confidence: number; // 0.0–1.0
+  /** GRE-02: Explanation of why this confidence level was assigned */
+  confidenceReasoning?: string;
   provider: string;
   tokensUsed?: number;
   /** VAI-01: Model version identifier for extraction manifest provenance. */
