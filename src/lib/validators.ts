@@ -71,6 +71,53 @@ export const CREDENTIAL_TYPES = [
 
 export type CredentialType = (typeof CREDENTIAL_TYPES)[number];
 
+/**
+ * GRE-01: Credential sub-type taxonomy.
+ * Maps each credential type to its valid sub-types.
+ * Sub-types enable Gemini to make fine-grained distinctions
+ * (e.g., "official undergraduate transcript" vs "transfer evaluation").
+ */
+export const CREDENTIAL_SUB_TYPES: Record<CredentialType, readonly string[]> = {
+  DEGREE: ['associate', 'bachelor', 'master', 'doctorate', 'professional_jd', 'professional_md', 'professional_mba', 'honorary', 'postgraduate_diploma'],
+  LICENSE: ['nursing_rn', 'nursing_lpn', 'nursing_np', 'law_bar_admission', 'engineering_pe', 'engineering_fe', 'real_estate', 'teaching', 'medical_md', 'medical_do', 'cpa', 'insurance_producer', 'contractor', 'cdl'],
+  CERTIFICATE: ['professional_certification', 'completion_certificate', 'accreditation_certificate', 'digital_badge', 'continuing_education', 'trade_certification'],
+  TRANSCRIPT: ['official_undergraduate', 'official_graduate', 'unofficial', 'transfer_evaluation', 'international_wes', 'international_ece', 'high_school', 'vocational'],
+  PROFESSIONAL: ['registration', 'membership', 'designation', 'fellowship'],
+  CLE: ['general_cle', 'ethics_cle', 'specialty_cle', 'new_attorney', 'federal_cle'],
+  BADGE: ['comptia', 'aws', 'cisco', 'pmi_pmp', 'pmi_capm', 'shrm', 'isc2_cissp', 'cfa', 'credly_open_badge'],
+  ATTESTATION: ['self_attestation', 'employer_attestation', 'notarized_attestation', 'institutional_attestation'],
+  FINANCIAL: ['sec_registration', 'finra_broker', 'finra_advisor', 'cpa_license', 'audit_report', 'tax_filing', 'financial_statement'],
+  LEGAL: ['court_opinion', 'court_order', 'plea_agreement', 'settlement', 'enforcement_action', 'regulatory_decision'],
+  INSURANCE: ['property_casualty', 'life_health', 'surplus_lines', 'adjuster', 'reinsurance'],
+  SEC_FILING: ['10k', '10q', '8k', 'def14a', 's1', 'form_adv', 'form_d'],
+  PATENT: ['utility_patent', 'design_patent', 'plant_patent', 'provisional_application', 'pct_application'],
+  REGULATION: ['federal_cfr', 'state_admin_code', 'executive_order', 'proposed_rule', 'final_rule', 'guidance_document'],
+  PUBLICATION: ['journal_article', 'book', 'book_chapter', 'conference_paper', 'dissertation', 'preprint', 'review', 'report'],
+  CHARITY: ['registered_charity', 'tax_exempt_501c3', 'foundation', 'charitable_trust'],
+  FINANCIAL_ADVISOR: ['ria_registration', 'iapd_firm', 'iapd_individual', 'broker_dealer'],
+  BUSINESS_ENTITY: ['articles_of_incorporation', 'certificate_of_formation', 'certificate_of_good_standing', 'annual_report', 'operating_agreement', 'amendment', 'dissolution'],
+  RESUME: ['professional_resume', 'cv_academic', 'federal_resume'],
+  MEDICAL: ['npi_registration', 'dea_registration', 'state_medical_license', 'board_certification', 'clinical_privilege'],
+  MILITARY: ['dd214', 'service_record', 'va_disability', 'military_id'],
+  IDENTITY: ['passport', 'drivers_license', 'national_id', 'birth_certificate', 'social_security'],
+  OTHER: ['unclassified'],
+  // Kenya-specific sub-types (KAU-05)
+  // DEGREE: + 'knec_kcpe', 'knec_kcse' — added via Kenya golden entries
+  // LICENSE: + 'tsc_teaching_ke', 'kmpdc_medical_ke', 'lsk_advocate_ke'
+  // Australia-specific sub-types (KAU-05)
+  // LICENSE: + 'ahpra_health_au', 'asqa_vet_au'
+  // ACCREDITATION: + 'teqsa_higher_ed_au'
+} as const;
+
+/** All valid sub-type values (flat list for validation) */
+export const ALL_SUB_TYPES = Object.values(CREDENTIAL_SUB_TYPES).flat();
+
+/** Validate that a sub-type is valid for its credential type */
+export function isValidSubType(credentialType: CredentialType, subType: string): boolean {
+  const validSubTypes = CREDENTIAL_SUB_TYPES[credentialType];
+  return validSubTypes?.includes(subType) ?? false;
+}
+
 // =============================================================================
 // SHARED ANCHOR FIELD SCHEMAS
 // =============================================================================
