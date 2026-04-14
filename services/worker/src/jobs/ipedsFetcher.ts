@@ -16,8 +16,8 @@
  * Gated by ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag.
  */
 
-import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { computeContentHash, delay } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const RATE_LIMIT_MS = 300;
@@ -26,14 +26,6 @@ const INSERT_BATCH_SIZE = 100;
 
 /** Urban Institute Education Data Portal API (free, no auth) */
 const IPEDS_API_BASE = 'https://educationdata.urban.org/api/v1';
-
-function computeContentHash(content: string): string {
-  return createHash('sha256').update(content, 'utf-8').digest('hex');
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 interface IpedsInstitution {
   unitid: number;
@@ -90,10 +82,8 @@ export async function fetchIpedsInstitutions(
     return { inserted: 0, skipped: 0, errors: 0, total: 0 };
   }
 
-  // Get latest year of IPEDS data
-  const year = new Date().getFullYear() - 1; // IPEDS data is ~1 year behind
+  const year = new Date().getFullYear() - 1; // IPEDS data lags ~1 year
 
-  // Resume from offset based on existing records
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { count: existingCount } = await (supabase as any)
     .from('public_records')
@@ -110,7 +100,6 @@ export async function fetchIpedsInstitutions(
   let total = 0;
   const batch: Array<Record<string, unknown>> = [];
 
-  // Paginate through IPEDS directory API
   let page = Math.floor(offset / 100);
   const maxPages = Math.ceil(MAX_PER_RUN / 100);
 

@@ -16,16 +16,8 @@
  * Gated by ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag.
  */
 
-import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-const RATE_LIMIT_MS = 500;
-const MAX_PER_RUN = 1000;
-
-function computeContentHash(content: string): string {
-  return createHash('sha256').update(content, 'utf-8').digest('hex');
-}
 
 interface CertFetchResult {
   source: string;
@@ -54,11 +46,7 @@ async function fetchCfaCharterholders(
     .select('id', { count: 'exact', head: true })
     .eq('source', 'cert_cfa');
 
-  logger.info({ existingCount, maxPerRun: MAX_PER_RUN }, 'CFA charterholder fetch starting');
-
-  // CFA doesn't have a bulk API — this fetcher is a placeholder
-  // that documents the integration pattern for when API access is obtained
-  logger.info('CFA charterholder directory requires API partnership — marking as placeholder');
+  logger.info({ existingCount }, 'CFA charterholder fetch — placeholder (requires API partnership)');
 
   return { source: 'CFA Institute', inserted, skipped, errors };
 }

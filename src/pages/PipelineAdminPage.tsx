@@ -7,7 +7,7 @@
  * Platform admin only (carson@arkova.ai, sarah@arkova.ai).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3 } from 'lucide-react';
@@ -431,102 +431,7 @@ export function PipelineAdminPage() {
         </div>
 
         {/* Data Quality Overview — NPH-04 */}
-        {!loading && stats && (
-          <Card className="border-[#00d4ff]/10 bg-transparent">
-            <CardHeader>
-              <CardTitle className="text-base flex items-center gap-2">
-                <BarChart3 className="h-4 w-4 text-[#00d4ff]" />
-                Training Data Quality
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                {/* Embedding Coverage */}
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Embedding Coverage</div>
-                  <div className="text-lg font-mono font-semibold">
-                    {stats.totalRecords > 0
-                      ? `${((stats.embeddedRecords / stats.totalRecords) * 100).toFixed(1)}%`
-                      : '0%'}
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5">
-                    <div
-                      className="bg-purple-400 h-1.5 rounded-full"
-                      style={{ width: `${stats.totalRecords ? Math.round((stats.embeddedRecords / stats.totalRecords) * 100) : 0}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {(stats.totalRecords - stats.embeddedRecords).toLocaleString()} unembedded
-                  </div>
-                </div>
-
-                {/* Anchor Coverage */}
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Anchor Coverage</div>
-                  <div className="text-lg font-mono font-semibold">
-                    {stats.totalRecords > 0
-                      ? `${((stats.anchoredRecords / stats.totalRecords) * 100).toFixed(1)}%`
-                      : '0%'}
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5">
-                    <div
-                      className="bg-emerald-400 h-1.5 rounded-full"
-                      style={{ width: `${stats.totalRecords ? Math.round((stats.anchoredRecords / stats.totalRecords) * 100) : 0}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {stats.pendingRecords.toLocaleString()} pending
-                  </div>
-                </div>
-
-                {/* Misclassified (OTHER) Count */}
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Type Classification</div>
-                  <div className="text-lg font-mono font-semibold">
-                    {(() => {
-                      const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
-                      const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
-                      const classified = totalAnchored - otherCount;
-                      return totalAnchored > 0 ? `${((classified / totalAnchored) * 100).toFixed(1)}%` : '100%';
-                    })()}
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5">
-                    <div
-                      className="bg-[#00d4ff] h-1.5 rounded-full"
-                      style={{
-                        width: `${(() => {
-                          const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
-                          const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
-                          return totalAnchored > 0 ? Math.round(((totalAnchored - otherCount) / totalAnchored) * 100) : 100;
-                        })()}%`,
-                      }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {(stats.byCredentialType['OTHER']?.total ?? 0).toLocaleString()} unclassified (OTHER)
-                  </div>
-                </div>
-
-                {/* Source Diversity */}
-                <div className="space-y-1">
-                  <div className="text-xs text-muted-foreground">Data Sources Active</div>
-                  <div className="text-lg font-mono font-semibold">
-                    {Object.keys(stats.bySource).length} / {Object.keys(SOURCE_CONFIG).length}
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-1.5">
-                    <div
-                      className="bg-amber-400 h-1.5 rounded-full"
-                      style={{ width: `${Math.round((Object.keys(stats.bySource).length / Object.keys(SOURCE_CONFIG).length) * 100)}%` }}
-                    />
-                  </div>
-                  <div className="text-[10px] text-muted-foreground">
-                    {Object.keys(SOURCE_CONFIG).length - Object.keys(stats.bySource).length} sources not yet ingested
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        {!loading && stats && <DataQualityCard stats={stats} sourceConfigCount={Object.keys(SOURCE_CONFIG).length} />}
 
         {/* Source Breakdown */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
@@ -1200,5 +1105,69 @@ function StatCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; sourceConfigCount: number }) {
+  const metrics = useMemo(() => {
+    const total = stats.totalRecords || 1; // avoid division by zero
+    const embeddingPct = ((stats.embeddedRecords / total) * 100).toFixed(1);
+    const embeddingWidth = Math.round((stats.embeddedRecords / total) * 100);
+    const anchorPct = ((stats.anchoredRecords / total) * 100).toFixed(1);
+    const anchorWidth = Math.round((stats.anchoredRecords / total) * 100);
+
+    const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
+    const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
+    const classifiedPct = totalAnchored > 0
+      ? (((totalAnchored - otherCount) / totalAnchored) * 100).toFixed(1)
+      : '100.0';
+    const classifiedWidth = totalAnchored > 0
+      ? Math.round(((totalAnchored - otherCount) / totalAnchored) * 100)
+      : 100;
+
+    const activeSources = Object.keys(stats.bySource).length;
+    const sourcePct = Math.round((activeSources / sourceConfigCount) * 100);
+
+    return {
+      embeddingPct, embeddingWidth, anchorPct, anchorWidth,
+      classifiedPct, classifiedWidth, otherCount,
+      activeSources, sourcePct,
+      unembedded: stats.totalRecords - stats.embeddedRecords,
+      inactiveSources: sourceConfigCount - activeSources,
+    };
+  }, [stats, sourceConfigCount]);
+
+  return (
+    <Card className="border-[#00d4ff]/10 bg-transparent">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-[#00d4ff]" />
+          Training Data Quality
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <QualityMetric label="Embedding Coverage" value={`${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${metrics.unembedded.toLocaleString()} unembedded`} />
+          <QualityMetric label="Anchor Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending`} />
+          <QualityMetric label="Type Classification" value={`${metrics.classifiedPct}%`} width={metrics.classifiedWidth} color="bg-[#00d4ff]" detail={`${metrics.otherCount.toLocaleString()} unclassified (OTHER)`} />
+          <QualityMetric label="Data Sources Active" value={`${metrics.activeSources} / ${sourceConfigCount}`} width={metrics.sourcePct} color="bg-amber-400" detail={`${metrics.inactiveSources} sources not yet ingested`} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function QualityMetric({ label, value, width, color, detail }: {
+  label: string; value: string; width: number; color: string; detail: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-lg font-mono font-semibold">{value}</div>
+      <div className="w-full bg-muted rounded-full h-1.5">
+        <div className={`${color} h-1.5 rounded-full`} style={{ width: `${width}%` }} />
+      </div>
+      <div className="text-[10px] text-muted-foreground">{detail}</div>
+    </div>
   );
 }

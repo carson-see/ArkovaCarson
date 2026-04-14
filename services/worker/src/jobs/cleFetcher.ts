@@ -12,20 +12,9 @@
  * Gated by ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag.
  */
 
-import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
+import { computeContentHash } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
-
-const RATE_LIMIT_MS = 500;
-const MAX_PER_RUN = 1000;
-
-function computeContentHash(content: string): string {
-  return createHash('sha256').update(content, 'utf-8').digest('hex');
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 interface CleFetchResult {
   source: string;
