@@ -74,10 +74,10 @@ async function fetchAnchorStatsData(): Promise<AnchorStats> {
   const txRaw = txStatsResult.data;
   const txData = parseRpcData(txRaw);
   const txRpcHasData = txRaw != null && !txStatsResult.error && txData.distinct_tx_count != null;
-  let distinctTxIds = 0;
-  let avgAnchorsPerTx = 0;
-  let lastAnchorTime: string | null = null;
-  let lastTxTime: string | null = null;
+  let distinctTxIds: number;
+  let avgAnchorsPerTx: number;
+  let lastAnchorTime: string | null;
+  let lastTxTime: string | null;
 
   if (txRpcHasData) {
     distinctTxIds = Number(txData.distinct_tx_count) || 0;

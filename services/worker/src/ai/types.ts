@@ -23,6 +23,8 @@ export interface ExtractionRequest {
 /** Structured fields extracted from a credential. */
 export interface ExtractedFields {
   credentialType?: string;
+  /** GRE-01: Fine-grained sub-type within the credential type (e.g., 'official_undergraduate' for TRANSCRIPT) */
+  subType?: string;
   issuerName?: string;
   recipientIdentifier?: string; // hashed, never raw PII
   issuedDate?: string;

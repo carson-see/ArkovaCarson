@@ -152,11 +152,7 @@ export function useCredentialLifecycle(input: LifecycleInput | null): UseCredent
       isExpiringSoon = daysUntilExpiry > 0 && daysUntilExpiry <= EXPIRY_WARNING_DAYS;
     }
 
-    // Progress: PENDING=25, SECURED=75, terminal=100
-    let progressPercent = 0;
-    if (status === 'PENDING') progressPercent = 25;
-    else if (status === 'SECURED') progressPercent = 75;
-    else progressPercent = 100;
+    const progressPercent = status === 'PENDING' ? 25 : status === 'SECURED' ? 75 : 100;
 
     return {
       events,

@@ -58,7 +58,7 @@
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^7.0.0",
     "tla-precheck": "^0.1.7",
-    "zod": "^3.25.76"
+    "zod": "~3.24.4"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.11.1",

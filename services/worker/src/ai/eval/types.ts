@@ -11,6 +11,8 @@
  */
 export interface GroundTruthFields {
   credentialType?: string;
+  /** GRE-01: Fine-grained sub-type (e.g., 'official_undergraduate', 'nursing_rn') */
+  subType?: string;
   issuerName?: string;
   recipientIdentifier?: string;
   issuedDate?: string;
