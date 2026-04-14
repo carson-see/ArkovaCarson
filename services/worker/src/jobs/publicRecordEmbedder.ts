@@ -16,11 +16,17 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-/** Batch size for embedding generation — increased from 100 to clear 12K+ backlog faster */
-const EMBED_BATCH_SIZE = 500;
+/** Batch size for embedding generation — NPH-03: increased to clear 1.34M backlog */
+const EMBED_BATCH_SIZE = 2000;
 
 /** Number of concurrent embedding API calls */
-const EMBED_CONCURRENCY = 10;
+const EMBED_CONCURRENCY = 25;
+
+/** Max retries for rate-limited API calls */
+const MAX_RETRIES = 3;
+
+/** Base delay (ms) for exponential backoff on rate limits */
+const RETRY_BASE_DELAY_MS = 1000;
 
 export interface BatchEmbedResult {
   total: number;
@@ -101,38 +107,47 @@ export async function embedPublicRecords(
     errors: [],
   };
 
-  // Process records with bounded concurrency for throughput
+  // Process records with bounded concurrency and retry on rate limits
   const processRecord = async (record: { id: string; title: string | null; source: string; record_type: string; metadata: Record<string, unknown> }) => {
-    try {
-      const text = buildPublicRecordEmbeddingText(record);
+    const text = buildPublicRecordEmbeddingText(record);
 
-      const embeddingResult = await aiProvider.generateEmbedding(text, 'RETRIEVAL_DOCUMENT');
-      if (!embeddingResult.embedding || embeddingResult.embedding.length === 0) {
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const embeddingResult = await aiProvider.generateEmbedding(text, 'RETRIEVAL_DOCUMENT');
+        if (!embeddingResult.embedding || embeddingResult.embedding.length === 0) {
+          result.failed++;
+          result.errors.push({ recordId: record.id, error: 'Empty embedding returned' });
+          return;
+        }
+
+        const { error: insertError } = await client
+          .from('public_record_embeddings')
+          .insert({
+            public_record_id: record.id,
+            embedding: embeddingResult.embedding,
+            model_version: GEMINI_EMBEDDING_MODEL,
+          });
+
+        if (insertError) {
+          result.failed++;
+          result.errors.push({ recordId: record.id, error: insertError.message });
+        } else {
+          result.succeeded++;
+        }
+        return;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        const isRateLimit = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || msg.includes('rate');
+        if (isRateLimit && attempt < MAX_RETRIES) {
+          const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+          logger.warn({ recordId: record.id, attempt, delay }, 'Rate limited — retrying');
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
         result.failed++;
-        result.errors.push({ recordId: record.id, error: 'Empty embedding returned' });
+        result.errors.push({ recordId: record.id, error: msg });
         return;
       }
-
-      const { error: insertError } = await client
-        .from('public_record_embeddings')
-        .insert({
-          public_record_id: record.id,
-          embedding: embeddingResult.embedding,
-          model_version: GEMINI_EMBEDDING_MODEL,
-        });
-
-      if (insertError) {
-        result.failed++;
-        result.errors.push({ recordId: record.id, error: insertError.message });
-      } else {
-        result.succeeded++;
-      }
-    } catch (error) {
-      result.failed++;
-      result.errors.push({
-        recordId: record.id,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
     }
   };
 

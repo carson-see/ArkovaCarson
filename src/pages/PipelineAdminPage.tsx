@@ -7,10 +7,10 @@
  * Platform admin only (carson@arkova.ai, sarah@arkova.ai).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark } from 'lucide-react';
+import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
@@ -355,37 +355,35 @@ export function PipelineAdminPage() {
     );
   }
 
-  const sourceIcon = (source: string) => {
-    switch (source) {
-      case 'edgar': return <FileText className="h-4 w-4" />;
-      case 'uspto': return <Scale className="h-4 w-4" />;
-      case 'federal_register': return <BookOpen className="h-4 w-4" />;
-      case 'openalex': return <GraduationCap className="h-4 w-4" />;
-      case 'dapip': return <Building2 className="h-4 w-4" />;
-      case 'acnc': return <Heart className="h-4 w-4" />;
-      case 'courtlistener': return <Scale className="h-4 w-4" />;
-      case 'openstates': return <Landmark className="h-4 w-4" />;
-      default: return <Database className="h-4 w-4" />;
-    }
+  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'other' }> = {
+    edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial' },
+    uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic' },
+    federal_register: { icon: <BookOpen className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER, category: 'government' },
+    openalex: { icon: <GraduationCap className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic' },
+    dapip: { icon: <Building2 className="h-4 w-4" />, label: 'DAPIP Accreditation', category: 'academic' },
+    acnc: { icon: <Heart className="h-4 w-4" />, label: 'ACNC Charities (AU)', category: 'compliance' },
+    courtlistener: { icon: <Scale className="h-4 w-4" />, label: 'CourtListener Legal', category: 'compliance' },
+    openstates: { icon: <Landmark className="h-4 w-4" />, label: 'Open States Legislation', category: 'government' },
+    npi: { icon: <Stethoscope className="h-4 w-4" />, label: 'NPI Medical Registry', category: 'medical' },
+    finra: { icon: <TrendingUp className="h-4 w-4" />, label: 'FINRA BrokerCheck', category: 'financial' },
+    sec_iapd: { icon: <TrendingUp className="h-4 w-4" />, label: 'SEC IAPD Advisors', category: 'financial' },
+    calbar: { icon: <Scale className="h-4 w-4" />, label: 'California State Bar', category: 'compliance' },
+    fcc: { icon: <Radio className="h-4 w-4" />, label: 'FCC License Registry', category: 'government' },
+    sam_gov: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SAM.gov Contractors', category: 'government' },
+    sam_gov_exclusions: { icon: <AlertTriangle className="h-4 w-4" />, label: 'SAM.gov Exclusions', category: 'government' },
+    // NPH-05–10 new fetcher sources
+    sos_de: { icon: <Building2 className="h-4 w-4" />, label: 'Delaware SOS', category: 'compliance' },
+    sos_ca: { icon: <Building2 className="h-4 w-4" />, label: 'California SOS', category: 'compliance' },
+    license_ca_nursing: { icon: <Stethoscope className="h-4 w-4" />, label: 'CA Nursing Board', category: 'medical' },
+    insurance_ca_cdi: { icon: <ShieldCheck className="h-4 w-4" />, label: 'CA Dept of Insurance', category: 'financial' },
+    cle_ny: { icon: <Scale className="h-4 w-4" />, label: 'NY CLE Board', category: 'compliance' },
+    cert_cfa: { icon: <TrendingUp className="h-4 w-4" />, label: 'CFA Institute', category: 'financial' },
+    ipeds: { icon: <GraduationCap className="h-4 w-4" />, label: 'IPEDS Education', category: 'academic' },
+    mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other' },
   };
 
-  const sourceLabel = (source: string) => {
-    switch (source) {
-      case 'edgar': return PIPELINE_LABELS.SOURCE_EDGAR;
-      case 'uspto': return PIPELINE_LABELS.SOURCE_USPTO;
-      case 'federal_register': return PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER;
-      case 'openalex': return 'OpenAlex Academic';
-      case 'dapip': return 'DAPIP Education';
-      case 'acnc': return 'ACNC Charities';
-      case 'courtlistener': return 'CourtListener Legal';
-      case 'openstates': return 'Open States Legislation';
-      case 'npi': return 'NPI Registry';
-      case 'finra': return 'FINRA BrokerCheck';
-      case 'calbar': return 'California State Bar';
-      case 'mcp': return PIPELINE_LABELS.SOURCE_MCP;
-      default: return source;
-    }
-  };
+  const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
+  const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
 
   return (
     <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
@@ -439,6 +437,9 @@ export function PipelineAdminPage() {
             loading={loading}
           />
         </div>
+
+        {/* Data Quality Overview — NPH-04 */}
+        {!loading && stats && <DataQualityCard stats={stats} sourceConfigCount={Object.keys(SOURCE_CONFIG).length} />}
 
         {/* Source Breakdown */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
@@ -575,6 +576,12 @@ export function PipelineAdminPage() {
                 { path: 'fetch-state-courts?state=NY', label: 'Fetch NY Courts', icon: <Landmark className="h-4 w-4" /> },
                 { path: 'fetch-state-courts?state=TX', label: 'Fetch TX Courts', icon: <Landmark className="h-4 w-4" /> },
                 { path: 'fetch-all-state-bills', label: 'Fetch State Bills (CA/NY/TX)', icon: <FileText className="h-4 w-4" /> },
+                { path: 'fetch-npi', label: 'Run NPI Fetch', icon: <Stethoscope className="h-4 w-4" /> },
+                { path: 'fetch-finra', label: 'Run FINRA Fetch', icon: <TrendingUp className="h-4 w-4" /> },
+                { path: 'fetch-calbar', label: 'Run CalBar Fetch', icon: <Scale className="h-4 w-4" /> },
+                { path: 'fetch-sec-iapd', label: 'Run SEC IAPD Fetch', icon: <TrendingUp className="h-4 w-4" /> },
+                { path: 'fetch-fcc', label: 'Run FCC Fetch', icon: <Radio className="h-4 w-4" /> },
+                { path: 'fetch-sam-entities', label: 'Run SAM.gov Fetch', icon: <ShieldCheck className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
                 { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className="h-4 w-4" /> },
                 { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },
@@ -1106,5 +1113,69 @@ function StatCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; sourceConfigCount: number }) {
+  const metrics = useMemo(() => {
+    const total = stats.totalRecords || 1; // avoid division by zero
+    const embeddingPct = ((stats.embeddedRecords / total) * 100).toFixed(1);
+    const embeddingWidth = Math.round((stats.embeddedRecords / total) * 100);
+    const anchorPct = ((stats.anchoredRecords / total) * 100).toFixed(1);
+    const anchorWidth = Math.round((stats.anchoredRecords / total) * 100);
+
+    const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
+    const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
+    const classifiedPct = totalAnchored > 0
+      ? (((totalAnchored - otherCount) / totalAnchored) * 100).toFixed(1)
+      : '100.0';
+    const classifiedWidth = totalAnchored > 0
+      ? Math.round(((totalAnchored - otherCount) / totalAnchored) * 100)
+      : 100;
+
+    const activeSources = Object.keys(stats.bySource).length;
+    const sourcePct = Math.round((activeSources / sourceConfigCount) * 100);
+
+    return {
+      embeddingPct, embeddingWidth, anchorPct, anchorWidth,
+      classifiedPct, classifiedWidth, otherCount,
+      activeSources, sourcePct,
+      unembedded: stats.totalRecords - stats.embeddedRecords,
+      inactiveSources: sourceConfigCount - activeSources,
+    };
+  }, [stats, sourceConfigCount]);
+
+  return (
+    <Card className="border-[#00d4ff]/10 bg-transparent">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-[#00d4ff]" />
+          Training Data Quality
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <QualityMetric label="Embedding Coverage" value={`${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${metrics.unembedded.toLocaleString()} unembedded`} />
+          <QualityMetric label="Anchor Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending`} />
+          <QualityMetric label="Type Classification" value={`${metrics.classifiedPct}%`} width={metrics.classifiedWidth} color="bg-[#00d4ff]" detail={`${metrics.otherCount.toLocaleString()} unclassified (OTHER)`} />
+          <QualityMetric label="Data Sources Active" value={`${metrics.activeSources} / ${sourceConfigCount}`} width={metrics.sourcePct} color="bg-amber-400" detail={`${metrics.inactiveSources} sources not yet ingested`} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function QualityMetric({ label, value, width, color, detail }: {
+  label: string; value: string; width: number; color: string; detail: string;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="text-lg font-mono font-semibold">{value}</div>
+      <div className="w-full bg-muted rounded-full h-1.5">
+        <div className={`${color} h-1.5 rounded-full`} style={{ width: `${width}%` }} />
+      </div>
+      <div className="text-[10px] text-muted-foreground">{detail}</div>
+    </div>
   );
 }
