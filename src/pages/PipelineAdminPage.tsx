@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark } from 'lucide-react';
+import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
@@ -355,37 +355,27 @@ export function PipelineAdminPage() {
     );
   }
 
-  const sourceIcon = (source: string) => {
-    switch (source) {
-      case 'edgar': return <FileText className="h-4 w-4" />;
-      case 'uspto': return <Scale className="h-4 w-4" />;
-      case 'federal_register': return <BookOpen className="h-4 w-4" />;
-      case 'openalex': return <GraduationCap className="h-4 w-4" />;
-      case 'dapip': return <Building2 className="h-4 w-4" />;
-      case 'acnc': return <Heart className="h-4 w-4" />;
-      case 'courtlistener': return <Scale className="h-4 w-4" />;
-      case 'openstates': return <Landmark className="h-4 w-4" />;
-      default: return <Database className="h-4 w-4" />;
-    }
+  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'other' }> = {
+    edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial' },
+    uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic' },
+    federal_register: { icon: <BookOpen className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER, category: 'government' },
+    openalex: { icon: <GraduationCap className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic' },
+    dapip: { icon: <Building2 className="h-4 w-4" />, label: 'DAPIP Accreditation', category: 'academic' },
+    acnc: { icon: <Heart className="h-4 w-4" />, label: 'ACNC Charities (AU)', category: 'compliance' },
+    courtlistener: { icon: <Scale className="h-4 w-4" />, label: 'CourtListener Legal', category: 'compliance' },
+    openstates: { icon: <Landmark className="h-4 w-4" />, label: 'Open States Legislation', category: 'government' },
+    npi: { icon: <Stethoscope className="h-4 w-4" />, label: 'NPI Medical Registry', category: 'medical' },
+    finra: { icon: <TrendingUp className="h-4 w-4" />, label: 'FINRA BrokerCheck', category: 'financial' },
+    sec_iapd: { icon: <TrendingUp className="h-4 w-4" />, label: 'SEC IAPD Advisors', category: 'financial' },
+    calbar: { icon: <Scale className="h-4 w-4" />, label: 'California State Bar', category: 'compliance' },
+    fcc: { icon: <Radio className="h-4 w-4" />, label: 'FCC License Registry', category: 'government' },
+    sam_gov: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SAM.gov Contractors', category: 'government' },
+    sam_gov_exclusions: { icon: <AlertTriangle className="h-4 w-4" />, label: 'SAM.gov Exclusions', category: 'government' },
+    mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other' },
   };
 
-  const sourceLabel = (source: string) => {
-    switch (source) {
-      case 'edgar': return PIPELINE_LABELS.SOURCE_EDGAR;
-      case 'uspto': return PIPELINE_LABELS.SOURCE_USPTO;
-      case 'federal_register': return PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER;
-      case 'openalex': return 'OpenAlex Academic';
-      case 'dapip': return 'DAPIP Education';
-      case 'acnc': return 'ACNC Charities';
-      case 'courtlistener': return 'CourtListener Legal';
-      case 'openstates': return 'Open States Legislation';
-      case 'npi': return 'NPI Registry';
-      case 'finra': return 'FINRA BrokerCheck';
-      case 'calbar': return 'California State Bar';
-      case 'mcp': return PIPELINE_LABELS.SOURCE_MCP;
-      default: return source;
-    }
-  };
+  const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
+  const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
 
   return (
     <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
@@ -439,6 +429,104 @@ export function PipelineAdminPage() {
             loading={loading}
           />
         </div>
+
+        {/* Data Quality Overview — NPH-04 */}
+        {!loading && stats && (
+          <Card className="border-[#00d4ff]/10 bg-transparent">
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <BarChart3 className="h-4 w-4 text-[#00d4ff]" />
+                Training Data Quality
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {/* Embedding Coverage */}
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Embedding Coverage</div>
+                  <div className="text-lg font-mono font-semibold">
+                    {stats.totalRecords > 0
+                      ? `${((stats.embeddedRecords / stats.totalRecords) * 100).toFixed(1)}%`
+                      : '0%'}
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className="bg-purple-400 h-1.5 rounded-full"
+                      style={{ width: `${stats.totalRecords ? Math.round((stats.embeddedRecords / stats.totalRecords) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {(stats.totalRecords - stats.embeddedRecords).toLocaleString()} unembedded
+                  </div>
+                </div>
+
+                {/* Anchor Coverage */}
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Anchor Coverage</div>
+                  <div className="text-lg font-mono font-semibold">
+                    {stats.totalRecords > 0
+                      ? `${((stats.anchoredRecords / stats.totalRecords) * 100).toFixed(1)}%`
+                      : '0%'}
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className="bg-emerald-400 h-1.5 rounded-full"
+                      style={{ width: `${stats.totalRecords ? Math.round((stats.anchoredRecords / stats.totalRecords) * 100) : 0}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {stats.pendingRecords.toLocaleString()} pending
+                  </div>
+                </div>
+
+                {/* Misclassified (OTHER) Count */}
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Type Classification</div>
+                  <div className="text-lg font-mono font-semibold">
+                    {(() => {
+                      const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
+                      const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
+                      const classified = totalAnchored - otherCount;
+                      return totalAnchored > 0 ? `${((classified / totalAnchored) * 100).toFixed(1)}%` : '100%';
+                    })()}
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className="bg-[#00d4ff] h-1.5 rounded-full"
+                      style={{
+                        width: `${(() => {
+                          const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
+                          const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
+                          return totalAnchored > 0 ? Math.round(((totalAnchored - otherCount) / totalAnchored) * 100) : 100;
+                        })()}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {(stats.byCredentialType['OTHER']?.total ?? 0).toLocaleString()} unclassified (OTHER)
+                  </div>
+                </div>
+
+                {/* Source Diversity */}
+                <div className="space-y-1">
+                  <div className="text-xs text-muted-foreground">Data Sources Active</div>
+                  <div className="text-lg font-mono font-semibold">
+                    {Object.keys(stats.bySource).length} / {Object.keys(SOURCE_CONFIG).length}
+                  </div>
+                  <div className="w-full bg-muted rounded-full h-1.5">
+                    <div
+                      className="bg-amber-400 h-1.5 rounded-full"
+                      style={{ width: `${Math.round((Object.keys(stats.bySource).length / Object.keys(SOURCE_CONFIG).length) * 100)}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">
+                    {Object.keys(SOURCE_CONFIG).length - Object.keys(stats.bySource).length} sources not yet ingested
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Source Breakdown */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
@@ -575,6 +663,12 @@ export function PipelineAdminPage() {
                 { path: 'fetch-state-courts?state=NY', label: 'Fetch NY Courts', icon: <Landmark className="h-4 w-4" /> },
                 { path: 'fetch-state-courts?state=TX', label: 'Fetch TX Courts', icon: <Landmark className="h-4 w-4" /> },
                 { path: 'fetch-all-state-bills', label: 'Fetch State Bills (CA/NY/TX)', icon: <FileText className="h-4 w-4" /> },
+                { path: 'fetch-npi', label: 'Run NPI Fetch', icon: <Stethoscope className="h-4 w-4" /> },
+                { path: 'fetch-finra', label: 'Run FINRA Fetch', icon: <TrendingUp className="h-4 w-4" /> },
+                { path: 'fetch-calbar', label: 'Run CalBar Fetch', icon: <Scale className="h-4 w-4" /> },
+                { path: 'fetch-sec-iapd', label: 'Run SEC IAPD Fetch', icon: <TrendingUp className="h-4 w-4" /> },
+                { path: 'fetch-fcc', label: 'Run FCC Fetch', icon: <Radio className="h-4 w-4" /> },
+                { path: 'fetch-sam-gov', label: 'Run SAM.gov Fetch', icon: <ShieldCheck className="h-4 w-4" /> },
                 { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
                 { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className="h-4 w-4" /> },
                 { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },

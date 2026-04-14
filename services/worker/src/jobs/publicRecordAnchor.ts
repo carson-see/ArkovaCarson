@@ -48,23 +48,44 @@ export interface PublicRecordAnchorResult {
 /**
  * Map public record source/type to a display-friendly filename for the anchor.
  */
-function buildAnchorFilename(record: {
+/** Source → display prefix for anchor filenames */
+const SOURCE_PREFIX: Record<string, string> = {
+  edgar: 'SEC',
+  openalex: 'OA',
+  uspto: 'USPTO',
+  federal_register: 'FR',
+  courtlistener: 'CASE',
+  npi: 'NPI',
+  finra: 'FINRA',
+  dapip: 'DAPIP',
+  calbar: 'CALBAR',
+  sec_iapd: 'IAPD',
+  acnc: 'ACNC',
+  fcc: 'FCC',
+  openstates: 'BILL',
+  sam_gov: 'SAM',
+  sam_gov_exclusions: 'SAM-EX',
+  // NPH-05–10 sources
+  sos_de: 'DE-SOS',
+  sos_ca: 'CA-SOS',
+  sos_ny: 'NY-SOS',
+  sos_tx: 'TX-SOS',
+  ipeds: 'IPEDS',
+  insurance_ca_cdi: 'CA-INS',
+  cle_ny: 'NY-CLE',
+  cle_tx: 'TX-CLE',
+  cert_cfa: 'CFA',
+  cert_comptia: 'COMPTIA',
+  cert_pmi: 'PMI',
+};
+
+export function buildAnchorFilename(record: {
   source: string;
   source_id: string;
   title: string | null;
   record_type: string;
 }): string {
-  const prefix = record.source === 'edgar'
-    ? 'SEC'
-    : record.source === 'openalex'
-      ? 'OA'
-      : record.source === 'uspto'
-        ? 'USPTO'
-        : record.source === 'federal_register'
-          ? 'FR'
-          : record.source === 'courtlistener'
-            ? 'CASE'
-            : record.source.toUpperCase();
+  const prefix = SOURCE_PREFIX[record.source] ?? record.source.toUpperCase();
 
   // Use title if available, otherwise source_id
   const name = record.title
@@ -78,14 +99,36 @@ function buildAnchorFilename(record: {
  * Map public record source to credential_type enum.
  * Pipeline records use dedicated types added in migration 0091.
  */
-function mapCredentialType(source: string): string {
+export function mapCredentialType(source: string): string {
   switch (source) {
+    // Original pipeline sources (migration 0091)
     case 'edgar': return 'SEC_FILING';
     case 'uspto': return 'PATENT';
     case 'openalex': return 'PUBLICATION';
     case 'federal_register': return 'REGULATION';
     case 'courtlistener': return 'LEGAL';
-    default: return 'OTHER';
+    // NPH-01: Fix misclassified sources that were falling through to OTHER
+    case 'npi': return 'MEDICAL';
+    case 'finra': return 'FINANCIAL';
+    case 'sec_iapd': return 'FINANCIAL';
+    case 'dapip': return 'ACCREDITATION';
+    case 'calbar': return 'LICENSE';
+    case 'acnc': return 'CHARITY';
+    case 'fcc': return 'LICENSE';
+    case 'openstates': return 'REGULATION';
+    case 'sam_gov': return 'CERTIFICATE';
+    case 'sam_gov_exclusions': return 'CERTIFICATE';
+    // NPH-05–10: New pipeline sources
+    case 'sos_de': case 'sos_ca': case 'sos_ny': case 'sos_tx': return 'BUSINESS_ENTITY';
+    case 'ipeds': return 'ACCREDITATION';
+    case 'insurance_ca_cdi': return 'INSURANCE';
+    case 'cle_ny': case 'cle_tx': return 'CLE';
+    case 'cert_cfa': case 'cert_comptia': case 'cert_pmi': return 'CERTIFICATE';
+    default: {
+      // License board sources follow pattern: license_{state}_{board}
+      if (source.startsWith('license_')) return 'LICENSE';
+      return 'OTHER';
+    }
   }
 }
 

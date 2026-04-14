@@ -152,6 +152,60 @@ describe('publicRecordAnchor', () => {
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 
+  it('maps all pipeline sources to correct credential types', async () => {
+    // NPH-01: Verify every pipeline source maps to its correct credential_type
+    const { mapCredentialType } = await import('../publicRecordAnchor.js') as unknown as {
+      mapCredentialType: (source: string) => string;
+    };
+
+    // Original mappings (migration 0091)
+    expect(mapCredentialType('edgar')).toBe('SEC_FILING');
+    expect(mapCredentialType('uspto')).toBe('PATENT');
+    expect(mapCredentialType('openalex')).toBe('PUBLICATION');
+    expect(mapCredentialType('federal_register')).toBe('REGULATION');
+    expect(mapCredentialType('courtlistener')).toBe('LEGAL');
+
+    // NPH-01 fixes: sources that were incorrectly mapped to OTHER
+    expect(mapCredentialType('npi')).toBe('MEDICAL');
+    expect(mapCredentialType('finra')).toBe('FINANCIAL');
+    expect(mapCredentialType('dapip')).toBe('ACCREDITATION');
+    expect(mapCredentialType('calbar')).toBe('LICENSE');
+    expect(mapCredentialType('sec_iapd')).toBe('FINANCIAL');
+    expect(mapCredentialType('acnc')).toBe('CHARITY');
+    expect(mapCredentialType('fcc')).toBe('LICENSE');
+    expect(mapCredentialType('openstates')).toBe('REGULATION');
+    expect(mapCredentialType('sam_gov')).toBe('CERTIFICATE');
+    expect(mapCredentialType('sam_gov_exclusions')).toBe('CERTIFICATE');
+
+    // Unknown sources still fall back to OTHER
+    expect(mapCredentialType('unknown_source')).toBe('OTHER');
+  });
+
+  it('builds correct filename prefixes for all sources', async () => {
+    const { buildAnchorFilename } = await import('../publicRecordAnchor.js') as unknown as {
+      buildAnchorFilename: (record: { source: string; source_id: string; title: string | null; record_type: string }) => string;
+    };
+
+    expect(buildAnchorFilename({ source: 'npi', source_id: '123', title: 'Dr. Smith', record_type: 'provider' }))
+      .toBe('[NPI] Dr. Smith');
+    expect(buildAnchorFilename({ source: 'finra', source_id: '456', title: 'Broker Check', record_type: 'broker' }))
+      .toBe('[FINRA] Broker Check');
+    expect(buildAnchorFilename({ source: 'dapip', source_id: '789', title: 'State University', record_type: 'institution' }))
+      .toBe('[DAPIP] State University');
+    expect(buildAnchorFilename({ source: 'calbar', source_id: '101', title: 'Attorney Record', record_type: 'attorney' }))
+      .toBe('[CALBAR] Attorney Record');
+    expect(buildAnchorFilename({ source: 'sec_iapd', source_id: '202', title: 'Investment Advisor', record_type: 'advisor' }))
+      .toBe('[IAPD] Investment Advisor');
+    expect(buildAnchorFilename({ source: 'acnc', source_id: '303', title: 'Charity Name', record_type: 'charity' }))
+      .toBe('[ACNC] Charity Name');
+    expect(buildAnchorFilename({ source: 'fcc', source_id: '404', title: 'License Record', record_type: 'license' }))
+      .toBe('[FCC] License Record');
+    expect(buildAnchorFilename({ source: 'openstates', source_id: '505', title: 'Bill HB-101', record_type: 'bill' }))
+      .toBe('[BILL] Bill HB-101');
+    expect(buildAnchorFilename({ source: 'sam_gov', source_id: '606', title: 'Contractor Entity', record_type: 'entity' }))
+      .toBe('[SAM] Contractor Entity');
+  });
+
   it('processes batch when enough records exist', async () => {
     const records = Array.from({ length: 20 }, (_, i) => ({
       id: `record-${i}`,

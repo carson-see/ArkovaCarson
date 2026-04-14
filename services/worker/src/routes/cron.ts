@@ -46,6 +46,12 @@ import { fetchSecIapdFirms } from '../jobs/secIapdFetcher.js';
 import { fetchNpiProviders } from '../jobs/npiFetcher.js';
 import { fetchSamEntities, fetchSamExclusions } from '../jobs/samGovFetcher.js';
 import { fetchFccLicenses } from '../jobs/fccUlsFetcher.js';
+import { fetchSosEntities } from '../jobs/sosFetcher.js';
+import { fetchLicensingBoardRecords } from '../jobs/licensingBoardFetcher.js';
+import { fetchInsuranceLicenses } from '../jobs/insuranceLicenseFetcher.js';
+import { fetchCleRecords } from '../jobs/cleFetcher.js';
+import { fetchCertificationRecords } from '../jobs/certificationFetcher.js';
+import { fetchIpedsInstitutions } from '../jobs/ipedsFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
@@ -757,6 +763,77 @@ cronRouter.post('/fetch-fcc', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'FCC ULS fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-05: State SOS Business Entity Fetchers ───
+cronRouter.post('/fetch-sos', async (req, res) => {
+  try {
+    const state = req.body?.state ?? req.query.state;
+    const results = await fetchSosEntities(db, state as string | undefined);
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'SOS entity fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-06: Professional Licensing Board Fetchers ───
+cronRouter.post('/fetch-licensing-board', async (req, res) => {
+  try {
+    const board = req.body?.board ?? req.query.board;
+    const results = await fetchLicensingBoardRecords(db, board as string | undefined);
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'Licensing board fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-07: Insurance License Fetchers ───
+cronRouter.post('/fetch-insurance-licenses', async (req, res) => {
+  try {
+    const source = req.body?.source ?? req.query.source;
+    const results = await fetchInsuranceLicenses(db, source as string | undefined);
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'Insurance license fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-08: CLE Credit Fetchers ───
+cronRouter.post('/fetch-cle', async (req, res) => {
+  try {
+    const source = req.body?.source ?? req.query.source;
+    const results = await fetchCleRecords(db, source as string | undefined);
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'CLE fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-09: Professional Certification Fetchers ───
+cronRouter.post('/fetch-certifications', async (req, res) => {
+  try {
+    const source = req.body?.source ?? req.query.source;
+    const results = await fetchCertificationRecords(db, source as string | undefined);
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'Certification fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NPH-10: IPEDS Education Institution Fetcher ───
+cronRouter.post('/fetch-ipeds', async (_req, res) => {
+  try {
+    const result = await fetchIpedsInstitutions(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'IPEDS fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
