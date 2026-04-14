@@ -28,7 +28,7 @@ describe('usePublicSearch', () => {
 
   it('searches for issuers', async () => {
     mockRpc.mockResolvedValue({
-      data: [{ org_id: 'o1', org_name: 'University of Michigan', org_domain: 'umich.edu', credential_count: 42 }],
+      data: [{ id: 'o1', display_name: 'University of Michigan', legal_name: 'University of Michigan', public_id: 'pub1', verified: true, credential_count: 42 }],
       error: null,
     });
 
