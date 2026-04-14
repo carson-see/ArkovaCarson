@@ -48,23 +48,14 @@ describe('Sidebar', () => {
     expect(logoLink[0]).toHaveAttribute('href', '/search');
   });
 
-  it('renders simplified main navigation', () => {
+  it('renders simplified main navigation (UAT Session 40 redesign)', () => {
     renderSidebar();
     expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Documents').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Search').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Developers').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows Directory link for all accounts (SCRUM-360)', () => {
-    renderSidebar({ orgName: 'Test Org' });
-    expect(screen.getAllByText('Directory').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('does not show Directory link when orgName is not provided (SCRUM-360)', () => {
-    renderSidebar();
-    expect(screen.queryByText('Directory')).toBeNull();
+    // Documents, Directory, Settings, Developers removed in simplified sidebar
+    expect(screen.queryByText('Documents')).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
+    expect(screen.queryByText('Developers')).toBeNull();
   });
 
 
