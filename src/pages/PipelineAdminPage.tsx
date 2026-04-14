@@ -557,59 +557,72 @@ export function PipelineAdminPage() {
           </CardContent>
         </Card>
 
-        {/* Pipeline Controls */}
+        {/* Pipeline Controls — grouped by category */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
           <CardHeader>
             <CardTitle className="text-base">Pipeline Controls</CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {([
-                { path: 'fetch-edgar', label: 'Run EDGAR Fetch', icon: <FileText className="h-4 w-4" /> },
-                { path: 'fetch-uspto', label: 'Run USPTO Fetch', icon: <Scale className="h-4 w-4" /> },
-                { path: 'fetch-federal-register', label: 'Run Fed Register Fetch', icon: <BookOpen className="h-4 w-4" /> },
-                { path: 'fetch-openalex', label: 'Run OpenAlex Fetch', icon: <GraduationCap className="h-4 w-4" /> },
-                { path: 'fetch-dapip', label: 'Run DAPIP Fetch', icon: <Building2 className="h-4 w-4" /> },
-                { path: 'fetch-acnc', label: 'Run ACNC Fetch', icon: <Heart className="h-4 w-4" /> },
-                { path: 'fetch-courtlistener', label: 'Run CourtListener Fetch', icon: <Scale className="h-4 w-4" /> },
-                { path: 'fetch-state-courts?state=CA', label: 'Fetch CA Courts', icon: <Landmark className="h-4 w-4" /> },
-                { path: 'fetch-state-courts?state=NY', label: 'Fetch NY Courts', icon: <Landmark className="h-4 w-4" /> },
-                { path: 'fetch-state-courts?state=TX', label: 'Fetch TX Courts', icon: <Landmark className="h-4 w-4" /> },
-                { path: 'fetch-all-state-bills', label: 'Fetch State Bills (CA/NY/TX)', icon: <FileText className="h-4 w-4" /> },
-                { path: 'fetch-npi', label: 'Run NPI Fetch', icon: <Stethoscope className="h-4 w-4" /> },
-                { path: 'fetch-finra', label: 'Run FINRA Fetch', icon: <TrendingUp className="h-4 w-4" /> },
-                { path: 'fetch-calbar', label: 'Run CalBar Fetch', icon: <Scale className="h-4 w-4" /> },
-                { path: 'fetch-sec-iapd', label: 'Run SEC IAPD Fetch', icon: <TrendingUp className="h-4 w-4" /> },
-                { path: 'fetch-fcc', label: 'Run FCC Fetch', icon: <Radio className="h-4 w-4" /> },
-                { path: 'fetch-sam-entities', label: 'Run SAM.gov Fetch', icon: <ShieldCheck className="h-4 w-4" /> },
-                { path: 'embed-public-records', label: 'Run Embedder', icon: <Cpu className="h-4 w-4" /> },
-                { path: 'anchor-public-records', label: 'Run Anchoring', icon: <ArkovaIcon className="h-4 w-4" /> },
-                { path: 'batch-anchors', label: 'Run Batch Anchoring', icon: <Layers className="h-4 w-4" /> },
-              ] as const).map(({ path, label, icon }) => {
-                const status = triggerStatus[path] ?? 'idle';
-                return (
-                  <Button
-                    key={path}
-                    variant="outline"
-                    size="sm"
-                    className="justify-start border-[#00d4ff]/20 hover:bg-[#00d4ff]/5"
-                    disabled={status === 'running'}
-                    onClick={() => triggerJob(path, label)}
-                  >
-                    {status === 'running' ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <span className="mr-2">{icon}</span>
-                    )}
-                    {label}
-                    {status === 'done' && <Badge variant="secondary" className="ml-auto text-emerald-400">Done</Badge>}
-                    {status === 'error' && <Badge variant="destructive" className="ml-auto">Error</Badge>}
-                  </Button>
-                );
-              })}
+          <CardContent className="space-y-5">
+            {/* Processing */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Processing</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="embed-public-records" label="Run Embedder" icon={<Cpu className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="anchor-public-records" label="Run Anchoring" icon={<ArkovaIcon className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="batch-anchors" label="Run Batch Anchoring" icon={<Layers className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-3">
-              Jobs run on the worker. Requires CRON_SECRET.
+
+            {/* Federal / Compliance Sources */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Federal &amp; Compliance</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-edgar" label="SEC EDGAR" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-federal-register" label="Federal Register" icon={<BookOpen className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-all-state-bills" label="State Bills (CA/NY/TX)" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-sam-entities" label="SAM.gov" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* Professional Licensing */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Professional Licensing</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-npi" label="NPI Medical" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-finra" label="FINRA BrokerCheck" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-calbar" label="CA State Bar" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-sec-iapd" label="SEC IAPD" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-fcc" label="FCC Licenses" icon={<Radio className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-licensing-board" label="Licensing Boards" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-insurance-licenses" label="Insurance (CDI)" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-cle" label="CLE Credits" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-certifications" label="Certifications" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* Academic & Education */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Academic &amp; Education</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-openalex" label="OpenAlex" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-uspto" label="USPTO Patents" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-dapip" label="DAPIP Accreditation" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-ipeds" label="IPEDS Education" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* Business & International */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Business &amp; International</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-sos" label="State SOS Entities" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-acnc" label="ACNC Charities (AU)" icon={<Heart className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              Jobs run on the worker service. Authenticated via platform admin JWT.
             </p>
           </CardContent>
         </Card>
@@ -1177,5 +1190,33 @@ function QualityMetric({ label, value, width, color, detail }: {
       </div>
       <div className="text-[10px] text-muted-foreground">{detail}</div>
     </div>
+  );
+}
+
+function JobButton({ path, label, icon, status, onTrigger }: {
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+  status: Record<string, 'idle' | 'running' | 'done' | 'error'>;
+  onTrigger: (path: string, label: string) => void;
+}) {
+  const s = status[path] ?? 'idle';
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="justify-start border-[#00d4ff]/20 hover:bg-[#00d4ff]/5 text-xs"
+      disabled={s === 'running'}
+      onClick={() => onTrigger(path, label)}
+    >
+      {s === 'running' ? (
+        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <span className="mr-2">{icon}</span>
+      )}
+      {label}
+      {s === 'done' && <Badge variant="secondary" className="ml-auto text-emerald-400 text-[10px]">Done</Badge>}
+      {s === 'error' && <Badge variant="destructive" className="ml-auto text-[10px]">Error</Badge>}
+    </Button>
   );
 }
