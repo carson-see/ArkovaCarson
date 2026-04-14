@@ -2038,4 +2038,8 @@ export const PRIVACY_NOTICE_LABELS = {
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
   BREACH_TIMELINE_LABEL: 'Breach Notification Timeline',
+  INFORMATION_OFFICER_LABEL: 'Information Officer',
 } as const;
+
+/** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
+export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';

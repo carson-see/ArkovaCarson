@@ -6,7 +6,7 @@
  * 30-day response timeline tracked.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -31,35 +31,35 @@ export function DataCorrectionForm() {
   const [submitting, setSubmitting] = useState(false);
   const [requests, setRequests] = useState<CorrectionRequest[]>([]);
 
+  const fetchRequests = useCallback(async () => {
+    const { data } = await supabase
+      .from('data_subject_requests')
+      .select('id, status, requested_at, completed_at, details')
+      .eq('request_type', 'correction')
+      .order('requested_at', { ascending: false })
+      .limit(10);
+
+    if (data) setRequests(data as CorrectionRequest[]);
+  }, []);
+
   useEffect(() => {
-    if (!user) return;
-
-    async function fetchRequests() {
-      const { data } = await supabase
-        .from('data_subject_requests')
-        .select('id, status, requested_at, completed_at, details')
-        .eq('request_type', 'correction')
-        .order('requested_at', { ascending: false })
-        .limit(10);
-
-      if (data) setRequests(data as CorrectionRequest[]);
-    }
-
+    if (!user?.id) return;
     fetchRequests();
-  }, [user]);
+  }, [user?.id, fetchRequests]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!user || !description.trim() || submitting) return;
 
     setSubmitting(true);
+    const trimmed = description.trim();
     try {
       const { error } = await supabase
         .from('data_subject_requests')
         .insert({
           user_id: user.id,
           request_type: 'correction',
-          details: { description: description.trim() },
+          details: { description: trimmed },
         });
 
       if (error) throw error;
@@ -67,15 +67,14 @@ export function DataCorrectionForm() {
       toast.success(DATA_CORRECTION_LABELS.SUCCESS);
       setDescription('');
 
-      // Refresh list
-      const { data } = await supabase
-        .from('data_subject_requests')
-        .select('id, status, requested_at, completed_at, details')
-        .eq('request_type', 'correction')
-        .order('requested_at', { ascending: false })
-        .limit(10);
-
-      if (data) setRequests(data as CorrectionRequest[]);
+      // Optimistic update — prepend new request to local state
+      setRequests(prev => [{
+        id: crypto.randomUUID(),
+        status: 'processing',
+        requested_at: new Date().toISOString(),
+        completed_at: null,
+        details: { description: trimmed },
+      }, ...prev.slice(0, 9)]);
     } catch {
       toast.error(DATA_CORRECTION_LABELS.ERROR);
     } finally {
