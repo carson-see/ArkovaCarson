@@ -14,7 +14,8 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BadgeCheck, Globe, Lock, Linkedin, Twitter, ExternalLink, Camera } from 'lucide-react';
+import { BadgeCheck, Globe, Lock, ExternalLink, Camera } from 'lucide-react';
+import { LinkedinIcon as Linkedin, TwitterIcon as Twitter } from '@/components/shared/SocialIcons';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';

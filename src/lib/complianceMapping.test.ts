@@ -31,12 +31,16 @@ describe('getComplianceControls', () => {
     const controls = getComplianceControls('DEGREE', true);
     const ids = controls.map(c => c.id);
     expect(ids).toContain('FERPA-99.31');
+    expect(ids).toContain('FERPA-99.31-DL');
+    expect(ids).toContain('FERPA-99.37');
   });
 
   it('includes FERPA for TRANSCRIPT type', () => {
     const controls = getComplianceControls('TRANSCRIPT', true);
     const ids = controls.map(c => c.id);
     expect(ids).toContain('FERPA-99.31');
+    expect(ids).toContain('FERPA-99.31-DL');
+    expect(ids).toContain('FERPA-99.37');
   });
 
   it('includes ISO A.14 for LICENSE type', () => {
@@ -49,6 +53,9 @@ describe('getComplianceControls', () => {
     const controls = getComplianceControls('INSURANCE', true);
     const ids = controls.map(c => c.id);
     expect(ids).toContain('HIPAA-164.312');
+    expect(ids).toContain('HIPAA-164.312-MFA');
+    expect(ids).toContain('HIPAA-164.312-AUDIT');
+    expect(ids).toContain('HIPAA-164.312-SESSION');
   });
 
   it('does not include FERPA for non-education types', () => {
@@ -118,9 +125,38 @@ describe('COMPLIANCE_CONTROLS', () => {
   });
 
   it('all controls have valid framework values', () => {
-    const validFrameworks = ['SOC 2', 'GDPR', 'FERPA', 'ISO 27001', 'eIDAS', 'HIPAA'];
+    const validFrameworks = ['SOC 2', 'GDPR', 'FERPA', 'ISO 27001', 'eIDAS', 'HIPAA', 'Kenya DPA', 'APP', 'POPIA', 'NDPA'];
     for (const control of Object.values(COMPLIANCE_CONTROLS)) {
       expect(validFrameworks).toContain(control.framework);
     }
+  });
+
+  it('includes international framework controls (REG-27)', () => {
+    expect(COMPLIANCE_CONTROLS['KENYA-DPA-25']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['KENYA-DPA-25'].framework).toBe('Kenya DPA');
+    expect(COMPLIANCE_CONTROLS['KENYA-DPA-48']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['APP-8']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['APP-8'].framework).toBe('APP');
+    expect(COMPLIANCE_CONTROLS['APP-11']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['APP-13']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['POPIA-19']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['POPIA-19'].framework).toBe('POPIA');
+    expect(COMPLIANCE_CONTROLS['POPIA-72']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['NDPA-24']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['NDPA-24'].framework).toBe('NDPA');
+    expect(COMPLIANCE_CONTROLS['NDPA-43']).toBeDefined();
+  });
+
+  it('includes FERPA sub-controls for disclosure log and opt-out (REG-26)', () => {
+    expect(COMPLIANCE_CONTROLS['FERPA-99.31-DL']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['FERPA-99.31-DL'].framework).toBe('FERPA');
+    expect(COMPLIANCE_CONTROLS['FERPA-99.37']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['FERPA-99.37'].framework).toBe('FERPA');
+  });
+
+  it('includes HIPAA sub-controls for MFA, audit, and session (REG-26)', () => {
+    expect(COMPLIANCE_CONTROLS['HIPAA-164.312-MFA']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['HIPAA-164.312-AUDIT']).toBeDefined();
+    expect(COMPLIANCE_CONTROLS['HIPAA-164.312-SESSION']).toBeDefined();
   });
 });

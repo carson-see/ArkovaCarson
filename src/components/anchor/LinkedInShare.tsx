@@ -7,7 +7,8 @@
  */
 
 import { useState, useCallback } from 'react';
-import { Linkedin, Copy, Check, Code } from 'lucide-react';
+import { Copy, Check, Code } from 'lucide-react';
+import { LinkedinIcon as Linkedin } from '@/components/shared/SocialIcons';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,

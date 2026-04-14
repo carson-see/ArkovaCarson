@@ -18,7 +18,7 @@ export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
   id: string;
   /** Framework name */
-  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA';
+  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA';
   /** Human-readable control name */
   label: string;
   /** What this control proves about the anchor */
@@ -27,79 +27,56 @@ export interface ComplianceControl {
   color: string;
 }
 
+/** Framework badge colors — single source, keyed by framework name */
+const FRAMEWORK_COLORS: Record<ComplianceControl['framework'], string> = {
+  'SOC 2': 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  'GDPR': 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+  'FERPA': 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+  'ISO 27001': 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  'eIDAS': 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  'HIPAA': 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  'Kenya DPA': 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  'APP': 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  'POPIA': 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  'NDPA': 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+};
+
+/** Helper to build a control entry with color derived from framework */
+function ctrl(id: string, framework: ComplianceControl['framework'], label: string, description: string): ComplianceControl {
+  return { id, framework, label, description, color: FRAMEWORK_COLORS[framework] };
+}
+
 /** All known compliance controls */
 export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
-  'SOC2-CC6.1': {
-    id: 'SOC2-CC6.1',
-    framework: 'SOC 2',
-    label: 'SOC 2 CC6.1',
-    description: 'Logical and physical access controls — document integrity protected by cryptographic fingerprinting',
-    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  },
-  'SOC2-CC6.7': {
-    id: 'SOC2-CC6.7',
-    framework: 'SOC 2',
-    label: 'SOC 2 CC6.7',
-    description: 'Data integrity in transmission and storage — immutable anchor on public network',
-    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-  },
-  'GDPR-5.1f': {
-    id: 'GDPR-5.1f',
-    framework: 'GDPR',
-    label: 'GDPR Art. 5(1)(f)',
-    description: 'Integrity and confidentiality — document processed client-side, only fingerprint stored',
-    color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
-  },
-  'GDPR-25': {
-    id: 'GDPR-25',
-    framework: 'GDPR',
-    label: 'GDPR Art. 25',
-    description: 'Data protection by design — privacy-preserving architecture, no PII on server',
-    color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
-  },
-  'FERPA-99.31': {
-    id: 'FERPA-99.31',
-    framework: 'FERPA',
-    label: 'FERPA §99.31',
-    description: 'Education record disclosure controls — verification without exposing student records',
-    color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
-  },
-  'ISO27001-A.10': {
-    id: 'ISO27001-A.10',
-    framework: 'ISO 27001',
-    label: 'ISO 27001 A.10',
-    description: 'Cryptographic controls — SHA-256 fingerprinting with public network anchoring',
-    color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
-  },
-  'ISO27001-A.14': {
-    id: 'ISO27001-A.14',
-    framework: 'ISO 27001',
-    label: 'ISO 27001 A.14',
-    description: 'System acquisition, development and maintenance — tamper-evident record keeping',
-    color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
-  },
-  'eIDAS-25': {
-    id: 'eIDAS-25',
-    framework: 'eIDAS',
-    label: 'eIDAS Art. 25',
-    description: 'Electronic signatures and seals — timestamped cryptographic proof of document state',
-    color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  },
-  'eIDAS-35': {
-    id: 'eIDAS-35',
-    framework: 'eIDAS',
-    label: 'eIDAS Art. 35',
-    description: 'Qualified electronic time stamps — network-observed timestamp via public anchoring',
-    color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
-  },
-  'HIPAA-164.312': {
-    id: 'HIPAA-164.312',
-    framework: 'HIPAA',
-    label: 'HIPAA §164.312',
-    description: 'Technical safeguards — integrity controls and audit controls for electronic PHI',
-    color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
-  },
-} as const;
+  'SOC2-CC6.1': ctrl('SOC2-CC6.1', 'SOC 2', 'SOC 2 CC6.1', 'Logical and physical access controls — document integrity protected by cryptographic fingerprinting'),
+  'SOC2-CC6.7': ctrl('SOC2-CC6.7', 'SOC 2', 'SOC 2 CC6.7', 'Data integrity in transmission and storage — immutable anchor on public network'),
+  'GDPR-5.1f': ctrl('GDPR-5.1f', 'GDPR', 'GDPR Art. 5(1)(f)', 'Integrity and confidentiality — document processed client-side, only fingerprint stored'),
+  'GDPR-25': ctrl('GDPR-25', 'GDPR', 'GDPR Art. 25', 'Data protection by design — privacy-preserving architecture, no PII on server'),
+  'FERPA-99.31': ctrl('FERPA-99.31', 'FERPA', 'FERPA §99.31', 'Education record disclosure controls — verification without exposing student records'),
+  'FERPA-99.31-DL': ctrl('FERPA-99.31-DL', 'FERPA', 'FERPA §99.31 Disclosure Log', 'Audit log of all education record disclosures per §99.32 — who accessed, when, and legitimate interest'),
+  'FERPA-99.37': ctrl('FERPA-99.37', 'FERPA', 'FERPA §99.37 Directory Opt-Out', 'Directory information opt-out controls — students can restrict release of directory data'),
+  'ISO27001-A.10': ctrl('ISO27001-A.10', 'ISO 27001', 'ISO 27001 A.10', 'Cryptographic controls — SHA-256 fingerprinting with public network anchoring'),
+  'ISO27001-A.14': ctrl('ISO27001-A.14', 'ISO 27001', 'ISO 27001 A.14', 'System acquisition, development and maintenance — tamper-evident record keeping'),
+  'eIDAS-25': ctrl('eIDAS-25', 'eIDAS', 'eIDAS Art. 25', 'Electronic signatures and seals — timestamped cryptographic proof of document state'),
+  'eIDAS-35': ctrl('eIDAS-35', 'eIDAS', 'eIDAS Art. 35', 'Qualified electronic time stamps — network-observed timestamp via public anchoring'),
+  'HIPAA-164.312': ctrl('HIPAA-164.312', 'HIPAA', 'HIPAA §164.312', 'Technical safeguards — integrity controls and audit controls for electronic PHI'),
+  'HIPAA-164.312-MFA': ctrl('HIPAA-164.312-MFA', 'HIPAA', 'HIPAA §164.312(d) MFA', 'Person or entity authentication — multi-factor authentication enforced for PHI access'),
+  'HIPAA-164.312-AUDIT': ctrl('HIPAA-164.312-AUDIT', 'HIPAA', 'HIPAA §164.312(b) Audit', 'Audit controls — hardware, software, and procedural mechanisms to record PHI access'),
+  'HIPAA-164.312-SESSION': ctrl('HIPAA-164.312-SESSION', 'HIPAA', 'HIPAA §164.312(a)(2)(iii) Session', 'Automatic logoff — session timeout for inactive PHI access sessions'),
+  // International frameworks (REG-27)
+  'KENYA-DPA-25': ctrl('KENYA-DPA-25', 'Kenya DPA', 'Kenya DPA §25', 'Data protection principles — lawful, fair, and transparent processing of personal data'),
+  'KENYA-DPA-48': ctrl('KENYA-DPA-48', 'Kenya DPA', 'Kenya DPA §48', 'Cross-border transfer controls — Standard Contractual Clauses for international transfers'),
+  'APP-8': ctrl('APP-8', 'APP', 'APP 8', 'Cross-border disclosure — reasonable steps to ensure overseas recipient compliance'),
+  'APP-11': ctrl('APP-11', 'APP', 'APP 11', 'Security of personal information — reasonable steps to protect from misuse, interference, and loss'),
+  'APP-13': ctrl('APP-13', 'APP', 'APP 13', 'Correction of personal information — data correction workflow with 30-day response timeline'),
+  'POPIA-19': ctrl('POPIA-19', 'POPIA', 'POPIA §19', 'Security safeguards — appropriate technical and organizational measures for personal information'),
+  'POPIA-72': ctrl('POPIA-72', 'POPIA', 'POPIA §72', 'Transborder information flows — binding agreement required for cross-border transfers'),
+  'NDPA-24': ctrl('NDPA-24', 'NDPA', 'NDPA §24', 'Data protection principles — lawfulness, fairness, transparency, and purpose limitation'),
+  'NDPA-43': ctrl('NDPA-43', 'NDPA', 'NDPA §43', 'Cross-border transfer — adequate data protection level or Standard Contractual Clauses'),
+};
+
+/** All tracked frameworks — derived from COMPLIANCE_CONTROLS to avoid duplication */
+export const ALL_FRAMEWORKS = [...new Set(Object.values(COMPLIANCE_CONTROLS).map(c => c.framework))];
 
 type CredentialType =
   | 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT'
@@ -127,13 +104,13 @@ const UNIVERSAL_CONTROLS = [
  * beyond the universal controls.
  */
 const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
-  DEGREE: ['FERPA-99.31'],
-  TRANSCRIPT: ['FERPA-99.31'],
+  DEGREE: ['FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37'],
+  TRANSCRIPT: ['FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37'],
   CERTIFICATE: ['ISO27001-A.14'],
   LICENSE: ['ISO27001-A.14'],
   PROFESSIONAL: ['ISO27001-A.14'],
   CLE: ['ISO27001-A.14'],
-  INSURANCE: ['HIPAA-164.312'],
+  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION'],
   FINANCIAL: ['ISO27001-A.14'],
   SEC_FILING: ['ISO27001-A.14'],
   LEGAL: ['ISO27001-A.14', 'eIDAS-35'],

@@ -31,7 +31,7 @@ import { ROUTES } from '@/lib/routes';
 import { COMPLIANCE_LABELS } from '@/lib/copy';
 import { NessieIntelligencePanel } from '@/components/search/NessieIntelligencePanel';
 import { cn } from '@/lib/utils';
-import { COMPLIANCE_CONTROLS, getComplianceControls } from '@/lib/complianceMapping';
+import { COMPLIANCE_CONTROLS, ALL_FRAMEWORKS, getComplianceControls } from '@/lib/complianceMapping';
 import type { Database } from '@/types/database.types';
 import { ComplianceScoreGauge } from '@/components/compliance/ComplianceScoreGauge';
 import { GradeBadge } from '@/components/compliance/GradeBadge';
@@ -318,7 +318,7 @@ export function ComplianceDashboardPage() {
     : 0;
 
   // CML-04: Framework coverage computation
-  const allFrameworks = ['SOC 2', 'GDPR', 'ISO 27001', 'eIDAS', 'FERPA', 'HIPAA'] as const;
+  const allFrameworks = ALL_FRAMEWORKS;
   const coveredFrameworks = new Set<string>();
   const coveredControls: Array<{ id: string; framework: string; label: string; description: string }> = [];
   const missingControls: Array<{ id: string; framework: string; label: string; description: string }> = [];

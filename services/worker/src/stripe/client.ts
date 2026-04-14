@@ -20,7 +20,7 @@ import { mockStripeClient } from './mock.js';
  * and any future Stripe API calls.
  */
 export const stripe = new Stripe(config.stripeSecretKey, {
-  apiVersion: '2023-10-16',
+  apiVersion: '2026-03-25.dahlia',
   typescript: true,
 });
 

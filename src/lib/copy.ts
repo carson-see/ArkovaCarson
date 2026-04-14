@@ -1996,6 +1996,26 @@ export const HIPAA_LABELS = {
 } as const;
 
 // =============================================================================
+// DATA CORRECTION (REG-19 / APP 13)
+// =============================================================================
+
+export const DATA_CORRECTION_LABELS = {
+  TITLE: 'Request data correction',
+  DESCRIPTION: 'If any personal information we hold about you is incorrect, you can request a correction. We will respond within 30 days per APP 13.',
+  FIELD_LABEL: 'What needs to be corrected?',
+  FIELD_PLACEHOLDER: 'Describe the information that is incorrect and what the correct information should be.',
+  SUBMIT: 'Submit correction request',
+  SUBMITTING: 'Submitting...',
+  SUCCESS: 'Correction request submitted. We will respond within 30 days.',
+  ERROR: 'Failed to submit correction request. Please try again.',
+  PENDING_LABEL: 'Correction request history',
+  NO_PENDING: 'No pending correction requests.',
+  STATUS_PROCESSING: 'Processing',
+  STATUS_COMPLETED: 'Completed',
+  STATUS_REJECTED: 'Rejected',
+} as const;
+
+// =============================================================================
 // JURISDICTION PRIVACY NOTICES (REG-14)
 // =============================================================================
 
@@ -2018,4 +2038,8 @@ export const PRIVACY_NOTICE_LABELS = {
   RIGHTS_LABEL: 'Your Rights',
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
   BREACH_TIMELINE_LABEL: 'Breach Notification Timeline',
+  INFORMATION_OFFICER_LABEL: 'Information Officer',
 } as const;
+
+/** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
+export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';

@@ -9,7 +9,7 @@
 import { Shield, Scale, Globe } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { PRIVACY_NOTICE_LABELS } from '@/lib/copy';
+import { PRIVACY_NOTICE_LABELS, PRIVACY_CONTACT_EMAIL } from '@/lib/copy';
 
 interface JurisdictionNotice {
   id: string;
@@ -21,6 +21,7 @@ interface JurisdictionNotice {
   transferBasis: string;
   breachTimeline: string;
   color: string;
+  informationOfficer?: string;
 }
 
 const JURISDICTION_NOTICES: JurisdictionNotice[] = [
@@ -56,6 +57,7 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     transferBasis: 'Standard Contractual Clauses (Section 48)',
     breachTimeline: '72 hours (controller to ODPC)',
     color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+    informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
     id: 'australia',
@@ -78,6 +80,7 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     transferBasis: 'Section 72 binding agreement (SCCs)',
     breachTimeline: 'As soon as reasonably possible',
     color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+    informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
   {
     id: 'nigeria',
@@ -89,6 +92,7 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     transferBasis: 'Standard Contractual Clauses',
     breachTimeline: '72 hours (controller to NDPC)',
     color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+    informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
 ];
 
@@ -165,6 +169,20 @@ export function JurisdictionPrivacyNotices({ jurisdictions }: JurisdictionPrivac
                     ))}
                   </div>
                 </div>
+
+                {notice.informationOfficer && (
+                  <div>
+                    <p className="font-medium text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                      {PRIVACY_NOTICE_LABELS.INFORMATION_OFFICER_LABEL}
+                    </p>
+                    <a
+                      href={`mailto:${notice.informationOfficer}`}
+                      className="text-primary hover:underline text-sm"
+                    >
+                      {notice.informationOfficer}
+                    </a>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
