@@ -24,9 +24,10 @@ import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { toast } from 'sonner';
 import { ROUTES } from '@/lib/routes';
-import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS, PROFILE_LABELS } from '@/lib/copy';
+import { NAV_LABELS, USER_ROLE_LABELS, IDENTITY_LABELS, NAV_POLISH_LABELS, SHARE_LABELS, ACCOUNT_DELETE_LABELS, PROFILE_LABELS, DATA_CORRECTION_LABELS } from '@/lib/copy';
 import { DeleteAccountDialog } from '@/components/auth/DeleteAccountDialog';
 import { ExportDataButton } from '@/components/auth/ExportDataButton';
+import { DataCorrectionForm } from '@/components/auth/DataCorrectionForm';
 import { TwoFactorSetup } from '@/components/auth/TwoFactorSetup';
 import { IdentityVerification } from '@/components/auth/IdentityVerification';
 import { UserVerifiedBadge } from '@/components/shared/VerifiedBadge';
@@ -502,6 +503,22 @@ export function SettingsPage() {
           </CardHeader>
           <CardContent>
             <ExportDataButton />
+          </CardContent>
+        </Card>
+
+        {/* Data Correction — REG-19 / APP 13 (SCRUM-580) */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              {DATA_CORRECTION_LABELS.TITLE}
+            </CardTitle>
+            <CardDescription>
+              {DATA_CORRECTION_LABELS.DESCRIPTION}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DataCorrectionForm />
           </CardContent>
         </Card>
 

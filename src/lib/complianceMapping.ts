@@ -18,7 +18,7 @@ export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
   id: string;
   /** Framework name */
-  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA';
+  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA';
   /** Human-readable control name */
   label: string;
   /** What this control proves about the anchor */
@@ -64,6 +64,20 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
     description: 'Education record disclosure controls — verification without exposing student records',
     color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
   },
+  'FERPA-99.31-DL': {
+    id: 'FERPA-99.31-DL',
+    framework: 'FERPA',
+    label: 'FERPA §99.31 Disclosure Log',
+    description: 'Audit log of all education record disclosures per §99.32 — who accessed, when, and legitimate interest',
+    color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+  },
+  'FERPA-99.37': {
+    id: 'FERPA-99.37',
+    framework: 'FERPA',
+    label: 'FERPA §99.37 Directory Opt-Out',
+    description: 'Directory information opt-out controls — students can restrict release of directory data',
+    color: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+  },
   'ISO27001-A.10': {
     id: 'ISO27001-A.10',
     framework: 'ISO 27001',
@@ -99,6 +113,91 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
     description: 'Technical safeguards — integrity controls and audit controls for electronic PHI',
     color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   },
+  'HIPAA-164.312-MFA': {
+    id: 'HIPAA-164.312-MFA',
+    framework: 'HIPAA',
+    label: 'HIPAA §164.312(d) MFA',
+    description: 'Person or entity authentication — multi-factor authentication enforced for PHI access',
+    color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  },
+  'HIPAA-164.312-AUDIT': {
+    id: 'HIPAA-164.312-AUDIT',
+    framework: 'HIPAA',
+    label: 'HIPAA §164.312(b) Audit',
+    description: 'Audit controls — hardware, software, and procedural mechanisms to record PHI access',
+    color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  },
+  'HIPAA-164.312-SESSION': {
+    id: 'HIPAA-164.312-SESSION',
+    framework: 'HIPAA',
+    label: 'HIPAA §164.312(a)(2)(iii) Session',
+    description: 'Automatic logoff — session timeout for inactive PHI access sessions',
+    color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  },
+  // International frameworks (REG-27)
+  'KENYA-DPA-25': {
+    id: 'KENYA-DPA-25',
+    framework: 'Kenya DPA',
+    label: 'Kenya DPA §25',
+    description: 'Data protection principles — lawful, fair, and transparent processing of personal data',
+    color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  },
+  'KENYA-DPA-48': {
+    id: 'KENYA-DPA-48',
+    framework: 'Kenya DPA',
+    label: 'Kenya DPA §48',
+    description: 'Cross-border transfer controls — Standard Contractual Clauses for international transfers',
+    color: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  },
+  'APP-8': {
+    id: 'APP-8',
+    framework: 'APP',
+    label: 'APP 8',
+    description: 'Cross-border disclosure — reasonable steps to ensure overseas recipient compliance',
+    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  },
+  'APP-11': {
+    id: 'APP-11',
+    framework: 'APP',
+    label: 'APP 11',
+    description: 'Security of personal information — reasonable steps to protect from misuse, interference, and loss',
+    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  },
+  'APP-13': {
+    id: 'APP-13',
+    framework: 'APP',
+    label: 'APP 13',
+    description: 'Correction of personal information — data correction workflow with 30-day response timeline',
+    color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  },
+  'POPIA-19': {
+    id: 'POPIA-19',
+    framework: 'POPIA',
+    label: 'POPIA §19',
+    description: 'Security safeguards — appropriate technical and organizational measures for personal information',
+    color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  },
+  'POPIA-72': {
+    id: 'POPIA-72',
+    framework: 'POPIA',
+    label: 'POPIA §72',
+    description: 'Transborder information flows — binding agreement required for cross-border transfers',
+    color: 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
+  },
+  'NDPA-24': {
+    id: 'NDPA-24',
+    framework: 'NDPA',
+    label: 'NDPA §24',
+    description: 'Data protection principles — lawfulness, fairness, transparency, and purpose limitation',
+    color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+  },
+  'NDPA-43': {
+    id: 'NDPA-43',
+    framework: 'NDPA',
+    label: 'NDPA §43',
+    description: 'Cross-border transfer — adequate data protection level or Standard Contractual Clauses',
+    color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+  },
 } as const;
 
 type CredentialType =
@@ -127,13 +226,13 @@ const UNIVERSAL_CONTROLS = [
  * beyond the universal controls.
  */
 const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
-  DEGREE: ['FERPA-99.31'],
-  TRANSCRIPT: ['FERPA-99.31'],
+  DEGREE: ['FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37'],
+  TRANSCRIPT: ['FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37'],
   CERTIFICATE: ['ISO27001-A.14'],
   LICENSE: ['ISO27001-A.14'],
   PROFESSIONAL: ['ISO27001-A.14'],
   CLE: ['ISO27001-A.14'],
-  INSURANCE: ['HIPAA-164.312'],
+  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION'],
   FINANCIAL: ['ISO27001-A.14'],
   SEC_FILING: ['ISO27001-A.14'],
   LEGAL: ['ISO27001-A.14', 'eIDAS-35'],

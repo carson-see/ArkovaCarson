@@ -21,7 +21,9 @@ describe('getComplianceControlIds', () => {
   it('adds FERPA for DEGREE', () => {
     const ids = getComplianceControlIds('DEGREE');
     expect(ids).toContain('FERPA-99.31');
-    expect(ids).toHaveLength(8);
+    expect(ids).toContain('FERPA-99.31-DL');
+    expect(ids).toContain('FERPA-99.37');
+    expect(ids).toHaveLength(10);
   });
 
   it('adds FERPA for TRANSCRIPT', () => {
@@ -37,6 +39,9 @@ describe('getComplianceControlIds', () => {
   it('adds HIPAA for INSURANCE', () => {
     const ids = getComplianceControlIds('INSURANCE');
     expect(ids).toContain('HIPAA-164.312');
+    expect(ids).toContain('HIPAA-164.312-MFA');
+    expect(ids).toContain('HIPAA-164.312-AUDIT');
+    expect(ids).toContain('HIPAA-164.312-SESSION');
   });
 
   it('adds multiple type-specific controls for LEGAL', () => {
@@ -71,7 +76,8 @@ describe('getComplianceControlIds', () => {
     const ids = getComplianceControlIds('DEGREE');
     const knownFrontendIds = [
       'SOC2-CC6.1', 'SOC2-CC6.7', 'GDPR-5.1f', 'GDPR-25',
-      'ISO27001-A.10', 'eIDAS-25', 'eIDAS-35', 'FERPA-99.31',
+      'ISO27001-A.10', 'eIDAS-25', 'eIDAS-35',
+      'FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37',
     ];
     for (const expected of knownFrontendIds) {
       expect(ids).toContain(expected);

@@ -59,4 +59,47 @@ describe('JurisdictionPrivacyNotices — REG-14', () => {
     expect(text).toContain('Nigeria');
     expect(text).toContain('NDPC');
   });
+
+  it('shows South Africa POPIA notice with Information Regulator details (REG-22)', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['south-africa']} />);
+
+    const allText = document.body.textContent ?? '';
+    expect(allText).toContain('POPIA');
+    expect(allText).toContain('Information Regulator');
+    expect(allText).toContain('Section 23');
+    expect(allText).toContain('Section 24');
+    expect(allText).toContain('Section 72');
+  });
+
+  it('shows Nigeria NDPA notice with NDPC details (REG-25)', () => {
+    render(<JurisdictionPrivacyNotices jurisdictions={['nigeria']} />);
+
+    const allText = document.body.textContent ?? '';
+    expect(allText).toContain('Nigeria Data Protection Act 2023');
+    expect(allText).toContain('NDPC');
+    expect(allText).toContain('Access');
+    expect(allText).toContain('Rectification');
+    expect(allText).toContain('Erasure');
+    expect(allText).toContain('72 hours');
+  });
+
+  it('shows Information Officer contact for African jurisdictions (REG-28)', () => {
+    render(<JurisdictionPrivacyNotices />);
+
+    const links = document.querySelectorAll('a[href="mailto:privacy@arkova.ai"]');
+    // Kenya, South Africa, and Nigeria should all show the DPO email
+    expect(links.length).toBe(3);
+  });
+
+  it('shows cross-border transfer basis for all jurisdictions', () => {
+    render(<JurisdictionPrivacyNotices />);
+
+    const allText = document.body.textContent ?? '';
+    // SA
+    expect(allText).toContain('Section 72 binding agreement');
+    // Nigeria
+    expect(allText).toContain('Standard Contractual Clauses');
+    // Kenya
+    expect(allText).toContain('Section 48');
+  });
 });

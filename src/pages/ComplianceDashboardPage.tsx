@@ -318,7 +318,7 @@ export function ComplianceDashboardPage() {
     : 0;
 
   // CML-04: Framework coverage computation
-  const allFrameworks = ['SOC 2', 'GDPR', 'ISO 27001', 'eIDAS', 'FERPA', 'HIPAA'] as const;
+  const allFrameworks = ['SOC 2', 'GDPR', 'ISO 27001', 'eIDAS', 'FERPA', 'HIPAA', 'Kenya DPA', 'APP', 'POPIA', 'NDPA'] as const;
   const coveredFrameworks = new Set<string>();
   const coveredControls: Array<{ id: string; framework: string; label: string; description: string }> = [];
   const missingControls: Array<{ id: string; framework: string; label: string; description: string }> = [];
