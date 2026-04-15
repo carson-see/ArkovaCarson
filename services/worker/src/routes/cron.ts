@@ -54,6 +54,9 @@ import { fetchCertificationRecords } from '../jobs/certificationFetcher.js';
 import { fetchIpedsInstitutions } from '../jobs/ipedsFetcher.js';
 import { fetchKenyaComplianceData } from '../jobs/kenyaLawFetcher.js';
 import { fetchAustraliaComplianceData } from '../jobs/australiaLawFetcher.js';
+import { fetchEcfrRegulations } from '../jobs/ecfrFetcher.js';
+import { fetchEnforcementActions } from '../jobs/enforcementFetcher.js';
+import { fetchContinuingEducationData } from '../jobs/ceFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
@@ -858,6 +861,39 @@ cronRouter.post('/fetch-australia', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Australia compliance data fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NCX-01: eCFR Federal Regulations Fetcher ───
+cronRouter.post('/fetch-ecfr', async (_req, res) => {
+  try {
+    const result = await fetchEcfrRegulations(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'eCFR fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NCX-02: Enforcement Actions Fetcher ───
+cronRouter.post('/fetch-enforcement', async (_req, res) => {
+  try {
+    const result = await fetchEnforcementActions(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Enforcement action fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── NCX-03/04: Continuing Education (NASBA + ACCME) ───
+cronRouter.post('/fetch-continuing-education', async (_req, res) => {
+  try {
+    const result = await fetchContinuingEducationData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Continuing education fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
