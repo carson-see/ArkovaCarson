@@ -1,38 +1,16 @@
 /**
- * KAU-03: Australian Privacy Act 1988 + APP Guidelines Fetcher
- * KAU-04: Australian Court Cases + ACNC Enforcement
- *
- * Ingests Australian compliance data for Nessie and Gemini training:
- * - Privacy Act 1988 (full text sections)
- * - Australian Privacy Principles (APP 1-13)
- * - OAIC (Office of the Australian Information Commissioner) determinations
- * - Federal Court of Australia decisions via AustLII
- * - ACNC enforcement actions
- *
- * Sources:
- * - legislation.gov.au (public, free — Commonwealth legislation)
- * - austlii.edu.au (public, free — Australian Legal Information Institute)
- * - oaic.gov.au (public — OAIC enforcement)
- *
- * Gated by ENABLE_PUBLIC_RECORDS_INGESTION switchboard flag.
+ * KAU-03/04: Australia compliance data fetcher.
+ * Thin wrapper around jurisdictionFetcher with Australian statutes and case law config.
  */
 
-import { logger } from '../utils/logger.js';
-import { computeContentHash, delay } from '../utils/pipeline.js';
+import { fetchJurisdictionCompliance, type JurisdictionFetchResult, type StatuteDefinition } from './jurisdictionFetcher.js';
+import { computeContentHash } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const RATE_LIMIT_MS = 500;
-const MAX_PER_RUN = 500;
-const INSERT_BATCH_SIZE = 50;
-
-/** AustLII search API */
-const AUSTLII_SEARCH_URL = 'http://www8.austlii.edu.au/cgi-bin/sinosrch.cgi';
-
-/** Key Australian statutes for compliance training */
-const AU_STATUTES = [
+const AU_STATUTES: StatuteDefinition[] = [
   {
     title: 'Privacy Act 1988 (Cth)',
-    source_id: 'AU-PA-1988',
+    sourceId: 'AU-PA-1988',
     url: 'https://www.legislation.gov.au/C2004A03712/latest/text',
     sections: [
       { id: 'AU-PA-1988-S6', title: 'Interpretation — definitions', section: 'Part I' },
@@ -52,7 +30,7 @@ const AU_STATUTES = [
   },
   {
     title: 'Australian Privacy Principles (Schedule 1)',
-    source_id: 'AU-APP',
+    sourceId: 'AU-APP',
     url: 'https://www.oaic.gov.au/privacy/australian-privacy-principles',
     sections: [
       { id: 'AU-APP-01', title: 'APP 1 — Open and transparent management of personal information', section: 'Schedule 1' },
@@ -72,7 +50,7 @@ const AU_STATUTES = [
   },
   {
     title: 'Notifiable Data Breaches Scheme Guidelines',
-    source_id: 'AU-NDB',
+    sourceId: 'AU-NDB',
     url: 'https://www.oaic.gov.au/privacy/notifiable-data-breaches',
     sections: [
       { id: 'AU-NDB-01', title: 'What is an eligible data breach', section: 'NDB Scheme' },
@@ -84,206 +62,40 @@ const AU_STATUTES = [
   },
 ];
 
-interface AustraliaFetchResult {
-  statutesInserted: number;
-  casesInserted: number;
-  skipped: number;
-  errors: number;
-}
-
-/**
- * Ingest Australian statutory text as structured records.
- */
-async function ingestAustralianStatutes(
-  supabase: SupabaseClient,
-): Promise<{ inserted: number; skipped: number; errors: number }> {
-  let inserted = 0;
-  let skipped = 0;
-  let errors = 0;
-  const batch: Array<Record<string, unknown>> = [];
-
-  for (const statute of AU_STATUTES) {
-    for (const section of statute.sections) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: existing } = await (supabase as any)
-        .from('public_records')
-        .select('id')
-        .eq('source', 'australia_law')
-        .eq('source_id', section.id)
-        .limit(1);
-
-      if (existing && existing.length > 0) { skipped++; continue; }
-
-      batch.push({
-        source: 'australia_law',
-        source_id: section.id,
-        source_url: statute.url,
-        record_type: 'regulation',
-        title: `${statute.title} — ${section.title}`,
-        content_hash: computeContentHash(JSON.stringify({
-          statute: statute.source_id, section: section.id, title: section.title,
-        })),
-        metadata: {
-          statute_name: statute.title,
-          statute_id: statute.source_id,
-          section_id: section.id,
-          section_title: section.title,
-          part: section.section,
-          jurisdiction: 'Australia',
-          jurisdiction_code: 'AU',
-          pipeline_source: 'australia_law',
-        },
-      });
-
-      if (batch.length >= INSERT_BATCH_SIZE) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { error } = await (supabase as any)
-          .from('public_records')
-          .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
-        if (error) { errors += batch.length; } else { inserted += batch.length; }
-        batch.length = 0;
-      }
-    }
-  }
-
-  if (batch.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from('public_records')
-      .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
-    if (error) { errors += batch.length; } else { inserted += batch.length; }
-  }
-
-  return { inserted, skipped, errors };
-}
-
-/**
- * Fetch Australian court decisions from AustLII.
- */
-async function fetchAustralianCaseLaw(
-  supabase: SupabaseClient,
-): Promise<{ inserted: number; skipped: number; errors: number }> {
-  let inserted = 0;
-  let skipped = 0;
-  let errors = 0;
-
-  const searchTerms = [
-    'privacy breach notification',
-    'Australian Privacy Principle',
-    'data protection personal information',
-    'ACNC charity compliance',
-    'health practitioner registration',
-  ];
-
-  const batch: Array<Record<string, unknown>> = [];
-
-  for (const term of searchTerms) {
-    if (inserted + skipped >= MAX_PER_RUN) break;
-
-    try {
-      const params = new URLSearchParams({
-        query: term,
-        meta: '/au/cases/cth/FCA',
-        results: '20',
-        method: 'auto',
-      });
-
-      const response = await fetch(`${AUSTLII_SEARCH_URL}?${params}`, {
-        headers: { Accept: 'text/html' },
-      });
-
-      if (!response.ok) {
-        logger.warn({ term, status: response.status }, 'AustLII search failed');
-        errors++;
-        continue;
-      }
-
-      const html = await response.text();
-
-      // Parse case links from AustLII HTML results
-      const caseMatches = html.matchAll(/<a href="(\/cgi-bin\/viewdoc\/au\/cases\/cth\/[^"]+)"[^>]*>([^<]+)<\/a>/gi);
-
-      for (const match of caseMatches) {
-        if (inserted + skipped >= MAX_PER_RUN) break;
-
-        const casePath = match[1];
-        const caseTitle = match[2]?.trim();
-        if (!caseTitle || caseTitle.length < 5) continue;
-
-        const caseId = casePath.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 100);
-
-        batch.push({
-          source: 'australia_caselaw',
-          source_id: `AU-CASE-${caseId}`,
-          source_url: `http://www.austlii.edu.au${casePath}`,
-          record_type: 'court_decision',
-          title: caseTitle,
-          content_hash: computeContentHash(JSON.stringify({ path: casePath, title: caseTitle })),
-          metadata: {
-            case_title: caseTitle,
-            court: 'Federal Court of Australia',
-            austlii_path: casePath,
-            search_term: term,
-            jurisdiction: 'Australia',
-            jurisdiction_code: 'AU',
-            pipeline_source: 'australia_caselaw',
-          },
-        });
-
-        if (batch.length >= INSERT_BATCH_SIZE) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const { error } = await (supabase as any)
-            .from('public_records')
-            .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
-          if (error) { errors += batch.length; } else { inserted += batch.length; }
-          batch.length = 0;
-        }
-      }
-
-      await delay(RATE_LIMIT_MS);
-    } catch (err) {
-      logger.error({ term, error: err }, 'Australian case law fetch failed');
-      errors++;
-    }
-  }
-
-  if (batch.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (supabase as any)
-      .from('public_records')
-      .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
-    if (error) { errors += batch.length; } else { inserted += batch.length; }
-  }
-
-  return { inserted, skipped, errors };
-}
-
-/**
- * Fetch Australian regulatory and legal data for Nessie/Gemini training.
- */
 export async function fetchAustraliaComplianceData(
   supabase: SupabaseClient,
-): Promise<AustraliaFetchResult> {
-  const { data: enabled } = await supabase.rpc('get_flag', {
-    p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
+): Promise<JurisdictionFetchResult> {
+  return fetchJurisdictionCompliance(supabase, {
+    jurisdiction: 'Australia',
+    jurisdictionCode: 'AU',
+    statuteSource: 'australia_law',
+    statutes: AU_STATUTES,
+    caseLaw: {
+      searchUrl: 'http://www8.austlii.edu.au/cgi-bin/sinosrch.cgi?query={TERM}&meta=/au/cases/cth/FCA&results=20&method=auto',
+      searchTerms: [
+        'privacy breach notification',
+        'Australian Privacy Principle',
+        'data protection personal information',
+        'ACNC charity compliance',
+        'health practitioner registration',
+      ],
+      source: 'australia_caselaw',
+      court: 'Federal Court of Australia',
+      parseResults: (html) => {
+        const cases: Array<{ id: string; title: string; url: string }> = [];
+        const matches = html.matchAll(/<a href="(\/cgi-bin\/viewdoc\/au\/cases\/cth\/[^"]+)"[^>]*>([^<]+)<\/a>/gi);
+        for (const m of matches) {
+          const path = m[1];
+          const title = m[2]?.trim();
+          if (!title || title.length < 5) continue;
+          cases.push({
+            id: `AU-CASE-${path.replace(/[^a-zA-Z0-9]/g, '-').slice(0, 100)}`,
+            title,
+            url: `http://www.austlii.edu.au${path}`,
+          });
+        }
+        return cases;
+      },
+    },
   });
-  if (!enabled) {
-    logger.info('ENABLE_PUBLIC_RECORDS_INGESTION disabled — skipping Australia compliance fetch');
-    return { statutesInserted: 0, casesInserted: 0, skipped: 0, errors: 0 };
-  }
-
-  logger.info('Starting Australia compliance data fetch (KAU-03/04)');
-
-  const statutes = await ingestAustralianStatutes(supabase);
-  const cases = await fetchAustralianCaseLaw(supabase);
-
-  const result: AustraliaFetchResult = {
-    statutesInserted: statutes.inserted,
-    casesInserted: cases.inserted,
-    skipped: statutes.skipped + cases.skipped,
-    errors: statutes.errors + cases.errors,
-  };
-
-  logger.info(result, 'Australia compliance data fetch complete');
-  return result;
 }
