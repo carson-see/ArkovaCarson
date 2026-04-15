@@ -33,7 +33,7 @@ export interface CrossFieldCheckResult {
  * and Oregon ODA unaccredited school list.
  * Lowercase for case-insensitive matching.
  */
-const KNOWN_DIPLOMA_MILLS: string[] = [
+export const KNOWN_DIPLOMA_MILLS: string[] = [
   // Original 24
   'belford university',
   'belford high school',
@@ -109,7 +109,7 @@ const KNOWN_DIPLOMA_MILLS: string[] = [
 /**
  * Suspicious name patterns that suggest unaccredited institutions.
  */
-const SUSPICIOUS_ISSUER_PATTERNS: RegExp[] = [
+export const SUSPICIOUS_ISSUER_PATTERNS: RegExp[] = [
   /universal\s+life\s+church/i,
   /university\s+of\s+nowhere/i,
   /degree\s+mill/i,
