@@ -629,15 +629,18 @@ export function PipelineAdminPage() {
               </div>
             </div>
 
-            {/* Federal / Compliance Sources */}
+            {/* 🇺🇸 Federal / Compliance Sources */}
             <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Federal &amp; Compliance</h4>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇺🇸 Federal &amp; Compliance</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <JobButton path="fetch-edgar" label="SEC EDGAR" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
                 <JobButton path="fetch-federal-register" label="Federal Register" icon={<BookOpen className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Gavel className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
                 <JobButton path="fetch-all-state-bills" label="State Bills (CA/NY/TX)" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
                 <JobButton path="fetch-sam-entities" label="SAM.gov" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-ecfr" label="eCFR Regulations" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-enforcement" label="HHS Enforcement" icon={<Shield className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-ce" label="NASBA/ACCME CE" icon={<Award className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -668,12 +671,28 @@ export function PipelineAdminPage() {
               </div>
             </div>
 
-            {/* Business & International */}
+            {/* Business Entities */}
             <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Business &amp; International</h4>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🏢 Business Entities</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 <JobButton path="fetch-sos" label="State SOS Entities" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-acnc" label="ACNC Charities (AU)" icon={<Heart className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇦🇺 Australia */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇦🇺 Australia</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-australia" label="AU Compliance (AHPRA/TEQSA/ASIC)" icon={<Globe className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-acnc" label="ACNC Charities" icon={<Heart className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇰🇪 Kenya */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇰🇪 Kenya</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-kenya" label="KE Compliance (KNEC/LSK/ODPC)" icon={<Globe className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
               </div>
             </div>
 
