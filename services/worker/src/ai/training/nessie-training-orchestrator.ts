@@ -19,7 +19,7 @@ import { createHash } from 'node:crypto';
 import { logger } from '../../utils/logger.js';
 import { EXTRACTION_SYSTEM_PROMPT } from '../prompts/extraction.js';
 import { FULL_GOLDEN_DATASET } from '../eval/golden-dataset.js';
-import { V4_TRAINING_DEFAULTS, computeRealisticConfidence, mixGeneralData } from './nessie-v4-data.js';
+import { V4_TRAINING_DEFAULTS, computeRealisticConfidence } from './nessie-v4-data.js';
 import { generateFraudTrainingData } from './fraud-training-pipeline.js';
 import type { GoldenDatasetEntry } from '../eval/types.js';
 
@@ -145,7 +145,6 @@ export async function runNessieTraining(
     dryRun = true,
     maxPerType = 500,
     includeFraud = true,
-    generalDataMixRatio = V4_TRAINING_DEFAULTS.generalDataMixRatio,
   } = config;
 
   logger.info('[nessie-training] Starting training data export...');
@@ -192,8 +191,8 @@ export async function runNessieTraining(
   // Step 3: Generate fraud training examples
   let fraudExamples: TrainingMessage[] = [];
   if (includeFraud) {
-    const fraudResult = generateFraudTrainingData({ maxExamples: 500 });
-    fraudExamples = fraudResult.examples.map(ex => ({
+    const fraudResult = generateFraudTrainingData({ outputPath: '/tmp/fraud-training.jsonl', returnExamples: true });
+    fraudExamples = (fraudResult.examples ?? []).map(ex => ({
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         { role: 'user', content: `Extract metadata from the following PII-stripped credential text.\n\n--- BEGIN CREDENTIAL TEXT ---\n${ex.input}\n--- END CREDENTIAL TEXT ---\n\nReturn a JSON object with the extracted fields, a "confidence" number (0.0 to 1.0), and a "fraudSignals" array.` },
@@ -208,11 +207,8 @@ export async function runNessieTraining(
   allExamples = deduplicateExamples(allExamples);
   logger.info(`[nessie-training] After dedup: ${allExamples.length} examples`);
 
-  // Step 5: Mix general data (prevent catastrophic forgetting)
-  const generalExamples = mixGeneralData(allExamples as Array<{ messages: Array<{ role: string; content: string }> }>, generalDataMixRatio);
-  const generalCount = generalExamples.length - allExamples.length;
-  allExamples = generalExamples as TrainingMessage[];
-  logger.info(`[nessie-training] After general data mix (${(generalDataMixRatio * 100).toFixed(0)}%): ${allExamples.length} total (${generalCount} general)`);
+  // Step 5: General data mixing skipped at build time — handled by nessie-v4-data.ts at training time
+  const generalCount = 0;
 
   // Step 6: Write JSONL
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
