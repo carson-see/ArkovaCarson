@@ -31,6 +31,11 @@ export interface GroundTruthFields {
   approvedBy?: string;
   // Fraud signals
   fraudSignals?: string[];
+  // GRE-02: Reasoning fields (optional — existing entries don't need these)
+  /** Expected reasoning pattern (for eval — does Gemini's reasoning match?) */
+  reasoning?: string;
+  /** Expected concerns (for eval) */
+  concerns?: string[];
 }
 
 /**
