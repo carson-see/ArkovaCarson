@@ -88,23 +88,21 @@ const PAGE_SIZE = 25;
 
 // ─── Pipeline Region + Source Config (module-scope to avoid re-allocation per render) ───
 
-type PipelineRegion = 'us' | 'au' | 'ke' | 'my' | 'eu' | 'uk' | 'latam' | 'sea' | 'in' | 'intl' | 'global';
+type PipelineRegion = 'us' | 'au' | 'ke' | 'eu' | 'uk' | 'latam' | 'sea' | 'intl' | 'global';
 
 const REGION_LABELS: Record<PipelineRegion, string> = {
   us: '🇺🇸 United States',
   au: '🇦🇺 Australia',
   ke: '🇰🇪 Kenya',
-  my: '🇲🇾 Malaysia',
   eu: '🇪🇺 European Union',
   uk: '🇬🇧 United Kingdom',
   latam: '🇧🇷 Latin America',
   sea: '🇸🇬 Southeast Asia',
-  in: '🇮🇳 India',
   global: '🌐 Global',
   intl: '🌍 International',
 };
 
-const REGION_ORDER: PipelineRegion[] = ['us', 'au', 'ke', 'my', 'eu', 'uk', 'latam', 'sea', 'in', 'global', 'intl'];
+const REGION_ORDER: PipelineRegion[] = ['us', 'au', 'ke', 'eu', 'uk', 'latam', 'sea', 'global', 'intl'];
 
 const ICON_4 = 'h-4 w-4';
 const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: Array<{ path: string; label: string; icon: React.ReactNode }> }> = [
@@ -116,24 +114,15 @@ const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: Array<{ path: str
     { path: 'fetch-kenya', label: 'KE Compliance (KNEC/LSK/ODPC)', icon: <Globe className={ICON_4} /> },
   ]},
   { heading: '🇪🇺 European Union', jobs: [
-    { path: 'fetch-eurlex', label: 'EUR-Lex Legislation', icon: <ScrollText className={ICON_4} /> },
-    { path: 'fetch-edpb', label: 'EDPB GDPR Decisions', icon: <Shield className={ICON_4} /> },
+    { path: 'fetch-eurlex', label: 'EUR-Lex Legislation (needs key)', icon: <ScrollText className={ICON_4} /> },
   ]},
   { heading: '🇬🇧 United Kingdom', jobs: [
-    { path: 'fetch-fca-uk', label: 'FCA Financial Register', icon: <TrendingUp className={ICON_4} /> },
-    { path: 'fetch-companies-house', label: 'Companies House', icon: <Building2 className={ICON_4} /> },
-  ]},
-  { heading: '🇲🇾 Malaysia', jobs: [
-    { path: 'fetch-mysc', label: 'SSM Companies Commission', icon: <Building2 className={ICON_4} /> },
-    { path: 'fetch-mympc', label: 'MPC Medical Practitioners', icon: <Stethoscope className={ICON_4} /> },
+    { path: 'fetch-fca-uk', label: 'FCA Register (needs key)', icon: <TrendingUp className={ICON_4} /> },
+    { path: 'fetch-companies-house', label: 'Companies House (needs key)', icon: <Building2 className={ICON_4} /> },
   ]},
   { heading: '🇸🇬 Southeast Asia', jobs: [
     { path: 'fetch-acra-sg', label: 'ACRA Singapore Companies', icon: <Building2 className={ICON_4} /> },
     { path: 'fetch-moh-sg', label: 'MOH Singapore Healthcare', icon: <Stethoscope className={ICON_4} /> },
-  ]},
-  { heading: '🇮🇳 India', jobs: [
-    { path: 'fetch-mca-in', label: 'MCA India Companies', icon: <Building2 className={ICON_4} /> },
-    { path: 'fetch-nmc-in', label: 'NMC India Medical Council', icon: <Stethoscope className={ICON_4} /> },
   ]},
   { heading: '🇧🇷 Latin America', jobs: [
     { path: 'fetch-cnpj-br', label: 'CNPJ Brazil Companies', icon: <Building2 className={ICON_4} /> },
@@ -453,23 +442,16 @@ export function PipelineAdminPage() {
     // ─── International / Global ───
     openalex: { icon: <Globe className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic', region: 'global' },
     mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other', region: 'global' },
-    // 🇲🇾 Malaysia
-    mysc: { icon: <Building2 className="h-4 w-4" />, label: 'SSM Companies Commission', category: 'compliance', region: 'my' },
-    mympc: { icon: <Stethoscope className="h-4 w-4" />, label: 'MPC Medical Practitioners', category: 'medical', region: 'my' },
     // 🇪🇺 European Union
-    eurlex: { icon: <ScrollText className="h-4 w-4" />, label: 'EUR-Lex EU Legislation', category: 'compliance', region: 'eu' },
-    edpb: { icon: <Shield className="h-4 w-4" />, label: 'EDPB GDPR Decisions', category: 'compliance', region: 'eu' },
+    eurlex: { icon: <ScrollText className="h-4 w-4" />, label: 'EUR-Lex Legislation (needs key)', category: 'compliance', region: 'eu' },
     // 🇬🇧 United Kingdom
-    fca_uk: { icon: <TrendingUp className="h-4 w-4" />, label: 'FCA Financial Register', category: 'financial', region: 'uk' },
-    companies_house: { icon: <Building2 className="h-4 w-4" />, label: 'Companies House', category: 'compliance', region: 'uk' },
+    fca_uk: { icon: <TrendingUp className="h-4 w-4" />, label: 'FCA Register (needs key)', category: 'financial', region: 'uk' },
+    companies_house: { icon: <Building2 className="h-4 w-4" />, label: 'Companies House (needs key)', category: 'compliance', region: 'uk' },
     // 🇧🇷 Latin America
     cnpj_br: { icon: <Building2 className="h-4 w-4" />, label: 'CNPJ Brazil Companies', category: 'compliance', region: 'latam' },
     // 🇸🇬 Southeast Asia
     acra_sg: { icon: <Building2 className="h-4 w-4" />, label: 'ACRA Singapore Companies', category: 'compliance', region: 'sea' },
     moh_sg: { icon: <Stethoscope className="h-4 w-4" />, label: 'MOH Singapore Healthcare', category: 'medical', region: 'sea' },
-    // 🇮🇳 India
-    mca_in: { icon: <Building2 className="h-4 w-4" />, label: 'MCA India Companies', category: 'compliance', region: 'in' },
-    nmc_in: { icon: <Stethoscope className="h-4 w-4" />, label: 'NMC India Medical Council', category: 'medical', region: 'in' },
   };
 
   // REGION_LABELS and REGION_ORDER are at module scope

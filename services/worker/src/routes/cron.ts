@@ -57,6 +57,9 @@ import { fetchAustraliaComplianceData } from '../jobs/australiaLawFetcher.js';
 import { fetchEcfrRegulations } from '../jobs/ecfrFetcher.js';
 import { fetchEnforcementActions } from '../jobs/enforcementFetcher.js';
 import { fetchContinuingEducationData } from '../jobs/ceFetcher.js';
+import { fetchAcraSgCompanies } from '../jobs/singaporeFetcher.js';
+import { fetchMohSgProviders } from '../jobs/singaporeHealthFetcher.js';
+import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
@@ -894,6 +897,41 @@ cronRouter.post('/fetch-continuing-education', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Continuing education fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── International: Singapore (ACRA + MOH) ───
+
+cronRouter.post('/fetch-acra-sg', async (_req, res) => {
+  try {
+    const result = await fetchAcraSgCompanies(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'ACRA SG fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/fetch-moh-sg', async (_req, res) => {
+  try {
+    const result = await fetchMohSgProviders(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'MOH SG fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── International: Brazil (CNPJ) ───
+
+cronRouter.post('/fetch-cnpj-br', async (req, res) => {
+  try {
+    const customCnpjs = req.body?.cnpjs as string[] | undefined;
+    const result = await fetchCnpjBrCompanies(db, customCnpjs);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'CNPJ BR fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
