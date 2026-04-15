@@ -52,6 +52,8 @@ import { fetchInsuranceLicenses } from '../jobs/insuranceLicenseFetcher.js';
 import { fetchCleRecords } from '../jobs/cleFetcher.js';
 import { fetchCertificationRecords } from '../jobs/certificationFetcher.js';
 import { fetchIpedsInstitutions } from '../jobs/ipedsFetcher.js';
+import { fetchKenyaComplianceData } from '../jobs/kenyaLawFetcher.js';
+import { fetchAustraliaComplianceData } from '../jobs/australiaLawFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
@@ -834,6 +836,28 @@ cronRouter.post('/fetch-ipeds', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'IPEDS fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── KAU-01/02: Kenya Compliance Data Fetcher ───
+cronRouter.post('/fetch-kenya', async (_req, res) => {
+  try {
+    const result = await fetchKenyaComplianceData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Kenya compliance data fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── KAU-03/04: Australia Compliance Data Fetcher ───
+cronRouter.post('/fetch-australia', async (_req, res) => {
+  try {
+    const result = await fetchAustraliaComplianceData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Australia compliance data fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
