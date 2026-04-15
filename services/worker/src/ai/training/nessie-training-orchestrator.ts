@@ -78,10 +78,8 @@ function goldenEntryToTraining(entry: GoldenDatasetEntry): TrainingMessage | nul
   const userPrompt = `Extract metadata from the following PII-stripped credential text.\nCredential type hint: ${entry.credentialTypeHint || entry.groundTruth.credentialType}\n\n--- BEGIN CREDENTIAL TEXT ---\n${entry.strippedText}\n--- END CREDENTIAL TEXT ---\n\nReturn a JSON object with the extracted fields, a "confidence" number (0.0 to 1.0), and a "fraudSignals" array.`;
 
   // Build expected output from ground truth
+  // KEEP reasoning + concerns — the model must learn to explain WHY it classified
   const output: Record<string, unknown> = { ...entry.groundTruth };
-  // Remove eval-only fields that shouldn't be in training output
-  delete output.reasoning;
-  delete output.concerns;
 
   // Compute realistic confidence if not present
   if (!output.confidence) {

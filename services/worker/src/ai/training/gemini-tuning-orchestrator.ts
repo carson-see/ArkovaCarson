@@ -82,10 +82,8 @@ function goldenEntryToGeminiFormat(entry: GoldenDatasetEntry): GeminiTrainingExa
 
   const textInput = `Extract metadata from the following PII-stripped credential text.\nCredential type hint: ${entry.credentialTypeHint || entry.groundTruth.credentialType}\n\n${entry.strippedText}`;
 
-  // Build expected output — exclude eval-only fields
+  // Build expected output — KEEP reasoning + concerns so Gemini learns to explain
   const output: Record<string, unknown> = { ...entry.groundTruth };
-  delete output.reasoning;
-  delete output.concerns;
 
   if (!output.fraudSignals) {
     output.fraudSignals = [];

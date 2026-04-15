@@ -72,14 +72,13 @@ async function runNessieExport() {
     if (!entry.strippedText || entry.strippedText.length < 50) continue;
     if (!entry.groundTruth.credentialType) continue;
 
+    // KEEP reasoning + concerns — model must learn to explain WHY
     const output: Record<string, unknown> = { ...entry.groundTruth };
-    delete output.reasoning;
-    delete output.concerns;
     if (!output.fraudSignals) output.fraudSignals = [];
 
     // Compute confidence based on field completeness
     const fieldCount = Object.keys(output).filter(
-      k => output[k] !== undefined && k !== 'fraudSignals' && k !== 'concerns' && k !== 'reasoning',
+      k => output[k] !== undefined && k !== 'fraudSignals',
     ).length;
     output.confidence = Math.min(0.95, 0.45 + fieldCount * 0.07);
 
@@ -188,9 +187,8 @@ async function runGeminiExport() {
     if (entry.strippedText.length > 15000) continue;
     if (!entry.groundTruth.credentialType) continue;
 
+    // KEEP reasoning + concerns — model must learn to explain WHY
     const output: Record<string, unknown> = { ...entry.groundTruth };
-    delete output.reasoning;
-    delete output.concerns;
     if (!output.fraudSignals) output.fraudSignals = [];
 
     const fieldCount = Object.keys(output).filter(
