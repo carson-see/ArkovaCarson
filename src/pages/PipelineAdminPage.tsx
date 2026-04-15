@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3 } from 'lucide-react';
+import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
@@ -355,31 +355,58 @@ export function PipelineAdminPage() {
     );
   }
 
-  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'other' }> = {
-    edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial' },
-    uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic' },
-    federal_register: { icon: <BookOpen className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER, category: 'government' },
-    openalex: { icon: <GraduationCap className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic' },
-    dapip: { icon: <Building2 className="h-4 w-4" />, label: 'DAPIP Accreditation', category: 'academic' },
-    acnc: { icon: <Heart className="h-4 w-4" />, label: 'ACNC Charities (AU)', category: 'compliance' },
-    courtlistener: { icon: <Scale className="h-4 w-4" />, label: 'CourtListener Legal', category: 'compliance' },
-    openstates: { icon: <Landmark className="h-4 w-4" />, label: 'Open States Legislation', category: 'government' },
-    npi: { icon: <Stethoscope className="h-4 w-4" />, label: 'NPI Medical Registry', category: 'medical' },
-    finra: { icon: <TrendingUp className="h-4 w-4" />, label: 'FINRA BrokerCheck', category: 'financial' },
-    sec_iapd: { icon: <TrendingUp className="h-4 w-4" />, label: 'SEC IAPD Advisors', category: 'financial' },
-    calbar: { icon: <Scale className="h-4 w-4" />, label: 'California State Bar', category: 'compliance' },
-    fcc: { icon: <Radio className="h-4 w-4" />, label: 'FCC License Registry', category: 'government' },
-    sam_gov: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SAM.gov Contractors', category: 'government' },
-    sam_gov_exclusions: { icon: <AlertTriangle className="h-4 w-4" />, label: 'SAM.gov Exclusions', category: 'government' },
-    // NPH-05–10 new fetcher sources
-    sos_de: { icon: <Building2 className="h-4 w-4" />, label: 'Delaware SOS', category: 'compliance' },
-    sos_ca: { icon: <Building2 className="h-4 w-4" />, label: 'California SOS', category: 'compliance' },
-    license_ca_nursing: { icon: <Stethoscope className="h-4 w-4" />, label: 'CA Nursing Board', category: 'medical' },
-    insurance_ca_cdi: { icon: <ShieldCheck className="h-4 w-4" />, label: 'CA Dept of Insurance', category: 'financial' },
-    cle_ny: { icon: <Scale className="h-4 w-4" />, label: 'NY CLE Board', category: 'compliance' },
-    cert_cfa: { icon: <TrendingUp className="h-4 w-4" />, label: 'CFA Institute', category: 'financial' },
-    ipeds: { icon: <GraduationCap className="h-4 w-4" />, label: 'IPEDS Education', category: 'academic' },
-    mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other' },
+  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'international' | 'other'; region: 'us' | 'au' | 'ke' | 'intl' | 'global' }> = {
+    // ─── US Federal ───
+    edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial', region: 'us' },
+    uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic', region: 'us' },
+    federal_register: { icon: <BookOpen className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_FEDERAL_REGISTER, category: 'government', region: 'us' },
+    courtlistener: { icon: <Gavel className="h-4 w-4" />, label: 'CourtListener Legal', category: 'compliance', region: 'us' },
+    openstates: { icon: <Landmark className="h-4 w-4" />, label: 'Open States Legislation', category: 'government', region: 'us' },
+    npi: { icon: <Stethoscope className="h-4 w-4" />, label: 'NPI Medical Registry', category: 'medical', region: 'us' },
+    finra: { icon: <TrendingUp className="h-4 w-4" />, label: 'FINRA BrokerCheck', category: 'financial', region: 'us' },
+    sec_iapd: { icon: <TrendingUp className="h-4 w-4" />, label: 'SEC IAPD Advisors', category: 'financial', region: 'us' },
+    fcc: { icon: <Radio className="h-4 w-4" />, label: 'FCC License Registry', category: 'government', region: 'us' },
+    sam_gov: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SAM.gov Contractors', category: 'government', region: 'us' },
+    sam_gov_exclusions: { icon: <AlertTriangle className="h-4 w-4" />, label: 'SAM.gov Exclusions', category: 'government', region: 'us' },
+    dapip: { icon: <Building2 className="h-4 w-4" />, label: 'DAPIP Accreditation', category: 'academic', region: 'us' },
+    ipeds: { icon: <GraduationCap className="h-4 w-4" />, label: 'IPEDS Education', category: 'academic', region: 'us' },
+    // ─── US State ───
+    calbar: { icon: <Scale className="h-4 w-4" />, label: 'California State Bar', category: 'compliance', region: 'us' },
+    sos_de: { icon: <Building2 className="h-4 w-4" />, label: 'Delaware SOS', category: 'compliance', region: 'us' },
+    sos_ca: { icon: <Building2 className="h-4 w-4" />, label: 'California SOS', category: 'compliance', region: 'us' },
+    license_ca_nursing: { icon: <Stethoscope className="h-4 w-4" />, label: 'CA Nursing Board', category: 'medical', region: 'us' },
+    insurance_ca_cdi: { icon: <ShieldCheck className="h-4 w-4" />, label: 'CA Dept of Insurance', category: 'financial', region: 'us' },
+    cle_ny: { icon: <Scale className="h-4 w-4" />, label: 'NY CLE Board', category: 'compliance', region: 'us' },
+    cert_cfa: { icon: <TrendingUp className="h-4 w-4" />, label: 'CFA Institute', category: 'financial', region: 'us' },
+    // ─── US Compliance Frameworks (NCX) ───
+    ecfr: { icon: <ScrollText className="h-4 w-4" />, label: 'eCFR Regulations', category: 'compliance', region: 'us' },
+    hhs_enforcement: { icon: <Shield className="h-4 w-4" />, label: 'HHS/HIPAA Enforcement', category: 'compliance', region: 'us' },
+    nasba: { icon: <Award className="h-4 w-4" />, label: 'NASBA CPE Registry', category: 'compliance', region: 'us' },
+    accme: { icon: <Stethoscope className="h-4 w-4" />, label: 'ACCME CME Providers', category: 'medical', region: 'us' },
+    nces: { icon: <GraduationCap className="h-4 w-4" />, label: 'NCES Transcript Data', category: 'academic', region: 'us' },
+    soc2: { icon: <ShieldCheck className="h-4 w-4" />, label: 'SOC 2 Controls', category: 'compliance', region: 'global' },
+    iso27001: { icon: <Shield className="h-4 w-4" />, label: 'ISO 27001 Annex A', category: 'compliance', region: 'global' },
+    nist800_53: { icon: <Shield className="h-4 w-4" />, label: 'NIST 800-53 Controls', category: 'compliance', region: 'us' },
+    // ─── Australia ───
+    acnc: { icon: <Heart className="h-4 w-4" />, label: 'ACNC Charities', category: 'compliance', region: 'au' },
+    ahpra: { icon: <Stethoscope className="h-4 w-4" />, label: 'AHPRA Health Practitioners', category: 'medical', region: 'au' },
+    teqsa: { icon: <GraduationCap className="h-4 w-4" />, label: 'TEQSA Higher Education', category: 'academic', region: 'au' },
+    asic: { icon: <Briefcase className="h-4 w-4" />, label: 'ASIC Business Registry', category: 'financial', region: 'au' },
+    // ─── Kenya ───
+    knec: { icon: <GraduationCap className="h-4 w-4" />, label: 'KNEC Examinations', category: 'academic', region: 'ke' },
+    lsk: { icon: <Scale className="h-4 w-4" />, label: 'Law Society of Kenya', category: 'compliance', region: 'ke' },
+    odpc: { icon: <Shield className="h-4 w-4" />, label: 'ODPC Data Protection', category: 'compliance', region: 'ke' },
+    // ─── International / Global ───
+    openalex: { icon: <Globe className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic', region: 'global' },
+    mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other', region: 'global' },
+  };
+
+  const REGION_LABELS: Record<string, string> = {
+    us: '🇺🇸 United States',
+    au: '🇦🇺 Australia',
+    ke: '🇰🇪 Kenya',
+    global: '🌐 Global',
+    intl: '🌍 International',
   };
 
   const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
@@ -435,51 +462,80 @@ export function PipelineAdminPage() {
             value={stats?.embeddedRecords}
             icon={<Cpu className="h-5 w-5 text-purple-400" />}
             loading={loading}
+            subtitle="(pg estimate — run ANALYZE for exact)"
           />
         </div>
 
         {/* Data Quality Overview — NPH-04 */}
         {!loading && stats && <DataQualityCard stats={stats} sourceConfigCount={Object.keys(SOURCE_CONFIG).length} />}
 
-        {/* Source Breakdown */}
+        {/* Source Breakdown — grouped by region */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
           <CardHeader>
-            <CardTitle className="text-base">Records by Source</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Globe className="h-4 w-4" />
+              Records by Source &amp; Region
+            </CardTitle>
           </CardHeader>
           <CardContent>
             {loading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
               </div>
-            ) : (
-              <div className="space-y-3">
-                {Object.entries(stats?.bySource ?? {})
-                  .sort(([, a], [, b]) => b - a)
-                  .map(([source, count]) => (
-                    <div
-                      key={source}
-                      className="flex items-center justify-between py-2 border-b border-border/50 last:border-0 cursor-pointer hover:bg-[#00d4ff]/5 rounded px-2 -mx-2 transition-colors"
-                      onClick={() => {
-                        handleFilterChange('source', source);
-                        document.getElementById('pipeline-records-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }}
-                    >
-                      <div className="flex items-center gap-3">
-                        {sourceIcon(source)}
-                        <span className="text-sm font-medium">{sourceLabel(source)}</span>
+            ) : (() => {
+              const bySourceEntries = Object.entries(stats?.bySource ?? {}).sort(([, a], [, b]) => b - a);
+              // Group by region
+              const regionGroups: Record<string, Array<[string, number]>> = {};
+              for (const [source, count] of bySourceEntries) {
+                const region = SOURCE_CONFIG[source]?.region ?? 'global';
+                if (!regionGroups[region]) regionGroups[region] = [];
+                regionGroups[region].push([source, count]);
+              }
+              const regionOrder = ['us', 'au', 'ke', 'global', 'intl'];
+
+              return (
+                <div className="space-y-4">
+                  {regionOrder.filter(r => regionGroups[r]?.length).map(region => (
+                    <div key={region}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <MapPin className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          {REGION_LABELS[region] ?? region}
+                        </span>
+                        <Badge variant="outline" className="text-xs font-mono ml-auto">
+                          {regionGroups[region].reduce((sum, [, c]) => sum + c, 0).toLocaleString()}
+                        </Badge>
                       </div>
-                      <Badge variant="secondary" className="font-mono">
-                        {count.toLocaleString()}
-                      </Badge>
+                      <div className="space-y-1 ml-5">
+                        {regionGroups[region].map(([source, count]) => (
+                          <div
+                            key={source}
+                            className="flex items-center justify-between py-1.5 border-b border-border/30 last:border-0 cursor-pointer hover:bg-[#00d4ff]/5 rounded px-2 -mx-2 transition-colors"
+                            onClick={() => {
+                              handleFilterChange('source', source);
+                              document.getElementById('pipeline-records-browser')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }}
+                          >
+                            <div className="flex items-center gap-2">
+                              {sourceIcon(source)}
+                              <span className="text-sm">{sourceLabel(source)}</span>
+                            </div>
+                            <Badge variant="secondary" className="font-mono text-xs">
+                              {count.toLocaleString()}
+                            </Badge>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   ))}
-                {Object.keys(stats?.bySource ?? {}).length === 0 && (
-                  <p className="text-sm text-muted-foreground text-center py-4">
-                    No records ingested yet. Run the data pipeline to start.
-                  </p>
-                )}
-              </div>
-            )}
+                  {bySourceEntries.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-4">
+                      No records ingested yet. Run the data pipeline to start.
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
           </CardContent>
         </Card>
 
@@ -1104,11 +1160,13 @@ function StatCard({
   value,
   icon,
   loading,
+  subtitle,
 }: {
   label: string;
   value: number | undefined;
   icon: React.ReactNode;
   loading: boolean;
+  subtitle?: string;
 }) {
   return (
     <Card className="border-[#00d4ff]/10 bg-transparent">
@@ -1120,9 +1178,14 @@ function StatCard({
         {loading ? (
           <Skeleton className="h-8 w-20" />
         ) : (
-          <p className="text-2xl font-bold font-mono">
-            {(value ?? 0).toLocaleString()}
-          </p>
+          <>
+            <p className="text-2xl font-bold font-mono">
+              {(value ?? 0).toLocaleString()}
+            </p>
+            {subtitle && (
+              <p className="text-xs text-muted-foreground/60 mt-1">{subtitle}</p>
+            )}
+          </>
         )}
       </CardContent>
     </Card>
