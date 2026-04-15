@@ -315,7 +315,7 @@ export const GOLDEN_DATASET_PHASE15: GoldenDatasetEntry[] = [
     credentialTypeHint: 'LICENSE',
     groundTruth: {
       credentialType: 'LICENSE',
-      subType: 'nursing_rn',
+      subType: 'pharmacist',
       issuerName: 'Florida Board of Pharmacy',
       issuedDate: '2020-03-01',
       expiryDate: '2024-02-28',
