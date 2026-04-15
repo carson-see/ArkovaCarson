@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
-import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
+import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, ChevronDown, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
@@ -355,7 +355,7 @@ export function PipelineAdminPage() {
     );
   }
 
-  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'international' | 'other'; region: 'us' | 'au' | 'ke' | 'intl' | 'global' }> = {
+  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'international' | 'other'; region: 'us' | 'au' | 'ke' | 'intl' | 'global' | 'my' | 'eu' | 'uk' | 'latam' | 'sea' | 'in' }> = {
     // ─── US Federal ───
     edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial', region: 'us' },
     uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic', region: 'us' },
@@ -399,12 +399,35 @@ export function PipelineAdminPage() {
     // ─── International / Global ───
     openalex: { icon: <Globe className="h-4 w-4" />, label: 'OpenAlex Academic', category: 'academic', region: 'global' },
     mcp: { icon: <Database className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_MCP, category: 'other', region: 'global' },
+    // 🇲🇾 Malaysia
+    mysc: { icon: <Building2 className="h-4 w-4" />, label: 'SSM Companies Commission', category: 'compliance', region: 'my' },
+    mympc: { icon: <Stethoscope className="h-4 w-4" />, label: 'MPC Medical Practitioners', category: 'medical', region: 'my' },
+    // 🇪🇺 European Union
+    eurlex: { icon: <ScrollText className="h-4 w-4" />, label: 'EUR-Lex EU Legislation', category: 'compliance', region: 'eu' },
+    edpb: { icon: <Shield className="h-4 w-4" />, label: 'EDPB GDPR Decisions', category: 'compliance', region: 'eu' },
+    // 🇬🇧 United Kingdom
+    fca_uk: { icon: <TrendingUp className="h-4 w-4" />, label: 'FCA Financial Register', category: 'financial', region: 'uk' },
+    companies_house: { icon: <Building2 className="h-4 w-4" />, label: 'Companies House', category: 'compliance', region: 'uk' },
+    // 🇧🇷 Latin America
+    cnpj_br: { icon: <Building2 className="h-4 w-4" />, label: 'CNPJ Brazil Companies', category: 'compliance', region: 'latam' },
+    // 🇸🇬 Southeast Asia
+    acra_sg: { icon: <Building2 className="h-4 w-4" />, label: 'ACRA Singapore Companies', category: 'compliance', region: 'sea' },
+    moh_sg: { icon: <Stethoscope className="h-4 w-4" />, label: 'MOH Singapore Healthcare', category: 'medical', region: 'sea' },
+    // 🇮🇳 India
+    mca_in: { icon: <Building2 className="h-4 w-4" />, label: 'MCA India Companies', category: 'compliance', region: 'in' },
+    nmc_in: { icon: <Stethoscope className="h-4 w-4" />, label: 'NMC India Medical Council', category: 'medical', region: 'in' },
   };
 
   const REGION_LABELS: Record<string, string> = {
     us: '🇺🇸 United States',
     au: '🇦🇺 Australia',
     ke: '🇰🇪 Kenya',
+    my: '🇲🇾 Malaysia',
+    eu: '🇪🇺 European Union',
+    uk: '🇬🇧 United Kingdom',
+    latam: '🇧🇷 Latin America',
+    sea: '🇸🇬 Southeast Asia',
+    in: '🇮🇳 India',
     global: '🌐 Global',
     intl: '🌍 International',
   };
@@ -462,7 +485,7 @@ export function PipelineAdminPage() {
             value={stats?.embeddedRecords}
             icon={<Cpu className="h-5 w-5 text-purple-400" />}
             loading={loading}
-            subtitle="(pg estimate — run ANALYZE for exact)"
+            subtitle="Vector embeddings enable AI search and cross-reference matching across all pipeline records"
           />
         </div>
 
@@ -470,14 +493,7 @@ export function PipelineAdminPage() {
         {!loading && stats && <DataQualityCard stats={stats} sourceConfigCount={Object.keys(SOURCE_CONFIG).length} />}
 
         {/* Source Breakdown — grouped by region */}
-        <Card className="border-[#00d4ff]/10 bg-transparent">
-          <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2">
-              <Globe className="h-4 w-4" />
-              Records by Source &amp; Region
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
+        <CollapsibleSection title="Records by Source & Region" icon={<Globe className="h-4 w-4" />} defaultOpen={false} badge={Object.keys(stats?.bySource ?? {}).length + ' sources'}>
             {loading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
@@ -491,7 +507,7 @@ export function PipelineAdminPage() {
                 if (!regionGroups[region]) regionGroups[region] = [];
                 regionGroups[region].push([source, count]);
               }
-              const regionOrder = ['us', 'au', 'ke', 'global', 'intl'];
+              const regionOrder = ['us', 'au', 'ke', 'my', 'eu', 'uk', 'latam', 'sea', 'in', 'global', 'intl'];
 
               return (
                 <div className="space-y-4">
@@ -536,15 +552,10 @@ export function PipelineAdminPage() {
                 </div>
               );
             })()}
-          </CardContent>
-        </Card>
+        </CollapsibleSection>
 
         {/* Anchors by Credential Type */}
-        <Card className="border-[#00d4ff]/10 bg-transparent">
-          <CardHeader>
-            <CardTitle className="text-base">{PIPELINE_LABELS.ANCHORS_BY_TYPE_TITLE}</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <CollapsibleSection title="Anchors by Credential Type" defaultOpen={false} badge={Object.keys(stats?.byCredentialType ?? {}).length + ' types'}>
             {loading ? (
               <div className="space-y-3">
                 {[1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
@@ -610,15 +621,11 @@ export function PipelineAdminPage() {
                 )}
               </div>
             )}
-          </CardContent>
-        </Card>
+        </CollapsibleSection>
 
         {/* Pipeline Controls — grouped by category */}
-        <Card className="border-[#00d4ff]/10 bg-transparent">
-          <CardHeader>
-            <CardTitle className="text-base">Pipeline Controls</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-5">
+        <CollapsibleSection title="Pipeline Controls" defaultOpen={false}>
+          <div className="space-y-5">
             {/* Processing */}
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Processing</h4>
@@ -696,11 +703,64 @@ export function PipelineAdminPage() {
               </div>
             </div>
 
+            {/* 🇪🇺 European Union */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇪🇺 European Union</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-eurlex" label="EUR-Lex Legislation" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-edpb" label="EDPB GDPR Decisions" icon={<Shield className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇬🇧 United Kingdom */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇬🇧 United Kingdom</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-fca-uk" label="FCA Financial Register" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-companies-house" label="Companies House" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇲🇾 Malaysia */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇲🇾 Malaysia</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-mysc" label="SSM Companies Commission" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-mympc" label="MPC Medical Practitioners" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇸🇬 Southeast Asia */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇸🇬 Southeast Asia</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-acra-sg" label="ACRA Singapore Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-moh-sg" label="MOH Singapore Healthcare" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇮🇳 India */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇮🇳 India</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-mca-in" label="MCA India Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-nmc-in" label="NMC India Medical Council" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
+            {/* 🇧🇷 Latin America */}
+            <div>
+              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇧🇷 Latin America</h4>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                <JobButton path="fetch-cnpj-br" label="CNPJ Brazil Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+              </div>
+            </div>
+
             <p className="text-xs text-muted-foreground">
               Jobs run on the worker service. Authenticated via platform admin JWT.
             </p>
-          </CardContent>
-        </Card>
+          </div>
+        </CollapsibleSection>
 
         {/* Anchoring Rate */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
@@ -1170,6 +1230,32 @@ export function PipelineAdminPage() {
         </Card>
       </div>
     </AppShell>
+  );
+}
+
+function CollapsibleSection({ title, icon, defaultOpen = false, badge, children }: {
+  title: string;
+  icon?: React.ReactNode;
+  defaultOpen?: boolean;
+  badge?: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <Card className="border-[#00d4ff]/10 bg-transparent">
+      <CardHeader
+        className="cursor-pointer select-none hover:bg-[#00d4ff]/5 transition-colors"
+        onClick={() => setOpen(!open)}
+      >
+        <CardTitle className="text-base flex items-center gap-2">
+          {icon}
+          <span>{title}</span>
+          {badge && <Badge variant="outline" className="ml-auto text-xs font-mono">{badge}</Badge>}
+          <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
+        </CardTitle>
+      </CardHeader>
+      {open && <CardContent>{children}</CardContent>}
+    </Card>
   );
 }
 
