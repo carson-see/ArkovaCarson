@@ -86,6 +86,60 @@ interface RecordFilters {
 
 const PAGE_SIZE = 25;
 
+// ─── Pipeline Region + Source Config (module-scope to avoid re-allocation per render) ───
+
+type PipelineRegion = 'us' | 'au' | 'ke' | 'my' | 'eu' | 'uk' | 'latam' | 'sea' | 'in' | 'intl' | 'global';
+
+const REGION_LABELS: Record<PipelineRegion, string> = {
+  us: '🇺🇸 United States',
+  au: '🇦🇺 Australia',
+  ke: '🇰🇪 Kenya',
+  my: '🇲🇾 Malaysia',
+  eu: '🇪🇺 European Union',
+  uk: '🇬🇧 United Kingdom',
+  latam: '🇧🇷 Latin America',
+  sea: '🇸🇬 Southeast Asia',
+  in: '🇮🇳 India',
+  global: '🌐 Global',
+  intl: '🌍 International',
+};
+
+const REGION_ORDER: PipelineRegion[] = ['us', 'au', 'ke', 'my', 'eu', 'uk', 'latam', 'sea', 'in', 'global', 'intl'];
+
+const ICON_4 = 'h-4 w-4';
+const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: Array<{ path: string; label: string; icon: React.ReactNode }> }> = [
+  { heading: '🇦🇺 Australia', jobs: [
+    { path: 'fetch-australia', label: 'AU Compliance (AHPRA/TEQSA/ASIC)', icon: <Globe className={ICON_4} /> },
+    { path: 'fetch-acnc', label: 'ACNC Charities', icon: <Heart className={ICON_4} /> },
+  ]},
+  { heading: '🇰🇪 Kenya', jobs: [
+    { path: 'fetch-kenya', label: 'KE Compliance (KNEC/LSK/ODPC)', icon: <Globe className={ICON_4} /> },
+  ]},
+  { heading: '🇪🇺 European Union', jobs: [
+    { path: 'fetch-eurlex', label: 'EUR-Lex Legislation', icon: <ScrollText className={ICON_4} /> },
+    { path: 'fetch-edpb', label: 'EDPB GDPR Decisions', icon: <Shield className={ICON_4} /> },
+  ]},
+  { heading: '🇬🇧 United Kingdom', jobs: [
+    { path: 'fetch-fca-uk', label: 'FCA Financial Register', icon: <TrendingUp className={ICON_4} /> },
+    { path: 'fetch-companies-house', label: 'Companies House', icon: <Building2 className={ICON_4} /> },
+  ]},
+  { heading: '🇲🇾 Malaysia', jobs: [
+    { path: 'fetch-mysc', label: 'SSM Companies Commission', icon: <Building2 className={ICON_4} /> },
+    { path: 'fetch-mympc', label: 'MPC Medical Practitioners', icon: <Stethoscope className={ICON_4} /> },
+  ]},
+  { heading: '🇸🇬 Southeast Asia', jobs: [
+    { path: 'fetch-acra-sg', label: 'ACRA Singapore Companies', icon: <Building2 className={ICON_4} /> },
+    { path: 'fetch-moh-sg', label: 'MOH Singapore Healthcare', icon: <Stethoscope className={ICON_4} /> },
+  ]},
+  { heading: '🇮🇳 India', jobs: [
+    { path: 'fetch-mca-in', label: 'MCA India Companies', icon: <Building2 className={ICON_4} /> },
+    { path: 'fetch-nmc-in', label: 'NMC India Medical Council', icon: <Stethoscope className={ICON_4} /> },
+  ]},
+  { heading: '🇧🇷 Latin America', jobs: [
+    { path: 'fetch-cnpj-br', label: 'CNPJ Brazil Companies', icon: <Building2 className={ICON_4} /> },
+  ]},
+];
+
 export function PipelineAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -197,7 +251,7 @@ export function PipelineAdminPage() {
 
   const [triggerStatus, setTriggerStatus] = useState<Record<string, 'idle' | 'running' | 'done' | 'error'>>({});
 
-  const triggerJob = useCallback(async (jobPath: string, _label: string) => {
+  const triggerJob = useCallback(async (jobPath: string) => {
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
     try {
       const response = await workerFetch(`/jobs/${jobPath}`, {
@@ -355,7 +409,7 @@ export function PipelineAdminPage() {
     );
   }
 
-  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'international' | 'other'; region: 'us' | 'au' | 'ke' | 'intl' | 'global' | 'my' | 'eu' | 'uk' | 'latam' | 'sea' | 'in' }> = {
+  const SOURCE_CONFIG: Record<string, { icon: React.ReactNode; label: string; category: 'compliance' | 'academic' | 'medical' | 'financial' | 'government' | 'international' | 'other'; region: PipelineRegion }> = {
     // ─── US Federal ───
     edgar: { icon: <FileText className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_EDGAR, category: 'financial', region: 'us' },
     uspto: { icon: <Scale className="h-4 w-4" />, label: PIPELINE_LABELS.SOURCE_USPTO, category: 'academic', region: 'us' },
@@ -418,19 +472,7 @@ export function PipelineAdminPage() {
     nmc_in: { icon: <Stethoscope className="h-4 w-4" />, label: 'NMC India Medical Council', category: 'medical', region: 'in' },
   };
 
-  const REGION_LABELS: Record<string, string> = {
-    us: '🇺🇸 United States',
-    au: '🇦🇺 Australia',
-    ke: '🇰🇪 Kenya',
-    my: '🇲🇾 Malaysia',
-    eu: '🇪🇺 European Union',
-    uk: '🇬🇧 United Kingdom',
-    latam: '🇧🇷 Latin America',
-    sea: '🇸🇬 Southeast Asia',
-    in: '🇮🇳 India',
-    global: '🌐 Global',
-    intl: '🌍 International',
-  };
+  // REGION_LABELS and REGION_ORDER are at module scope
 
   const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
   const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
@@ -507,7 +549,7 @@ export function PipelineAdminPage() {
                 if (!regionGroups[region]) regionGroups[region] = [];
                 regionGroups[region].push([source, count]);
               }
-              const regionOrder = ['us', 'au', 'ke', 'my', 'eu', 'uk', 'latam', 'sea', 'in', 'global', 'intl'];
+              const regionOrder = REGION_ORDER;
 
               return (
                 <div className="space-y-4">
@@ -686,75 +728,17 @@ export function PipelineAdminPage() {
               </div>
             </div>
 
-            {/* 🇦🇺 Australia */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇦🇺 Australia</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-australia" label="AU Compliance (AHPRA/TEQSA/ASIC)" icon={<Globe className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-acnc" label="ACNC Charities" icon={<Heart className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+            {/* International region groups — data-driven */}
+            {INTERNATIONAL_JOB_GROUPS.map(({ heading, jobs }) => (
+              <div key={heading}>
+                <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{heading}</h4>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {jobs.map(j => (
+                    <JobButton key={j.path} path={j.path} label={j.label} icon={j.icon} status={triggerStatus} onTrigger={triggerJob} />
+                  ))}
+                </div>
               </div>
-            </div>
-
-            {/* 🇰🇪 Kenya */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇰🇪 Kenya</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-kenya" label="KE Compliance (KNEC/LSK/ODPC)" icon={<Globe className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇪🇺 European Union */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇪🇺 European Union</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-eurlex" label="EUR-Lex Legislation" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-edpb" label="EDPB GDPR Decisions" icon={<Shield className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇬🇧 United Kingdom */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇬🇧 United Kingdom</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-fca-uk" label="FCA Financial Register" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-companies-house" label="Companies House" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇲🇾 Malaysia */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇲🇾 Malaysia</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-mysc" label="SSM Companies Commission" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-mympc" label="MPC Medical Practitioners" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇸🇬 Southeast Asia */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇸🇬 Southeast Asia</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-acra-sg" label="ACRA Singapore Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-moh-sg" label="MOH Singapore Healthcare" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇮🇳 India */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇮🇳 India</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-mca-in" label="MCA India Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-nmc-in" label="NMC India Medical Council" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
-
-            {/* 🇧🇷 Latin America */}
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇧🇷 Latin America</h4>
-              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-cnpj-br" label="CNPJ Brazil Companies" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-              </div>
-            </div>
+            ))}
 
             <p className="text-xs text-muted-foreground">
               Jobs run on the worker service. Authenticated via platform admin JWT.
@@ -1249,9 +1233,9 @@ function CollapsibleSection({ title, icon, defaultOpen = false, badge, children 
       >
         <CardTitle className="text-base flex items-center gap-2">
           {icon}
-          <span>{title}</span>
-          {badge && <Badge variant="outline" className="ml-auto text-xs font-mono">{badge}</Badge>}
-          <ChevronDown className={`h-4 w-4 ml-auto transition-transform ${open ? 'rotate-180' : ''}`} />
+          <span className="flex-1">{title}</span>
+          {badge && <Badge variant="outline" className="text-xs font-mono">{badge}</Badge>}
+          <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
         </CardTitle>
       </CardHeader>
       {open && <CardContent>{children}</CardContent>}
@@ -1366,7 +1350,7 @@ function JobButton({ path, label, icon, status, onTrigger }: {
   label: string;
   icon: React.ReactNode;
   status: Record<string, 'idle' | 'running' | 'done' | 'error'>;
-  onTrigger: (path: string, label: string) => void;
+  onTrigger: (path: string) => void;
 }) {
   const s = status[path] ?? 'idle';
   return (
@@ -1375,7 +1359,7 @@ function JobButton({ path, label, icon, status, onTrigger }: {
       size="sm"
       className="justify-start border-[#00d4ff]/20 hover:bg-[#00d4ff]/5 text-xs"
       disabled={s === 'running'}
-      onClick={() => onTrigger(path, label)}
+      onClick={() => onTrigger(path)}
     >
       {s === 'running' ? (
         <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
