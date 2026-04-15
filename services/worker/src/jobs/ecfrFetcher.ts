@@ -155,16 +155,15 @@ export async function fetchEcfrRegulations(
 
         if (existing && existing.length > 0) {
           totalSkipped++;
-          sectionsProcessed++;
-          continue;
+          continue; // skips don't count toward cap — otherwise re-runs exhaust budget on already-ingested sections
         }
 
         await delay(RATE_LIMIT_MS);
         const text = await fetchSectionText(title, section.identifier);
+        sectionsProcessed++; // only count sections we actually attempted to fetch
 
         if (!text) {
           totalErrors++;
-          sectionsProcessed++;
           continue;
         }
 
