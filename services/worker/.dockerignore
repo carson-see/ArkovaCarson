@@ -11,3 +11,5 @@ tests
 __tests__
 vitest.config.ts
 .DS_Store
+training-output/
+scripts/
