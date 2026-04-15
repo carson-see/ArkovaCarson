@@ -4,7 +4,6 @@
  */
 
 import { fetchJurisdictionCompliance, type JurisdictionFetchResult, type StatuteDefinition } from './jurisdictionFetcher.js';
-import { computeContentHash } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 const AU_STATUTES: StatuteDefinition[] = [
