@@ -475,7 +475,7 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
 // =============================================================================
 
 /** Base fields present on every credential type. */
-const BASE_FIELDS = ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fraudSignals', 'suggestedType'];
+const BASE_FIELDS = ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fraudSignals', 'suggestedType', 'subType', 'reasoning', 'concerns', 'issuerVerified'];
 
 /** Per-type field extensions beyond BASE_FIELDS. Keep in sync with ExtractedFields in types.ts. */
 const FIELD_EXTENSIONS: Record<string, string[]> = {

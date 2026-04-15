@@ -47,6 +47,12 @@ export const ExtractedFieldsSchema = z.object({
   suggestedType: z.string().optional(),
   // Fraud signals (Session 10)
   fraudSignals: z.array(z.string()).optional(),
+  // GRE-01: Sub-type taxonomy
+  subType: z.string().optional(),
+  // GRE-02: Chain-of-thought reasoning fields
+  reasoning: z.string().optional(),
+  concerns: z.array(z.string()).optional(),
+  issuerVerified: z.boolean().optional(),
 }).strict();
 
 /**
