@@ -29,6 +29,11 @@ export interface GroundTruthFields {
   activityNumber?: string;
   providerName?: string;
   approvedBy?: string;
+  // BUSINESS_ENTITY-specific
+  entityType?: string;
+  stateOfFormation?: string;
+  registeredAgent?: string;
+  goodStandingStatus?: string;
   // Fraud signals
   fraudSignals?: string[];
   // GRE-02: Reasoning fields (optional — existing entries don't need these)
