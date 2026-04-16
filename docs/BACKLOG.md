@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-16 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,127 tests, 214 migrations, **Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed + parallel-serving**, Gemini Golden **v6 trained + eval'd (Macro F1 77.1% / Weighted 83.6% / latency -70%)** cutover pending, **v7 designed**, intelligence dataset **343 scenarios + 209 anchored sources**, Phase 1.5 15/16, NMT 14/14, ATS 8/8, NCE 20/20 built (Jira done; Nessie under NVI gate), **INT 8/9** (webhook CRUD open), DEP 4/23, **GME2 v6/v7 arc** (GME-01–20 superseded; 2.0-flash is prod, no 2.5 deadline), **NVI (SCRUM-804) gates further regulation training**, **NDD/NSS/NTF paused per NVI decree**) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-16 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,127 tests, 215 migrations, **Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed + parallel-serving**, Gemini Golden **v6 trained + eval'd (Macro F1 77.1% / Weighted 83.6% / latency -70%)** cutover pending, **v7 designed**, intelligence dataset **343 scenarios + 209 anchored sources**, Phase 1.5 15/16, NMT 14/14, ATS 8/8, NCE 20/20 built (Jira done; Nessie under NVI gate), **INT 8/9** (webhook CRUD open), DEP 4/23, **GME2 v6/v7 arc** (GME-01–20 superseded; 2.0-flash is prod, no 2.5 deadline), **NVI (SCRUM-804) gates further regulation training**, **NDD/NSS/NTF paused per NVI decree**, **NEW CONT epic SCRUM-874** (contract expertise) + **FEDCONT epic SCRUM-875** (federal contracting), **Gemini CONTRACT credential_type migration queued (SCRUM-882)**) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -30,6 +30,8 @@ _Last updated: 2026-04-16 (1.41M+ public records, 1.41M+ SECURED anchors on main
 | **Nessie Training Foundation (NTF)** ★ PAUSED beyond v6 | **8** | **1** | **7** | No (paused) |
 | **Nessie Compliance Audit (NCA)** ★ ACTIVE | **10** | **0** | **10** | No (product-facing, not model-gated) |
 | **API Richness (API-RICH)** ★ NEW 2026-04-16 | **5** | **0** | **5** | No (converts stored data → response) |
+| **Contract Expertise (CONT)** ★ NEW 2026-04-16 epic SCRUM-874 | **4+** | **0** | **4** | No (NVI-gated; seeds SCRUM-791 + 3 new) |
+| **Federal Contracting (FEDCONT)** ★ NEW 2026-04-16 epic SCRUM-875 | **3+** | **0** | **3** | No (NVI-gated except SAM.gov fetcher) |
 | **Integration Surface (INT)** | **9** | **8** | **1** | No (webhook CRUD open) |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
@@ -736,6 +738,61 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 | API-RICH-05 | New `GET /anchor/{publicId}/extraction-manifest` exposing `zk_proof`, `manifest_hash`, prompt version (VAI-01 storage surfaced) | Medium | NOT STARTED | Medium |
 
 **Principle:** zero model risk; already-stored data becomes API-visible. All additions are nullable in response schema; no breaking changes. OpenAPI spec + Zod + SDK (TS + Python) must update together.
+
+---
+
+## TIER 0J: NESSIE CONTRACT EXPERTISE (CONT) — NEW 2026-04-16
+
+> **Jira Epic:** SCRUM-874 | **Priority:** High | **Blocked by:** SCRUM-804 (NVI FCRA gate)
+> **Story doc:** to be written at `docs/stories/40_nessie_contract_expertise.md` (scoped, not yet committed)
+> **User directive (2026-04-16):** _"Nessie needs to be experts on contracts as well. Contracts are key as we expand to e-signatures and highly regulated markets."_
+
+**Why this exists:** Arkova has best-in-class contract-**integrity** (Bitcoin anchoring + Phase 3 AdES + compliance tagging) but no contract-**reasoning** intelligence. A compliance officer cannot ask Nessie "is this BAA missing required §164.504 provisions? is this click-wrap ESIGN-enforceable in Illinois? does this SCC 2021 Module 2 apply here?"
+
+### Children (seeded 2026-04-16)
+
+| ID | Jira | Story | Effort | Status |
+|----|------|-------|--------|--------|
+| CONT-01 (seed) | SCRUM-791 | Contract law fundamentals (US / UK / common law / BAA / DUA / DPA / SCC) — re-parented from NDD | Large | Open (was Medium; raised to High) |
+| CONT-02 | SCRUM-876 | ESIGN Act + UETA state variations + eIDAS → AdES mapping | Large (~4w) | Open |
+| CONT-03 | SCRUM-877 | Clause-risk detection — 30–50 patterns (liability, indemnity, assignment, non-compete, auto-renewal, IP/WFH, arbitration, MFN) | Large (~3w) | Open |
+| CONT-04 | SCRUM-878 | FERPA §99.31(a)(6) DUA scenarios (currently **0** in v29.0 training) | Medium (~2w) | Open |
+
+Additional child stories to be created later for the remaining CONT epic phases (AdES lifecycle reasoning, GDPR SCC 2021 module selection, contract formation edge cases).
+
+---
+
+## TIER 0K: NESSIE FEDERAL CONTRACTING (FEDCONT) — NEW 2026-04-16
+
+> **Jira Epic:** SCRUM-875 | **Priority:** High | **Blocked by:** SCRUM-804 (NVI) — except SAM.gov fetcher which is pipeline/infrastructure
+> **Strategic rationale:** $700B+ annual federal procurement market with heavy compliance obligations that map naturally to Arkova's anchoring + audit-ready-export stack. GovCon prospects have procurement budget and need paper trails for DCAA / OIG / IG audits.
+
+### Children (seeded 2026-04-16)
+
+| ID | Jira | Story | Effort | Status |
+|----|------|-------|--------|--------|
+| FEDCONT-01 | SCRUM-879 | FAR Part 52 + DFARS 252 mandatory-clause library + flowdown classification | XL (~6w) | Open |
+| FEDCONT-02 | SCRUM-880 | SAM.gov UEI lookup + active-registration status validation (pipeline fetcher — NOT NVI-gated) | Medium (~2w) | Open |
+| FEDCONT-03 | SCRUM-881 | SBA set-asides + size-standards classifier (8(a), HUBZone, SDVOSB, WOSB) | Large (~3w) | Open |
+
+Additional FEDCONT phases queued: CMMC Level detection (DFARS 252.204-7012/-7019/-7020), 2 CFR 200 Uniform Guidance, Davis-Bacon / SCA wage determinations, TINA certification thresholds, CAS coverage classification.
+
+---
+
+## TIER 0L: GEMINI CONTRACT-TYPE MIGRATION (GME2-06) — NEW 2026-04-16
+
+> **Jira:** SCRUM-882 | **Parent epic:** SCRUM-772 (GME2) | **NOT blocked by NVI** (Gemini extraction work, not Nessie training)
+
+Prerequisite for CONT epic (SCRUM-874) Phase 3+: Gemini needs a `CONTRACT` `credential_type` to emit at extraction time. Multi-step work per CLAUDE.md Migration Procedure:
+
+1. Migration 0216 `ALTER TYPE credential_type ADD VALUE IF NOT EXISTS 'CONTRACT'`
+2. TS types regeneration (`npx supabase gen types`)
+3. `src/lib/validators.ts` — add CONTRACT + sub-types (msa, sow, nda, baa, dpa, scc, dua, employment, federal_prime, federal_subcontract, saas_order, license_agreement, settlement_bilateral, loi, mou, amendment)
+4. `services/worker/src/ai/prompts/extraction-v6.ts:29` — add CONTRACT to enumerated credentialType list
+5. Consumer file sweep (40+ files reference CREDENTIAL_TYPES; TS compiler catches most)
+6. 5–10 CONTRACT seed exemplars in v7 golden dataset
+
+**Dedup check:** `operating_agreement` already exists under `BUSINESS_ENTITY` sub-types — do NOT duplicate under CONTRACT; cross-reference from story doc.
 
 ---
 
