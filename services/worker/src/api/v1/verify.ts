@@ -41,50 +41,24 @@ export interface VerificationResult {
   ferpa_notice?: string;
   /** REG-02: Indicates directory-level fields were suppressed per FERPA Section 99.37 opt-out (additive, nullable — Constitution 1.8) */
   directory_info_suppressed?: boolean;
-  /**
-   * API-RICH-01 (SCRUM-772 / 2026-04-16): Regulatory control IDs mapped to this anchor
-   * (SOC 2, FERPA, HIPAA, GDPR, ISO 27001 control tags). Stored in `anchors.compliance_controls`
-   * by CML-02 (migration 0137). Enables GRC platform integration (Vanta, Drata, Anecdotes).
-   * Additive, nullable — Constitution 1.8.
-   */
+  // API-RICH-01 (SCRUM-772, 2026-04-16): 8 additive nullable fields that surface
+  // already-stored data for GRC platform + SDK consumers. All additions per
+  // Constitution 1.8 (frozen schema allows additive nullables).
+  /** Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) — populated by CML-02 (migration 0137). */
   compliance_controls?: Record<string, unknown> | null;
-  /**
-   * API-RICH-01: Number of Bitcoin block confirmations at anchor time. Stored in
-   * `anchors.chain_confirmations`. Useful for maturity checks ("6-confirmed?").
-   * Additive, nullable — Constitution 1.8.
-   */
+  /** Bitcoin block confirmations at anchor time. */
   chain_confirmations?: number | null;
-  /**
-   * API-RICH-01: Public ID of this anchor's parent (credential lineage — reissued diploma,
-   * amended license, etc.). Resolved from `anchors.parent_anchor_id` UUID → parent's public_id
-   * so we never leak internal anchor UUIDs (Constitution 1.4).
-   * Additive, nullable — Constitution 1.8.
-   */
+  /** Public ID of the parent anchor (credential lineage). Resolved from internal UUID — Constitution 1.4. */
   parent_public_id?: string | null;
-  /**
-   * API-RICH-01: Version number within a lineage. Defaults to 1 for originals.
-   * Stored in `anchors.version_number`. Additive, nullable — Constitution 1.8.
-   */
+  /** Version in the lineage; defaults to 1 (omitted from response in the default case). */
   version_number?: number | null;
-  /**
-   * API-RICH-01: Bitcoin transaction ID of the revocation (when status = REVOKED).
-   * Stored in `anchors.revocation_tx_id`. Additive, nullable — Constitution 1.8.
-   */
+  /** Revocation TX id when status = REVOKED. */
   revocation_tx_id?: string | null;
-  /**
-   * API-RICH-01: Bitcoin block height at which revocation was anchored.
-   * Stored in `anchors.revocation_block_height`. Additive, nullable — Constitution 1.8.
-   */
+  /** Revocation block height when status = REVOKED. */
   revocation_block_height?: number | null;
-  /**
-   * API-RICH-01: MIME type of the source document (client-side metadata — Constitution 1.6).
-   * Stored in `anchors.file_mime`. Additive, nullable — Constitution 1.8.
-   */
+  /** Source document MIME type — client-side metadata only per Constitution 1.6. */
   file_mime?: string | null;
-  /**
-   * API-RICH-01: Size of the source document in bytes (client-side metadata — Constitution 1.6).
-   * Stored in `anchors.file_size`. Additive, nullable — Constitution 1.8.
-   */
+  /** Source document size in bytes — client-side metadata only. */
   file_size?: number | null;
   error?: string;
 }
@@ -221,36 +195,50 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     result.ferpa_notice = FERPA_REDISCLOSURE_NOTICE;
   }
 
-  // API-RICH-01 (2026-04-16): Surface already-stored fields that GRC platforms,
-  // downstream SDK callers, and auditors need. All nullable / additive — Constitution 1.8.
-  if (anchor.compliance_controls !== null && anchor.compliance_controls !== undefined) {
-    result.compliance_controls = anchor.compliance_controls;
+  // API-RICH-01: Surface already-stored fields for GRC platforms + SDK consumers.
+  // All backwards-compat nullable per Constitution 1.8. `version_number === 1` (the
+  // default / no-lineage case) is omitted to keep the common-case payload lean.
+  const API_RICH_KEYS = [
+    'compliance_controls',
+    'chain_confirmations',
+    'parent_public_id',
+    'revocation_tx_id',
+    'revocation_block_height',
+    'file_mime',
+    'file_size',
+  ] as const;
+  for (const key of API_RICH_KEYS) {
+    const v = anchor[key];
+    if (v !== null && v !== undefined && v !== '') {
+      (result as unknown as Record<string, unknown>)[key] = v;
+    }
   }
-  if (anchor.chain_confirmations !== null && anchor.chain_confirmations !== undefined) {
-    result.chain_confirmations = anchor.chain_confirmations;
-  }
-  if (anchor.parent_public_id) {
-    result.parent_public_id = anchor.parent_public_id;
-  }
-  if (anchor.version_number !== null && anchor.version_number !== undefined && anchor.version_number !== 1) {
-    // Only emit for non-default versions to keep response lean for the common case.
+  if (
+    anchor.version_number !== null &&
+    anchor.version_number !== undefined &&
+    anchor.version_number !== 1
+  ) {
     result.version_number = anchor.version_number;
-  }
-  if (anchor.revocation_tx_id) {
-    result.revocation_tx_id = anchor.revocation_tx_id;
-  }
-  if (anchor.revocation_block_height !== null && anchor.revocation_block_height !== undefined) {
-    result.revocation_block_height = anchor.revocation_block_height;
-  }
-  if (anchor.file_mime) {
-    result.file_mime = anchor.file_mime;
-  }
-  if (anchor.file_size !== null && anchor.file_size !== undefined) {
-    result.file_size = anchor.file_size;
   }
 
   return result;
 }
+
+/**
+ * Default shape for the 8 API-RICH-01 fields on a bare `AnchorByPublicId`.
+ * Used by endpoints that don't hydrate rich fields (e.g. the oracle batch endpoint) so
+ * adding a new rich field only requires touching this constant + the interface.
+ */
+export const EMPTY_API_RICH_FIELDS = {
+  compliance_controls: null,
+  chain_confirmations: null,
+  parent_public_id: null,
+  version_number: null,
+  revocation_tx_id: null,
+  revocation_block_height: null,
+  file_mime: null,
+  file_size: null,
+} as const;
 
 /** Fire-and-forget audit log for verification queries */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -272,49 +260,28 @@ function logVerificationAudit(req: any, publicId: string, result: VerificationRe
   });
 }
 
-/** Default DB-backed lookup */
+/** Default DB-backed lookup — single JOIN for orgName + parent public_id to avoid N+1 on hot path */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
-    // Cast to any — directory_info_opt_out column added by migration 0197 (not yet in generated types)
+    // Supabase nested select hydrates org + parent anchor in one round-trip.
+    // `organization:org_id(display_name)` and `parent:parent_anchor_id(public_id)` each resolve
+    // the referenced row via the FK. `directory_info_opt_out` added by migration 0197 is
+    // not yet in generated types; `parent_anchor_id` FK to anchors.id never leaves this module.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
       .from('anchors')
       .select(
         'public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, ' +
-          'credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out, ' +
-          // API-RICH-01 additions — all already in `anchors` schema, just not previously surfaced:
-          'compliance_controls, chain_confirmations, parent_anchor_id, version_number, ' +
-          'revocation_tx_id, revocation_block_height, file_mime, file_size',
+          'credential_type, issued_at, expires_at, description, directory_info_opt_out, ' +
+          'compliance_controls, chain_confirmations, version_number, ' +
+          'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
+          'organization:org_id(display_name), parent:parent_anchor_id(public_id)',
       )
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
 
     if (error || !data) return null;
-
-    // Look up org name separately
-    let orgName: string | null = null;
-    if (data.org_id) {
-      const { data: org } = await db
-        .from('organizations')
-        .select('display_name')
-        .eq('id', data.org_id)
-        .single();
-      orgName = org?.display_name ?? null;
-    }
-
-    // API-RICH-01: Resolve parent_anchor_id (UUID) → parent's public_id.
-    // Never leak the internal UUID to the public API (Constitution 1.4).
-    let parentPublicId: string | null = null;
-    if (data.parent_anchor_id) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: parent } = await (db as any)
-        .from('anchors')
-        .select('public_id')
-        .eq('id', data.parent_anchor_id)
-        .single();
-      parentPublicId = parent?.public_id ?? null;
-    }
 
     return {
       public_id: data.public_id ?? '',
@@ -325,7 +292,7 @@ const defaultLookup: PublicIdLookup = {
       chain_timestamp: data.chain_timestamp,
       created_at: data.created_at,
       credential_type: data.credential_type,
-      org_name: orgName,
+      org_name: data.organization?.display_name ?? null,
       recipient_hash: null,
       issued_at: data.issued_at,
       expires_at: data.expires_at,
@@ -333,10 +300,9 @@ const defaultLookup: PublicIdLookup = {
       merkle_root: null,
       description: data.description ?? null,
       directory_info_opt_out: data.directory_info_opt_out ?? false,
-      // API-RICH-01
       compliance_controls: data.compliance_controls ?? null,
       chain_confirmations: data.chain_confirmations ?? null,
-      parent_public_id: parentPublicId,
+      parent_public_id: data.parent?.public_id ?? null,
       version_number: data.version_number ?? null,
       revocation_tx_id: data.revocation_tx_id ?? null,
       revocation_block_height: data.revocation_block_height ?? null,

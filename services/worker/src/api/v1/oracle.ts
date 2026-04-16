@@ -21,7 +21,7 @@ import { createHmac, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { buildVerificationResult } from './verify.js';
+import { buildVerificationResult, EMPTY_API_RICH_FIELDS } from './verify.js';
 import type { AnchorByPublicId } from './verify.js';
 
 const router = Router();
@@ -131,17 +131,9 @@ router.post('/verify', async (req: Request, res: Response) => {
         merkle_root: null,
         description: (raw.description as string) ?? null,
         directory_info_opt_out: (raw.directory_info_opt_out as boolean) ?? false,
-        // API-RICH-01: Oracle endpoint is batch + terse by design — doesn't hydrate
-        // the rich fields to keep per-row payload small. Clients that need richness
-        // should use the per-anchor GET /verify/{publicId} endpoint.
-        compliance_controls: null,
-        chain_confirmations: null,
-        parent_public_id: null,
-        version_number: null,
-        revocation_tx_id: null,
-        revocation_block_height: null,
-        file_mime: null,
-        file_size: null,
+        // Oracle endpoint is batch + terse by design — rich fields stay null to keep
+        // per-row payload small. Clients that need richness call GET /verify/{publicId}.
+        ...EMPTY_API_RICH_FIELDS,
       };
 
       const full = buildVerificationResult(anchor);

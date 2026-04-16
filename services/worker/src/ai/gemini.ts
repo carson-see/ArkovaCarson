@@ -23,6 +23,7 @@ import type {
 import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
 import { EXTRACTION_V6_SYSTEM_PROMPT, buildV6UserPrompt } from './prompts/extraction-v6.js';
+import { isV6PromptActive } from './featureFlags.js';
 import {
   TEMPLATE_RECONSTRUCTION_SYSTEM_PROMPT,
   buildTemplateReconstructionPrompt,
@@ -112,12 +113,10 @@ export class GeminiProvider implements IAIProvider {
       let tokensUsed: number | undefined;
 
       if (this.tunedModelPath) {
-        // GME2 v6: When GEMINI_V6_PROMPT=true, use the v6 system+user prompts
-        // that v6 was trained on. This is mandatory for v6 endpoints — without
-        // it, the model regresses toward base behavior (emits reasoning fields
-        // it wasn't trained for, skips description/subType).
-        // For v5-reasoning and earlier tuned models, keep the production prompt.
-        const useV6 = process.env.GEMINI_V6_PROMPT === 'true';
+        // GME2 v6: v6 endpoints require the v6 prompts they were trained on;
+        // using the v5 prompt on v6 regresses toward base behavior (emits
+        // untrained reasoning fields, skips description/subType).
+        const useV6 = isV6PromptActive();
         const systemPromptToUse = useV6 ? EXTRACTION_V6_SYSTEM_PROMPT : EXTRACTION_SYSTEM_PROMPT;
         const userPromptToUse = useV6
           ? buildV6UserPrompt(request.strippedText, request.credentialType, request.issuerHint)

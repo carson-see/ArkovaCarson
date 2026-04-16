@@ -221,9 +221,11 @@ const V6_CALIBRATION_KNOTS: [number, number][] = [
   [1.00, 0.82],
 ];
 
+import { isV6PromptActive } from '../featureFlags.js';
+
 /** Select which knot table to use based on the active-model env flag. */
 function getActiveKnots(): [number, number][] {
-  return process.env.GEMINI_V6_PROMPT === 'true' ? V6_CALIBRATION_KNOTS : CALIBRATION_KNOTS;
+  return isV6PromptActive() ? V6_CALIBRATION_KNOTS : CALIBRATION_KNOTS;
 }
 
 /**
