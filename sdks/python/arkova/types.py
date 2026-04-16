@@ -4,7 +4,7 @@ All types use frozen dataclasses for immutability and hashability.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 # ── Anchor & Verification ─────────────────────────────────────────────
@@ -36,6 +36,15 @@ class VerificationResult:
     description: Optional[str] = None
     issued_date: Optional[str] = None
     expiry_date: Optional[str] = None
+    # API-RICH-01 (v1.5.0) — additive nullable fields
+    compliance_controls: Optional[Dict[str, Any]] = None
+    chain_confirmations: Optional[int] = None
+    parent_public_id: Optional[str] = None
+    version_number: Optional[int] = None
+    revocation_tx_id: Optional[str] = None
+    revocation_block_height: Optional[int] = None
+    file_mime: Optional[str] = None
+    file_size: Optional[int] = None
     error: Optional[str] = None
 
 

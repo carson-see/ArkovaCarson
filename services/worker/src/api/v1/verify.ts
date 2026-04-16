@@ -41,6 +41,51 @@ export interface VerificationResult {
   ferpa_notice?: string;
   /** REG-02: Indicates directory-level fields were suppressed per FERPA Section 99.37 opt-out (additive, nullable — Constitution 1.8) */
   directory_info_suppressed?: boolean;
+  /**
+   * API-RICH-01 (SCRUM-772 / 2026-04-16): Regulatory control IDs mapped to this anchor
+   * (SOC 2, FERPA, HIPAA, GDPR, ISO 27001 control tags). Stored in `anchors.compliance_controls`
+   * by CML-02 (migration 0137). Enables GRC platform integration (Vanta, Drata, Anecdotes).
+   * Additive, nullable — Constitution 1.8.
+   */
+  compliance_controls?: Record<string, unknown> | null;
+  /**
+   * API-RICH-01: Number of Bitcoin block confirmations at anchor time. Stored in
+   * `anchors.chain_confirmations`. Useful for maturity checks ("6-confirmed?").
+   * Additive, nullable — Constitution 1.8.
+   */
+  chain_confirmations?: number | null;
+  /**
+   * API-RICH-01: Public ID of this anchor's parent (credential lineage — reissued diploma,
+   * amended license, etc.). Resolved from `anchors.parent_anchor_id` UUID → parent's public_id
+   * so we never leak internal anchor UUIDs (Constitution 1.4).
+   * Additive, nullable — Constitution 1.8.
+   */
+  parent_public_id?: string | null;
+  /**
+   * API-RICH-01: Version number within a lineage. Defaults to 1 for originals.
+   * Stored in `anchors.version_number`. Additive, nullable — Constitution 1.8.
+   */
+  version_number?: number | null;
+  /**
+   * API-RICH-01: Bitcoin transaction ID of the revocation (when status = REVOKED).
+   * Stored in `anchors.revocation_tx_id`. Additive, nullable — Constitution 1.8.
+   */
+  revocation_tx_id?: string | null;
+  /**
+   * API-RICH-01: Bitcoin block height at which revocation was anchored.
+   * Stored in `anchors.revocation_block_height`. Additive, nullable — Constitution 1.8.
+   */
+  revocation_block_height?: number | null;
+  /**
+   * API-RICH-01: MIME type of the source document (client-side metadata — Constitution 1.6).
+   * Stored in `anchors.file_mime`. Additive, nullable — Constitution 1.8.
+   */
+  file_mime?: string | null;
+  /**
+   * API-RICH-01: Size of the source document in bytes (client-side metadata — Constitution 1.6).
+   * Stored in `anchors.file_size`. Additive, nullable — Constitution 1.8.
+   */
+  file_size?: number | null;
   error?: string;
 }
 
@@ -89,6 +134,22 @@ export interface AnchorByPublicId {
   description: string | null;
   /** REG-02: FERPA Section 99.37 directory info opt-out */
   directory_info_opt_out: boolean;
+  /** API-RICH-01: Regulatory control IDs (SOC 2 / FERPA / HIPAA / GDPR / ISO) */
+  compliance_controls: Record<string, unknown> | null;
+  /** API-RICH-01: Bitcoin block confirmations at anchor time */
+  chain_confirmations: number | null;
+  /** API-RICH-01: Parent anchor PUBLIC ID (resolved from internal UUID — never expose UUID) */
+  parent_public_id: string | null;
+  /** API-RICH-01: Version in lineage; defaults to 1 */
+  version_number: number | null;
+  /** API-RICH-01: Revocation TX id when status = REVOKED */
+  revocation_tx_id: string | null;
+  /** API-RICH-01: Revocation block height when status = REVOKED */
+  revocation_block_height: number | null;
+  /** API-RICH-01: Source document MIME type (client-side metadata only) */
+  file_mime: string | null;
+  /** API-RICH-01: Source document size in bytes */
+  file_size: number | null;
 }
 
 /**
@@ -160,6 +221,34 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     result.ferpa_notice = FERPA_REDISCLOSURE_NOTICE;
   }
 
+  // API-RICH-01 (2026-04-16): Surface already-stored fields that GRC platforms,
+  // downstream SDK callers, and auditors need. All nullable / additive — Constitution 1.8.
+  if (anchor.compliance_controls !== null && anchor.compliance_controls !== undefined) {
+    result.compliance_controls = anchor.compliance_controls;
+  }
+  if (anchor.chain_confirmations !== null && anchor.chain_confirmations !== undefined) {
+    result.chain_confirmations = anchor.chain_confirmations;
+  }
+  if (anchor.parent_public_id) {
+    result.parent_public_id = anchor.parent_public_id;
+  }
+  if (anchor.version_number !== null && anchor.version_number !== undefined && anchor.version_number !== 1) {
+    // Only emit for non-default versions to keep response lean for the common case.
+    result.version_number = anchor.version_number;
+  }
+  if (anchor.revocation_tx_id) {
+    result.revocation_tx_id = anchor.revocation_tx_id;
+  }
+  if (anchor.revocation_block_height !== null && anchor.revocation_block_height !== undefined) {
+    result.revocation_block_height = anchor.revocation_block_height;
+  }
+  if (anchor.file_mime) {
+    result.file_mime = anchor.file_mime;
+  }
+  if (anchor.file_size !== null && anchor.file_size !== undefined) {
+    result.file_size = anchor.file_size;
+  }
+
   return result;
 }
 
@@ -190,7 +279,13 @@ const defaultLookup: PublicIdLookup = {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
       .from('anchors')
-      .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
+      .select(
+        'public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, ' +
+          'credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out, ' +
+          // API-RICH-01 additions — all already in `anchors` schema, just not previously surfaced:
+          'compliance_controls, chain_confirmations, parent_anchor_id, version_number, ' +
+          'revocation_tx_id, revocation_block_height, file_mime, file_size',
+      )
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
@@ -206,6 +301,19 @@ const defaultLookup: PublicIdLookup = {
         .eq('id', data.org_id)
         .single();
       orgName = org?.display_name ?? null;
+    }
+
+    // API-RICH-01: Resolve parent_anchor_id (UUID) → parent's public_id.
+    // Never leak the internal UUID to the public API (Constitution 1.4).
+    let parentPublicId: string | null = null;
+    if (data.parent_anchor_id) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: parent } = await (db as any)
+        .from('anchors')
+        .select('public_id')
+        .eq('id', data.parent_anchor_id)
+        .single();
+      parentPublicId = parent?.public_id ?? null;
     }
 
     return {
@@ -225,6 +333,15 @@ const defaultLookup: PublicIdLookup = {
       merkle_root: null,
       description: data.description ?? null,
       directory_info_opt_out: data.directory_info_opt_out ?? false,
+      // API-RICH-01
+      compliance_controls: data.compliance_controls ?? null,
+      chain_confirmations: data.chain_confirmations ?? null,
+      parent_public_id: parentPublicId,
+      version_number: data.version_number ?? null,
+      revocation_tx_id: data.revocation_tx_id ?? null,
+      revocation_block_height: data.revocation_block_height ?? null,
+      file_mime: data.file_mime ?? null,
+      file_size: data.file_size ?? null,
     } as AnchorByPublicId;
   },
 };

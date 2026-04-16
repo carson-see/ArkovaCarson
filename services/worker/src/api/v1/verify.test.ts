@@ -39,6 +39,15 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     merkle_root: null,
     description: null,
     directory_info_opt_out: false,
+    // API-RICH-01 defaults (all null — opt-in per anchor)
+    compliance_controls: null,
+    chain_confirmations: null,
+    parent_public_id: null,
+    version_number: null,
+    revocation_tx_id: null,
+    revocation_block_height: null,
+    file_mime: null,
+    file_size: null,
     ...overrides,
   };
 }
@@ -313,6 +322,84 @@ describe('buildVerificationResult', () => {
       const result = buildVerificationResult(anchor);
 
       expect(result.directory_info_suppressed).toBe(true);
+    });
+  });
+
+  describe('API-RICH-01 — additive rich fields (SCRUM-772 / 2026-04-16)', () => {
+    it('omits all new fields when all are null (backwards-compat baseline)', () => {
+      const result = buildVerificationResult(createAnchor());
+      expect(result.compliance_controls).toBeUndefined();
+      expect(result.chain_confirmations).toBeUndefined();
+      expect(result.parent_public_id).toBeUndefined();
+      expect(result.version_number).toBeUndefined();
+      expect(result.revocation_tx_id).toBeUndefined();
+      expect(result.revocation_block_height).toBeUndefined();
+      expect(result.file_mime).toBeUndefined();
+      expect(result.file_size).toBeUndefined();
+    });
+
+    it('surfaces compliance_controls JSON when present', () => {
+      const result = buildVerificationResult(createAnchor({
+        compliance_controls: { soc2: ['CC6.1', 'CC6.2'], ferpa: ['99.31'] },
+      }));
+      expect(result.compliance_controls).toEqual({
+        soc2: ['CC6.1', 'CC6.2'],
+        ferpa: ['99.31'],
+      });
+    });
+
+    it('surfaces chain_confirmations when non-null', () => {
+      const result = buildVerificationResult(createAnchor({ chain_confirmations: 6 }));
+      expect(result.chain_confirmations).toBe(6);
+    });
+
+    it('accepts chain_confirmations=0 (unconfirmed) without omitting', () => {
+      const result = buildVerificationResult(createAnchor({ chain_confirmations: 0 }));
+      expect(result.chain_confirmations).toBe(0);
+    });
+
+    it('surfaces parent_public_id (never raw UUID)', () => {
+      const result = buildVerificationResult(createAnchor({ parent_public_id: 'ARK-2025-PARENT-001' }));
+      expect(result.parent_public_id).toBe('ARK-2025-PARENT-001');
+    });
+
+    it('omits version_number when it equals default (1) to keep response lean', () => {
+      const result = buildVerificationResult(createAnchor({ version_number: 1 }));
+      expect(result.version_number).toBeUndefined();
+    });
+
+    it('surfaces version_number when > 1', () => {
+      const result = buildVerificationResult(createAnchor({ version_number: 3 }));
+      expect(result.version_number).toBe(3);
+    });
+
+    it('surfaces revocation_tx_id + revocation_block_height for REVOKED anchors', () => {
+      const result = buildVerificationResult(createAnchor({
+        status: 'REVOKED',
+        revocation_tx_id: '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+        revocation_block_height: 900123,
+      }));
+      expect(result.revocation_tx_id).toBe('0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef');
+      expect(result.revocation_block_height).toBe(900123);
+    });
+
+    it('surfaces file_mime + file_size when present', () => {
+      const result = buildVerificationResult(createAnchor({
+        file_mime: 'application/pdf',
+        file_size: 128_456,
+      }));
+      expect(result.file_mime).toBe('application/pdf');
+      expect(result.file_size).toBe(128_456);
+    });
+
+    it('does not leak an internal UUID in any output field', () => {
+      // Constitution 1.4: never expose anchors.id / user_id / org_id publicly.
+      const result = buildVerificationResult(createAnchor({
+        parent_public_id: 'ARK-2025-PARENT-XYZ',
+      }));
+      const serialized = JSON.stringify(result);
+      // UUID v4 pattern: 8-4-4-4-12 hex chars
+      expect(serialized).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
     });
   });
 });
