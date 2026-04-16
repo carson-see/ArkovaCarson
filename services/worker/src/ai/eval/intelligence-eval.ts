@@ -101,6 +101,12 @@ export function scoreCitationAccuracy(
 ): number {
   if (expectedCitations.length === 0) return 1.0;
   const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+  // Minimum overlap length for bidirectional substring match. Shorter overlaps cause
+  // false positives — e.g. model emits record_id "fcra" and alt is "fcra-604-b-3";
+  // without this guard, `alt.includes(tok)` inflates the citation score. 4 chars is
+  // the shortest meaningful canonical-ID prefix in the FCRA/HIPAA/FERPA registries
+  // (all sources start with a regulation prefix of 4+ chars).
+  const MIN_MATCH_LEN = 4;
   const actualTokens = new Set<string>();
   for (const c of actualCitations) {
     if (c.record_id) actualTokens.add(norm(c.record_id));
@@ -109,7 +115,15 @@ export function scoreCitationAccuracy(
   const found = expectedCitations.filter((slot) => {
     const alternatives = slot.split('|').map(norm);
     return alternatives.some((alt) =>
-      Array.from(actualTokens).some((tok) => tok.includes(alt) || alt.includes(tok)),
+      Array.from(actualTokens).some((tok) => {
+        // Exact match always counts.
+        if (tok === alt) return true;
+        // Directional substring match requires the shorter side to meet MIN_MATCH_LEN
+        // AND to be a meaningful prefix/segment (not just shared prefix like "fcr").
+        if (tok.length >= MIN_MATCH_LEN && alt.includes(tok)) return true;
+        if (alt.length >= MIN_MATCH_LEN && tok.includes(alt)) return true;
+        return false;
+      }),
     );
   });
   return found.length / expectedCitations.length;

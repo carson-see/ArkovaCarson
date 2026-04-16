@@ -15,7 +15,7 @@ import { ExtractionRequestSchema } from '../../ai/schemas.js';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
-import { calibrateConfidence } from '../../ai/eval/calibration.js';
+import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { buildExtractionManifest } from '../../ai/extraction-manifest.js';
 import { GeminiProvider } from '../../ai/gemini.js';
 import { db } from '../../utils/db.js';
@@ -124,10 +124,13 @@ router.post('/', async (req: Request, res: Response) => {
     }
     const durationMs = Date.now() - startMs;
 
-    // Apply confidence calibration (AI-EVAL-02): maps raw model confidence
+    // Apply confidence calibration (AI-EVAL-02 / NMT-03): maps raw model confidence
     // to calibrated confidence that better reflects actual extraction accuracy.
+    // Provider-routed — Gemini is underconfident (knots map UP), Nessie is
+    // overconfident (knots map DOWN). Using the Gemini function on a Nessie
+    // result re-inflates already-calibrated values.
     const rawConfidence = result.confidence;
-    const calibrated = calibrateConfidence(rawConfidence);
+    const calibrated = calibrateConfidenceByProvider(result.provider, rawConfidence);
 
     // Structured observability log — AI extraction latency + quality metrics
     logger.info({

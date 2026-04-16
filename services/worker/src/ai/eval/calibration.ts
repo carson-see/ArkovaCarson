@@ -438,6 +438,33 @@ export function getCurrentNessieCalibrationKnots(): [number, number][] {
 }
 
 /**
+ * Provider-aware calibration router.
+ *
+ * Why this exists: `calibrateConfidence` is tuned for Gemini (underconfident;
+ * maps UP). `calibrateNessieConfidence` is tuned for Nessie (overconfident;
+ * maps DOWN). Calling the Gemini function on a Nessie result re-inflates its
+ * already-calibrated confidence, nullifying NMT-03 calibration work.
+ *
+ * Call this from API endpoints that receive `{ provider, confidence }` from the
+ * provider abstraction. Direct callers (eval harness, etc.) should call the
+ * provider-specific function they mean.
+ *
+ * @param provider Provider string from IAIProvider result (gemini / nessie / together / etc.)
+ * @param rawConfidence Model-reported confidence (0.0–1.0)
+ * @returns Calibrated confidence (0.0–1.0)
+ */
+export function calibrateConfidenceByProvider(
+  provider: string,
+  rawConfidence: number,
+): number {
+  // Any Nessie-derived provider string routes to Nessie calibration. `together`
+  // serves Nessie-family LoRA adapters in our setup (see CLAUDE.md env vars),
+  // so it gets the same downward mapping.
+  const isNessieFamily = provider === 'nessie' || provider === 'together';
+  return isNessieFamily ? calibrateNessieConfidence(rawConfidence) : calibrateConfidence(rawConfidence);
+}
+
+/**
  * Format calibration report as markdown.
  */
 export function formatCalibrationReport(cal: CalibrationResult): string {

@@ -76,6 +76,33 @@ CLAUDE.md must stay accurate and organized. If a task introduces new rules, patt
 ### API RICHNESS MANDATE
 Every new response field must be a **backwards-compatible nullable addition**. Never remove a field without a v2+ API path and 12-month deprecation (per Constitution 1.8). Prefer surfacing already-stored data (compliance_controls, confidence_scores, audit_events, zk_proof) over inventing new inference. The OpenAPI spec and TS/Python SDKs must update in the **same PR** as any response-schema change.
 
+### VERTEX ENDPOINT HYGIENE MANDATE (HARD RULE — 2026-04-16)
+**Audit Vertex endpoints BEFORE and AFTER every tuning/eval/deploy run.** Hitting the wallet is not abstract — idle replicas bill per hour, and a single tuning job can create 6+ checkpoint endpoints that silently cost hundreds of dollars a month. No exceptions.
+
+**Before a run** (tuning, eval, smoke, cutover):
+```bash
+gcloud ai endpoints list --region=us-central1 --project=arkova1 \
+  --format="table(name.basename(),displayName,deployedModels.model.list())"
+```
+Confirm the target endpoint is what you expect AND no orphan endpoints exist. If any show up that you cannot justify right now, undeploy/delete them first.
+
+**After a run** (especially after any Vertex SFT tuning job succeeds — Vertex auto-creates one endpoint per checkpoint):
+1. Keep ONLY the final-step endpoint (highest step number) + current prod + immediate rollback.
+2. Undeploy every intermediate checkpoint endpoint in the same session, in parallel:
+   ```bash
+   gcloud ai endpoints undeploy-model <endpoint> --deployed-model-id=<deployed-model-id> \
+     --region=us-central1 --project=arkova1
+   ```
+3. Delete empty endpoint shells once undeployed (shells don't bill but count against quota):
+   ```bash
+   gcloud ai endpoints delete <endpoint> --region=us-central1 --project=arkova1 --quiet
+   ```
+4. Document the census in the post-run summary: `N deployed → M deployed, kept [list], undeployed [list]`.
+
+**Target state at all times: ≤3 deployed endpoints** (current prod + v-N-1 rollback + active training target). If you're above 3, you have cleanup debt — resolve it before the next run.
+
+**Never defer Vertex cleanup to "later."** Later is 2026-04-16, $XXX lost while the intermediate checkpoints idled. Cleanup is part of Definition of Done for any task that touches Vertex.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
@@ -627,7 +654,9 @@ GEMINI_API_KEY=
 GEMINI_MODEL=gemini-3-flash          # migrated from 2.5-flash (GME complete)
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001  # text-embedding-004 does NOT exist; gemini-embedding-2-preview is available but preview-only
 AI_PROVIDER=mock                    # gemini | nessie | together | cloudflare | replicate | mock
-GEMINI_TUNED_MODEL=                 # optional — fine-tuned Gemini model path
+GEMINI_TUNED_MODEL=                 # optional — fine-tuned Gemini model path (e.g. projects/arkova1/locations/us-central1/endpoints/740332515062972416 for v6)
+GEMINI_V6_PROMPT=false              # GME2-03 — when true, use prompts/extraction-v6.ts system+user prompts (required for v6 tuned endpoint). Also activates v6 isotonic calibration knots in calibration.ts. See docs/runbooks/v6-cutover.md.
+GEMINI_TUNED_RESPONSE_SCHEMA=false  # optional — when true, attach responseSchema on tuned Gemini 2.0/2.5-flash calls. Default off: base Gemini 3 over-generates optional fields with responseSchema; keep this flag off unless evaluating tuned-only endpoints.
 REPLICATE_API_TOKEN=                # QA only
 AI_BATCH_CONCURRENCY=3              # concurrent AI extraction requests (min: 1)
 CF_AI_MODEL=                        # Cloudflare AI model (default: @cf/nvidia/nemotron)

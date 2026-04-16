@@ -197,6 +197,37 @@ describe('calibrateConfidence (v6 branch — SCRUM-794 / GME2-03)', () => {
   });
 });
 
+describe('calibrateConfidenceByProvider (NMT-03 double-calibration guard)', () => {
+  it('routes gemini provider to Gemini calibration (underconfident → maps UP)', async () => {
+    const { calibrateConfidenceByProvider, calibrateConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('gemini', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+  });
+
+  it('routes nessie provider to Nessie calibration (overconfident → maps DOWN)', async () => {
+    const { calibrateConfidenceByProvider, calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('nessie', 0.87)).toBeCloseTo(calibrateNessieConfidence(0.87), 5);
+  });
+
+  it('routes together provider to Nessie calibration (Together hosts Nessie LoRAs)', async () => {
+    const { calibrateConfidenceByProvider, calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('together', 0.9)).toBeCloseTo(calibrateNessieConfidence(0.9), 5);
+  });
+
+  it('falls back to Gemini calibration for unknown providers (mock / cloudflare / replicate)', async () => {
+    const { calibrateConfidenceByProvider, calibrateConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('mock', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+    expect(calibrateConfidenceByProvider('cloudflare', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+  });
+
+  it('does not double-calibrate a Nessie result (raw 0.87 stays in low range, not re-inflated)', async () => {
+    const { calibrateConfidenceByProvider } = await import('./calibration.js');
+    // Pre-fix: calibrateConfidence(0.87) ≈ 0.92 (Gemini underconfident map UP).
+    // Post-fix: router sends to Nessie knots → ~0.40 (overconfident map DOWN).
+    const result = calibrateConfidenceByProvider('nessie', 0.87);
+    expect(result).toBeLessThan(0.5);
+  });
+});
+
 describe('calibrateNessieConfidence', () => {
   // NMT-03: Nessie models are severely overconfident (85-90% reported, 34-46% actual)
   // These tests verify the Nessie-specific calibration curve maps scores DOWN.

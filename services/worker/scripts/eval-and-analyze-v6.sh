@@ -31,6 +31,10 @@ source .env
 set +a
 export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-$HOME/.config/gcloud/arkova-cli-key.json}"
 export GEMINI_TUNED_MODEL="$ENDPOINT"
+# v6 endpoints require the v6 system+user prompts they were trained on (see
+# services/worker/src/ai/gemini.ts:115 — flag gates prompt selection). Missing
+# this flag runs the v5 prompt against the v6 endpoint and regresses metrics.
+export GEMINI_V6_PROMPT=true
 
 # 2. Smoke test (fails fast on auth / schema / endpoint issues)
 echo "=== Smoke test ==="
@@ -60,7 +64,7 @@ if npx tsx scripts/analyze-gemini-golden-v6-eval.ts --input "$EVAL_JSON" --outpu
   echo
   echo "To cut over:"
   echo "  gcloud run services update arkova-worker --region us-central1 --project arkova1 \\"
-  echo "    --update-env-vars \"GEMINI_TUNED_MODEL=$ENDPOINT\""
+  echo "    --update-env-vars \"GEMINI_TUNED_MODEL=$ENDPOINT,GEMINI_V6_PROMPT=true\""
   exit 0
 else
   rc=$?
