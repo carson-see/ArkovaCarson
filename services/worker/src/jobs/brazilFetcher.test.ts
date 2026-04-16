@@ -7,6 +7,13 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Mock config so the transitive logger.ts → config.ts chain doesn't fail
+// module-load when prod env vars (SUPABASE_URL, etc.) aren't set in tests.
+vi.mock('../config.js', () => ({
+  config: { nodeEnv: 'test', useMocks: true, logLevel: 'silent' },
+  getNetworkDisplayName: vi.fn(() => 'Test Environment'),
+}));
+
 // Mock the pipeline module's delay to be a no-op (avoids timer issues)
 vi.mock('../utils/pipeline.js', async (importOriginal) => {
   const actual = await importOriginal() as Record<string, unknown>;

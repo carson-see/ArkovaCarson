@@ -63,7 +63,7 @@ function createMockProvider(): IAIProvider {
     extractMetadata: vi.fn(),
     generateEmbedding: vi.fn().mockResolvedValue({
       embedding: new Array(768).fill(0.1),
-      model: 'text-embedding-004',
+      model: 'gemini-embedding-001',
     } satisfies EmbeddingResult),
     healthCheck: vi.fn(),
   };
@@ -121,7 +121,7 @@ describe('embeddings', () => {
         undefined,
       );
       expect(result.embedding).toHaveLength(768);
-      expect(result.model).toBe('text-embedding-004');
+      expect(result.model).toBe('gemini-embedding-001');
     });
 
     it('returns 768-dimensional embedding', async () => {
@@ -157,7 +157,7 @@ describe('embeddings', () => {
       });
 
       expect(result.success).toBe(true);
-      expect(result.model).toBe('text-embedding-004');
+      expect(result.model).toBe('gemini-embedding-001');
       expect(mockProvider.generateEmbedding).toHaveBeenCalled();
       expect(db.from).toHaveBeenCalledWith('credential_embeddings');
     });

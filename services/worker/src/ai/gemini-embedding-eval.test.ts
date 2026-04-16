@@ -1,42 +1,38 @@
 /**
  * GME-03: Embedding Model Migration Evaluation
  *
- * Documents the evaluation of text-embedding-004 deprecation and migration path.
- * Deprecation date: July 14, 2026 (93 days from 2026-04-12)
- * Recommended replacement: text-embedding-004
+ * Records the current embedding-model selection + migration posture.
  *
- * Decision: KEEP text-embedding-004 for now.
- * Rationale:
- *   - 93 days until shutdown (less urgent than Flash model at 66 days)
- *   - text-embedding-004 dimensions may differ (768 vs unknown) — re-embedding 320K+ records needed
- *   - Re-embedding cost: ~$100-200 at current Gemini pricing
- *   - Migration should be planned as a separate story before July 2026
+ * Current model: `gemini-embedding-001` (per CLAUDE.md Section 7).
+ * Original GME-03 plan (2026-04-12) named `text-embedding-004` as the target —
+ * that identifier does not exist in the public Gemini SDK. The actual production
+ * embedding model was set to `gemini-embedding-001`, with `gemini-embedding-2-preview`
+ * reserved for post-preview migration.
  *
- * IMPORTANT: text-embedding-004 may have different vector dimensions.
- * If dimensions differ, ALL public_record_embeddings rows must be regenerated.
+ * If we ever migrate to a different-dimension model, all rows in
+ * `public_record_embeddings` must be regenerated (320K+ records; ~$100-200 at
+ * current pricing). Plan as a separate story before any dimension change.
  */
 import { describe, it, expect } from 'vitest';
 import { GEMINI_EMBEDDING_MODEL, getGeminiConfig } from './gemini-config.js';
 
 describe('GME-03: Embedding Model Evaluation', () => {
-  it('current embedding model is text-embedding-004', () => {
-    expect(GEMINI_EMBEDDING_MODEL).toBe('text-embedding-004');
+  it('current embedding model is gemini-embedding-001', () => {
+    expect(GEMINI_EMBEDDING_MODEL).toBe('gemini-embedding-001');
   });
 
   it('embedding model is separate from generation model in config', () => {
     const config = getGeminiConfig();
-    expect(config.embeddingModel).toBe('text-embedding-004');
+    expect(config.embeddingModel).toBe('gemini-embedding-001');
     expect(config.generationModel).not.toBe(config.embeddingModel);
   });
 
-  it('documents deprecation timeline', () => {
-    // This test documents the decision made during GME-03 evaluation
+  it('documents migration posture', () => {
     const decision = {
-      currentModel: 'text-embedding-004',
-      deprecationDate: '2026-07-14',
-      recommendedReplacement: 'text-embedding-004',
+      currentModel: 'gemini-embedding-001',
+      candidateReplacement: 'gemini-embedding-2-preview',
       action: 'KEEP_CURRENT',
-      reason: 'Shutdown 93 days away; re-embedding 320K+ records is expensive; plan separate migration story',
+      reason: 'gemini-embedding-2-preview is preview-only; dimension change requires regenerating 320K+ records',
       riskIfDimensionsChange: 'ALL public_record_embeddings must be regenerated',
       migrationStoryNeeded: true,
     };

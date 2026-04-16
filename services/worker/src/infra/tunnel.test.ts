@@ -34,8 +34,8 @@ describe('INFRA-01: Dockerfile', () => {
   });
 
   it('excludes dev dependencies in production stage', () => {
-    // Multi-stage: production stage uses npm ci --omit=dev
-    expect(dockerfile).toMatch(/npm ci --omit=dev|npm prune --omit=dev/);
+    // Production stage excludes dev deps via any of: npm ci / npm install / npm prune + --omit=dev
+    expect(dockerfile).toMatch(/npm (ci|install|prune) --omit=dev/);
   });
 
   it('uses multi-stage build (source not in production image)', () => {

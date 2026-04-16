@@ -30,7 +30,7 @@ describe('gemini-config', () => {
 
   it('exports correct default embedding model', async () => {
     const { GEMINI_EMBEDDING_MODEL } = await import('./gemini-config.js');
-    expect(GEMINI_EMBEDDING_MODEL).toBe('text-embedding-004');
+    expect(GEMINI_EMBEDDING_MODEL).toBe('gemini-embedding-001');
   });
 
   it('exports correct default vision model (same as generation)', async () => {
@@ -48,7 +48,7 @@ describe('gemini-config', () => {
     const config = getGeminiConfig();
     expect(config).toEqual({
       generationModel: 'gemini-3-flash-preview',
-      embeddingModel: 'text-embedding-004',
+      embeddingModel: 'gemini-embedding-001',
       visionModel: 'gemini-3-flash-preview',
       tunedModel: null,
       liteModel: 'gemini-3-flash-lite-preview',
