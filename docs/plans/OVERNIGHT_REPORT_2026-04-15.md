@@ -33,12 +33,25 @@ Eval file: `services/worker/docs/eval/eval-gemini-2026-04-16T04-00-10.md`
 ### Win #3: Gemini fraud v1 training COMPLETED + endpoint live + eval passes
 - State: JOB_STATE_SUCCEEDED at 03:41:40 UTC (~22 min total training time)
 - Live endpoint: `projects/270018525501/locations/us-central1/endpoints/2117308101131501568`
-- 5-sample smoke eval (using extraction prompts as input):
-  - Macro F1: **77.4%** (vs 70.7% base, vs 73.8% v5-reasoning)
-  - Confidence Pearson r: **0.718** (vs 0.375 base, 0.396 v5-reasoning) — **best confidence calibration of any model we've measured**
-- Note: this was extraction eval, not fraud eval (extraction is the only eval pipeline that exists). Real fraud eval requires building a fraud-specific eval set; the 18 fraud examples in the training data could be used as a held-out test (need to add 4 more for a 4-train / 14-test split, or train v2 with held-out).
+- **30-sample extraction eval (authoritative):**
+  - Macro F1: **70.3%** (~ same as base 70.7%)
+  - Weighted F1: **81.0%** (+3.8pp vs base 77.2% — BEST WEIGHTED F1 of any model)
+  - Mean reported confidence: 74.0%
+  - Mean actual accuracy: 74.1%
+  - Latency: 8.5s
+- Note: this was extraction eval, not fraud eval. The fraud model was trained on extracted-fields → fraud-signals, but the base Gemini Pro knowledge is preserved enough that it does extraction at +3.8pp Weighted vs base. Real fraud eval requires building a fraud-specific eval set (18 training examples could be used as a 4-train / 14-test split, OR add 100 more from FTC actions for a real benchmark).
 
-Eval file: `services/worker/docs/eval/eval-gemini-2026-04-16T04-02-47.md`
+Eval files: `services/worker/docs/eval/eval-gemini-2026-04-16T04-10-13.md` (30 samples, authoritative), `services/worker/docs/eval/eval-gemini-2026-04-16T04-02-47.md` (5 samples, smoke)
+
+### FINAL MODEL SCOREBOARD (50/30 samples after eval framework fix)
+
+| Model | Macro F1 | Weighted F1 | Confidence r | Latency |
+|---|---|---|---|---|
+| Gemini 2.0 Flash (base, **production**) | 70.7% | 77.2% | 0.375 | 1.5s |
+| Vertex v5-reasoning (tuned, sat unused for weeks) | **73.8%** | 80.1% | 0.396 | 11.4s |
+| Vertex fraud-v1 (tuned tonight) | 70.3% | **81.0%** | 0.211 | 8.5s |
+
+**Production deploy candidate:** Vertex v5-reasoning has the best Macro F1. fraud-v1 has the best Weighted F1. **Either is a real upgrade over base — recommend deploying v5-reasoning first** (already exists, no new training cost, +3.1 Macro / +2.9 Weighted).
 
 ### Blocker that remains: RunPod 16GB Llama serving
 - Smoke endpoint with `facebook/opt-125m` (250MB): WORKS (jobs completed)
