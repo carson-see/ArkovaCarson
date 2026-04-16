@@ -203,9 +203,13 @@ export async function handleAdminRecords(
   const typeFilter = (req.query.type as string) || '';
 
   try {
+    // PERF (2026-04-16): count: 'exact' on 1.6M-row anchors table scans the whole
+    // table every page load — makes Admin Records "ungodly slow". Use estimated
+    // count from pipeline_dashboard_cache (refreshed every 60s) and query rows
+    // without a count round-trip.
     let query = db
       .from('anchors')
-      .select('id, public_id, filename, credential_type, status, chain_tx_id, fingerprint, user_id, org_id, created_at, metadata', { count: 'exact' })
+      .select('id, public_id, filename, credential_type, status, chain_tx_id, fingerprint, user_id, org_id, created_at, metadata')
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -221,12 +225,31 @@ export async function handleAdminRecords(
       query = query.eq('credential_type', typeFilter as 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT' | 'PROFESSIONAL' | 'OTHER');
     }
 
-    const { data: records, count, error } = await query;
+    // Fetch rows + cached total count in parallel
+    const [{ data: records, error }, cachedCountResp] = await Promise.all([
+      query,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any).from('pipeline_dashboard_cache').select('cache_value').eq('cache_key', 'anchor_status_counts').single(),
+    ]);
 
     if (error) {
       logger.error({ error }, 'Admin records query failed');
       res.status(500).json({ error: 'Query failed' });
       return;
+    }
+
+    // Derive total from cache when no filter/search narrows results; otherwise use
+    // page-size * current-page heuristic so the page shows a Next button.
+    let count: number;
+    const isFiltered = !!(search || statusFilter || typeFilter);
+    if (isFiltered) {
+      // For filtered results, we don't know the exact count without a scan.
+      // Estimate: if rows returned < limit, this is the last page; otherwise assume there's more.
+      const returned = records?.length ?? 0;
+      count = returned < limit ? offset + returned : offset + limit + 1;
+    } else {
+      const cacheVal = (cachedCountResp?.data?.cache_value ?? {}) as Record<string, unknown>;
+      count = Number(cacheVal.total ?? 0);
     }
 
     // Enrich with user emails
