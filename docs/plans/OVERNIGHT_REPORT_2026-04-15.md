@@ -245,24 +245,64 @@ The eval framework bug was a **single-line fix**: `ExtractedFieldsSchema` was `.
 
 Fix in `services/worker/src/ai/schemas.ts`: added `confidenceReasoning: z.string().optional()` to the schema. Also added `extractionError` capture in `runner.ts` so future failures are visible (with `EVAL_VERBOSE=1`).
 
-**After the fix — REAL Gemini base baseline (30 samples, 2026-04-16T03:34:14):**
+**After the fix — REAL Gemini base baseline:**
 
-| Metric | Value (was) | Value (now) |
+| Metric | Was | 30 samples | **50 samples (authoritative)** |
+|---|---|---|---|
+| Macro F1 | 0.0% | 65.7% | **70.7%** |
+| Weighted F1 | 0.0% | 78.3% | **77.2%** |
+| Mean reported confidence | 0.0% | 71.9% | **69.9%** |
+| Mean actual accuracy | 23.0% | 71.7% | **70.4%** |
+| Confidence Pearson r — raw | 0.000 | 0.239 | **0.375** |
+| Confidence Pearson r — calibrated | 0.000 | 0.329 | **0.570** |
+| Mean latency | 186ms | 1552ms | **1565ms** |
+
+**Per-field at 50 samples (the production target to beat):**
+
+| Field | F1 |
+|---|---|
+| credentialType | **92.0%** |
+| issuedDate | 84.6% |
+| degreeLevel | 83.3% |
+| expiryDate | 81.8% |
+| issuerName | 75.3% |
+| jurisdiction | 68.0% |
+| fieldOfStudy | 65.8% |
+| licenseNumber | 50.0% |
+| accreditingBody | 47.1% |
+| creditHours/creditType | **100%** |
+| **fraudSignals** | **0%** ← exactly why we're training the Gemini fraud stream |
+
+**Per-type at 50 samples:**
+
+| Type | n | Macro F1 |
 |---|---|---|
-| Macro F1 | 0.0% | **65.7%** |
-| Weighted F1 | 0.0% | **78.3%** |
-| Mean reported confidence | 0.0% | **71.9%** |
-| Mean actual accuracy | 23.0% | **71.7%** |
-| Confidence Pearson r | 0.000 | **0.239** (still under 0.7 target) |
-| Mean latency | 186ms | **1552ms** (the 186ms was failing fast) |
-| credentialType F1 | 0% | **90.0%** |
-| issuerName F1 | 0% | **80.0%** |
-| degreeLevel F1 | 0% | **100%** |
-| fraudSignals F1 | 0% | **0%** (confirmed real gap — needs Gemini fraud stream) |
+| DEGREE | 4 | **100.0%** ← our DEGREE LoRA needs to match or beat this |
+| PROFESSIONAL | 2 | 95.2% |
+| ATTESTATION | 2 | 93.3% |
+| CERTIFICATE | 7 | 91.6% |
+| CLE | 2 | 91.7% |
+| PATENT | 2 | 91.7% |
+| PUBLICATION | 4 | 85.0% |
+| LEGAL | 2 | 83.3% |
+| INSURANCE | 2 | 77.8% |
+| OTHER | 1 | 66.7% |
+| FINANCIAL | 2 | 66.7% |
+| MEDICAL | 3 | 62.2% |
+| BADGE | 3 | 60.0% |
+| REGULATION | 3 | 60.0% |
+| SEC_FILING/MILITARY/CHARITY/TRANSCRIPT | 1-2 each | 50.0% |
+| IDENTITY | 3 | 38.9% |
+| RESUME | 2 | 20.0% |
 
-This is now the authoritative baseline that any fine-tune must beat. **DoD for the DEGREE Nessie LoRA: ≥ 65.7% macro F1 on the same 30-sample slice (or > 80% weighted F1 to make the cost worthwhile).**
+**Definitions of Done (locked):**
+- DEGREE Nessie LoRA: ≥ 100% macro F1 on the same DEGREE slice (since base is already 100%, the bar is "match or improve confidence calibration / latency / cost")
+- Gemini fraud v1: > 0% F1 on fraudSignals on a held-out fraud test set (any improvement on a column where base scores 0 is meaningful)
+- All other Nessie domain LoRAs: must beat the corresponding type's macro F1 above
 
-Eval result file: `services/worker/docs/eval/eval-gemini-2026-04-16T03-34-14.md`
+**Authoritative baseline files:**
+- `services/worker/docs/eval/eval-gemini-2026-04-16T03-38-01.md` (50 samples)
+- `services/worker/docs/eval/eval-gemini-2026-04-16T03-34-14.md` (30 samples)
 
 ## 8a. EARLIER CRITICAL FINDING (now resolved — kept for forensic record) — Eval framework itself is broken
 
