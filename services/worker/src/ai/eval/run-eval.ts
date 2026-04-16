@@ -62,8 +62,21 @@ async function main() {
     if (modelOverride) {
       console.log(`   Model override: ${modelOverride}`);
     }
+  } else if (providerArg === 'together') {
+    if (!process.env.TOGETHER_API_KEY) {
+      console.error('ERROR: TOGETHER_API_KEY required for together provider');
+      process.exit(1);
+    }
+    const { TogetherProvider } = await import('../together.js');
+    // TogetherProvider takes (apiKey, model, embeddingModel) — pass model override as 2nd arg
+    provider = new TogetherProvider(undefined, modelOverride);
+    if (modelOverride) {
+      console.log(`   Model override: ${modelOverride}`);
+    } else {
+      console.log(`   Model: ${process.env.TOGETHER_MODEL ?? '(default base Llama)'}`);
+    }
   } else {
-    console.error(`ERROR: Unknown provider "${providerArg}". Use "mock", "gemini", or "nessie".`);
+    console.error(`ERROR: Unknown provider "${providerArg}". Use "mock", "gemini", "nessie", or "together".`);
     process.exit(1);
   }
 
