@@ -106,6 +106,9 @@ async function evaluateEntry(
     latencyMs,
     provider: provider.name,
     tokensUsed,
+    // GME2 v6: retain raw fields so post-eval analysis can compute
+    // emission rates for non-ALL_FIELDS fields (subType, description).
+    extractedFields,
   };
 }
 

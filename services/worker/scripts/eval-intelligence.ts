@@ -31,6 +31,116 @@ import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js
 import type { IntelligenceMode } from '../src/ai/prompts/intelligence.js';
 import { INTELLIGENCE_EVAL_DATASET_V2 } from '../src/ai/eval/intelligence-eval-dataset.js';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
+import { FCRA_EVAL_50 } from './intelligence-dataset/evals/fcra-eval.js';
+import { HIPAA_EVAL_50 } from './intelligence-dataset/evals/hipaa-eval.js';
+import { FERPA_EVAL_50 } from './intelligence-dataset/evals/ferpa-eval.js';
+
+// ---------------------------------------------------------------------------
+// Eval dataset v3 — HIPAA healthcare compliance (matches v28.0 canonical IDs)
+// ---------------------------------------------------------------------------
+
+const INTELLIGENCE_EVAL_HIPAA: IntelligenceEvalEntry[] = [
+  {
+    id: 'intel-hipaa-001',
+    taskType: 'compliance_qa',
+    domain: 'healthcare_privacy',
+    query: 'What are the HIPAA requirements for responding to a patient access request?',
+    contextDocIds: [],
+    expectedKeyPoints: ['30 calendar days', 'reasonable cost-based fee', 'designated record set', 'electronic format', '45 CFR 164.524'],
+    expectedRisks: [],
+    expectedCitations: ['hipaa-164-524-access|ocr-right-of-access-2019|hipaa-access-fees'],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'intel-hipaa-002',
+    taskType: 'risk_analysis',
+    domain: 'healthcare_privacy',
+    query: 'An employee accessed a family member\'s medical record without clinical reason. What breach analysis and sanctions apply?',
+    contextDocIds: [],
+    expectedKeyPoints: ['unauthorized access', 'breach risk assessment', 'sanction policy', '60-day notification', '164.402'],
+    expectedRisks: ['unauthorized access by workforce member', 'potential breach requiring notification', 'inadequate sanction policy'],
+    expectedCitations: [
+      'hipaa-164-402-breach|hipaa-164-404-individual',
+      'hipaa-sanction-policy|hipaa-164-308-admin',
+    ],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'intel-hipaa-003',
+    taskType: 'compliance_qa',
+    domain: 'healthcare_privacy',
+    query: 'What terms must a Business Associate Agreement include?',
+    contextDocIds: [],
+    expectedKeyPoints: ['permitted uses', 'safeguards', 'subcontractor BAAs', 'breach reporting', 'return or destroy at termination'],
+    expectedRisks: [],
+    expectedCitations: ['hipaa-164-504-baa|hipaa-164-314-ba-security|hipaa-160-103-ba'],
+    minConfidence: 0.85,
+  },
+  {
+    id: 'intel-hipaa-004',
+    taskType: 'recommendation',
+    domain: 'healthcare_privacy',
+    query: 'Ransomware encrypted our system with PHI. What notification obligations apply?',
+    contextDocIds: [],
+    expectedKeyPoints: ['presumed breach', 'risk assessment', '60-day individual notification', 'HHS notification', '500+ triggers media notice'],
+    expectedRisks: ['double-extortion exfiltration', 'delayed discovery extends exposure', 'failure to notify within 60 days'],
+    expectedCitations: [
+      'hipaa-164-402-breach|hipaa-164-404-individual',
+      'hipaa-164-406-media|hipaa-164-408-hhs',
+    ],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'intel-hipaa-005',
+    taskType: 'cross_reference',
+    domain: 'healthcare_privacy',
+    query: 'How does California CMIA differ from HIPAA for medical record disclosures?',
+    contextDocIds: [],
+    expectedKeyPoints: ['CMIA broader scope', 'private right of action', 'statutory damages', 'employer-held medical info covered', '45 CFR 164'],
+    expectedRisks: [],
+    expectedCitations: [
+      'ca-cmia|ca-cmia-1798-82',
+      'hipaa-164-502|hipaa-160-103-phi',
+    ],
+    minConfidence: 0.70,
+  },
+  {
+    id: 'intel-hipaa-006',
+    taskType: 'compliance_qa',
+    domain: 'healthcare_security',
+    query: 'Does the HIPAA Security Rule require multi-factor authentication for ePHI access?',
+    contextDocIds: [],
+    expectedKeyPoints: ['authentication', 'technology neutral', 'risk analysis determines', '164.312(d)', 'industry best practice'],
+    expectedRisks: [],
+    expectedCitations: ['hipaa-164-312-d|hipaa-164-312-technical|hipaa-164-308-a1'],
+    minConfidence: 0.70,
+  },
+  {
+    id: 'intel-hipaa-007',
+    taskType: 'recommendation',
+    domain: 'healthcare_privacy',
+    query: 'A law enforcement officer requested PHI about a patient involved in a crime. What can we disclose?',
+    contextDocIds: [],
+    expectedKeyPoints: ['required by law', 'court order', 'suspect identification', 'victim of crime', '164.512(f)'],
+    expectedRisks: ['over-disclosure to informal police requests', 'state laws restrict further'],
+    expectedCitations: ['hipaa-164-512-f|hipaa-164-512-e'],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'intel-hipaa-008',
+    taskType: 'compliance_qa',
+    domain: 'healthcare_privacy',
+    query: 'Our credentialing department uses a CRA for healthcare background checks. Are they a Business Associate?',
+    contextDocIds: [],
+    expectedKeyPoints: ['depends on PHI access', 'employment records exception', 'BAA required if PHI disclosed', 'FCRA parallel obligations', '160.103'],
+    expectedRisks: ['misclassification of CRA as non-BA when PHI accessed', 'FCRA+HIPAA parallel compliance'],
+    expectedCitations: [
+      'hipaa-160-103-ba|hipaa-164-504-baa',
+      'hipaa-employment-records|fcra-hipaa-intersection',
+    ],
+    minConfidence: 0.70,
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Eval dataset — FCRA/employment compliance questions
@@ -50,7 +160,7 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       '15 U.S.C. 1681',
     ],
     expectedRisks: [],
-    expectedCitations: ['fcra-adverse-001'],
+    expectedCitations: ['fcra-604-b-3|cfpb-summary-of-rights|cfpb-bulletin-2012-09|henderson-2021'],
     minConfidence: 0.70,
   },
   {
@@ -70,7 +180,7 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'active disciplinary restrictions',
       'medication administration restriction',
     ],
-    expectedCitations: ['fcra-lic-002'],
+    expectedCitations: ['fcra-604-b-3|fcra-615-a|oig-leie|nysed-op|medical-board-ca|fcra-607-b'],
     minConfidence: 0.75,
   },
   {
@@ -88,7 +198,10 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'resume inconsistency',
       'fabricated education credential',
     ],
-    expectedCitations: ['fcra-empver-002', 'fcra-bgc-002'],
+    expectedCitations: [
+      'fcra-607-b|ftc-almeda-2003|oregon-oda-list|ftc-belford-2012',
+      'fcra-604-b-3|fcra-615-a',
+    ],
     minConfidence: 0.65,
   },
   {
@@ -104,7 +217,7 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'DHS referral letter',
     ],
     expectedRisks: [],
-    expectedCitations: ['fcra-everify-001'],
+    expectedCitations: ['e-verify-tnc|ftc-everify-001'],
     minConfidence: 0.70,
   },
   {
@@ -121,7 +234,10 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'conditional offer',
     ],
     expectedRisks: [],
-    expectedCitations: ['fcra-btb-001', 'fcra-btb-002'],
+    expectedCitations: [
+      'cal-fair-chance|cal-gov-12952-c',
+      'ny-article-23a|nyc-fair-chance|nyc-fair-chance-2021-amend',
+    ],
     minConfidence: 0.75,
   },
   {
@@ -139,7 +255,10 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'criminal record found in Texas',
       'different state lookback periods apply',
     ],
-    expectedCitations: ['fcra-multi-001'],
+    expectedCitations: [
+      'fcra-605-a|fcra-605-b|cal-civ-1786-18|ma-chap-93-50',
+      'eeoc-2012-guidance|eeoc-green-factors|tx-bcc-411',
+    ],
     minConfidence: 0.70,
   },
   {
@@ -157,7 +276,7 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
     expectedRisks: [
       'expired certification',
     ],
-    expectedCitations: ['fcra-cert-002'],
+    expectedCitations: ['fcra-607-b|fcra-604-b-3|fcra-615-a'],
     minConfidence: 0.75,
   },
   {
@@ -174,7 +293,9 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
       'NPI verification',
     ],
     expectedRisks: [],
-    expectedCitations: ['fcra-lic-001'],
+    expectedCitations: [
+      'cms-npi-spec|dea-controlled-reg|npdb-hipdb|oig-leie|medical-board-ca|nysed-op',
+    ],
     minConfidence: 0.80,
   },
 ];
@@ -197,22 +318,33 @@ async function callIntelligenceAPI(
     const model = process.env.NESSIE_MODEL ?? 'carsonarkova/nessie-v26-llama-3.1-8b';
     if (!key || !endpoint) throw new Error('RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID required');
 
-    const res = await fetch(`https://api.runpod.ai/v2/${endpoint}/openai/v1/chat/completions`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: query },
-        ],
-        temperature: 0.2,
-        max_tokens: 2048,
-      }),
+    const body = JSON.stringify({
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: query },
+      ],
+      temperature: 0.2,
+      max_tokens: 2048,
     });
-    const data = await res.json() as { choices?: Array<{ message: { content: string } }>; usage?: { total_tokens: number } };
+    const doCall = async () => {
+      const res = await fetch(`https://api.runpod.ai/v2/${endpoint}/openai/v1/chat/completions`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        body,
+      });
+      return (await res.json()) as { choices?: Array<{ message: { content: string } }>; usage?: { total_tokens: number } };
+    };
+    // Retry once on empty response — cold-start worker may return queue/error body first
+    let data = await doCall();
+    let text = data.choices?.[0]?.message?.content ?? '';
+    if (!text) {
+      await new Promise((r) => setTimeout(r, 3000));
+      data = await doCall();
+      text = data.choices?.[0]?.message?.content ?? '';
+    }
     return {
-      text: data.choices?.[0]?.message?.content ?? '',
+      text,
       latencyMs: Date.now() - start,
       tokensUsed: data.usage?.total_tokens ?? 0,
     };
@@ -272,7 +404,7 @@ async function evaluateEntry(
     const parsed = JSON.parse(text) as {
       analysis?: string;
       answer?: string;
-      citations?: Array<{ record_id: string }>;
+      citations?: Array<{ record_id: string; source?: string; quote?: string }>;
       risks?: string[];
       recommendations?: string[];
       confidence?: number;
@@ -287,7 +419,7 @@ async function evaluateEntry(
     const faithfulness = scoreFaithfulness(answer, [entry.query]); // simplified — in prod use actual context docs
     const answerRel = scoreAnswerRelevance(answer, entry.expectedKeyPoints);
     const riskRecall = entry.expectedRisks.length > 0
-      ? scoreRiskDetection(entry.expectedRisks, risks)
+      ? scoreRiskDetection(entry.expectedRisks, risks, answer)
       : -1; // N/A
 
     const actualQuality = (citationAcc * 0.3 + faithfulness * 0.2 + answerRel * 0.3 + (riskRecall >= 0 ? riskRecall * 0.2 : 0.2));
@@ -378,7 +510,13 @@ async function main() {
   const provider = (providerIdx >= 0 ? args[providerIdx + 1] : 'gemini') as 'gemini' | 'together' | 'runpod';
   const datasetIdx = args.indexOf('--dataset');
   const datasetVersion = datasetIdx >= 0 ? args[datasetIdx + 1] : 'v1';
-  const dataset = datasetVersion === 'v2' ? INTELLIGENCE_EVAL_DATASET_V2 : INTELLIGENCE_EVAL_DATASET;
+  const dataset =
+    datasetVersion === 'v2' ? INTELLIGENCE_EVAL_DATASET_V2
+    : datasetVersion === 'hipaa' ? INTELLIGENCE_EVAL_HIPAA
+    : datasetVersion === 'fcra50' ? FCRA_EVAL_50
+    : datasetVersion === 'hipaa50' ? HIPAA_EVAL_50
+    : datasetVersion === 'ferpa50' ? FERPA_EVAL_50
+    : INTELLIGENCE_EVAL_DATASET;
   const limit = limitIdx >= 0 ? parseInt(args[limitIdx + 1], 10) : dataset.length;
 
   const entries = dataset.slice(0, limit);

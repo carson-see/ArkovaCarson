@@ -22,6 +22,7 @@ import type {
 } from './types.js';
 import { ExtractedFieldsSchema } from './schemas.js';
 import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extraction.js';
+import { EXTRACTION_V6_SYSTEM_PROMPT, buildV6UserPrompt } from './prompts/extraction-v6.js';
 import {
   TEMPLATE_RECONSTRUCTION_SYSTEM_PROMPT,
   buildTemplateReconstructionPrompt,
@@ -111,11 +112,20 @@ export class GeminiProvider implements IAIProvider {
       let tokensUsed: number | undefined;
 
       if (this.tunedModelPath) {
-        // Use Vertex AI fine-tuned model — trained on golden dataset
-        const tunedResult = await this.callTunedModel(EXTRACTION_SYSTEM_PROMPT, prompt);
+        // GME2 v6: When GEMINI_V6_PROMPT=true, use the v6 system+user prompts
+        // that v6 was trained on. This is mandatory for v6 endpoints — without
+        // it, the model regresses toward base behavior (emits reasoning fields
+        // it wasn't trained for, skips description/subType).
+        // For v5-reasoning and earlier tuned models, keep the production prompt.
+        const useV6 = process.env.GEMINI_V6_PROMPT === 'true';
+        const systemPromptToUse = useV6 ? EXTRACTION_V6_SYSTEM_PROMPT : EXTRACTION_SYSTEM_PROMPT;
+        const userPromptToUse = useV6
+          ? buildV6UserPrompt(request.strippedText, request.credentialType, request.issuerHint)
+          : prompt;
+        const tunedResult = await this.callTunedModel(systemPromptToUse, userPromptToUse);
         text = tunedResult.text;
         tokensUsed = tunedResult.tokensUsed;
-        logger.info({ tunedModel: this.tunedModelPath, tokensUsed }, 'Gemini: extraction via tuned model');
+        logger.info({ tunedModel: this.tunedModelPath, tokensUsed, v6Prompt: useV6 }, 'Gemini: extraction via tuned model');
       } else {
         // Standard Gemini API path
         const controller = new AbortController();
@@ -464,6 +474,18 @@ export class GeminiProvider implements IAIProvider {
     }
     const url = `${VERTEX_AI_API_BASE}/${resourcePath}:generateContent`;
 
+    // GME2 v7 bet 3: optional responseSchema belt-and-suspenders JSON enforcement.
+    // Enable via GEMINI_TUNED_RESPONSE_SCHEMA=true (default off — prior testing on
+    // base gemini-3-flash-preview showed over-generation of optional fields, but
+    // a tuned model on gemini-2.5-flash may behave differently; flag lets us A/B).
+    const generationConfig: Record<string, unknown> = {
+      temperature: 0.1,
+      responseMimeType: 'application/json',
+    };
+    if (process.env.GEMINI_TUNED_RESPONSE_SCHEMA === 'true') {
+      generationConfig.responseSchema = getExtractionResponseSchema();
+    }
+
     const response = await fetch(url, {
       method: 'POST',
       headers: {
@@ -473,10 +495,7 @@ export class GeminiProvider implements IAIProvider {
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
         systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
-        generationConfig: {
-          temperature: 0.1,
-          responseMimeType: 'application/json',
-        },
+        generationConfig,
       }),
       signal: AbortSignal.timeout(30_000),
     });
