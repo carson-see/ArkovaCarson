@@ -186,10 +186,37 @@ const INTELLIGENCE_EVAL_DATASET: IntelligenceEvalEntry[] = [
 async function callIntelligenceAPI(
   query: string,
   taskType: string,
-  provider: 'gemini' | 'together',
+  provider: 'gemini' | 'together' | 'runpod',
 ): Promise<{ text: string; latencyMs: number; tokensUsed: number }> {
   const systemPrompt = buildIntelligenceSystemPrompt(taskType as IntelligenceMode);
   const start = Date.now();
+
+  if (provider === 'runpod') {
+    const key = process.env.RUNPOD_API_KEY;
+    const endpoint = process.env.RUNPOD_ENDPOINT_ID;
+    const model = process.env.NESSIE_MODEL ?? 'carsonarkova/nessie-v26-llama-3.1-8b';
+    if (!key || !endpoint) throw new Error('RUNPOD_API_KEY and RUNPOD_ENDPOINT_ID required');
+
+    const res = await fetch(`https://api.runpod.ai/v2/${endpoint}/openai/v1/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: query },
+        ],
+        temperature: 0.2,
+        max_tokens: 2048,
+      }),
+    });
+    const data = await res.json() as { choices?: Array<{ message: { content: string } }>; usage?: { total_tokens: number } };
+    return {
+      text: data.choices?.[0]?.message?.content ?? '',
+      latencyMs: Date.now() - start,
+      tokensUsed: data.usage?.total_tokens ?? 0,
+    };
+  }
 
   if (provider === 'together') {
     const key = process.env.TOGETHER_API_KEY;
@@ -348,7 +375,7 @@ async function main() {
   const providerIdx = args.indexOf('--provider');
   const limitIdx = args.indexOf('--limit');
 
-  const provider = (providerIdx >= 0 ? args[providerIdx + 1] : 'gemini') as 'gemini' | 'together';
+  const provider = (providerIdx >= 0 ? args[providerIdx + 1] : 'gemini') as 'gemini' | 'together' | 'runpod';
   const datasetIdx = args.indexOf('--dataset');
   const datasetVersion = datasetIdx >= 0 ? args[datasetIdx + 1] : 'v1';
   const dataset = datasetVersion === 'v2' ? INTELLIGENCE_EVAL_DATASET_V2 : INTELLIGENCE_EVAL_DATASET;
