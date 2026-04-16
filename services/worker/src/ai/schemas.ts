@@ -53,6 +53,9 @@ export const ExtractedFieldsSchema = z.object({
   reasoning: z.string().optional(),
   concerns: z.array(z.string()).optional(),
   issuerVerified: z.boolean().optional(),
+  // Gemini structured output emits these; previously caused .strict() to reject ALL responses
+  // (root cause of "0% F1" for all eval runs across providers). Captured 2026-04-15.
+  confidenceReasoning: z.string().optional(),
 }).strict();
 
 /**

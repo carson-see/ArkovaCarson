@@ -65,15 +65,23 @@ async function evaluateEntry(
   let confidence = 0;
   let tokensUsed = 0;
 
+  let extractionError: string | undefined;
   try {
     const result = await provider.extractMetadata(request);
     extractedFields = result.fields as Record<string, unknown>;
     confidence = result.confidence;
     tokensUsed = result.tokensUsed ?? 0;
-  } catch {
-    // Extraction failed — all fields missing
+  } catch (err) {
+    // Extraction failed — capture the error so the bug is visible in eval output
+    // (silent swallowing here is what masked the dead-RunPod-endpoint bug + the
+    // Together-non-serverless bug for months — never go back to silent catch)
     extractedFields = {};
     confidence = 0;
+    extractionError = err instanceof Error ? err.message : String(err);
+    if (process.env.EVAL_VERBOSE === '1') {
+      // eslint-disable-next-line no-console
+      console.error(`[eval] entry=${entry.id} provider=${provider.name} ERROR: ${extractionError}`);
+    }
   }
 
   const latencyMs = Date.now() - start;

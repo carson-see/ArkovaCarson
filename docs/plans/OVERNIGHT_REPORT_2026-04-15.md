@@ -239,7 +239,32 @@ CLAUDE.md                                           (MODIFIED — Strategy Reset
 .env                                                (LOCAL — RUNPOD_ENDPOINT_ID + NESSIE_MODEL updated; not committed, gitignored)
 ```
 
-## 8a. ADDITIONAL CRITICAL FINDING (added 03:30 UTC) — Eval framework itself is broken
+## 8b. EVAL FRAMEWORK FIXED + REAL BASELINE ESTABLISHED (added 03:35 UTC)
+
+The eval framework bug was a **single-line fix**: `ExtractedFieldsSchema` was `.strict()` and Gemini structured output emits a `confidenceReasoning` field that wasn't in the schema. Every single response failed validation, runner caught the error silently, and reported 0% F1 across all providers.
+
+Fix in `services/worker/src/ai/schemas.ts`: added `confidenceReasoning: z.string().optional()` to the schema. Also added `extractionError` capture in `runner.ts` so future failures are visible (with `EVAL_VERBOSE=1`).
+
+**After the fix — REAL Gemini base baseline (30 samples, 2026-04-16T03:34:14):**
+
+| Metric | Value (was) | Value (now) |
+|---|---|---|
+| Macro F1 | 0.0% | **65.7%** |
+| Weighted F1 | 0.0% | **78.3%** |
+| Mean reported confidence | 0.0% | **71.9%** |
+| Mean actual accuracy | 23.0% | **71.7%** |
+| Confidence Pearson r | 0.000 | **0.239** (still under 0.7 target) |
+| Mean latency | 186ms | **1552ms** (the 186ms was failing fast) |
+| credentialType F1 | 0% | **90.0%** |
+| issuerName F1 | 0% | **80.0%** |
+| degreeLevel F1 | 0% | **100%** |
+| fraudSignals F1 | 0% | **0%** (confirmed real gap — needs Gemini fraud stream) |
+
+This is now the authoritative baseline that any fine-tune must beat. **DoD for the DEGREE Nessie LoRA: ≥ 65.7% macro F1 on the same 30-sample slice (or > 80% weighted F1 to make the cost worthwhile).**
+
+Eval result file: `services/worker/docs/eval/eval-gemini-2026-04-16T03-34-14.md`
+
+## 8a. EARLIER CRITICAL FINDING (now resolved — kept for forensic record) — Eval framework itself is broken
 
 Ran a 30-sample baseline eval against **base Gemini Flash** (the model production has been using all along) and got:
 
