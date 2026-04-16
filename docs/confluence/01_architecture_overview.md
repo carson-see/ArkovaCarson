@@ -1,10 +1,19 @@
 # Architecture Overview
 
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-16_
 
 ## Purpose
 
 Arkova is a document anchoring system that creates cryptographic fingerprints of documents and secures them on-chain for tamper-evident timestamping. Users never upload documents — only SHA-256 fingerprints are stored and anchored.
+
+On top of that foundation, Arkova runs two AI layers:
+
+1. **Gemini Golden** — the **extraction engine**. Reads PII-stripped text and pulls structured metadata (credential type, subtype, dates, fields, confidence). Currently running v5-reasoning on `gemini-2.0-flash` tuned (`endpoints/8811908947217743872`). **v6** trained and eval'd (Macro F1 73.8→77.1%, Weighted 80.1→83.6%, latency -70%, tokens/req -95%) — cutover pending. **v7** designed (190-entry surgical dataset + isotonic calibration + Vertex `responseSchema`).
+2. **Nessie** — the **compliance intelligence engine**. Reads anchored credentials and regulation text, produces analyses with verified citations. Three regulations parallel-serving on RunPod: **v27.3 FCRA** (`ikkto3e36xllms`), **v28.0 HIPAA** (`7d1mr5m9y6nnyx`), **v29.0 FERPA** (`mwcomiw9avfqom`). Full-day arc: FCRA citation 0% → 57% via canonical-ID convention (+30.5pp) and scenario expansion (+14pp).
+
+### NVI Gate (2026-04-16)
+
+Nessie training is currently gated by the **NVI epic (SCRUM-804)**: FCRA source quotes, case citations, and agency bulletins must be verified against authoritative primary sources (Cornell LII, Google Scholar Case Law, CFPB/FTC/HHS dockets) before further regulation expansion. v28/v29 continue serving but are under review. NDD/NSS/NTF training epics are paused until FCRA passes the attorney-reviewed gold-standard benchmark.
 
 ## Tech Stack
 

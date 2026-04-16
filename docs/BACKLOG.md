@@ -1,5 +1,5 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-14 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,127 tests, 211 migrations, AI eval F1=87.2% Nessie v5 / 90.4% Gemini Golden, golden dataset 1,887 entries, 130 few-shot examples, Phase 1.5 15/16 complete, NMT 14/14 complete, ATS 8/8 complete, NCE 20/20 complete, DEP 4/23, GME 0/26 deadline June 17) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-16 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,127 tests, 214 migrations, **Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed + parallel-serving**, Gemini Golden **v6 trained + eval'd (Macro F1 77.1% / Weighted 83.6% / latency -70%)** cutover pending, **v7 designed**, intelligence dataset **343 scenarios + 209 anchored sources**, Phase 1.5 15/16, NMT 14/14, ATS 8/8, NCE 20/20 built (Jira done; Nessie under NVI gate), **INT 8/9** (webhook CRUD open), DEP 4/23, **GME2 v6/v7 arc** (GME-01–20 superseded; 2.0-flash is prod, no 2.5 deadline), **NVI (SCRUM-804) gates further regulation training**, **NDD/NSS/NTF paused per NVI decree**) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
 
@@ -20,13 +20,24 @@ _Last updated: 2026-04-14 (1.41M+ public records, 1.41M+ SECURED anchors on main
 | Compliance Mapping Layer (CML) | 5 | 5 | 0 | No (all complete) |
 | Verifiable AI (VAI) | 5 | 3 | 2 | No (Phase III) |
 | ~~Nessie Model Training (NMT)~~ | ~~14~~ | ~~14~~ | ~~0~~ | ~~No (all complete)~~ |
-| **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic)** |
-| **Gemini Migration + Quality (GME)** | **26** | **0** | **26** | **YES (June 17 deadline)** |
+| **Nessie Compliance Engine (NCE)** | **23** | **0** | **23** | **No (strategic; now gated on NVI)** |
+| **Nessie Verification Infrastructure (NVI)** ★ NEW 2026-04-16 | **12** | **0** | **12** | **No — but gates NDD/NSS/NTF** |
+| ~~Gemini Migration (GME-01–20)~~ | ~~26~~ | ~~—~~ | ~~—~~ | **SUPERSEDED by GME2** (2.0-flash is prod, no 2.5 deadline) |
+| **Gemini Golden Evolution (GME2)** ★ ACTIVE | **5** | **0** | **5** | No (v6 cutover pending; v7 designed) |
+| **Gemini Golden Domain Experts (GME3/4/5)** ★ NEW 2026-04-16 | **3** | **0** | **3** | No (gated on v7 + GME8 router) |
+| **Nessie Domain Depth (NDD)** ★ PAUSED by NVI | **13** | **0** | **13** | No (paused) |
+| **Nessie State Specialization (NSS)** ★ PAUSED by NVI | **8** | **0** | **8** | No (paused) |
+| **Nessie Training Foundation (NTF)** ★ PAUSED beyond v6 | **8** | **1** | **7** | No (paused) |
+| **Nessie Compliance Audit (NCA)** ★ ACTIVE | **10** | **0** | **10** | No (product-facing, not model-gated) |
+| **API Richness (API-RICH)** ★ NEW 2026-04-16 | **5** | **0** | **5** | No (converts stored data → response) |
+| **Integration Surface (INT)** | **9** | **8** | **1** | No (webhook CRUD open) |
 | Phase 2 Agentic Layer | 6 | 6 | 0 | No (all complete) |
 | Phase 3 eSignature (SCRUM-421) | 3 | 0 | 3 | No (in progress) |
 | Compliance & Audit Readiness (SCRUM-426) | 8 | 8 | 0 | No (all complete) |
 | Dependency Hardening (DEP) | 10 | 1 | 9 | No |
 | International Compliance (REG) | 28 | 0 | 28 | No |
+| International Regulatory Expansion (INTL) ★ NEW | 6 | 0 | 6 | No (deferred — customer-gated) |
+| Trust Framework (TRUST) ★ NEW | 7 | 0 | 7 | No (deferred — external vendor) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -40,7 +51,7 @@ _Last updated: 2026-04-14 (1.41M+ public records, 1.41M+ SECURED anchors on main
 | TLA+ Verification Findings | 3 | 3 fixed | 0 | No |
 | Code TODOs | 1 | — | 1 | No |
 | QA Audit (PR #162) | 25 | 25 resolved | 0 | No |
-| **Total Open Items** | | | **79** | |
+| **Total Open Items** | | | **~110** | |
 
 ---
 
@@ -575,14 +586,13 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 ---
 
-## TIER 0F: GEMINI MIGRATION & EVOLUTION (GME) — DEADLINE: JUNE 17, 2026
+## TIER 0F: GEMINI GOLDEN EVOLUTION (GME2) — ACTIVE 2026-04-16
 
-> **CRITICAL:** `gemini-2.5-flash` shuts down June 17, 2026. Every Gemini call breaks.
-> Jira Epic: SCRUM-612 | Stories: SCRUM-613–617, 618–628, 629–634 (22 children)
-> Jira Release: **R-GME-01 Gemini 3 Model Upgrade** (17 open stories) | v1.4.0 (5 Done stories GME-21–25)
-> Note: SCRUM-651 was a duplicate GME epic — consolidated into SCRUM-612 on 2026-04-11; its 11 children (SCRUM-618–628) were re-parented under SCRUM-612.
-> Story doc: [28_gemini_migration_evolution.md](stories/28_gemini_migration_evolution.md)
-> Ref: [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
+> **Correction (2026-04-16):** The original GME epic (SCRUM-612) was premised on a June 17 `gemini-2.5-flash` deprecation. Prod extraction is actually on **gemini-2.0-flash tuned (v5-reasoning, `endpoints/8811908947217743872`)** — no 2.5 deadline pressure. The real Gemini evolution happened via GME2.
+> **Active Jira Epic:** SCRUM-772 (GME2) | Child stories SCRUM-792–796
+> **Domain-expert epics (gated on v7 + GME8):** SCRUM-820 GME3 Legal, SCRUM-821 GME4 Financial, SCRUM-823 GME5 Trades
+> **Story doc:** [28_gemini_migration_evolution.md](stories/28_gemini_migration_evolution.md) (being rewritten 2026-04-16 to match v5/v6/v7 arc)
+> **Status:** SCRUM-612 (original GME epic) and its 17 children (SCRUM-613–617, 618–628) remain open in Jira but are **strategically superseded** — all future Gemini work flows through SCRUM-772 / 820 / 821 / 823.
 
 ### Phase 1: Emergency Migration (MUST ship before June 17)
 
@@ -639,42 +649,93 @@ _From E2E journey validation across 7 user flows. Report: `docs/bugs/e2e_journey
 
 ---
 
-## TIER 0G: INTEGRATION SURFACE & PACKAGING (INT) — TOP PRIORITY (2026-04-11)
+## TIER 0G: INTEGRATION SURFACE & PACKAGING (INT) — 8/9 DONE (2026-04-16 reconciled)
 
 > **Source:** Arkova Integration Strategy v2 (Google Doc `1wP7pkOmf7rVdStIHaA9V4QxKPg4hoVB6`)
 > **Jira Epic:** SCRUM-641 | **Stories:** SCRUM-642–650
 > **Story doc:** [31_integration_surface.md](stories/31_integration_surface.md)
-> **Priority:** P0 — **AHEAD OF NCE AND GME** (per 2026-04-11 prioritization)
+> **Status (2026-04-16):** 8 of 9 shipped. Last gap is INT-09 Webhook CRUD route (file `services/worker/src/routes/webhooks.ts` does not yet exist). Close epic after INT-09 lands.
 
-**Vision:** Core infrastructure is done. The gap is packaging and distribution — SDKs, MCP agent tools, embeddable components, vertical connectors. Three days of Claude Code = YC demo readiness.
-
-### R-INT-01: YC Demo Critical (P0 — Build Now)
+### R-INT-01: YC Demo Critical
 
 | ID | Jira | Story | Pts | Status |
 |----|------|-------|-----|--------|
-| INT-01 | SCRUM-642 | TypeScript SDK (`@arkova/sdk`) | 5 | NOT STARTED |
-| INT-02 | SCRUM-643 | MCP Server Tool Enhancement | 3 | NOT STARTED |
-| INT-03 | SCRUM-644 | Embeddable Verification Bundle (`embed.js`) | 5 | NOT STARTED |
-| INT-09 | SCRUM-645 | Webhook CRUD via API | 3 | NOT STARTED |
+| ~~INT-01~~ | ~~SCRUM-642~~ | ~~TypeScript SDK (`@arkova/sdk`)~~ | ~~5~~ | **DONE** (`sdks/typescript/`) |
+| ~~INT-02~~ | ~~SCRUM-643~~ | ~~MCP Server Tool Enhancement~~ | ~~3~~ | **DONE** |
+| ~~INT-03~~ | ~~SCRUM-644~~ | ~~Embeddable Verification Bundle (`embed.js`)~~ | ~~5~~ | **DONE** (`public/embed.js`, `dist/embed.js`) |
+| **INT-09** | **SCRUM-645** | **Webhook CRUD via API** | 3 | **NOT STARTED** — last INT gap. `services/worker/src/routes/webhooks.ts` missing. See Sprint 4 in `docs/SPRINT_PLAN_2026-Q2.md`. |
 
-**Total:** 16 points | **YC demo path:** 3 days Claude Code
-
-### R-INT-02: SDK & Automation (P1)
+### R-INT-02: SDK & Automation
 
 | ID | Jira | Story | Pts | Status |
 |----|------|-------|-----|--------|
-| INT-04 | SCRUM-646 | Python SDK (`arkova-python`) | 3 | NOT STARTED |
-| INT-05 | SCRUM-647 | Zapier / Make.com Integration | 5 | NOT STARTED (LOI-gated) |
+| ~~INT-04~~ | ~~SCRUM-646~~ | ~~Python SDK (`arkova-python`)~~ | ~~3~~ | **DONE** (`sdks/python/arkova/client.py`) |
+| ~~INT-05~~ | ~~SCRUM-647~~ | ~~Zapier / Make.com Integration~~ | ~~5~~ | **DONE** (per memory) |
 
-### R-INT-03: Vertical Connectors (P2 — LOI-gated)
+### R-INT-03: Vertical Connectors
 
-| ID | Jira | Story | Pts | Build Trigger |
-|----|------|-------|-----|---------------|
-| INT-06 | SCRUM-648 | Clio (Law Firm DMS) | 8 | First law firm pilot signed |
-| INT-07 | SCRUM-649 | Bullhorn Marketplace App | 8 | First staffing pilot converts to paid |
-| INT-08 | SCRUM-650 | Screening Report Embed Template | 3 | CredentialCheck/equivalent LOI |
+| ID | Jira | Story | Pts | Status |
+|----|------|-------|-----|--------|
+| ~~INT-06~~ | ~~SCRUM-648~~ | ~~Clio (Law Firm DMS)~~ | ~~8~~ | **DONE** |
+| ~~INT-07~~ | ~~SCRUM-649~~ | ~~Bullhorn Marketplace App~~ | ~~8~~ | **DONE** |
+| ~~INT-08~~ | ~~SCRUM-650~~ | ~~Screening Report Embed Template~~ | ~~3~~ | **DONE** |
 
-**Total INT epic:** 43 points | **9 stories** | **3 release trains**
+**Total INT epic:** 43 points | **9 stories / 8 done / 1 open** | Close epic after INT-09.
+
+---
+
+## TIER 0H: NESSIE VERIFICATION INFRASTRUCTURE (NVI) — HIGHEST PRIORITY (2026-04-16)
+
+> **Jira Epic:** SCRUM-804 | **LLM-as-judge child:** SCRUM-816 (NVI-12)
+> **Priority:** **HIGHEST — gates all further Nessie regulation training**
+
+**Why this epic exists:** The 2026-04-16 A/B/C test proved FCRA citation accuracy improved 0%→57% via (a) canonical-ID convention (+30.5pp) and (b) hand-crafted scenario expansion (+14pp). But the underlying question — _"is the training data accurate?"_ — has no answer. Statute quotes, case numbers, agency bulletin references, and state cites in the 89-source FCRA registry and 277 training scenarios have NOT been verified against authoritative text. A Nessie deployed on unverified data is not just inaccurate — it's professionally dangerous for a compliance officer relying on its citations.
+
+**Decree:** **NDD (SCRUM-770) / NSS (SCRUM-771) / NTF (SCRUM-769) are PAUSED** until FCRA passes the NVI verification + benchmark gate. v28 HIPAA and v29 FERPA are **quarantined** until FCRA proves the verification pipeline works.
+
+### Phase 1 — FCRA Source Verification Pipeline
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NVI-01 | Statute-quote validator (Cornell LII / eCFR diff) | **Highest** | NOT STARTED | Medium |
+| NVI-02 | Case-law citation validator (Google Scholar Case Law) | **Highest** | NOT STARTED | Medium |
+| NVI-03 | Agency-bulletin validator (CFPB / FTC / HHS OCR / DoE) | **Highest** | NOT STARTED | Medium |
+| NVI-04 | State-statute validator (state legislature DBs) | High | NOT STARTED | Medium |
+| NVI-05 | FCRA source registry audit + quarantine | **Highest** | NOT STARTED | Small |
+
+### Phase 2 — Chain-of-Thought + Distillation + Benchmark
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| NVI-06 | Chain-of-thought retrofit on all FCRA scenarios | **Highest** | NOT STARTED | Medium |
+| NVI-07 | Claude Opus distillation → 5k verified FCRA Q&A | **Highest** | NOT STARTED | Medium (~$200 API) |
+| NVI-08 | Multi-turn + document-grounded scenarios | High | NOT STARTED | Medium |
+| NVI-09 | Adversarial + "I don't know" training | High | NOT STARTED | Medium |
+| NVI-10 | Attorney-reviewed gold-standard benchmark (50 Q) | **Highest** | NOT STARTED | Large ($2–5K counsel) |
+| NVI-11 | Production canary (5% FCRA queries) + feedback loop | High | NOT STARTED | Medium |
+| SCRUM-816 / NVI-12 | LLM-as-judge benchmark runner (Claude / GPT-4o / Gemini 2.5 Pro) | High | NOT STARTED | Medium |
+
+**DoD (epic-level):** All FCRA quotes / cites / bulletins verified (or quarantined); CoT on every scenario; 5K distilled Q&A; 50-Q attorney-reviewed benchmark; Nessie ≥ Gemini 2.5 Pro on benchmark; 5% production canary live.
+
+**Cost + timeline:** ~$3,300–$7,300 (mostly attorney review), 3–4 weeks.
+
+---
+
+## TIER 0I: API RESPONSE RICHNESS (API-RICH) — NEW 2026-04-16
+
+> **Source:** 2026-04-16 API surface audit against `src/types/database.types.ts`. Current `/verify/{publicId}`, `/ai/extract`, `/attestations/{publicId}` return ~15 fields; DB stores 30+ per anchor plus linked manifests, audit events, extraction_manifests. Quick wins are all backwards-compatible nullable additions.
+> **Story doc:** `docs/stories/NN_api_response_richness.md` (to be written in Sprint 1)
+> **Priority:** High — highest ROI per engineering hour on the backlog.
+
+| ID | Story | Priority | Status | Effort |
+|----|-------|----------|--------|--------|
+| API-RICH-01 | `/verify/{publicId}` expose `compliance_controls`, `chain_confirmations`, `parent_anchor_id`, `revocation_tx_id/block`, `file_mime/size` | **High** | NOT STARTED | Medium |
+| API-RICH-02 | `/ai/extract` + `/verify/{publicId}` expose per-field `confidence_scores`, `subType`, `description`, `fraudSignals` | High | NOT STARTED | Small |
+| API-RICH-03 | New `GET /anchor/{publicId}/lifecycle` returning chain-of-custody from `audit_events` | High | NOT STARTED | Medium |
+| API-RICH-04 | `/attestations/{publicId}` include evidence array (not count-only) + attestor chain | Medium | NOT STARTED | Small |
+| API-RICH-05 | New `GET /anchor/{publicId}/extraction-manifest` exposing `zk_proof`, `manifest_hash`, prompt version (VAI-01 storage surfaced) | Medium | NOT STARTED | Medium |
+
+**Principle:** zero model risk; already-stored data becomes API-visible. All additions are nullable in response schema; no breaking changes. OpenAPI spec + Zod + SDK (TS + Python) must update together.
 
 ---
 
