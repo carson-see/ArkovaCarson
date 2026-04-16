@@ -13,3 +13,9 @@ vitest.config.ts
 .DS_Store
 training-output/
 scripts/
+# Finder/iCloud duplicate files (e.g. "foo 2.ts") — not in git, break tsc build
+**/* 2.ts
+**/* 2.js
+**/* 2.tsx
+**/* 3.ts
+**/* 3.js
