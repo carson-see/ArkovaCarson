@@ -2,6 +2,27 @@
 
 > **Mandate:** "Lead AI engineer" overnight session to fix systemic Nessie/Gemini training and infrastructure failures. Comprehensive report due by morning. **Target deadline: 14 hours from session start (~2026-04-16 13:00 UTC).**
 
+## END-OF-SESSION SCORECARD (final state ~03:50 UTC)
+
+| Layer | Status | Evidence |
+|---|---|---|
+| **Eval framework** | ✅ FIXED | confidenceReasoning schema bug found and patched — Gemini base went from "0% F1" to **70.7% Macro F1, 77.2% Weighted F1** on 50 samples |
+| **Authoritative baseline** | ✅ ESTABLISHED | `eval-gemini-2026-04-16T03-38-01.md` — DEGREE 100%, credentialType 92%, fraudSignals 0% (the gap we're now training Gemini fraud to fill) |
+| **Nessie DEGREE training** | ✅ COMPLETED | Together job `ft-dc07b30c-8203` finished in 6.4 min; output adapter at `s3://together-dev/.../arkova-nessie-degree-v1-8bf09ab0/...adapter-...` |
+| **Gemini fraud training** | ⏳ RUNNING | Vertex job `tuningJobs/6279500967121518592`; tuned model `models/7399201982025564160@1`; **endpoint `endpoints/1902261218924560384` already provisioned** (live the moment training finishes) |
+| **RunPod v2 serving endpoint** | ⚠ BLOCKED | Endpoint `mmw8uthnsqzbbt` shows ready/idle workers but won't pick up queued jobs (jobs go IN_QUEUE and stay there even with healthy workers). Tried v5 model first — workers stuck initializing for 14 min. Needs RunPod UI investigation in morning. |
+| **Vertex tuned model eval (locally)** | ⚠ BLOCKED | `GOOGLE_APPLICATION_CREDENTIALS` not set locally; Node SDK won't use gcloud user creds. Production has it via service account. Documented in §8c. |
+| **Strategy docs** | ✅ DONE | 4 new docs in `docs/plans/`: strategy reset, Nessie training params v1, Gemini training params v1, training infra runbook |
+| **Supabase storage** | ✅ CLEANED | Migration 0214 dropped 8 dead indexes, ~37MB freed |
+| **Local disk** | ✅ CLEANED | 51GB freed (was 99% → now 82%) |
+| **CLAUDE.md** | ✅ UPDATED | Strategy Reset banner + migration count + new training stats |
+| **RunPod-native deploy script** | ✅ WRITTEN | `services/worker/scripts/runpod-merge-and-deploy.sh` ready to run when RunPod stabilizes |
+
+**The morning unblock list (what only you can do):**
+1. **RunPod console**: log in, check why workers won't pick up queued jobs on endpoint `mmw8uthnsqzbbt`. Possibly upgrade vLLM image tag or recreate with different config.
+2. **GCP service account key**: download from console, save somewhere safe, set `GOOGLE_APPLICATION_CREDENTIALS` so we can locally eval Vertex tuned models.
+3. **Approve next steps**: see §9.
+
 ## TL;DR (60-second read)
 
 Six months of AI work was producing **zero deployed inference**. Tonight the root causes were found and the recovery is in flight:
@@ -337,6 +358,16 @@ This means the F1 calculation has been broken for ALL providers for an unknown a
 This is a force-multiplier finding: it means our "eval-driven iteration" rule depends on a working eval. The eval is not currently working. Fix the eval first, then iterate.
 
 Eval result file: `services/worker/docs/eval/eval-gemini-2026-04-16T03-25-34.md`
+
+## 8c. ADDITIONAL FINDING (added 03:40 UTC) — Vertex tuned model auth gap
+
+Tried evaluating the existing Vertex AI tuned model (`projects/270018525501/locations/us-central1/models/5221711562191929344@1` — the v5-reasoning model trained months ago) now that the eval framework works.
+
+Result: every entry returns `ERROR: No GCP credentials available — set GOOGLE_APPLICATION_CREDENTIALS`.
+
+This means the v5-reasoning Vertex model hasn't been usable for eval locally because gemini.ts's Vertex code path requires `GOOGLE_APPLICATION_CREDENTIALS` env, but local only has gcloud user creds (works for `gcloud auth print-access-token` but not the Node SDK). Production Cloud Run has the service account auth wired in, so it WOULD work in production — but production's `.env` doesn't set `GEMINI_TUNED_MODEL`, so the tuned model has never actually been called in production either.
+
+**Tomorrow's morning task added (§5.6):** either set `GOOGLE_APPLICATION_CREDENTIALS` locally (download service account key from GCP console, set env var) or fix gemini.ts to fall back to `gcloud auth print-access-token` for Vertex calls in dev. Then we can finally measure if the v5-reasoning Vertex model actually beats base Gemini.
 
 ## 9. Action items for human review (your morning)
 
