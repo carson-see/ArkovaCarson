@@ -1,8 +1,8 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-14 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 211 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (280 complete + 54 remaining) | 24/24 audit + 9 pentest findings resolved | AI: Gemini 3 Flash (migrated) / Gemini Golden v3 (2,000+ entries) / Nessie v5 (87.2% weighted F1, 75.7% macro F1) / Nessie Intelligence v2 (4 trained domains) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
-> **Nessie Reality Check:** fraudSignals 0% F1 | confidence correlation 0.539 (need >0.7) | 2/6 domain adapters placeholder | 8 credential types <5 golden entries | embedding NDCG never benchmarked | fraud audit never run
+> **Version:** 2026-04-15 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 214 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (280 complete + 54 remaining) | 24/24 audit + 9 pentest findings resolved | AI: Gemini 2.0 Flash (production base — no tuned model deployed) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **🚨 NESSIE STRATEGY RESET (2026-04-15):** v6–v26 generalist sprawl was non-serverless on Together — never deployed inference. v2 baseline 0% F1 was infrastructure failure (dead RunPod endpoint), not model quality. Strategy reset: single-domain mastery starting with DEGREE. See `docs/plans/nessie-strategy-reset-2026-04-15.md`. **Active training:** Nessie DEGREE LoRA (Together ft-dc07b30c-8203, 157 examples) | Gemini fraud v1 (Vertex tuningJobs/6279500967121518592, 18 hand-crafted examples). **RunPod:** nessie-v2-prod endpoint `mmw8uthnsqzbbt` (replaced stuck v5).
 
 Read this file before every task. Rules here override all other documents.
 
@@ -298,9 +298,24 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | **Nessie Production Hardening** ★ NEW | **0/TBD** | **0** | **TBD** | **0%** |
 | **Total** | **~280/334+** | **4** | **~50+** | **~84%** |
 
-### ⚠ Nessie Production Hardening — THE REAL REMAINING WORK
+### 🚨 NESSIE STRATEGY RESET — 2026-04-15 (READ FIRST)
+
+> **The "v5 87.2% F1 / 75.7% macro F1" headline numbers cannot be trusted.** They were measured against a Together-hosted model that is now confirmed **non-serverless** (returns `400 model_not_available` without a paid dedicated endpoint). The "v2 baseline 0% F1 / 272s latency" numbers from `eval-nessie-v2-baseline-2026-04-15.md` were measured against a `RUNPOD_ENDPOINT_ID` that no longer exists. **All extraction in production has been base `gemini-2.0-flash` since launch — no fine-tuned model is deployed anywhere.**
+>
+> **What changed today (2026-04-15):**
+> 1. ✅ Created RunPod endpoint `mmw8uthnsqzbbt` (nessie-v2-prod) pointing at `carsonarkova/nessie-v2-llama-3.1-8b` (HuggingFace, fully uploaded)
+> 2. ✅ Submitted **Nessie DEGREE-only LoRA** to Together: `ft-dc07b30c-8203` (157 hand-validated training examples, 39 held-out test, 3 epochs, LoRA r=16)
+> 3. ✅ Submitted **Gemini fraud v1** to Vertex AI: `tuningJobs/6279500967121518592` (18 hand-crafted fraud examples from FTC actions, GAO reports, Oregon ODA, gemini-2.5-pro, 5 epochs)
+> 4. ✅ Wrote separated training-parameter docs (Nessie ≠ Gemini): `docs/plans/nessie-training-parameters-v1.md`, `docs/plans/gemini-training-parameters-v1.md`, `docs/plans/training-infra-runbook-2026-04-15.md`
+> 5. ✅ Dropped 8 dead Supabase indexes (~37MB freed) via migration 0214
+> 6. ✅ Freed 51GB local /tmp model artifacts
+>
+> **The new rule:** Nessie does narrow extraction (one credential type per LoRA, mastered before next), Gemini does fraud + reasoning. Each model trained on its own platform with locked parameters. No more 12-domain generalist sprawl. No more training without an end-to-end deploy proof. See `docs/plans/nessie-strategy-reset-2026-04-15.md` for full diagnosis + plan.
+
+### ⚠ Nessie Production Hardening — original assessment (now superseded by Strategy Reset above)
 
 > **Jira says NMT and NCE are "Done." The eval data says otherwise.** Nessie has scaffolding and initial training complete, but is NOT production/enterprise-ready. The following gaps are measured from actual eval runs and codebase inspection, not estimates.
+> ⚠️ **Note:** the per-type F1 numbers below were measured against a non-serverless Together model and may overstate or understate true performance. Re-baseline against the new RunPod v2 endpoint before treating these numbers as authoritative.
 
 **Model Quality Gaps (training needed):**
 
