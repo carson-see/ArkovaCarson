@@ -59,6 +59,8 @@ import { fetchEnforcementActions } from '../jobs/enforcementFetcher.js';
 import { fetchContinuingEducationData } from '../jobs/ceFetcher.js';
 import { fetchAcraSgCompanies } from '../jobs/singaporeFetcher.js';
 import { fetchMohSgProviders } from '../jobs/singaporeHealthFetcher.js';
+import { fetchCmsPhysicians, fetchStateMedicalBoards } from '../jobs/cmsPhysicianFetcher.js';
+import { fetchBrazilComplianceData, fetchSingaporeComplianceData, fetchMexicoComplianceData } from '../jobs/intlComplianceFetcher.js';
 import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
@@ -740,6 +742,32 @@ cronRouter.post('/fetch-npi', async (req, res) => {
   }
 });
 
+// ─── CMS Physician Compare (Medicare providers — NPH-11) ───
+cronRouter.post('/fetch-cms-physicians', async (req, res) => {
+  try {
+    const states = req.body?.states as string[] | undefined;
+    const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
+    const result = await fetchCmsPhysicians(db, { states, maxPerRun });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'CMS Physician Compare fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── State Medical Boards (physician licenses — NPH-11) ───
+cronRouter.post('/fetch-medical-boards', async (req, res) => {
+  try {
+    const states = req.body?.states as string[] | undefined;
+    const maxPerRun = req.body?.maxPerRun ? parseInt(String(req.body.maxPerRun), 10) : undefined;
+    const result = await fetchStateMedicalBoards(db, { states, maxPerRun });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'State Medical Board fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── SAM.gov (federal contractor registrations) ───
 cronRouter.post('/fetch-sam-entities', async (req, res) => {
   try {
@@ -864,6 +892,39 @@ cronRouter.post('/fetch-australia', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Australia compliance data fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── INTL-01: Brazil LGPD compliance data ───
+cronRouter.post('/fetch-brazil-compliance', async (_req, res) => {
+  try {
+    const result = await fetchBrazilComplianceData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Brazil compliance data fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── INTL-02: Singapore PDPA compliance data ───
+cronRouter.post('/fetch-singapore-compliance', async (_req, res) => {
+  try {
+    const result = await fetchSingaporeComplianceData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Singapore compliance data fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── INTL-03: Mexico LFPDPPP compliance data ───
+cronRouter.post('/fetch-mexico-compliance', async (_req, res) => {
+  try {
+    const result = await fetchMexicoComplianceData(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Mexico compliance data fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

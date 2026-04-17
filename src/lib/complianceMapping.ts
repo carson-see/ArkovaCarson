@@ -18,7 +18,7 @@ export interface ComplianceControl {
   /** Short identifier (e.g., "SOC2-CC6.7") */
   id: string;
   /** Framework name */
-  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA';
+  framework: 'SOC 2' | 'GDPR' | 'FERPA' | 'ISO 27001' | 'eIDAS' | 'HIPAA' | 'Kenya DPA' | 'APP' | 'POPIA' | 'NDPA' | 'LGPD' | 'PDPA' | 'LFPDPPP' | 'EU-US DPF';
   /** Human-readable control name */
   label: string;
   /** What this control proves about the anchor */
@@ -39,6 +39,10 @@ const FRAMEWORK_COLORS: Record<ComplianceControl['framework'], string> = {
   'APP': 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
   'POPIA': 'bg-violet-100 text-violet-800 dark:bg-violet-900/30 dark:text-violet-300',
   'NDPA': 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+  'LGPD': 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+  'PDPA': 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
+  'LFPDPPP': 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
+  'EU-US DPF': 'bg-sky-100 text-sky-800 dark:bg-sky-900/30 dark:text-sky-300',
 };
 
 /** Helper to build a control entry with color derived from framework */
@@ -73,6 +77,18 @@ export const COMPLIANCE_CONTROLS: Record<string, ComplianceControl> = {
   'POPIA-72': ctrl('POPIA-72', 'POPIA', 'POPIA §72', 'Transborder information flows — binding agreement required for cross-border transfers'),
   'NDPA-24': ctrl('NDPA-24', 'NDPA', 'NDPA §24', 'Data protection principles — lawfulness, fairness, transparency, and purpose limitation'),
   'NDPA-43': ctrl('NDPA-43', 'NDPA', 'NDPA §43', 'Cross-border transfer — adequate data protection level or Standard Contractual Clauses'),
+  // Brazil LGPD (INTL-01)
+  'LGPD-6': ctrl('LGPD-6', 'LGPD', 'LGPD Art. 6', 'Data processing principles — purpose, adequacy, necessity, free access, quality, transparency, security, non-discrimination'),
+  'LGPD-33': ctrl('LGPD-33', 'LGPD', 'LGPD Art. 33', 'International data transfer — adequate protection level, SCCs, or binding corporate rules'),
+  // Singapore PDPA (INTL-02)
+  'PDPA-24': ctrl('PDPA-24', 'PDPA', 'PDPA §24', 'Protection obligation — reasonable security arrangements to protect personal data'),
+  'PDPA-26': ctrl('PDPA-26', 'PDPA', 'PDPA §26', 'Transfer limitation — overseas transfers only to jurisdictions with comparable protection or contractual safeguards'),
+  // Mexico LFPDPPP (INTL-03)
+  'LFPDPPP-6': ctrl('LFPDPPP-6', 'LFPDPPP', 'LFPDPPP Art. 6', 'Data protection principles — lawfulness, consent, information, quality, purpose, loyalty, proportionality, accountability'),
+  'LFPDPPP-36': ctrl('LFPDPPP-36', 'LFPDPPP', 'LFPDPPP Art. 36', 'International transfer — recipient must assume same obligations, data subject consent required'),
+  // EU-US Data Privacy Framework (TRUST-03)
+  'DPF-NOTICE': ctrl('DPF-NOTICE', 'EU-US DPF', 'DPF Notice Principle', 'Organizations must inform individuals about data practices, purpose, and their rights under the Framework'),
+  'DPF-ACCOUNTABILITY': ctrl('DPF-ACCOUNTABILITY', 'EU-US DPF', 'DPF Accountability', 'Onward transfer accountability — contractual obligations on third-party recipients of personal data'),
 };
 
 /** All tracked frameworks — derived from COMPLIANCE_CONTROLS to avoid duplication */
@@ -96,6 +112,8 @@ const UNIVERSAL_CONTROLS = [
   'ISO27001-A.10',
   'eIDAS-25',
   'eIDAS-35',
+  'DPF-NOTICE',
+  'DPF-ACCOUNTABILITY',
 ];
 
 /**
@@ -110,10 +128,10 @@ const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
   LICENSE: ['ISO27001-A.14'],
   PROFESSIONAL: ['ISO27001-A.14'],
   CLE: ['ISO27001-A.14'],
-  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION'],
-  FINANCIAL: ['ISO27001-A.14'],
+  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION', 'LGPD-6', 'PDPA-24'],
+  FINANCIAL: ['ISO27001-A.14', 'LGPD-6', 'LFPDPPP-6'],
   SEC_FILING: ['ISO27001-A.14'],
-  LEGAL: ['ISO27001-A.14', 'eIDAS-35'],
+  LEGAL: ['ISO27001-A.14', 'eIDAS-35', 'LGPD-33', 'PDPA-26', 'LFPDPPP-36'],
 };
 
 /**

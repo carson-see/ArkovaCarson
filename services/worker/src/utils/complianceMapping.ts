@@ -25,6 +25,8 @@ const UNIVERSAL_CONTROLS = [
   'ISO27001-A.10', // Cryptographic controls
   'eIDAS-25',     // Electronic signatures and seals
   'eIDAS-35',     // Qualified electronic time stamps
+  'DPF-NOTICE',   // EU-US DPF Notice Principle
+  'DPF-ACCOUNTABILITY', // EU-US DPF Accountability for onward transfers
 ];
 
 /**
@@ -37,10 +39,10 @@ const TYPE_SPECIFIC_CONTROLS: Partial<Record<CredentialType, string[]>> = {
   LICENSE: ['ISO27001-A.14'],
   PROFESSIONAL: ['ISO27001-A.14'],
   CLE: ['ISO27001-A.14'],
-  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION'],
-  FINANCIAL: ['ISO27001-A.14'],
+  INSURANCE: ['HIPAA-164.312', 'HIPAA-164.312-MFA', 'HIPAA-164.312-AUDIT', 'HIPAA-164.312-SESSION', 'LGPD-6', 'PDPA-24'],
+  FINANCIAL: ['ISO27001-A.14', 'LGPD-6', 'LFPDPPP-6'],
   SEC_FILING: ['ISO27001-A.14'],
-  LEGAL: ['ISO27001-A.14', 'eIDAS-35'],
+  LEGAL: ['ISO27001-A.14', 'eIDAS-35', 'LGPD-33', 'PDPA-26', 'LFPDPPP-36'],
 };
 
 /**

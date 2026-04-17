@@ -7,7 +7,7 @@
 
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { Building2, Code2, Layers, Webhook, KeyRound, Headphones, Anchor, Lock, Database, Terminal, BookOpen, Bot, Bell, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Building2, Code2, Layers, Webhook, KeyRound, Headphones, Anchor, Lock, Database, Terminal, BookOpen, Bot, Bell, ArrowRight, CheckCircle2, Globe, Shield } from 'lucide-react';
 import { usePageMeta } from '@/hooks/usePageMeta';
 import { ENTERPRISE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
@@ -27,6 +27,8 @@ const TRUST_ITEMS = [
   { icon: CheckCircle2, title: ENTERPRISE_LABELS.TRUST_SOC2_TITLE, description: ENTERPRISE_LABELS.TRUST_SOC2_DESC },
   { icon: Lock, title: ENTERPRISE_LABELS.TRUST_ENCRYPTION_TITLE, description: ENTERPRISE_LABELS.TRUST_ENCRYPTION_DESC },
   { icon: Database, title: ENTERPRISE_LABELS.TRUST_RLS_TITLE, description: ENTERPRISE_LABELS.TRUST_RLS_DESC },
+  { icon: Shield, title: ENTERPRISE_LABELS.TRUST_DPF_TITLE, description: ENTERPRISE_LABELS.TRUST_DPF_DESC },
+  { icon: Globe, title: ENTERPRISE_LABELS.TRUST_INTL_TITLE, description: ENTERPRISE_LABELS.TRUST_INTL_DESC },
 ];
 
 const INTEGRATIONS = [
