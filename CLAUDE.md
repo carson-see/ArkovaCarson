@@ -1,7 +1,7 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-17 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 209 migrations (0000-0218, production through 0185, 0186-0218 pending deploy — 19 pending) | 4,325 tests (1,265 frontend + 3,060 worker; +44 new via NCA-05..09 + NCA-06 cron + NPH-16 verify + compliance PDF) | 344 stories (310 complete + 34 remaining) | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.3 FCRA UNDER_REVIEW + v28.0 HIPAA + v29.0 FERPA **QUARANTINED** (NVI-15) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 209 migrations (0000-0218, production through 0185, 0186-0218 pending deploy — 19 pending) | 4,329 tests (1,265 frontend + 3,060 worker + 4 new via GEO-11 VideoObject helper) | 344 stories (**338 complete + 6 remaining**; QA backlog cleared 2026-04-17 — 30 QA stories audited, all 100% engineering-complete, transitioned to Done) | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.3 FCRA UNDER_REVIEW + v28.0 HIPAA + v29.0 FERPA **QUARANTINED** (NVI-15) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 > **🛡 NVI INFRASTRUCTURE LANDED (2026-04-17):** SCRUM-805/806/807/808 validators (statute-quote, case-law, agency-bulletin, state-statute) shipped in `services/worker/scripts/intelligence-dataset/validators/` with 33 unit tests + orchestrator + on-disk `verification-status.json` registry. **SCRUM-825 NVI-18 CI guard wired into `build-dataset.ts`:** training JSONL emission refuses when any cited source is untrusted (stale > 90d, failing, or orphaned). Baseline run on 205 FCRA+HIPAA+FERPA sources: **140 pass / 39 hardFail / 19 orphan.** SCRUM-819 NVI-15 quarantine policy (`src/ai/nessie-quarantine.ts` + 11 tests) routes HIPAA v28 + FERPA v29 customer traffic through a caveat + confidence downgrade; FCRA v27.3 kept UNDER_REVIEW (soft downgrade).
 > **🎯 NCA "AUDIT MY ORGANIZATION" PHASE 1 LANDED (2026-04-17):** SCRUM-756 NCA-01 migration 0216 expands `jurisdiction_rules` seed from ~30 to ≥100 rules across US FEDERAL (FERPA, HIPAA, SOX, FCRA employment, ADA, FLSA, GLBA, GINA) + Kenya DPA + Australia APP + EU/UK GDPR + Canada PIPEDA + Singapore PDPA + Japan APPI + India DPDP + South Africa POPIA + Nigeria NDPR + additional US state × industry coverage. SCRUM-757 NCA-02 + SCRUM-759 NCA-04 wired into SCRUM-758 NCA-03: new `compliance_audits` table (migration 0217) + `POST/GET /api/v1/compliance/audit` endpoint that rolls up per-jurisdiction scores, 4-category gap detection (MISSING/EXPIRED/EXPIRING_SOON/INSUFFICIENT) with severity sort, and NVI quarantine caveat surfacing.
 > **🎯 NCA PHASE 2+3 LANDED (2026-04-17 — PRs #413 #414):** NCA-05 recommendation engine (pure `buildRecommendations` — dedupe by (type, category) across jurisdictions, severity × penalty-risk ÷ effort priority, QUICK_WIN/CRITICAL/UPCOMING/STANDARD grouping, 20-item cap with `overflow_count`, `gap_keys` drill-down, persisted in `compliance_audits.metadata.recommendations`). NCA-06 regulatory-change cron (`jobs/regulatory-change-cron.ts` + pure `computeRegulatoryChangeImpact` — NONE/INFO/IN_APP/EMAIL severity, in-app notification + Resend email with `regulatory_change_email` opt-out; orchestrator importable, Cloud Scheduler wiring in SCRUM-893). NCA-07 dashboard `AuditMyOrganizationButton` (state machine with ARIA live progress region). NCA-08 `/compliance/scorecard` page (gauge + per-jurisdiction bars + gap list + grouped recommendations + inline SVG timeline + error / empty states). NCA-09 client-side PDF export (`src/lib/compliancePdf.ts`, jsPDF US-Letter, filename `arkova-compliance-audit-<slug>-<date>.pdf`). Migration 0218 adds `notifications` table (RLS + CHECK constraint + read_at pattern).
@@ -61,6 +61,54 @@ Every task MUST update its Jira ticket. Required fields: Definition of Ready (Do
 
 ### CONFLUENCE MANDATE
 Every task that changes schema, security, API, flows, or architecture MUST update the corresponding Confluence doc (see Doc Update Matrix in Section 4). This is not optional — it is part of Definition of Done.
+
+**Additionally (2026-04-17):** every new `docs/compliance/**/*.md` or procurement/RFP/playbook artefact MUST be mirrored to Confluence in the same PR. A `.md` file alone is insufficient — non-technical stakeholders (counsel, procurement, executive) must be able to find the document in Confluence. Add a "How to use this document" section to every operational playbook so the reader knows the 5 concrete steps to execute. Link the Confluence page back from the Markdown file header.
+
+### STORY-NOTES MANDATE (2026-04-17)
+Every Jira story MUST have a Confluence page (or section in a sprint-notes page) that captures: (1) engineering deliverables shipped, (2) next manual action, (3) owner. Stories without Confluence presence are invisible to non-technical stakeholders and will be reopened as incomplete.
+
+### MANUAL-FOLLOWUP EMAIL MANDATE (2026-04-17)
+Any story whose closure requires a human action outside of code (register with a regulator, engage a vendor, pay a fee, create an external account, record a video, file a form) MUST generate an email to **carson@arkova.ai** summarising the action, owner, playbook link, and deadline. Jira comments alone are not sufficient — inbox items drive action; Jira comments do not.
+
+### STORY-FORMAT MANDATE (2026-04-17)
+Every Jira story description MUST use the standard template:
+
+```
+## User Story
+As a <role>, I want <goal>, so that <reason>.
+
+## Description
+<context>
+
+## Definition of Ready (DoR)
+- [ ] Story description reviewed
+- [ ] Dependencies identified
+- [ ] Plan outlined
+- [ ] Acceptance criteria defined
+- [ ] Owner assigned
+
+## Acceptance Criteria
+- [ ] <criterion>
+
+## Definition of Done (DoD) — Mandatory Gates
+**GATE 1 — Tests (TDD MANDATE)** …
+**GATE 2 — Jira (JIRA MANDATE)** …
+**GATE 3 — Confluence (CONFLUENCE MANDATE)** …
+**GATE 4 — Bug Log (BUG LOG MANDATE)** …
+**GATE 5 — agents.md** …
+**GATE 6 — CLAUDE.md (CLAUDE.MD MANDATE)** …
+
+## Effort / Priority / Dependencies
+```
+
+Stories with malformed escape sequences (e.g. `\\\\n` instead of real newlines), missing DoR, or minimal 1-2-gate DoD MUST be reformatted before work begins.
+
+### QA-STATUS MANDATE (2026-04-17)
+Jira stories in **QA** status must be actively driven to resolution. Either:
+- **Transition to Done** if the engineering deliverable is 100% complete and merged (manual follow-ups move to a dedicated follow-up ticket), OR
+- **Transition to Blocked** if work cannot be completed without external action.
+
+Leaving stories in QA indefinitely is prohibited — QA is a transition state, not a parking state.
 
 ### BUG LOG MANDATE
 Every bug created or fixed MUST be logged in the master bug tracker spreadsheet: https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0

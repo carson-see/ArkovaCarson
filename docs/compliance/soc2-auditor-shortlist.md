@@ -1,10 +1,27 @@
 # SOC 2 Auditor Shortlist — Readiness Assessment
 
+**Confluence mirror:** [SOC 2 Auditor Shortlist](https://arkova.atlassian.net/wiki/spaces/A/) — see "Vendor Engagement" under "Compliance & Audit Mapping".
 **Purpose:** Unblock SCRUM-522 ("Engage SOC 2 auditor for readiness assessment") with a structured shortlist instead of open-ended sales calls.
 **Last updated:** 2026-04-17
 **Baseline evidence:** `docs/compliance/soc2-evidence.md`, `docs/compliance/soc2-type2-evidence-matrix.md`, `docs/compliance/soc2-type2-decision.md`
-**Decision owner:** Matthew (see `docs/compliance/vendor-register.md` for handle) (external owner) + Carson (final sign-off)
+**Decision owner:** Matthew (see `docs/compliance/vendor-register.md` for handle) + Carson (final sign-off)
 **Related:** depends on SCRUM-516 (framework selection — Type II confirmed)
+
+---
+
+## How to use this document
+
+**Decision owner's 5-step playbook:**
+
+| Step | Action | Who | Output |
+|------|--------|-----|--------|
+| 1 | Email the **three firms in §Candidate pool** with the **RFP packet**. Ask for fixed-fee readiness + fixed-fee Type II quotes, named signing partner, and evidence-portal compatibility. | Matthew | RFP sent to 3 firms |
+| 2 | When proposals arrive (~2 weeks): score against the **100-point rubric**. Record in `docs/compliance/vendor-register.md` under "SOC 2 Auditor RFP 2026". | Matthew + Carson | Scored proposals |
+| 3 | Pick highest scorer (≥75/100). Sign MSA + readiness SOW. Budget: $12-20K readiness + $28-45K Type II. | Carson + counsel | Signed SOW |
+| 4 | Auditor runs readiness (~3 weeks); delivers gap report. Gap items copied to `docs/BACKLOG.md` with owners + target close dates. | Auditor + Carson | Gap report |
+| 5 | Engineering remediates gaps (~4 weeks). Readiness re-check confirms closure; transition SCRUM-522 → Done. Type II observation window opens under a separate follow-up epic. | Engineering | Close-out memo |
+
+**Scope reminder:** this story is readiness-only. Type II observation is a follow-up epic — do NOT conflate.
 
 ---
 
