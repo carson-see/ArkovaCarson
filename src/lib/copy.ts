@@ -2055,6 +2055,11 @@ export const AUDIT_MY_ORG_LABELS = {
   SCORECARD_EXPORTING: 'Preparing PDF…',
   SCORECARD_DISCLAIMER:
     'This report reflects credential status as of the audit date. It is not legal advice.',
+  SCORECARD_LOADING: 'Loading…',
+  SCORECARD_BACK_TO_DASHBOARD: '← Back to dashboard',
+  SCORECARD_NO_JURISDICTION_DATA: 'No jurisdiction data.',
+  SCORECARD_NO_GAPS: 'No open compliance gaps.',
+  SCORECARD_TIMELINE_INSUFFICIENT: 'Not enough history yet.',
 } as const;
 
 export const PRIVACY_NOTICE_LABELS = {

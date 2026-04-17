@@ -152,8 +152,8 @@ describe('POST /api/v1/compliance/audit', () => {
       if (table === 'anchors') {
         return makeBuilder({
           selectData: [
-            { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', integrity_score: 0.9, fraud_flags: [], not_after: null, title: 'Lic' },
-            { id: 'a2', credential_type: 'CONTINUING_EDUCATION', status: 'SECURED', integrity_score: 0.9, fraud_flags: [], not_after: null, title: 'CE' },
+            { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', expires_at: null, label: 'Lic' },
+            { id: 'a2', credential_type: 'CONTINUING_EDUCATION', status: 'SECURED', expires_at: null, label: 'CE' },
           ],
         }) as unknown as never;
       }

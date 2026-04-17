@@ -194,7 +194,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
           )}
         </header>
 
-        {loading && <div role="status" aria-live="polite" className="text-sm text-muted-foreground">Loading…</div>}
+        {loading && <div role="status" aria-live="polite" className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.SCORECARD_LOADING}</div>}
 
         {error && (
           <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm" data-testid="scorecard-error">
@@ -264,7 +264,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
 
         <div className="text-sm">
           <Link to={ROUTES.DASHBOARD} className="text-primary hover:underline">
-            ← Back to dashboard
+            {AUDIT_MY_ORG_LABELS.SCORECARD_BACK_TO_DASHBOARD}
           </Link>
         </div>
       </main>
@@ -273,7 +273,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
 }
 
 function PerJurisdictionBars({ data }: { readonly data: PerJurisdiction[] }) {
-  if (data.length === 0) return <p className="text-sm text-muted-foreground">No jurisdiction data.</p>;
+  if (data.length === 0) return <p className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.SCORECARD_NO_JURISDICTION_DATA}</p>;
   return (
     <ul className="space-y-3">
       {data.map((d) => (
@@ -307,7 +307,7 @@ function GapList({ gaps }: { readonly gaps: Gap[] }) {
       <Card>
         <CardContent className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
           <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden="true" />
-          No open compliance gaps.
+          {AUDIT_MY_ORG_LABELS.SCORECARD_NO_GAPS}
         </CardContent>
       </Card>
     );
@@ -383,7 +383,7 @@ function ScoreTimeline({ history }: { readonly history: AuditRow[] }) {
       .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime())
       .map((h) => ({ x: new Date(h.started_at).getTime(), y: h.overall_score }));
   }, [history]);
-  if (points.length < 2) return <p className="text-sm text-muted-foreground">Not enough history yet.</p>;
+  if (points.length < 2) return <p className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.SCORECARD_TIMELINE_INSUFFICIENT}</p>;
 
   const WIDTH = 600;
   const HEIGHT = 160;

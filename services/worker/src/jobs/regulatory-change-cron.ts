@@ -28,7 +28,7 @@ import {
   type OrgAuditResult,
   type JurisdictionPair,
 } from '../compliance/org-audit.js';
-import { computeGrade, type JurisdictionRule, type OrgAnchor } from '../compliance/score-calculator.js';
+import type { JurisdictionRule, OrgAnchor } from '../compliance/score-calculator.js';
 
 export interface RegulatoryChangeCronResult {
   orgs_scanned: number;
@@ -93,12 +93,13 @@ export async function runRegulatoryChangeCron(
   for (const { org_id, last_audit_at } of orgs) {
     result.orgs_scanned += 1;
     try {
-      const impact = await computeImpactForOrg(database, org_id, last_audit_at, allRules);
-      if (!impact || impact.severity === 'NONE' || impact.severity === 'INFO') continue;
+      const computed = await computeImpactForOrg(database, org_id, last_audit_at, allRules);
+      if (!computed || computed.impact.severity === 'NONE' || computed.impact.severity === 'INFO') continue;
+      const { impact, currentAudit } = computed;
 
       result.impacted_orgs += 1;
 
-      await persistChangeEvent(database, org_id, impact);
+      await persistChangeEvent(database, org_id, impact, currentAudit);
 
       if (impact.severity === 'IN_APP' || impact.severity === 'EMAIL') {
         const notified = await createInAppNotification(database, org_id, impact, scorecardUrl);
@@ -125,7 +126,7 @@ async function computeImpactForOrg(
   orgId: string,
   lastAuditAt: string,
   rules: JurisdictionRule[],
-): Promise<RegulatoryChangeImpact | null> {
+): Promise<{ impact: RegulatoryChangeImpact; currentAudit: OrgAuditResult } | null> {
   const { data: previous } = await database
     .from('compliance_audits')
     .select('*')
@@ -164,18 +165,22 @@ async function computeImpactForOrg(
 
   const { data: anchorRows } = await database
     .from('anchors')
-    .select('id, credential_type, status, integrity_score, fraud_flags, not_after, title')
+    .select('id, credential_type, status, expires_at, label')
     .eq('org_id', orgId)
     .eq('status', 'SECURED')
     .limit(10_000);
+  // integrity_score + fraud_flags live in separate tables (integrity_scores,
+  // fraud_signals) — intentionally default to null / empty so the score
+  // delta is computed consistently on both sides of the diff. A follow-up
+  // may join those tables if the cron needs fraud-aware severity bumps.
   const anchors: OrgAnchor[] = (anchorRows ?? []).map((a: Record<string, unknown>) => ({
     id: a.id as string,
     credential_type: (a.credential_type as string) ?? 'OTHER',
     status: a.status as string,
-    integrity_score: (a.integrity_score as number | null) ?? null,
-    fraud_flags: (a.fraud_flags as string[]) ?? [],
-    expiry_date: (a.not_after as string) ?? null,
-    title: (a.title as string) ?? null,
+    integrity_score: null,
+    fraud_flags: [],
+    expiry_date: (a.expires_at as string) ?? null,
+    title: (a.label as string) ?? null,
   }));
 
   const currentAudit: OrgAuditResult = calculateOrgAudit({
@@ -195,7 +200,8 @@ async function computeImpactForOrg(
       ?? { recommendations: [], overflow_count: 0, grouped: { quick_wins: [], critical: [], upcoming: [], standard: [] } },
   };
 
-  return computeRegulatoryChangeImpact(previousAudit, currentAudit, ruleChange);
+  const impact = computeRegulatoryChangeImpact(previousAudit, currentAudit, ruleChange);
+  return { impact, currentAudit };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -203,16 +209,26 @@ async function persistChangeEvent(
   database: any,
   orgId: string,
   impact: RegulatoryChangeImpact,
+  currentAudit: OrgAuditResult,
 ): Promise<void> {
+  // Write the FULL post-change audit state, not just the score. This keeps
+  // the scorecard view coherent after a cron fire (gaps + per-jurisdiction
+  // + recommendations don't silently clear), and gives the next cron tick
+  // a real baseline to diff against.
+  const now = new Date().toISOString();
   await database.from('compliance_audits').insert({
     org_id: orgId,
-    overall_score: impact.new_score,
-    overall_grade: computeGrade(impact.new_score),
+    overall_score: currentAudit.overall_score,
+    overall_grade: currentAudit.overall_grade,
+    per_jurisdiction: currentAudit.per_jurisdiction,
+    gaps: currentAudit.gaps,
+    quarantines: currentAudit.quarantines,
     status: 'COMPLETED',
-    started_at: new Date().toISOString(),
-    completed_at: new Date().toISOString(),
+    started_at: now,
+    completed_at: now,
     duration_ms: 0,
     metadata: {
+      recommendations: currentAudit.recommendations,
       regulatory_change: impact,
       trigger: 'nca-06-cron',
     },
@@ -244,9 +260,7 @@ async function createInAppNotification(
     if (error) throw error;
     return true;
   } catch (err) {
-    // When the notifications table does not yet exist (dev/test), log and
-    // skip rather than fail the whole cron.
-    logger.warn({ err, org_id: orgId }, 'NCA-06 cron: in-app notification insert skipped');
+    logger.warn({ err, org_id: orgId }, 'NCA-06 cron: in-app notification insert failed');
     return false;
   }
 }
