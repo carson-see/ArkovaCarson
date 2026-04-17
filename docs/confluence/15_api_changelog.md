@@ -1,6 +1,6 @@
 # API Changelog & Versioning
 
-> Last updated: 2026-03-31
+> Last updated: 2026-04-16
 
 ## Versioning Policy
 
@@ -10,6 +10,53 @@ Arkova follows a **stable-first** API versioning strategy:
 - **Breaking changes** require a new major version (`/api/v2/`) with a 12-month deprecation period (Constitution 1.8)
 - **Additive changes** (new nullable fields, new endpoints) are shipped without version bump
 - **Frozen schemas:** The `VerificationResult` schema is frozen. Fields cannot be removed or renamed.
+
+## v1.5.0 (planned, Sprint 1) — API Richness
+
+**Source:** 2026-04-16 API surface audit (`docs/BACKLOG.md` TIER 0I). Audit found existing responses expose ~15 fields while the DB stores 30+ per anchor plus linked manifests, audit events, and extraction_manifests. All additions below are **backwards-compatible nullable fields** — no endpoints changed, no existing fields removed.
+
+### `GET /api/v1/verify/{publicId}` — additive fields
+
+| Field | Type | Source | Purpose |
+|-------|------|--------|---------|
+| `compliance_controls` | `Record<string, string[]> \| null` | `anchors.compliance_controls` JSON | SOC 2 / FERPA / HIPAA / GDPR control IDs for enterprise GRC platforms (Vanta/Drata) |
+| `chain_confirmations` | `number \| null` | `anchors.chain_confirmations` | Bitcoin network confirmations — block-level maturity indicator |
+| `parent_anchor_id` | `string \| null` | `anchors.parent_anchor_id` (public_id of parent) | Credential lineage — e.g. "this diploma was reissued in 2024" |
+| `version_number` | `number \| null` | `anchors.version_number` | Monotonically increasing version within a lineage |
+| `revocation_tx_id` | `string \| null` | `anchors.revocation_tx_id` | Independently-verifiable revocation proof chain |
+| `revocation_block_height` | `number \| null` | `anchors.revocation_block_height` | Block at which revocation was anchored |
+| `file_mime` | `string \| null` | `anchors.file_mime` | Document MIME type |
+| `file_size` | `number \| null` | `anchors.file_size` | Document size in bytes |
+
+### `POST /api/v1/ai/extract` — additive fields
+
+| Field | Type | Source | Purpose |
+|-------|------|--------|---------|
+| `confidenceScores` | `Record<string, number> \| null` | `extraction_manifests.confidence_scores` | Per-field confidence breakdown (not just overall) |
+| `subType` | `string \| null` | Gemini v6 output | Fine-grained classification ("MD_LICENSE" vs "MEDICAL") |
+| `description` | `string \| null` | Gemini v6 output | 1-2 sentence human-readable summary |
+| `fraudSignals` | `string[] \| null` | Gemini cross-field fraud checks | Array of detected fraud indicators |
+
+### New endpoint: `GET /api/v1/anchor/{publicId}/lifecycle`
+
+Returns chain-of-custody event log from `audit_events`:
+- `uploaded_at`, `extraction_completed_at`, `pending_anchor_at`, `submitted_at`, `secured_at`, `verified_at[]`, `revoked_at` (nullable)
+- Each event includes `event_type`, `timestamp`, `actor_role` (anonymized), optional `metadata`
+
+### New endpoint: `GET /api/v1/anchor/{publicId}/extraction-manifest`
+
+Exposes the VAI-01 verifiable-AI manifest:
+- `manifestHash` (deterministic SHA-256 of extraction inputs + output)
+- `zkProof`, `zkPublicSignals`, `zkCircuitVersion` (when ZK proof was generated)
+- `promptVersion` (hash of extraction prompt at inference time)
+- `modelVersion` (e.g. `gemini-golden-v6-endpoint-740332515062972416`)
+
+### SDK impact (must ship in same release)
+
+- `sdks/typescript/src/types.ts` — `VerificationResult`, `ExtractionResult` type additions
+- `sdks/python/arkova/types.py` — TypedDict additions
+- OpenAPI spec `docs/api/openapi.yaml` — schema refs for new fields and endpoints
+- CHANGELOG entry in both SDK packages
 
 ## v1.3.1 — 2026-03-31
 

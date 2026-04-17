@@ -475,7 +475,7 @@ export function runCrossFieldChecks(fields: ExtractedFields): CrossFieldCheckRes
 // =============================================================================
 
 /** Base fields present on every credential type. */
-const BASE_FIELDS = ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fraudSignals', 'suggestedType', 'subType', 'reasoning', 'concerns', 'issuerVerified'];
+const BASE_FIELDS = ['credentialType', 'issuerName', 'recipientIdentifier', 'issuedDate', 'expiryDate', 'fraudSignals', 'suggestedType', 'subType', 'reasoning', 'concerns', 'issuerVerified', 'description'];
 
 /** Per-type field extensions beyond BASE_FIELDS. Keep in sync with ExtractedFields in types.ts. */
 const FIELD_EXTENSIONS: Record<string, string[]> = {
@@ -501,6 +501,9 @@ const FIELD_EXTENSIONS: Record<string, string[]> = {
   CHARITY: ['fieldOfStudy', 'jurisdiction', 'einNumber', 'taxExemptStatus', 'governingBody'],
   FINANCIAL_ADVISOR: ['fieldOfStudy', 'jurisdiction', 'crdNumber', 'firmName', 'finraRegistration', 'seriesLicenses'],
   BUSINESS_ENTITY: ['fieldOfStudy', 'jurisdiction', 'entityType', 'stateOfFormation', 'einNumber', 'registeredAgent', 'goodStandingStatus'],
+  // v7: ACCREDITATION promoted to canonical — institutional/program/industry accreditations.
+  // Fields mirror typical accreditation payloads: scope (fieldOfStudy), the accrediting body (accreditingBody may differ from issuerName in ISO-style chains), jurisdiction, optional licenseNumber for accreditation IDs.
+  ACCREDITATION: ['fieldOfStudy', 'licenseNumber', 'accreditingBody', 'jurisdiction'],
 };
 
 /** Pre-built Set allowlists for O(1) field lookups. */

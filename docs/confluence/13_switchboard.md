@@ -30,7 +30,21 @@ Flags are seeded in migration 0021 and re-seeded by `seed.sql`. Additional flags
 | `ENABLE_EXPIRY_ALERTS` | `false` | Enable daily credential expiry alerts cron + email (NCE-09) | No |
 | `ENABLE_COMPLIANCE_ENGINE` | `false` | Enable NCE compliance scoring, gap analysis, intelligence (NCE) | No |
 
-> **Note:** Total flag count: 16. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI extraction/search/fraud/reports, x402, batch anchoring).
+## Environment Variables — AI Cutover (2026-04-16)
+
+Some feature toggles live as **process-level env vars**, not DB flags, because they select model endpoints rather than feature scope:
+
+| Env Var | Default | Purpose | Scope |
+|---------|---------|---------|-------|
+| `GEMINI_V6_PROMPT` | unset / `false` | When `true`, use `src/ai/prompts/extraction-v6.ts` system prompt (required for v6 tuned endpoint to produce expected schema). | Worker process |
+| `GEMINI_TUNED_MODEL` | unset (falls back to v5-reasoning) | Vertex endpoint resource name for tuned Gemini Golden model. v6 = `endpoints/740332515062972416`. | Worker process |
+| `ENABLE_NESSIE_CONSTRAINED` (planned) | unset / `false` | When `true`, attach per-regulation `response_format: {type: "json_schema"}` whitelist enum to vLLM calls. Proven +15pp faithfulness / +10s latency on 2026-04-16 FCRA test. | Worker process |
+
+**Cutover semantics:** These are **additive env-var flips** at container-startup time, not runtime DB flags. Flip/unflip via `gcloud run services update arkova-worker --update-env-vars ...` or `--remove-env-vars ...`. See `docs/runbooks/v6-cutover.md` for exact commands.
+
+**Rollback discipline:** For any AI endpoint change, document the exact rollback env-var command in the runbook **before** flipping the forward direction.
+
+> **Note:** Total flag count: 16 DB flags + 3 AI-endpoint env vars. The original 5 flags were seeded in migration 0021. Additional flags were added as features matured (Verification API, AI extraction/search/fraud/reports, x402, batch anchoring).
 
 ### flagRegistry Unified Initialization
 

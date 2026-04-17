@@ -34,6 +34,15 @@ export interface GroundTruthFields {
   stateOfFormation?: string;
   registeredAgent?: string;
   goodStandingStatus?: string;
+  // CHARITY-specific
+  einNumber?: string;
+  taxExemptStatus?: string;
+  governingBody?: string;
+  // FINANCIAL_ADVISOR-specific
+  crdNumber?: string;
+  firmName?: string;
+  finraRegistration?: string;
+  seriesLicenses?: string;
   // Fraud signals
   fraudSignals?: string[];
   // GRE-02: Reasoning fields (optional — existing entries don't need these)
@@ -104,6 +113,12 @@ export interface EntryEvalResult {
   provider: string;
   /** Tokens consumed */
   tokensUsed: number;
+  /**
+   * Raw extracted fields from the provider. Useful for post-eval analysis of
+   * fields NOT in ALL_FIELDS (e.g., v6's subType, description emission rates).
+   * Kept optional so existing eval JSON readers don't break.
+   */
+  extractedFields?: Record<string, unknown>;
 }
 
 /**

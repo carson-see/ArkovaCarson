@@ -51,12 +51,16 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../ai/eval/calibration.js', () => ({
-  calibrateConfidence: vi.fn((raw: number) => raw + 0.05), // simple offset for testing
+  // Router used by production code — test offset lives here.
+  calibrateConfidenceByProvider: vi.fn((_provider: string, raw: number) => raw + 0.05),
+  // Preserved in case other tests still import the direct helpers.
+  calibrateConfidence: vi.fn((raw: number) => raw + 0.05),
+  calibrateNessieConfidence: vi.fn((raw: number) => raw - 0.4),
 }));
 
 import { aiBatchExtractRouter } from './ai-extract-batch.js';
 import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
-import { calibrateConfidence } from '../../ai/eval/calibration.js';
+import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 
 function createApp() {
   const app = express();
@@ -174,7 +178,7 @@ describe('POST /api/v1/ai/extract-batch', () => {
     expect(res.status).toBe(200);
     // Mock provider returns confidence 0.85, calibration mock adds 0.05 → 0.90
     expect(res.body.results[0].confidence).toBe(0.9);
-    expect(calibrateConfidence).toHaveBeenCalledWith(0.85);
+    expect(calibrateConfidenceByProvider).toHaveBeenCalledWith('mock', 0.85);
   });
 
   it('handles partial failures gracefully', async () => {

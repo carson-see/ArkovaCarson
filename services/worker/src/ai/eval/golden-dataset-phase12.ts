@@ -348,7 +348,7 @@ export const GOLDEN_DATASET_PHASE12: GoldenDatasetEntry[] = [
   },
   {
     id: 'GD-1735', description: 'Suspicious identity document',
-    strippedText: 'REPUBLIC OF GENERICA. NATIONAL IDENTIFICATION DOCUMENT. [NAME_REDACTED]. ID Number: 000-00-0000. Date of Issue: January 1, 2020. No Expiry. Issuing Authority: Ministry of Internal Affairs, Generica City. Note: This document was issued by a non-recognized sovereign entity.',
+    strippedText: 'REPUBLIC OF GENERICA. NATIONAL IDENTIFICATION DOCUMENT. [NAME_REDACTED]. ID Number: [REDACTED]. Date of Issue: January 1, 2020. No Expiry. Issuing Authority: Ministry of Internal Affairs, Generica City. Note: This document was issued by a non-recognized sovereign entity.',
     credentialTypeHint: 'IDENTITY', groundTruth: { credentialType: 'IDENTITY', issuerName: 'Republic of Generica', issuedDate: '2020-01-01', fraudSignals: ['UNVERIFIABLE_ISSUER', 'INVALID_FORMAT'] },
     source: 'synthetic-identity', category: 'identity', tags: ['synthetic', 'fraud', 'suspicious'],
   },

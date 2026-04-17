@@ -16,7 +16,7 @@ import { z } from 'zod';
 import { createExtractionProvider } from '../../ai/factory.js';
 import { checkAICredits, deductAICredits, logAIUsageEvent } from '../../ai/cost-tracker.js';
 import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
-import { calibrateConfidence } from '../../ai/eval/calibration.js';
+import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
@@ -148,8 +148,10 @@ router.post('/', async (req: Request, res: Response) => {
           const durationMs = Date.now() - startMs;
           successCount++;
 
-          // AI-EVAL-02: Apply confidence calibration (parity with single extraction endpoint)
-          const calibrated = calibrateConfidence(result.confidence);
+          // AI-EVAL-02 / NMT-03: provider-routed calibration (parity with single extraction).
+          // Gemini maps UP, Nessie maps DOWN — routing by provider prevents double-calibration
+          // of Nessie results (which already return in the calibrated range).
+          const calibrated = calibrateConfidenceByProvider(result.provider, result.confidence);
 
           // Log usage event (non-blocking) — store calibrated confidence for consistency
           logAIUsageEvent({

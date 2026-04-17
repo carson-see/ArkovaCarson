@@ -18,6 +18,8 @@ function createMockSupabase() {
     from: vi.fn(() => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
+          // getExistingSourceIds calls .in(); jurisdiction-filter path uses .eq().limit().
+          in: vi.fn().mockResolvedValue({ data: [] }),
           eq: vi.fn(() => ({
             limit: vi.fn().mockResolvedValue({ data: [] }),
           })),

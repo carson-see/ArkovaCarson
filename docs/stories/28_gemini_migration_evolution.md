@@ -1,14 +1,69 @@
-# Story Group 28: Gemini Migration & Evolution — 2.5 Flash Sunset to Gemini 3
+# Story Group 28: Gemini Golden Evolution (GME2 / GME3 / GME4 / GME5)
 
-> **Created:** 2026-04-09 | **Epic:** Gemini Migration & Evolution (GME)
-> **Jira Epic:** SCRUM-612 | **Stories:** SCRUM-613–634 | **Priority:** P0 — CRITICAL (deadline-driven)
-> **Deadline:** June 17, 2026 (69 days) — `gemini-2.5-flash` shutdown
-> **Depends on:** Existing Gemini infrastructure (gemini.ts, golden finetune, embedding pipeline)
-> **Reference:** [Google Gemini Deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
+> **Created:** 2026-04-09 | **Rewritten:** 2026-04-16 to reflect actual work shipped
+> **Active epic:** SCRUM-772 (GME2) | **Domain expert epics:** SCRUM-820 (GME3 Legal), SCRUM-821 (GME4 Financial), SCRUM-823 (GME5 Trades)
+> **Legacy epic:** SCRUM-612 (GME-01–20) — **strategically superseded** by GME2 narrative below. Children SCRUM-613–628 remain open in Jira but have no active owner; close or reparent as each GME2 child absorbs its intent.
+
+## Correction — the original premise was wrong
+
+The 2026-04-09 version of this doc was built around a `gemini-2.5-flash` deprecation on June 17, 2026. **That deadline does not apply to production Arkova.** Prod extraction runs on `gemini-2.0-flash` via the v5-reasoning tuned endpoint (`endpoints/8811908947217743872`), not base `gemini-2.5-flash`. The v6 tuning job also used `gemini-2.0-flash` as base. There is no imminent Google-deprecation pressure on the primary extraction path.
+
+The real Gemini evolution happened via the GME2 arc (v5 → v6 → v7), not the GME-01–20 migration plan.
 
 ---
 
-## The Problem
+## The actual version arc (reality as of 2026-04-16)
+
+### v5-reasoning (prod)
+- Vertex endpoint: `endpoints/8811908947217743872`
+- Base: `gemini-2.0-flash`
+- Tuned on Gemini Golden v5 (reasoning-enriched extraction).
+- Current production default.
+
+### v6 (trained + eval'd + code-ready, cutover pending)
+- Vertex endpoint: `endpoints/740332515062972416`
+- Vertex tuningJob: `240015537143283712` (38.9 min)
+- **50-sample eval:** Macro F1 73.8→77.1% (+3.3pp), Weighted 80.1→83.6% (+3.5pp), mean latency 11.4→3.38s (-70%), tokens/req 35881→1741 (-95%)
+- **Stratified eval (n=10/type, 249 entries):** Macro F1 79.3%, 19/23 types ≥75%
+- **True weaknesses:** RESUME 53.1%, ACCREDITATION 42.9% (data hygiene issue)
+- **Requires to ship:** `GEMINI_V6_PROMPT=true` env var + `services/worker/src/ai/prompts/extraction-v6.ts` + `description` field in `ExtractedFieldsSchema` — all wired in codebase (uncommitted as of 2026-04-16; see `docs/runbooks/v6-cutover.md` for flip instructions).
+
+### v7 (designed)
+- Design doc: `docs/plans/gemini-golden-v7-design-2026-04-16.md`
+- 190-entry surgical dataset expansion (RESUME 30 + 4 borderline types 15×4 + 100 fraud seed + 20 ACCREDITATION fix)
+- Isotonic calibration retrain (no base-model retrain, $0 GPU, ~15 min local compute)
+- Vertex `responseSchema` constrained decoding
+- **DoD:** Macro F1 ≥80%, per-type F1 ≥75% ALL types, Confidence Pearson r ≥0.5 (vs v6's 0.117), latency p50 ≤3.5s
+- Cost: ~$40. Time: ~1 day.
+
+### v8+ (future)
+- Gemini 3 tuning migration when Google opens tuning on 3-flash base.
+
+---
+
+## Domain Expert variants (GME3 / GME4 / GME5)
+
+After v7 ships and the GME8 domain router infra is ready, specialized models branch off the v7 base:
+
+| Epic | Domain | Representative credentials | Status |
+|---|---|---|---|
+| SCRUM-820 GME3 | Legal | Bar admissions, federal court admissions, legal specialty certs, paralegal, JD/LLM, CLE | To Do |
+| SCRUM-821 GME4 | Financial Services | FINRA, SEC-registered advisers, Series exams, insurance producers, CFA/CPA/CFP | To Do |
+| SCRUM-823 GME5 | Trades | Electrician, plumber, HVAC, CDL, welder, pilot, crane, elevator, OSHA | To Do |
+
+Each has its own epic with curation plan, Vertex tuning budget, and DoD. Do not start these before v7 + GME8 land.
+
+---
+
+# ⚠️ LEGACY CONTENT BELOW — PRESERVED FOR REFERENCE ONLY
+
+> **The content below was the 2026-04-09 version of this story group, which framed the work around a June 17 `gemini-2.5-flash` deprecation. That premise does not apply to Arkova prod — see the "Correction" at the top of this doc.**
+>
+> Keep this content for historical context (it still contains useful references about Google's deprecation policy and base-model comparisons). Do **not** plan new work against it. All new Gemini work flows through the GME2/3/4/5 epics described above.
+
+---
+
+## The now-stale "2.5 deadline" plan (LEGACY)
 
 **`gemini-2.5-flash` shuts down June 17, 2026.** Every Gemini call in Arkova breaks that day.
 

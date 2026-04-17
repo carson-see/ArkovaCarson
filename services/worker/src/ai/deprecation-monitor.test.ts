@@ -24,7 +24,8 @@ describe('deprecation-monitor', () => {
   });
 
   it('returns no warnings for non-deprecated models', () => {
-    const warnings = getDeprecationWarnings(['gemini-3-flash-preview', 'text-embedding-004']);
+    // Both models are not in MODEL_DEPRECATION_DATES → no warnings expected.
+    const warnings = getDeprecationWarnings(['gemini-3-flash-preview', 'gemini-embedding-2-preview']);
     expect(warnings).toHaveLength(0);
   });
 
@@ -44,7 +45,7 @@ describe('deprecation-monitor', () => {
     expect(status).toHaveProperty('warnings');
     expect(status).toHaveProperty('checkedAt');
     expect(status.activeModels).toContain('gemini-3-flash-preview');
-    expect(status.activeModels).toContain('text-embedding-004');
+    expect(status.activeModels).toContain('gemini-embedding-001');
   });
 
   it('severity is critical when < 30 days to shutdown', () => {

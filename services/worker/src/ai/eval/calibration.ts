@@ -183,7 +183,7 @@ export function analyzeCalibration(
 //   reported 0.90 → calibrated 0.92 (ceiling — model rarely exceeds 92% accuracy)
 //   reported 1.00 → calibrated 0.92 (cap at empirical ceiling)
 
-/** Calibration knots: [rawConfidence, calibratedConfidence] */
+/** v5-reasoning calibration knots: [rawConfidence, calibratedConfidence] */
 const CALIBRATION_KNOTS: [number, number][] = [
   [0.00, 0.76],
   [0.50, 0.76],
@@ -195,23 +195,62 @@ const CALIBRATION_KNOTS: [number, number][] = [
 ];
 
 /**
+ * Gemini Golden v6 calibration knots (GME2-03, SCRUM-794).
+ *
+ * Derived 2026-04-16 from stratified v6 eval (n=249, Pearson r raw = 0.260)
+ * via `scripts/derive-v6-calibration-knots.ts` against
+ * `docs/eval/eval-gemini-2026-04-16T17-08-23.json`.
+ *
+ * Outcome (vs v5 knots applied to v6 data):
+ *   - Mean calibrated conf: 79.8% (matches mean actual accuracy 78.3% within 1.4pp)
+ *   - ECE: ~24% → ~1.4pp (ceteris paribus on ranking; isotonic can't spread clustered
+ *     flash output but fixes the mean. See SCRUM-794 comment for discussion.)
+ *   - Pearson r: 0.260 → 0.264 (basically unchanged — flash v6 confidence clusters
+ *     narrowly; meta-model `adjustedConfidence` queued as follow-up)
+ *
+ * Active when `GEMINI_V6_PROMPT=true` env var is set (matches the endpoint-selection
+ * flag documented in `docs/runbooks/v6-cutover.md`).
+ */
+const V6_CALIBRATION_KNOTS: [number, number][] = [
+  [0.00, 0.67],
+  [0.48, 0.79],
+  [0.53, 0.80],
+  [0.56, 0.80],
+  [0.59, 0.80],
+  [0.62, 0.82],
+  [1.00, 0.82],
+];
+
+import { isV6PromptActive } from '../featureFlags.js';
+
+/** Select which knot table to use based on the active-model env flag. */
+function getActiveKnots(): [number, number][] {
+  return isV6PromptActive() ? V6_CALIBRATION_KNOTS : CALIBRATION_KNOTS;
+}
+
+/**
  * Apply post-hoc calibration to a raw model confidence score.
  *
  * Uses piecewise linear interpolation between empirically-derived knots.
  * The model is systematically underconfident (reports ~76% when accuracy is ~94%),
  * so this function maps raw scores upward to better reflect actual accuracy.
  *
+ * Branch:
+ *   - GEMINI_V6_PROMPT=true → v6 knots (stratified eval 2026-04-16, Pearson r 0.26)
+ *   - otherwise → v5-reasoning knots (production default)
+ *
  * @param rawConfidence - Model-reported confidence (0.0–1.0)
  * @returns Calibrated confidence (0.0–1.0)
  */
 export function calibrateConfidence(rawConfidence: number): number {
-  if (rawConfidence <= 0) return CALIBRATION_KNOTS[0][1];
-  if (rawConfidence >= 1) return CALIBRATION_KNOTS[CALIBRATION_KNOTS.length - 1][1];
+  const knots = getActiveKnots();
+  if (rawConfidence <= 0) return knots[0][1];
+  if (rawConfidence >= 1) return knots[knots.length - 1][1];
 
   // Find the two surrounding knots
-  for (let i = 0; i < CALIBRATION_KNOTS.length - 1; i++) {
-    const [x0, y0] = CALIBRATION_KNOTS[i];
-    const [x1, y1] = CALIBRATION_KNOTS[i + 1];
+  for (let i = 0; i < knots.length - 1; i++) {
+    const [x0, y0] = knots[i];
+    const [x1, y1] = knots[i + 1];
     if (rawConfidence >= x0 && rawConfidence <= x1) {
       // Linear interpolation
       const t = (rawConfidence - x0) / (x1 - x0);
@@ -396,6 +435,33 @@ export function calibrateNessieConfidence(rawConfidence: number): number {
 /** Export current Nessie knots for testing */
 export function getCurrentNessieCalibrationKnots(): [number, number][] {
   return [...NESSIE_CALIBRATION_KNOTS];
+}
+
+/**
+ * Provider-aware calibration router.
+ *
+ * Why this exists: `calibrateConfidence` is tuned for Gemini (underconfident;
+ * maps UP). `calibrateNessieConfidence` is tuned for Nessie (overconfident;
+ * maps DOWN). Calling the Gemini function on a Nessie result re-inflates its
+ * already-calibrated confidence, nullifying NMT-03 calibration work.
+ *
+ * Call this from API endpoints that receive `{ provider, confidence }` from the
+ * provider abstraction. Direct callers (eval harness, etc.) should call the
+ * provider-specific function they mean.
+ *
+ * @param provider Provider string from IAIProvider result (gemini / nessie / together / etc.)
+ * @param rawConfidence Model-reported confidence (0.0–1.0)
+ * @returns Calibrated confidence (0.0–1.0)
+ */
+export function calibrateConfidenceByProvider(
+  provider: string,
+  rawConfidence: number,
+): number {
+  // Any Nessie-derived provider string routes to Nessie calibration. `together`
+  // serves Nessie-family LoRA adapters in our setup (see CLAUDE.md env vars),
+  // so it gets the same downward mapping.
+  const isNessieFamily = provider === 'nessie' || provider === 'together';
+  return isNessieFamily ? calibrateNessieConfidence(rawConfidence) : calibrateConfidence(rawConfidence);
 }
 
 /**

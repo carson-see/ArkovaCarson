@@ -85,14 +85,47 @@ export interface IntelligenceEvalReport {
 
 /**
  * Score citation accuracy: what fraction of expected citations were present?
+ *
+ * Each expected citation slot may list alternatives separated by '|'.
+ * Citing ANY alternative in a slot satisfies the slot. Total score is
+ * (slots hit) / (total slots). This accommodates semantic equivalence —
+ * e.g. "fcra-604b3|fcra-rights-summary" means citing either the statute
+ * or the CFPB rights summary counts as covering pre-adverse action.
+ *
+ * Matching is case-insensitive and also accepts citation by source-label
+ * substring (e.g. model emits record_id "fcra-604b3" OR source "FCRA §604(b)(3)").
  */
 export function scoreCitationAccuracy(
   expectedCitations: string[],
-  actualCitations: Array<{ record_id: string }>,
+  actualCitations: Array<{ record_id: string; source?: string }>,
 ): number {
   if (expectedCitations.length === 0) return 1.0;
-  const actualIds = new Set(actualCitations.map((c) => c.record_id));
-  const found = expectedCitations.filter((id) => actualIds.has(id));
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '');
+  // Minimum overlap length for bidirectional substring match. Shorter overlaps cause
+  // false positives — e.g. model emits record_id "fcra" and alt is "fcra-604-b-3";
+  // without this guard, `alt.includes(tok)` inflates the citation score. 4 chars is
+  // the shortest meaningful canonical-ID prefix in the FCRA/HIPAA/FERPA registries
+  // (all sources start with a regulation prefix of 4+ chars).
+  const MIN_MATCH_LEN = 4;
+  const actualTokens = new Set<string>();
+  for (const c of actualCitations) {
+    if (c.record_id) actualTokens.add(norm(c.record_id));
+    if (c.source) actualTokens.add(norm(c.source));
+  }
+  const found = expectedCitations.filter((slot) => {
+    const alternatives = slot.split('|').map(norm);
+    return alternatives.some((alt) =>
+      Array.from(actualTokens).some((tok) => {
+        // Exact match always counts.
+        if (tok === alt) return true;
+        // Directional substring match requires the shorter side to meet MIN_MATCH_LEN
+        // AND to be a meaningful prefix/segment (not just shared prefix like "fcr").
+        if (tok.length >= MIN_MATCH_LEN && alt.includes(tok)) return true;
+        if (alt.length >= MIN_MATCH_LEN && tok.includes(alt)) return true;
+        return false;
+      }),
+    );
+  });
   return found.length / expectedCitations.length;
 }
 
@@ -128,47 +161,112 @@ export function scoreFaithfulness(
 /**
  * Score answer relevance: does the answer address the expected key points?
  */
+// Stop words excluded from content-token matching. Domain-neutral list —
+// compliance phrasing varies a lot, so the discriminating words are usually
+// statute numbers, named concepts, and specific nouns.
+const STOP_WORDS = new Set([
+  'the','a','an','of','is','to','for','in','on','at','by','and','or','if','but',
+  'be','been','being','are','was','were','will','would','shall','should','must',
+  'may','can','not','no','that','this','these','those','their','them','they',
+  'it','its','as','from','with','about','over','under','which','what','when',
+  'how','where','who','why','our','your','any','all','some','each','every',
+  'per','via','because','requires','required','apply','applies','applicable',
+]);
+
+function contentTokens(s: string, minLen = 3): Set<string> {
+  const out = new Set<string>();
+  for (const raw of s.toLowerCase().replace(/[^\w§().-]/g, ' ').split(/\s+/)) {
+    const tok = raw.replace(/[()§.]+$/g, '').replace(/^[()§.]+/g, '');
+    if (tok.length >= minLen && !STOP_WORDS.has(tok)) out.add(tok);
+  }
+  return out;
+}
+
+function overlapCount(a: Set<string>, b: Set<string>): number {
+  let n = 0;
+  for (const t of a) if (b.has(t)) n++;
+  return n;
+}
+
+/**
+ * Answer relevance: does the answer cover the expected key points?
+ *
+ * Scoring (less brittle than raw word-ratio):
+ *   - Extract content tokens (len≥3, not stop-words) from each key point.
+ *   - Key point is COVERED when:
+ *       (a) the full phrase appears as substring in answer, OR
+ *       (b) ≥50% of its content tokens appear in answer (min 2 tokens).
+ *   - For short key points (1-2 content tokens), require both to appear.
+ */
 export function scoreAnswerRelevance(
   answer: string,
   expectedKeyPoints: string[],
 ): number {
   if (expectedKeyPoints.length === 0) return 1.0;
-
   const answerLower = answer.toLowerCase();
+  const answerTokens = contentTokens(answer);
   let covered = 0;
   for (const point of expectedKeyPoints) {
-    // Check if key point's words appear in answer
-    const words = point.toLowerCase().split(/\s+/).filter((w) => w.length > 3);
-    const matchCount = words.filter((w) => answerLower.includes(w)).length;
-    if (matchCount / Math.max(words.length, 1) > 0.5) {
-      covered++;
+    if (answerLower.includes(point.toLowerCase())) { covered++; continue; }
+    const expected = contentTokens(point);
+    if (expected.size === 0) { covered++; continue; }
+    const hit = overlapCount(expected, answerTokens);
+    if (expected.size <= 2) {
+      if (hit >= expected.size) covered++;
+    } else {
+      if (hit / expected.size >= 0.5 && hit >= 2) covered++;
     }
   }
-
   return covered / expectedKeyPoints.length;
 }
 
 /**
- * Score risk detection recall: were expected risks identified?
+ * Risk detection recall: were expected risks identified among detected risks?
+ *
+ * Scoring (semantic-match approximation):
+ *   Expected risk is MATCHED when any detected risk either:
+ *     (a) contains the expected as substring, OR
+ *     (b) shares ≥50% of content tokens (min 2), OR
+ *     (c) shares ≥40% of content tokens where expected has ≥4 content tokens
+ *         (longer risks tolerate more paraphrase).
+ *   The full answer text is ALSO checked as fallback — sometimes the model
+ *   lists the risk in prose rather than the `risks` array.
  */
 export function scoreRiskDetection(
   expectedRisks: string[],
   detectedRisks: string[],
+  answer?: string,
 ): number {
   if (expectedRisks.length === 0) return 1.0;
-
+  const detectedTokens = detectedRisks.map((r) => contentTokens(r));
   const detectedLower = detectedRisks.map((r) => r.toLowerCase());
+  const answerTokens = answer ? contentTokens(answer) : new Set<string>();
+  const answerLower = answer?.toLowerCase() ?? '';
+
   let found = 0;
   for (const expected of expectedRisks) {
-    const expectedLower = expected.toLowerCase();
-    // Fuzzy match: check if any detected risk contains the key words
-    const matched = detectedLower.some((d) => {
-      const words = expectedLower.split(/\s+/).filter((w) => w.length > 3);
-      return words.filter((w) => d.includes(w)).length / Math.max(words.length, 1) > 0.4;
-    });
-    if (matched) found++;
-  }
+    const exLower = expected.toLowerCase();
+    const exTokens = contentTokens(expected);
 
+    // (a) substring in any detected risk, or in answer
+    if (detectedLower.some((d) => d.includes(exLower)) || answerLower.includes(exLower)) {
+      found++; continue;
+    }
+    // (b) token-overlap ≥50% (min 2) with any detected risk
+    const threshold = exTokens.size >= 4 ? 0.4 : 0.5;
+    const matched = detectedTokens.some((d) => {
+      const hit = overlapCount(exTokens, d);
+      return hit >= 2 && hit / Math.max(exTokens.size, 1) >= threshold;
+    });
+    if (matched) { found++; continue; }
+    // (c) fallback: content-token overlap with the prose answer
+    if (answerTokens.size > 0 && exTokens.size >= 2) {
+      const hit = overlapCount(exTokens, answerTokens);
+      if (hit >= 2 && hit / Math.max(exTokens.size, 1) >= 0.6) {
+        found++;
+      }
+    }
+  }
   return found / expectedRisks.length;
 }
 

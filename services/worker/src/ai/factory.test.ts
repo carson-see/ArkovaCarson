@@ -105,10 +105,14 @@ describe('createEmbeddingProvider', () => {
     resetProviderCache();
   });
 
-  it('returns MockAIProvider for default provider', () => {
+  it('returns GeminiProvider regardless of AI_PROVIDER (embeddings are Gemini-only)', () => {
+    // Embedding routing always goes to Gemini — Nessie has no embedding support
+    // and Together retired its embedding model. AI_PROVIDER=mock here only changes
+    // extraction routing; embedding still uses Gemini. Tests assert that contract.
     process.env.AI_PROVIDER = 'mock';
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
     const provider = createEmbeddingProvider();
-    expect(provider).toBeInstanceOf(MockAIProvider);
+    expect(provider.name).toBe('gemini');
   });
 
   it('falls back to GeminiProvider when AI_PROVIDER=nessie', () => {

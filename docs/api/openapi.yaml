@@ -758,6 +758,61 @@ components:
         description:
           type: string
           description: Immutable credential description
+        compliance_controls:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            API-RICH-01 (v1.5.0): Regulatory control IDs mapped to this anchor
+            (SOC 2 / FERPA / HIPAA / GDPR / ISO 27001 control tags). Sourced from
+            anchors.compliance_controls JSON populated by CML-02 (migration 0137).
+            Enables GRC platform integration (Vanta, Drata, Anecdotes).
+        chain_confirmations:
+          type: integer
+          nullable: true
+          description: >-
+            API-RICH-01: Number of Bitcoin block confirmations at anchor time.
+            Useful for maturity checks ("6-confirmed?").
+        parent_public_id:
+          type: string
+          nullable: true
+          description: >-
+            API-RICH-01: Public ID of the parent anchor (credential lineage —
+            reissued diplomas, amended licenses). Internal anchor UUIDs are never
+            exposed (Constitution 1.4).
+        version_number:
+          type: integer
+          nullable: true
+          minimum: 1
+          description: >-
+            API-RICH-01: Version in this anchor's lineage. Defaults to 1 for
+            originals. Omitted from response when equal to 1 to keep common-case
+            payloads lean; present (>= 2) when this is a successor version.
+        revocation_tx_id:
+          type: string
+          nullable: true
+          description: >-
+            API-RICH-01: Bitcoin transaction ID of the revocation when status =
+            REVOKED. Enables independent verification of the revocation.
+        revocation_block_height:
+          type: integer
+          nullable: true
+          description: >-
+            API-RICH-01: Bitcoin block height at which revocation was anchored.
+        file_mime:
+          type: string
+          nullable: true
+          description: >-
+            API-RICH-01: MIME type of the source document (client-side metadata
+            only — documents themselves never leave the user's device per
+            Constitution 1.6).
+        file_size:
+          type: integer
+          nullable: true
+          minimum: 0
+          description: >-
+            API-RICH-01: Size of the source document in bytes (client-side
+            metadata only).
         error:
           type: string
 

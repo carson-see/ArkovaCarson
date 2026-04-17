@@ -56,6 +56,9 @@ export const ExtractedFieldsSchema = z.object({
   // Gemini structured output emits these; previously caused .strict() to reject ALL responses
   // (root cause of "0% F1" for all eval runs across providers). Captured 2026-04-15.
   confidenceReasoning: z.string().optional(),
+  // GME2 v6: 1–2 sentence human-readable summary suitable for customer reports.
+  // v6 tuned model always emits this; adding here so .strict() does not reject v6 output.
+  description: z.string().max(500).optional(),
 }).strict();
 
 /**

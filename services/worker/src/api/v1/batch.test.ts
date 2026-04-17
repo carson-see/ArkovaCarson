@@ -36,6 +36,15 @@ function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
     merkle_root: null,
     description: null,
     directory_info_opt_out: false,
+    // API-RICH-01 defaults
+    compliance_controls: null,
+    chain_confirmations: null,
+    parent_public_id: null,
+    version_number: null,
+    revocation_tx_id: null,
+    revocation_block_height: null,
+    file_mime: null,
+    file_size: null,
   };
 }
 

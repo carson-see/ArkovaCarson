@@ -93,7 +93,15 @@ vi.mock('../jobs/edgarFetcher.js', () => ({
   fetchEdgarBulk: (...args: unknown[]) => mockFetchEdgarBulk(...args),
 }));
 
-const mockFetchUsptoPAtents = vi.fn().mockResolvedValue(undefined);
+// USPTO fetcher returns a FetchResult object (see jobs/usptoFetcher.ts). Mock shape
+// matches the production return so the /fetch-uspto route forwards it to the client.
+const mockFetchUsptoPAtents = vi.fn().mockResolvedValue({
+  status: 'complete',
+  inserted: 0,
+  skipped: 0,
+  errors: 0,
+  resumeDate: '',
+});
 vi.mock('../jobs/usptoFetcher.js', () => ({
   fetchUsptoPAtents: (...args: unknown[]) => mockFetchUsptoPAtents(...args),
 }));
@@ -546,7 +554,10 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/fetch-uspto');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ status: 'complete' });
+      // Route forwards the FetchResult from the fetcher verbatim.
+      expect(res.body).toMatchObject({ status: 'complete' });
+      expect(res.body).toHaveProperty('inserted');
+      expect(res.body).toHaveProperty('resumeDate');
     });
 
     it('returns 500 on failure', async () => {

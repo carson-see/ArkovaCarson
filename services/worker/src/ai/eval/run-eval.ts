@@ -32,6 +32,13 @@ const sampleSize = args.includes('--sample')
   ? parseInt(args[args.indexOf('--sample') + 1], 10)
   : 0; // 0 = full dataset
 
+// v7: stratified sampling — N entries PER credential type (not total).
+// Produces statistically meaningful per-type F1 even for rare types.
+// Usage: --stratified 10   → take 10 entries of each credential type
+const stratifiedPerType = args.includes('--stratified')
+  ? parseInt(args[args.indexOf('--stratified') + 1], 10)
+  : 0;
+
 async function main() {
   console.log(`\n🔬 AI Extraction Eval Framework (AI-EVAL-01)`);
   console.log(`   Provider: ${providerArg}`);
@@ -82,7 +89,32 @@ async function main() {
 
   // Optionally sample the dataset for faster iteration
   let evalEntries = FULL_GOLDEN_DATASET;
-  if (sampleSize > 0 && sampleSize < FULL_GOLDEN_DATASET.length) {
+  if (stratifiedPerType > 0) {
+    // v7: stratified by credentialType — N entries per type, deterministic ordering
+    const byType = new Map<string, typeof FULL_GOLDEN_DATASET>();
+    for (const entry of FULL_GOLDEN_DATASET) {
+      const ct = (entry.groundTruth.credentialType ?? entry.credentialTypeHint ?? 'UNKNOWN').toUpperCase();
+      const existing = byType.get(ct) ?? [];
+      existing.push(entry);
+      byType.set(ct, existing);
+    }
+    const stratified: typeof FULL_GOLDEN_DATASET = [];
+    const typeCounts: Record<string, number> = {};
+    for (const [type, entries] of [...byType.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      // Take first N entries of each type (deterministic).
+      // If a type has fewer than N, take all of them.
+      const taken = entries.slice(0, stratifiedPerType);
+      stratified.push(...taken);
+      typeCounts[type] = taken.length;
+    }
+    evalEntries = stratified;
+    console.log(`   Stratified: ${evalEntries.length} entries across ${byType.size} types (${stratifiedPerType}/type target)`);
+    console.log('   Per-type counts:');
+    for (const [type, n] of Object.entries(typeCounts).sort((a, b) => b[1] - a[1])) {
+      const total = byType.get(type)?.length ?? 0;
+      console.log(`     ${type.padEnd(20)} ${String(n).padStart(3)} / ${total}`);
+    }
+  } else if (sampleSize > 0 && sampleSize < FULL_GOLDEN_DATASET.length) {
     // Deterministic sample: pick every Nth entry for reproducibility
     const step = Math.floor(FULL_GOLDEN_DATASET.length / sampleSize);
     evalEntries = FULL_GOLDEN_DATASET.filter((_, i) => i % step === 0).slice(0, sampleSize);

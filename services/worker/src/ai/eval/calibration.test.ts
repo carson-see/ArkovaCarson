@@ -2,7 +2,7 @@
  * Tests for Confidence Calibration Analysis (AI-EVAL-02)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { analyzeCalibration, formatCalibrationReport, calibrateConfidence } from './calibration.js';
 import type { EntryEvalResult } from './types.js';
 
@@ -139,6 +139,92 @@ describe('calibrateConfidence', () => {
     for (let i = 1; i < calibrated.length; i++) {
       expect(calibrated[i]).toBeGreaterThanOrEqual(calibrated[i - 1]);
     }
+  });
+});
+
+describe('calibrateConfidence (v6 branch — SCRUM-794 / GME2-03)', () => {
+  // v6 knots derived 2026-04-16 from stratified eval (n=249, Pearson r=0.26).
+  // Gated by GEMINI_V6_PROMPT=true env var. Floor 0.67, ceiling 0.82.
+
+  const savedEnv = process.env.GEMINI_V6_PROMPT;
+  beforeEach(() => {
+    process.env.GEMINI_V6_PROMPT = 'true';
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env.GEMINI_V6_PROMPT;
+    else process.env.GEMINI_V6_PROMPT = savedEnv;
+  });
+
+  it('maps raw 0.0 to v6 floor (0.67)', () => {
+    expect(calibrateConfidence(0.0)).toBeCloseTo(0.67, 2);
+  });
+
+  it('maps raw 0.48 (low-mid) to calibrated 0.79', () => {
+    expect(calibrateConfidence(0.48)).toBeCloseTo(0.79, 2);
+  });
+
+  it('maps raw 0.6 to around 0.80-0.82', () => {
+    const r = calibrateConfidence(0.6);
+    expect(r).toBeGreaterThanOrEqual(0.80);
+    expect(r).toBeLessThanOrEqual(0.82);
+  });
+
+  it('caps raw 1.0 at v6 ceiling (0.82)', () => {
+    expect(calibrateConfidence(1.0)).toBeCloseTo(0.82, 2);
+  });
+
+  it('is monotonically non-decreasing under v6 knots', () => {
+    const values = [0.0, 0.1, 0.3, 0.48, 0.53, 0.6, 0.7, 0.9, 1.0];
+    const calibrated = values.map(calibrateConfidence);
+    for (let i = 1; i < calibrated.length; i++) {
+      expect(calibrated[i]).toBeGreaterThanOrEqual(calibrated[i - 1]);
+    }
+  });
+
+  it('lifts mean raw-~0.55 confidence to ~0.80 (matches stratified eval mean accuracy 78.3%)', () => {
+    // Real v6 raw confidences cluster around 0.50-0.60; calibrated should land near 0.80.
+    const rawSamples = [0.48, 0.50, 0.52, 0.53, 0.55, 0.56, 0.58, 0.60];
+    const calibrated = rawSamples.map(calibrateConfidence);
+    const meanCalibrated = calibrated.reduce((s, v) => s + v, 0) / calibrated.length;
+    expect(meanCalibrated).toBeGreaterThan(0.78);
+    expect(meanCalibrated).toBeLessThan(0.82);
+  });
+
+  it('falls back to v5 knots when GEMINI_V6_PROMPT is unset', () => {
+    process.env.GEMINI_V6_PROMPT = 'false';
+    expect(calibrateConfidence(0.0)).toBeCloseTo(0.76, 2); // v5 floor, not 0.67
+    expect(calibrateConfidence(1.0)).toBeCloseTo(0.92, 2); // v5 ceiling, not 0.82
+  });
+});
+
+describe('calibrateConfidenceByProvider (NMT-03 double-calibration guard)', () => {
+  it('routes gemini provider to Gemini calibration (underconfident → maps UP)', async () => {
+    const { calibrateConfidenceByProvider, calibrateConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('gemini', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+  });
+
+  it('routes nessie provider to Nessie calibration (overconfident → maps DOWN)', async () => {
+    const { calibrateConfidenceByProvider, calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('nessie', 0.87)).toBeCloseTo(calibrateNessieConfidence(0.87), 5);
+  });
+
+  it('routes together provider to Nessie calibration (Together hosts Nessie LoRAs)', async () => {
+    const { calibrateConfidenceByProvider, calibrateNessieConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('together', 0.9)).toBeCloseTo(calibrateNessieConfidence(0.9), 5);
+  });
+
+  it('falls back to Gemini calibration for unknown providers (mock / cloudflare / replicate)', async () => {
+    const { calibrateConfidenceByProvider, calibrateConfidence } = await import('./calibration.js');
+    expect(calibrateConfidenceByProvider('mock', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+    expect(calibrateConfidenceByProvider('cloudflare', 0.5)).toBeCloseTo(calibrateConfidence(0.5), 5);
+  });
+
+  it('does not double-calibrate a Nessie result (raw 0.87 stays in low range, not re-inflated)', async () => {
+    const { calibrateConfidenceByProvider } = await import('./calibration.js');
+    // Pre-fix: calibrateConfidence(0.87) ≈ 0.92 (Gemini underconfident map UP).
+    // Post-fix: router sends to Nessie knots → ~0.40 (overconfident map DOWN).
+    const result = calibrateConfidenceByProvider('nessie', 0.87);
+    expect(result).toBeLessThan(0.5);
   });
 });
 
