@@ -163,8 +163,7 @@ export function buildRecommendations(
       existing.gap_keys.add(gapKey(gap));
       existing.jurisdictions.add(gap.jurisdiction_code);
       existing.severities.add(gap.severity);
-      // Keep the most severe gap as the "base" used for title / hint.
-      if (severityRank(gap.severity) < severityRank(existing.baseGap.severity)) {
+      if (SEVERITY_WEIGHT[gap.severity] > SEVERITY_WEIGHT[existing.baseGap.severity]) {
         existing.baseGap = gap;
       }
       continue;
@@ -224,8 +223,4 @@ export function buildRecommendations(
       standard: truncated.filter((r) => r.group === 'STANDARD'),
     },
   };
-}
-
-function severityRank(severity: AuditGap['severity']): number {
-  return SEVERITY_WEIGHT.critical - SEVERITY_WEIGHT[severity];
 }

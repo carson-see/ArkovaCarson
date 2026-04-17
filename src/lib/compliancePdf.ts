@@ -69,7 +69,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
   const margin = 54;
   let y = margin;
 
-  // Header
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(20);
   doc.text('Compliance Audit Report', margin, y);
@@ -86,7 +85,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
   doc.text(`Audit ID: ${audit.id}`, margin, y);
   y += 24;
 
-  // Overall score block
   doc.setTextColor(0);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(14);
@@ -101,7 +99,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
   doc.setTextColor(0);
   y += 16;
 
-  // Per-jurisdiction
   y = ensurePageSpace(doc, y, 120, margin);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
@@ -120,7 +117,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
   }
   y += 12;
 
-  // Gaps
   y = ensurePageSpace(doc, y, 80, margin);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
@@ -155,7 +151,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
     y += hintLines.length * 12 + 6;
   }
 
-  // Recommendations (NCA-05)
   const recs = audit.metadata?.recommendations?.recommendations ?? [];
   if (recs.length > 0) {
     y = ensurePageSpace(doc, y, 60, margin);
@@ -190,7 +185,6 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
     }
   }
 
-  // Disclaimer footer on every page.
   stampFooter(doc, ctx, margin);
 
   const filename = buildFilename(ctx.orgName, audit);

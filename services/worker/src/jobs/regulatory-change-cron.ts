@@ -28,7 +28,7 @@ import {
   type OrgAuditResult,
   type JurisdictionPair,
 } from '../compliance/org-audit.js';
-import type { JurisdictionRule, OrgAnchor } from '../compliance/score-calculator.js';
+import { computeGrade, type JurisdictionRule, type OrgAnchor } from '../compliance/score-calculator.js';
 
 export interface RegulatoryChangeCronResult {
   orgs_scanned: number;
@@ -86,10 +86,14 @@ export async function runRegulatoryChangeCron(
     return result;
   }
 
+  // Rules don't change between orgs within a single cron tick — load once.
+  const { data: rulesRows } = await database.from('jurisdiction_rules').select('*').limit(2000);
+  const allRules = (rulesRows ?? []) as JurisdictionRule[];
+
   for (const { org_id, last_audit_at } of orgs) {
     result.orgs_scanned += 1;
     try {
-      const impact = await computeImpactForOrg(database, org_id, last_audit_at);
+      const impact = await computeImpactForOrg(database, org_id, last_audit_at, allRules);
       if (!impact || impact.severity === 'NONE' || impact.severity === 'INFO') continue;
 
       result.impacted_orgs += 1;
@@ -120,8 +124,8 @@ async function computeImpactForOrg(
   database: any,
   orgId: string,
   lastAuditAt: string,
+  rules: JurisdictionRule[],
 ): Promise<RegulatoryChangeImpact | null> {
-  // Load previous audit row (the most recent COMPLETED audit).
   const { data: previous } = await database
     .from('compliance_audits')
     .select('*')
@@ -132,9 +136,7 @@ async function computeImpactForOrg(
     .maybeSingle?.();
   if (!previous) return null;
 
-  // Load current jurisdiction rules.
-  const { data: rules } = await database.from('jurisdiction_rules').select('*').limit(2000);
-  const ruleChange = detectRuleChangesSince((rules ?? []) as Array<{
+  const ruleChange = detectRuleChangesSince(rules as unknown as Array<{
     id: string;
     updated_at: string;
     created_at?: string;
@@ -179,7 +181,7 @@ async function computeImpactForOrg(
   const currentAudit: OrgAuditResult = calculateOrgAudit({
     orgId,
     jurisdictions: pairs,
-    rules: (rules ?? []) as JurisdictionRule[],
+    rules,
     anchors,
   });
 
@@ -205,7 +207,7 @@ async function persistChangeEvent(
   await database.from('compliance_audits').insert({
     org_id: orgId,
     overall_score: impact.new_score,
-    overall_grade: gradeFor(impact.new_score),
+    overall_grade: computeGrade(impact.new_score),
     status: 'COMPLETED',
     started_at: new Date().toISOString(),
     completed_at: new Date().toISOString(),
@@ -215,14 +217,6 @@ async function persistChangeEvent(
       trigger: 'nca-06-cron',
     },
   });
-}
-
-function gradeFor(score: number): string {
-  if (score >= 90) return 'A';
-  if (score >= 80) return 'B';
-  if (score >= 70) return 'C';
-  if (score >= 60) return 'D';
-  return 'F';
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
