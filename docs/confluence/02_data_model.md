@@ -1,5 +1,5 @@
 # Data Model
-_Last updated: 2026-04-12 | Migrations: 0001-0197 (gaps at 0033+0078, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0174-0180 have intentional duplicate numbers from parallel branches). Migration 0190: RLS subquery caching. 0191: BRIN indexes. 0192: pg_stat_statements. 0193: job_queue table. **0194: `jurisdiction_rules` table (NCE-06).** **0195: `compliance_scores` table (NCE-07).** **0196: `ENABLE_COMPLIANCE_ENGINE` + `ENABLE_EXPIRY_ALERTS` switchboard flags (NCE-09).** **0197: REG-02/05/06/10 — directory opt-out, HIPAA org settings, emergency access grants.**_
+_Last updated: 2026-04-17 | 208 unique migration files (0000-0217; 11 macOS " 2" duplicate copies excluded). Gaps: 0033, 0078, 0162, 0198-0211. Splits: 0068→0068a/0068b, 0088→0088/0088b. Parallel-branch duplicates: 0174-0176, 0180. Production applied through 0185; 0186-0197 + 0212-0217 pending deploy (18 files). Key migrations: 0190 RLS caching, 0191 BRIN indexes, 0192 pg\_stat\_statements, 0193 job\_queue, 0194 `jurisdiction_rules` (NCE-06), 0195 `compliance_scores` (NCE-07), 0196 switchboard flags (NCE-09), 0197 REG compliance (directory opt-out, HIPAA org settings, emergency access), 0212-0213 credential type additions, 0214 drop unused indexes, 0215 emergency dashboard performance, 0216 `jurisdiction_rules` expansion to ≥100 rules (NCA-01), 0217 `compliance_audits` table (NCA-03)._
 
 ### New Tables (REG Sprint — 2026-04-12)
 
@@ -74,11 +74,48 @@ Cached compliance scores per org, per jurisdiction+industry.
 
 **RLS:** Org members SELECT only. UNIQUE on (org_id, jurisdiction_code, industry_code). Worker writes via service_role.
 
+#### compliance_audits (NCA-03, migration 0217)
+Org-level compliance audit records for "Audit My Organization" (SCRUM-758). Each audit rolls up
+per-(jurisdiction, industry) scores + gap detection + NVI quarantine caveats into a single
+historical row so the scorecard timeline (NCA-08) can chart compliance posture over time.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | UUID PK | |
+| org_id | UUID FK→organizations | |
+| triggered_by | UUID FK→auth.users | User who triggered the audit (nullable) |
+| overall_score | SMALLINT 0-100 | Weighted org-level compliance score |
+| overall_grade | TEXT (A/B/C/D/F) | |
+| per_jurisdiction | JSONB | Array of `{jurisdiction_code, industry_code, score, grade, total_required, total_present, rule_count}` |
+| gaps | JSONB | Array of `AuditGap` — MISSING / EXPIRED / EXPIRING_SOON / INSUFFICIENT with severity |
+| quarantines | JSONB | Array of NVI caveats for regulations in QUARANTINED / UNDER_REVIEW status |
+| status | TEXT | QUEUED / RUNNING / COMPLETED / FAILED |
+| started_at | TIMESTAMPTZ | |
+| completed_at | TIMESTAMPTZ | |
+| duration_ms | INTEGER | |
+| jurisdiction_filter | TEXT[] | Optional filter echoed back for reproducibility |
+| error_code | TEXT | Set when status=FAILED |
+| error_message | TEXT | |
+| metadata | JSONB | Additive — anchor_count, rule_count, extensibility hook |
+
+**RLS:** Org members SELECT only. Worker writes via service_role. Indexes on
+`(org_id, created_at DESC)` (recent-audit lookup) and a partial index on
+`(org_id, status)` filtering to `QUEUED`/`RUNNING` for future async job expansion.
+
+#### Migration 0216: jurisdiction_rules expansion (NCA-01)
+Expands the migration 0194 seed from ~30 rules (10 states × 3 industries) to **≥100 rules** across
+US federal regulations (FERPA, HIPAA, SOX, FCRA employment, ADA, FLSA, GLBA, GINA),
+international privacy (Kenya DPA + ODPC, Australia Privacy Act APP 1-13, EU/UK GDPR,
+Canada PIPEDA, Singapore PDPA, Japan APPI, India DPDP, South Africa POPIA, Nigeria NDPR),
+and additional US state × industry coverage (real_estate, insurance, engineering for CA/NY/TX/FL/IL/OH;
+WA/MA/NJ/AZ/CO/MN/NV accounting+legal+nursing core; VA/IN/NC additions).
+All additions are `ON CONFLICT DO NOTHING` so re-runs are safe.
+
 ## Overview
 
 Arkova uses PostgreSQL via Supabase with a schema-first approach. All tables have Row Level Security (RLS) enabled via `FORCE ROW LEVEL SECURITY`. Data integrity is enforced through constraints, triggers, and Zod validators on all write paths.
 
-**Total tables:** 47+ across 139 migration files (versions 0001-0136). New tables since 0092: `audit_events_archive`, `payment_grace_periods`, `reconciliation_reports`, `financial_reports`, `unified_credits`, `merkle_batches`, `training_metrics`, `webhook_idempotency`, `credential_portfolios`, `ats_integrations`. New view: `payment_ledger`.
+**Total tables:** 47+ across 206 unique migration files (versions 0000-0215, see header for gap details). New tables since 0092: `audit_events_archive`, `payment_grace_periods`, `reconciliation_reports`, `financial_reports`, `unified_credits`, `merkle_batches`, `training_metrics`, `webhook_idempotency`, `credential_portfolios`, `ats_integrations`. New view: `payment_ledger`.
 
 > **Note:** Column-level documentation below covers tables through migration ~0051 in detail. Tables created in migrations 0053-0075 (including `credits`, `anchor_recipients`, `api_keys`, `batch_verification_jobs`, `ai_credits`, `ai_usage_events`, `credentials_embeddings`, `extraction_feedback`, `review_queue_items`, `ai_reports`) are documented at summary level in [01_architecture_overview.md](./01_architecture_overview.md). Full column-level docs for these tables is a backlog item.
 

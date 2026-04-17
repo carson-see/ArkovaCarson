@@ -1,0 +1,3126 @@
+{
+  "version": "1",
+  "lastRun": "2026-04-17T13:21:40.807Z",
+  "sources": {
+    "fcra-601": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-601",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-603-d": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-603-d",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-603-f": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-603-f",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-603-p": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-603-p",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-603-x": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-603-x",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-604-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-604-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-604-b-1": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-604-b-1",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-604-b-2": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-604-b-2",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-604-b-3": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-604-b-3",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-604-f": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-604-f",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-605-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-605-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-605-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-605-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-605-g": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-605-g",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-605A": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-605A",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-606-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-606-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-607-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-607-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-607-d": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-607-d",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-609": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-609",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-609-g": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-609-g",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-611-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-611-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-611-a-5-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-611-a-5-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-613": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-613",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-615-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-615-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-615-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-615-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-615-h": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-615-h",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-616": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-616",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-617": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-617",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-618": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-618",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-621": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-621",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-623-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-623-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-623-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-623-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-625": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-625",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cfpb-summary-of-rights": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cfpb-summary-of-rights",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no CFPB-style issuance identifier found — expected one of: Bulletin\\s+\\d{4}-\\d{1,2}, Consent\\s+Order, Compliance\\s+Aid",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "reg-v-1022-74": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "reg-v-1022-74",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cfpb-bulletin-2012-09": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cfpb-bulletin-2012-09",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: CFPB source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cfpb-bulletin-2016-04": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cfpb-bulletin-2016-04",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: CFPB source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cfpb-advisory-2022-01": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cfpb-advisory-2022-01",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no CFPB-style issuance identifier found — expected one of: Bulletin\\s+\\d{4}-\\d{1,2}, Consent\\s+Order, Compliance\\s+Aid; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cfpb-compliance-bulletin-2023-01": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cfpb-compliance-bulletin-2023-01",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: CFPB source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "spokeo-2016": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "spokeo-2016",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "safeco-2007": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "safeco-2007",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "transunion-2021": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "transunion-2021",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "long-trw-1995": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "long-trw-1995",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "syed-2017": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "syed-2017",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "gilberg-2019": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "gilberg-2019",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "henderson-2021": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "henderson-2021",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-almeda-2003": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-almeda-2003",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-almeda-2003",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-belford-2012": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-belford-2012",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-belford-2012",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-instant-checkmate-2014": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-instant-checkmate-2014",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-instant-checkmate-2014",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-realpage-2018": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-realpage-2018",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-realpage-2018",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-sterling-2015": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-sterling-2015",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-sterling-2015",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "oregon-oda-list": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "oregon-oda-list",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical OR code pattern (ORS\\s*§?\\s*\\d+)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "eeoc-2012-guidance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "eeoc-2012-guidance",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: EEOC source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "eeoc-green-factors": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "eeoc-green-factors",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cal-civ-1786": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cal-civ-1786",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cal-civ-1786-18": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cal-civ-1786-18",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cal-civ-1785": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cal-civ-1785",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cal-fair-chance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cal-fair-chance",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cal-gov-12952-c": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "cal-gov-12952-c",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ny-article-23a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ny-article-23a",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NY state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ny-exec-296-15": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ny-exec-296-15",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NY state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "nyc-fair-chance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "nyc-fair-chance",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NYC state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "nyc-fair-chance-2021-amend": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "nyc-fair-chance-2021-amend",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NYC state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "il-joqaa": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "il-joqaa",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes IL state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "il-hra-2103-1": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "il-hra-2103-1",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes IL state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "il-rip-act": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "il-rip-act",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes IL state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "tx-bcc-411": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "tx-bcc-411",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical TX code pattern (Tex\\.?\\s*(?:Bus\\.?\\s*&\\s*Com|Lab(?:or)?|Gov|Ins|Fin|Occ|Health(?:\\s+&\\s+Safety)?)\\.?\\s*Code, TX\\s+(?:Bus(?:iness)?|Labor|Gov|Occ)\\s*Code, \\bHB\\s?300\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "tx-labor-21-115": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "tx-labor-21-115",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes TX state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ma-chap-93-50": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ma-chap-93-50",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical MA code pattern (M\\.?\\s*G\\.?\\s*L\\.?\\s*c(?:h(?:apter)?|\\.)?\\s*\\d+, Mass\\.?\\s*Gen\\.?\\s*Laws, \\bCORI\\b, Chap(?:ter)?\\.?\\s*\\d+[,\\s])",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ma-cori-reform": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ma-cori-reform",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes MA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "philadelphia-fair-chance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "cook-county-fair-chance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "nj-opportunity-act": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "nj-opportunity-act",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NJ state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "mn-crim-record": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "mn-crim-record",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "section-number mismatch — label references \"364\", quote references \"364.03\"",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "wa-fair-chance": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "wa-fair-chance",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes WA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "co-wpra": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "co-wpra",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical CO code pattern (C\\.?\\s*R\\.?\\s*S\\.?\\s*§?\\s*\\d+, Colorado\\s+Privacy\\s+Act, \\bCPA\\b, \\bWPRA\\b, Colo(?:rado)?\\s+(?:Rev|Wage)\\.?\\s*Stat)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "cms-npi-spec": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "oig-leie": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "oig-leie",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "sam-gov-exclusion": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "npdb-hipdb": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "e-verify-tnc": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "ssa-cbsv": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "dea-controlled-reg": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "dea-controlled-reg",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "nysed-op": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "nysed-op",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical NY code pattern (N\\.?\\s*Y\\.?\\s*(?:Gen\\.?\\s*Bus|Lab|Exec|Educ|Corp|CPLR|Correct(?:ion)?)\\.?\\s*Law\\s*§?, NYC\\s+Admin\\.\\s*Code, SHIELD\\s+Act, Article\\s+23[-\\s]?A, NY\\s*Exec(?:utive)?\\s*Law, NY\\s+Educ(?:ation)?(?:\\s+Law)?); no section number detected in label or quote",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "medical-board-ca": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "medical-board-ca",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical CA code pattern (Cal\\.\\s*(?:Civ|Lab|Bus\\.?\\s*&\\s*Prof|Gov|Pen|Educ|Fin)\\.?\\s*Code\\s*§, \\bCCPA\\b, \\bCRA\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ftc-red-flags": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ftc-red-flags",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ftc-red-flags",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no FTC-style issuance identifier found — expected one of: Docket\\s+No\\.?\\s+[\\w\\-/]+, File\\s+No\\.?\\s+\\w+, Consent\\s+Order, Staff\\s+Report; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ssa-dmf": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ssa-dmf",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ofac-sdn": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ofac-sdn",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"OFAC SDN List\" has no extractable section number",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "glba-safeguards": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "glba-safeguards",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "facta-disposal": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "facta-disposal",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ginetic-nondiscrim": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "hipaa-genetic": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-genetic",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-act-1996": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-act-1996",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hitech-2009": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hitech-2009",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"HITECH Act 2009\" has no extractable section number",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-103-phi": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-103-phi",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-103-ce": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-103-ce",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-103-ba": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-103-ba",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-103-ephi": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-103-ephi",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-502": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-502",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-502-minimum-necessary": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-502-minimum-necessary",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-506-tpo": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-506-tpo",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-508-authorization": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-508-authorization",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-508-psychotherapy": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-508-psychotherapy",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-510-opportunity": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-510-opportunity",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-512-public-health": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-512-public-health",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-512-e": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-512-e",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-512-f": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-512-f",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-514-deidentification": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-514-deidentification",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-520-npp": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-520-npp",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-522-restriction": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-522-restriction",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-524-access": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-524-access",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-526-amendment": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-526-amendment",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-528-accounting": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-528-accounting",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-308-admin": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-308-admin",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-308-a1": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-308-a1",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-308-a5": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-308-a5",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-310-physical": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-310-physical",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-312-technical": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-312-technical",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-312-a2-iv": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-312-a2-iv",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-312-d": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-312-d",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-402-breach": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-402-breach",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-404-individual": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-404-individual",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-406-media": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-406-media",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-408-hhs": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-408-hhs",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "hipaa-164-408-hhs",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-410-ba": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-410-ba",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-504-baa": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-504-baa",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-164-314-ba-security": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-164-314-ba-security",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-402-tier": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-402-tier",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-160-410-safe-harbor": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-160-410-safe-harbor",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ocr-anthem-2018": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ocr-anthem-2018",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ocr-anthem-2018",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ocr-memorial-2017": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ocr-memorial-2017",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ocr-memorial-2017",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ocr-premera-2019": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ocr-premera-2019",
+          "validator": "case-law",
+          "passed": false,
+          "hardFail": false,
+          "notes": "no reporter cite detected (e.g. \"551 U.S. 47\", \"853 F.3d 492\") — recommended",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ocr-premera-2019",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: HHS OCR source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ocr-right-of-access-2019": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ocr-right-of-access-2019",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ca-cmia": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ca-cmia",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ca-cmia-1798-82": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ca-cmia-1798-82",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CA state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "tx-hb300": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "tx-hb300",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes TX state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ny-shield-2019": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ny-shield-2019",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NY state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "il-mhddcc": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "il-mhddcc",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical IL code pattern (\\d+\\s+ILCS\\s+\\d+\\/, \\bBIPA\\b, \\bPIPA\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fl-phic": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fl-phic",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes FL state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "part-2": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "hipaa-employment-records": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-employment-records",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fcra-hipaa-intersection": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fcra-hipaa-intersection",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"HIPAA + FCRA intersection analysis\" has no extractable section number; quote does not reference the U.S.C. citation or its section number — every federal-statute quote must open with (or contain) the canonical cite",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-telehealth-2020": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-telehealth-2020",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-part-2-amendment-2024": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "hipaa-sanction-policy": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-sanction-policy",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-workforce-training-2023": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-workforce-training-2023",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-reproductive-2024": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-reproductive-2024",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"HIPAA Reproductive Health Rule (2024)\" has no extractable section number; quote does not reference the U.S.C. citation or its section number — every federal-statute quote must open with (or contain) the canonical cite",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-minor": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-minor",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-deceased": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-deceased",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-access-fees": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-access-fees",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-api-access-2024": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-api-access-2024",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "hipaa-workplace-wellness": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "hipaa-workplace-wellness",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no EEOC-style issuance identifier found — expected one of: Guidance, Enforcement\\s+Guidance, Notice\\s+Concerning; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ada-medical-exam": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "state-breach-matrix": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "ferpa-20-1232g": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-20-1232g",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"FERPA, 20 USC 1232g\" has no extractable section number; quote does not reference the U.S.C. citation or its section number — every federal-statute quote must open with (or contain) the canonical cite",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-a": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-a",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-b": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-b",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-b-1": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-b-1",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-b-2": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-b-2",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-d": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-d",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-1232g-f": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-1232g-f",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-3-education-record": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-3-education-record",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-3-pii": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-3-pii",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-3-school-official": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-3-school-official",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-3-directory": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-3-directory",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-10": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-10",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-20": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-20",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-30": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-30",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-31": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-31",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-31-a-11": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-31-a-11",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-32": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-32",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-34": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-34",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-35": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-35",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-37": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-37",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-61": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-61",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-62": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-62",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-99-63": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-99-63",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-vpic-2008": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-vpic-2008",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no DoE FPCO-style issuance identifier found — expected one of: Letter\\s+to\\s+[A-Z], Dear\\s+Colleague, Technical\\s+Assistance; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-online-tools": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-online-tools",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no DoE FPCO-style issuance identifier found — expected one of: Letter\\s+to\\s+[A-Z], Dear\\s+Colleague, Technical\\s+Assistance; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-pta-2023": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-pta-2023",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": false,
+          "notes": "soft warning: DoE FPCO source has identifier but no url — backfill url when available",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ppra-20-1232h": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "gepa-20-1232f": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "ferpa-hipaa-boundary": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-hipaa-boundary",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"DoE/OCR FERPA-HIPAA Joint Guidance\" has no extractable section number",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "ferpa-hipaa-boundary",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no HHS OCR-style issuance identifier found — expected one of: Resolution\\s+Agreement, Corrective\\s+Action\\s+Plan, Breach\\s+Notification, Transaction\\s+No\\.?; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ny-education-2d": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ny-education-2d",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes NY state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ca-sopipa": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ca-sopipa",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical CA code pattern (Cal\\.\\s*(?:Civ|Lab|Bus\\.?\\s*&\\s*Prof|Gov|Pen|Educ|Fin)\\.?\\s*Code\\s*§, \\bCCPA\\b, \\bCRA\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ca-ab-1584": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ca-ab-1584",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical CA code pattern (Cal\\.\\s*(?:Civ|Lab|Bus\\.?\\s*&\\s*Prof|Gov|Pen|Educ|Fin)\\.?\\s*Code\\s*§, \\bCCPA\\b, \\bCRA\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "il-sopa": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "il-sopa",
+          "validator": "state-statute",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label does not match any canonical IL code pattern (\\d+\\s+ILCS\\s+\\d+\\/, \\bBIPA\\b, \\bPIPA\\b)",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "co-siea": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "co-siea",
+          "validator": "state-statute",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes CO state-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "owasso-falvo-2002": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "owasso-falvo-2002",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "gonzaga-doe-2002": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "gonzaga-doe-2002",
+          "validator": "case-law",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes case-cite structural checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        },
+        {
+          "sourceId": "gonzaga-doe-2002",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no DoE FPCO-style issuance identifier found — expected one of: Letter\\s+to\\s+[A-Z], Dear\\s+Colleague, Technical\\s+Assistance; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "fpco-enforcement-examples": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "fpco-enforcement-examples",
+          "validator": "agency-bulletin",
+          "passed": false,
+          "hardFail": true,
+          "notes": "no DoE FPCO-style issuance identifier found — expected one of: Letter\\s+to\\s+[A-Z], Dear\\s+Colleague, Technical\\s+Assistance; no url and no issuance identifier — add one or the other",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-sunshine-state-law": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "ferpa-disciplinary-records": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-disciplinary-records",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-clery-act-intersection": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": false,
+      "orphaned": true,
+      "results": []
+    },
+    "ferpa-law-enforcement-unit": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-law-enforcement-unit",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-treatment-records": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-treatment-records",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-verification-employment": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": false,
+      "overallHardFail": true,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-verification-employment",
+          "validator": "statute-quote",
+          "passed": false,
+          "hardFail": true,
+          "notes": "source label \"FERPA degree verification for employment\" has no extractable section number",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-opt-out-scope": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-opt-out-scope",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    },
+    "ferpa-ex-parte-order": {
+      "lastVerifiedAt": "2026-04-17T13:21:40.807Z",
+      "overallPassed": true,
+      "overallHardFail": false,
+      "orphaned": false,
+      "results": [
+        {
+          "sourceId": "ferpa-ex-parte-order",
+          "validator": "statute-quote",
+          "passed": true,
+          "hardFail": false,
+          "notes": "passes canonical federal-statute checks",
+          "verifiedAt": "2026-04-17T13:21:40.807Z"
+        }
+      ]
+    }
+  }
+}

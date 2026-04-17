@@ -73,6 +73,7 @@ import { complianceCrossRefRouter } from './compliance-cross-ref.js';
 import { complianceHistoryRouter } from './compliance-history.js';
 import { complianceBenchmarkRouter } from './compliance-benchmark.js';
 import { complianceReportRouter } from './compliance-report.js';
+import { complianceAuditRouter } from './compliance-audit.js';
 import ferpaDisclosuresRouter from './ferpa-disclosures.js';
 import directoryOptOutRouter from './directory-opt-out.js';
 import { emergencyAccessRouter } from './emergency-access.js';
@@ -358,6 +359,8 @@ router.use('/compliance/history', requireAuth, aiRateLimiter, complianceHistoryR
 router.use('/compliance/benchmark', requireAuth, aiRateLimiter, complianceBenchmarkRouter);
 // Audit-ready report — JWT auth required (NCE-18)
 router.use('/compliance/report', requireAuth, batchRateLimiter, complianceReportRouter);
+// "Audit My Organization" — org-level compliance audit (NCA-03)
+router.use('/compliance/audit', requireAuth, batchRateLimiter, complianceAuditRouter);
 
 // ─── FERPA Compliance (REG-01, REG-02) — rate limited per Constitution 1.10 ───
 router.use('/ferpa', requireAuth, aiRateLimiter, ferpaDisclosuresRouter);

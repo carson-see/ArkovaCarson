@@ -25,6 +25,9 @@ import type {
 import { NESSIE_INTELLIGENCE_PROMPT_V2 } from './prompts';
 import { splitBalanced } from './split';
 import { validateDataset, findUncitedSources } from './validate';
+import {
+  defaultRegistryPath, loadRegistry, decideTrust,
+} from './validators/verification-registry';
 
 import { FCRA_SOURCES } from './sources/fcra-sources';
 import { HIPAA_SOURCES } from './sources/hipaa-sources';
@@ -204,6 +207,55 @@ function main() {
   if (uncited.length > 0) {
     console.log(`\n📎 Uncited sources (${uncited.length}) — consider adding scenarios or removing sources:`);
     for (const s of uncited.slice(0, 10)) console.log(`   - ${s.id} (${s.source})`);
+  }
+
+  // ─── NVI-18 CI guard: block emission if any cited source is untrusted ───
+  // A cited source is trusted iff the verification registry has a current
+  // passing entry (NVI-01..04) for it. Unverified / failing / stale entries
+  // are BLOCKERS — we refuse to produce training JSONL that cites them.
+  //
+  // Override: set NVI_SKIP_GUARD=1 to emit anyway. This is a deliberate
+  // escape hatch (e.g. experimenting on a disposable endpoint) — CI must
+  // NOT set it.
+  const skipGuard = process.env.NVI_SKIP_GUARD === '1';
+  const intelDir = resolve(__dirname);
+  const registryPath = defaultRegistryPath(intelDir);
+  let registry;
+  try {
+    registry = loadRegistry(registryPath);
+  } catch (err) {
+    console.error(`\n💥 NVI CI guard: cannot load verification registry at ${registryPath}: ${(err as Error).message}`);
+    console.error('   Run: npx tsx scripts/intelligence-dataset/validators/verify-sources.ts');
+    if (!skipGuard) process.exit(3);
+    registry = null;
+  }
+
+  const citedIds = new Set<string>();
+  for (const sc of dataset.scenarios) {
+    for (const c of sc.expected.citations) citedIds.add(c.record_id);
+  }
+
+  if (registry) {
+    const decisions = decideTrust(registry, Array.from(citedIds), { maxAgeDays: 90 });
+    const untrusted = decisions.filter((d) => !d.trusted);
+    console.log(`\n🛡  NVI CI guard (90-day freshness window):`);
+    console.log(`   cited sources:     ${citedIds.size}`);
+    console.log(`   trusted:           ${decisions.length - untrusted.length}`);
+    console.log(`   untrusted:         ${untrusted.length}`);
+    if (untrusted.length > 0) {
+      console.log(`\n❌ Cannot emit training JSONL — the following cited sources are not trusted:`);
+      for (const d of untrusted.slice(0, 20)) {
+        console.log(`   - ${d.sourceId}: ${d.reason}`);
+      }
+      if (untrusted.length > 20) console.log(`   ... (${untrusted.length - 20} more)`);
+      if (!skipGuard) {
+        console.log(`\n   Fix: run npx tsx scripts/intelligence-dataset/validators/verify-sources.ts`);
+        console.log(`        and resolve any hardFail / orphan before rebuilding.`);
+        console.log(`        Override (disposable-only): NVI_SKIP_GUARD=1`);
+        process.exit(4);
+      }
+      console.log(`\n⚠️  NVI_SKIP_GUARD=1 set — emitting anyway. DO NOT use this for production training.`);
+    }
   }
 
   // ─── Split ───

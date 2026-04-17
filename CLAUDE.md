@@ -1,7 +1,9 @@
 # ARKOVA — Claude Code Engineering Directive
 
-> **Version:** 2026-04-16 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 214 migrations | 4,127 tests (1,235 frontend + 2,892 worker) | 334 stories (280 complete + 54 remaining) | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.0 FCRA LoRA deployed RunPod `u2ojptb1i9awwt` (NOT in prod routing) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Version:** 2026-04-17 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
+> **Stats:** 208 migrations (0000-0217, production through 0185, 0186-0217 pending deploy — 18 pending) | 4,187 tests (1,235 frontend + 2,952 worker; +60 new this PR across NVI validators + NCA audit) | 344 stories (290 complete + 54 remaining) | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.3 FCRA UNDER_REVIEW + v28.0 HIPAA + v29.0 FERPA **QUARANTINED** (NVI-15) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **🛡 NVI INFRASTRUCTURE LANDED (2026-04-17):** SCRUM-805/806/807/808 validators (statute-quote, case-law, agency-bulletin, state-statute) shipped in `services/worker/scripts/intelligence-dataset/validators/` with 33 unit tests + orchestrator + on-disk `verification-status.json` registry. **SCRUM-825 NVI-18 CI guard wired into `build-dataset.ts`:** training JSONL emission refuses when any cited source is untrusted (stale > 90d, failing, or orphaned). Baseline run on 205 FCRA+HIPAA+FERPA sources: **140 pass / 39 hardFail / 19 orphan.** SCRUM-819 NVI-15 quarantine policy (`src/ai/nessie-quarantine.ts` + 11 tests) routes HIPAA v28 + FERPA v29 customer traffic through a caveat + confidence downgrade; FCRA v27.3 kept UNDER_REVIEW (soft downgrade).
+> **🎯 NCA "AUDIT MY ORGANIZATION" PHASE 1 LANDED (2026-04-17):** SCRUM-756 NCA-01 migration 0216 expands `jurisdiction_rules` seed from ~30 to ≥100 rules across US FEDERAL (FERPA, HIPAA, SOX, FCRA employment, ADA, FLSA, GLBA, GINA) + Kenya DPA + Australia APP + EU/UK GDPR + Canada PIPEDA + Singapore PDPA + Japan APPI + India DPDP + South Africa POPIA + Nigeria NDPR + additional US state × industry coverage. SCRUM-757 NCA-02 + SCRUM-759 NCA-04 wired into SCRUM-758 NCA-03: new `compliance_audits` table (migration 0217) + `POST/GET /api/v1/compliance/audit` endpoint that rolls up per-jurisdiction scores, 4-category gap detection (MISSING/EXPIRED/EXPIRING_SOON/INSUFFICIENT) with severity sort, and NVI quarantine caveat surfacing.
 > **✅ NESSIE v27.0 FCRA DEPLOYED (2026-04-16):** Pipeline proved end-to-end. Together ft-56fd901e-669e → RunPod merge pod (A40, PEFT 0.15 + autocast=False, stripped 9 incompatible adapter_config keys) → HF `carsonarkova/nessie-v27-fcra` (16.1GB merged) → RunPod endpoint `u2ojptb1i9awwt` (workersStandby=2, p50 5.6s). **v27.0 eval (8 FCRA entries):** Citation 0% (eval-framework bug — all models show 0%), Faithfulness 25% (vs v26 31%), Relevance 35% (**+21pp vs v26**), Risk Recall 6.7%, Confidence r 0.672, Latency 5.56s (**3× faster than v26**). 2/7 DoD targets met — ship as baseline, train v27.1 immediately.
 > **✅ ELITE DATASET ARCHITECTURE (2026-04-16):** `services/worker/scripts/intelligence-dataset/` — anchored sources registry, hand-crafted scenarios, category-balanced leakage-free splitter, full validation (every citation.record_id must exist; non-empty risks/recs; confidence 0.55-0.99; near-duplicate detection). **Total: 343 scenarios + 209 anchored sources across 3 regulations.** FCRA v27.1 (208 scenarios, 89 sources, 169/39 split, 11 categories), HIPAA v28.0 (73 scenarios, 74 sources, 61/12 split, 5 categories), FERPA v29.0 (62 scenarios, 46 sources, 52/10 split, 10 categories). All compile clean (0 errors).
 > **✅ NESSIE v27.1 DEPLOYED + EVAL'D (2026-04-16):** Together ft-e9bbf91c-9cfa → RunPod merge (A40, PEFT 0.15) → HF `carsonarkova/nessie-v27-1-fcra` → RunPod endpoint `mpdzo2pso0bkua` (nessie-v27-1-fcra-prod). **Eval gains driven ONLY by dataset quality** (same hyperparameters as v27.0): Faithfulness 25→37.5% (+12.5pp), Relevance 35→44% (+9pp), **Risk Recall 6.7→25% (+18.3pp)**, Confidence r 0.672→0.806 (+0.134), Citation 0%→12.5% (after citation-fix rerun), Latency 13s (cold-start skew; warm 6-16s). 3-4/7 DoD targets. See `services/worker/docs/eval/eval-intelligence-v27-1-vs-v27-0-2026-04-16.md`.
@@ -313,7 +315,7 @@ npm run test:e2e     # if user-facing flow changed
 
 **Never modify an existing migration.** Write a compensating migration.
 
-**Current:** 211 files (0001-0211, 0033+0078 skipped, 0068 split into 0068a/0068b, 0088 split into 0088/0088b, 0147 skipped numbering gap, 0174-0180 have intentional duplicate numbers from parallel branches). Migrations 0190-0193: RLS caching, BRIN indexes, pg_stat_statements, job queue (PERF sprint). Migrations 0194-0196: NCE compliance engine (jurisdiction_rules, compliance_scores, feature flags). **Migrations 0197-0211: REG compliance** (FERPA disclosure log, HIPAA MFA/audit, directory opt-out, emergency access, privacy notices, data subject rights). All migrations applied to production through 0185; 0186-0211 pending deploy.
+**Current:** 206 unique files (0000-0215; 11 macOS " 2" duplicate copies excluded from count). Gaps: 0033, 0078, 0162, 0198-0211 skipped. Splits: 0068→0068a/0068b, 0088→0088/0088b. Parallel-branch duplicate numbers: 0174-0176, 0180 each have two distinct files. Migrations 0190-0193: RLS caching, BRIN indexes, pg_stat_statements, job queue (PERF sprint). Migrations 0194-0196: NCE compliance engine (jurisdiction_rules, compliance_scores, feature flags). Migration 0197: REG compliance (directory opt-out). Migrations 0212-0213: credential type additions (accreditation, credential sub-type). Migration 0214: drop unused indexes. Migration 0215: emergency dashboard performance. **Production applied through 0185; 0186-0197 + 0212-0215 pending deploy (16 pending files).**
 
 **IMPORTANT — Post-db-reset step:** After `supabase db reset`, migration 0068a's `ALTER TYPE anchor_status ADD VALUE 'SUBMITTED'` silently fails inside the transaction. You must manually run:
 ```bash
@@ -349,10 +351,10 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | **Integration Surface (INT)** | **8/9** | **0** | **1** | **89% — INT-09 webhook CRUD open** |
 | Dependency Hardening | 4/23 | 0 | 19 | 17% |
 | International Compliance | 0/28 | 2 | 26 | 7% |
-| **NVI (Nessie Verification Infrastructure)** ★ NEW, HIGHEST | **0/12** | **0** | **12** | **0% — gates NDD/NSS/NTF** |
+| **NVI (Nessie Verification Infrastructure)** ★ HIGHEST | **6/18** | **0** | **12** | **33% — NVI-01..04 validators + NVI-15 quarantine + NVI-18 CI guard shipped 2026-04-17 (SCRUM-805/806/807/808/819/825); baseline registry 140/205 pass; NVI-05..14/16/17 remaining** |
 | **GME2 (Gemini Golden v6/v7)** ★ ACTIVE (SCRUM-772) | **2/5** | **0** | **3** | **40% — v6 + v7 trained & eval'd, both FAILED DoD, v7.1 surgical retrain planned** |
 | **GME3/4/5 (Gemini Domain Experts)** ★ NEW | **0/3** | **0** | **3** | **0% — gated on v7 + GME8** |
-| **NCA (Nessie Compliance Audit)** ★ ACTIVE | **0/10** | **0** | **10** | **0% — product-facing, not model-gated** |
+| **NCA (Nessie Compliance Audit)** ★ ACTIVE | **4/10** | **0** | **6** | **40% — NCA-01/02/03/04 shipped 2026-04-17 (SCRUM-756/757/758/759); NCA-05/06/07/08/09 remaining** |
 | **API Richness (API-RICH)** ★ NEW | **0/5** | **0** | **5** | **0% — zero model risk, quick wins** |
 | **NDD / NSS / NTF (paused by NVI)** | 0/29 | 0 | 29 | 0% — **PAUSED** |
 | **TRUST (SOC 2 Type II / ISO / cyber)** ★ NEW | 0/7 | 0 | 7 | 0% — external-vendor-gated |
@@ -514,7 +516,7 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | ~~AWS KMS signing~~ | ~~Key provisioning for mainnet~~ — **DONE** (AWS + GCP KMS providers complete, 69 tests, GCP KMS configured in Cloud Run) |
 | ~~Mainnet treasury funding~~ | ~~Fund production treasury wallet~~ — **DONE** (treasury funded, 116 mainnet TXs confirmed) |
 | ~~Flip to mainnet~~ | ~~Change to mainnet~~ — **DONE** (BITCOIN_NETWORK=mainnet, 166K+ SECURED anchors) |
-| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (all migrations through 0157 applied) |
+| ~~Deploy migrations~~ | ~~Apply to production~~ — **DONE** (production through 0185; 0186-0215 pending deploy) |
 
 ### Pre-Launch Tasks
 
@@ -678,5 +680,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-14 | 211 migrations | 4,127 tests | ~280/334 stories complete | GME: 20/20 DONE | NCE: 20/20 DONE | INT: 9/9 DONE | NMT: 14/14 DONE (pipeline built, model needs training) | Golden dataset: 1,905 entries (need ~5,000+) | Nessie v5: 87.2% weighted F1, 75.7% macro F1, 0% fraudSignals, 0.539 confidence correlation | Gemini 3 Flash migrated | Major remaining: Nessie production hardening, DEP (19 not started), REG (26 not started)_
+_Directive version: 2026-04-16 | 206 migrations (0000-0215, prod through 0185, 16 pending) | 4,127 tests | ~280/334 stories complete | GME: 20/20 DONE | NCE: 20/20 DONE | INT: 8/9 (webhook CRUD open) | NMT: 14/14 DONE (pipeline built, model needs training) | Golden dataset: 1,905 entries (need ~5,000+) | Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed | Gemini v5-reasoning prod, v6 cutover pending, v7 failed DoD | Major remaining: NVI gate, DEP (9 not started), REG (28 not started)_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_
