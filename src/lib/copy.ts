@@ -2023,6 +2023,40 @@ export const DATA_CORRECTION_LABELS = {
 // JURISDICTION PRIVACY NOTICES (REG-14)
 // =============================================================================
 
+/** NCA-07 / NCA-08 / NCA-09 — "Audit My Organization" UI copy */
+export const AUDIT_MY_ORG_LABELS = {
+  TITLE: 'Audit My Organization',
+  DESCRIPTION:
+    'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
+  CTA: 'Start compliance audit',
+  PROGRESS_ANALYZING: 'Analyzing credentials…',
+  PROGRESS_CHECKING: 'Checking regulatory requirements…',
+  PROGRESS_GENERATING: 'Generating compliance report…',
+  PROGRESS_ESTIMATE: 'This usually completes in under 30 seconds.',
+  VIEW_RESULTS: 'View results',
+  RETRY: 'Try again',
+  ERROR_HTTP_PREFIX: 'Audit failed with HTTP',
+  ERROR_AUDIT_FAILED: 'The audit could not complete. Please retry.',
+  ERROR_NETWORK: 'Network error — please check your connection and retry.',
+  ERROR_FETCH_UNAVAILABLE: 'Your browser cannot reach the audit service. Please refresh and retry.',
+  IN_PROGRESS_TOOLTIP: 'Audit is already in progress for this organization.',
+  SCORECARD_TITLE: 'Compliance scorecard',
+  SCORECARD_EMPTY: 'Run your first audit to see your compliance score.',
+  SCORECARD_GAPS_HEADING: 'Open gaps',
+  SCORECARD_RECOMMENDATIONS_HEADING: 'Recommended actions',
+  SCORECARD_QUICK_WINS: 'Quick wins',
+  SCORECARD_CRITICAL: 'Critical',
+  SCORECARD_UPCOMING: 'Upcoming',
+  SCORECARD_STANDARD: 'Other',
+  SCORECARD_PER_JURISDICTION: 'Score by jurisdiction',
+  SCORECARD_TIMELINE: 'Score over time',
+  SCORECARD_LAST_AUDITED: 'Last audited',
+  SCORECARD_EXPORT_PDF: 'Export PDF',
+  SCORECARD_EXPORTING: 'Preparing PDF…',
+  SCORECARD_DISCLAIMER:
+    'This report reflects credential status as of the audit date. It is not legal advice.',
+} as const;
+
 export const PRIVACY_NOTICE_LABELS = {
   TITLE: 'Privacy & Data Protection',
   DESCRIPTION: 'Information about how your data is protected under applicable laws.',
