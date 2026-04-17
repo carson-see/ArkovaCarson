@@ -28,6 +28,17 @@ import { validateDataset, findUncitedSources } from './validate';
 import {
   defaultRegistryPath, loadRegistry, decideTrust,
 } from './validators/verification-registry';
+import { scaffoldCot, mergeCotIntoAnswer } from './cot-scaffold';
+import { multiTurnToTogetherRow, validateMultiTurnScenario, type MultiTurnScenario } from './multi-turn';
+import { FCRA_MULTI_TURN_SCENARIOS } from './scenarios/fcra/multi-turn';
+import {
+  buildCorpusIndex,
+  documentGroundedToTogetherRow,
+  validateDocumentGroundedScenario,
+  type DocumentGroundedScenario,
+} from './document-grounded';
+import { FCRA_DOCUMENT_CORPUS } from './documents/fcra-corpus';
+import { FCRA_DOC_GROUNDED_SCENARIOS } from './scenarios/fcra/document-grounded';
 
 import { FCRA_SOURCES } from './sources/fcra-sources';
 import { HIPAA_SOURCES } from './sources/hipaa-sources';
@@ -145,12 +156,17 @@ function buildFerpaDataset(version: string): RegulationDataset {
 // Together-format emission
 // ---------------------------------------------------------------------------
 
-function scenarioToTogetherRow(s: IntelligenceScenario): TogetherTrainingRow {
+function scenarioToTogetherRow(s: IntelligenceScenario, opts: { cot: boolean } = { cot: true }): TogetherTrainingRow {
+  // NVI-06: attach chain-of-thought unless explicitly disabled. The
+  // scaffolder is deterministic + offline, so this costs no API budget.
+  const answer = opts.cot
+    ? mergeCotIntoAnswer(s.expected, s.expected.reasoning_steps ?? scaffoldCot(s))
+    : s.expected;
   return {
     messages: [
       { role: 'system', content: NESSIE_INTELLIGENCE_PROMPT_V2 },
       { role: 'user', content: s.query },
-      { role: 'assistant', content: JSON.stringify(s.expected) },
+      { role: 'assistant', content: JSON.stringify(answer) },
     ],
   };
 }
@@ -166,6 +182,9 @@ function main() {
 
   const regulation = regIdx >= 0 ? args[regIdx + 1] : null;
   const version = verIdx >= 0 ? args[verIdx + 1] : null;
+  // NVI-06: chain-of-thought emission in training JSONL. Default ON.
+  // Pass `--no-cot` to reproduce v27.3 / earlier training format exactly.
+  const cotEnabled = !args.includes('--no-cot');
 
   if (!regulation || !version) {
     console.error('Usage: --regulation fcra|hipaa|ferpa --version v27.1|v28.0|v29.0');
@@ -275,13 +294,46 @@ function main() {
   const trainPath = resolve(OUTPUT_DIR, `${prefix}-train.jsonl`);
   const testPath  = resolve(OUTPUT_DIR, `${prefix}-test.jsonl`);
 
-  writeFileSync(
-    trainPath,
-    split.train.map((s) => JSON.stringify(scenarioToTogetherRow(s))).join('\n') + '\n',
-  );
+  // NVI-08: multi-turn scenarios join the FCRA training set. Validate each
+  // before emit so a malformed seed file fails the build, not a silent
+  // trainingpad. Other regulations don't have multi-turn seeds yet.
+  const multiTurn: MultiTurnScenario[] = dataset.regulation === 'FCRA' ? FCRA_MULTI_TURN_SCENARIOS : [];
+  for (const mt of multiTurn) {
+    const errs = validateMultiTurnScenario(mt);
+    if (errs.length > 0) {
+      console.error(`❌ Multi-turn scenario ${mt.id} invalid: ${errs.join('; ')}`);
+      process.exit(5);
+    }
+  }
+  if (multiTurn.length > 0) {
+    console.log(`\n💬 Multi-turn scenarios (NVI-08): ${multiTurn.length} (appended to train split)`);
+  }
+
+  // NVI-09: document-grounded scenarios join FCRA training. Validate every
+  // reference against the corpus index; missing or malformed scenarios fail
+  // the build rather than emit silently.
+  const docScenarios: DocumentGroundedScenario[] = dataset.regulation === 'FCRA' ? FCRA_DOC_GROUNDED_SCENARIOS : [];
+  const corpus = dataset.regulation === 'FCRA' ? buildCorpusIndex(FCRA_DOCUMENT_CORPUS) : buildCorpusIndex([]);
+  for (const dg of docScenarios) {
+    const errs = validateDocumentGroundedScenario(dg, corpus);
+    if (errs.length > 0) {
+      console.error(`❌ Document-grounded scenario ${dg.id} invalid: ${errs.join('; ')}`);
+      process.exit(6);
+    }
+  }
+  if (docScenarios.length > 0) {
+    console.log(`📎 Document-grounded scenarios (NVI-09): ${docScenarios.length} (appended to train split)`);
+  }
+
+  const trainRows: string[] = [
+    ...split.train.map((s) => JSON.stringify(scenarioToTogetherRow(s, { cot: cotEnabled }))),
+    ...multiTurn.map((mt) => JSON.stringify(multiTurnToTogetherRow(mt))),
+    ...docScenarios.map((dg) => JSON.stringify(documentGroundedToTogetherRow(dg, corpus))),
+  ];
+  writeFileSync(trainPath, trainRows.join('\n') + '\n');
   writeFileSync(
     testPath,
-    split.test.map((s) => JSON.stringify(scenarioToTogetherRow(s))).join('\n') + '\n',
+    split.test.map((s) => JSON.stringify(scenarioToTogetherRow(s, { cot: cotEnabled }))).join('\n') + '\n',
   );
 
   // ─── Manifest ───

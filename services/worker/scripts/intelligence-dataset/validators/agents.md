@@ -64,6 +64,10 @@ NOT be used in CI. It's only for disposable experimental endpoints.
 
 - `docs/runbooks/nvi-quarantine-2026-04-17.md` — quarantine policy for v28
   HIPAA + v29 FERPA.
+- `docs/plans/nessie-attorney-review-process.md` — NVI-05 tier policy +
+  attorney engagement scope.
+- `services/worker/scripts/intelligence-dataset/review-workflow.ts` — NVI-05
+  tier classifier + packet generator (consumes `verification-status.json`).
 - `services/worker/src/ai/nessie-quarantine.ts` — customer-facing caveat
   roster consumed by `org-audit.ts`.
 - CLAUDE.md §0 NVI Gate Mandate — hard rule: no new regulation training

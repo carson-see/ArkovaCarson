@@ -126,6 +126,13 @@ export interface IntelligenceAnswer {
   jurisdiction: Jurisdiction;
   /** Applicable law short code (e.g. "FCRA §604(b)(3)", "HIPAA Privacy Rule"). */
   applicable_law: ApplicableLaw;
+  /**
+   * Optional 8-step chain-of-thought (NVI-06 / SCRUM-810). When present,
+   * build-dataset.ts serialises this into the assistant message so the
+   * model learns step-wise reasoning. When absent, the scaffolder in
+   * cot-scaffold.ts fills it from the other fields at emit time.
+   */
+  reasoning_steps?: import('./cot-scaffold').CotReasoningSteps;
 }
 
 export interface ScenarioCitation {
