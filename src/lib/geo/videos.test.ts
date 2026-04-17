@@ -1,20 +1,16 @@
 /**
- * Unit test for GEO-11 VideoObject schema helper at src/lib/geo/videos.ts.
+ * Unit test for GEO-11 VideoObject schema helper (SCRUM-478).
  *
  * The inventory is intentionally empty in-repo; this test exercises the
  * generator with a fixture so we catch schema drift before the first video
- * lands (SCRUM-478).
+ * lands.
  */
 
 import { describe, it, expect } from 'vitest';
 
-import {
-  VIDEOS,
-  buildVideoObjectsJsonLd,
-  type VideoInventoryEntry,
-} from '../../lib/geo/videos';
+import { VIDEOS, buildVideoObjectsJsonLd, type VideoInventoryEntry } from './videos';
 
-describe('arkova-marketing/data/videos', () => {
+describe('src/lib/geo/videos', () => {
   it('ships with an empty inventory so no stub VideoObjects leak to Google', () => {
     expect(VIDEOS).toEqual([]);
     expect(buildVideoObjectsJsonLd()).toEqual([]);
@@ -65,5 +61,22 @@ describe('arkova-marketing/data/videos', () => {
       },
     ]);
     expect(schema.isPartOf).toMatchObject({ url: 'https://arkova.ai/' });
+  });
+
+  it('SeekToAction target points at the video contentUrl (not the channel)', () => {
+    const [schema] = buildVideoObjectsJsonLd([
+      {
+        youtubeId: 'vid42',
+        name: 'n',
+        description: 'd',
+        uploadDate: '2026-05-01',
+        duration: 'PT2M',
+        thumbnailUrl: 'https://arkova.ai/t.jpg',
+      },
+    ]);
+    expect(schema.potentialAction).toMatchObject({
+      '@type': 'SeekToAction',
+      target: 'https://www.youtube.com/watch?v=vid42&t={seek_to_second_number}',
+    });
   });
 });

@@ -3,7 +3,7 @@
 **Purpose:** Unblock SCRUM-522 ("Engage SOC 2 auditor for readiness assessment") with a structured shortlist instead of open-ended sales calls.
 **Last updated:** 2026-04-17
 **Baseline evidence:** `docs/compliance/soc2-evidence.md`, `docs/compliance/soc2-type2-evidence-matrix.md`, `docs/compliance/soc2-type2-decision.md`
-**Decision owner:** Matthew (external owner) + Carson (final sign-off)
+**Decision owner:** Matthew (see `docs/compliance/vendor-register.md` for handle) (external owner) + Carson (final sign-off)
 **Related:** depends on SCRUM-516 (framework selection — Type II confirmed)
 
 ---
@@ -82,9 +82,9 @@ Alternate / hold list (did not make the top three for the first round):
 
 | Milestone | Target date | Owner |
 |-----------|-------------|-------|
-| RFP sent to 3 firms | T+0 | Matthew |
-| Proposals received | T+2 weeks | Matthew |
-| Scoring + shortlist-of-one | T+3 weeks | Carson + Matthew |
+| RFP sent to 3 firms | T+0 | Matthew (see `docs/compliance/vendor-register.md` for handle) |
+| Proposals received | T+2 weeks | Matthew (see `docs/compliance/vendor-register.md` for handle) |
+| Scoring + shortlist-of-one | T+3 weeks | Carson + Matthew (see `docs/compliance/vendor-register.md` for handle) |
 | MSA + SOW signed | T+5 weeks | Counsel |
 | Readiness kick-off | T+6 weeks | Auditor PM |
 | Readiness gap report delivered | T+9 weeks | Auditor |

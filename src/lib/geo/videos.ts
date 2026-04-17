@@ -44,8 +44,6 @@ export interface VideoInventoryEntry {
  */
 export const VIDEOS: VideoInventoryEntry[] = [];
 
-const YT_CHANNEL = 'https://www.youtube.com/channel/UCTTDFFSLxl85omCeJ9DBvrg';
-
 /**
  * Build schema.org VideoObject JSON-LD from the inventory.
  *
@@ -55,25 +53,28 @@ const YT_CHANNEL = 'https://www.youtube.com/channel/UCTTDFFSLxl85omCeJ9DBvrg';
 export function buildVideoObjectsJsonLd(
   videos: readonly VideoInventoryEntry[] = VIDEOS,
 ): Record<string, unknown>[] {
-  return videos.map((v) => ({
-    '@context': 'https://schema.org',
-    '@type': 'VideoObject',
-    name: v.name,
-    description: v.description,
-    thumbnailUrl: v.thumbnailUrl,
-    uploadDate: v.uploadDate,
-    duration: v.duration,
-    contentUrl: `https://www.youtube.com/watch?v=${v.youtubeId}`,
-    embedUrl: `https://www.youtube.com/embed/${v.youtubeId}`,
-    publisher: { '@id': 'https://arkova.ai/#org' },
-    author: { '@id': 'https://arkova.ai/#org' },
-    isPartOf: { '@type': 'WebPage', url: v.embedPage ?? 'https://arkova.ai/' },
-    isAccessibleForFree: true,
-    inLanguage: 'en',
-    potentialAction: {
-      '@type': 'SeekToAction',
-      target: `${YT_CHANNEL}?t={seek_to_second_number}`,
-      'startOffset-input': 'required name=seek_to_second_number',
-    },
-  }));
+  return videos.map((v) => {
+    const contentUrl = `https://www.youtube.com/watch?v=${v.youtubeId}`;
+    return {
+      '@context': 'https://schema.org',
+      '@type': 'VideoObject',
+      name: v.name,
+      description: v.description,
+      thumbnailUrl: v.thumbnailUrl,
+      uploadDate: v.uploadDate,
+      duration: v.duration,
+      contentUrl,
+      embedUrl: `https://www.youtube.com/embed/${v.youtubeId}`,
+      publisher: { '@id': 'https://arkova.ai/#org' },
+      author: { '@id': 'https://arkova.ai/#org' },
+      isPartOf: { '@type': 'WebPage', url: v.embedPage ?? 'https://arkova.ai/' },
+      isAccessibleForFree: true,
+      inLanguage: 'en',
+      potentialAction: {
+        '@type': 'SeekToAction',
+        target: `${contentUrl}&t={seek_to_second_number}`,
+        'startOffset-input': 'required name=seek_to_second_number',
+      },
+    };
+  });
 }
