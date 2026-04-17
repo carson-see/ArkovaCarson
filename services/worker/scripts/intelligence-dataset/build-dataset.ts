@@ -55,6 +55,11 @@ import { CREDENTIAL_SPECIFIC_SCENARIOS } from './scenarios/fcra/credential-speci
 import { RISK_PATTERNS_EXPANSION } from './scenarios/fcra/v27-3-risk-patterns-expansion';
 import { ADVERSE_EXPANSION } from './scenarios/fcra/v27-3-adverse-expansion';
 import { MULTI_REG_EXPANSION } from './scenarios/fcra/v27-4-multi-reg-expansion';
+import { FCRA_ADVERSARIAL_INDEX } from './scenarios/fcra/adversarial';
+import { validateAdversarialAnswer } from './adversarial';
+import { ensureHeldOut as ensureBenchmarkHeldOut, validateBenchmark } from './benchmark/benchmark';
+import { FCRA_GOLD_STANDARD_BENCHMARK } from './benchmark/fcra-gold-standard';
+import { evaluateFcraMasteryGate, renderGateStatusMarkdown } from './gate';
 
 // HIPAA scenarios
 import { HIPAA_PRIVACY_SCENARIOS } from './scenarios/hipaa/privacy-and-patient-rights';
@@ -86,6 +91,7 @@ function buildFcraDataset(version: string): RegulationDataset {
     ...RISK_PATTERNS_EXPANSION,
     ...ADVERSE_EXPANSION,
     ...MULTI_REG_EXPANSION,
+    ...FCRA_ADVERSARIAL_INDEX,
   ];
 
   return {
@@ -205,6 +211,33 @@ function main() {
   console.log(`   Sources: ${dataset.sources.length}`);
   console.log(`   Scenarios: ${dataset.scenarios.length}`);
 
+  // NVI-14: Mastery-gate check for non-FCRA regulations. The gate
+  // evaluator is always advisory here (we don't block HIPAA / FERPA
+  // JSONL emission because the quarantine policy keeps those endpoints
+  // pinned to already-evaluated weights). When the gate is closed we
+  // loudly warn so any operator running this by hand has no excuse
+  // for expanding training. When the gate is open this is a no-op.
+  if (dataset.regulation !== 'FCRA') {
+    // Placeholder inputs — real values will come from the verification
+    // registry + distillation report + benchmark output once those live.
+    // Today the gate is closed by construction (pending attorney-review
+    // + 5,000 distilled Q&A + live canary).
+    const gateEval = evaluateFcraMasteryGate({
+      verification: { total: 1, passing: 0, orphans: 1, hardFails: 0 },
+      attorneyReview: { tier3Open: 27, tier3Resolved: 0 },
+      chainOfThought: { scenariosWithCot: 0, scenariosTotal: 302 },
+      distillation: { acceptedQa: 0, target: 5000 },
+      auxiliary: { multiTurn: 12, documentGrounded: 9, adversarial: 15 },
+      benchmark: { attorneyQuestions: 2, nessieScorePercent: 0, geminiBaselinePercent: 70 },
+      canary: { reviewedResponses: 0, matchRatePercent: 0 },
+    });
+    if (!gateEval.passes) {
+      console.warn(`\n🛑 NVI-14 FCRA Mastery Gate is CLOSED — building ${dataset.regulation} while FCRA is pre-mastery.`);
+      console.warn(`   CLAUDE.md §0 NVI Gate Mandate applies. This build is permitted only for bug-fixes to already-deployed v28/v29 endpoints (per quarantine policy).`);
+      console.warn(renderGateStatusMarkdown(gateEval).replace(/^/gm, '   '));
+    }
+  }
+
   // ─── Validation ───
   const report = validateDataset(dataset);
   console.log(`\n🔍 Validation:`);
@@ -226,6 +259,40 @@ function main() {
   if (uncited.length > 0) {
     console.log(`\n📎 Uncited sources (${uncited.length}) — consider adding scenarios or removing sources:`);
     for (const s of uncited.slice(0, 10)) console.log(`   - ${s.id} (${s.source})`);
+  }
+
+  // NVI-10: adversarial humility-contract check. When any scenario carries
+  // should_refuse=true the answer must satisfy confidence≤0.70 +
+  // escalation_trigger=true + an escalation-style recommendation. Fail the
+  // build hard on mismatch so the training signal stays consistent.
+  const advErrors: string[] = [];
+  for (const sc of dataset.scenarios) {
+    const errs = validateAdversarialAnswer(sc.expected);
+    for (const e of errs) advErrors.push(`${sc.id}: ${e}`);
+  }
+  if (advErrors.length > 0) {
+    console.error(`\n❌ Adversarial (NVI-10) contract violations:`);
+    for (const e of advErrors.slice(0, 20)) console.error(`   - ${e}`);
+    if (advErrors.length > 20) console.error(`   ... (${advErrors.length - 20} more)`);
+    process.exit(7);
+  }
+
+  // NVI-11: FCRA gold-standard benchmark held-out guard. Any scenario id
+  // that collides with the benchmark contaminates the measurement.
+  if (dataset.regulation === 'FCRA') {
+    const benchErrs = validateBenchmark(FCRA_GOLD_STANDARD_BENCHMARK);
+    if (benchErrs.length > 0) {
+      console.error(`\n❌ Benchmark (NVI-11) validation failed:`);
+      for (const e of benchErrs) console.error(`   - ${e}`);
+      process.exit(8);
+    }
+    try {
+      ensureBenchmarkHeldOut(FCRA_GOLD_STANDARD_BENCHMARK, dataset.scenarios);
+    } catch (err) {
+      console.error(`\n❌ Benchmark (NVI-11) held-out violation: ${(err as Error).message}`);
+      process.exit(8);
+    }
+    console.log(`\n🎯 Benchmark (NVI-11): ${FCRA_GOLD_STANDARD_BENCHMARK.length} held-out questions verified`);
   }
 
   // ─── NVI-18 CI guard: block emission if any cited source is untrusted ───

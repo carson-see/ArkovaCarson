@@ -132,7 +132,18 @@ export interface IntelligenceAnswer {
    * model learns step-wise reasoning. When absent, the scaffolder in
    * cot-scaffold.ts fills it from the other fields at emit time.
    */
-  reasoning_steps?: import('./cot-scaffold').CotReasoningSteps;
+  reasoning_steps?: import('./cot-scaffold.js').CotReasoningSteps;
+  /**
+   * NVI-10 (SCRUM-814). When true, this scenario teaches the model to
+   * DECLINE a confident answer — the facts are insufficient, the law is
+   * unsettled, or the question targets territory outside the verified
+   * source registry. When true: `confidence` must be ≤ 0.70,
+   * `escalation_trigger` must be true, and at least one recommendation
+   * must point to counsel / expert consultation.
+   */
+  should_refuse?: boolean;
+  /** NVI-10: flag that the model should surface an "escalate to counsel" cue. */
+  escalation_trigger?: boolean;
 }
 
 export interface ScenarioCitation {
