@@ -14,7 +14,7 @@
 The dossier is drafted; what remains is a portal submission + fee payment. This checklist turns that into a 5-step playbook for the counsel + platform admin:
 
 1. **Pre-submission review** (§Pre-submission checks) — counsel reviews every field in `odpc-registration.md` against Section 56-57 requirements; flag any that counsel wants to amend before submission.
-2. **DPO appointment** (§DPO prerequisite) — designate a DPO per `dpo-designation.md`; counsel is OK to act as interim DPO if an internal appointment is not ready.
+2. **DPO appointment** (§DPO prerequisite) — designate a DPO per `../dpo-designation.md`; counsel is OK to act as interim DPO if an internal appointment is not ready.
 3. **Portal submission** (§Portal submission) — counsel logs into ODPC portal, enters dossier values, uploads supporting docs, pays fee.
 4. **Registration number receipt** (§Post-registration) — ODPC returns a registration number within 14 business days; Carson or counsel updates `privacy-notice.md` and ships a follow-up PR embedding the number in the Kenya tenant UI.
 5. **Calendar renewal** — set calendar 60 days before 24-month renewal.
@@ -38,7 +38,7 @@ Transition SCRUM-576 Blocked → Done once the registration number is received a
 
 ## DPO prerequisite
 
-Kenya DPA Section 24 requires a DPO for any processor handling sensitive personal data. Status today: **template at `dpo-designation.md`, no appointment yet.** Three options:
+Kenya DPA Section 24 requires a DPO for any processor handling sensitive personal data. Status today: **template at `../dpo-designation.md`, no appointment yet.** Three options:
 
 | Option | Pros | Cons | Recommended? |
 |--------|------|------|--------------|
@@ -46,7 +46,7 @@ Kenya DPA Section 24 requires a DPO for any processor handling sensitive persona
 | Outsourced DPO (Kenyan firm, part-time) | Fast to stand up; expert on ODPC | $600–1200/month | **Yes — for year 1** |
 | Counsel acts as interim DPO | No extra cost | Conflict of interest (same party advising + filing + DPO duties) | Only if counsel explicitly accepts dual hat |
 
-Action: counsel selects interim/outsourced DPO; record designation letter (copy template at `dpo-designation.md`) in `vendor-register.md`.
+Action: counsel selects interim/outsourced DPO; record designation letter (copy template at `../dpo-designation.md`) in `vendor-register.md`.
 
 ---
 
@@ -67,7 +67,7 @@ Counsel logs in at [https://odpc.go.ke/register/](https://odpc.go.ke/register/) 
 | Cross-border transfers | `odpc-registration.md` §7 | Basis: SCCs. Destinations: US, EU, UK. |
 | Security measures | `odpc-registration.md` §8 + `../soc2-evidence.md` | Reference SOC 2 controls CC6-CC8 |
 | Retention period | `odpc-registration.md` §9 + `../data-retention-policy.md` | 7 years default; 90 days on revocation |
-| DPO name + contact | `dpo-designation.md` | Must match DPO designation letter |
+| DPO name + contact | `../dpo-designation.md` | Must match DPO designation letter |
 | Supporting documents | §Pre-submission checks | Upload as PDFs |
 
 **Fee:** KES 25,000 (~USD 194). Payment via ODPC portal card or M-Pesa. Receipt goes into `vendor-register.md`.
@@ -102,12 +102,9 @@ Refile within 30 days to avoid re-paying the fee.
 
 ---
 
-## Manual-followup email (per CLAUDE.md)
+## Manual-followup email
 
-Counsel should send `carson@arkova.ai` an inbox note when:
-- Submission is filed (with payment receipt).
-- Registration number is received (with certificate).
-- Any rejection is received (with reason + remediation plan).
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, counsel sends `carson@arkova.ai` an inbox note on submission (with payment receipt), on registration-number receipt (with certificate), and on any rejection (with reason + remediation plan).
 
 ---
 

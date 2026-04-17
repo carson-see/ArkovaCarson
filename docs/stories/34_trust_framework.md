@@ -177,13 +177,9 @@ Update this table as each TRUST-xx transitions. Current state 2026-04-17:
 
 ---
 
-## Manual-followup email (per CLAUDE.md)
+## Manual-followup email
 
-When TRUST-01..06 tickets are created, Carson receives an inbox note from the scrum master:
-
-- List of ticket IDs + summaries + priorities.
-- Link back to this doc.
-- Proposed Q1 sprint slotting.
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, the scrum master emails `carson@arkova.ai` on ticket-creation day with: list of ticket IDs + summaries + priorities, link back to this doc, and proposed Q1 sprint slotting.
 
 ---
 

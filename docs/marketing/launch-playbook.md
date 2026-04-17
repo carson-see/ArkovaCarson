@@ -3,7 +3,7 @@
 **Jira:** [SCRUM-477 / GEO-09](https://arkova.atlassian.net/browse/SCRUM-477)
 **Last updated:** 2026-04-17
 **Owner:** Carson (marketing)
-**Engineering status:** Complete — `sameAs` schema at `arkova-marketing/index.html` lines 54-60 already advertises 5 canonical profiles (wikidata, linkedin, x, youtube, github). Each net-new community profile requires a **follow-up PR** appending its canonical URL to `sameAs`.
+**Engineering status:** Scaffolding complete; external content work outstanding. The `sameAs` array in the Organization JSON-LD at `arkova-marketing/index.html` already advertises 5 canonical profiles (wikidata, linkedin, x, youtube, github). Each net-new community profile requires a **follow-up PR** appending its canonical URL to `sameAs`.
 
 ---
 
@@ -39,13 +39,13 @@ After all four channels launch, SCRUM-477 can transition to Done.
 
 ### Copy: 90-word description
 
-> Arkova is a verification platform that turns credentials, records, and documents into tamper-evident proofs. Documents never leave the user's device — fingerprints and PII-stripped metadata flow to our server, anchor on Bitcoin, and return a verifiable receipt that any counterparty can check in a browser. Client-side processing means we don't hold the original document; the receipt is what buyers, auditors, and regulators rely on. Built for credential issuers, background-check providers, and compliance teams operating under FERPA, HIPAA, GDPR, and Kenya DPA.
+> Arkova is a verification platform that turns credentials, records, and documents into tamper-evident proofs. Documents never leave the user's device — fingerprints and PII-stripped metadata flow to our server, anchor to a permanent public network, and return a verifiable receipt that any counterparty can check in a browser. Client-side processing means we don't hold the original document; the receipt is what buyers, auditors, and regulators rely on. Built for credential issuers, background-check providers, and compliance teams operating under FERPA, HIPAA, GDPR, and Kenya DPA.
 
 ### Copy: 250-word description
 
-> Most verification tools either require the verifier to upload the document (creating a new privacy surface) or rely on a trusted central ledger (creating a new single point of failure). Arkova takes a third path: the document is processed entirely in the user's browser, a cryptographic fingerprint is generated locally, and only the fingerprint plus PII-stripped metadata is anchored to Bitcoin. Verifiers receive a public receipt they can validate against the Bitcoin network directly — without Arkova in the loop at verification time.
+> Most verification tools either require the verifier to upload the document (creating a new privacy surface) or rely on a trusted central ledger (creating a new single point of failure). Arkova takes a third path: the document is processed entirely in the user's browser, a cryptographic fingerprint is generated locally, and only the fingerprint plus PII-stripped metadata is anchored to a permanent public network. Verifiers receive a public receipt they can validate against that network directly — without Arkova in the loop at verification time.
 >
-> Under the hood we combine schema-first data modelling (Supabase + RLS on every table), client-side OCR and PII stripping (PDF.js + Tesseract.js), AWS/GCP KMS-signed Bitcoin transactions, and a verification API that returns a signed proof bundle with timestamps, jurisdiction tags, and downstream attestations.
+> Under the hood we combine schema-first data modelling (Supabase + RLS on every table), client-side OCR and PII stripping (PDF.js + Tesseract.js), GCP KMS-signed network receipts, and a verification API that returns a signed proof bundle with timestamps, jurisdiction tags, and downstream attestations.
 >
 > Customers use Arkova for:
 >
@@ -54,7 +54,7 @@ After all four channels launch, SCRUM-477 can transition to Done.
 > - ATS integrations (webhook, SDK, MCP).
 > - International compliance operators subject to FERPA, HIPAA, FCRA, GDPR, Kenya DPA, APP, POPIA, PDPA, APPI, PIPEDA.
 >
-> 1.41M+ records are already secured on Bitcoin mainnet. The client-side processing boundary is a foundational privacy guarantee, not a configuration flag.
+> 1.41M+ records are already secured on our production network. The client-side processing boundary is a foundational privacy guarantee, not a configuration flag.
 
 ---
 

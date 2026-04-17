@@ -124,14 +124,9 @@ This ticket does not close the NVI gate, but the v8 training run is the first Ne
 
 ---
 
-## Manual-followup email (when training starts)
+## Manual-followup email
 
-When the operator submits the tuning job, email `carson@arkova.ai`:
-
-- Gate-closure confirmation snippet (screenshot of updated CLAUDE.md Section 0).
-- Tuning job ID (Together.ai `ft-xxxxx`).
-- Expected completion window.
-- Budget delta vs. the NPH-14 authorisation.
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, the operator emails `carson@arkova.ai` on training submission with: gate-closure confirmation snippet, Together.ai tuning job ID, expected completion window, and budget delta vs. the NPH-14 authorisation.
 
 ---
 

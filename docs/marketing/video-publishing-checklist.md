@@ -3,7 +3,7 @@
 **Jira:** [SCRUM-478 / GEO-11](https://arkova.atlassian.net/browse/SCRUM-478)
 **Last updated:** 2026-04-17
 **Owner:** Carson (video production + voiceover), Engineering (schema deploy)
-**Engineering status:** Complete.
+**Engineering status:** Scaffolding complete; video production outstanding. Helper + component + tests are in place and `VIDEOS` is intentionally empty until the first explainer is live.
 - Helper: [src/lib/geo/videos.ts](../../src/lib/geo/videos.ts) (canonical inventory + `buildVideoObjectsJsonLd`).
 - React wrapper: [src/components/seo/VideoObjectSchema.tsx](../../src/components/seo/VideoObjectSchema.tsx).
 - Tests: [src/components/seo/VideoObjectSchema.test.tsx](../../src/components/seo/VideoObjectSchema.test.tsx) (4 tests, verified green 2026-04-17).
@@ -44,7 +44,7 @@ Do not emit VideoObject JSON-LD for a video that has not been uploaded and is no
 - [ ] **Description** first 2 lines contain the primary keyword and the canonical `app.arkova.ai` link. Full description ≥250 words; include timestamps for chapters.
 - [ ] **Chapters** defined via `0:00 Intro` / `0:30 Problem` / `1:15 Solution` lines in description (YouTube auto-generates the chapter markers).
 - [ ] **Thumbnail** 1280×720 JPG/PNG, high contrast text, ≤3 words on thumbnail. Store the original at `arkova-marketing/public/video-thumbnails/<youtubeId>.jpg`.
-- [ ] **Tags** (≤10): `credential verification`, `document verification`, `Bitcoin anchoring`, `privacy-preserving verification`, `background checks`, `compliance`, `FERPA`, `HIPAA`, `Kenya DPA`, `Arkova`.
+- [ ] **Tags** (≤10): `credential verification`, `document verification`, `network anchoring`, `privacy-preserving verification`, `background checks`, `compliance`, `FERPA`, `HIPAA`, `Kenya DPA`, `Arkova`.
 - [ ] **Closed captions** — required. Use YouTube auto-captions as a base, correct manually before publish.
 - [ ] **Cards + end screens** — at least one end-screen CTA linking to `app.arkova.ai`.
 - [ ] **Visibility** set to Public only after the landing page's `<VideoObjectSchema />` is merged and deployed (avoid a 24-hour window where the schema references an unlisted video).
@@ -60,7 +60,7 @@ Do not emit VideoObject JSON-LD for a video that has not been uploaded and is no
      {
        youtubeId: 'XXXXXXXXXXX',                      // 11-char YouTube ID
        name: 'Proof of record, not promise — Arkova Verification',
-       description: 'How Arkova anchors credential fingerprints on Bitcoin without storing the original document. 90 seconds.',
+       description: 'How Arkova anchors credential fingerprints to a public network without storing the original document. 90 seconds.',
        uploadDate: '2026-04-20',                       // ISO 8601
        duration: 'PT1M28S',                            // ISO 8601 duration
        thumbnailUrl: 'https://arkova.ai/video-thumbnails/XXXXXXXXXXX.jpg',
