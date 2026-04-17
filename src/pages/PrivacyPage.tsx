@@ -75,7 +75,24 @@ export function PrivacyPage() {
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">5. Data Retention</h2>
+            <h2 className="text-lg font-semibold text-foreground">5. International Data Transfers</h2>
+            <p>
+              Arkova self-certifies under the EU-US Data Privacy Framework (DPF) for lawful
+              transatlantic personal data transfers. We also utilize Standard Contractual Clauses
+              (SCCs) for transfers to jurisdictions without adequacy decisions. Our client-side
+              processing architecture minimizes cross-border data flows — documents never leave
+              your device, and only cryptographic fingerprints are transmitted.
+            </p>
+            <p>
+              For transfers involving Brazilian data subjects, we use ANPD-approved Standard
+              Contractual Clauses. For Singapore, we comply with PDPA Section 26 transfer
+              requirements. For Mexico, cross-border transfers require data subject consent
+              per LFPDPPP Article 36.
+            </p>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold text-foreground">6. Data Retention</h2>
             <p>
               Verification records are retained for as long as your account is active. You may
               request deletion of your account and associated data by contacting us at{' '}
@@ -92,7 +109,7 @@ export function PrivacyPage() {
           </section>
 
           <section className="space-y-3">
-            <h2 className="text-lg font-semibold text-foreground">6. Contact</h2>
+            <h2 className="text-lg font-semibold text-foreground">7. Contact</h2>
             <p>
               For privacy-related inquiries, contact us at{' '}
               <a href="mailto:privacy@arkova.ai" className="text-primary hover:underline">

@@ -15,7 +15,9 @@ describe('getComplianceControlIds', () => {
     expect(ids).toContain('ISO27001-A.10');
     expect(ids).toContain('eIDAS-25');
     expect(ids).toContain('eIDAS-35');
-    expect(ids).toHaveLength(7);
+    expect(ids).toContain('DPF-NOTICE');
+    expect(ids).toContain('DPF-ACCOUNTABILITY');
+    expect(ids).toHaveLength(9);
   });
 
   it('adds FERPA for DEGREE', () => {
@@ -23,7 +25,7 @@ describe('getComplianceControlIds', () => {
     expect(ids).toContain('FERPA-99.31');
     expect(ids).toContain('FERPA-99.31-DL');
     expect(ids).toContain('FERPA-99.37');
-    expect(ids).toHaveLength(10);
+    expect(ids).toHaveLength(12);
   });
 
   it('adds FERPA for TRANSCRIPT', () => {
@@ -52,14 +54,33 @@ describe('getComplianceControlIds', () => {
     expect(ids).toEqual(unique);
   });
 
+  it('adds LGPD and PDPA for INSURANCE', () => {
+    const ids = getComplianceControlIds('INSURANCE');
+    expect(ids).toContain('LGPD-6');
+    expect(ids).toContain('PDPA-24');
+  });
+
+  it('adds LGPD and LFPDPPP for FINANCIAL', () => {
+    const ids = getComplianceControlIds('FINANCIAL');
+    expect(ids).toContain('LGPD-6');
+    expect(ids).toContain('LFPDPPP-6');
+  });
+
+  it('adds international transfer controls for LEGAL', () => {
+    const ids = getComplianceControlIds('LEGAL');
+    expect(ids).toContain('LGPD-33');
+    expect(ids).toContain('PDPA-26');
+    expect(ids).toContain('LFPDPPP-36');
+  });
+
   it('handles null credential type', () => {
     const ids = getComplianceControlIds(null);
-    expect(ids.length).toBe(7); // universal only
+    expect(ids.length).toBe(9); // universal only (7 + 2 DPF)
   });
 
   it('handles undefined credential type', () => {
     const ids = getComplianceControlIds(undefined);
-    expect(ids.length).toBe(7);
+    expect(ids.length).toBe(9);
   });
 
   it('returns string array suitable for JSONB storage', () => {
@@ -77,6 +98,7 @@ describe('getComplianceControlIds', () => {
     const knownFrontendIds = [
       'SOC2-CC6.1', 'SOC2-CC6.7', 'GDPR-5.1f', 'GDPR-25',
       'ISO27001-A.10', 'eIDAS-25', 'eIDAS-35',
+      'DPF-NOTICE', 'DPF-ACCOUNTABILITY',
       'FERPA-99.31', 'FERPA-99.31-DL', 'FERPA-99.37',
     ];
     for (const expected of knownFrontendIds) {
