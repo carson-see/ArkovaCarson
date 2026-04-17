@@ -19,11 +19,10 @@
  */
 
 /**
- * Structural types matching the intelligence-dataset shape. Production
- * `src/` cannot cross-import from `scripts/`, so these duplicate the
- * canonical shape defined in
- * `scripts/intelligence-dataset/types.ts` — keep them in sync by eye.
- * The duck-typed Together training-row consumer doesn't care.
+ * Canonical shape duplicated from `scripts/intelligence-dataset/types.ts`
+ * because worker `tsconfig.rootDir` forbids `src/ → scripts/` imports.
+ * Keep the fields here structurally identical; a field drift makes
+ * `captureFailureAsScenario()` silently wrong.
  */
 export interface IntelligenceAnswer {
   analysis: string;

@@ -119,7 +119,6 @@ describe('scoreBenchmarkAnswer — rubric scoring', () => {
   it('scores 4 for expert-level answer (all required citations + keywords)', () => {
     const score = scoreBenchmarkAnswer(VALID_QUESTION, mkAnswer());
     expect(score.tier).toBe(4);
-    expect(score.total).toBe(4);
   });
 
   it('scores 0 when all required citations are missing', () => {

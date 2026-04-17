@@ -32,7 +32,11 @@ import { validateTeacherAnswer, summariseValidations } from './validation-pipeli
 import { FCRA_DISTILL_TEMPLATES } from './fcra-templates';
 import { FCRA_SOURCES } from '../intelligence-dataset/sources/fcra-sources';
 import { loadRegistry, defaultRegistryPath } from '../intelligence-dataset/validators/verification-registry';
-import { NESSIE_INTELLIGENCE_PROMPT_V2 } from '../intelligence-dataset/prompts';
+import { toTogetherRow } from '../common/together';
+import { pLimit } from '../common/p-limit';
+
+// O(1) lookup — avoids a 91-source linear scan per RAG context build.
+const FCRA_SOURCES_BY_ID = new Map(FCRA_SOURCES.map((s) => [s.id, s]));
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -42,16 +46,19 @@ interface Args {
   out: string;
   limit: number;
   teacher: 'opus' | 'mock';
+  concurrency: number;
 }
 
 function parseArgs(argv: string[]): Args {
   const outIdx = argv.indexOf('--out');
   const limitIdx = argv.indexOf('--limit');
+  const concIdx = argv.indexOf('--concurrency');
   return {
     dryRun: argv.includes('--dry-run'),
     out: outIdx >= 0 ? argv[outIdx + 1] : resolve(__dirname, '..', '..', 'training-output', 'nessie-v28-fcra-distilled-train.jsonl'),
     limit: limitIdx >= 0 ? parseInt(argv[limitIdx + 1], 10) : Number.POSITIVE_INFINITY,
     teacher: argv.includes('--dry-run') ? 'mock' : 'opus',
+    concurrency: concIdx >= 0 ? parseInt(argv[concIdx + 1], 10) : 8,
   };
 }
 
@@ -59,7 +66,7 @@ function parseArgs(argv: string[]): Args {
 function buildRagContext(sourceIds: string[]): string {
   const lines: string[] = [];
   for (const id of sourceIds) {
-    const src = FCRA_SOURCES.find((s) => s.id === id);
+    const src = FCRA_SOURCES_BY_ID.get(id);
     if (!src) {
       lines.push(`- ${id}: (not found in FCRA_SOURCES)`);
       continue;
@@ -107,35 +114,39 @@ async function main() {
       }
     : (await import('./opus-teacher')).createOpusTeacher();
 
+  // Bounded-concurrency fan-out. A 5,000-variation run at ~5s/call is
+  // ~7h serial; with 8 concurrent calls it's under an hour. Provider
+  // rate limits are the real ceiling — tune via --concurrency.
+  const limit = pLimit(args.concurrency);
+  const tasks = capped.map((v) =>
+    limit(async () => {
+      const rag = buildRagContext(v.expectedSources);
+      try {
+        const answer = await teacher.infer(v, rag);
+        return validateTeacherAnswer(v, answer, { registry });
+      } catch (err) {
+        return {
+          variationId: v.id,
+          accepted: false,
+          reasons: [`teacher error: ${(err as Error).message}`],
+          answer: {} as never,
+        } as ReturnType<typeof validateTeacherAnswer>;
+      }
+    }),
+  );
+  const results = await Promise.all(tasks);
   const accepted: DistilledScenario[] = [];
-  const results: ReturnType<typeof validateTeacherAnswer>[] = [];
-
-  for (const v of capped) {
-    const rag = buildRagContext(v.expectedSources);
-    let answer;
-    try {
-      answer = await teacher.infer(v, rag);
-    } catch (err) {
-      results.push({
-        variationId: v.id,
-        accepted: false,
-        reasons: [`teacher error: ${(err as Error).message}`],
-        answer: {} as never,
-      });
-      continue;
-    }
-    const result = validateTeacherAnswer(v, answer, { registry });
-    results.push(result);
-    if (result.accepted) {
-      accepted.push({
-        id: `distilled::${v.id}`,
-        category: v.category,
-        query: v.query,
-        expected: answer,
-        provenance: 'distilled',
-        teacher: teacher.name,
-      });
-    }
+  for (const [i, r] of results.entries()) {
+    if (!r.accepted) continue;
+    const v = capped[i];
+    accepted.push({
+      id: `distilled::${v.id}`,
+      category: v.category,
+      query: v.query,
+      expected: r.answer,
+      provenance: 'distilled',
+      teacher: teacher.name,
+    });
   }
 
   const summary = summariseValidations(results);
@@ -146,16 +157,9 @@ async function main() {
     console.log(`     - ${bucket}: ${n}`);
   }
 
-  // Emit training JSONL (Together chat-completions shape).
   const outDir = dirname(args.out);
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-  const rows = accepted.map((s) => ({
-    messages: [
-      { role: 'system', content: NESSIE_INTELLIGENCE_PROMPT_V2 },
-      { role: 'user', content: s.query },
-      { role: 'assistant', content: JSON.stringify(s.expected) },
-    ],
-  }));
+  const rows = accepted.map((s) => toTogetherRow(s.query, s.expected));
   writeFileSync(args.out, rows.map((r) => JSON.stringify(r)).join('\n') + (rows.length ? '\n' : ''));
 
   const report: DistillationReport = {

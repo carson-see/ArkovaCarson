@@ -23,6 +23,7 @@ import type {
   Judge,
   QuestionResult,
 } from './types';
+import { pLimit } from '../common/p-limit';
 
 export function detectDisagreement(tiers: Array<0 | 1 | 2 | 3 | 4>): boolean {
   if (tiers.length < 2) return false;
@@ -37,42 +38,61 @@ export function meanTier(tiers: Array<0 | 1 | 2 | 3 | 4>): number {
   return sum / tiers.length;
 }
 
+export interface RunBenchmarkOpts {
+  /** Concurrency for candidate answer calls per candidate. Default 4. */
+  questionConcurrency?: number;
+}
+
 export async function runBenchmark(
   questions: BenchmarkQuestion[],
   candidates: CandidateModel[],
   judges: Judge[],
+  opts: RunBenchmarkOpts = {},
 ): Promise<BenchmarkRun> {
   if (judges.length < 3) {
     throw new Error(`LLM-as-judge requires ≥ 3 judges to detect disagreement; got ${judges.length}`);
   }
   const startedAt = new Date().toISOString();
-  const candidateResults: Record<string, CandidateReport> = {};
+  const questionConcurrency = opts.questionConcurrency ?? 4;
 
-  for (const c of candidates) {
-    const perQuestion: QuestionResult[] = [];
-    for (const q of questions) {
-      const answer = await c.answer(q);
-      const judgeScores = await Promise.all(judges.map((j) => j.score(q, answer)));
-      const tiers = judgeScores.map((s) => s.tier);
-      perQuestion.push({
-        questionId: q.id,
+  // Candidates run in parallel — they're independent LLMs. Per candidate,
+  // questions fan out with bounded concurrency so we don't flood one
+  // provider's rate limit with N simultaneous requests.
+  const reports = await Promise.all(
+    candidates.map(async (c) => {
+      const limit = pLimit(questionConcurrency);
+      const perQuestion = await Promise.all(
+        questions.map((q) =>
+          limit(async (): Promise<QuestionResult> => {
+            const answer = await c.answer(q);
+            const judgeScores = await Promise.all(judges.map((j) => j.score(q, answer)));
+            const tiers = judgeScores.map((s) => s.tier);
+            return {
+              questionId: q.id,
+              candidateId: c.id,
+              candidateAnswer: answer,
+              judgeScores,
+              aggregateTier: meanTier(tiers),
+              disagreement: detectDisagreement(tiers),
+            };
+          }),
+        ),
+      );
+      const totalScore = perQuestion.reduce((a, r) => a + r.aggregateTier, 0);
+      const percent = questions.length > 0 ? (totalScore / (4 * questions.length)) * 100 : 0;
+      const report: CandidateReport = {
         candidateId: c.id,
-        candidateAnswer: answer,
-        judgeScores,
-        aggregateTier: meanTier(tiers),
-        disagreement: detectDisagreement(tiers),
-      });
-    }
-    const totalScore = perQuestion.reduce((a, r) => a + r.aggregateTier, 0);
-    const percent = questions.length > 0 ? (totalScore / (4 * questions.length)) * 100 : 0;
-    candidateResults[c.id] = {
-      candidateId: c.id,
-      perQuestion,
-      totalScore,
-      percent,
-      disagreementCount: perQuestion.filter((r) => r.disagreement).length,
-    };
-  }
+        perQuestion,
+        totalScore,
+        percent,
+        disagreementCount: perQuestion.filter((r) => r.disagreement).length,
+      };
+      return report;
+    }),
+  );
+
+  const candidateResults: Record<string, CandidateReport> = {};
+  for (const r of reports) candidateResults[r.candidateId] = r;
 
   return {
     startedAt,

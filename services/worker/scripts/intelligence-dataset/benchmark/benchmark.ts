@@ -59,7 +59,7 @@ export interface BenchmarkQuestion {
   /** Attorney credential + signed-date string. "pending attorney review" until reviewed. */
   authorCredential: string;
   /** Must be true for every benchmark item — prevents training-set contamination. */
-  heldOut: true | false;
+  heldOut: boolean;
 }
 
 export interface BenchmarkIndex {
@@ -137,7 +137,6 @@ export function ensureHeldOut(
 export interface BenchmarkScore {
   questionId: string;
   tier: 0 | 1 | 2 | 3 | 4;
-  total: number;
   components: {
     citationCoverage: number;      // 0..1 — fraction of requiredCitations present
     riskCoverage: number;          // 0..1 — fraction of requiredRiskKeywords found
@@ -208,7 +207,6 @@ export function scoreBenchmarkAnswer(
   return {
     questionId: q.id,
     tier,
-    total: tier, // 0–4 scale per question; total-over-50 is computed by the runner
     components: { citationCoverage, riskCoverage, recommendationCoverage },
     missing: {
       citations: missingCitations,

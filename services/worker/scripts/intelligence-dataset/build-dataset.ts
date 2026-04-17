@@ -22,9 +22,9 @@ import { fileURLToPath } from 'url';
 import type {
   RegulationDataset, IntelligenceScenario, TogetherTrainingRow, DatasetManifest,
 } from './types';
-import { NESSIE_INTELLIGENCE_PROMPT_V2 } from './prompts';
 import { splitBalanced } from './split';
 import { validateDataset, findUncitedSources } from './validate';
+import { toTogetherRow } from '../common/together';
 import {
   defaultRegistryPath, loadRegistry, decideTrust,
 } from './validators/verification-registry';
@@ -73,6 +73,18 @@ import { FERPA_ADVANCED_SCENARIOS } from './scenarios/ferpa/ferpa-advanced';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const OUTPUT_DIR = resolve(__dirname, '..', '..', 'training-output');
+
+/** Inputs for the closed-gate advisory warning on non-FCRA builds. Reflects
+ *  the snapshot documented in docs/plans/nessie-fcra-mastery-gate.md. */
+const CLOSED_GATE_PLACEHOLDER = {
+  verification: { total: 1, passing: 0, orphans: 1, hardFails: 0 },
+  attorneyReview: { tier3Open: 27, tier3Resolved: 0 },
+  chainOfThought: { scenariosWithCot: 0, scenariosTotal: 302 },
+  distillation: { acceptedQa: 0, target: 5000 },
+  auxiliary: { multiTurn: 12, documentGrounded: 9, adversarial: 15 },
+  benchmark: { attorneyQuestions: 2, nessieScorePercent: 0, geminiBaselinePercent: 70 },
+  canary: { reviewedResponses: 0, matchRatePercent: 0 },
+} as const;
 
 // ---------------------------------------------------------------------------
 // Dataset assembly per regulation
@@ -168,13 +180,7 @@ function scenarioToTogetherRow(s: IntelligenceScenario, opts: { cot: boolean } =
   const answer = opts.cot
     ? mergeCotIntoAnswer(s.expected, s.expected.reasoning_steps ?? scaffoldCot(s))
     : s.expected;
-  return {
-    messages: [
-      { role: 'system', content: NESSIE_INTELLIGENCE_PROMPT_V2 },
-      { role: 'user', content: s.query },
-      { role: 'assistant', content: JSON.stringify(answer) },
-    ],
-  };
+  return toTogetherRow(s.query, answer);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,26 +217,9 @@ function main() {
   console.log(`   Sources: ${dataset.sources.length}`);
   console.log(`   Scenarios: ${dataset.scenarios.length}`);
 
-  // NVI-14: Mastery-gate check for non-FCRA regulations. The gate
-  // evaluator is always advisory here (we don't block HIPAA / FERPA
-  // JSONL emission because the quarantine policy keeps those endpoints
-  // pinned to already-evaluated weights). When the gate is closed we
-  // loudly warn so any operator running this by hand has no excuse
-  // for expanding training. When the gate is open this is a no-op.
+  // NVI-14 advisory: warn when building non-FCRA while the gate is closed.
   if (dataset.regulation !== 'FCRA') {
-    // Placeholder inputs — real values will come from the verification
-    // registry + distillation report + benchmark output once those live.
-    // Today the gate is closed by construction (pending attorney-review
-    // + 5,000 distilled Q&A + live canary).
-    const gateEval = evaluateFcraMasteryGate({
-      verification: { total: 1, passing: 0, orphans: 1, hardFails: 0 },
-      attorneyReview: { tier3Open: 27, tier3Resolved: 0 },
-      chainOfThought: { scenariosWithCot: 0, scenariosTotal: 302 },
-      distillation: { acceptedQa: 0, target: 5000 },
-      auxiliary: { multiTurn: 12, documentGrounded: 9, adversarial: 15 },
-      benchmark: { attorneyQuestions: 2, nessieScorePercent: 0, geminiBaselinePercent: 70 },
-      canary: { reviewedResponses: 0, matchRatePercent: 0 },
-    });
+    const gateEval = evaluateFcraMasteryGate(CLOSED_GATE_PLACEHOLDER);
     if (!gateEval.passes) {
       console.warn(`\n🛑 NVI-14 FCRA Mastery Gate is CLOSED — building ${dataset.regulation} while FCRA is pre-mastery.`);
       console.warn(`   CLAUDE.md §0 NVI Gate Mandate applies. This build is permitted only for bug-fixes to already-deployed v28/v29 endpoints (per quarantine policy).`);

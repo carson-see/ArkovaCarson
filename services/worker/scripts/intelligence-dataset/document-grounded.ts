@@ -23,7 +23,7 @@
  */
 
 import type { CategoryId, IntelligenceAnswer, TogetherTrainingRow } from './types';
-import { NESSIE_INTELLIGENCE_PROMPT_V2 } from './prompts';
+import { toTogetherRow } from '../common/together';
 
 export type DocumentKind =
   | 'consumer-report'
@@ -128,11 +128,5 @@ export function documentGroundedToTogetherRow(
     throw new Error(`document-grounded scenario ${sc.id} failed validation: ${errs.join('; ')}`);
   }
   const doc = corpus.byId.get(sc.documentCorpusId)!;
-  return {
-    messages: [
-      { role: 'system', content: NESSIE_INTELLIGENCE_PROMPT_V2 },
-      { role: 'user', content: renderUserMessage(doc, sc.query) },
-      { role: 'assistant', content: JSON.stringify(sc.expected) },
-    ],
-  };
+  return toTogetherRow(renderUserMessage(doc, sc.query), sc.expected);
 }
