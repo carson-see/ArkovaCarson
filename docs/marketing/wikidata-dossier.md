@@ -3,7 +3,7 @@
 **Jira:** [SCRUM-479 / GEO-02](https://arkova.atlassian.net/browse/SCRUM-479)
 **Last updated:** 2026-04-17
 **Owner:** Carson (Wikidata submission), Engineering (follow-up `sameAs` PR if Q-ID shifts)
-**Engineering status:** Complete — [arkova-marketing/index.html](../../arkova-marketing/index.html) `sameAs` references `https://www.wikidata.org/wiki/Q138765025`. This dossier is the payload to enrich Q138765025 so LLMs and knowledge panels have structured facts to cite.
+**Engineering status:** Scaffolding complete; Wikidata enrichment submission outstanding. [arkova-marketing/index.html](../../arkova-marketing/index.html) `sameAs` already references `https://www.wikidata.org/wiki/Q138765025`, but that entity is a stub on Wikidata. This dossier is the payload to enrich Q138765025 so LLMs and knowledge panels have structured facts to cite.
 
 ---
 
@@ -27,10 +27,10 @@ When Google surfaces Q138765025 in a Knowledge Graph result, transition SCRUM-47
 
 | Language | Label | Description | Aliases |
 |----------|-------|-------------|---------|
-| en | Arkova | American software company providing privacy-preserving credential and document verification via Bitcoin anchoring | Arkova Technologies, ArkovaTech |
-| es | Arkova | Empresa estadounidense de software de verificación de credenciales con anclaje en Bitcoin | Arkova Technologies |
+| en | Arkova | American software company providing privacy-preserving credential and document verification via public-network anchoring | Arkova Technologies, ArkovaTech |
+| es | Arkova | Empresa estadounidense de software de verificación de credenciales con anclaje en red pública | Arkova Technologies |
 | ja | アーコバ | 米国のクレデンシャル検証ソフトウェア企業 | Arkova, ArkovaTech |
-| fr | Arkova | Éditeur américain de logiciels de vérification de justificatifs avec ancrage Bitcoin | Arkova Technologies |
+| fr | Arkova | Éditeur américain de logiciels de vérification de justificatifs avec ancrage sur réseau public | Arkova Technologies |
 
 ---
 

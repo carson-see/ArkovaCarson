@@ -44,7 +44,7 @@ We're selecting a firm for a SOC 2 Type II **readiness** assessment for Arkova (
 **Firm profile:**
 
 - ~15 FTE; bootstrapped.
-- Cloud footprint: Vercel (frontend), Google Cloud Run (worker), Supabase (database, with RLS and `FORCE ROW LEVEL SECURITY` on every table), Cloudflare Workers (edge), AWS/GCP KMS for key custody.
+- Cloud footprint: Vercel (frontend), Google Cloud Run (worker), Supabase (database, with RLS and `FORCE ROW LEVEL SECURITY` on every table), Cloudflare Workers (edge), GCP KMS for key custody.
 - Client-side processing boundary: documents never leave the user's device. Fingerprints + PII-stripped metadata are anchored to Bitcoin mainnet. This materially reduces audit scope — we're flagging so you scope accurately.
 - 1.41M+ anchored records in production; SOC 2 evidence already assembled at the level expected by Drata / Vanta / Hyperproof.
 
@@ -89,7 +89,7 @@ Requesting a proposal for a SOC 2 Type II **readiness** assessment for Arkova (a
 **Firm profile:**
 
 - ~15 FTE; bootstrapped.
-- Cloud footprint: Vercel, Cloud Run, Supabase (RLS-enforced), Cloudflare Workers, AWS/GCP KMS.
+- Cloud footprint: Vercel, Cloud Run, Supabase (RLS-enforced), Cloudflare Workers, GCP KMS.
 - Client-side processing boundary (documents never leave user device) materially reduces audit scope.
 
 **Engagement:**
@@ -98,7 +98,7 @@ Requesting a proposal for a SOC 2 Type II **readiness** assessment for Arkova (a
 - Gap report with OWNER + severity + target close date.
 - Preference for the partner to also lead ISO 27001 implementation later.
 
-**Budget:** readiness $8K–$20K.
+**Budget:** readiness $8K–$18K.
 
 **Attached:** same 3 docs as §Email 1.
 
@@ -128,7 +128,7 @@ Requesting a proposal for a SOC 2 Type II **readiness** assessment for Arkova (a
 **Firm profile:**
 
 - ~15 FTE; bootstrapped.
-- Cloud footprint: Vercel, Cloud Run, Supabase with RLS, Cloudflare Workers, AWS/GCP KMS.
+- Cloud footprint: Vercel, Cloud Run, Supabase with RLS, Cloudflare Workers, GCP KMS.
 - Client-side processing boundary reduces audit scope.
 - 1.41M+ anchored records in production.
 
@@ -137,7 +137,7 @@ Requesting a proposal for a SOC 2 Type II **readiness** assessment for Arkova (a
 - Readiness (3 weeks).
 - Gap report with OWNER + severity + close-date.
 - Named partner signs both readiness and (eventual) Type II reports.
-- Budget: readiness $8K–$15K.
+- Budget: readiness $8K–$18K.
 
 **Attached:** same 3 docs as §Email 1.
 
@@ -166,25 +166,12 @@ Arkova
 
 ---
 
-## Decline email (template)
+## Decline email
 
-**Subject:** Arkova SOC 2 readiness RFP — decision
-
-Hi [firm] team,
-
-Thanks for your readiness proposal. We've decided to proceed with a different firm, driven by [partner continuity / evidence-portal fit / pricing]. Your proposal was strong on [specific strength] — we'd welcome re-engagement for [specific future scope, e.g. "ISO 27001 in Q3"].
-
-Best,
-Matthew
-Arkova
+Use the shared template at [docs/compliance/rfp-decline-email-template.md](./rfp-decline-email-template.md). Subject line: `Arkova SOC 2 readiness RFP — decision`.
 
 ---
 
-## Manual-followup email to carson@arkova.ai
+## Manual-followup email
 
-Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, send an inbox note to `carson@arkova.ai` confirming:
-
-- Date RFPs were sent + reply-by date.
-- Links to [docs/compliance/soc2-auditor-shortlist.md](./soc2-auditor-shortlist.md) and this email draft.
-- Calendar hold for T+15 scoring meeting.
-- Budget approval confirmation (readiness $8K–$20K).
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, send `carson@arkova.ai` an inbox note on RFP-send day confirming: send date, reply-by date, links back to [soc2-auditor-shortlist.md](./soc2-auditor-shortlist.md) + this draft, T+15 scoring-meeting calendar hold, and budget approval confirmation (readiness $8K–$18K).

@@ -114,12 +114,9 @@ Even without a full v0.2 content change, the following may surface:
 
 ---
 
-## Manual-followup email (per CLAUDE.md)
+## Manual-followup email
 
-DPO sends `carson@arkova.ai`:
-- Review completion date + v0.2 PR link.
-- Whether Section 31(4) ODPC consultation is required.
-- If new stories surfaced, a list of proposed Jira tickets.
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, DPO sends `carson@arkova.ai`: review completion date + v0.2 PR link, whether Section 31(4) ODPC consultation is required, and any new story proposals surfaced during review.
 
 ---
 
