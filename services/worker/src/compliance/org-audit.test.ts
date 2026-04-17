@@ -190,6 +190,28 @@ describe('NCA-03 calculateOrgAudit', () => {
     expect(r.overall_score).toBe(100);
     expect(r.gaps).toEqual([]);
     expect(r.per_jurisdiction).toEqual([]);
+    expect(r.recommendations.recommendations).toEqual([]);
+    expect(r.recommendations.overflow_count).toBe(0);
+  });
+
+  it('NCA-05 recommendations are attached and prioritised for each audit', () => {
+    const input: OrgAuditInput = {
+      orgId: 'org-1',
+      jurisdictions: [{ jurisdiction_code: 'US-CA', industry_code: 'accounting' }],
+      rules: [CA_ACCOUNTING_RULE],
+      anchors: [
+        // Missing LICENSE (critical severity), CERTIFICATE, CONTINUING_EDUCATION
+      ],
+    };
+    const r = calculateOrgAudit(input);
+    expect(r.recommendations.recommendations.length).toBeGreaterThan(0);
+    expect(r.recommendations.recommendations[0].priority_score).toBeGreaterThanOrEqual(
+      r.recommendations.recommendations[r.recommendations.recommendations.length - 1].priority_score,
+    );
+    // Every recommendation links to at least one gap key
+    for (const rec of r.recommendations.recommendations) {
+      expect(rec.gap_keys.length).toBeGreaterThan(0);
+    }
   });
 
   it('handles unknown jurisdiction (no rules) with score 100 for that slot', () => {

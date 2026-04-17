@@ -147,6 +147,8 @@ router.post('/', async (req: Request, res: Response) => {
           anchor_count: anchors.length,
           rule_count: rules.length,
           jurisdiction_pair_count: jurisdictionPairs.length,
+          // NCA-05: recommendations live in metadata per migration 0217 comment.
+          recommendations: result.recommendations,
         },
       })
       .select('*')
