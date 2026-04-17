@@ -1,7 +1,45 @@
 # Arkova Unified Backlog — Single Source of Truth
-_Last updated: 2026-04-17 (1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,187 tests, 208 migrations (0000-0217, prod through 0185, 18 pending), **Nessie v27.3 FCRA UNDER_REVIEW / v28.0 HIPAA + v29.0 FERPA QUARANTINED (NVI-15)**, Gemini Golden **v6 trained + eval'd** cutover pending, **v7 failed DoD**, intelligence dataset **343 scenarios + 209 anchored sources** + **NVI validators shipped 2026-04-17 (NVI-01..04 + NVI-15 + NVI-18 CI guard)**, Phase 1.5 15/16, NMT 14/14, ATS 8/8, NCE 20/20 built, **NCA 4/10 shipped 2026-04-17 (NCA-01..04)**, **INT 8/9**, DEP 4/23, **NVI 6/18 shipped**; NVI-05..14/16/17 remain, **NDD/NSS/NTF paused per NVI decree**, **CONT epic SCRUM-874** + **FEDCONT epic SCRUM-875**) | Re-prioritized each session per CLAUDE.md rules_
+_Last updated: 2026-04-17 (evening — 1.41M+ public records, 1.41M+ SECURED anchors on mainnet, 4,325 tests, 209 migrations (0000-0218, prod through 0185, 19 pending), **Nessie v27.3 FCRA UNDER_REVIEW / v28.0 HIPAA + v29.0 FERPA QUARANTINED (NVI-15)**, Gemini Golden **v6 trained + eval'd** cutover pending, **v7 failed DoD**, intelligence dataset **343 scenarios + 209 anchored sources** + **NVI validators shipped 2026-04-17 (NVI-01..04 + NVI-15 + NVI-18 CI guard)**, Phase 1.5 15/16, NMT 14/14, ATS 8/8, NCE 20/20 built, **NCA 9/10 shipped 2026-04-17 (NCA-01..09 across #411/#413/#414)**, **INTL 3/6 shipped (INTL-04/05/06 in #413)**, **TRUST 1/7 shipped (TRUST-07 CE+ readiness in #413)**, **INT 8/9**, DEP 4/23, **NVI 6/18 shipped**; NVI-05..14/16/17 remain, **NDD/NSS/NTF paused per NVI decree**, **CONT epic SCRUM-874** + **FEDCONT epic SCRUM-875** | Follow-ups: SCRUM-888 (SIC), -889 (Thailand), -890 (Malaysia), -891 (IASME), -892 (NPH-16 deploy), -893 (NCA engineering bundle)) | Re-prioritized each session per CLAUDE.md rules_
 
 > **Rule:** All backlog items — stories, bugs, security findings, operational tasks, GEO items — exist in this single document. Prioritized and re-prioritized each session.
+
+---
+
+## 2026-04-17 (evening) sprint — 10 stories shipped across PR #413 + PR #414
+
+**Shipped (all QA-merged, awaiting production deploy + external operator steps):**
+
+| Story | Ticket | PR | Notes |
+|-------|--------|----|-------|
+| NCA-05 Recommendation Engine | SCRUM-760 | #413 | Pure `buildRecommendations`, 20-item cap, `gap_keys` drill-down; persisted in `compliance_audits.metadata.recommendations` |
+| NCA-06 Regulatory Change Impact | SCRUM-761 | #414 | Pure impact calculator + cron orchestrator (not yet wired to Cloud Scheduler — see SCRUM-893) |
+| NCA-07 Audit Dashboard Button | SCRUM-762 | #414 | ARIA-live state machine; slotted above ComplianceScoreCard for ORG_ADMIN |
+| NCA-08 Compliance Scorecard | SCRUM-763 | #414 | `/compliance/scorecard` — gauge + bars + gaps + grouped recs + SVG timeline |
+| NCA-09 PDF Export | SCRUM-764 | #414 | jsPDF US-Letter, browser-only (Constitution 1.6) |
+| INTL-04 Colombia Law 1581 | SCRUM-724 | #413 | Privacy notice + SIC RNBD packet |
+| INTL-05 Thailand PDPA | SCRUM-725 | #413 | Privacy notice + ASEAN/GDPR-aligned SCC annex |
+| INTL-06 Malaysia PDPA 2024 | SCRUM-726 | #413 | Privacy notice + Transfer Impact Assessment template |
+| TRUST-07 UK Cyber Essentials Plus | SCRUM-720 | #413 | Readiness checklist covering all 5 CE+ control themes |
+| NPH-16 Deploy API Keys | SCRUM-728 | #414 | Runbook + pre-deploy verification script (operator-executed) |
+
+**Follow-up tickets created (6):**
+
+| Ticket | Type | Blocks |
+|--------|------|--------|
+| SCRUM-888 | Operator — File Colombia SIC RNBD registration | SCRUM-724 |
+| SCRUM-889 | Operator — Engage Thailand counsel (SCC + PDPA DPO) | SCRUM-725 |
+| SCRUM-890 | Operator — Engage Malaysia counsel (TIA + PDP DPO) | SCRUM-726 |
+| SCRUM-891 | Operator — Engage IASME CE+ assessor | SCRUM-720 |
+| SCRUM-892 | Operator — `gcloud run services update` for OpenStates/SAM.gov/CourtListener keys | SCRUM-728 |
+| SCRUM-893 | Engineering bundle — Cloud Scheduler wiring, gap filters, PDF SVG gauge, Nessie RAG text, integrity JOIN, UAT | Relates to SCRUM-760..764 |
+
+**Migration:** 0218 `notifications` table (NCA-06 in-app notifications — RLS, CHECK constraint, unread index).
+
+**Code-review findings fixed in-session (commit 920938bf on PR #414):**
+1. `anchors.not_after` → `expires_at` + `title` → `label` (both `regulatory-change-cron.ts` + pre-existing `compliance-audit.ts` schema mismatch flagged on PR #411)
+2. `persistChangeEvent` now writes full `currentAudit` state (prevents scorecard clobber + self-poisoning delta)
+3. 5 hardcoded UI strings in `ComplianceScorecardPage.tsx` moved to `AUDIT_MY_ORG_LABELS.SCORECARD_*`
+4. Migration 0218 replaces the runtime try/catch on `notifications` insert
 
 ---
 
