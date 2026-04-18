@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Hoist mocks
 const mockFrom = vi.hoisted(() => vi.fn());
+const mockRpc = vi.hoisted(() => vi.fn());
 const mockUser = vi.hoisted(() => ({ current: { id: 'test-user-id' } as { id: string } | null }));
 
 const mockChannel = vi.hoisted(() => ({
@@ -20,6 +21,7 @@ const mockRemoveChannel = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     from: mockFrom,
+    rpc: mockRpc,
     channel: vi.fn(() => mockChannel),
     removeChannel: mockRemoveChannel,
   },
@@ -77,22 +79,16 @@ function setupMocks(opts: {
         select: () => Promise.resolve({ data: allPlans, error: planError }),
       };
     }
-    if (table === 'anchors') {
-      // Builder chain with abortSignal + Thenable so `await` works and the
-      // hook's `.then(r => r, err => {...})` fallback path is exercisable.
-      const result = { count, error: countError, data: null };
-      const builder: Record<string, unknown> = {};
-      builder.select = () => builder;
-      builder.eq = () => builder;
-      builder.gte = () => builder;
-      builder.abortSignal = () => builder;
-      builder.then = (onFulfilled: (v: typeof result) => unknown, onRejected?: (e: unknown) => unknown) => {
-        if (countError && onRejected) return Promise.resolve(onRejected(countError));
-        return Promise.resolve(onFulfilled(result));
-      };
-      return builder;
-    }
     return {};
+  });
+
+  // Count now goes through `supabase.rpc('get_user_monthly_anchor_count', ...)`
+  // (migration 0220 SECURITY DEFINER RPC, BUG-2026-04-19-001 follow-up).
+  mockRpc.mockImplementation((_name: string, _args: Record<string, unknown>) => {
+    if (countError) {
+      return Promise.resolve({ data: null, error: countError });
+    }
+    return Promise.resolve({ data: count, error: null });
   });
 }
 
@@ -275,9 +271,9 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.recordsUsed).toBe(2));
   });
 
-  // BUG-2026-04-19-001 regression: anchor count timeout / RLS failure must
-  // NOT strand the UsageWidget in its loading skeleton. Fall back to 0.
-  it('falls back to recordsUsed=0 when anchor count errors (BUG-2026-04-19-001)', async () => {
+  // BUG-2026-04-19-001 regression: anchor count RPC failure must NOT strand
+  // the UsageWidget in its loading skeleton. Fall back to 0 + console.warn.
+  it('falls back to recordsUsed=0 when anchor count RPC errors (BUG-2026-04-19-001)', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     setupMocks({
       subscription: { plan_id: 'pro', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
@@ -291,11 +287,14 @@ describe('useEntitlements', () => {
 
     expect(result.current.recordsUsed).toBe(0);
     expect(result.current.planName).toBe('Professional');
+    // Hook surfaces error as null (the failure path is *internal* — widget
+    // renders normally with the fallback). The underlying error is logged
+    // through console.warn with its exact message, asserted below.
     expect(result.current.error).toBeNull();
     expect(result.current.canCreateAnchor).toBe(true);
     expect(warnSpy).toHaveBeenCalledWith(
-      '[useEntitlements] anchor count fell back to 0:',
-      expect.any(Error),
+      '[useEntitlements] anchor count RPC error, falling back to 0:',
+      expect.objectContaining({ message: 'statement timeout (25s)' }),
     );
     warnSpy.mockRestore();
   });

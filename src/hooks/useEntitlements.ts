@@ -50,41 +50,26 @@ interface EntitlementData {
 }
 
 async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-
-  // BUG-2026-04-19-001: For users who own a large number of anchors (platform
-  // admins + high-volume pipeline operators), the `.eq(user_id).gte(created_at)`
-  // count runs through RLS and times out at 30s + 500s. That left the dashboard
-  // UsageWidget stuck in a perpetual loading skeleton on prod.
-  //
-  // Tight 5-second race on the count. On timeout or error we fall back to 0 —
-  // the widget already shows "Unlimited" plan copy and the count is
-  // non-critical in beta. Follow-up SCRUM ticket tracks moving this to a
-  // SECURITY DEFINER RPC like `get_user_anchor_stats` (which the dashboard
-  // stat cards already use and returns in <100ms).
-  const COUNT_TIMEOUT_MS = 5_000;
-  const countController = new AbortController();
-  const countTimer = setTimeout(() => countController.abort(), COUNT_TIMEOUT_MS);
-
-  const countPromise = (async () => {
-    try {
-      return await supabase
-        .from('anchors')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId)
-        .gte('created_at', monthStart.toISOString())
-        .abortSignal(countController.signal);
-    } catch (err) {
-      // Abort or RLS timeout — degrade to 0 rather than failing the widget.
-      // Logged via console so ops can track incidence without paging.
-      console.warn('[useEntitlements] anchor count fell back to 0:', err);
-      return { count: 0, error: null, data: null };
-    } finally {
-      clearTimeout(countTimer);
-    }
-  })();
+  // BUG-2026-04-19-001: Counting this-month anchors through RLS on a 2.8M-row
+  // table takes 23s and 500s at the 30s Supabase REST timeout for platform
+  // admins / high-volume pipeline operators. Migration 0220 introduces
+  // `get_user_monthly_anchor_count` — a SECURITY DEFINER RPC that bypasses
+  // RLS and returns in <100ms. The RPC enforces per-user isolation
+  // internally (returns 0 if p_user_id != auth.uid()). On any error we
+  // degrade to 0 — recordsLimit is null (unlimited) in beta, so the count
+  // is advisory and must not strand the widget in its skeleton state.
+  const countPromise = supabase
+    // Supabase types regen runs via `npm run gen:types`; new RPC will appear
+    // after the next regen. Until then the name cast is expected.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .rpc('get_user_monthly_anchor_count' as any, { p_user_id: userId })
+    .then(
+      (r) => ({ count: (typeof r.data === 'number' ? r.data : 0), error: r.error }),
+      (err: unknown) => {
+        console.warn('[useEntitlements] anchor count RPC rejected, falling back to 0:', err);
+        return { count: 0, error: null };
+      },
+    );
 
   const [subResult, plansResult, countResult] = await Promise.all([
     supabase
@@ -103,6 +88,9 @@ async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
   // NOTE: intentionally do NOT throw on countResult.error — the count is
   // advisory in beta (recordsLimit is always null). Throwing here would keep
   // the widget in its skeleton state, which is BUG-2026-04-19-001.
+  if (countResult.error) {
+    console.warn('[useEntitlements] anchor count RPC error, falling back to 0:', countResult.error);
+  }
 
   const subData = subResult.data;
   const plans = plansResult.data ?? [];
