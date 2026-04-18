@@ -78,13 +78,19 @@ function setupMocks(opts: {
       };
     }
     if (table === 'anchors') {
-      return {
-        select: () => ({
-          eq: () => ({
-            gte: () => Promise.resolve({ count, error: countError }),
-          }),
-        }),
+      // Builder chain with abortSignal + Thenable so `await` works and the
+      // hook's `.then(r => r, err => {...})` fallback path is exercisable.
+      const result = { count, error: countError, data: null };
+      const builder: Record<string, unknown> = {};
+      builder.select = () => builder;
+      builder.eq = () => builder;
+      builder.gte = () => builder;
+      builder.abortSignal = () => builder;
+      builder.then = (onFulfilled: (v: typeof result) => unknown, onRejected?: (e: unknown) => unknown) => {
+        if (countError && onRejected) return Promise.resolve(onRejected(countError));
+        return Promise.resolve(onFulfilled(result));
       };
+      return builder;
     }
     return {};
   });
@@ -267,6 +273,31 @@ describe('useEntitlements', () => {
 
     // React Query refetch is async — wait for the new data
     await waitFor(() => expect(result.current.recordsUsed).toBe(2));
+  });
+
+  // BUG-2026-04-19-001 regression: anchor count timeout / RLS failure must
+  // NOT strand the UsageWidget in its loading skeleton. Fall back to 0.
+  it('falls back to recordsUsed=0 when anchor count errors (BUG-2026-04-19-001)', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setupMocks({
+      subscription: { plan_id: 'pro', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
+      plan: { records_per_month: 100, name: 'Professional' },
+      countError: new Error('statement timeout (25s)'),
+    });
+
+    const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(result.current.recordsUsed).toBe(0);
+    expect(result.current.planName).toBe('Professional');
+    expect(result.current.error).toBeNull();
+    expect(result.current.canCreateAnchor).toBe(true);
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[useEntitlements] anchor count fell back to 0:',
+      expect.any(Error),
+    );
+    warnSpy.mockRestore();
   });
 
   // H5: Realtime subscription removed — plan changes are rare during beta.

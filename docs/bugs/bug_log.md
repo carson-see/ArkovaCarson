@@ -1,5 +1,13 @@
 # Arkova Bug Log
-_Last updated: 2026-04-18 (evening) | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 45 (40 prior + 5 from 2026-04-18 Top-10 sprint incl. two HIGH prod regressions)_
+_Last updated: 2026-04-19 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 46 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 UAT)_
+
+## 2026-04-19 — Click-through UAT Bug Finds (continuation of 2026-04-18 sprint)
+
+Followed the same "do click-through UAT on prod before trusting CI-green" discipline as 2026-04-18. Continues the 2026-04-18 finding that features can ship green tests + code review and still be broken in prod. Same entries logged in the master [Bug Tracker Spreadsheet](https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0).
+
+| ID | Severity | Summary | Fix | Regression Test |
+|----|----------|---------|-----|-----------------|
+| BUG-2026-04-19-001 | **HIGH (prod regression)** | `/dashboard` `UsageWidget` stuck in perpetual loading skeleton in production for users who own many anchors (platform admin + high-volume pipeline operators). Root cause: `fetchEntitlementData` in `src/hooks/useEntitlements.ts` issued `supabase.from('anchors').select('id', { count: 'exact', head: true }).eq('user_id', userId).gte('created_at', monthStart)` through RLS. For carson@arkova.ai (757K+ anchors this month via the pipeline), `EXPLAIN ANALYZE` confirmed 23.4s / Index-Only Scan touching 323K buffers; Supabase REST 500-abort at 30s. React Query default retries stacked up to 90+s of stuck skeleton. Found by 2026-04-19 prod UAT: Chrome MCP screenshot of `arkova-26.vercel.app/dashboard` showed a third-slot card with 3 `animate-pulse` skeletons between `Compliance Score` and `Credits` that never resolved, then JS hook of `window.fetch` captured `[BLOCKED redacted supabase URL] status=500 ms=30073`. | Wrap the anchors-count query in an explicit `AbortController` with a 5s timeout, and in a `try/catch` that degrades to `{ count: 0 }` + `console.warn` on error. `recordsLimit` is hardcoded to `null` (unlimited in beta) so the count is advisory only — failing it must NOT block the widget. `src/hooks/useEntitlements.ts` updated accordingly. | `src/hooks/useEntitlements.test.ts` — new test `falls back to recordsUsed=0 when anchor count errors (BUG-2026-04-19-001)` asserts `recordsUsed=0 + planName preserved + error=null + canCreateAnchor=true + console.warn emitted`. Full suite: 15/15 tests passing post-fix. Post-deploy prod UAT re-check planned after Vercel auto-deploys from main. |
 
 ## 2026-04-18 — Top-10 Sprint Bug Finds
 
