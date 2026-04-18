@@ -147,6 +147,8 @@ router.post('/', async (req: Request, res: Response) => {
           anchor_count: anchors.length,
           rule_count: rules.length,
           jurisdiction_pair_count: jurisdictionPairs.length,
+          // NCA-05: recommendations live in metadata per migration 0217 comment.
+          recommendations: result.recommendations,
         },
       })
       .select('*')
@@ -300,10 +302,15 @@ async function loadJurisdictionRules(
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
+  // 3-query parallel JOIN: anchors + integrity_scores + review_queue_items.
+  // Schema per codex review on PR #411: anchors table uses `expires_at` +
+  // `label`, not `not_after` + `title`. integrity_scores + review_queue_items
+  // live on separate tables; joined here via client-side Map lookup so we can
+  // surface integrity score + fraud flags alongside the anchor record.
   const [{ data: anchorsRaw }, { data: integrityRows }, { data: reviewRows }] = await Promise.all([
     dbAny
       .from('anchors')
-      .select('id, credential_type, status, not_after, title')
+      .select('id, credential_type, status, expires_at, label')
       .eq('org_id', orgId)
       .eq('status', 'SECURED')
       .limit(10_000),
@@ -347,8 +354,8 @@ async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
       status: a.status as string,
       integrity_score: integrity?.overall_score ?? null,
       fraud_flags: fraudFlags,
-      expiry_date: (a.not_after as string) ?? null,
-      title: (a.title as string) ?? null,
+      expiry_date: (a.expires_at as string) ?? null,
+      title: (a.label as string) ?? null,
     };
   });
 }

@@ -1,51 +1,31 @@
 /**
- * VideoObject JSON-LD Schema Component (GEO-11)
+ * VideoObject JSON-LD Schema Component (GEO-11 / SCRUM-478).
  *
- * Renders schema.org VideoObject markup for embedded videos.
- * Improves discoverability in Google, Gemini, and AI search engines.
+ * Thin React wrapper that renders schema.org VideoObject markup for a single
+ * embedded video. The shape comes from `buildVideoObjectsJsonLd` in
+ * `src/lib/geo/videos.ts` so the emitted schema stays aligned with the
+ * marketing-site inventory model and the canonical Organization `@id`.
  */
 
+import { buildVideoObjectsJsonLd, type VideoInventoryEntry } from '../../lib/geo/videos';
+
 export interface VideoObjectProps {
+  /** Canonical YouTube video ID (e.g. "dQw4w9WgXcQ"). */
+  youtubeId: string;
   name: string;
   description: string;
   thumbnailUrl: string;
+  /** ISO 8601 (YYYY-MM-DD or full datetime). */
   uploadDate: string;
-  contentUrl?: string;
-  embedUrl?: string;
-  duration?: string; // ISO 8601 format (e.g., "PT3M30S")
-  publisher?: string;
+  /** ISO 8601 duration (e.g. "PT3M30S"). */
+  duration: string;
+  /** Canonical page URL the video is embedded on; falls back to site root. */
+  embedPage?: string;
 }
 
-export function VideoObjectSchema({
-  name,
-  description,
-  thumbnailUrl,
-  uploadDate,
-  contentUrl,
-  embedUrl,
-  duration,
-  publisher = 'Arkova',
-}: VideoObjectProps) {
-  const schema = {
-    '@context': 'https://schema.org',
-    '@type': 'VideoObject',
-    name,
-    description,
-    thumbnailUrl,
-    uploadDate,
-    ...(contentUrl ? { contentUrl } : {}),
-    ...(embedUrl ? { embedUrl } : {}),
-    ...(duration ? { duration } : {}),
-    publisher: {
-      '@type': 'Organization',
-      name: publisher,
-      logo: {
-        '@type': 'ImageObject',
-        url: 'https://app.arkova.ai/arkova-icon.png',
-      },
-    },
-  };
-
+export function VideoObjectSchema(props: VideoObjectProps) {
+  const entry: VideoInventoryEntry = props;
+  const [schema] = buildVideoObjectsJsonLd([entry]);
   return (
     <script
       type="application/ld+json"

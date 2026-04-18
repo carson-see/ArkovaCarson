@@ -23,7 +23,7 @@ Arkova currently has:
 | **NOW** | EU-US Data Privacy Framework | Free | Self-certification, 2-3 weeks |
 | **Next 12 mo** | ISO 27001 + 27701 | $50-100K | International trust signal, feeds everything else |
 | **Next 12 mo** | CSA STAR Level 2 | $15-25K | Leverages SOC 2 Type II |
-| **Next 12 mo** | Cyber Essentials Plus (UK) | $2-6.5K | Cheap UK market entry |
+| **Next 12 mo** | Cyber Essentials Plus (UK) | $2-6.5K | Cheap UK market entry — readiness at `uk-cyber-essentials/readiness-checklist.md` (SCRUM-720) |
 | **Next 12 mo** | HITRUST i1 | $55-105K | Only if healthcare vertical active |
 | **Next 12 mo** | StateRAMP | $50-100K | Only if state gov education pipeline |
 | **Future** | FedRAMP | $500K-2M | Post-Series B, federal pipeline required |
