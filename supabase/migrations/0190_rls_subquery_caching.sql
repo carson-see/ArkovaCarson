@@ -4,9 +4,16 @@
 -- evaluates per-row. Wrapping in (SELECT auth.uid()) lets the planner cache
 -- the result once per statement.
 --
--- Tables affected: profiles, audit_events, credit_allocations, credit_transactions,
--- reports, anchor_recipients, extraction_feedback, ai_reports, review_decisions,
--- compliance_flags, payments, invoices, subscriptions
+-- Tables affected (verified to exist as of 2026-04-19): profiles,
+-- audit_events, credit_transactions, reports, anchor_recipients, payments,
+-- subscriptions, extraction_feedback.
+--
+-- The original header listed `credit_allocations`, `ai_reports`,
+-- `review_decisions`, `compliance_flags`, and `invoices` — those references
+-- are stale (the tables were never created or were renamed before this
+-- migration landed). The `credit_allocations` block in particular caused
+-- `supabase db reset` to fail with `42P01 relation does not exist` on every
+-- fresh boot, which kept `Tests` CI red for multiple days.
 --
 -- Note: anchors and attestations already optimized in 0169/0176.
 
@@ -40,15 +47,7 @@ CREATE POLICY audit_events_insert ON audit_events
   );
 
 -- =============================================================================
--- 3. credit_allocations — SELECT policy
--- =============================================================================
-DROP POLICY IF EXISTS credit_allocations_select ON credit_allocations;
-CREATE POLICY credit_allocations_select ON credit_allocations
-  FOR SELECT TO authenticated
-  USING (user_id = (SELECT auth.uid()));
-
--- =============================================================================
--- 4. credit_transactions — SELECT policy
+-- 3. credit_transactions — SELECT policy
 -- =============================================================================
 DROP POLICY IF EXISTS credit_transactions_select ON credit_transactions;
 CREATE POLICY credit_transactions_select ON credit_transactions
