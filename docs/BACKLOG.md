@@ -48,7 +48,7 @@ _Last updated: 2026-04-17 (evening — 1.41M+ public records, 1.41M+ SECURED anc
 | Category | Total | Done | Open | Blocking Beta? |
 |----------|-------|------|------|:--------------:|
 | **BETA Readiness Stories** | **13** | **13** | **0** | No (all complete) |
-| BETA Activation Items | 2 | 2 | 0 | No (signet confirmed) |
+| BETA Activation Items | 2 | 2 | 0 | No (mainnet confirmed — 1.41M+ SECURED) |
 | E2E Validation Bugs | 7 | 7 fixed | 0 | No |
 | Demo Readiness (DEMO) | 4 | 4 | 0 | No |
 | Phase 1.5 Foundation | 16 | 15 | 1 | No |

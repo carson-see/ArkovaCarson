@@ -2,8 +2,8 @@
 
 **ID:** BUG-OPS-01
 **Date:** 2026-03-20 (discovered via debug logging)
-**Severity:** CRITICAL (blocks all anchor processing on production)
-**Status:** OPEN — requires manual secret update
+**Severity:** CRITICAL (blocked all anchor processing — testnet only)
+**Status:** **RESOLVED 2026-04-18** — obsolete. This bug was scoped to testnet treasury keypair mismatch. Production cut over to `BITCOIN_NETWORK=mainnet` weeks before this audit; mainnet treasury is correctly funded and has been processing continuously. Worker `/health` reports `"anchoring":"ok"` on 2026-04-18; header shows **1.41M+ SECURED anchors on mainnet**. File retained for historical context only.
 
 ## Summary
 
