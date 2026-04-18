@@ -48,7 +48,7 @@ CREATE POLICY "Org admins can mark notifications read"
   ON notifications FOR UPDATE USING (
     org_id IN (
       SELECT org_id FROM org_members
-      WHERE user_id = auth.uid() AND role IN ('OWNER', 'ADMIN')
+      WHERE user_id = auth.uid() AND role IN ('owner', 'admin')
     )
   );
 
