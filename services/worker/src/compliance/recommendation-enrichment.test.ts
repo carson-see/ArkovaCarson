@@ -85,6 +85,29 @@ describe('NCA-FU1 enrichRecommendationsWithNessie', () => {
     expect(out.recommendations[0].description).toBe(base.recommendations[0].description);
   });
 
+  it('clears the timeout timer when the RAG call wins the race', async () => {
+    const base = buildRecommendations({ gaps: [gap()] });
+    const first = base.recommendations[0];
+    const rag = vi.fn().mockResolvedValue({
+      text: JSON.stringify([{ id: first.id, description: 'Grounded description that is long enough to pass the floor.' }]),
+    });
+    const setSpy = vi.spyOn(global, 'setTimeout');
+    const clearSpy = vi.spyOn(global, 'clearTimeout');
+    try {
+      await enrichRecommendationsWithNessie({
+        result: base,
+        gaps: [gap()],
+        rag,
+        timeoutMs: 10_000,
+      });
+      expect(setSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(clearSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      setSpy.mockRestore();
+      clearSpy.mockRestore();
+    }
+  });
+
   it('regroups enriched recommendations into the same group buckets', async () => {
     const base = buildRecommendations({
       gaps: [
