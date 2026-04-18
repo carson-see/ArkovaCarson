@@ -77,7 +77,7 @@ _Last updated: 2026-04-17 (evening — 1.41M+ public records, 1.41M+ SECURED anc
 | Dependency Hardening (DEP) | 10 | 1 | 9 | No |
 | International Compliance (REG) | 28 | 0 | 28 | No |
 | International Regulatory Expansion (INTL) ★ NEW | 6 | 0 | 6 | No (deferred — customer-gated) |
-| Trust Framework (TRUST) ★ NEW | 7 | 0 | 7 | No (deferred — external vendor) |
+| Trust Framework (TRUST) ★ NEW | 7 | 1 | 6 | TRUST-01/02/03 Q1; TRUST-04/05 blocked (SCRUM-522/517); TRUST-06 dep chain; TRUST-07 shipped (#413) |
 | Stories (NOT STARTED) | 5 | — | 5 | No (post-launch) |
 | ATS & Background Checks | 8 | 8 | 0 | No (all complete) |
 | Stories (PARTIAL) | 2 | — | 2 | No (external/ops) |
@@ -831,6 +831,26 @@ Prerequisite for CONT epic (SCRUM-874) Phase 3+: Gemini needs a `CONTRACT` `cred
 6. 5–10 CONTRACT seed exemplars in v7 golden dataset
 
 **Dedup check:** `operating_agreement` already exists under `BUSINESS_ENTITY` sub-types — do NOT duplicate under CONTRACT; cross-reference from story doc.
+
+---
+
+## TIER 0M: TRUST FRAMEWORK EXPANSION (TRUST-01..07) — NEW 2026-04-17
+
+> **Jira epic:** [SCRUM-712](https://arkova.atlassian.net/browse/SCRUM-712) | **Source roadmap:** [docs/compliance/trust-framework-roadmap.md](compliance/trust-framework-roadmap.md) | **Story doc:** [docs/stories/34_trust_framework.md](stories/34_trust_framework.md) | **Confluence:** [Top-10 Sprint Batch 3 §11](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) | **Status:** 1/7 shipped (TRUST-07 in #413); 6 open
+
+Q1 decomposition of the TRUST epic. Each TRUST-NN below is a discrete child story — scrum master creates a Jira ticket per row using the template in `34_trust_framework.md §Story template` and paperclips the Confluence page to it.
+
+| ID | Story | Priority | Status | Dependencies | Effort | Cost |
+|----|-------|----------|--------|--------------|--------|------|
+| TRUST-01 | CSA STAR Level 1 self-assessment | High | To Do (Q1) | none — CAIQ drafted at `docs/compliance/csa-star-caiq-self-assessment.md` | Small | $0 |
+| TRUST-02 | EU-US Data Privacy Framework self-certification | High (EU procurement blocker) | To Do (Q1) | none | Small | $0 |
+| TRUST-03 | Cyber liability insurance $2M–$5M | High | To Do (Q1) | none — rubric + carriers list in `docs/compliance/cyber-insurance-checklist.md` | Small (ops) | $3K–$7K/yr |
+| TRUST-04 | SOC 2 Type II readiness engagement | High | **Blocked** on [SCRUM-522](https://arkova.atlassian.net/browse/SCRUM-522) | SCRUM-522 | Medium | $8K–$18K |
+| TRUST-05 | Annual CREST-accredited penetration test | High | **Blocked** on [SCRUM-517](https://arkova.atlassian.net/browse/SCRUM-517) | SCRUM-517 | Large | $25K–$55K |
+| TRUST-06 | Trust seals on marketing + app (`TrustBadges` component) | Medium | To Do | TRUST-01..04 closed first | Medium | $0 |
+| ~~TRUST-07~~ | ~~Cyber Essentials Plus UK readiness~~ | ~~Medium~~ | **DONE** ([#413](https://github.com/carson-see/ArkovaCarson/pull/413)); external IASME engagement tracked in SCRUM-891 | — | — | — |
+
+**Q1 priority order:** TRUST-01 → TRUST-02 → TRUST-03 (all free or low-cost) → TRUST-04 / TRUST-05 unblock after external RFPs close → TRUST-06 after TRUST-01..04 close.
 
 ---
 

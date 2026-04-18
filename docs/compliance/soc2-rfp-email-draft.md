@@ -1,5 +1,6 @@
 # SOC 2 Readiness-Assessment RFP — Ready-to-Send Email Drafts
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §5](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "SOC 2 Auditor RFP Email Drafts — SCRUM-522"
 **Jira:** [SCRUM-522](https://arkova.atlassian.net/browse/SCRUM-522)
 **Last updated:** 2026-04-17
 **Owner:** Matthew (send), Carson (CC + final sign-off)

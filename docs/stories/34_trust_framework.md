@@ -1,5 +1,6 @@
 # TRUST Framework Expansion — Q1 Child Stories
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §11](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "TRUST Framework — Q1 Child Stories Plan — SCRUM-712"
 **Jira epic:** [SCRUM-712](https://arkova.atlassian.net/browse/SCRUM-712)
 **Source roadmap:** [docs/compliance/trust-framework-roadmap.md](../compliance/trust-framework-roadmap.md)
 **Last updated:** 2026-04-17

@@ -1,5 +1,6 @@
 # Kenya ODPC Filing Checklist
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §7](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Kenya ODPC Filing Checklist — REG-15 (SCRUM-576)"
 **Jira:** [SCRUM-576 / REG-15](https://arkova.atlassian.net/browse/SCRUM-576)
 **Last updated:** 2026-04-17
 **Owner:** Kenyan counsel (engaged 2026-04-11) + Carson (platform admin, funds KES 25,000 fee)
