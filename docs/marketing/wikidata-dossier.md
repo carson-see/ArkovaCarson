@@ -1,5 +1,6 @@
 # Wikidata Entity Dossier — Arkova (Q138765025)
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §3](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Wikidata Dossier — GEO-02 (SCRUM-479)"
 **Jira:** [SCRUM-479 / GEO-02](https://arkova.atlassian.net/browse/SCRUM-479)
 **Last updated:** 2026-04-17
 **Owner:** Carson (Wikidata submission), Engineering (follow-up `sameAs` PR if Q-ID shifts)
@@ -91,6 +92,12 @@ If Wikidata assigns a **different** Q-ID (unlikely, but possible if an admin mer
 ```
 
 Re-run the [Google Rich Results Test](https://search.google.com/test/rich-results). If the old Q-ID 404s, leave a redirect comment in the Wikidata talk page for 30 days so crawlers update.
+
+---
+
+## Manual-followup email
+
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, Carson emails `carson@arkova.ai` on Wikidata submission with: final Q-ID (if different from Q138765025), list of claims added, Google Knowledge Graph API validation result (once the 48-72h propagation window closes), and link to any follow-up `sameAs` PR if Q-ID shifted.
 
 ---
 

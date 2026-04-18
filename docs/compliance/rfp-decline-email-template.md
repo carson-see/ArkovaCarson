@@ -1,5 +1,6 @@
 # RFP Decline Email — Shared Template
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §6](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Shared RFP Decline Email Template"
 **Purpose:** One template reused across all vendor RFP workflows (pentest, SOC 2 auditor, cyber-insurance carrier, etc.) so non-selected firms receive a consistent, polite decline that doesn't burn future bridges.
 
 **Referenced by:**

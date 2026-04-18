@@ -1,5 +1,6 @@
 # Kenya DPIA — DPO Review Checklist
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §8](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Kenya DPIA DPO Review Checklist — REG-16 (SCRUM-577)"
 **Jira:** [SCRUM-577 / REG-16](https://arkova.atlassian.net/browse/SCRUM-577)
 **Last updated:** 2026-04-17
 **Owner:** DPO (to be designated per `filing-checklist.md` §DPO prerequisite) + Kenyan counsel

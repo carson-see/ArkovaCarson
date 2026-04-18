@@ -1,5 +1,6 @@
 # Community & Brand Launch Playbook
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §1](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Launch Playbook — GEO-09 (SCRUM-477)"
 **Jira:** [SCRUM-477 / GEO-09](https://arkova.atlassian.net/browse/SCRUM-477)
 **Last updated:** 2026-04-17
 **Owner:** Carson (marketing)
@@ -133,6 +134,12 @@ Update this table as each channel launches. Leave blank until live.
 | Reddit r/privacy | — | — | — | N/A | — |
 | G2 | — | — | — | — | — |
 | Crunchbase | — | — | — | — | — |
+
+---
+
+## Manual-followup email
+
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, Carson (marketing) emails `carson@arkova.ai` on each channel launch with: channel name + canonical URL, launch-day engagement summary, link to the follow-up PR that appends the URL to `sameAs` in `arkova-marketing/index.html`, and the updated §Outcome tracker row. One email per channel, not a batched rollup — auditors and procurement may request proof of specific launches.
 
 ---
 

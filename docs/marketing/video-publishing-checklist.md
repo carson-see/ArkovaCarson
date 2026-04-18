@@ -1,5 +1,6 @@
 # YouTube Explainer Video Publishing Checklist
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §2](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Video Publishing Checklist — GEO-11 (SCRUM-478)"
 **Jira:** [SCRUM-478 / GEO-11](https://arkova.atlassian.net/browse/SCRUM-478)
 **Last updated:** 2026-04-17
 **Owner:** Carson (video production + voiceover), Engineering (schema deploy)
@@ -113,6 +114,12 @@ After deploy:
 | 3. Kenya DPA + FERPA + HIPAA | — | — | — | — | — |
 | 4. Background-check providers | — | — | — | — | — |
 | 5. Client-side fingerprinting | — | — | — | — | — |
+
+---
+
+## Manual-followup email
+
+Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE ("record a video" is explicitly named as a triggering external action), Carson emails `carson@arkova.ai` on first-video publication with: YouTube video ID, embed URL, link to the PR that appended the `VideoInventoryEntry` to `VIDEOS`, Rich Results Test validation URL + result, and the updated §Outcome tracker row. One email per explainer, not batched.
 
 ---
 

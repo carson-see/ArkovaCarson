@@ -1,5 +1,6 @@
 # NPH Phase 1 — Credential-Type Mapping Audit
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §9](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "NPH Phase-1 Credential-Type Audit — SCRUM-697"
 **Jira:** [SCRUM-697 / NPH Epic](https://arkova.atlassian.net/browse/SCRUM-697)
 **Last updated:** 2026-04-17
 **Owner:** AI Platform (Carson, Engineering)

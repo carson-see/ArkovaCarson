@@ -1,5 +1,6 @@
 # Nessie v8 Retrain — Training Parameters (SKELETON, NVI-gated)
 
+**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §10](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Nessie v8 Training Parameters Skeleton — NPH-14 (SCRUM-711)"
 **Jira:** [SCRUM-711 / NPH-14](https://arkova.atlassian.net/browse/SCRUM-711)
 **Last updated:** 2026-04-17
 **Owner:** AI Platform (Carson)
