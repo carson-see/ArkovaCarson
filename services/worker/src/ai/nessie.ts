@@ -35,6 +35,7 @@ import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChe
 import { computeAdjustedConfidence } from './confidence-model.js';
 import { routeToDomain, isDomainRoutingEnabled } from './nessie-domain-router.js';
 import { calibrateNessieConfidence } from './eval/calibration.js';
+import { detectRegulation, getConstrainedSchema } from './constrained-schemas.js';
 
 import { NESSIE_CONDENSED_PROMPT } from './prompts/nessie-condensed.js';
 export { NESSIE_CONDENSED_PROMPT };
@@ -287,6 +288,28 @@ export class NessieProvider implements IAIProvider {
     // Domain routing is for extraction adapters only — never for intelligence.
     const intelligenceModel = process.env.NESSIE_INTELLIGENCE_MODEL ?? DEFAULT_INTELLIGENCE_MODEL;
 
+    let responseFormat: Record<string, unknown> | undefined;
+    const constrainedEnabled = process.env.ENABLE_CONSTRAINED_DECODING === 'true';
+    if (constrainedEnabled) {
+      const regulation = detectRegulation(userPrompt);
+      if (regulation) {
+        const schema = getConstrainedSchema(regulation);
+        if (schema) {
+          responseFormat = {
+            type: 'json_schema',
+            json_schema: {
+              name: 'intelligence_response',
+              schema: schema.jsonSchema,
+            },
+          };
+          logger.info(
+            { regulation, idCount: schema.canonicalIds.length },
+            'Nessie RAG: constrained decoding enabled',
+          );
+        }
+      }
+    }
+
     logger.info(
       { model: intelligenceModel },
       'Nessie RAG: using intelligence model for compliance analysis',
@@ -296,6 +319,7 @@ export class NessieProvider implements IAIProvider {
       return this.chatCompletion(systemPrompt, userPrompt, {
         temperature: 0.2,
         model: intelligenceModel,
+        response_format: responseFormat,
       });
     });
 
@@ -314,27 +338,33 @@ export class NessieProvider implements IAIProvider {
       temperature?: number;
       max_tokens?: number;
       model?: string;
+      response_format?: Record<string, unknown>;
     } = {},
   ): Promise<RunPodChatResponse> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
+      const payload: Record<string, unknown> = {
+        model: options.model ?? this.modelName,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        temperature: options.temperature ?? 0.1,
+        max_tokens: options.max_tokens ?? 4096,
+      };
+      if (options.response_format) {
+        payload.response_format = options.response_format;
+      }
+
       const response = await fetch(`${this.apiBase}/chat/completions`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({
-          model: options.model ?? this.modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: options.temperature ?? 0.1,
-          max_tokens: options.max_tokens ?? 4096,
-        }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
 

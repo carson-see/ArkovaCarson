@@ -255,6 +255,115 @@ describe('NessieProvider', () => {
     });
   });
 
+  describe('constrained decoding (NVI-16)', () => {
+    afterEach(() => {
+      delete process.env.ENABLE_CONSTRAINED_DECODING;
+    });
+
+    it('adds response_format when constrained decoding is enabled and regulation detected', async () => {
+      process.env.ENABLE_CONSTRAINED_DECODING = 'true';
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  answer: 'FCRA requires pre-adverse action notice.',
+                  citations: [{ record_id: 'fcra-604-b-3', relevance: 'direct' }],
+                  confidence: 0.85,
+                  risks: [{ description: 'Missing disclosure' }],
+                  recommendations: [{ description: 'Add standalone disclosure' }],
+                }),
+              },
+            },
+          ],
+          usage: { total_tokens: 200 },
+        }),
+      });
+
+      await provider.generateRAGResponse(
+        'You are a compliance assistant.',
+        'What are FCRA adverse action requirements?',
+      );
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.response_format).toBeDefined();
+      expect(body.response_format.type).toBe('json_schema');
+      expect(body.response_format.json_schema.name).toBe('intelligence_response');
+      expect(body.response_format.json_schema.schema.properties.citations.items.properties.record_id.enum).toBeDefined();
+    });
+
+    it('does not add response_format when constrained decoding is disabled', async () => {
+      process.env.ENABLE_CONSTRAINED_DECODING = 'false';
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"answer":"test"}' } }],
+          usage: { total_tokens: 50 },
+        }),
+      });
+
+      await provider.generateRAGResponse(
+        'You are a compliance assistant.',
+        'What are FCRA requirements?',
+      );
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.response_format).toBeUndefined();
+    });
+
+    it('does not add response_format when regulation is not detected', async () => {
+      process.env.ENABLE_CONSTRAINED_DECODING = 'true';
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"answer":"generic answer"}' } }],
+          usage: { total_tokens: 50 },
+        }),
+      });
+
+      await provider.generateRAGResponse(
+        'You are a compliance assistant.',
+        'Tell me about general compliance best practices.',
+      );
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.response_format).toBeUndefined();
+    });
+
+    it('does not add response_format when env var is not set', async () => {
+      delete process.env.ENABLE_CONSTRAINED_DECODING;
+      const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"answer":"test"}' } }],
+          usage: { total_tokens: 50 },
+        }),
+      });
+
+      await provider.generateRAGResponse(
+        'You are a compliance assistant.',
+        'What are HIPAA requirements?',
+      );
+
+      const fetchCall = mockFetch.mock.calls[0];
+      const body = JSON.parse(fetchCall[1].body);
+      expect(body.response_format).toBeUndefined();
+    });
+  });
+
   describe('circuit breaker', () => {
     it('opens after 5 consecutive failures', async () => {
       const provider = new NessieProvider(FAKE_API_KEY, FAKE_ENDPOINT_ID);

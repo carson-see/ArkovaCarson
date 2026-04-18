@@ -191,6 +191,8 @@ describe('AI Extraction Endpoint', () => {
           credentialType: 'DEGREE',
           issuerName: 'University of Michigan',
           fieldOfStudy: 'Computer Science',
+          subType: 'BACHELOR',
+          fraudSignals: [{ signal: 'font_mismatch', severity: 'low' }],
         },
         confidence: 0.92,
         provider: 'gemini',
@@ -202,7 +204,8 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
     // Confidence is now calibrated: raw 0.92 maps to 0.92 via calibration knots (1030-entry recalibration)
-    expect(res.json).toHaveBeenCalledWith(
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson).toEqual(
       expect.objectContaining({
         fields: expect.objectContaining({
           credentialType: 'DEGREE',
@@ -210,9 +213,77 @@ describe('AI Extraction Endpoint', () => {
         }),
         confidence: 0.92,
         provider: 'gemini',
-        creditsRemaining: 489, // 490 - 1 credit deducted
+        creditsRemaining: 489,
       }),
     );
+
+    // API-RICH-02: new nullable fields
+    expect(responseJson.confidenceScores).toEqual({ overall: 0.92 });
+    expect(responseJson.subType).toBe('BACHELOR');
+    expect(responseJson.fraudSignals).toEqual([{ signal: 'font_mismatch', severity: 'low' }]);
+  });
+
+  it('returns null for subType and fraudSignals when not present in extraction (API-RICH-02)', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+      if (table === 'ai_usage_events') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  not: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
+      };
+    });
+
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+      monthlyAllocation: 500,
+      usedThisMonth: 10,
+      remaining: 490,
+      hasCredits: true,
+    });
+
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+      extractMetadata: vi.fn().mockResolvedValue({
+        fields: { credentialType: 'CERTIFICATE', issuerName: 'Test Corp' },
+        confidence: 0.85,
+        provider: 'gemini',
+        tokensUsed: 100,
+      }),
+    });
+
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    await handler!(req, res);
+
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson.subType).toBeNull();
+    expect(responseJson.fraudSignals).toBeNull();
+    expect(responseJson.confidenceScores).toBeDefined();
   });
 
   it('applies confidence calibration to AI model output (AI-EVAL-02)', async () => {

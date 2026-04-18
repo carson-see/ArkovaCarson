@@ -63,6 +63,8 @@ import { fetchCmsPhysicians, fetchStateMedicalBoards } from '../jobs/cmsPhysicia
 import { fetchBrazilComplianceData, fetchSingaporeComplianceData, fetchMexicoComplianceData } from '../jobs/intlComplianceFetcher.js';
 import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
+import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
+import { withCronMonitoring } from '../utils/sentry.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -993,6 +995,26 @@ cronRouter.post('/fetch-cnpj-br', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'CNPJ BR fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Regulatory Change Scan (NCA-FU1 #1) ───
+
+cronRouter.post('/regulatory-change-scan', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'regulatory-change-scan',
+      '0 */6 * * *',
+      () => runRegulatoryChangeScan(),
+    )();
+    res.json({
+      scanned: result.scanned,
+      alerts_created: result.alertsCreated,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.error({ error }, 'Regulatory change scan failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

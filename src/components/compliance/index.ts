@@ -1,3 +1,4 @@
+export { AuditGapScorecard } from './AuditGapScorecard';
 export { ComplianceScoreCard } from './ComplianceScoreCard';
 export { ComplianceScoreGauge } from './ComplianceScoreGauge';
 export { ExpiringDocumentsCard } from './ExpiringDocumentsCard';

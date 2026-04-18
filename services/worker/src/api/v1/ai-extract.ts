@@ -214,8 +214,10 @@ router.post('/', async (req: Request, res: Response) => {
       logger.warn({ error: tagErr }, 'Auto-tagging failed (non-fatal)');
     }
 
+    const fields = result.fields as Record<string, unknown>;
+
     res.json({
-      fields: result.fields,
+      fields,
       confidence: calibrated,
       provider: result.provider,
       creditsRemaining: creditBalance ? creditBalance.remaining - 1 : null,
@@ -223,6 +225,9 @@ router.post('/', async (req: Request, res: Response) => {
       documentType,
       category,
       manifestHash: manifest.manifestHash,
+      confidenceScores: manifest.confidenceScores ?? null,
+      subType: fields.subType ?? null,
+      fraudSignals: fields.fraudSignals ?? null,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';

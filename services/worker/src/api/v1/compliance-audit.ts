@@ -300,21 +300,57 @@ async function loadJurisdictionRules(
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
-  const { data } = await dbAny
-    .from('anchors')
-    .select('id, credential_type, status, integrity_score, fraud_flags, not_after, title')
-    .eq('org_id', orgId)
-    .eq('status', 'SECURED')
-    .limit(10_000);
-  return (data ?? []).map((a: Record<string, unknown>) => ({
-    id: a.id as string,
-    credential_type: (a.credential_type as string) ?? 'OTHER',
-    status: a.status as string,
-    integrity_score: (a.integrity_score as number | null) ?? null,
-    fraud_flags: (a.fraud_flags as string[]) ?? [],
-    expiry_date: (a.not_after as string) ?? null,
-    title: (a.title as string) ?? null,
-  }));
+  const [{ data: anchorsRaw }, { data: integrityRows }, { data: reviewRows }] = await Promise.all([
+    dbAny
+      .from('anchors')
+      .select('id, credential_type, status, not_after, title')
+      .eq('org_id', orgId)
+      .eq('status', 'SECURED')
+      .limit(10_000),
+    dbAny
+      .from('integrity_scores')
+      .select('anchor_id, overall_score, flags')
+      .eq('org_id', orgId)
+      .limit(10_000),
+    dbAny
+      .from('review_queue_items')
+      .select('anchor_id, flags')
+      .eq('org_id', orgId)
+      .limit(10_000),
+  ]);
+
+  const scoreMap = new Map<string, { overall_score: number; flags: unknown }>();
+  for (const row of (integrityRows ?? []) as Array<Record<string, unknown>>) {
+    scoreMap.set(row.anchor_id as string, {
+      overall_score: row.overall_score as number,
+      flags: row.flags,
+    });
+  }
+
+  const fraudMap = new Map<string, string[]>();
+  for (const row of (reviewRows ?? []) as Array<Record<string, unknown>>) {
+    const anchorId = row.anchor_id as string;
+    const flags = Array.isArray(row.flags) ? (row.flags as string[]) : [];
+    if (flags.length > 0) {
+      const existing = fraudMap.get(anchorId) ?? [];
+      fraudMap.set(anchorId, [...existing, ...flags]);
+    }
+  }
+
+  return (anchorsRaw ?? []).map((a: Record<string, unknown>) => {
+    const anchorId = a.id as string;
+    const integrity = scoreMap.get(anchorId);
+    const fraudFlags = fraudMap.get(anchorId) ?? [];
+    return {
+      id: anchorId,
+      credential_type: (a.credential_type as string) ?? 'OTHER',
+      status: a.status as string,
+      integrity_score: integrity?.overall_score ?? null,
+      fraud_flags: fraudFlags,
+      expiry_date: (a.not_after as string) ?? null,
+      title: (a.title as string) ?? null,
+    };
+  });
 }
 
 function shapeAuditRow(row: Record<string, unknown>) {
