@@ -50,13 +50,13 @@ CREATE INDEX idx_jurisdiction_rules_lookup
 INSERT INTO jurisdiction_rules (jurisdiction_code, industry_code, rule_name, required_credential_types, optional_credential_types, regulatory_reference, details) VALUES
 ('US-CA', 'accounting', 'California CPA Requirements', ARRAY['LICENSE','CERTIFICATE','CONTINUING_EDUCATION'], ARRAY['DEGREE'], 'CA Bus & Prof Code §5026', '{"ce_hours": 80, "ce_cycle_years": 2, "ethics_hours": 4, "ethics_cycle_years": 2}'),
 ('US-CA', 'legal', 'California Attorney Requirements', ARRAY['LICENSE','CONTINUING_EDUCATION','CERTIFICATE'], ARRAY['DEGREE'], 'CA Bus & Prof Code §6060; State Bar Rules', '{"mcle_hours": 25, "mcle_cycle_years": 1, "competence_hours": 1, "ethics_hours": 1}'),
-('US-CA', 'nursing', 'California RN Requirements', ARRAY['LICENSE','CERTIFICATE','CONTINUING_EDUCATION'], ARRAY[], 'CA Bus & Prof Code §2732; BRN Regulations', '{"ce_hours": 30, "ce_cycle_years": 2, "bls_required": true}');
+('US-CA', 'nursing', 'California RN Requirements', ARRAY['LICENSE','CERTIFICATE','CONTINUING_EDUCATION'], ARRAY[]::TEXT[], 'CA Bus & Prof Code §2732; BRN Regulations', '{"ce_hours": 30, "ce_cycle_years": 2, "bls_required": true}');
 
 -- New York
 INSERT INTO jurisdiction_rules (jurisdiction_code, industry_code, rule_name, required_credential_types, optional_credential_types, regulatory_reference, details) VALUES
 ('US-NY', 'accounting', 'New York CPA Requirements', ARRAY['LICENSE','CONTINUING_EDUCATION'], ARRAY['DEGREE','CERTIFICATE'], 'NY Educ Law §7404; 8 NYCRR §70.9', '{"ce_hours": 40, "ce_cycle_years": 1, "ethics_hours": 4, "ethics_cycle_years": 3}'),
 ('US-NY', 'legal', 'New York Attorney Requirements', ARRAY['LICENSE','CONTINUING_EDUCATION'], ARRAY['DEGREE'], 'NY CLE Board Rules §1500', '{"cle_hours": 24, "cle_cycle_years": 2, "ethics_hours": 4, "skills_hours": 6}'),
-('US-NY', 'nursing', 'New York RN Requirements', ARRAY['LICENSE','CONTINUING_EDUCATION','CERTIFICATE'], ARRAY[], 'NY Educ Law §6905; 8 NYCRR §64.5', '{"ce_hours": 0, "infection_control_required": true, "child_abuse_training": true}');
+('US-NY', 'nursing', 'New York RN Requirements', ARRAY['LICENSE','CONTINUING_EDUCATION','CERTIFICATE'], ARRAY[]::TEXT[], 'NY Educ Law §6905; 8 NYCRR §64.5', '{"ce_hours": 0, "infection_control_required": true, "child_abuse_training": true}');
 
 -- Texas
 INSERT INTO jurisdiction_rules (jurisdiction_code, industry_code, rule_name, required_credential_types, optional_credential_types, regulatory_reference, details) VALUES
