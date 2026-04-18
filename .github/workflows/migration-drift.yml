@@ -1,0 +1,127 @@
+# Migration Drift Check — Option A (read-only)
+#
+# Prevents the scorecard-outage class of bug (BUG-2026-04-18-004/005 +
+# BUG-2026-04-19-001) where code merges to main depending on a migration
+# that hasn't been applied to prod yet.
+#
+# Reads the local `supabase/migrations/*.sql` file list + compares against
+# prod's applied-migrations set. Fails if any local file is missing in prod.
+#
+# Write permission NOT required. Read-only against Supabase Management API.
+#
+# Jira: SCRUM-908 (PROD-DRIFT-01)
+# Runbook: docs/runbooks/migration-drift-playbook.md
+# ADR: docs/confluence/16_migration_drift_prevention.md
+
+name: Migration Drift Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/migration-drift.yml'
+
+jobs:
+  check:
+    name: Check supabase/migrations vs prod
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Read-only. No write anywhere.
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Diff local migrations vs Supabase Management API
+        # Skips the drift check gracefully when SUPABASE_ACCESS_TOKEN is not
+        # provisioned (e.g., forks, Dependabot PRs). Without a token the check
+        # emits an informational summary + passes — never blocks on secret
+        # availability.
+        env:
+          # Read-only personal access token scoped to the Supabase org.
+          # Generate at https://app.supabase.com/account/tokens with "All projects".
+          # Store as GitHub Actions secret SUPABASE_ACCESS_TOKEN.
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
+        run: |
+          set -eo pipefail
+
+          if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
+            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (typical for forks/Dependabot)."
+            exit 0
+          fi
+
+          # Collect local migration filenames — strip extension, keep just the
+          # basename so we can compare against the Supabase `name` field.
+          local_names=$(ls supabase/migrations/ 2>/dev/null | grep -E '\.sql$' | sed 's/\.sql$//' | sort -u)
+          if [ -z "$local_names" ]; then
+            echo "::error::No local migrations found at supabase/migrations/*.sql"
+            exit 1
+          fi
+
+          # Fetch prod applied migrations. Supabase Management API returns an
+          # array of { version, name, ... }.
+          prod_response=$(curl --silent --fail --show-error \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/migrations") || {
+              echo "::error::Failed to query Supabase Management API for migrations list."
+              exit 1
+            }
+
+          # Extract names. jq filter: .[].name. Fallback: grep.
+          prod_names=$(echo "$prod_response" | jq -r '.[].name' 2>/dev/null | sort -u)
+          if [ -z "$prod_names" ]; then
+            echo "::error::Supabase Management API returned no migrations (unexpected)."
+            echo "Response body preview:"
+            echo "$prod_response" | head -5
+            exit 1
+          fi
+
+          # Diff: what's local but not prod?
+          missing=$(comm -23 <(echo "$local_names") <(echo "$prod_names"))
+
+          # Exempt list — see docs/runbooks/migration-drift-playbook.md §
+          # "Exempt migrations" + docs/confluence/16_migration_drift_prevention.md
+          # for each entry's rationale.
+          #
+          # Categories:
+          #   (a) 0033 / 0078 / 0162 — numbered gaps that never existed as files
+          #   (b) `" 2.sql"` macOS duplicate suffixes for migrations already
+          #       applied in prod under the canonical name — the `.* 2$` rule
+          #       tolerates the copy-paste artefact pending a repo-level cleanup
+          #   (c) 0186 / 0212..0216 — applied under 2026041X version strings
+          #       in prod's schema_migrations (migrations were pushed before
+          #       the current naming convention was stable); the filenames
+          #       exist but the names in prod don't match 1:1
+          #   (d) 0190 RLS subquery caching + 0191 BRIN on anchors —
+          #       intentionally held back for a maintenance window
+          #       (tracked in SCRUM-908)
+          exempt_regex='^(0033|0078|0162|.* 2|0186_.*|0190_.*|0191_.*|0212_.*|0213_.*|0214_.*|0215_.*|0216_.*|0216b_.*)$'
+          filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
+
+          missing_count=$(echo "$filtered_missing" | grep -c . || true)
+
+          echo "## Migration drift check"
+          echo "- Local migrations: $(echo "$local_names" | wc -l | tr -d ' ')"
+          echo "- Prod applied:    $(echo "$prod_names"  | wc -l | tr -d ' ')"
+          echo "- Missing in prod: $missing_count"
+
+          if [ "$missing_count" -gt 0 ]; then
+            echo ""
+            echo "::error title=Migrations missing in prod::The following migrations exist in supabase/migrations/ but have NOT been applied to prod:"
+            echo "$filtered_missing" | sed 's/^/  - /'
+            echo ""
+            echo "Resolution (see docs/runbooks/migration-drift-playbook.md):"
+            echo "  1. Review each missing migration for risk."
+            echo "  2. Apply via Supabase MCP, \`supabase db push\`, or operator runbook."
+            echo "  3. Re-run this check."
+            echo ""
+            echo "If a migration is intentionally held back (e.g., locks a hot table"
+            echo "and needs a maintenance window), add it to the exempt_regex in"
+            echo ".github/workflows/migration-drift.yml with a code comment explaining why."
+            exit 1
+          fi
+
+          echo "::notice title=Migration drift check passed::All local migrations are applied in prod."

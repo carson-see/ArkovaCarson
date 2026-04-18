@@ -45,15 +45,19 @@ function createMcpServer(config: SupabaseConfig): McpServer {
 
   // Workaround for TS2589 "Type instantiation is excessively deep" on zod
   // 3.25 + @modelcontextprotocol/sdk 1.29. The generic inference on
-  // `server.tool(name, desc, shape, cb)` blows up when Zod's recursive types
-  // meet the SDK's ZodRawShapeCompat overload. The non-deprecated
-  // `server.registerTool(name, config, cb)` doesn't hit this — full migration
-  // to that API is tracked as a follow-up. For now a locally-typed alias
-  // bypasses the deep inference while still preserving the callback contract.
+  // `server.tool(name, desc, shape, cb)` AND `server.prompt(name, desc, shape, cb)`
+  // blows up when Zod's recursive types meet the SDK's ZodRawShapeCompat
+  // overload. The non-deprecated `registerTool` / `registerPrompt` APIs don't
+  // hit this — full migration tracked as a follow-up. For now locally-typed
+  // aliases bypass the deep inference while preserving the callback contract.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type ToolCb = (args: Record<string, any>) => Promise<unknown> | unknown;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const tool: (name: string, description: string, shape: Record<string, unknown>, cb: ToolCb) => unknown = server.tool.bind(server) as any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type PromptCb = (args: Record<string, any>) => Promise<unknown> | unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prompt: (name: string, description: string, shape: Record<string, unknown>, cb: PromptCb) => unknown = server.prompt.bind(server) as any;
 
   // ── Tools ─────────────────────────────────────────────────────────────
 
@@ -231,7 +235,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
 
   // ── Prompts ───────────────────────────────────────────────────────────
 
-  server.prompt(
+  prompt(
     'verify-credential',
     'Look up and verify a credential by its Arkova public ID',
     { public_id: z.string().describe('Credential public ID (e.g., ARK-2026-001)') },
@@ -247,7 +251,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     }),
   );
 
-  server.prompt(
+  prompt(
     'search-and-verify',
     'Search for credentials matching a query and verify the top result',
     { query: z.string().describe('What to search for') },
@@ -263,7 +267,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     }),
   );
 
-  server.prompt(
+  prompt(
     'anchor-and-verify',
     'Anchor a document fingerprint and confirm it was submitted',
     {
@@ -282,7 +286,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     }),
   );
 
-  server.prompt(
+  prompt(
     'research-topic',
     'Research a topic using Nessie\'s verified intelligence engine',
     { topic: z.string().describe('Research topic or question') },
