@@ -93,3 +93,13 @@ export type {
   RegressionResult,
   RegressionCheck,
 } from './baseline-metrics.js';
+
+export {
+  cosineSimilarity,
+  semanticSimilarityScore,
+  semanticFaithfulness,
+  semanticRelevance,
+  semanticRiskDetection,
+  createGeminiEmbedFn,
+} from './semantic-similarity.js';
+export type { EmbedFn, SemanticScoringOptions } from './semantic-similarity.js';

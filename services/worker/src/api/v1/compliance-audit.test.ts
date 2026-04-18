@@ -46,7 +46,6 @@ interface QueryBuilder {
   limit: ReturnType<typeof vi.fn>;
   single: ReturnType<typeof vi.fn>;
   maybeSingle: ReturnType<typeof vi.fn>;
-  then: ReturnType<typeof vi.fn>;
 }
 
 /**
@@ -85,7 +84,6 @@ function makeBuilder(state: {
     data: state.maybeSingleData ?? null,
     error: null,
   }));
-  builder.then = vi.fn();
   return builder;
 }
 
@@ -156,6 +154,17 @@ describe('POST /api/v1/compliance/audit', () => {
             { id: 'a2', credential_type: 'CONTINUING_EDUCATION', status: 'SECURED', expires_at: null, label: 'CE' },
           ],
         }) as unknown as never;
+      }
+      if (table === 'integrity_scores') {
+        return makeBuilder({
+          selectData: [
+            { anchor_id: 'a1', overall_score: 0.9, flags: null },
+            { anchor_id: 'a2', overall_score: 0.9, flags: null },
+          ],
+        }) as unknown as never;
+      }
+      if (table === 'review_queue_items') {
+        return makeBuilder({ selectData: [] }) as unknown as never;
       }
       if (table === 'compliance_scores') {
         return makeBuilder({ selectData: [] }) as unknown as never;
@@ -332,6 +341,154 @@ describe('GET /api/v1/compliance/audit/:id', () => {
       .get('/api/v1/compliance/audit/11111111-1111-1111-1111-111111111111')
       .expect(200);
     expect(res.body.overall_score).toBe(77);
+  });
+});
+
+describe('loadOrgAnchors with integrity_scores + review_queue_items JOIN (NCA-FU1 #5)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  /**
+   * Simpler fluent builder that avoids the Promise-Object hybrid
+   * approach of makeBuilder. All chain methods return `this`; the
+   * terminal `.limit()` always returns a plain Promise.
+   */
+  function simpleBuilder(data: unknown = [], error: unknown = null) {
+    const b = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockReturnThis(),
+      gte: vi.fn().mockReturnThis(),
+      or: vi.fn().mockReturnThis(),
+      order: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockResolvedValue({ data, error }),
+      single: vi.fn().mockResolvedValue({ data, error }),
+      maybeSingle: vi.fn().mockResolvedValue({ data, error }),
+      insert: vi.fn().mockReturnThis(),
+      then: vi.fn(),
+    };
+    return b;
+  }
+
+  it('merges integrity_score from integrity_scores and fraud_flags from review_queue_items', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const inserted = {
+      id: '22222222-2222-2222-2222-222222222222',
+      org_id: 'org-1', overall_score: 100, overall_grade: 'A',
+      per_jurisdiction: [], gaps: [], quarantines: [],
+      status: 'COMPLETED', started_at: '', completed_at: '', duration_ms: 50,
+      jurisdiction_filter: null, error_code: null, error_message: null,
+      metadata: { anchor_count: 1 }, created_at: '',
+    };
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        return simpleBuilder(null) as unknown as never;
+      }
+      if (table === 'organizations') {
+        return simpleBuilder({ jurisdictions: ['US-CA'], industry: 'accounting' }) as unknown as never;
+      }
+      if (table === 'jurisdiction_rules') {
+        return simpleBuilder([{
+          id: 'r1', jurisdiction_code: 'US-CA', industry_code: 'accounting',
+          rule_name: 'CA', required_credential_types: ['LICENSE'],
+          optional_credential_types: [], regulatory_reference: null, details: {},
+        }]) as unknown as never;
+      }
+      if (table === 'anchors') {
+        return simpleBuilder([
+          { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', not_after: null, title: 'Lic' },
+        ]) as unknown as never;
+      }
+      if (table === 'integrity_scores') {
+        return simpleBuilder([
+          { anchor_id: 'a1', overall_score: 0.85, flags: null },
+        ]) as unknown as never;
+      }
+      if (table === 'review_queue_items') {
+        return simpleBuilder([
+          { anchor_id: 'a1', flags: ['duplicate_detected', 'issuer_mismatch'] },
+        ]) as unknown as never;
+      }
+      return simpleBuilder([]) as unknown as never;
+    });
+
+    // Override compliance_audits insert to return the inserted row
+    let callCount = 0;
+    const origImpl = vi.mocked(db.from).getMockImplementation()!;
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        callCount++;
+        // First call = idempotency probe (returns null), subsequent = insert
+        if (callCount <= 1) return simpleBuilder(null) as unknown as never;
+        return simpleBuilder(inserted) as unknown as never;
+      }
+      return origImpl(table as Parameters<typeof origImpl>[0]) as never;
+    });
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/compliance/audit')
+      .send({})
+      .expect(201);
+
+    expect(res.body.status).toBe('COMPLETED');
+    // Verify that integrity_scores and review_queue_items were queried
+    const calledTables = vi.mocked(db.from).mock.calls.map(c => c[0]);
+    expect(calledTables).toContain('integrity_scores');
+    expect(calledTables).toContain('review_queue_items');
+  });
+
+  it('returns null integrity_score and empty fraud_flags when no related rows exist', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const inserted = {
+      id: '33333333-3333-3333-3333-333333333333',
+      org_id: 'org-1', overall_score: 100, overall_grade: 'A',
+      per_jurisdiction: [], gaps: [], quarantines: [],
+      status: 'COMPLETED', started_at: '', completed_at: '', duration_ms: 50,
+      jurisdiction_filter: null, error_code: null, error_message: null,
+      metadata: { anchor_count: 1 }, created_at: '',
+    };
+
+    let auditCallCount = 0;
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        auditCallCount++;
+        if (auditCallCount <= 1) return simpleBuilder(null) as unknown as never;
+        return simpleBuilder(inserted) as unknown as never;
+      }
+      if (table === 'organizations') {
+        return simpleBuilder({ jurisdictions: ['US-CA'], industry: 'accounting' }) as unknown as never;
+      }
+      if (table === 'jurisdiction_rules') {
+        return simpleBuilder([{
+          id: 'r1', jurisdiction_code: 'US-CA', industry_code: 'accounting',
+          rule_name: 'CA', required_credential_types: ['LICENSE'],
+          optional_credential_types: [], regulatory_reference: null, details: {},
+        }]) as unknown as never;
+      }
+      if (table === 'anchors') {
+        return simpleBuilder([
+          { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', not_after: null, title: 'Lic' },
+        ]) as unknown as never;
+      }
+      if (table === 'integrity_scores') {
+        return simpleBuilder([]) as unknown as never;
+      }
+      if (table === 'review_queue_items') {
+        return simpleBuilder([]) as unknown as never;
+      }
+      return simpleBuilder([]) as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/compliance/audit')
+      .send({})
+      .expect(201);
+
+    expect(res.body.status).toBe('COMPLETED');
   });
 });
 

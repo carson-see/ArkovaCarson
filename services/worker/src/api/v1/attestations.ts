@@ -276,11 +276,13 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       explorerUrl = `${baseMap[network] ?? baseMap.signet}/tx/${attestation.chain_tx_id}`;
     }
 
-    // Fetch evidence count
-    const { count: evidenceCount } = await dbAny
+    // Fetch evidence items (limit 50)
+    const { data: evidenceItems, count: evidenceCount } = await dbAny
       .from('attestation_evidence')
-      .select('*', { count: 'exact', head: true })
-      .eq('attestation_id', attestation.id);
+      .select('id, evidence_type, description, fingerprint, created_at', { count: 'exact' })
+      .eq('attestation_id', attestation.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
 
     // Look up linked credential info if anchor_id exists
     let linkedCredential: Record<string, unknown> | null = null;
@@ -320,6 +322,13 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       // Proof
       fingerprint: attestation.fingerprint,
       evidence_fingerprint: attestation.evidence_fingerprint,
+      evidence: (evidenceItems ?? []).map((e: Record<string, unknown>) => ({
+        id: e.id,
+        evidence_type: e.evidence_type,
+        description: e.description,
+        fingerprint: e.fingerprint,
+        created_at: e.created_at,
+      })),
       evidence_count: evidenceCount ?? 0,
       // Chain proof
       chain_proof: attestation.chain_tx_id ? {

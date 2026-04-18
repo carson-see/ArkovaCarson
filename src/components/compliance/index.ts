@@ -1,3 +1,4 @@
+export { AuditGapScorecard } from './AuditGapScorecard';
 export { AuditMyOrganizationButton } from './AuditMyOrganizationButton';
 export { ComplianceScoreCard } from './ComplianceScoreCard';
 export { ComplianceScoreGauge } from './ComplianceScoreGauge';

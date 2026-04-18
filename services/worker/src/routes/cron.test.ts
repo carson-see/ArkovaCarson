@@ -160,6 +160,15 @@ vi.mock('../jobs/acncFetcher.js', () => ({
   fetchAcncCharities: (...args: unknown[]) => mockFetchAcncCharities(...args),
 }));
 
+const mockRunRegulatoryChangeScan = vi.fn().mockResolvedValue({ scanned: 12, alertsCreated: 3 });
+vi.mock('../jobs/regulatory-change-scan.js', () => ({
+  runRegulatoryChangeScan: (...args: unknown[]) => mockRunRegulatoryChangeScan(...args),
+}));
+
+vi.mock('../utils/sentry.js', () => ({
+  withCronMonitoring: (_slug: string, _schedule: string, fn: () => unknown) => fn,
+}));
+
 const mockFetchStateBills = vi.fn().mockResolvedValue({ fetched: 30 });
 const mockFetchMultipleStateBills = vi.fn().mockResolvedValue({ fetched: 90 });
 vi.mock('../jobs/openStatesFetcher.js', () => ({
@@ -1272,6 +1281,31 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).get('/cron/smoke-test/history');
       expect(res.status).toBe(500);
+    });
+  });
+
+  // ═══════════════════════════════════════
+  // Regulatory Change Scan (NCA-FU1 #1)
+  // ═══════════════════════════════════════
+
+  describe('POST /regulatory-change-scan', () => {
+    it('returns scan result with Sentry monitoring wrapper', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/regulatory-change-scan');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        scanned: 12,
+        alerts_created: 3,
+        timestamp: expect.any(String),
+      });
+    });
+
+    it('returns 500 on scan failure', async () => {
+      mockRunRegulatoryChangeScan.mockRejectedValueOnce(new Error('scan failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/regulatory-change-scan');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
     });
   });
 });

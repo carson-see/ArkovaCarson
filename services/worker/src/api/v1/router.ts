@@ -45,6 +45,8 @@ import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
+import { anchorLifecycleRouter } from './anchor-lifecycle.js';
+import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
 import { attestationsRouter } from './attestations.js';
 import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
@@ -290,6 +292,10 @@ router.use('/agents', requireAuth, agentsRouter);
 // ─── Record Authenticity Oracle — Phase II Agentic Layer (PH2-AGENT-04) ───
 // API key required — tracks agent identity for audit trail
 router.use('/oracle', requireScope('verify'), oracleRouter);
+
+// ─── Anchor lifecycle + extraction manifest — API-RICH-03/05 ───
+router.use('/anchor', requireScope('verify'), anchorLifecycleRouter);
+router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // API key required, standard rate limit

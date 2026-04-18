@@ -127,6 +127,10 @@ const ConfigSchema = z.object({
   /** Maximum fee rate (sat/vB) for batch anchoring — queue if exceeded (BTC-002) */
   maxFeeThresholdSatPerVbyte: z.coerce.number().min(1).default(50),
 
+  // Nessie Constrained Decoding (NVI-16)
+  /** When true, vLLM intelligence queries use guided JSON with per-regulation ID whitelists */
+  enableConstrainedDecoding: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+
   // Nessie Training Pipeline (PH1-DATA)
   /** SEC EDGAR User-Agent (required by SEC) */
   edgarUserAgent: z.string().optional(),
@@ -216,6 +220,7 @@ function loadConfig(): Config {
     batchAnchorIntervalMinutes: process.env.BATCH_ANCHOR_INTERVAL_MINUTES,
     batchAnchorMaxSize: process.env.BATCH_ANCHOR_MAX_SIZE,
     maxFeeThresholdSatPerVbyte: process.env.MAX_FEE_THRESHOLD_SAT_PER_VBYTE,
+    enableConstrainedDecoding: process.env.ENABLE_CONSTRAINED_DECODING,
     edgarUserAgent: process.env.EDGAR_USER_AGENT,
     trainingDataOutputPath: process.env.TRAINING_DATA_OUTPUT_PATH,
     resendApiKey: process.env.RESEND_API_KEY,

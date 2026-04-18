@@ -302,25 +302,62 @@ async function loadJurisdictionRules(
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
-  // Schema fix (codex review on PR #411): anchors table uses `expires_at`
-  // + `label`, not `not_after` + `title`. integrity_score + fraud_flags
-  // live on separate tables and default to null / empty here — a future
-  // follow-up can JOIN them in if fraud-aware severity bumps are wanted.
-  const { data } = await dbAny
-    .from('anchors')
-    .select('id, credential_type, status, expires_at, label')
-    .eq('org_id', orgId)
-    .eq('status', 'SECURED')
-    .limit(10_000);
-  return (data ?? []).map((a: Record<string, unknown>) => ({
-    id: a.id as string,
-    credential_type: (a.credential_type as string) ?? 'OTHER',
-    status: a.status as string,
-    integrity_score: null,
-    fraud_flags: [],
-    expiry_date: (a.expires_at as string) ?? null,
-    title: (a.label as string) ?? null,
-  }));
+  // 3-query parallel JOIN: anchors + integrity_scores + review_queue_items.
+  // Schema per codex review on PR #411: anchors table uses `expires_at` +
+  // `label`, not `not_after` + `title`. integrity_scores + review_queue_items
+  // live on separate tables; joined here via client-side Map lookup so we can
+  // surface integrity score + fraud flags alongside the anchor record.
+  const [{ data: anchorsRaw }, { data: integrityRows }, { data: reviewRows }] = await Promise.all([
+    dbAny
+      .from('anchors')
+      .select('id, credential_type, status, expires_at, label')
+      .eq('org_id', orgId)
+      .eq('status', 'SECURED')
+      .limit(10_000),
+    dbAny
+      .from('integrity_scores')
+      .select('anchor_id, overall_score, flags')
+      .eq('org_id', orgId)
+      .limit(10_000),
+    dbAny
+      .from('review_queue_items')
+      .select('anchor_id, flags')
+      .eq('org_id', orgId)
+      .limit(10_000),
+  ]);
+
+  const scoreMap = new Map<string, { overall_score: number; flags: unknown }>();
+  for (const row of (integrityRows ?? []) as Array<Record<string, unknown>>) {
+    scoreMap.set(row.anchor_id as string, {
+      overall_score: row.overall_score as number,
+      flags: row.flags,
+    });
+  }
+
+  const fraudMap = new Map<string, string[]>();
+  for (const row of (reviewRows ?? []) as Array<Record<string, unknown>>) {
+    const anchorId = row.anchor_id as string;
+    const flags = Array.isArray(row.flags) ? (row.flags as string[]) : [];
+    if (flags.length > 0) {
+      const existing = fraudMap.get(anchorId) ?? [];
+      fraudMap.set(anchorId, [...existing, ...flags]);
+    }
+  }
+
+  return (anchorsRaw ?? []).map((a: Record<string, unknown>) => {
+    const anchorId = a.id as string;
+    const integrity = scoreMap.get(anchorId);
+    const fraudFlags = fraudMap.get(anchorId) ?? [];
+    return {
+      id: anchorId,
+      credential_type: (a.credential_type as string) ?? 'OTHER',
+      status: a.status as string,
+      integrity_score: integrity?.overall_score ?? null,
+      fraud_flags: fraudFlags,
+      expiry_date: (a.expires_at as string) ?? null,
+      title: (a.label as string) ?? null,
+    };
+  });
 }
 
 function shapeAuditRow(row: Record<string, unknown>) {
