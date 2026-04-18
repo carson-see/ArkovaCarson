@@ -50,17 +50,12 @@ interface EntitlementData {
 }
 
 async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
-  // BUG-2026-04-19-001: Counting this-month anchors through RLS on a 2.8M-row
-  // table takes 23s and 500s at the 30s Supabase REST timeout for platform
-  // admins / high-volume pipeline operators. Migration 0220 introduces
-  // `get_user_monthly_anchor_count` — a SECURITY DEFINER RPC that bypasses
-  // RLS and returns in <100ms. The RPC enforces per-user isolation
-  // internally (returns 0 if p_user_id != auth.uid()). On any error we
-  // degrade to 0 — recordsLimit is null (unlimited) in beta, so the count
-  // is advisory and must not strand the widget in its skeleton state.
+  // BUG-2026-04-19-001 — this-month count moved to the SECURITY DEFINER
+  // `get_user_monthly_anchor_count` RPC (migration 0220); details there.
+  // On any failure we degrade to 0: recordsLimit is null (unlimited) in
+  // beta so the count is advisory, and the widget must not strand.
+  // `as any` until `npm run gen:types` picks up the new RPC.
   const countPromise = supabase
-    // Supabase types regen runs via `npm run gen:types`; new RPC will appear
-    // after the next regen. Until then the name cast is expected.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .rpc('get_user_monthly_anchor_count' as any, { p_user_id: userId })
     .then(

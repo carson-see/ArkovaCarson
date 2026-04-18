@@ -82,16 +82,24 @@ jobs:
           # Diff: what's local but not prod?
           missing=$(comm -23 <(echo "$local_names") <(echo "$prod_names"))
 
-          # Known legacy names that pre-date the tracking system — exempt.
-          # (Historical pre-20260101 names that are already applied to prod
-          # under different version strings — do not cause false positives.)
-          exempt_regex='^(0033|0078|0162|0186_.*|0190_.*|0191_.*|0212_.*|0213_.*|0214_.*|0215_.*|0216_.*|0216b_.*)$'
+          # Exempt list — see docs/runbooks/migration-drift-playbook.md §
+          # "Exempt migrations" + docs/confluence/16_migration_drift_prevention.md
+          # for each entry's rationale.
+          #
+          # Categories:
+          #   (a) 0033 / 0078 / 0162 — numbered gaps that never existed as files
+          #   (b) `" 2.sql"` macOS duplicate suffixes for migrations already
+          #       applied in prod under the canonical name — the `.* 2$` rule
+          #       tolerates the copy-paste artefact pending a repo-level cleanup
+          #   (c) 0186 / 0212..0216 — applied under 2026041X version strings
+          #       in prod's schema_migrations (migrations were pushed before
+          #       the current naming convention was stable); the filenames
+          #       exist but the names in prod don't match 1:1
+          #   (d) 0190 RLS subquery caching + 0191 BRIN on anchors —
+          #       intentionally held back for a maintenance window
+          #       (tracked in SCRUM-908)
+          exempt_regex='^(0033|0078|0162|.* 2|0186_.*|0190_.*|0191_.*|0212_.*|0213_.*|0214_.*|0215_.*|0216_.*|0216b_.*)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
-
-          # BRIN-on-anchors + RLS subquery caching — deferred to maintenance
-          # window. Treated as exempt until the dedicated migration PR lands.
-          filtered_missing=$(echo "$filtered_missing" | grep -v '^0190_rls_subquery_caching$' || true)
-          filtered_missing=$(echo "$filtered_missing" | grep -v '^0191_brin_indexes_timeseries$' || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
 

@@ -80,12 +80,26 @@ needs hard enforcement at the deploy layer.
 
 ## Exempt migrations (as of 2026-04-19)
 
-- `0190_rls_subquery_caching` — RLS policy refactor; reviewed for
-  conflict with current prod policy set
+**Intentional deferrals** (tracked, scheduled for removal):
+- `0190_rls_subquery_caching` — RLS policy refactor; review against
+  current prod policy set before applying
 - `0191_brin_indexes_timeseries` — non-concurrent BRIN index build on
   `anchors` (2.8M rows); locks table; apply in maintenance window
 
-Both entries tracked in SCRUM-908 follow-up.
+**Repository artefacts / naming drift** (applied in prod under different
+names, kept in the exempt list until the repo cleanup lands):
+- `0033` / `0078` / `0162` — numbered gaps that never existed as files
+- `.* 2` — macOS "Duplicate" `" 2.sql"` files that shadow canonical
+  migrations already applied under the base name (e.g.
+  `0186_treasury_cache 2.sql` vs prod's applied
+  `0186_treasury_cache`). Repo cleanup tracked separately.
+- `0186_.*` / `0212_.*` / `0213_.*` / `0214_.*` / `0215_.*` / `0216_.*`
+  / `0216b_.*` — applied in prod under `2026041X` version strings
+  (migrations pushed before the current naming convention stabilized);
+  filenames exist locally but `prod.schema_migrations.name` doesn't
+  match 1:1
+
+Both categories tracked in SCRUM-908 follow-up.
 
 ## References
 
