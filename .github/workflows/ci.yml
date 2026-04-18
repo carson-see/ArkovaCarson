@@ -119,6 +119,8 @@ jobs:
         run: npm run lint:copy
 
       - name: TypeScript check (edge workers)
+        env:
+          NODE_OPTIONS: '--max-old-space-size=8192'
         run: npx tsc -p services/edge/tsconfig.json --noEmit
 
   # Verify generated types are up to date
