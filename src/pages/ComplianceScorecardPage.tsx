@@ -37,6 +37,7 @@ import { downloadAuditPdf } from '@/lib/compliancePdf';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useProfile } from '@/hooks/useProfile';
 import { useAuth } from '@/hooks/useAuth';
+import { supabase } from '@/lib/supabase';
 
 interface PerJurisdiction {
   jurisdiction_code: string;
@@ -102,8 +103,19 @@ export interface ComplianceScorecardPageProps {
   onExportPdf?: (audit: AuditRow) => Promise<void> | void;
 }
 
+// Browser fetch wrapper that attaches the Supabase JWT. The worker's
+// `requireAuth` middleware rejects any `/api/v1/compliance/*` call that
+// doesn't carry a Bearer token — the scorecard shipped in PR #411 without
+// this, so the page 401'd for every user until the 2026-04-18 PM fix.
+async function fetchWithSupabaseJwt(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+  if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+  return fetch(input, { ...init, credentials: init.credentials ?? 'include', headers });
+}
+
 export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}) {
-  const fetchFn = props.fetchFn ?? (typeof window !== 'undefined' ? window.fetch.bind(window) : undefined);
+  const fetchFn = props.fetchFn ?? (typeof window !== 'undefined' ? fetchWithSupabaseJwt : undefined);
   const { signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { organization } = useOrganization(profile?.org_id);
