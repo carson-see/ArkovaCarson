@@ -2023,6 +2023,45 @@ export const DATA_CORRECTION_LABELS = {
 // JURISDICTION PRIVACY NOTICES (REG-14)
 // =============================================================================
 
+/** NCA-07 / NCA-08 / NCA-09 — "Audit My Organization" UI copy */
+export const AUDIT_MY_ORG_LABELS = {
+  TITLE: 'Audit My Organization',
+  DESCRIPTION:
+    'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
+  CTA: 'Start compliance audit',
+  PROGRESS_ANALYZING: 'Analyzing credentials…',
+  PROGRESS_CHECKING: 'Checking regulatory requirements…',
+  PROGRESS_GENERATING: 'Generating compliance report…',
+  PROGRESS_ESTIMATE: 'This usually completes in under 30 seconds.',
+  VIEW_RESULTS: 'View results',
+  RETRY: 'Try again',
+  ERROR_HTTP_PREFIX: 'Audit failed with HTTP',
+  ERROR_AUDIT_FAILED: 'The audit could not complete. Please retry.',
+  ERROR_NETWORK: 'Network error — please check your connection and retry.',
+  ERROR_FETCH_UNAVAILABLE: 'Your browser cannot reach the audit service. Please refresh and retry.',
+  IN_PROGRESS_TOOLTIP: 'Audit is already in progress for this organization.',
+  SCORECARD_TITLE: 'Compliance scorecard',
+  SCORECARD_EMPTY: 'Run your first audit to see your compliance score.',
+  SCORECARD_GAPS_HEADING: 'Open gaps',
+  SCORECARD_RECOMMENDATIONS_HEADING: 'Recommended actions',
+  SCORECARD_QUICK_WINS: 'Quick wins',
+  SCORECARD_CRITICAL: 'Critical',
+  SCORECARD_UPCOMING: 'Upcoming',
+  SCORECARD_STANDARD: 'Other',
+  SCORECARD_PER_JURISDICTION: 'Score by jurisdiction',
+  SCORECARD_TIMELINE: 'Score over time',
+  SCORECARD_LAST_AUDITED: 'Last audited',
+  SCORECARD_EXPORT_PDF: 'Export PDF',
+  SCORECARD_EXPORTING: 'Preparing PDF…',
+  SCORECARD_DISCLAIMER:
+    'This report reflects credential status as of the audit date. It is not legal advice.',
+  SCORECARD_LOADING: 'Loading…',
+  SCORECARD_BACK_TO_DASHBOARD: '← Back to dashboard',
+  SCORECARD_NO_JURISDICTION_DATA: 'No jurisdiction data.',
+  SCORECARD_NO_GAPS: 'No open compliance gaps.',
+  SCORECARD_TIMELINE_INSUFFICIENT: 'Not enough history yet.',
+} as const;
+
 export const PRIVACY_NOTICE_LABELS = {
   TITLE: 'Privacy & Data Protection',
   DESCRIPTION: 'Information about how your data is protected under applicable laws.',
@@ -2044,6 +2083,12 @@ export const PRIVACY_NOTICE_LABELS = {
   SINGAPORE_DESCRIPTION: 'Applies to data subjects in Singapore. Your personal data is protected under the PDPA. You have rights of access and correction. Organizations must obtain consent and provide notification before collecting data.',
   MEXICO_TITLE: 'LFPDPPP (Ley Federal de Protección de Datos Personales en Posesión de los Particulares)',
   MEXICO_DESCRIPTION: 'Applies to data subjects in Mexico. Your personal data is protected under the LFPDPPP (2025 reform). You have ARCO rights: access, rectification, cancellation, and opposition. Consent is required for cross-border transfers.',
+  COLOMBIA_TITLE: 'Colombia Law 1581 of 2012 (Personal Data Protection)',
+  COLOMBIA_DESCRIPTION: 'Applies to data subjects in Colombia. Your personal data is protected under Law 1581 + Decree 1377. You have rights of access, rectification, erasure, and consent revocation. US transfers rely on the SIC adequacy list.',
+  THAILAND_TITLE: 'Thailand PDPA (Personal Data Protection Act 2019)',
+  THAILAND_DESCRIPTION: 'Applies to data subjects in Thailand. Your personal data is protected under the PDPA. You have access, portability, objection, deletion, restriction, and rectification rights. Cross-border transfers use SCCs aligned with ASEAN MCCs or GDPR SCCs referencing Thai law.',
+  MALAYSIA_TITLE: 'Malaysia PDPA 2010 (as amended 2024)',
+  MALAYSIA_DESCRIPTION: 'Applies to data subjects in Malaysia. Your personal data is protected under the PDPA as amended in 2024. You have access, correction, consent withdrawal, and (from 2025) data portability rights. Cross-border transfers use a risk-based Transfer Impact Assessment framework.',
   DPF_TITLE: 'EU-US Data Privacy Framework',
   DPF_DESCRIPTION: 'Arkova self-certifies under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers. Individuals have the right to access, correct, or delete their data, and may file complaints with their national DPA or the DPF Panel.',
   REGULATOR_LABEL: 'Regulator',

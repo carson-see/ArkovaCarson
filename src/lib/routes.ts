@@ -32,6 +32,7 @@ export const ROUTES = {
   DATA_RETENTION: '/privacy/data-retention',
   AUDITOR_BATCH: '/organization/auditor-batch',
   COMPLIANCE_TRENDS: '/organization/compliance-trends',
+  COMPLIANCE_SCORECARD: '/compliance/scorecard',
 
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',

@@ -13,7 +13,8 @@ persistence.
 |------|---------|------|
 | `score-calculator.ts` | Per-(jurisdiction, industry) compliance score, weighted by credential type, with integrity bonus + expired/fraud penalties | NCE-07 / SCRUM-597 |
 | `gap-detector.ts` | Missing required + missing recommended gap analysis with peer-adoption data | NCE-08 / SCRUM-598 |
-| `org-audit.ts` | **NCA-03 NEW.** Org-level audit rollup across all the org's jurisdictions. Adds EXPIRED / INSUFFICIENT gap categories + attaches NVI quarantine caveats | NCA-03 / SCRUM-758 |
+| `org-audit.ts` | **NCA-03.** Org-level audit rollup across all the org's jurisdictions. Adds EXPIRED / INSUFFICIENT gap categories + attaches NVI quarantine caveats + NCA-05 recommendations | NCA-03 / SCRUM-758 |
+| `recommendation-engine.ts` | **NCA-05 NEW.** Turns audit gaps into prioritised recommendations. Dedupes by (type, category), groups by QUICK_WIN / CRITICAL / UPCOMING / STANDARD, scores by severity × jurisdiction penalty risk ÷ effort hours. Pure function — unit tests cover dedup, sort, grouping, overflow. | NCA-05 / SCRUM-760 |
 | `expiry-checker.ts` | Cron helper for expiring-credential alerts | NCE-09 |
 | `audit-report.ts` | Audit-ready report generation | NCE-18 |
 | `benchmarking.ts` | Industry benchmark comparisons | NCE-17 |

@@ -147,6 +147,8 @@ router.post('/', async (req: Request, res: Response) => {
           anchor_count: anchors.length,
           rule_count: rules.length,
           jurisdiction_pair_count: jurisdictionPairs.length,
+          // NCA-05: recommendations live in metadata per migration 0217 comment.
+          recommendations: result.recommendations,
         },
       })
       .select('*')
@@ -300,9 +302,13 @@ async function loadJurisdictionRules(
 }
 
 async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
+  // Schema fix (codex review on PR #411): anchors table uses `expires_at`
+  // + `label`, not `not_after` + `title`. integrity_score + fraud_flags
+  // live on separate tables and default to null / empty here — a future
+  // follow-up can JOIN them in if fraud-aware severity bumps are wanted.
   const { data } = await dbAny
     .from('anchors')
-    .select('id, credential_type, status, integrity_score, fraud_flags, not_after, title')
+    .select('id, credential_type, status, expires_at, label')
     .eq('org_id', orgId)
     .eq('status', 'SECURED')
     .limit(10_000);
@@ -310,10 +316,10 @@ async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
     id: a.id as string,
     credential_type: (a.credential_type as string) ?? 'OTHER',
     status: a.status as string,
-    integrity_score: (a.integrity_score as number | null) ?? null,
-    fraud_flags: (a.fraud_flags as string[]) ?? [],
-    expiry_date: (a.not_after as string) ?? null,
-    title: (a.title as string) ?? null,
+    integrity_score: null,
+    fraud_flags: [],
+    expiry_date: (a.expires_at as string) ?? null,
+    title: (a.label as string) ?? null,
   }));
 }
 

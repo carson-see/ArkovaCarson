@@ -92,6 +92,7 @@ const IndependentVerifyPage = React.lazy(() => import('@/pages/IndependentVerify
 const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').then(m => ({ default: m.DataRetentionPage })));
 const AuditorBatchPage = React.lazy(() => import('@/pages/AuditorBatchPage').then(m => ({ default: m.AuditorBatchPage })));
 const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
+const ComplianceScorecardPage = React.lazy(() => import('@/pages/ComplianceScorecardPage').then(m => ({ default: m.ComplianceScorecardPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -235,6 +236,8 @@ export function App() {
           {/* Compliance Intelligence */}
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* NCA-08 — Compliance Scorecard (post-audit landing) */}
+          <Route path={ROUTES.COMPLIANCE_SCORECARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceScorecard"><ComplianceScorecardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Signature Compliance Center (Phase III — PH3-ESIG-03) */}
           <Route path={ROUTES.SIGNATURE_COMPLIANCE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="SignatureCompliance"><SignatureCompliancePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

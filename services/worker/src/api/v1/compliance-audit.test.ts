@@ -152,8 +152,8 @@ describe('POST /api/v1/compliance/audit', () => {
       if (table === 'anchors') {
         return makeBuilder({
           selectData: [
-            { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', integrity_score: 0.9, fraud_flags: [], not_after: null, title: 'Lic' },
-            { id: 'a2', credential_type: 'CONTINUING_EDUCATION', status: 'SECURED', integrity_score: 0.9, fraud_flags: [], not_after: null, title: 'CE' },
+            { id: 'a1', credential_type: 'LICENSE', status: 'SECURED', expires_at: null, label: 'Lic' },
+            { id: 'a2', credential_type: 'CONTINUING_EDUCATION', status: 'SECURED', expires_at: null, label: 'CE' },
           ],
         }) as unknown as never;
       }
@@ -173,6 +173,81 @@ describe('POST /api/v1/compliance/audit', () => {
     expect(res.body.overall_score).toBe(67);
     expect(res.body.gaps.length).toBeGreaterThan(0);
     expect(res.body.quarantines[0].regulation).toBe('HIPAA');
+  });
+
+  it('writes NCA-05 recommendations into metadata on insert', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const insertCalls: Array<Record<string, unknown>> = [];
+
+    const inserted = {
+      id: '22222222-2222-2222-2222-222222222222',
+      org_id: 'org-1',
+      overall_score: 60,
+      overall_grade: 'D',
+      per_jurisdiction: [],
+      gaps: [],
+      quarantines: [],
+      status: 'COMPLETED',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: 50,
+      jurisdiction_filter: null,
+      error_code: null,
+      error_message: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        const builder = makeBuilder({ maybeSingleData: null, singleData: inserted });
+        builder.insert = vi.fn((payload: Record<string, unknown>) => {
+          insertCalls.push(payload);
+          return builder;
+        });
+        return builder as unknown as never;
+      }
+      if (table === 'organizations') {
+        return makeBuilder({
+          maybeSingleData: { jurisdictions: ['US-CA'], industry: 'accounting' },
+        }) as unknown as never;
+      }
+      if (table === 'jurisdiction_rules') {
+        return makeBuilder({
+          selectData: [{
+            id: 'r1',
+            jurisdiction_code: 'US-CA',
+            industry_code: 'accounting',
+            rule_name: 'CA',
+            required_credential_types: ['LICENSE','CERTIFICATE'],
+            optional_credential_types: [],
+            regulatory_reference: 'CA code',
+            details: {},
+          }],
+        }) as unknown as never;
+      }
+      if (table === 'anchors') {
+        return makeBuilder({ selectData: [] }) as unknown as never;
+      }
+      if (table === 'compliance_scores') {
+        return makeBuilder({ selectData: [] }) as unknown as never;
+      }
+      return makeBuilder({ selectData: [] }) as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    await request(app).post('/api/v1/compliance/audit').send({}).expect(201);
+
+    // The first insert call is the successful audit persist; assert its
+    // metadata.recommendations is populated by NCA-05.
+    expect(insertCalls.length).toBe(1);
+    const metadata = insertCalls[0].metadata as Record<string, unknown>;
+    expect(metadata.recommendations).toBeDefined();
+    const recs = metadata.recommendations as { recommendations: unknown[]; overflow_count: number };
+    expect(Array.isArray(recs.recommendations)).toBe(true);
+    expect(recs.recommendations.length).toBeGreaterThan(0);
+    expect(typeof recs.overflow_count).toBe('number');
   });
 
   it('returns idempotent completed audit when a recent one exists', async () => {

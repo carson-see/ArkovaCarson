@@ -1,3 +1,4 @@
+export { AuditMyOrganizationButton } from './AuditMyOrganizationButton';
 export { ComplianceScoreCard } from './ComplianceScoreCard';
 export { ComplianceScoreGauge } from './ComplianceScoreGauge';
 export { ExpiringDocumentsCard } from './ExpiringDocumentsCard';

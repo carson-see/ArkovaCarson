@@ -1,9 +1,12 @@
 # ARKOVA — Claude Code Engineering Directive
 
 > **Version:** 2026-04-17 | **Repo:** ArkovaCarson | **Deploy:** app.arkova.ai (arkova-26.vercel.app)
-> **Stats:** 208 migrations (0000-0217, production through 0185, 0186-0217 pending deploy — 18 pending) | 4,281 tests (1,235 frontend + 3,046 worker; +94 new via NVI-05..14 infrastructure) | 344 stories (300 complete + 44 remaining) | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.3 FCRA UNDER_REVIEW + v28.0 HIPAA + v29.0 FERPA **QUARANTINED** (NVI-15) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
+> **Stats:** 209 migrations (0000-0218, production through 0185, 0186-0218 pending deploy — 19 pending) | 4,329 tests (1,265 frontend + 3,060 worker + 4 new via GEO-11 VideoObject helper) | 344 stories (~323 complete, ~21 remaining). **QA sweep 2026-04-17 (corrected):** audited 30 QA stories; 16 transitioned to Done (engineering-truly-complete), **15 rolled back to Blocked** after per-story AC audit revealed unfinished external/manual work (attorney engagement, IASME assessor, SIC filing, Cloud Scheduler wiring, gold-standard benchmark). **NPH-16 (SCRUM-728) genuinely deployed 2026-04-17:** Secret Manager versions bumped (`openstates-api-key` v2, `courtlistener-api-token` v2, new `sam-gov-api-key` v1); Cloud Run revision `arkova-worker-00321-9cc` live at 100% traffic | 24/24 audit + 9 pentest findings resolved | AI: **Gemini 2.5 Flash (prod extraction, v5-reasoning tuned `endpoints/8811908947217743872`, single deployed Vertex endpoint)** — v6/v7 tuned and eval'd but did NOT cut over (v7 failed DoD 2026-04-16 PM, v7.1 surgical retrain planned); Nessie v27.3 FCRA UNDER_REVIEW + v28.0 HIPAA + v29.0 FERPA **QUARANTINED** (NVI-15) | 1.41M+ public records | 1.41M+ SECURED anchors (mainnet)
 > **🛡 NVI INFRASTRUCTURE LANDED (2026-04-17):** SCRUM-805/806/807/808 validators (statute-quote, case-law, agency-bulletin, state-statute) shipped in `services/worker/scripts/intelligence-dataset/validators/` with 33 unit tests + orchestrator + on-disk `verification-status.json` registry. **SCRUM-825 NVI-18 CI guard wired into `build-dataset.ts`:** training JSONL emission refuses when any cited source is untrusted (stale > 90d, failing, or orphaned). Baseline run on 205 FCRA+HIPAA+FERPA sources: **140 pass / 39 hardFail / 19 orphan.** SCRUM-819 NVI-15 quarantine policy (`src/ai/nessie-quarantine.ts` + 11 tests) routes HIPAA v28 + FERPA v29 customer traffic through a caveat + confidence downgrade; FCRA v27.3 kept UNDER_REVIEW (soft downgrade).
 > **🎯 NCA "AUDIT MY ORGANIZATION" PHASE 1 LANDED (2026-04-17):** SCRUM-756 NCA-01 migration 0216 expands `jurisdiction_rules` seed from ~30 to ≥100 rules across US FEDERAL (FERPA, HIPAA, SOX, FCRA employment, ADA, FLSA, GLBA, GINA) + Kenya DPA + Australia APP + EU/UK GDPR + Canada PIPEDA + Singapore PDPA + Japan APPI + India DPDP + South Africa POPIA + Nigeria NDPR + additional US state × industry coverage. SCRUM-757 NCA-02 + SCRUM-759 NCA-04 wired into SCRUM-758 NCA-03: new `compliance_audits` table (migration 0217) + `POST/GET /api/v1/compliance/audit` endpoint that rolls up per-jurisdiction scores, 4-category gap detection (MISSING/EXPIRED/EXPIRING_SOON/INSUFFICIENT) with severity sort, and NVI quarantine caveat surfacing.
+> **🎯 NCA PHASE 2+3 LANDED (2026-04-17 — PRs #413 #414):** NCA-05 recommendation engine (pure `buildRecommendations` — dedupe by (type, category) across jurisdictions, severity × penalty-risk ÷ effort priority, QUICK_WIN/CRITICAL/UPCOMING/STANDARD grouping, 20-item cap with `overflow_count`, `gap_keys` drill-down, persisted in `compliance_audits.metadata.recommendations`). NCA-06 regulatory-change cron (`jobs/regulatory-change-cron.ts` + pure `computeRegulatoryChangeImpact` — NONE/INFO/IN_APP/EMAIL severity, in-app notification + Resend email with `regulatory_change_email` opt-out; orchestrator importable, Cloud Scheduler wiring in SCRUM-893). NCA-07 dashboard `AuditMyOrganizationButton` (state machine with ARIA live progress region). NCA-08 `/compliance/scorecard` page (gauge + per-jurisdiction bars + gap list + grouped recommendations + inline SVG timeline + error / empty states). NCA-09 client-side PDF export (`src/lib/compliancePdf.ts`, jsPDF US-Letter, filename `arkova-compliance-audit-<slug>-<date>.pdf`). Migration 0218 adds `notifications` table (RLS + CHECK constraint + read_at pattern).
+> **🧾 INTL TIER 2 + TRUST UK LANDED (2026-04-17 — PR #413):** Colombia Law 1581 (INTL-04) + Thailand PDPA 2019 (INTL-05) + Malaysia PDPA 2024 (INTL-06) privacy notices added to `JurisdictionPrivacyNotices`. Compliance docs: `docs/compliance/colombia/{privacy-notice,sic-registration}.md`, `docs/compliance/thailand/{privacy-notice,scc-annex}.md`, `docs/compliance/malaysia/{privacy-notice,transfer-impact-assessment}.md`. Cyber Essentials Plus UK readiness checklist (TRUST-07) at `docs/compliance/uk-cyber-essentials/readiness-checklist.md`. External-action follow-ups: SCRUM-888 (SIC filing), SCRUM-889 (Thailand counsel), SCRUM-890 (Malaysia counsel), SCRUM-891 (IASME assessor).
+> **🔧 NPH-16 OPERATOR RUNBOOK (2026-04-17 — PR #414):** `docs/runbooks/nph-16-deploy-api-keys.md` + `services/worker/scripts/ops/verify-public-record-keys.ts` pre-deploy safety check. Unblocks three fetchers (OpenStates, SAM.gov, CourtListener) that currently silent-no-op in prod. Operator execution tracked in SCRUM-892.
 > **✅ NESSIE v27.0 FCRA DEPLOYED (2026-04-16):** Pipeline proved end-to-end. Together ft-56fd901e-669e → RunPod merge pod (A40, PEFT 0.15 + autocast=False, stripped 9 incompatible adapter_config keys) → HF `carsonarkova/nessie-v27-fcra` (16.1GB merged) → RunPod endpoint `u2ojptb1i9awwt` (workersStandby=2, p50 5.6s). **v27.0 eval (8 FCRA entries):** Citation 0% (eval-framework bug — all models show 0%), Faithfulness 25% (vs v26 31%), Relevance 35% (**+21pp vs v26**), Risk Recall 6.7%, Confidence r 0.672, Latency 5.56s (**3× faster than v26**). 2/7 DoD targets met — ship as baseline, train v27.1 immediately.
 > **✅ ELITE DATASET ARCHITECTURE (2026-04-16):** `services/worker/scripts/intelligence-dataset/` — anchored sources registry, hand-crafted scenarios, category-balanced leakage-free splitter, full validation (every citation.record_id must exist; non-empty risks/recs; confidence 0.55-0.99; near-duplicate detection). **Total: 343 scenarios + 209 anchored sources across 3 regulations.** FCRA v27.1 (208 scenarios, 89 sources, 169/39 split, 11 categories), HIPAA v28.0 (73 scenarios, 74 sources, 61/12 split, 5 categories), FERPA v29.0 (62 scenarios, 46 sources, 52/10 split, 10 categories). All compile clean (0 errors).
 > **✅ NESSIE v27.1 DEPLOYED + EVAL'D (2026-04-16):** Together ft-e9bbf91c-9cfa → RunPod merge (A40, PEFT 0.15) → HF `carsonarkova/nessie-v27-1-fcra` → RunPod endpoint `mpdzo2pso0bkua` (nessie-v27-1-fcra-prod). **Eval gains driven ONLY by dataset quality** (same hyperparameters as v27.0): Faithfulness 25→37.5% (+12.5pp), Relevance 35→44% (+9pp), **Risk Recall 6.7→25% (+18.3pp)**, Confidence r 0.672→0.806 (+0.134), Citation 0%→12.5% (after citation-fix rerun), Latency 13s (cold-start skew; warm 6-16s). 3-4/7 DoD targets. See `services/worker/docs/eval/eval-intelligence-v27-1-vs-v27-0-2026-04-16.md`.
@@ -57,7 +60,58 @@ Single source of truth: `docs/BACKLOG.md`. Every backlog item must exist there +
 Every task MUST update its Jira ticket. Required fields: Definition of Ready (DoR), Definition of Done (DoD), Confluence doc links, status transitions. No task is complete until Jira reflects reality.
 
 ### CONFLUENCE MANDATE
-Every task that changes schema, security, API, flows, or architecture MUST update the corresponding Confluence doc (see Doc Update Matrix in Section 4). This is not optional — it is part of Definition of Done.
+Every Jira story MUST have a matching Confluence page. This is NOT scoped to stories that change schema, security, API, flows, or architecture — it applies to **every story in the backlog and every new story created going forward**. The Confluence page must exist at story-creation time (at least as a stub, linked from the Jira ticket) and is part of Definition of Ready, not a follow-up.
+
+**Regulation-related stories are non-negotiable (2026-04-17 rule, expanded).** Any compliance regime (FERPA, HIPAA, FCRA, GDPR, Kenya DPA, POPIA, PIPEDA, PDPA, APPI, DPDP, NDPR, Law 1581, APP, SOX, GLBA, ADA, FLSA, GINA — any jurisdiction, any framework), privacy work, data-residency decision, auditor engagement (SOC 2, ISO, Cyber Essentials, pen test), and external legal engagement MUST be mirrored to Confluence before the Jira story moves out of "To Do." Auditors will ask for it; "it's only in Jira" is not a defensible answer. A regulation-related Jira ticket without a Confluence page is itself an audit finding.
+
+**Per-story Confluence page must capture:** (1) user story + AC, (2) engineering deliverables shipped (or planned), (3) next manual action + owner, (4) links to related Confluence topic pages per Doc Update Matrix, (5) links back to the Jira ticket and any PRs. Stories without Confluence presence are invisible to non-technical stakeholders (counsel, procurement, executive) and will be reopened as incomplete.
+
+**Additionally:** every new `docs/compliance/**/*.md` or procurement/RFP/playbook artefact MUST be mirrored to Confluence in the same PR. A `.md` file alone is insufficient. Add a "How to use this document" section to every operational playbook so the reader knows the 5 concrete steps to execute. Link the Confluence page back from the Markdown file header.
+
+Any task that changes schema, security, API, flows, or architecture MUST ALSO update the corresponding topic-level Confluence doc (see Doc Update Matrix in Section 4) — on top of the per-story page, not instead of it.
+
+### MANUAL-FOLLOWUP EMAIL MANDATE (2026-04-17)
+Any story whose closure requires a human action outside of code (register with a regulator, engage a vendor, pay a fee, create an external account, record a video, file a form) MUST generate an email to **carson@arkova.ai** summarising the action, owner, playbook link, and deadline. Jira comments alone are not sufficient — inbox items drive action; Jira comments do not.
+
+### STORY-FORMAT MANDATE (2026-04-17)
+Every Jira story description MUST use the standard template:
+
+```
+## User Story
+As a <role>, I want <goal>, so that <reason>.
+
+## Description
+<context>
+
+## Definition of Ready (DoR)
+- [ ] Story description reviewed
+- [ ] Dependencies identified
+- [ ] Plan outlined
+- [ ] Acceptance criteria defined
+- [ ] Owner assigned
+
+## Acceptance Criteria
+- [ ] <criterion>
+
+## Definition of Done (DoD) — Mandatory Gates
+**GATE 1 — Tests (TDD MANDATE)** …
+**GATE 2 — Jira (JIRA MANDATE)** …
+**GATE 3 — Confluence (CONFLUENCE MANDATE)** …
+**GATE 4 — Bug Log (BUG LOG MANDATE)** …
+**GATE 5 — agents.md** …
+**GATE 6 — CLAUDE.md (CLAUDE.MD MANDATE)** …
+
+## Effort / Priority / Dependencies
+```
+
+Stories with malformed escape sequences (e.g. `\\\\n` instead of real newlines), missing DoR, or minimal 1-2-gate DoD MUST be reformatted before work begins.
+
+### QA-STATUS MANDATE (2026-04-17)
+Jira stories in **QA** status must be actively driven to resolution. Either:
+- **Transition to Done** if the engineering deliverable is 100% complete and merged (manual follow-ups move to a dedicated follow-up ticket), OR
+- **Transition to Blocked** if work cannot be completed without external action.
+
+Leaving stories in QA indefinitely is prohibited — QA is a transition state, not a parking state.
 
 ### BUG LOG MANDATE
 Every bug created or fixed MUST be logged in the master bug tracker spreadsheet: https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0
@@ -354,12 +408,13 @@ docker exec -i $(docker ps --filter "name=supabase_db" -q | head -1) psql -U pos
 | **NVI (Nessie Verification Infrastructure)** ★ HIGHEST | **16/18** | **0** | **2** | **89% — NVI-01..14 + 15 + 18 shipped (SCRUM-805..818/819/825 all QA-merged in #411); NVI-16 (constrained decoding productize) + NVI-17 (semantic-similarity scoring) remaining** |
 | **GME2 (Gemini Golden v6/v7)** ★ ACTIVE (SCRUM-772) | **2/5** | **0** | **3** | **40% — v6 + v7 trained & eval'd, both FAILED DoD, v7.1 surgical retrain planned** |
 | **GME3/4/5 (Gemini Domain Experts)** ★ NEW | **0/3** | **0** | **3** | **0% — gated on v7 + GME8** |
-| **NCA (Nessie Compliance Audit)** ★ ACTIVE | **4/10** | **0** | **6** | **40% — NCA-01/02/03/04 shipped 2026-04-17 (SCRUM-756/757/758/759); NCA-05/06/07/08/09 remaining** |
+| **NCA (Nessie Compliance Audit)** ★ ACTIVE | **9/10** | **0** | **1** | **90% — NCA-01..09 shipped (SCRUM-756..760 + 761/762/763/764 QA-merged in #413/#414); NCA-FU1 (SCRUM-893) bundles deferred items: Cloud Scheduler wiring, gap filters, SVG-to-canvas PDF gauge, Nessie RAG text (NVI-gated), integrity_score JOIN, UAT** |
 | **API Richness (API-RICH)** ★ NEW | **0/5** | **0** | **5** | **0% — zero model risk, quick wins** |
 | **NDD / NSS / NTF (paused by NVI)** | 0/29 | 0 | 29 | 0% — **PAUSED** |
-| **TRUST (SOC 2 Type II / ISO / cyber)** ★ NEW | 0/7 | 0 | 7 | 0% — external-vendor-gated |
-| **INTL (SE Asia / LatAm regulatory)** ★ NEW | 0/6 | 0 | 6 | 0% — customer-gated |
-| **Total** | **~280/370+** | **4** | **~90+** | **~76%** |
+| **TRUST (SOC 2 Type II / ISO / cyber)** ★ ACTIVE | **1/7** | **0** | **6** | **14% — TRUST-07 UK CE+ readiness checklist shipped in #413; IASME assessor engagement tracked in SCRUM-891** |
+| **INTL (SE Asia / LatAm regulatory)** ★ ACTIVE | **3/6** | **0** | **3** | **50% — INTL-04 Colombia + INTL-05 Thailand + INTL-06 Malaysia privacy notices + SCC annex + TIA shipped in #413; external legal engagement tracked in SCRUM-888/889/890** |
+| **NPH (Nessie Pipeline Hardening)** | **1/?** | **0** | **?** | **NPH-16 runbook shipped in #414 (SCRUM-728 QA); operator deploy tracked in SCRUM-892** |
+| **Total** | **~310/370+** | **4** | **~60+** | **~84%** |
 
 ### 🚨 NESSIE STRATEGY RESET — 2026-04-15 (READ FIRST)
 
@@ -681,5 +736,5 @@ TRAINING_DATA_OUTPUT_PATH=          # optional — JSONL export path for trainin
 
 ---
 
-_Directive version: 2026-04-17 | 208 migrations (0000-0217, prod through 0185, 18 pending) | 4,281 tests | ~300/344 stories complete | GME: 20/20 DONE | NCE: 20/20 DONE | INT: 8/9 (webhook CRUD open) | NMT: 14/14 DONE | NVI: 16/18 DONE (NVI-05..14 shipped in #411 — CoT scaffolder, distillation, multi-turn, document-grounded, adversarial, benchmark, LLM-judge, canary, mastery-gate; NVI-16/17 remaining) | NCA: 4/10 (NCA-01..04 shipped; NCA-05..09 remaining) | Golden dataset: 1,905 entries (need ~5,000+) | Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed | Gemini v5-reasoning prod, v6 cutover pending, v7 failed DoD | FCRA Mastery Gate: 🛑 HOLD (8/8 criteria pending attorney + budget) | Major remaining: NVI gate closure, DEP (9 not started), REG (26 not started)_
+_Directive version: 2026-04-17 (evening) | 209 migrations (0000-0218, prod through 0185, 19 pending) | 4,325 tests | ~310/344 stories complete | GME: 20/20 DONE | NCE: 20/20 DONE | INT: 8/9 (webhook CRUD open) | NMT: 14/14 DONE | NVI: 16/18 DONE (NVI-16/17 remaining) | **NCA: 9/10** (NCA-01..09 shipped across #411/#413/#414; NCA-FU1 = SCRUM-893 bundles engineering follow-ups) | **INTL: 3/6** (INTL-04/05/06 shipped in #413; SCRUM-888/889/890 track external legal) | **TRUST: 1/7** (TRUST-07 CE+ readiness shipped in #413; SCRUM-891 tracks IASME assessor) | NPH-16 runbook shipped in #414 (SCRUM-892 tracks operator deploy) | Golden dataset: 1,905 entries (need ~5,000+) | Nessie v27.3 FCRA / v28.0 HIPAA / v29.0 FERPA deployed | Gemini v5-reasoning prod, v6 cutover pending, v7 failed DoD | FCRA Mastery Gate: 🛑 HOLD (8/8 criteria pending attorney + budget) | Major remaining: NVI gate closure, DEP (9 not started), REG (26 not started), NCA-FU1 engineering cleanup_
 _Reference docs: `docs/reference/` (FILE_MAP, BRAND, TESTING, STORY_ARCHIVE)_

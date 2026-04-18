@@ -1,5 +1,5 @@
 # Security & Row Level Security (RLS)
-_Last updated: 2026-04-12 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**, **0169 (permanent RLS performance: SECURITY DEFINER helpers for 1.4M+ records)**, **0194-0195 (NCE: jurisdiction_rules + compliance_scores)**_
+_Last updated: 2026-04-17 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (org RLS recursion fix), 0149 (attestations RLS recursion fix), 0024/prod (anchors RLS performance: subquery-based policies replacing function calls), 0156-0157 (search privacy gate), **0160 (critical security hardening — 9 pentest findings)**, **0169 (permanent RLS performance: SECURITY DEFINER helpers for 1.4M+ records)**, **0194-0195 (NCE: jurisdiction_rules + compliance_scores)**, **0217 (NCA-03: compliance_audits)**, **0218 (NCA-06: notifications)**_
 
 ### REG Tables (2026-04-12)
 
@@ -19,6 +19,23 @@ _Last updated: 2026-04-12 | Story: P1-TS-03 through P6-TS-06, migrations 0107 (o
 **compliance_scores** (migration 0195):
 - `Org members can read their org scores` — SELECT where org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid())
 - No INSERT/UPDATE/DELETE for users — worker writes via service_role
+
+### NCA Tables (2026-04-17)
+
+**compliance_audits** (migration 0217):
+- `Org members can read their org audits` — SELECT where org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid())
+- No INSERT/UPDATE/DELETE for users — POST `/api/v1/compliance/audit` writes via service_role
+- `FORCE ROW LEVEL SECURITY` enabled
+- Indexes: `idx_compliance_audits_org_recent` (`org_id, created_at DESC`), `idx_compliance_audits_status` partial (`QUEUED`/`RUNNING`)
+- `metadata` JSONB carries NCA-05 recommendations + NCA-06 change events (no new columns per migration header)
+
+**notifications** (migration 0218):
+- `Org members can read their org notifications` — SELECT where org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid())
+- `Org admins can mark notifications read` — UPDATE where org_id IN (SELECT org_id FROM org_members WHERE user_id = auth.uid() AND role IN ('OWNER', 'ADMIN'))
+- No INSERT/DELETE for users — worker writes via service_role (NCA-06 cron)
+- `FORCE ROW LEVEL SECURITY` enabled
+- `type` CHECK constraint: `'REGULATORY_CHANGE'`, `'AUDIT_COMPLETED'`, `'BREACH_ALERT'` — extend when new notification kinds land
+- Indexes: `idx_notifications_org_unread` partial (unread rows), `idx_notifications_org_recent`
 
 ## Overview
 

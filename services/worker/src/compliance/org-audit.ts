@@ -21,6 +21,10 @@ import {
   getQuarantineStatus,
   type QuarantineEntry,
 } from '../ai/nessie-quarantine.js';
+import {
+  buildRecommendations,
+  type BuildRecommendationsResult,
+} from './recommendation-engine.js';
 
 export interface JurisdictionPair {
   jurisdiction_code: string;
@@ -82,6 +86,8 @@ export interface OrgAuditResult {
   per_jurisdiction: PerJurisdictionResult[];
   gaps: AuditGap[];
   quarantines: AuditQuarantineCaveat[];
+  /** NCA-05 prioritised recommendations derived from gaps. */
+  recommendations: BuildRecommendationsResult;
 }
 
 /** Severity weights per credential type — informs gap severity labels. */
@@ -272,11 +278,45 @@ export function calculateOrgAudit(input: OrgAuditInput): OrgAuditResult {
     return categoryOrder[a.category] - categoryOrder[b.category];
   });
 
+  const recommendations = buildRecommendations({
+    gaps,
+    // Penalty risk is informed by the overall severity of each jurisdiction's
+    // regulator. Values >1 push a jurisdiction up the priority order.
+    jurisdictionPenaltyRisk: JURISDICTION_PENALTY_RISK,
+  });
+
   return {
     overall_score: overall,
     overall_grade: computeGrade(overall),
     per_jurisdiction: perJurisdiction,
     gaps,
     quarantines,
+    recommendations,
   };
 }
+
+/**
+ * Relative penalty risk per jurisdiction — informs NCA-05 recommendation
+ * priority. Higher = harsher regulator / larger fines. Keep in sync with
+ * `docs/confluence/12_identity_access.md` when tuning.
+ */
+const JURISDICTION_PENALTY_RISK: Record<string, number> = {
+  // US federal
+  'US-FEDERAL': 1.8,
+  'US-CA': 1.5,
+  'US-NY': 1.5,
+  'US-TX': 1.2,
+  // EU
+  'EU': 2.0,
+  'UK': 1.6,
+  // International high-risk
+  'SG': 1.6,
+  'AU': 1.4,
+  'CA': 1.3,
+  'BR': 1.5,
+  'ZA': 1.2,
+  // Intl tier 2 (introduced 2026-04-17)
+  'CO': 1.1,
+  'TH': 1.3,
+  'MY': 1.3,
+};
