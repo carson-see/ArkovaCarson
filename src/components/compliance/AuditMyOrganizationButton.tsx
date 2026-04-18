@@ -16,6 +16,18 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AUDIT_MY_ORG_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
+import { supabase } from '@/lib/supabase';
+
+// Browser fetch wrapper that attaches the Supabase JWT — the worker's
+// requireAuth middleware rejects any /api/v1/compliance/audit call that
+// doesn't carry a Bearer token. Pre-2026-04-18-PM the button used raw fetch
+// and 401'd in prod.
+async function fetchWithSupabaseJwt(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const { data: { session } } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+  if (session?.access_token) headers.set('Authorization', `Bearer ${session.access_token}`);
+  return fetch(input, { ...init, credentials: init.credentials ?? 'include', headers });
+}
 
 type AuditState =
   | { kind: 'idle' }
@@ -52,7 +64,7 @@ const DEFAULT_PHASE_DURATION_MS = 1500;
 export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps = {}) {
   const {
     triggerUrl = DEFAULT_TRIGGER_URL,
-    fetchFn = typeof window !== 'undefined' ? window.fetch.bind(window) : undefined,
+    fetchFn = typeof window !== 'undefined' ? fetchWithSupabaseJwt : undefined,
     onAuditStarted,
     onAuditCompleted,
     phaseDurationMs = DEFAULT_PHASE_DURATION_MS,
