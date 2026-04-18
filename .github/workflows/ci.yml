@@ -536,12 +536,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Generate frontend SBOM (CycloneDX)
-        run: npx @cyclonedx/cyclonedx-npm --output-file sbom-frontend.json --output-format JSON
+        # `--ignore-npm-errors` lets us emit a best-effort SBOM when the
+        # dep tree has legitimate peer-range drift (e.g. zod 3.24 vs
+        # zod-to-json-schema's ^3.25.28 || ^4 peer). The SBOM still captures
+        # the resolved tree — we just don't fail the job on `npm ls` warnings.
+        run: npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file sbom-frontend.json --output-format JSON
       - name: Generate worker SBOM (CycloneDX)
         run: |
           cd services/worker
           npm ci
-          npx @cyclonedx/cyclonedx-npm --output-file ../../sbom-worker.json --output-format JSON
+          npx @cyclonedx/cyclonedx-npm --ignore-npm-errors --output-file ../../sbom-worker.json --output-format JSON
       - name: Generate license summary (DEP-09)
         run: |
           npx license-checker --json --production > license-summary-frontend.json 2>/dev/null || true
