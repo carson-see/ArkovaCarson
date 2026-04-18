@@ -30,9 +30,15 @@ ALTER TABLE jurisdiction_rules FORCE ROW LEVEL SECURITY;
 CREATE POLICY "Anyone can read jurisdiction rules"
   ON jurisdiction_rules FOR SELECT USING (true);
 
+-- Platform admins can manage rules. `PLATFORM_ADMIN` is NOT a `user_role`
+-- enum value — the role flag lives on `profiles.is_platform_admin`
+-- (boolean column added in migration 0095). Checking the boolean here
+-- matches the pattern used by every other "platform admin only" policy
+-- in the codebase and avoids the 22P02 enum-cast error that kept
+-- `supabase db reset` failing at this migration in CI.
 CREATE POLICY "Platform admins can manage rules"
   ON jurisdiction_rules FOR ALL USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'PLATFORM_ADMIN')
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_platform_admin = true)
   );
 
 CREATE INDEX idx_jurisdiction_rules_lookup
