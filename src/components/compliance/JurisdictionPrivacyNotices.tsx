@@ -114,7 +114,7 @@ const JURISDICTION_NOTICES: JurisdictionNotice[] = [
     regulatorUrl: 'https://www.pdpc.gov.sg',
     rights: ['Access (§21)', 'Correction (§22)', 'Withdraw consent (§16)', 'Data portability (§26H)'],
     transferBasis: 'Comparable protection standard or ASEAN Model Contractual Clauses',
-    breachTimeline: '3 calendar days after determining notifiable (500+ individuals)',
+    breachTimeline: '3 calendar days once classified as notifiable (500+ individuals)',
     color: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
     informationOfficer: PRIVACY_CONTACT_EMAIL,
   },
