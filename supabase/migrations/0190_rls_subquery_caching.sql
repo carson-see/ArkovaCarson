@@ -5,15 +5,16 @@
 -- the result once per statement.
 --
 -- Tables affected (verified to exist as of 2026-04-19): profiles,
--- audit_events, credit_transactions, reports, anchor_recipients, payments,
+-- audit_events, credit_transactions, reports, anchor_recipients,
 -- subscriptions, extraction_feedback.
 --
 -- The original header listed `credit_allocations`, `ai_reports`,
--- `review_decisions`, `compliance_flags`, and `invoices` — those references
--- are stale (the tables were never created or were renamed before this
--- migration landed). The `credit_allocations` block in particular caused
--- `supabase db reset` to fail with `42P01 relation does not exist` on every
--- fresh boot, which kept `Tests` CI red for multiple days.
+-- `review_decisions`, `compliance_flags`, `invoices`, and `payments` —
+-- those references are stale (the tables were never created or were
+-- renamed before this migration landed). Removed from the migration body.
+-- The `credit_allocations` and `payments` blocks in particular caused
+-- `supabase db reset` to fail with `42P01 relation does not exist` on
+-- every fresh boot, which kept `Tests` CI red for multiple days.
 --
 -- Note: anchors and attestations already optimized in 0169/0176.
 
@@ -74,15 +75,7 @@ CREATE POLICY anchor_recipients_select ON anchor_recipients
   USING (recipient_user_id = (SELECT auth.uid()));
 
 -- =============================================================================
--- 7. payments — SELECT policy
--- =============================================================================
-DROP POLICY IF EXISTS payments_select ON payments;
-CREATE POLICY payments_select ON payments
-  FOR SELECT TO authenticated
-  USING (user_id = (SELECT auth.uid()));
-
--- =============================================================================
--- 8. subscriptions — SELECT policy
+-- 7. subscriptions — SELECT policy
 -- =============================================================================
 DROP POLICY IF EXISTS subscriptions_select ON subscriptions;
 CREATE POLICY subscriptions_select ON subscriptions

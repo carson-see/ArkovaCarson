@@ -4,7 +4,11 @@
 -- ordering (like created_at on append-mostly tables). Much smaller than btree
 -- for timestamp columns on large tables.
 --
--- Tables: audit_events, anchors (created_at), credit_transactions, payments
+-- Tables: audit_events, anchors (created_at), credit_transactions.
+-- (The original header also listed `payments` but that table is never
+-- created anywhere in supabase/migrations/ — it was a stale reference
+-- from the original planning notes. Removed to keep `supabase db reset`
+-- working on fresh boots.)
 
 -- =============================================================================
 -- 1. audit_events — time-range filtering on dashboards
@@ -27,15 +31,8 @@ CREATE INDEX IF NOT EXISTS idx_brin_credit_transactions_created
   ON credit_transactions USING brin(created_at);
 
 -- =============================================================================
--- 4. payments — date-range reporting
--- =============================================================================
-CREATE INDEX IF NOT EXISTS idx_brin_payments_created
-  ON payments USING brin(created_at);
-
--- =============================================================================
 -- ROLLBACK:
 -- DROP INDEX IF EXISTS idx_brin_audit_events_created;
 -- DROP INDEX IF EXISTS idx_brin_anchors_created;
 -- DROP INDEX IF EXISTS idx_brin_credit_transactions_created;
--- DROP INDEX IF EXISTS idx_brin_payments_created;
 -- =============================================================================
