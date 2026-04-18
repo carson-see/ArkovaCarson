@@ -55,16 +55,22 @@ export async function enrichRecommendationsWithNessie(
   const timeoutMs = input.timeoutMs ?? 4000;
 
   let text: string;
+  // Capture the timer handle so we can clear it when the RAG call wins the
+  // race — otherwise the timeout stays pending and keeps the Node event
+  // loop alive for up to `timeoutMs` after every successful enrichment.
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
     const ragCall = input.rag(SYSTEM_PROMPT, userPrompt);
     const timeoutGuard = new Promise<{ text: string }>((_, reject) => {
-      setTimeout(() => reject(new Error('nessie-enrich-timeout')), timeoutMs);
+      timeoutHandle = setTimeout(() => reject(new Error('nessie-enrich-timeout')), timeoutMs);
     });
     const response = await Promise.race([ragCall, timeoutGuard]);
     text = response.text;
   } catch {
     // Timeout, circuit-breaker, cold start — keep the static descriptions.
     return input.result;
+  } finally {
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
 
   const parsed = parseNessieDescriptions(text);
