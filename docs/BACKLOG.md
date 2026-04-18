@@ -854,6 +854,31 @@ Q1 decomposition of the TRUST epic. Each TRUST-NN below is a discrete child stor
 
 ---
 
+## TIER 0N: SALES-ACCURACY SPRINT (2026-04-18 evening — PR #419)
+
+> **Source:** 2026-04-17 Hakichain sales-doc audit + NCA-FU1 closeout.
+> **Story doc:** [docs/stories/35_sales_accuracy_sprint.md](stories/35_sales_accuracy_sprint.md)
+> **Confluence:** [Top-10 Sprint 2026-04-18](https://arkova.atlassian.net/wiki/spaces/A/pages/14843905) | **PR:** [#419](https://github.com/carson-see/ArkovaCarson/pull/419)
+> **Principle:** every customer-facing claim is backed by code or a dated doc — no more aspirational language.
+
+| ID | Jira | Story | Status | Priority |
+|----|------|-------|--------|----------|
+| KENYA-RES-01 | [SCRUM-899](https://arkova.atlassian.net/browse/SCRUM-899) | Kenya data-residency evaluation (`docs/compliance/kenya/residency-options.md` + `services/worker/scripts/bench/kenya-latency.ts`) | **DONE (#419)** | Medium |
+| PROOF-SIG-01 | [SCRUM-900](https://arkova.atlassian.net/browse/SCRUM-900) | `/verify/:publicId/proof?format=signed` Ed25519 detached signature bundle | **DONE (#419)** | Medium |
+| SELF-HOST-01 | [SCRUM-901](https://arkova.atlassian.net/browse/SCRUM-901) | Self-hosted reference architecture (`docs/deployment/self-hosted/README.md` + GCP-only Terraform skeleton) | **DONE (#419)** | Medium |
+| AWS-RM-01 | [SCRUM-902](https://arkova.atlassian.net/browse/SCRUM-902) | Scope customer-facing docs to GCP-only; AWS provider kept as code-level optionality | **DONE (#419)** | Low |
+| NCA-FU1 #3 | [SCRUM-893](https://arkova.atlassian.net/browse/SCRUM-893) | PDF vector gauge (one `doc.lines()` polyline) | **DONE (#419)** | Medium |
+| NCA-FU1 #4 | [SCRUM-893](https://arkova.atlassian.net/browse/SCRUM-893) | Nessie contextual recommendation prose (flag-gated) | **DONE (#419)** | Medium |
+| NCA-FU1 #6 | [SCRUM-893](https://arkova.atlassian.net/browse/SCRUM-893) | Operator UAT runbook (1280px + 375px) | **DONE (#419)** | Medium |
+
+**Follow-ups not in scope of this sprint (tracked separately):**
+- GCP KMS `asymmetricSign` adapter for the `SignerFn` interface (PROOF-SIG-01 AC6; currently static PEM in env — sub-1-day swap).
+- First external self-host pilot — fills in the pilot-evidence table in `docs/deployment/self-hosted/README.md` §5.
+- Kenya latency benchmark run from a `africa-south1` test VM (AC2 of KENYA-RES-01).
+- `arkova-hakichain-response.docx` regeneration with the corrected language.
+
+---
+
 ## TIER 0D: NESSIE MODEL TRAINING & EVALUATION (Session 19 — 2026-03-30)
 
 > Source: Model comparison eval (MLX 4-bit, 50 samples). Story doc: [21_nessie_model_training.md](stories/21_nessie_model_training.md)
