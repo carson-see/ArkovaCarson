@@ -85,4 +85,25 @@ describe('NCA-09 generateAuditPdf', () => {
     const output = r.doc.output();
     expect(output).toContain('None. All required credentials are present and valid.');
   });
+
+  // Vector score gauge — we can't pixel-diff a PDF, but we can count `l`
+  // (lineto) operators emitted by `doc.lines()` for the arc polyline.
+  it('renders a vector score gauge with a polyline arc next to the overall score', () => {
+    const r = generateAuditPdf(baseAudit({ overall_score: 72, overall_grade: 'C' }), { orgName: 'Acme' });
+    const output = r.doc.output();
+    expect(output).toContain('Overall compliance score');
+    expect(output).toContain('72');
+    expect(output).toContain('Grade C');
+    const linetoMatches = output.match(/\b-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?\s+l\b/g) ?? [];
+    expect(linetoMatches.length).toBeGreaterThan(15);
+  });
+
+  it('gauge arc length scales with the score (more lineto ops at 95 than 10)', () => {
+    const low = generateAuditPdf(baseAudit({ overall_score: 10, overall_grade: 'F' }), { orgName: 'Acme' });
+    const hi = generateAuditPdf(baseAudit({ overall_score: 95, overall_grade: 'A' }), { orgName: 'Acme' });
+    const re = /\b-?\d+(?:\.\d+)?\s+-?\d+(?:\.\d+)?\s+l\b/g;
+    const lowLinetos = (low.doc.output().match(re) ?? []).length;
+    const hiLinetos = (hi.doc.output().match(re) ?? []).length;
+    expect(hiLinetos).toBeGreaterThan(lowLinetos);
+  });
 });

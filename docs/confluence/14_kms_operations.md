@@ -1,13 +1,15 @@
-# AWS KMS Operations — Bitcoin Treasury Signing
-_Last updated: 2026-03-24 | Story: DH-03 (unblocked by this document), MVP-29_
+# KMS Operations — Bitcoin Treasury Signing (GCP KMS in production)
+_Last updated: 2026-04-18 | Stories: DH-03, MVP-29, **SCRUM-902 AWS-RM-01**_
 
 ## Overview
 
-Arkova uses AWS KMS for mainnet Bitcoin transaction signing. The `KmsSigningProvider` in `services/worker/src/chain/signing-provider.ts` wraps an asymmetric KMS key (ECC_SECG_P256K1 / secp256k1) to sign OP_RETURN anchor transactions.
+Arkova uses **GCP Cloud KMS** for mainnet Bitcoin transaction signing (Arkova runs on GCP only — see `memory/feedback_no_aws.md`). The `KmsSigningProvider` in `services/worker/src/chain/signing-provider.ts` wraps an asymmetric KMS key (secp256k1) to sign OP_RETURN anchor transactions.
 
 Signet and testnet use `WifSigningProvider` (ECPair from environment variable). KMS is **mainnet only**.
 
-**Provider options:** AWS KMS (primary) or GCP Cloud KMS (MVP-29 alternative). Both support secp256k1 asymmetric signing. The provider is selected based on environment configuration.
+**Provider abstraction in code:** the signing provider layer supports both GCP KMS (production) and AWS KMS (code-level abstraction only, for future optionality). Production deployments always use `KMS_PROVIDER=gcp`; Arkova has no AWS account. Any customer-facing document that promises "AWS KMS" is inaccurate — use "GCP Cloud KMS" (or a vendor-neutral phrase like "cloud HSM" when the specific provider is not material).
+
+**Story SCRUM-902 AWS-RM-01 decision on the `KMS_PROVIDER=aws` code path (AC3):** **Keep with a file-level comment flagging it as non-production / future optionality.** Rationale: the abstraction is thin (~200 LOC), removing it now yields little simplification, and optional provider plurality is useful if a future enterprise customer requires AWS residency. Every AWS-provider test file now has a block-comment header marking it as "NOT IN PRODUCTION — GCP is the only production KMS provider." Customer-facing claims are the enforcement line, not code deletion.
 
 ## Architecture
 

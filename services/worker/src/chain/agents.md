@@ -12,7 +12,7 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 | `client.ts` | Async factory (`initChainClient()` / `getInitializedChainClient()`) — returns `MockChainClient` or `BitcoinChainClient` based on config. Includes `SupabaseChainIndexLookup` for O(1) fingerprint verification. |
 | `mock.ts` | In-memory mock for tests and development |
 | `signet.ts` | Real Bitcoin implementation — `BitcoinChainClient` (renamed from `SignetChainClient`, alias kept). Supports signet, testnet, mainnet via `SigningProvider` + `FeeEstimator` + `UtxoProvider` abstractions. |
-| `signing-provider.ts` | Signing abstraction — `WifSigningProvider` (ECPair, signet/testnet) + `KmsSigningProvider` (AWS KMS, mainnet) |
+| `signing-provider.ts` | Signing abstraction — `WifSigningProvider` (ECPair, signet/testnet), `KmsSigningProvider` (AWS KMS, code-level only, NOT in production), `GcpKmsSigningProvider` (**production mainnet**). See `gcp-kms-signing-provider.ts` + SCRUM-902. |
 | `fee-estimator.ts` | Fee estimation — `StaticFeeEstimator` (fixed rate) + `MempoolFeeEstimator` (live API) |
 | `utxo-provider.ts` | UTXO provider abstraction — `RpcUtxoProvider` (Bitcoin Core RPC) + `MempoolUtxoProvider` (Mempool.space REST) + factory |
 | `wallet.ts` | Treasury wallet utilities — keypair generation, address derivation, WIF validation |
@@ -48,12 +48,13 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 - Test funding txs: use `buildDummyFundingTx()` pattern — static hex strings fail PSBT validation
 
 ## MVP Launch Gap Context
-- No MVP launch gap stories directly target this folder. CRIT-2 operational items remain: AWS KMS key provisioning (mainnet), mainnet treasury funding.
+- No MVP launch gap stories directly target this folder. Mainnet treasury funding is complete; GCP Cloud KMS is the production signing provider. The AWS KMS provider remains in the codebase as future optionality only — NOT deployed (SCRUM-902).
 
 ## Dependencies
 
 - `bitcoinjs-lib`, `tiny-secp256k1`, `ecpair` — Bitcoin transaction construction + signing
-- `@aws-sdk/client-kms` — AWS KMS signing (mainnet)
+- `@google-cloud/kms` — GCP Cloud KMS signing (production mainnet)
+- `@aws-sdk/client-kms` — AWS KMS signing (code-level abstraction only; NOT in production, see SCRUM-902)
 - `../config.js` — environment config (WIF, KMS key, RPC URL, fee strategy, feature flags)
 - `../utils/logger.js` — structured logging (pino)
 - `../utils/db.js` — Supabase service_role client (for `SupabaseChainIndexLookup`)

@@ -32,6 +32,7 @@ import {
   type OrgAuditResult,
 } from '../../compliance/org-audit.js';
 import type { JurisdictionRule, OrgAnchor } from '../../compliance/score-calculator.js';
+import { maybeEnrichWithNessieProvider } from '../../compliance/recommendation-enrichment.js';
 
 const router = Router();
 
@@ -124,6 +125,11 @@ router.post('/', async (req: Request, res: Response) => {
       anchors,
       activeRegulations: ACTIVE_REGULATIONS,
     });
+
+    // Flag-gated contextual-prose enrichment. Falls back silently to the
+    // static remediation_hint on any error; Nessie is never allowed to
+    // break the audit response.
+    result.recommendations = await maybeEnrichWithNessieProvider(result.recommendations, result.gaps);
 
     const completedAt = new Date();
     const durationMs = completedAt.getTime() - startedAt.getTime();

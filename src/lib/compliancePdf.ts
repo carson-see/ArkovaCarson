@@ -90,14 +90,17 @@ export function generateAuditPdf(audit: AuditPdfInput, ctx: AuditPdfContext): Au
   doc.setFontSize(14);
   doc.text('Overall compliance score', margin, y);
   y += 20;
-  doc.setFontSize(36);
+  drawScoreGauge(doc, margin + 60, y + 50, audit.overall_score, audit.overall_grade);
+  doc.setFontSize(28);
   doc.setTextColor(gradeColor(audit.overall_grade));
-  doc.text(`${audit.overall_score} / 100`, margin, y);
-  y += 8;
+  doc.setFont('helvetica', 'bold');
+  doc.text(`${audit.overall_score} / 100`, margin + 140, y + 40);
   doc.setFontSize(14);
-  doc.text(`Grade ${audit.overall_grade}`, margin + 180, y - 8);
+  doc.setTextColor(90);
+  doc.setFont('helvetica', 'normal');
+  doc.text(`Grade ${audit.overall_grade}`, margin + 140, y + 60);
   doc.setTextColor(0);
-  y += 16;
+  y += 120;
 
   y = ensurePageSpace(doc, y, 120, margin);
   doc.setFont('helvetica', 'bold');
@@ -240,4 +243,74 @@ function gradeColor(grade: string): string {
     case 'F': return '#dc2626';
     default: return '#000000';
   }
+}
+
+// Parse a "#rrggbb" string into jsPDF's 0–255 RGB tuple.
+function gradeRgb(grade: string): { r: number; g: number; b: number } {
+  const hex = gradeColor(grade).slice(1);
+  return {
+    r: parseInt(hex.slice(0, 2), 16),
+    g: parseInt(hex.slice(2, 4), 16),
+    b: parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+// Vector score gauge — keeps the PDF lib-lite (no html2canvas dep). The
+// progress arc is emitted as one polyline (a single stroke call) instead of
+// N individual `doc.line()` operators so the PDF is smaller on disk. 36
+// segments around a 34pt-radius arc is visually indistinguishable at print
+// DPI from a smooth circle.
+function drawScoreGauge(
+  doc: jsPDF,
+  centerX: number,
+  centerY: number,
+  score: number,
+  grade: string,
+): void {
+  const radius = 34;
+  const lineWidth = 7;
+  const fullSegments = 36;
+  const progressRatio = Math.max(0, Math.min(1, score / 100));
+  const startAngle = -Math.PI / 2;
+
+  doc.setDrawColor(230, 230, 230);
+  doc.setLineWidth(lineWidth);
+  doc.circle(centerX, centerY, radius, 'S');
+
+  const { r, g, b } = gradeRgb(grade);
+  doc.setDrawColor(r, g, b);
+  doc.setLineWidth(lineWidth);
+  const segmentCount = Math.max(0, Math.round(fullSegments * progressRatio));
+  if (segmentCount > 0) {
+    const startX = centerX + radius * Math.cos(startAngle);
+    const startY = centerY + radius * Math.sin(startAngle);
+    // jsPDF's `doc.lines(deltas, x, y)` emits one subpath + one stroke,
+    // which is cheaper than calling `doc.line()` N times. Each entry is a
+    // relative [dx, dy] line-to from the previous point.
+    const deltas: Array<[number, number]> = [];
+    let prevX = startX;
+    let prevY = startY;
+    for (let i = 1; i <= segmentCount; i++) {
+      const angle = startAngle + (i / fullSegments) * 2 * Math.PI;
+      const x = centerX + radius * Math.cos(angle);
+      const y = centerY + radius * Math.sin(angle);
+      deltas.push([x - prevX, y - prevY]);
+      prevX = x;
+      prevY = y;
+    }
+    doc.lines(deltas, startX, startY);
+  }
+
+  doc.setDrawColor(0);
+  doc.setLineWidth(1);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(gradeColor(grade));
+  doc.text(`${score}`, centerX, centerY + 4, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text(`Grade ${grade}`, centerX, centerY + 18, { align: 'center' });
+  doc.setTextColor(0);
 }

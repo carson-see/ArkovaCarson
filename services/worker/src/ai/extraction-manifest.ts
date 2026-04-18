@@ -10,6 +10,7 @@
  */
 import { createHash } from 'crypto';
 import type { ExtractedFields } from './types.js';
+import { deepSortKeys } from '../utils/canonical-json.js';
 
 /** Per-field and overall confidence scores for the extraction. */
 export interface ManifestConfidenceScores {
@@ -61,20 +62,6 @@ export function computeManifestHash(input: ManifestHashInput): string {
   const deepSorted = deepSortKeys(input);
   const canonical = JSON.stringify(deepSorted);
   return createHash('sha256').update(canonical).digest('hex');
-}
-
-/** Recursively sort object keys for canonical JSON representation. */
-function deepSortKeys(obj: unknown): unknown {
-  if (obj === null || obj === undefined) return obj;
-  if (Array.isArray(obj)) return obj.map(deepSortKeys);
-  if (typeof obj === 'object') {
-    const sorted: Record<string, unknown> = {};
-    for (const key of Object.keys(obj as Record<string, unknown>).sort()) {
-      sorted[key] = deepSortKeys((obj as Record<string, unknown>)[key]);
-    }
-    return sorted;
-  }
-  return obj;
 }
 
 /**

@@ -127,7 +127,7 @@ The processing is necessary because:
 - **End-to-end encryption** — TLS 1.3 in transit, AES-256 at rest
 - **Row-level security** on all 190+ migrations (Constitution 1.4)
 - **Client-side fingerprinting** — documents never leave the user's device (Constitution 1.6)
-- **KMS-managed signing keys** — AWS + GCP KMS for Bitcoin treasury
+- **KMS-managed signing keys** — GCP Cloud KMS (HSM-backed) for Bitcoin treasury signing
 - **PII-scrubbed error reporting** — Sentry events strip user emails, document fingerprints, API keys
 - **Zero Trust ingress** — Cloudflare Tunnel, no public ports
 - **Rate limiting** — 100 req/min anonymous, 1000 req/min authenticated (Constitution 1.10)

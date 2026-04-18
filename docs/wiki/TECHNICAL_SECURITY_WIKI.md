@@ -60,7 +60,7 @@ Arkova is **strictly non-custodial** across three dimensions:
 |-----------|----------------|
 | **Document Non-Custody** | Documents never leave the user's device. Arkova never receives, stores, transmits, or processes raw document content. Only a one-way SHA-256 fingerprint is stored. |
 | **Financial Non-Custody** | Arkova does not store, accept, or manage user cryptocurrency. All on-chain fees are paid from an Arkova-managed corporate fee account. Users never interact with chain economics. |
-| **Key Non-Custody** | Treasury signing keys are secured in cloud HSMs (AWS KMS / GCP Cloud HSM). No human has access to raw private key material. |
+| **Key Non-Custody** | Treasury signing keys are secured in GCP Cloud KMS (HSM-backed). No human has access to raw private key material. |
 
 This design eliminates regulated data custody risk. Arkova does not become a custodian of PII, financial assets, or cryptographic material — removing exposure to GDPR data processor obligations, money transmitter classification, and key management liability.
 
