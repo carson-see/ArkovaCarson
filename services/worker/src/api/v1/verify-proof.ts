@@ -14,8 +14,21 @@
  */
 
 import { Router, Request, Response } from 'express';
+import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
 
 const router = Router();
+
+// Resolve the signer once per request. Returns null when neither env var is
+// set so `?format=signed` can respond 503 (caller degrades to the legacy
+// unsigned shape) instead of silently shipping an unsigned bundle.
+// Production will swap `staticEd25519Signer` for a GCP KMS adapter; the
+// `SignerFn` contract doesn't change.
+function resolveSigner(): { sign: SignerFn; keyId: string } | null {
+  const pem = process.env.PROOF_SIGNING_KEY_PEM;
+  const keyId = process.env.PROOF_SIGNING_KEY_ID;
+  if (!pem || !keyId) return null;
+  return { sign: staticEd25519Signer(pem, keyId), keyId };
+}
 
 /** Merkle proof entry matching the stored format */
 export interface MerkleProofEntry {
@@ -161,6 +174,26 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
 
     if ('error' in result) {
       res.status(500).json(result);
+      return;
+    }
+
+    // Default shape is unchanged for backwards compatibility. `?format=signed`
+    // wraps the payload in an Ed25519 envelope verifiable against our
+    // published public key (docs.arkova.ai/keys.json).
+    if ((req.query.format as string | undefined) === 'signed') {
+      const signer = resolveSigner();
+      if (!signer) {
+        res.status(503).json({
+          error:
+            'Signed proof bundle is not configured in this environment. Set PROOF_SIGNING_KEY_PEM + PROOF_SIGNING_KEY_ID or call without ?format=signed.',
+        } as ProofErrorResponse);
+        return;
+      }
+      const bundle = await createSignedBundle({
+        payload: result as unknown as Record<string, unknown>,
+        sign: signer.sign,
+      });
+      res.json(bundle);
       return;
     }
 

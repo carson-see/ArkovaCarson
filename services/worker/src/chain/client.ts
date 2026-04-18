@@ -12,11 +12,13 @@
  * `getInitializedChainClient()` synchronously in hot paths.
  *
  * Constitution refs:
- *   - 1.1: bitcoinjs-lib + AWS KMS (target)
+ *   - 1.1: bitcoinjs-lib + GCP Cloud KMS (production). AWS KMS remains in the
+ *     code as an abstraction for future optionality but is NOT deployed in
+ *     production — see SCRUM-902 AWS-RM-01 + memory/feedback_no_aws.md.
  *   - 1.4: Treasury keys never logged
  *   - 1.9: ENABLE_PROD_NETWORK_ANCHORING gates real Bitcoin chain calls
  *
- * Stories: P7-TS-05, P7-TS-12, P7-TS-13, CRIT-2
+ * Stories: P7-TS-05, P7-TS-12, P7-TS-13, CRIT-2, SCRUM-902 (AWS removal from customer claims)
  */
 
 import { config } from '../config.js';

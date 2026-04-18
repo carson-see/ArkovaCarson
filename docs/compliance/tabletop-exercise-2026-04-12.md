@@ -81,7 +81,7 @@ During a routine log review, an engineer notices that 3 weeks ago a deployment t
 | T+15 min | **Containment:** Disable current treasury wallet — set `ENABLE_PROD_NETWORK_ANCHORING=false` | TL | Stops all anchoring immediately |
 | T+20 min | **Investigation:** Audit GCP IAM — who has `roles/logging.viewer`? | TL | `gcloud projects get-iam-policy arkova1` |
 | T+30 min | **Investigation:** Check treasury wallet for unauthorized transactions | TL | Mempool API — compare expected vs actual UTXO set |
-| T+45 min | **Remediation:** Generate new KMS key pair (no more WIF) | TL | `gcloud kms keys create` or AWS KMS |
+| T+45 min | **Remediation:** Generate new KMS key pair (no more WIF) | TL | `gcloud kms keys create …` (GCP KMS is the production provider) |
 | T+1 hr | **Remediation:** Update Cloud Run with new KMS key reference | TL | `gcloud run services update` |
 | T+1.5 hr | **Recovery:** Transfer remaining funds from compromised wallet to new KMS-backed wallet | TL | Sweep transaction |
 | T+2 hr | **Recovery:** Re-enable anchoring with new wallet | TL | `ENABLE_PROD_NETWORK_ANCHORING=true` |

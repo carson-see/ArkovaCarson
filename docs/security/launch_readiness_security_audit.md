@@ -152,8 +152,8 @@ The codebase demonstrates strong foundational security: 100% RLS coverage with F
 | Constitution 1.6 boundary | PASS | Zero imports of `fileHasher`/`generateFingerprint` in worker |
 | HMAC-SHA256 API keys | PASS | `crypto.createHmac('sha256')`, env-loaded secret, hash-then-lookup |
 | Bitcoin WIF handling | PASS | Env-only loading, never logged, generic error messages |
-| AWS KMS delegation | PASS | Proper DER-to-compact conversion, key ID never logged |
-| GCP KMS delegation | PASS | Same pattern as AWS, PEM parsing correct |
+| GCP KMS delegation (production) | PASS | Proper DER-to-compact conversion, key ID never logged; PEM parsing correct |
+| AWS KMS provider abstraction (code-level only; not deployed in production) | PASS | Coded for future optionality; `KMS_PROVIDER=gcp` is the only production value |
 | HSTS (frontend) | PASS | 2-year max-age, includeSubDomains, preload via `vercel.json` |
 | HSTS (worker) | PASS | Handled by Cloudflare Tunnel edge |
 | Randomness | PASS | `crypto.randomBytes(32)` for security; `Math.random()` only in tests/mocks/UI |

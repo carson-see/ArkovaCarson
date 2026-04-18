@@ -14,6 +14,7 @@ import 'dotenv/config';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GEMINI_EMBEDDING_MODEL } from '../src/ai/gemini-config.js';
+import { percentile } from './lib/stats.js';
 
 // Benchmark queries with expected top-k document types
 const BENCHMARK_QUERIES = [
@@ -94,11 +95,6 @@ async function main() {
   console.log(`\nResults written to docs/eval/`);
 }
 
-function percentile(values: number[], p: number): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const idx = Math.ceil(p * sorted.length) - 1;
-  return sorted[Math.max(0, idx)];
-}
 
 main().catch((err) => {
   console.error('\nBENCHMARK FAILED:', err instanceof Error ? err.message : err);

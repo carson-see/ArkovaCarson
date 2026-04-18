@@ -50,7 +50,7 @@ It is intended to be re-reviewed annually and re-executed whenever there is a ma
 | Cryptographic fingerprints | SHA-256 one-way hashes; not reversible | Downgrades attack surface — fingerprints alone cannot identify individuals without corroborating data |
 | RLS multi-tenant isolation | Database-level enforcement of org boundary | Prevents cross-tenant government-compelled disclosure from affecting unrelated exporters |
 | Encryption at rest + in transit | AES-256 / TLS 1.2+ | Mitigates bulk collection risk |
-| Hardware-backed key management | AWS KMS + GCP KMS for signing keys | Compels lawful process to reach discrete keys rather than bulk key material |
+| Hardware-backed key management | GCP Cloud KMS (HSM-backed) for signing keys | Compels lawful process to reach discrete keys rather than bulk key material |
 | MFA on admin access | FIDO2 hardware keys required | Mitigates account takeover |
 | Append-only audit log | Immutable RLS-protected events | Enables reconstruction of any disclosure |
 

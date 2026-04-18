@@ -3,15 +3,22 @@
  *
  * Abstracts cryptographic signing so that BitcoinChainClient can work with:
  *   - A WIF private key (Signet/testnet — ECPair)
- *   - AWS KMS (mainnet — ECDSA_SHA_256 via @aws-sdk/client-kms)
+ *   - GCP Cloud KMS (mainnet — production; see `gcp-kms-signing-provider.ts`)
+ *   - AWS KMS (code-level abstraction ONLY — not deployed in production)
+ *
+ * **Production note (SCRUM-902 AWS-RM-01):** Arkova has no AWS account; the
+ * `KmsSigningProvider` AWS path here exists for provider-plurality optionality
+ * only. `KMS_PROVIDER=gcp` is the only production value. Do not promise AWS
+ * KMS signing to customers — see `docs/confluence/14_kms_operations.md` and
+ * `memory/feedback_no_aws.md`.
  *
  * sign() is async to accommodate KMS network calls. WIF resolves immediately.
  *
  * Constitution refs:
  *   - 1.4: Treasury/signing keys never logged or exposed
- *   - 1.1: bitcoinjs-lib + AWS KMS (target)
+ *   - 1.1: bitcoinjs-lib + GCP Cloud KMS (production)
  *
- * Story: CRIT-2 (Bitcoin chain client completion)
+ * Story: CRIT-2 (Bitcoin chain client completion); SCRUM-902 (AWS removal from customer claims)
  */
 
 import * as ecc from 'tiny-secp256k1';

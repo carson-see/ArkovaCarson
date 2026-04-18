@@ -125,7 +125,25 @@ describe('COMPLIANCE_CONTROLS', () => {
   });
 
   it('all controls have valid framework values', () => {
-    const validFrameworks = ['SOC 2', 'GDPR', 'FERPA', 'ISO 27001', 'eIDAS', 'HIPAA', 'Kenya DPA', 'APP', 'POPIA', 'NDPA'];
+    // Updated to track the full INTL expansion (INTL-01..03 LGPD + PDPA +
+    // LFPDPPP) and TRUST-03 EU-US DPF additions. New frameworks added to
+    // complianceMapping.ts must also land here.
+    const validFrameworks = [
+      'SOC 2',
+      'GDPR',
+      'FERPA',
+      'ISO 27001',
+      'eIDAS',
+      'HIPAA',
+      'Kenya DPA',
+      'APP',
+      'POPIA',
+      'NDPA',
+      'LGPD',
+      'PDPA',
+      'LFPDPPP',
+      'EU-US DPF',
+    ];
     for (const control of Object.values(COMPLIANCE_CONTROLS)) {
       expect(validFrameworks).toContain(control.framework);
     }

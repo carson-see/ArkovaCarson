@@ -22,7 +22,7 @@ Arkova targets CE+ because UK universities, NHS trusts, and UK government procur
 | Certification boundary | Entire production environment: worker (Cloud Run), frontend (Vercel), Supabase database, edge (Cloudflare Tunnel + Workers) |
 | Device scope | Arkova-issued MacBooks (all employees); no BYOD for production access |
 | User scope | All employees with access to production systems (≤ 10) |
-| Cloud services in scope | Supabase, Cloudflare, Vercel, Google Cloud Run, AWS KMS, Stripe, Resend |
+| Cloud services in scope | Supabase, Cloudflare, Vercel, Google Cloud Run, Google Cloud KMS, Stripe, Resend |
 | Out of scope | Personal devices, contractor devices (read-only GitHub only — not in scope per NCSC cloud guidance) |
 
 ---
