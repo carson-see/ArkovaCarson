@@ -43,16 +43,28 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     version: SERVER_VERSION,
   });
 
+  // Workaround for TS2589 "Type instantiation is excessively deep" on zod
+  // 3.25 + @modelcontextprotocol/sdk 1.29. The generic inference on
+  // `server.tool(name, desc, shape, cb)` blows up when Zod's recursive types
+  // meet the SDK's ZodRawShapeCompat overload. The non-deprecated
+  // `server.registerTool(name, config, cb)` doesn't hit this — full migration
+  // to that API is tracked as a follow-up. For now a locally-typed alias
+  // bypasses the deep inference while still preserving the callback contract.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type ToolCb = (args: Record<string, any>) => Promise<unknown> | unknown;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tool: (name: string, description: string, shape: Record<string, unknown>, cb: ToolCb) => unknown = server.tool.bind(server) as any;
+
   // ── Tools ─────────────────────────────────────────────────────────────
 
-  server.tool(
+  tool(
     'verify_credential',
     TOOL_DESC['verify_credential'],
     { public_id: z.string().describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
     async ({ public_id }) => handleVerifyCredential({ public_id }, config),
   );
 
-  server.tool(
+  tool(
     'search_credentials',
     TOOL_DESC['search_credentials'],
     {
@@ -62,7 +74,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
   );
 
-  server.tool(
+  tool(
     'nessie_query',
     TOOL_DESC['nessie_query'],
     {
@@ -73,7 +85,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
   );
 
-  server.tool(
+  tool(
     'anchor_document',
     TOOL_DESC['anchor_document'],
     {
@@ -87,7 +99,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
       handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
   );
 
-  server.tool(
+  tool(
     'verify_document',
     TOOL_DESC['verify_document'],
     { content_hash: z.string().describe('SHA-256 fingerprint of the document to verify') },
@@ -96,7 +108,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
 
   // ── INT-02: Batch verification ────────────────────────────────────────
 
-  server.tool(
+  tool(
     'verify_batch',
     TOOL_DESC['verify_batch'],
     {
@@ -111,7 +123,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
 
   // ── Phase II Agentic Tools (PH2-AGENT-06) ─────────────────────────────
 
-  server.tool(
+  tool(
     'oracle_batch_verify',
     'Batch-verify multiple credentials via the Arkova Oracle. Returns HMAC-signed results for tamper detection. Use for bulk verification workflows where audit trail is required.',
     {
@@ -131,7 +143,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     },
   );
 
-  server.tool(
+  tool(
     'list_agents',
     'List all registered AI agents for the authenticated organization. Returns agent names, types, scopes, and status.',
     {},
