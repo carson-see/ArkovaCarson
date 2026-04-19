@@ -55,7 +55,9 @@ describe('generateFingerprint', () => {
             value: new DOMException('simulated read error', 'NotReadableError'),
             configurable: true,
           });
-          this.onerror?.(new ProgressEvent('error'));
+          // Cast: FileReader event types are narrowed to FileReader target, but
+          // a generic ProgressEvent is what the runtime actually fires.
+          this.onerror?.(new ProgressEvent('error') as ProgressEvent<FileReader>);
         }, 0);
       }
     }
