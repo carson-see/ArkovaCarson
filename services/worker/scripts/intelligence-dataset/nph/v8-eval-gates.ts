@@ -11,6 +11,8 @@
  * required before any run — see the plan doc for the execution order.
  */
 
+import { NESSIE_V5_BASELINE } from '../../../src/ai/eval/baseline-metrics.js';
+
 export interface V8EvalInput {
   /** Macro F1 across all credential types, 0-1. */
   macroF1: number;
@@ -44,15 +46,18 @@ export interface V8GateReport {
 }
 
 /**
- * v5 baseline — freeze these values so v8 gates are measured against the
- * historical prod model. See CLAUDE.md §5 AI Infrastructure for provenance.
+ * v5 baseline for the seven v8 gates. Reuses the frozen canonical
+ * baseline in `baseline-metrics.ts` and extends it with the v8-only
+ * dimensions (fraud signals, min per-type F1, citation accuracy) that
+ * aren't tracked on the generic regression shape.
  */
 export const V5_BASELINE: V8EvalInput = {
-  macroF1: 0.757,
-  weightedF1: 0.872,
-  confidenceCorrelation: 0.539,
+  macroF1: NESSIE_V5_BASELINE.macroF1,
+  weightedF1: NESSIE_V5_BASELINE.weightedF1,
+  confidenceCorrelation: NESSIE_V5_BASELINE.confidenceCorrelation,
+  ece: NESSIE_V5_BASELINE.ece,
+  // v8-only dimensions — not on the generic BaselineMetrics shape.
   fraudSignalsF1: 0.0,
-  ece: 0.110,
   minPerTypeF1: 0.548,
   citationAccuracy: 0.570,
 };

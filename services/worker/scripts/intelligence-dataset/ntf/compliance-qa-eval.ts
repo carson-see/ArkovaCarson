@@ -8,14 +8,10 @@
  * citation scoring so a compliance-Q&A deployment can ship without
  * blocking on citation accuracy.
  *
- * Dataset split across five regulatory domains to match the 37 compliance
- * Q&A training examples referenced in the Jira story (Together job
- * ft-2481de56-cf03):
- *   - FERPA (10 examples)
- *   - HIPAA (10 examples)
- *   - Fraud-pattern identification (10 examples)
- *   - SOX / financial (3 examples)
- *   - International (4 examples)
+ * Dataset split across five regulatory domains: FERPA, HIPAA, fraud-pattern
+ * identification, SOX/financial, and international regimes. Matches the
+ * compliance-Q&A split targeted by the Together fine-tuning job referenced
+ * on the Jira ticket.
  */
 
 export type ComplianceQaDomain = 'ferpa' | 'hipaa' | 'fraud' | 'sox' | 'international';
@@ -144,12 +140,12 @@ export interface ComplianceQaAnswerCandidate {
 
 export function scoreComplianceQaEntry(entry: ComplianceQaEntry, answer: ComplianceQaAnswerCandidate): ComplianceQaResult {
   const lowered = answer.text.toLowerCase();
+  const loweredRisks = answer.risks.map((r) => r.toLowerCase());
   const keyPointsHit = entry.expectedKeyPoints.filter((k) => lowered.includes(k.toLowerCase())).length;
   const keyPointsTotal = entry.expectedKeyPoints.length;
   const risksHit = entry.expectedRisks.filter((r) => {
     const rl = r.toLowerCase();
-    if (answer.risks.some((x) => x.toLowerCase().includes(rl))) return true;
-    return lowered.includes(rl);
+    return lowered.includes(rl) || loweredRisks.some((x) => x.includes(rl));
   }).length;
   const risksTotal = entry.expectedRisks.length;
   const confidenceOk = answer.confidence >= entry.minConfidence;

@@ -193,8 +193,6 @@ export const KAU_CREDENTIAL_TYPES: KauCredentialType[] = [
   },
 ];
 
-export const JURISDICTION_UNCERTAIN = 'jurisdiction_uncertain' as const;
-
 /**
  * Decide a KAU credential id from issuer-hint keywords on the document.
  * Returns null if no single match — caller should flag as
@@ -208,18 +206,11 @@ export function matchKauCredential(textOrKeywords: string | string[]): KauCreden
       matches.push(c);
     }
   }
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) return null;
+  if (matches.length <= 1) return matches[0] ?? null;
   // Prefer the most specific (longest-keyword) match when multiple hit.
-  matches.sort((a, b) => maxKeywordLength(b) - maxKeywordLength(a));
-  const top = matches[0];
-  const runner = matches[1];
-  if (maxKeywordLength(top) > maxKeywordLength(runner)) return top;
-  return null; // ambiguous — escalate to human
-}
-
-function maxKeywordLength(c: KauCredentialType): number {
-  return Math.max(...c.documentKeywords.map((k) => k.length));
+  const lengthById = new Map(matches.map((c) => [c.id, Math.max(...c.documentKeywords.map((k) => k.length))]));
+  matches.sort((a, b) => lengthById.get(b.id)! - lengthById.get(a.id)!);
+  return lengthById.get(matches[0].id)! > lengthById.get(matches[1].id)! ? matches[0] : null;
 }
 
 /**
@@ -228,7 +219,10 @@ function maxKeywordLength(c: KauCredentialType): number {
 export function validateKauCoverage(): string[] {
   const errs: string[] = [];
   const byJurisdiction = new Map<string, number>();
+  const ids = new Set<string>();
   for (const c of KAU_CREDENTIAL_TYPES) {
+    if (ids.has(c.id)) errs.push(`duplicate id: ${c.id}`);
+    ids.add(c.id);
     const key = c.jurisdiction.startsWith('AU') ? 'AU' : c.jurisdiction;
     byJurisdiction.set(key, (byJurisdiction.get(key) ?? 0) + 1);
   }
@@ -236,20 +230,27 @@ export function validateKauCoverage(): string[] {
   const auCount = byJurisdiction.get('AU') ?? 0;
   if (keCount < 5) errs.push(`Kenya coverage below minimum: ${keCount} < 5`);
   if (auCount < 5) errs.push(`Australia coverage below minimum: ${auCount} < 5`);
-  const ids = new Set<string>();
-  for (const c of KAU_CREDENTIAL_TYPES) {
-    if (ids.has(c.id)) errs.push(`duplicate id: ${c.id}`);
-    ids.add(c.id);
-  }
   return errs;
 }
 
 /**
  * Build a Gemini few-shot block the extractor can splice into its system
  * prompt. Matches the few-shot format under `src/ai/prompts/extraction-v6.ts`.
+ *
+ * Interleaves Kenya + Australia entries so both jurisdictions are represented
+ * — slicing the head of the registry would yield zero Australia coverage
+ * because the registry is authored Kenya-first.
  */
 export function kauFewShotExamples(): Array<{ input: string; output: { type: string; subType: string; jurisdiction: string; confidence: number } }> {
-  return KAU_CREDENTIAL_TYPES.slice(0, 5).map((c) => ({
+  const ke = KAU_CREDENTIAL_TYPES.filter((c) => c.jurisdiction === 'KE');
+  const au = KAU_CREDENTIAL_TYPES.filter((c) => c.jurisdiction.startsWith('AU'));
+  const balanced: KauCredentialType[] = [];
+  const n = Math.max(ke.length, au.length);
+  for (let i = 0; i < n; i++) {
+    if (i < ke.length) balanced.push(ke[i]);
+    if (i < au.length) balanced.push(au[i]);
+  }
+  return balanced.slice(0, 6).map((c) => ({
     input: `Document keywords: ${c.documentKeywords.join(', ')}. Issuer: ${c.issuer}.`,
     output: {
       type: c.canonicalType,

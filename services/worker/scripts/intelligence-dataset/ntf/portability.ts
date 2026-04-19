@@ -25,6 +25,12 @@ export interface InterstateCompact {
   privilege: string;
 }
 
+/**
+ * Professions that typically support endorsement in non-compact pairings.
+ * Sourced from FSMB, NCSBN, and NABP endorsement-policy summaries (2025).
+ */
+const ENDORSEMENT_ELIGIBLE_PROFESSIONS = ['physician', 'rn', 'lpn', 'nurse practitioner', 'pharmacist'] as const;
+
 export const INTERSTATE_COMPACTS: InterstateCompact[] = [
   {
     id: 'nlc',
@@ -128,8 +134,8 @@ export function analyzePortability(q: PortabilityQuery): PortabilityAnalysis {
   // reapplication bucket. Heuristic: assume endorsement is available for
   // physicians and RNs in non-compact pairings (most states), otherwise
   // full reapplication.
-  const endorsementEligible = ['physician', 'rn', 'lpn', 'nurse practitioner', 'pharmacist']
-    .some((p) => q.profession.toLowerCase().includes(p));
+  const loweredProfession = q.profession.toLowerCase();
+  const endorsementEligible = ENDORSEMENT_ELIGIBLE_PROFESSIONS.some((p) => loweredProfession.includes(p));
   if (endorsementEligible) {
     return {
       outcome: 'ENDORSEMENT',

@@ -77,6 +77,13 @@ describe('KAU credential taxonomy', () => {
       expect(ex.output.confidence).toBeLessThanOrEqual(0.99);
     }
   });
+
+  it('few-shot examples cover both Kenya and Australia', () => {
+    const examples = kauFewShotExamples();
+    const jurisdictions = new Set(examples.map((ex) => ex.output.jurisdiction));
+    expect(jurisdictions.has('KE')).toBe(true);
+    expect(Array.from(jurisdictions).some((j) => j.startsWith('AU'))).toBe(true);
+  });
 });
 
 describe('KAU NDB procedures', () => {

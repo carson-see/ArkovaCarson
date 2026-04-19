@@ -29,10 +29,8 @@ export interface AuditFinding {
   recommendations: string[];
   /** Numeric dollar or rate exposure, if estimable. */
   quantifiedExposureUsd?: number;
-  /** Severity decided per the framework. */
+  /** Severity decided per the framework. Priority is derived via `priorityForSeverity`. */
   severity: FindingSeverity;
-  /** Priority label used when ordering remediation. */
-  priority: 1 | 2 | 3;
 }
 
 /**
@@ -108,7 +106,7 @@ export function priorityForSeverity(severity: FindingSeverity): 1 | 2 | 3 {
  */
 export function renderFinding(f: AuditFinding): string {
   const lines: string[] = [];
-  lines.push(`# ${f.id} — ${f.framework} ${f.severity} (priority ${f.priority})`);
+  lines.push(`# ${f.id} — ${f.framework} ${f.severity} (priority ${priorityForSeverity(f.severity)})`);
   lines.push('');
   lines.push(`**Control objective:** ${f.controlObjective}`);
   lines.push('');

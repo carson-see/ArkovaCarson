@@ -131,15 +131,9 @@ function scoreCompleteness(reasoning: CotReasoningSteps, answer: IntelligenceAns
  * the coherence score < 0.7 OR the answer refuses OR escalates.
  */
 export function isEdgeCase(answer: IntelligenceAnswer, reasoning: CotReasoningSteps): boolean {
-  const { coherence } = scoreReasoningQuality({
-    answer,
-    reasoning,
-    sources: [],
-  });
-  if (coherence < 0.7) return true;
   if (answer.should_refuse) return true;
   if (answer.escalation_trigger) return true;
-  return false;
+  return scoreCoherence(reasoning, []) < 0.7;
 }
 
 /**

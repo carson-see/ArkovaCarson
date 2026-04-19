@@ -113,9 +113,13 @@ export function crossReferenceClaim(claim: CrossRefClaim, record: CrossRefRecord
 
 function namesOverlap(a: string, b: string): boolean {
   const tok = (s: string) => s.toLowerCase().split(/[^a-z]+/).filter((t) => t.length >= 2);
+  const tokA = tok(a);
   const setB = new Set(tok(b));
-  const shared = tok(a).filter((t) => setB.has(t)).length;
-  return shared >= 2;
+  if (tokA.length === 0 || setB.size === 0) return false;
+  const shared = tokA.filter((t) => setB.has(t)).length;
+  // Single-token legitimate names exist (e.g. "Madonna") — one shared token is
+  // enough signal to prefer PARTIAL_MATCH over FABRICATED.
+  return shared >= 1;
 }
 
 /**

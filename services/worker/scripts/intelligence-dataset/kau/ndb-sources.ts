@@ -24,7 +24,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     url: 'https://kenyalaw.org/kl/fileadmin/pdfdownloads/Acts/2019/TheDataProtectionAct__No24of2019.pdf',
     lastVerified: V,
     tags: ['kenya', 'ndb', 'statute', 'notification-timeline'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'KE',
   },
   {
     id: 'kdpa-odpc-notification-form',
@@ -33,7 +33,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     url: 'https://www.odpc.go.ke/',
     lastVerified: V,
     tags: ['kenya', 'ndb', 'guidance', 'notification-content'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'KE',
   },
   {
     id: 'kdpa-penalty-section-63',
@@ -41,7 +41,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     source: 'Kenya Data Protection Act 2019 §63',
     lastVerified: V,
     tags: ['kenya', 'ndb', 'penalty'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'KE',
   },
   // Australia — statute
   {
@@ -51,7 +51,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     url: 'https://www.legislation.gov.au/C2004A03712/latest/text',
     lastVerified: V,
     tags: ['australia', 'ndb', 'statute'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'AU',
   },
   {
     id: 'au-ndb-eligible-breach',
@@ -59,7 +59,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     source: 'Privacy Act 1988 (Cth) §26WE',
     lastVerified: V,
     tags: ['australia', 'ndb', 'statute', 'eligibility-test'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'AU',
   },
   {
     id: 'au-ndb-assessment-30-days',
@@ -67,7 +67,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     source: 'Privacy Act 1988 (Cth) §26WH',
     lastVerified: V,
     tags: ['australia', 'ndb', 'assessment-timeline'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'AU',
   },
   {
     id: 'au-ndb-notification-content',
@@ -75,7 +75,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     source: 'Privacy Act 1988 (Cth) §26WK',
     lastVerified: V,
     tags: ['australia', 'ndb', 'notification-content'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'AU',
   },
   {
     id: 'au-oaic-ndb-form',
@@ -84,7 +84,7 @@ export const KAU_NDB_SOURCES: IntelligenceSource[] = [
     url: 'https://www.oaic.gov.au/privacy/notifiable-data-breaches/report-a-data-breach',
     lastVerified: V,
     tags: ['australia', 'ndb', 'guidance', 'form'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'AU',
   },
 ];
 

@@ -268,6 +268,14 @@ describe('NTF-04 cross-reference verification', () => {
     expect(v.verdict).toBe('FABRICATED');
   });
 
+  it('single-token legitimate name (Madonna) is not flagged as FABRICATED', () => {
+    const v = crossReferenceClaim(
+      { credentialType: 'LEGAL', subject: { name: 'Madonna', identifiers: {} }, claimed: { barNumber: '123' } },
+      { source: 'BAR', actual: { barNumber: '123', registeredName: 'Madonna' }, fetchedAt: '2026-04-18' },
+    );
+    expect(v.verdict).not.toBe('FABRICATED');
+  });
+
   it('one field mismatch → PARTIAL_MATCH', () => {
     const v = crossReferenceClaim(
       { credentialType: 'MEDICAL', subject: { name: 'Jane Doe', identifiers: {} }, claimed: { specialty: 'cardiology' } },
@@ -374,6 +382,25 @@ describe('NTF-06 regulatory conflict resolver', () => {
     expect(r.outcome).toBe('STATE_INVALID');
   });
 
+  it('express preemption invalidates state law regardless of stringency', () => {
+    const strict = resolveConflict({
+      federalRule: 'federal rule',
+      federalPosture: 'EXPRESS',
+      stateRule: 'stricter state rule',
+      stateMoreStringent: true,
+      dualComplianceFeasible: true,
+    });
+    const lax = resolveConflict({
+      federalRule: 'federal rule',
+      federalPosture: 'EXPRESS',
+      stateRule: 'laxer state rule',
+      stateMoreStringent: false,
+      dualComplianceFeasible: true,
+    });
+    expect(strict.outcome).toBe('STATE_INVALID');
+    expect(lax.outcome).toBe('STATE_INVALID');
+  });
+
   it('field preemption always → STATE_INVALID', () => {
     const r = resolveConflict({
       federalRule: 'ERISA',
@@ -423,7 +450,6 @@ describe('NTF-07 audit findings', () => {
     recommendations: ['Split approval from initiation', 'Add detective review until split is live'],
     quantifiedExposureUsd: 2_500_000,
     severity: 'SIGNIFICANT_DEFICIENCY',
-    priority: 2,
   };
 
   it('complete finding passes validation', () => {

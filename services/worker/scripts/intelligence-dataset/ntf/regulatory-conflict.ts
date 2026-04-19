@@ -41,47 +41,44 @@ export interface ConflictAnalysis {
   outcome: ConflictOutcome;
   /** Reasoning chain. */
   reasoning: string[];
-  /** Citation anchors the model should emit. */
-  citations: string[];
 }
 
 export function resolveConflict(q: ConflictQuery): ConflictAnalysis {
-  const reasoning: string[] = [];
-  const citations: string[] = [];
-  reasoning.push(`federal rule: ${q.federalRule} (posture: ${q.federalPosture})`);
-  reasoning.push(`state rule: ${q.stateRule} (more stringent: ${q.stateMoreStringent})`);
+  const reasoning: string[] = [
+    `federal rule: ${q.federalRule} (posture: ${q.federalPosture})`,
+    `state rule: ${q.stateRule} (more stringent: ${q.stateMoreStringent})`,
+  ];
 
   if (q.federalPosture === 'FIELD') {
     reasoning.push('Congress occupied the field — state regulation is preempted regardless of stringency');
-    return { outcome: 'STATE_INVALID', reasoning, citations };
+    return { outcome: 'STATE_INVALID', reasoning };
   }
   if (q.federalPosture === 'EXPRESS') {
-    reasoning.push('statute expressly preempts state law in this area');
-    return { outcome: q.stateMoreStringent ? 'STATE_INVALID' : 'FEDERAL_CONTROLS', reasoning, citations };
+    reasoning.push('statute expressly preempts state law in this area — state rule is invalid regardless of stringency');
+    return { outcome: 'STATE_INVALID', reasoning };
   }
   if (q.federalPosture === 'CEILING') {
     if (q.stateMoreStringent) {
       reasoning.push('state law exceeds the federal ceiling — the state rule is invalid to the extent it exceeds');
-      return { outcome: 'STATE_INVALID', reasoning, citations };
+      return { outcome: 'STATE_INVALID', reasoning };
     }
     reasoning.push('state law is at or below the federal ceiling — both can apply');
-    return { outcome: 'BOTH_APPLY', reasoning, citations };
+    return { outcome: 'BOTH_APPLY', reasoning };
   }
   if (q.federalPosture === 'FLOOR') {
     if (q.stateMoreStringent && q.dualComplianceFeasible) {
       reasoning.push('floor preemption: state rule is more stringent and dual compliance is feasible — state controls in practice; federal provides the backstop');
-      return { outcome: 'STATE_CONTROLS', reasoning, citations };
+      return { outcome: 'STATE_CONTROLS', reasoning };
     }
     if (q.stateMoreStringent && !q.dualComplianceFeasible) {
       reasoning.push('floor preemption: conflict cannot be dual-complied — impossibility preemption applies, federal wins');
-      return { outcome: 'FEDERAL_CONTROLS', reasoning, citations };
+      return { outcome: 'FEDERAL_CONTROLS', reasoning };
     }
     reasoning.push('state rule is at or below the federal floor — federal minimum controls');
-    return { outcome: 'FEDERAL_CONTROLS', reasoning, citations };
+    return { outcome: 'FEDERAL_CONTROLS', reasoning };
   }
-  // NONE
   reasoning.push('no preemption identified — both rules apply; comply concurrently');
-  return { outcome: 'CONCURRENT_COMPLIANCE', reasoning, citations };
+  return { outcome: 'CONCURRENT_COMPLIANCE', reasoning };
 }
 
 /**
