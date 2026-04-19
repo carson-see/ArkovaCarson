@@ -105,24 +105,23 @@ export function priorityForSeverity(severity: FindingSeverity): 1 | 2 | 3 {
  * workpaper without reformatting.
  */
 export function renderFinding(f: AuditFinding): string {
-  const lines: string[] = [];
-  lines.push(`# ${f.id} — ${f.framework} ${f.severity} (priority ${priorityForSeverity(f.severity)})`);
-  lines.push('');
-  lines.push(`**Control objective:** ${f.controlObjective}`);
-  lines.push('');
-  lines.push(`**Condition:** ${f.condition}`);
-  lines.push('');
-  lines.push(`**Criteria:** ${f.criteria}`);
-  lines.push('');
-  lines.push(`**Cause:** ${f.cause}`);
-  lines.push('');
-  lines.push(`**Effect:** ${f.effect}`);
+  const lines: string[] = [
+    `# ${f.id} — ${f.framework} ${f.severity} (priority ${priorityForSeverity(f.severity)})`,
+    '',
+    `**Control objective:** ${f.controlObjective}`,
+    '',
+    `**Condition:** ${f.condition}`,
+    '',
+    `**Criteria:** ${f.criteria}`,
+    '',
+    `**Cause:** ${f.cause}`,
+    '',
+    `**Effect:** ${f.effect}`,
+  ];
   if (f.quantifiedExposureUsd !== undefined) {
-    lines.push('');
-    lines.push(`**Quantified exposure:** $${f.quantifiedExposureUsd.toLocaleString()}`);
+    lines.push('', `**Quantified exposure:** $${f.quantifiedExposureUsd.toLocaleString()}`);
   }
-  lines.push('');
-  lines.push('**Recommendations:**');
+  lines.push('', '**Recommendations:**');
   for (const r of f.recommendations) lines.push(`- ${r}`);
   return lines.join('\n');
 }

@@ -17,13 +17,13 @@ import {
 
 function mkInput(over: Partial<V8EvalInput> = {}): V8EvalInput {
   return {
-    macroF1: 0.90,
+    macroF1: 0.9,
     weightedF1: 0.92,
     confidenceCorrelation: 0.75,
     fraudSignalsF1: 0.35,
     ece: 0.06,
     minPerTypeF1: 0.75,
-    citationAccuracy: 0.60,
+    citationAccuracy: 0.6,
     ...over,
   };
 }

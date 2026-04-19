@@ -158,7 +158,7 @@ describe('NTF-02 LoRA ablation winner selection', () => {
   });
 
   it('rejects ranks that regress macro F1 below baseline', () => {
-    const r = pickAblationWinner([mk(32, 0.85, 0.7, 100), mk(64, 0.80, 0.9, 110)], 0.84);
+    const r = pickAblationWinner([mk(32, 0.85, 0.7, 100), mk(64, 0.8, 0.9, 110)], 0.84);
     expect(r.winner.rank).toBe(32);
     expect(r.rejected.find((x) => x.rank === 64)).toBeTruthy();
   });
@@ -170,7 +170,7 @@ describe('NTF-02 LoRA ablation winner selection', () => {
   });
 
   it('throws when every rank regresses', () => {
-    expect(() => pickAblationWinner([mk(32, 0.70, 0.6, 100)], 0.84)).toThrow();
+    expect(() => pickAblationWinner([mk(32, 0.7, 0.6, 100)], 0.84)).toThrow();
   });
 });
 
@@ -224,7 +224,7 @@ describe('NTF-03 compliance Q&A eval', () => {
 
   it('flags below-threshold entries as failing', () => {
     const e = COMPLIANCE_QA_SEED[0];
-    const r = scoreComplianceQaEntry(e, { id: e.id, text: '', confidence: 0.0, risks: [] });
+    const r = scoreComplianceQaEntry(e, { id: e.id, text: '', confidence: 0, risks: [] });
     const report = buildComplianceQaReport([r], [e]);
     expect(report.failing.length).toBe(1);
   });
@@ -458,7 +458,7 @@ describe('NTF-07 audit findings', () => {
 
   it('partial finding returns the missing components', () => {
     const missing = validateFindingStructure({ ...baseFinding, condition: '', cause: '', recommendations: [] });
-    expect(missing.sort()).toEqual(['cause', 'condition', 'recommendations']);
+    expect(missing.toSorted((a, b) => a.localeCompare(b))).toEqual(['cause', 'condition', 'recommendations']);
   });
 
   it('severity: financial impact above materiality + no compensating control = MATERIAL_WEAKNESS', () => {

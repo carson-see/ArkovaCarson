@@ -68,32 +68,50 @@ export interface CrossRefVerdict {
  */
 export function crossReferenceClaim(claim: CrossRefClaim, record: CrossRefRecord): CrossRefVerdict {
   const reasons: string[] = [];
+
+  const fabricated = checkFabricatedByClosure(claim, record, reasons);
+  if (fabricated) return fabricated;
+
+  const expired = checkExpiredClaimedActive(claim, record, reasons);
+  if (expired) return expired;
+
+  const nameMismatch = checkNameDivergence(claim, record, reasons);
+  if (nameMismatch) return nameMismatch;
+
+  const mismatchedFields = collectFieldMismatches(claim, record, reasons);
+  return classifyByFieldCount(reasons, mismatchedFields);
+}
+
+function checkFabricatedByClosure(claim: CrossRefClaim, record: CrossRefRecord, reasons: string[]): CrossRefVerdict | null {
+  if (record.registryStatus !== 'CLOSED') return null;
+  const conferralDate = claim.claimed.conferralDate ?? claim.claimed.issueDate;
+  const closureDate = record.actual.closureDate;
+  if (conferralDate && closureDate && conferralDate > closureDate) {
+    reasons.push(`registry closure ${closureDate} predates claim date ${conferralDate}`);
+    return { verdict: 'FABRICATED', reasons, mismatchedFields: ['conferralDate'], confidence: 0.95 };
+  }
+  return null;
+}
+
+function checkExpiredClaimedActive(claim: CrossRefClaim, record: CrossRefRecord, reasons: string[]): CrossRefVerdict | null {
+  if (record.registryStatus !== 'EXPIRED') return null;
+  reasons.push('registry shows license expired');
+  if (claim.claimed.status?.toLowerCase() === 'active') {
+    reasons.push('claim presents credential as active');
+    return { verdict: 'EXPIRED', reasons, mismatchedFields: ['status'], confidence: 0.92 };
+  }
+  return null;
+}
+
+function checkNameDivergence(claim: CrossRefClaim, record: CrossRefRecord, reasons: string[]): CrossRefVerdict | null {
+  if (!claim.subject.name || !record.actual.registeredName) return null;
+  if (namesOverlap(claim.subject.name, record.actual.registeredName)) return null;
+  reasons.push(`name mismatch: claim "${claim.subject.name}" vs registry "${record.actual.registeredName}"`);
+  return { verdict: 'FABRICATED', reasons, mismatchedFields: ['name'], confidence: 0.9 };
+}
+
+function collectFieldMismatches(claim: CrossRefClaim, record: CrossRefRecord, reasons: string[]): string[] {
   const mismatchedFields: string[] = [];
-
-  if (record.registryStatus === 'CLOSED') {
-    const conferralDate = claim.claimed.conferralDate ?? claim.claimed.issueDate;
-    const closureDate = record.actual.closureDate;
-    if (conferralDate && closureDate && conferralDate > closureDate) {
-      reasons.push(`registry closure ${closureDate} predates claim date ${conferralDate}`);
-      return { verdict: 'FABRICATED', reasons, mismatchedFields: ['conferralDate'], confidence: 0.95 };
-    }
-  }
-
-  if (record.registryStatus === 'EXPIRED') {
-    reasons.push('registry shows license expired');
-    if (claim.claimed.status && claim.claimed.status.toLowerCase() === 'active') {
-      reasons.push('claim presents credential as active');
-      return { verdict: 'EXPIRED', reasons, mismatchedFields: ['status'], confidence: 0.92 };
-    }
-  }
-
-  if (claim.subject.name && record.actual.registeredName) {
-    if (!namesOverlap(claim.subject.name, record.actual.registeredName)) {
-      reasons.push(`name mismatch: claim "${claim.subject.name}" vs registry "${record.actual.registeredName}"`);
-      return { verdict: 'FABRICATED', reasons, mismatchedFields: ['name'], confidence: 0.9 };
-    }
-  }
-
   for (const [field, claimedValue] of Object.entries(claim.claimed)) {
     const actualValue = record.actual[field];
     if (actualValue && actualValue !== claimedValue) {
@@ -101,7 +119,10 @@ export function crossReferenceClaim(claim: CrossRefClaim, record: CrossRefRecord
       reasons.push(`field ${field} mismatch: claim "${claimedValue}" vs registry "${actualValue}"`);
     }
   }
+  return mismatchedFields;
+}
 
+function classifyByFieldCount(reasons: string[], mismatchedFields: string[]): CrossRefVerdict {
   if (mismatchedFields.length === 0) {
     return { verdict: 'MATCH', reasons: ['all fields match registry'], mismatchedFields: [], confidence: 0.95 };
   }

@@ -57,9 +57,9 @@ export const V5_BASELINE: V8EvalInput = {
   confidenceCorrelation: NESSIE_V5_BASELINE.confidenceCorrelation,
   ece: NESSIE_V5_BASELINE.ece,
   // v8-only dimensions — not on the generic BaselineMetrics shape.
-  fraudSignalsF1: 0.0,
+  fraudSignalsF1: 0,
   minPerTypeF1: 0.548,
-  citationAccuracy: 0.570,
+  citationAccuracy: 0.57,
 };
 
 /**
@@ -68,11 +68,11 @@ export const V5_BASELINE: V8EvalInput = {
  */
 export const V8_TARGETS = {
   macroF1: 0.85,
-  weightedF1: 0.90,
-  confidenceCorrelation: 0.70,
-  fraudSignalsF1: 0.30,
+  weightedF1: 0.9,
+  confidenceCorrelation: 0.7,
+  fraudSignalsF1: 0.3,
   ece: 0.08,
-  minPerTypeF1: 0.70,
+  minPerTypeF1: 0.7,
   citationAccuracy: 0.55,
 } as const;
 
@@ -108,19 +108,19 @@ function mkGate(
 }
 
 export function renderV8GateReport(report: V8GateReport): string {
-  const lines: string[] = [];
-  lines.push(`# v8 Eval Gate Report — ${report.passes ? 'PASS' : 'FAIL'}`);
-  lines.push('');
-  lines.push('| Gate | Target | Actual | Status |');
-  lines.push('|------|--------|--------|--------|');
+  const lines: string[] = [
+    `# v8 Eval Gate Report — ${report.passes ? 'PASS' : 'FAIL'}`,
+    '',
+    '| Gate | Target | Actual | Status |',
+    '|------|--------|--------|--------|',
+  ];
   for (const g of report.gates) {
     const fmt = formatMetric(g.metric, g.actual);
     const tgt = formatMetric(g.metric, g.target);
     lines.push(`| ${g.label} | ${g.operator} ${tgt} | ${fmt} | ${g.passed ? 'PASS' : 'FAIL'} |`);
   }
   if (!report.passes) {
-    lines.push('');
-    lines.push('## Failing gates');
+    lines.push('', '## Failing gates');
     for (const g of report.failing) {
       lines.push(`- **${g.label}** — need ${g.operator} ${formatMetric(g.metric, g.target)}, got ${formatMetric(g.metric, g.actual)}`);
     }

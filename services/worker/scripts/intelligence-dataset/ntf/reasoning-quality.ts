@@ -98,7 +98,7 @@ function sharesMaterialTokens(a: string, b: string, threshold = 0.3): boolean {
 function tokenize(s: string): string[] {
   return s
     .toLowerCase()
-    .replace(/[^a-z0-9§\s]/g, ' ')
+    .replaceAll(/[^a-z0-9§\s]/g, ' ')
     .split(/\s+/)
     .filter((t) => t.length >= 3);
 }
@@ -107,7 +107,7 @@ const STATUTE_PATTERN = /§\s*\d+[a-z0-9()\-.]*/gi;
 
 function scoreCompleteness(reasoning: CotReasoningSteps, answer: IntelligenceAnswer, issues: string[]): number {
   const statutesInAnswer = new Set(
-    (answer.analysis.match(STATUTE_PATTERN) || []).map((m: string) => m.toLowerCase().replace(/\s+/g, '')),
+    (answer.analysis.match(STATUTE_PATTERN) || []).map((m: string) => m.toLowerCase().replaceAll(/\s+/g, '')),
   );
   if (statutesInAnswer.size === 0) {
     // Answer cites no statutes — completeness collapses to whether the
@@ -116,7 +116,7 @@ function scoreCompleteness(reasoning: CotReasoningSteps, answer: IntelligenceAns
     const trailing = trailingKeys.filter((k) => hasContent(reasoning[k])).length;
     return trailing / 2;
   }
-  const statuteText = JSON.stringify(reasoning).toLowerCase().replace(/\s+/g, '');
+  const statuteText = JSON.stringify(reasoning).toLowerCase().replaceAll(/\s+/g, '');
   let covered = 0;
   for (const s of statutesInAnswer) {
     if (statuteText.includes(s)) covered++;
