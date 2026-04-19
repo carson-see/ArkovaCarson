@@ -137,13 +137,14 @@ describe('story-specific coverage spot checks', () => {
   it('NDD-03 HIPAA OCR includes HITECH tier structure + Anthem case', () => {
     const ids = new Set(NDD_SOURCES_BY_STORY['ndd-03-hipaa-ocr'].map((s) => s.id));
     expect(ids.has('hitech-13410-tier-structure')).toBe(true);
-    expect(ids.has('anthem-2020-settlement')).toBe(true);
+    expect(ids.has('anthem-2018-settlement')).toBe(true);
   });
 
-  it('NDD-04 SOX includes §302 + §404 + PCAOB AS 2201', () => {
+  it('NDD-04 SOX includes §302 + §404 + §906 + PCAOB AS 2201', () => {
     const ids = new Set(NDD_SOURCES_BY_STORY['ndd-04-sox-pcaob'].map((s) => s.id));
     expect(ids.has('sox-section-302')).toBe(true);
     expect(ids.has('sox-section-404')).toBe(true);
+    expect(ids.has('sox-section-906')).toBe(true);
     expect(ids.has('pcaob-as-2201')).toBe(true);
   });
 
@@ -162,12 +163,14 @@ describe('story-specific coverage spot checks', () => {
     expect(ids.has('schrems-ii-c-311-18')).toBe(true);
   });
 
-  it('NDD-10 covers Nigeria NDPA + South Africa POPIA', () => {
+  it('NDD-10 covers Nigeria NDPA + South Africa POPIA (penalty sections separated from registration/transfer provisions)', () => {
     const ids = new Set(NDD_SOURCES_BY_STORY['ndd-10-nigeria-sa'].map((s) => s.id));
     expect(ids.has('ndpa-2023-section-26')).toBe(true);
     expect(ids.has('ndpa-2023-section-48')).toBe(true);
+    expect(ids.has('ndpa-2023-section-52-penalty')).toBe(true);
     expect(ids.has('popia-section-11')).toBe(true);
     expect(ids.has('popia-section-72-transfer')).toBe(true);
+    expect(ids.has('popia-section-109-penalties')).toBe(true);
   });
 });
 

@@ -117,11 +117,11 @@ const HIPAA_OCR_SOURCES: IntelligenceSource[] = [
     jurisdiction: 'federal',
   },
   {
-    id: 'anthem-2020-settlement',
-    quote: 'Anthem Inc. 2020 HIPAA settlement — $16M, the largest HIPAA OCR settlement on record. Findings: failure to conduct enterprise-wide risk analysis, insufficient procedures to review system activity, failure to identify and respond to a known cyberattack. CAP: 2-year monitoring.',
-    source: 'HHS OCR v. Anthem Inc. 2020 Resolution Agreement',
+    id: 'anthem-2018-settlement',
+    quote: 'Anthem Inc. 2018 HIPAA settlement — $16M, the largest HIPAA OCR settlement at the time of resolution (October 2018). Findings: failure to conduct enterprise-wide risk analysis, insufficient procedures to review system activity, failure to identify and respond to a known cyberattack. CAP: 2-year monitoring.',
+    source: 'HHS OCR v. Anthem Inc. 2018 Resolution Agreement',
     lastVerified: V,
-    tags: ['hipaa', 'ocr', 'case', 'largest-settlement'],
+    tags: ['hipaa', 'ocr', 'case', 'largest-settlement-2018'],
     jurisdiction: 'federal',
   },
 ];
@@ -153,6 +153,14 @@ const SOX_SOURCES: IntelligenceSource[] = [
     url: 'https://pcaobus.org/oversight/standards/auditing-standards/details/AS2201',
     lastVerified: V,
     tags: ['sox', 'pcaob', 'auditing-standard', 'material-weakness'],
+    jurisdiction: 'federal',
+  },
+  {
+    id: 'sox-section-906',
+    quote: 'SOX §906 (18 U.S.C. §1350) — criminal penalties for knowing or willful certification of a periodic report that does not comport with all the requirements of §13(a) or §15(d) of the Exchange Act: knowing = up to $1M fine and/or 10 years imprisonment; willful = up to $5M and/or 20 years',
+    source: 'Sarbanes-Oxley Act §906 (18 U.S.C. §1350)',
+    lastVerified: V,
+    tags: ['sox', 'statute', 'criminal', 'certification'],
     jurisdiction: 'federal',
   },
 ];
@@ -344,7 +352,7 @@ const NIGERIA_SA_SOURCES: IntelligenceSource[] = [
     url: 'https://ndpc.gov.ng/',
     lastVerified: V,
     tags: ['nigeria', 'ndpa', 'statute', 'cross-border'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'NG',
   },
   {
     id: 'ndpa-2023-section-48',
@@ -352,7 +360,15 @@ const NIGERIA_SA_SOURCES: IntelligenceSource[] = [
     source: 'Nigeria Data Protection Act 2023 §48 (registration)',
     lastVerified: V,
     tags: ['nigeria', 'ndpa', 'statute', 'registration'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'NG',
+  },
+  {
+    id: 'ndpa-2023-section-52-penalty',
+    quote: 'Nigeria NDPA 2023 §52 — NDPC may impose administrative sanctions on a data controller of major importance up to the greater of NGN 10 million or 2% of annual gross revenue in the preceding year',
+    source: 'Nigeria Data Protection Act 2023 §52 (administrative sanctions)',
+    lastVerified: V,
+    tags: ['nigeria', 'ndpa', 'statute', 'penalty'],
+    jurisdiction: 'NG',
   },
   {
     id: 'popia-section-11',
@@ -361,7 +377,7 @@ const NIGERIA_SA_SOURCES: IntelligenceSource[] = [
     url: 'https://inforegulator.org.za/',
     lastVerified: V,
     tags: ['south-africa', 'popia', 'statute', 'lawful-processing'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'ZA',
   },
   {
     id: 'popia-section-72-transfer',
@@ -369,7 +385,15 @@ const NIGERIA_SA_SOURCES: IntelligenceSource[] = [
     source: 'South Africa POPIA §72 (cross-border)',
     lastVerified: V,
     tags: ['south-africa', 'popia', 'statute', 'cross-border'],
-    jurisdiction: 'CA-intl',
+    jurisdiction: 'ZA',
+  },
+  {
+    id: 'popia-section-109-penalties',
+    quote: 'POPIA §109 — the Information Regulator may issue administrative fines up to ZAR 10 million; criminal offences under POPIA carry imprisonment up to 10 years for offences under §§100–106 + §103(1), and up to 12 months or ZAR 10M fine for other offences',
+    source: 'South Africa POPIA §109 (administrative fines + criminal penalties)',
+    lastVerified: V,
+    tags: ['south-africa', 'popia', 'statute', 'penalties'],
+    jurisdiction: 'ZA',
   },
 ];
 

@@ -85,7 +85,7 @@ export const NDD_ENFORCEMENT_LADDERS: Record<NddStoryId, NddEnforcementRule[]> =
     {
       name: 'OCR Corrective Action Plan (multi-year monitoring)',
       tier: 'CIVIL_MAJOR',
-      anchorSources: ['ocr-corrective-action-framework', 'anthem-2020-settlement'],
+      anchorSources: ['ocr-corrective-action-framework', 'anthem-2018-settlement'],
       penalty: 'Resolution Agreement + 2–3 year CAP; public disclosure of findings',
       confidenceBand: 'common-interpretation',
     },
@@ -94,8 +94,8 @@ export const NDD_ENFORCEMENT_LADDERS: Record<NddStoryId, NddEnforcementRule[]> =
     {
       name: 'SOX §906 knowingly false certification',
       tier: 'CRIMINAL',
-      anchorSources: ['sox-section-302'],
-      penalty: 'Up to $1M fine and 10 years imprisonment; $5M and 20 years for willful',
+      anchorSources: ['sox-section-906'],
+      penalty: 'Up to $1M fine and 10 years imprisonment; $5M and 20 years for willful (18 U.S.C. §1350)',
       confidenceBand: 'clear-statute',
     },
     {
@@ -209,24 +209,24 @@ export const NDD_ENFORCEMENT_LADDERS: Record<NddStoryId, NddEnforcementRule[]> =
   ],
   'ndd-10-nigeria-sa': [
     {
-      name: 'Nigeria NDPA §48 — failure to register',
+      name: 'Nigeria NDPA §52 administrative sanction (major importance)',
       tier: 'CIVIL_MAJOR',
-      anchorSources: ['ndpa-2023-section-48'],
-      penalty: 'NGN 10M or 2% of annual turnover for data controllers of major importance',
+      anchorSources: ['ndpa-2023-section-52-penalty', 'ndpa-2023-section-48'],
+      penalty: 'Greater of NGN 10M or 2% of annual gross revenue (§52 sanctions for failures arising under §48 registration)',
       confidenceBand: 'clear-statute',
     },
     {
       name: 'POPIA §72 unauthorized transborder flow',
       tier: 'CIVIL_MAJOR',
-      anchorSources: ['popia-section-72-transfer'],
-      penalty: 'ZAR 10M fine, 10 years imprisonment; Information Regulator enforcement',
+      anchorSources: ['popia-section-72-transfer', 'popia-section-109-penalties'],
+      penalty: 'Penalties under §109: admin fine up to ZAR 10M + criminal liability for §72 contravention',
       confidenceBand: 'clear-statute',
     },
     {
       name: 'POPIA §11 unlawful processing',
       tier: 'CIVIL_MAJOR',
-      anchorSources: ['popia-section-11'],
-      penalty: 'ZAR 10M fine; compensation order via Information Regulator',
+      anchorSources: ['popia-section-11', 'popia-section-109-penalties'],
+      penalty: 'Penalties under §109: admin fine up to ZAR 10M + compensation order via Information Regulator',
       confidenceBand: 'clear-statute',
     },
   ],

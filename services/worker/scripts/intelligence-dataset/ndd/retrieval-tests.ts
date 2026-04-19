@@ -55,7 +55,7 @@ export const NDD_RETRIEVAL_TESTS: Record<NddStoryId, NddRetrievalExpectation[]> 
     },
     {
       query: 'Largest HIPAA OCR settlement Anthem',
-      mustCiteAnyOf: ['anthem-2020-settlement'],
+      mustCiteAnyOf: ['anthem-2018-settlement'],
     },
   ],
   'ndd-04-sox-pcaob': [
