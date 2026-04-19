@@ -64,7 +64,9 @@ export type Jurisdiction =
   // Specific substates
   | 'Cook-County' | 'Philadelphia' | 'San-Francisco'
   // International (future — HIPAA/FERPA may cross borders for research + ed)
-  | 'EU' | 'UK' | 'CA-intl';
+  | 'EU' | 'UK' | 'CA-intl'
+  // KAU (SCRUM-753/754) — Kenya + Australia regulatory sources
+  | 'KE' | 'AU';
 
 /**
  * Canonical applicable-law short codes.
