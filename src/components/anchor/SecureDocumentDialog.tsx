@@ -50,6 +50,7 @@ interface SecureDocumentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  initialCredentialType?: string;
 }
 
 type Step = 'upload' | 'extracting' | 'extraction-failed' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
@@ -68,6 +69,7 @@ export function SecureDocumentDialog({
   open,
   onOpenChange,
   onSuccess,
+  initialCredentialType,
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
@@ -100,6 +102,13 @@ export function SecureDocumentDialog({
       isAIExtractionEnabled().then(setAiEnabled).catch(() => setAiEnabled(false));
     }
   }, [open]);
+
+  // NCA-FU2 (SCRUM-906): Pre-select template when linked from compliance scorecard
+  useEffect(() => {
+    if (open && initialCredentialType && !selectedTemplate) {
+      autoSelectTemplate(initialCredentialType);
+    }
+  }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
 
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
