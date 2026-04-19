@@ -63,9 +63,11 @@ export function scoreNddStory(storyId: NddStoryId, candidates: NddCandidateAnswe
   const byQuery = new Map<string, NddCandidateAnswer>();
   for (const c of candidates) byQuery.set(c.query, c);
 
+  // `perQuery` is built in-order from `expectations`, so index alignment is
+  // guaranteed and the tier-expectation lookup is O(1) per entry.
   const perQuery: NddPerQueryResult[] = expectations.map((e) => scoreExpectation(e, byQuery.get(e.query)));
   const citationHits = perQuery.filter((p) => p.citationHit).length;
-  const tierChecks = perQuery.filter((p) => expectations.find((e) => e.query === p.query)?.expectedTier !== undefined);
+  const tierChecks = perQuery.filter((_, i) => expectations[i].expectedTier !== undefined);
   const tierHits = tierChecks.filter((p) => p.tierOk).length;
 
   return {
