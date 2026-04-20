@@ -51,7 +51,7 @@ interface ProfileState {
 
 interface ProfileActions {
   refreshProfile: () => Promise<void>;
-  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>> & Record<string, unknown>) => Promise<boolean>;
+  updateProfile: (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>) => Promise<boolean>;
 }
 
 type ProfileContextValue = ProfileState & ProfileActions;
@@ -140,7 +140,7 @@ function useProfileInternal(): ProfileState & ProfileActions {
   }, [user, qc]);
 
   const updateProfile = useCallback(
-    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>> & Record<string, unknown>): Promise<boolean> => {
+    async (updates: Partial<Pick<Profile, 'full_name' | 'avatar_url' | 'is_public_profile' | 'disclaimer_accepted_at' | 'bio' | 'social_links'>>): Promise<boolean> => {
       if (!user) return false;
 
       const { error: updateError } = await supabase
