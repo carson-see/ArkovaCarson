@@ -11,7 +11,7 @@
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — subpath export, types resolve at runtime
-import readXlsxFile from 'read-excel-file/browser';
+import { readSheet } from 'read-excel-file/browser';
 import type { ParsedCsv, CsvColumn, CsvRow } from './csvParser';
 
 /** Safely coerce a cell value to string (avoids [object Object] for non-primitives). */
@@ -47,7 +47,7 @@ export function isExcelFile(file: File): boolean {
  * @returns ParsedCsv structure compatible with the existing bulk upload pipeline
  */
 export async function parseExcelFile(file: File): Promise<ParsedCsv> {
-  const rawData = await readXlsxFile(file);
+  const rawData = await readSheet(file);
 
   if (rawData.length === 0) {
     return { columns: [], rows: [], totalRows: 0 };
