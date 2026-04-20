@@ -103,13 +103,6 @@ export function SecureDocumentDialog({
     }
   }, [open]);
 
-  // NCA-FU2 (SCRUM-906): Pre-select template when linked from compliance scorecard
-  useEffect(() => {
-    if (open && initialCredentialType && !selectedTemplate) {
-      autoSelectTemplate(initialCredentialType);
-    }
-  }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
-
   const handleFileSelect = useCallback((file: File, fingerprint: string) => {
     setFileData({ file, fingerprint });
   }, []);
@@ -221,6 +214,14 @@ export function SecureDocumentDialog({
     }
     return null;
   }, []);
+
+  // NCA-FU2 (SCRUM-906): Pre-select template when linked from compliance scorecard
+  useEffect(() => {
+    if (open && initialCredentialType && !selectedTemplate) {
+      autoSelectTemplate(initialCredentialType);
+    }
+  }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
+
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
     if (!fileData) return;
