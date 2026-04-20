@@ -120,6 +120,22 @@ export function DocumentsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
 
+  // NCA-FU2 (SCRUM-906): Auto-open dialog when linked from compliance scorecard
+  const actionParam = searchParams.get('action');
+  const initialCredentialType = searchParams.get('credential_type') ?? undefined;
+  useEffect(() => {
+    if (actionParam === 'upload') {
+      setSecureDialogOpen(true);
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete('action');
+        next.delete('credential_type');
+        next.delete('jurisdiction');
+        return next;
+      }, { replace: true });
+    }
+  }, [actionParam, setSearchParams]);
+
   // Tab from URL search params
   const tabParam = searchParams.get('tab');
   const activeTab: DocumentTab = (['all', 'records', 'credentials', 'attestations'] as const).includes(tabParam as DocumentTab)
@@ -351,6 +367,7 @@ export function DocumentsPage() {
         open={secureDialogOpen}
         onOpenChange={setSecureDialogOpen}
         onSuccess={handleSecureSuccess}
+        initialCredentialType={initialCredentialType}
       />
     </AppShell>
   );
