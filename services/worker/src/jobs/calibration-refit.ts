@@ -33,13 +33,23 @@ export interface CalibrationRefitResult {
 export async function runCalibrationRefit(): Promise<CalibrationRefitResult> {
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
-  const { data: samples, error } = await db
+  // NOTE: `confidence` and `extraction_accuracy` are not yet exposed as
+  // columns on the `anchors` table (they live in extraction_manifests /
+  // ai_usage_events and still need a view or column-mirror migration).
+  // Cast through unknown until that migration lands so supabase-js v2.104's
+  // stricter column-type checks don't trip the worker build.
+  // TODO(SCRUM-908 follow-up): move this query to a proper view once the
+  // calibration-features view is added.
+  const { data: samples, error } = await (db
     .from('anchors')
-    .select('id, credential_type, confidence, extraction_accuracy, created_at')
+    .select('id, credential_type, confidence, extraction_accuracy, created_at' as '*')
     .gte('created_at', sevenDaysAgo)
     .not('confidence', 'is', null)
     .not('extraction_accuracy', 'is', null)
-    .limit(5000);
+    .limit(5000) as unknown as Promise<{
+      data: Array<{ id: string; credential_type: string; confidence: number; extraction_accuracy: number; created_at: string }> | null;
+      error: { message: string } | null;
+    }>);
 
   if (error) {
     logger.error({ error }, 'Failed to fetch calibration samples');
