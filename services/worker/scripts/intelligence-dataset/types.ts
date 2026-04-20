@@ -66,7 +66,9 @@ export type Jurisdiction =
   // International (future — HIPAA/FERPA may cross borders for research + ed)
   | 'EU' | 'UK' | 'CA-intl'
   // KAU (SCRUM-753/754) — Kenya + Australia regulatory sources
-  | 'KE' | 'AU';
+  | 'KE' | 'AU'
+  // NDD-10 (SCRUM-789) — Nigeria + South Africa regulatory sources
+  | 'NG' | 'ZA';
 
 /**
  * Canonical applicable-law short codes.
