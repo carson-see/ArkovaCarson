@@ -5,8 +5,8 @@
  * Separate from Dashboard which shows an overview.
  */
 
-import { useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   FileText,
   CheckCircle,
@@ -66,13 +66,34 @@ type StatusFilter = 'ALL' | 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'E
 
 export function MyRecordsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
-  const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+
+  // NCA-FU2 (SCRUM-906) — the compliance scorecard deep-links into this page
+  // with `?action=upload&credential_type=...&jurisdiction=...`. Open the
+  // SecureDocument dialog on mount, capture the pre-fill values, then scrub
+  // the URL so a refresh doesn't re-open the dialog.
+  const initialCredentialType = searchParams.get('credential_type') ?? undefined;
+  const shouldAutoOpenUpload = searchParams.get('action') === 'upload';
+  const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+
+  useEffect(() => {
+    if (shouldAutoOpenUpload) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('credential_type');
+      next.delete('jurisdiction');
+      setSearchParams(next, { replace: true });
+    }
+    // Only run once on mount; we intentionally want the initial URL state, not
+    // re-fires if the user later adds these params via navigation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -303,6 +324,7 @@ export function MyRecordsPage() {
         open={secureDialogOpen}
         onOpenChange={setSecureDialogOpen}
         onSuccess={handleSecureSuccess}
+        initialCredentialType={initialCredentialType}
       />
     </AppShell>
   );
