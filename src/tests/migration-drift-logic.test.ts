@@ -224,9 +224,12 @@ describe('SCRUM-908: migration files sanity check', () => {
       .filter((f) => f.endsWith('.sql'))
       .map((f) => f.replace(/\.sql$/, ''));
 
-    // Every file should start with a 4-digit number
-    // (with possible 'a'/'b' suffix for splits like 0068a, 0088b)
-    const pattern = /^\d{4}[a-z]?_/;
+    // Every file should start with a 4-digit number, with possible 'a'/'b'
+    // suffix for splits like 0068a/0088b. scripts/ci-supabase-start.sh
+    // renames a handful of files to a 5-digit form (e.g. 0068a -> 00680,
+    // 0088 -> 00880) so they sort before the `_`-prefixed siblings in the
+    // Supabase CLI's migration order; accept those as a second valid shape.
+    const pattern = /^(\d{4}[a-z]?|\d{5})_/;
     for (const name of files) {
       expect(name, `"${name}" does not match migration naming pattern`).toMatch(pattern);
     }
