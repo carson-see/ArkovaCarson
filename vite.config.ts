@@ -13,15 +13,31 @@ export default defineConfig({
     sourcemap: !!process.env.SENTRY_AUTH_TOKEN,
     rollupOptions: {
       output: {
-        manualChunks: {
-          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          'vendor-query': ['@tanstack/react-query'],
-          'vendor-supabase': ['@supabase/supabase-js'],
-          'vendor-ui': ['lucide-react', 'sonner', 'class-variance-authority', 'clsx', 'tailwind-merge'],
-          // Heavy libs — dynamically imported only during document upload.
-          // Named chunks give stable filenames for CDN cache hits.
-          'vendor-ai-ner': ['@huggingface/transformers'],
-          'vendor-pdf': ['pdfjs-dist'],
+        // Vite 8 / rolldown requires manualChunks to be a function.
+        manualChunks: (id) => {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('@huggingface/transformers')) return 'vendor-ai-ner';
+          if (id.includes('pdfjs-dist')) return 'vendor-pdf';
+          if (id.includes('@tanstack/react-query')) return 'vendor-query';
+          if (id.includes('@supabase/supabase-js')) return 'vendor-supabase';
+          if (
+            id.includes('/lucide-react/') ||
+            id.includes('/sonner/') ||
+            id.includes('class-variance-authority') ||
+            id.includes('/clsx/') ||
+            id.includes('tailwind-merge')
+          ) {
+            return 'vendor-ui';
+          }
+          if (
+            id.includes('/react/') ||
+            id.includes('/react-dom/') ||
+            id.includes('react-router-dom') ||
+            id.includes('/react-router/')
+          ) {
+            return 'vendor-react';
+          }
+          return undefined;
         },
       },
     },
