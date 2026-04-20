@@ -5,6 +5,34 @@ _Last updated: 2026-04-17 (evening — 1.41M+ public records, 1.41M+ SECURED anc
 
 ---
 
+## 2026-04-20 sprint — Dependency-bump fix sprint (14 PRs merged, 3 follow-up stories created)
+
+See [Confluence sprint writeup](https://arkova.atlassian.net/wiki/spaces/A/pages/16908289) and bug log (BUG-2026-04-20-001..003 in `docs/bugs/bug_log.md`).
+
+**Dep bumps merged (14 PRs):** #437 (nessie NDD scaffolding), #438 (GME7 calibration + NCA-FU2/3 + PROD-DRIFT-01), #439 (typescript 6 edge), #440/#441 (edge worker-types + wrangler), #442 (worker-deps group — sentry, supabase-js, stripe, viem, resend), #443 (eslint 10 worker), #444 (production-deps group — supabase-js 2.104, sentry 10.49, tanstack-query 5.99, esbuild 0.28), #447 (huggingface/transformers 4), #448 (eslint-plugin-react-hooks 7 — compiler rules downgraded to warn), #449 (eslint 10), #450 (@vitejs/plugin-react 6), #451 (read-excel-file 9 — switched to readSheet), #452 (vite 8 — manualChunks function form).
+
+**Dep bumps pending (2 PRs):** #445 (typescript 6 worker — CI rerun in flight), #453 (react-router-dom 7 — removed deprecated `future` prop).
+
+**Closed without merge (1 PR):** #446 Tailwind 3→4 — full CSS-first config rewrite, replaced by [SCRUM-915](https://arkova.atlassian.net/browse/SCRUM-915).
+
+**Follow-up stories created (3):**
+
+| Ticket | Summary | Priority |
+|--------|---------|----------|
+| [SCRUM-915](https://arkova.atlassian.net/browse/SCRUM-915) | DEP: Migrate Tailwind CSS 3 → 4 (CSS-first config rewrite) | MEDIUM |
+| [SCRUM-916](https://arkova.atlassian.net/browse/SCRUM-916) | DEP: Clean up 44 react-hooks v7 React Compiler violations | MEDIUM |
+| [SCRUM-917](https://arkova.atlassian.net/browse/SCRUM-917) | SCRUM-908 follow-up: proper calibration-features view | MEDIUM |
+
+**Bugs logged (3):**
+
+| ID | Severity | Origin |
+|----|----------|--------|
+| BUG-2026-04-20-001 | MEDIUM | calibration-refit.ts queries non-existent `anchors.confidence` / `anchors.extraction_accuracy` (hidden by loose supabase-js 2.93 types; surfaced by 2.104) |
+| BUG-2026-04-20-002 | LOW | SCRUM-908 migration-drift test rejected CI-renamed 5-digit filenames (`0068a→00680`) |
+| BUG-2026-04-20-003 | LOW | `autoSelectTemplate` used before declaration in `SecureDocumentDialog.tsx` |
+
+---
+
 ## 2026-04-17 (evening) sprint — 10 stories shipped across PR #413 + PR #414
 
 **Shipped (all QA-merged, awaiting production deploy + external operator steps):**

@@ -1,5 +1,17 @@
 # Arkova Bug Log
-_Last updated: 2026-04-19 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 46 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 UAT)_
+_Last updated: 2026-04-20 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 49 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dependency-bump sprint)_
+
+## 2026-04-20 — Dependency-Bump Fix Sprint Bug Finds
+
+Dependency-bump sprint (PRs #437..#453). Most dependabot PRs had failing CI; the pre-existing issues caught along the way:
+
+| ID | Severity | Summary | Fix | Regression Test |
+|----|----------|---------|-----|-----------------|
+| BUG-2026-04-20-001 | MEDIUM | `services/worker/src/jobs/calibration-refit.ts` (shipped in PR #438 / SCRUM-908) queried `anchors.confidence` and `anchors.extraction_accuracy` — neither column exists on the `anchors` table. The query silently succeeded under `@supabase/supabase-js@2.93.2` (loose type checks); `2.104.0` (bumped in PR #444) added `RejectExcessProperties<T>` to `.select()` args and surfaces the real mismatch as a TS error. Would have become a runtime 400 whenever the calibration-refit cron started running. | Cast the query through `unknown` to unblock the supabase-js bump; added a TODO(SCRUM-908 follow-up) to move the query to a proper view that exposes calibration features. Landed in PR #444 (`services/worker/src/jobs/calibration-refit.ts`). | No dedicated test yet — cron hasn't run in prod; follow-up story will add one when the view lands. |
+| BUG-2026-04-20-002 | LOW | `src/tests/migration-drift-logic.test.ts` (shipped in PR #438 / SCRUM-908) enforced migration filenames match `/^\d{4}[a-z]?_/`. `scripts/ci-supabase-start.sh` renames `0068a` → `00680` and `0088` → `00880` in CI to force ADD VALUE transactions to sort before their consumers, so the 5-digit names tripped the pattern. Every PR based on `main` after #438 merged saw a spurious test failure. | Broadened the pattern to `/^(\d{4}[a-z]?|\d{5})_/` and documented why. Landed in commit `4d9820a5` (pushed direct to main). | `src/tests/migration-drift-logic.test.ts` now has 14/14 tests green. |
+| BUG-2026-04-20-003 | LOW | `src/components/anchor/SecureDocumentDialog.tsx` (shipped in PR #438 / NCA-FU2 / SCRUM-906) had a useEffect at line 107 that called `autoSelectTemplate`, but the `autoSelectTemplate` `useCallback` wasn't declared until line 177. TypeScript 5.9 let this compile; TS stricter checks under the PR #438 CI flagged it as TS2448/TS2454. Only hit the post-merge CI after dependabot rebased PRs onto the new main. | Moved the useEffect block to after the `autoSelectTemplate` declaration (file reorg only; behavior unchanged). Landed in commit `7ac802a2` on the PR #438 branch prior to squash-merge. | Typecheck now clean on the full frontend compile (`tsc --noEmit` exit 0). |
+
+Sprint also closed PR #446 (Tailwind 3→4) because Tailwind 4 is a full CSS-first config migration (new `@tailwindcss/postcss` package, `@theme` CSS config, v3 utility deprecations) that needs a dedicated migration story, not a Dependabot bump. Tracked under follow-up stories.
 
 ## 2026-04-19 — Click-through UAT Bug Finds (continuation of 2026-04-18 sprint)
 
