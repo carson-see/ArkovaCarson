@@ -25,8 +25,9 @@
 /** Request timeout for all Supabase fetch calls (ms) */
 const FETCH_TIMEOUT_MS = 10_000;
 
-/** SHA-256 hex pattern (64 lowercase hex chars) */
-const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
+/** SHA-256 hex pattern (64 hex chars). Exported so mcp-server.ts can
+ *  reuse the single source of truth for its Zod input validator. */
+export const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 
 export interface ToolDefinition {
   name: string;

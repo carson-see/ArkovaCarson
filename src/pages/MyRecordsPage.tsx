@@ -72,10 +72,9 @@ export function MyRecordsPage() {
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
 
-  // NCA-FU2 (SCRUM-906) — the compliance scorecard deep-links into this page
-  // with `?action=upload&credential_type=...&jurisdiction=...`. Open the
-  // SecureDocument dialog on mount, capture the pre-fill values, then scrub
-  // the URL so a refresh doesn't re-open the dialog.
+  // NCA-FU2 (SCRUM-906) — deep-linked from the compliance scorecard with
+  // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
+  // so a page refresh doesn't re-open the dialog.
   const initialCredentialType = searchParams.get('credential_type') ?? undefined;
   const shouldAutoOpenUpload = searchParams.get('action') === 'upload';
   const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
