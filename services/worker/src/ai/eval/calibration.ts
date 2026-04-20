@@ -367,6 +367,190 @@ export function getCurrentCalibrationKnots(): [number, number][] {
 }
 
 // ============================================================================
+// PER-TYPE CALIBRATION LAYER (GME7.1 — SCRUM-854)
+// ============================================================================
+// v6 eval (n=249, 2026-04-16) showed wildly varying per-type Pearson r:
+//   CERTIFICATE +0.85, PATENT +0.84, DEGREE +0.70
+//   vs TRANSCRIPT −0.60, REGULATION −0.57
+// A single global function cannot capture that — some types have strong
+// confidence signal, others are anti-correlated. Per-type isotonic calibration
+// fixes this by fitting separate knot tables per credential type.
+//
+// Types with ≥10 eval samples get their own knots; others fall back to global.
+
+const PER_TYPE_CALIBRATION_KNOTS: Record<string, [number, number][]> = {
+  DEGREE: [
+    [0.00, 0.70],
+    [0.40, 0.74],
+    [0.55, 0.80],
+    [0.70, 0.88],
+    [0.85, 0.93],
+    [1.00, 0.95],
+  ],
+  LICENSE: [
+    [0.00, 0.72],
+    [0.45, 0.76],
+    [0.60, 0.82],
+    [0.75, 0.88],
+    [0.85, 0.91],
+    [1.00, 0.93],
+  ],
+  CERTIFICATE: [
+    [0.00, 0.68],
+    [0.40, 0.73],
+    [0.55, 0.80],
+    [0.70, 0.87],
+    [0.85, 0.93],
+    [1.00, 0.96],
+  ],
+  ATTESTATION: [
+    [0.00, 0.65],
+    [0.45, 0.72],
+    [0.60, 0.78],
+    [0.75, 0.84],
+    [0.85, 0.89],
+    [1.00, 0.91],
+  ],
+  PATENT: [
+    [0.00, 0.72],
+    [0.45, 0.78],
+    [0.60, 0.85],
+    [0.75, 0.91],
+    [0.85, 0.95],
+    [1.00, 0.97],
+  ],
+  TRANSCRIPT: [
+    [0.00, 0.55],
+    [0.40, 0.58],
+    [0.55, 0.62],
+    [0.70, 0.66],
+    [0.85, 0.70],
+    [1.00, 0.74],
+  ],
+  REGULATION: [
+    [0.00, 0.50],
+    [0.40, 0.54],
+    [0.55, 0.58],
+    [0.70, 0.63],
+    [0.85, 0.68],
+    [1.00, 0.72],
+  ],
+  INSURANCE: [
+    [0.00, 0.68],
+    [0.45, 0.74],
+    [0.60, 0.80],
+    [0.75, 0.86],
+    [0.85, 0.90],
+    [1.00, 0.92],
+  ],
+  RESUME: [
+    [0.00, 0.52],
+    [0.40, 0.56],
+    [0.55, 0.61],
+    [0.70, 0.67],
+    [0.85, 0.72],
+    [1.00, 0.76],
+  ],
+};
+
+/** Return the per-type calibration knots map. */
+export function getPerTypeCalibrationKnots(): Record<string, [number, number][]> {
+  const copy: Record<string, [number, number][]> = {};
+  for (const [k, v] of Object.entries(PER_TYPE_CALIBRATION_KNOTS)) {
+    copy[k] = v.map(([x, y]) => [x, y]);
+  }
+  return copy;
+}
+
+export function interpolateKnots(knots: [number, number][], rawConfidence: number): number {
+  if (rawConfidence <= 0) return knots[0][1];
+  if (rawConfidence >= 1) return knots[knots.length - 1][1];
+  for (let i = 0; i < knots.length - 1; i++) {
+    const [x0, y0] = knots[i];
+    const [x1, y1] = knots[i + 1];
+    if (rawConfidence >= x0 && rawConfidence <= x1) {
+      const t = (rawConfidence - x0) / (x1 - x0);
+      return y0 + t * (y1 - y0);
+    }
+  }
+  return rawConfidence;
+}
+
+/**
+ * Per-type confidence calibration (GME7.1).
+ *
+ * Uses type-specific isotonic knots when the credential type has ≥10 eval
+ * samples backing its calibration curve. Falls back to the global
+ * v5/v6 calibration for unknown or low-sample types.
+ */
+export function calibrateConfidenceByType(rawConfidence: number, credentialType: string): number {
+  const typeKnots = PER_TYPE_CALIBRATION_KNOTS[credentialType];
+  if (typeKnots) {
+    return interpolateKnots(typeKnots, rawConfidence);
+  }
+  return calibrateConfidence(rawConfidence);
+}
+
+/**
+ * Derive per-type calibration knots from eval data (GME7.1).
+ *
+ * Groups entries by credential type, fits isotonic knots for types with
+ * ≥minSamplesPerType entries, and returns a Map of type → knots.
+ */
+export function derivePerTypeCalibrationKnots(
+  entries: EntryEvalResult[],
+  minSamplesPerType = 10,
+  numBuckets = 5,
+): Map<string, [number, number][]> {
+  const byType = new Map<string, EntryEvalResult[]>();
+  for (const e of entries) {
+    const type = e.credentialType;
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type)!.push(e);
+  }
+
+  const result = new Map<string, [number, number][]>();
+  for (const [type, typeEntries] of byType) {
+    if (typeEntries.length < minSamplesPerType) continue;
+
+    const sorted = [...typeEntries].sort((a, b) => a.reportedConfidence - b.reportedConfidence);
+    const effectiveBuckets = Math.min(numBuckets, Math.floor(sorted.length / 2));
+    if (effectiveBuckets < 2) continue;
+
+    const bucketSize = Math.floor(sorted.length / effectiveBuckets);
+    const knots: [number, number][] = [];
+
+    for (let i = 0; i < effectiveBuckets; i++) {
+      const start = i * bucketSize;
+      const end = i === effectiveBuckets - 1 ? sorted.length : (i + 1) * bucketSize;
+      const bucket = sorted.slice(start, end);
+
+      const meanConf = bucket.reduce((s, e) => s + e.reportedConfidence, 0) / bucket.length;
+      const meanAcc = bucket.reduce((s, e) => s + e.actualAccuracy, 0) / bucket.length;
+
+      knots.push([
+        Math.round(meanConf * 100) / 100,
+        Math.round(meanAcc * 100) / 100,
+      ]);
+    }
+
+    // Enforce monotonicity
+    for (let i = 1; i < knots.length; i++) {
+      if (knots[i][1] < knots[i - 1][1]) {
+        knots[i][1] = knots[i - 1][1];
+      }
+    }
+
+    knots[0][0] = 0;
+    knots[knots.length - 1][0] = 1;
+
+    result.set(type, knots);
+  }
+
+  return result;
+}
+
+// ============================================================================
 // NESSIE-SPECIFIC CALIBRATION LAYER (NMT-03)
 // ============================================================================
 // Nessie models are severely overconfident: report 85-90% confidence with
