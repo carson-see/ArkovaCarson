@@ -162,7 +162,7 @@ export function App() {
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
       <AuditorModeContext.Provider value={auditorMode}>
-      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <BrowserRouter>
         <ProfileProvider>
         <Toaster position="top-right" richColors closeButton />
         <Suspense fallback={<RouteFallback />}>
