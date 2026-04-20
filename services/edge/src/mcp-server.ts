@@ -34,10 +34,34 @@ const SERVER_VERSION = '1.0.0';
 /** Map tool name → description from the single source of truth */
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
+// ── Input validators ─────────────────────────────────────────────────────
+// Tightened after the 2026-04-20 MCP security audit — bare `z.string()` let
+// callers submit arbitrary shapes into tools that hand the value to
+// Supabase REST / RPC paths. Explicit format checks fail closed.
+const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
+const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
+const publicIdSchema = z.string().regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>').max(64);
+const contentHashSchema = z.string().regex(SHA256_HEX_RE, 'content_hash must be 64 hex chars').length(64);
+const freeTextQuerySchema = z.string().min(1).max(500);
+
+/** Scrub tool handler errors before they reach the MCP client — raw
+ *  `String(error)` was leaking stack traces + internal URLs. */
+function safeErrorText(err: unknown, context: string): string {
+  console.error(`[mcp-server] ${context}:`, err);
+  return JSON.stringify({ error: `${context} failed`, code: 'TOOL_ERROR' });
+}
+
+/** Extended handler config — now includes the authenticated caller's
+ *  user id so tools can scope queries instead of running service-role
+ *  with no filter (the 2026-04-20 `list_agents` cross-org leak). */
+interface ScopedConfig extends SupabaseConfig {
+  userId: string;
+}
+
 /**
  * Create and configure the MCP server with Arkova tools, resources, and prompts.
  */
-function createMcpServer(config: SupabaseConfig): McpServer {
+function createMcpServer(config: ScopedConfig): McpServer {
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
@@ -64,7 +88,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
   tool(
     'verify_credential',
     TOOL_DESC['verify_credential'],
-    { public_id: z.string().describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
+    { public_id: publicIdSchema.describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
     async ({ public_id }) => handleVerifyCredential({ public_id }, config),
   );
 
@@ -72,8 +96,8 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     'search_credentials',
     TOOL_DESC['search_credentials'],
     {
-      query: z.string().describe('Natural language search query'),
-      max_results: z.number().optional().describe('Maximum results to return (default: 10, max: 50)'),
+      query: freeTextQuerySchema.describe('Natural language search query'),
+      max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
     },
     async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
   );
@@ -82,9 +106,9 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     'nessie_query',
     TOOL_DESC['nessie_query'],
     {
-      query: z.string().describe('Natural language query'),
+      query: freeTextQuerySchema.describe('Natural language query'),
       mode: z.enum(['retrieval', 'context']).optional().describe('Query mode (default: retrieval)'),
-      limit: z.number().optional().describe('Max results (default: 10, max: 50)'),
+      limit: z.number().int().min(1).max(50).optional().describe('Max results (default: 10, max: 50)'),
     },
     async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
   );
@@ -93,11 +117,11 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     'anchor_document',
     TOOL_DESC['anchor_document'],
     {
-      content_hash: z.string().describe('SHA-256 fingerprint of the document'),
-      record_type: z.string().optional().describe('Record type (e.g., patent_grant, 10-K)'),
-      source: z.string().optional().describe('Source (e.g., edgar, uspto)'),
-      title: z.string().optional().describe('Document title'),
-      source_url: z.string().optional().describe('Original document URL'),
+      content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
+      record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
+      source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
+      title: z.string().max(500).optional().describe('Document title'),
+      source_url: z.string().url().max(2048).optional().describe('Original document URL'),
     },
     async ({ content_hash, record_type, source, title, source_url }) =>
       handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
@@ -106,7 +130,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
   tool(
     'verify_document',
     TOOL_DESC['verify_document'],
-    { content_hash: z.string().describe('SHA-256 fingerprint of the document to verify') },
+    { content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document to verify') },
     async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
   );
 
@@ -117,7 +141,7 @@ function createMcpServer(config: SupabaseConfig): McpServer {
     TOOL_DESC['verify_batch'],
     {
       public_ids: z
-        .array(z.string())
+        .array(publicIdSchema)
         .min(1)
         .max(100)
         .describe('Array of credential public IDs (max 100). Results returned in input order.'),
@@ -129,9 +153,12 @@ function createMcpServer(config: SupabaseConfig): McpServer {
 
   tool(
     'oracle_batch_verify',
-    'Batch-verify multiple credentials via the Arkova Oracle. Returns HMAC-signed results for tamper detection. Use for bulk verification workflows where audit trail is required.',
+    // NOTE 2026-04-20 MCP security audit: description previously claimed
+    // "HMAC-signed results for tamper detection" — implementation did no
+    // such signing. Claim removed; real HMAC signing tracked as MCP-SEC-02.
+    'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
     {
-      public_ids: z.array(z.string()).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
+      public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },
     async ({ public_ids }) => {
       try {
@@ -142,34 +169,41 @@ function createMcpServer(config: SupabaseConfig): McpServer {
         }
         return { content: [{ type: 'text' as const, text: JSON.stringify({ query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() }, null, 2) }] };
       } catch (error) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }] };
+        return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }] };
       }
     },
   );
 
   tool(
     'list_agents',
-    'List all registered AI agents for the authenticated organization. Returns agent names, types, scopes, and status.',
+    'List AI agents registered to the authenticated caller\'s organization. Returns agent names, types, scopes, and status.',
     {},
     async () => {
+      // MCP security fix 2026-04-20: prior implementation queried
+      // /rest/v1/agents?status=eq.active with the service-role key and no
+      // org filter — cross-org data leak. Replaced with SECURITY DEFINER
+      // RPC get_agents_for_user(p_user_id) (migration 0221) that joins
+      // through org_members and returns only the caller's org's agents.
       try {
         const resp = await fetch(
-          `${config.supabaseUrl}/rest/v1/agents?status=eq.active&select=id,name,agent_type,status,allowed_scopes,framework,created_at`,
+          `${config.supabaseUrl}/rest/v1/rpc/get_agents_for_user`,
           {
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               apikey: config.supabaseKey,
               Authorization: `Bearer ${config.supabaseKey}`,
             },
+            body: JSON.stringify({ p_user_id: config.userId }),
           },
         );
         if (!resp.ok) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `HTTP ${resp.status}` }) }] };
+          return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'list_agents') }] };
         }
         const agents = await resp.json();
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: agents ?? [] }, null, 2) }] };
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: Array.isArray(agents) ? agents : [] }, null, 2) }] };
       } catch (error) {
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error: String(error) }) }] };
+        return { content: [{ type: 'text' as const, text: safeErrorText(error, 'list_agents') }] };
       }
     },
   );
@@ -193,8 +227,8 @@ function createMcpServer(config: SupabaseConfig): McpServer {
           '',
           'Available tools:',
           '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
-          '  search_credentials   — Semantic search across 1.39M+ anchored records',
-          '  oracle_batch_verify  — Batch-verify up to 25 credentials with HMAC-signed results',
+          '  search_credentials   — Semantic search across the anchored records corpus',
+          '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
           '  nessie_query         — RAG search over SEC filings, patents, and regulatory docs',
           '  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring',
           '  verify_document      — Check if a document fingerprint has been anchored',
@@ -408,7 +442,11 @@ function handleProtectedResourceMetadata(baseUrl: string): Response {
 
 function getCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get('Origin') ?? '';
-  const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://arkova-carson.vercel.app,https://app.arkova.ai')
+  // 2026-04-20 MCP security audit: previous default listed the stale
+  // `arkova-carson.vercel.app` host. Current prod front-end is
+  // `arkova-26.vercel.app`; canonical is `app.arkova.ai`. Env var override
+  // (`ALLOWED_ORIGINS`) still wins.
+  const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://arkova-26.vercel.app,https://app.arkova.ai')
     .split(',')
     .map((o) => o.trim())
     .filter((o) => o.length > 0);
@@ -467,10 +505,12 @@ export async function handleMcpRequest(
     );
   }
 
-  // Create MCP server and transport
-  const config: SupabaseConfig = {
+  // Create MCP server and transport. userId threaded through so tools can
+  // org-scope their queries (see `list_agents` + get_agents_for_user RPC).
+  const config: ScopedConfig = {
     supabaseUrl: env.SUPABASE_URL,
     supabaseKey: env.SUPABASE_SERVICE_ROLE_KEY,
+    userId: auth.userId,
   };
 
   try {
