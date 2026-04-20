@@ -64,6 +64,7 @@ import { fetchBrazilComplianceData, fetchSingaporeComplianceData, fetchMexicoCom
 import { fetchCnpjBrCompanies } from '../jobs/brazilFetcher.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
+import { runCalibrationRefit } from '../jobs/calibration-refit.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
@@ -1026,6 +1027,22 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     res.json({ status: 'refreshed' });
   } catch (error) {
     logger.error({ error }, 'Stats materialized view refresh failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── Calibration Refit (GME7.3 — SCRUM-856) ───
+
+cronRouter.post('/calibration-refit', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'calibration-refit',
+      '0 3 * * 1',
+      () => runCalibrationRefit(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Calibration refit failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
