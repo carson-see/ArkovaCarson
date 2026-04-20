@@ -3,7 +3,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { analyzeCalibration, formatCalibrationReport, calibrateConfidence } from './calibration.js';
+import {
+  analyzeCalibration,
+  formatCalibrationReport,
+  calibrateConfidence,
+  calibrateConfidenceByType,
+  derivePerTypeCalibrationKnots,
+  getPerTypeCalibrationKnots,
+} from './calibration.js';
 import type { EntryEvalResult } from './types.js';
 
 function makeEntry(overrides: Partial<EntryEvalResult>): EntryEvalResult {
@@ -286,6 +293,151 @@ describe('calibrateNessieConfidence', () => {
   it('values > 1 return cap', async () => {
     const { calibrateNessieConfidence } = await import('./calibration.js');
     expect(calibrateNessieConfidence(1.5)).toBeCloseTo(0.58, 2);
+  });
+});
+
+describe('calibrateConfidenceByType (GME7.1 — SCRUM-854)', () => {
+  it('uses per-type knots when available for the credential type', () => {
+    const result = calibrateConfidenceByType(0.80, 'DEGREE');
+    expect(result).toBeGreaterThanOrEqual(0);
+    expect(result).toBeLessThanOrEqual(1);
+  });
+
+  it('falls back to global knots for unknown credential types', () => {
+    const globalResult = calibrateConfidence(0.75);
+    const typeResult = calibrateConfidenceByType(0.75, 'UNKNOWN_TYPE_XYZ');
+    expect(typeResult).toBeCloseTo(globalResult, 5);
+  });
+
+  it('falls back to global knots for types with insufficient sample data', () => {
+    const globalResult = calibrateConfidence(0.75);
+    const typeResult = calibrateConfidenceByType(0.75, 'CHARITY');
+    expect(typeResult).toBeCloseTo(globalResult, 5);
+  });
+
+  it('returns different calibrated values for types with known divergent patterns', () => {
+    const degreeResult = calibrateConfidenceByType(0.80, 'DEGREE');
+    const transcriptResult = calibrateConfidenceByType(0.80, 'TRANSCRIPT');
+    expect(degreeResult).not.toBeCloseTo(transcriptResult, 2);
+  });
+
+  it('is monotonically non-decreasing for each type', () => {
+    const types = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT'];
+    const rawValues = [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0];
+    for (const type of types) {
+      const calibrated = rawValues.map(v => calibrateConfidenceByType(v, type));
+      for (let i = 1; i < calibrated.length; i++) {
+        expect(calibrated[i]).toBeGreaterThanOrEqual(calibrated[i - 1]);
+      }
+    }
+  });
+
+  it('handles edge cases: raw 0.0 and 1.0', () => {
+    const low = calibrateConfidenceByType(0.0, 'DEGREE');
+    const high = calibrateConfidenceByType(1.0, 'DEGREE');
+    expect(low).toBeGreaterThanOrEqual(0);
+    expect(high).toBeLessThanOrEqual(1);
+    expect(high).toBeGreaterThanOrEqual(low);
+  });
+
+  it('handles negative and >1 values gracefully', () => {
+    expect(calibrateConfidenceByType(-0.5, 'DEGREE')).toBeGreaterThanOrEqual(0);
+    expect(calibrateConfidenceByType(1.5, 'DEGREE')).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('derivePerTypeCalibrationKnots (GME7.1 — SCRUM-854)', () => {
+  it('returns per-type knots for types with ≥10 entries', () => {
+    const entries: EntryEvalResult[] = [];
+    for (let i = 0; i < 15; i++) {
+      entries.push(makeEntry({
+        entryId: `degree-${i}`,
+        credentialType: 'DEGREE',
+        reportedConfidence: 0.5 + (i / 30),
+        actualAccuracy: 0.6 + (i / 30),
+      }));
+    }
+    const result = derivePerTypeCalibrationKnots(entries);
+    expect(result.has('DEGREE')).toBe(true);
+    const knots = result.get('DEGREE')!;
+    expect(knots.length).toBeGreaterThan(0);
+    expect(knots[0][0]).toBe(0);
+    expect(knots[knots.length - 1][0]).toBe(1);
+  });
+
+  it('excludes types with <10 entries', () => {
+    const entries: EntryEvalResult[] = [];
+    for (let i = 0; i < 5; i++) {
+      entries.push(makeEntry({
+        entryId: `rare-${i}`,
+        credentialType: 'RARE_TYPE',
+        reportedConfidence: 0.7 + (i / 50),
+        actualAccuracy: 0.6 + (i / 50),
+      }));
+    }
+    const result = derivePerTypeCalibrationKnots(entries);
+    expect(result.has('RARE_TYPE')).toBe(false);
+  });
+
+  it('handles multiple types simultaneously', () => {
+    const entries: EntryEvalResult[] = [];
+    for (let i = 0; i < 12; i++) {
+      entries.push(makeEntry({
+        entryId: `degree-${i}`,
+        credentialType: 'DEGREE',
+        reportedConfidence: 0.5 + (i / 25),
+        actualAccuracy: 0.6 + (i / 25),
+      }));
+      entries.push(makeEntry({
+        entryId: `license-${i}`,
+        credentialType: 'LICENSE',
+        reportedConfidence: 0.4 + (i / 25),
+        actualAccuracy: 0.3 + (i / 25),
+      }));
+    }
+    const result = derivePerTypeCalibrationKnots(entries);
+    expect(result.has('DEGREE')).toBe(true);
+    expect(result.has('LICENSE')).toBe(true);
+  });
+
+  it('produces monotonically non-decreasing knots', () => {
+    const entries: EntryEvalResult[] = [];
+    for (let i = 0; i < 20; i++) {
+      entries.push(makeEntry({
+        entryId: `test-${i}`,
+        credentialType: 'DEGREE',
+        reportedConfidence: Math.random(),
+        actualAccuracy: Math.random(),
+      }));
+    }
+    const result = derivePerTypeCalibrationKnots(entries);
+    if (result.has('DEGREE')) {
+      const knots = result.get('DEGREE')!;
+      for (let i = 1; i < knots.length; i++) {
+        expect(knots[i][1]).toBeGreaterThanOrEqual(knots[i - 1][1]);
+      }
+    }
+  });
+});
+
+describe('getPerTypeCalibrationKnots (GME7.1 — SCRUM-854)', () => {
+  it('returns a map with known credential types', () => {
+    const knots = getPerTypeCalibrationKnots();
+    expect(knots).toBeDefined();
+    expect(typeof knots).toBe('object');
+  });
+
+  it('each type has valid knot arrays', () => {
+    const knots = getPerTypeCalibrationKnots();
+    for (const [type, typeKnots] of Object.entries(knots)) {
+      expect(typeKnots.length).toBeGreaterThan(0);
+      expect(typeKnots[0][0]).toBe(0);
+      expect(typeKnots[typeKnots.length - 1][0]).toBe(1);
+      for (let i = 1; i < typeKnots.length; i++) {
+        expect(typeKnots[i][0]).toBeGreaterThanOrEqual(typeKnots[i - 1][0]);
+        expect(typeKnots[i][1]).toBeGreaterThanOrEqual(typeKnots[i - 1][1]);
+      }
+    }
   });
 });
 
