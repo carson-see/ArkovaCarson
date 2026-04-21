@@ -3558,7 +3558,20 @@ export type Database = {
           title: string
         }[]
       }
+      get_agents_for_user: {
+        Args: { p_user_id: string }
+        Returns: {
+          allowed_scopes: string[]
+          agent_type: string
+          created_at: string
+          framework: string
+          id: string
+          name: string
+          status: string
+        }[]
+      }
       get_user_anchor_stats: { Args: { p_user_id: string }; Returns: Json }
+      get_user_monthly_anchor_count: { Args: { p_user_id: string }; Returns: number }
       get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }

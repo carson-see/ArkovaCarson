@@ -82,13 +82,22 @@ export function ApiUsageDashboard({
   }
 
   if (error) {
-    const isNetworkError = error.toLowerCase().includes('failed to fetch') || error.toLowerCase().includes('networkerror');
-    const isAuthError = error.toLowerCase().includes('authentication') || error.toLowerCase().includes('401') || error.toLowerCase().includes('unauthorized');
+    // BUG-UAT5-04: the usage card previously rendered the raw error string
+    // for any un-classified error — which leaked internal wording (e.g.
+    // "Ensure the worker service is running"). Match known categories,
+    // then fall back to a clean generic copy. The raw error still lands
+    // in the console for triage.
+    const lc = error.toLowerCase();
+    const isNetworkError = lc.includes('failed to fetch') || lc.includes('networkerror');
+    const isAuthError = lc.includes('authentication') || lc.includes('401') || lc.includes('unauthorized');
+    if (!isNetworkError && !isAuthError) {
+      console.error('[ApiUsageDashboard] unclassified usage error:', error);
+    }
     const friendlyMessage = isNetworkError
       ? API_KEY_LABELS.USAGE_UNAVAILABLE
       : isAuthError
         ? API_KEY_LABELS.USAGE_CREATE_KEY_HINT
-        : error;
+        : API_KEY_LABELS.USAGE_UNAVAILABLE;
     return (
       <Card className="shadow-card-rest">
         <CardContent className="py-8">

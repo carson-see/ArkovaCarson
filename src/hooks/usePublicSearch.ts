@@ -90,7 +90,10 @@ export function usePublicSearch(): UsePublicSearchReturn {
         credential_count: (row.credential_count as number) ?? 0,
       }));
       setIssuerResults(mapped);
-    } catch {
+    } catch (err) {
+      // BUG-UAT5-01: silent catch masked a TypeError from the generated
+      // RPC type bindings. Log so prod triage doesn't have to reproduce.
+      console.error('[usePublicSearch] issuer search threw:', err);
       setError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
       setSearching(false);

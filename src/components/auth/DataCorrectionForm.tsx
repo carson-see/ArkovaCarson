@@ -32,14 +32,20 @@ export function DataCorrectionForm() {
   const [requests, setRequests] = useState<CorrectionRequest[]>([]);
 
   const fetchRequests = useCallback(async () => {
-    const { data } = await supabase
+    // Gated on the REG-11/-19 migration rollout — skipping the fetch avoids
+    // 404 noise in environments where `data_subject_requests` hasn't been
+    // deployed yet. Accept explicit truthy values only so `'0'` / `'false'`
+    // / empty string all disable the feature.
+    const flag = import.meta.env.VITE_ENABLE_DSAR_UI;
+    if (flag !== '1' && flag !== 'true' && flag !== true) return;
+    const { data, error } = await supabase
       .from('data_subject_requests')
       .select('id, status, requested_at, completed_at, details')
       .eq('request_type', 'correction')
       .order('requested_at', { ascending: false })
       .limit(10);
-
-    if (data) setRequests(data as CorrectionRequest[]);
+    if (error || !data) return;
+    setRequests(data as CorrectionRequest[]);
   }, []);
 
   useEffect(() => {

@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
 const statusConfig = {
@@ -72,10 +73,9 @@ export function MyRecordsPage() {
   const { records, loading: recordsLoading, refreshAnchors } = useAnchors();
   const { revokeAnchor, error: revokeError, clearError: clearRevokeError } = useRevokeAnchor();
 
-  // NCA-FU2 (SCRUM-906) — the compliance scorecard deep-links into this page
-  // with `?action=upload&credential_type=...&jurisdiction=...`. Open the
-  // SecureDocument dialog on mount, capture the pre-fill values, then scrub
-  // the URL so a refresh doesn't re-open the dialog.
+  // NCA-FU2 (SCRUM-906) — deep-linked from the compliance scorecard with
+  // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
+  // so a page refresh doesn't re-open the dialog.
   const initialCredentialType = searchParams.get('credential_type') ?? undefined;
   const shouldAutoOpenUpload = searchParams.get('action') === 'upload';
   const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
@@ -330,16 +330,3 @@ export function MyRecordsPage() {
   );
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

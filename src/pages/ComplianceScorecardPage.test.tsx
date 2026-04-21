@@ -1,7 +1,7 @@
 /**
  * NCA-08 ComplianceScorecardPage — renders sections driven by audit history.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ComplianceScorecardPage } from './ComplianceScorecardPage';
@@ -12,8 +12,11 @@ vi.mock('@/components/layout', () => ({
 }));
 
 // ProfileProvider + OrganizationProvider are expensive in tests — stub.
+const mockProfile = vi.hoisted(() => ({
+  current: { org_id: 'org-1' as string | null, role: 'ORG_ADMIN' } as { org_id: string | null; role: string },
+}));
 vi.mock('@/hooks/useProfile', () => ({
-  useProfile: () => ({ profile: { org_id: 'org-1', role: 'ORG_ADMIN' }, loading: false, updateProfile: vi.fn() }),
+  useProfile: () => ({ profile: mockProfile.current, loading: false, updateProfile: vi.fn() }),
 }));
 vi.mock('@/hooks/useOrganization', () => ({
   useOrganization: () => ({ organization: { id: 'org-1', display_name: 'Acme Corp' }, loading: false }),
@@ -63,6 +66,10 @@ function renderWithRouter(ui: React.ReactElement) {
 }
 
 describe('NCA-08 ComplianceScorecardPage', () => {
+  beforeEach(() => {
+    mockProfile.current = { org_id: 'org-1', role: 'ORG_ADMIN' };
+  });
+
   it('renders empty state when no audits exist', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,
@@ -125,6 +132,20 @@ describe('NCA-08 ComplianceScorecardPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('scorecard-error')).toBeDefined();
     });
+  });
+
+  it('renders org-required empty state for individual users without firing /audit (UAT 2026-04-18 Bug 1)', async () => {
+    mockProfile.current = { org_id: null, role: 'INDIVIDUAL' };
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ audits: [], count: 0 }) } as unknown as Response));
+    renderWithRouter(<ComplianceScorecardPage fetchFn={fetchFn} />);
+    await waitFor(() => {
+      expect(screen.getByTestId('scorecard-org-required')).toBeDefined();
+    });
+    // Must not fire the org-scoped audit endpoint for individuals — that was the 403 source.
+    expect(fetchFn).not.toHaveBeenCalled();
+    // The legacy empty state + error banners must not appear concurrently.
+    expect(screen.queryByTestId('scorecard-empty')).toBeNull();
+    expect(screen.queryByTestId('scorecard-error')).toBeNull();
   });
 
   it('invokes onExportPdf with latest audit when Export PDF is clicked (NCA-09 hook)', async () => {

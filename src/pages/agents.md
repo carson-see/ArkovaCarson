@@ -1,10 +1,11 @@
 # agents.md — pages
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-21_
 
 ## What This Folder Contains
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-04-21 Top-10 UAT sprint: `ComplianceScorecardPage.tsx` + `ApiKeySettingsPage.tsx` — both pages are org-scoped at the worker API layer but were rendering raw HTTP-403 / engineering-copy errors for individual-tier users (no `org_id`). Now detect `!profile.org_id` and short-circuit to the new shared `<OrgRequiredCard>` component (`src/components/shared/OrgRequiredCard.tsx`). For the API Keys page, the `useApiKeys` + `useApiUsage` hooks also now honor an `{ enabled }` option so individuals never fire the 403-bound worker calls at all. Pattern: any org-scoped page should mirror this.
 - 2026-03-11 SonarQube sprint: `MyRecordsPage.tsx`, `OrganizationPage.tsx`, `SettingsPage.tsx` — S3358 (nested ternary → if/else), S6582 (optional chaining). No behavioral changes.
 - 2026-03-07 Code-review fixes: `DashboardPage.tsx` — surfaced `revokeError` from `useRevokeAnchor` with dismissible Alert; used `recordDetailPath()` instead of hardcoded path; corrected docstring.
 - 2026-03-07 P3-TS-01: `DashboardPage.tsx` — replaced `useState<Record[]>([])` mock with `useAnchors()` hook for real Supabase data. Wired `handleRevokeRecord` to `useRevokeAnchor`. Removed `Math.random()` fingerprints and `console.log` stubs.

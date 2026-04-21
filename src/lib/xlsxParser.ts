@@ -9,8 +9,8 @@
  *   - 1.6: Document processing is client-side only (runs in browser)
  */
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — subpath export, types resolve at runtime
+// read-excel-file v9 ships types for the `/browser` subpath — the
+// previous `@ts-ignore` suppression is no longer needed.
 import { readSheet } from 'read-excel-file/browser';
 import type { ParsedCsv, CsvColumn, CsvRow } from './csvParser';
 

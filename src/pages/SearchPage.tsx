@@ -111,6 +111,10 @@ export function SearchPage() {
         .limit(1);
 
       if (queryError) {
+        // BUG-UAT5-01 root cause was silent catch-blocks hiding RPC
+        // failures. Surface the real error to the console so prod triage
+        // can see why a search failed without needing to reproduce.
+        console.error('[search] fingerprint query failed:', queryError);
         setFpError('Search failed. Please try again.');
         return;
       }
@@ -128,7 +132,8 @@ export function SearchPage() {
       } else {
         setFpResult({ verified: false, fingerprint: fp.toLowerCase() });
       }
-    } catch {
+    } catch (err) {
+      console.error('[search] fingerprint search threw:', err);
       setFpError('Search failed. Please try again.');
     } finally {
       setFpSearching(false);
@@ -141,6 +146,9 @@ export function SearchPage() {
     setPersonResults([]);
 
     try {
+      // The `as any` cast predates the generated `Database` types covering
+      // this RPC signature. Kept narrow here (one call-site) rather than
+      // regenerating types in this PR — see `npm run gen:types` follow-up.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: rpcError } = await (supabase.rpc as any)(
         'search_public_credentials',
@@ -148,6 +156,7 @@ export function SearchPage() {
       );
 
       if (rpcError) {
+        console.error('[search] search_public_credentials RPC failed:', rpcError);
         setPersonError('Search failed. Please try again.');
         return;
       }
@@ -166,7 +175,9 @@ export function SearchPage() {
         };
       });
       setPersonResults(unwrapped);
-    } catch {
+    } catch (err) {
+      // BUG-UAT5-01 surfaced this silently-caught TypeError — log it.
+      console.error('[search] search_public_credentials threw:', err);
       setPersonError('Search failed. Please try again.');
     } finally {
       setPersonSearching(false);

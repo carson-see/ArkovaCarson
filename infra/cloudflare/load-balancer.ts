@@ -143,9 +143,9 @@ async function createHealthMonitor(): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function createOriginPool(monitorId: string): Promise<string> {
-  const workerHost = process.env.WORKER_TUNNEL_HOSTNAME ?? 'worker.arkova.io';
+  const workerHost = process.env.WORKER_TUNNEL_HOSTNAME ?? 'worker.arkova.ai';
   const notificationEmail =
-    process.env.NOTIFICATION_EMAIL ?? 'ops@arkova.io';
+    process.env.NOTIFICATION_EMAIL ?? 'ops@arkova.ai';
 
   const pool: OriginPool = {
     name: 'arkova-worker-pool',
@@ -185,7 +185,7 @@ async function createOriginPool(monitorId: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 async function createLoadBalancer(poolId: string): Promise<string> {
-  const lbHostname = process.env.LB_HOSTNAME ?? 'api.arkova.io';
+  const lbHostname = process.env.LB_HOSTNAME ?? 'api.arkova.ai';
 
   const lb: LoadBalancer = {
     name: lbHostname,
