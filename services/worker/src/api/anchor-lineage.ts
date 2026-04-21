@@ -127,7 +127,14 @@ export async function handleSupersedeAnchor(
       const status = mapRpcErrorToStatus(error.message ?? '');
       res.status(status).json({
         error: {
-          code: status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'conflict',
+          code:
+            status === 403
+              ? 'forbidden'
+              : status === 404
+                ? 'not_found'
+                : status === 409
+                  ? 'conflict'
+                  : 'internal',
           message: error.message ?? 'Supersede failed',
         },
       });

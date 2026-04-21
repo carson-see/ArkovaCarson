@@ -52,7 +52,6 @@ export async function handleListRules(
       .select(
         'id, org_id, name, description, enabled, trigger_type, action_type, created_at, updated_at',
       )
-      .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -172,8 +171,7 @@ export async function handleUpdateRule(
     const { error } = await (db as any)
       .from('organization_rules')
       .update(update)
-      .eq('id', idParsed.data)
-      .is('deleted_at', null);
+      .eq('id', idParsed.data);
     if (error) {
       logger.warn({ error }, 'organization_rules update failed');
       res.status(400).json({ error: { code: 'update_failed', message: error.message } });
@@ -196,14 +194,16 @@ export async function handleDeleteRule(
     return;
   }
   try {
+    // Hard delete: `organization_rules` has no soft-delete column yet.
+    // A future migration may add `deleted_at`; until then, DELETE removes
+    // the row + cascades to `organization_rule_executions` via FK.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any)
       .from('organization_rules')
-      .update({ deleted_at: new Date().toISOString(), enabled: false })
-      .eq('id', idParsed.data)
-      .is('deleted_at', null);
+      .delete()
+      .eq('id', idParsed.data);
     if (error) {
-      logger.warn({ error }, 'organization_rules soft-delete failed');
+      logger.warn({ error }, 'organization_rules delete failed');
       res.status(400).json({ error: { code: 'delete_failed', message: error.message } });
       return;
     }

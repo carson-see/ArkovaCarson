@@ -125,7 +125,14 @@ export async function handleResolveQueue(
       logger.warn({ error }, 'resolve_anchor_queue RPC returned error');
       res.status(status).json({
         error: {
-          code: status === 403 ? 'forbidden' : status === 404 ? 'not_found' : 'conflict',
+          code:
+            status === 403
+              ? 'forbidden'
+              : status === 404
+                ? 'not_found'
+                : status === 409
+                  ? 'conflict'
+                  : 'internal',
           message: error.message ?? 'Resolve failed',
         },
       });
