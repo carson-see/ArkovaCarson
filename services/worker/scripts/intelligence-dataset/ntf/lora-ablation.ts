@@ -14,6 +14,8 @@
  *      confidence correlation, then by smaller model (lower rank).
  */
 
+import { V8_TARGETS } from '../nph/v8-eval-gates.js';
+
 export interface RankMetrics {
   /** LoRA rank used in this ablation run. */
   rank: number;
@@ -48,7 +50,7 @@ export interface AblationResult {
   rejected: AblationFinding[];
 }
 
-export const MIN_PER_TYPE_F1_GATE = 0.70;
+export const MIN_PER_TYPE_F1_GATE = V8_TARGETS.minPerTypeF1;
 
 /**
  * Select the winner from a LoRA ablation sweep.
