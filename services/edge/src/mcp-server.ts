@@ -114,31 +114,6 @@ function withTelemetry(
     const argsJson = JSON.stringify(args ?? {});
     let outcome: McpAuditEntry['outcome'] = 'success';
 
-    // Schema validation at the tool boundary. The SDK validates against
-    // the inline shape; the registry adds strict-mode unknown-field
-    // rejection and a scrubbed error envelope on any validation miss.
-    if ((MCP_TOOL_SCHEMAS as Record<string, unknown>)[toolName]) {
-      const v = validateToolArgs(toolName as McpToolName, args);
-      if (!v.ok) {
-        outcome = 'tool_error';
-        const envelope = validationErrorToToolResult(v.error);
-        fireAndForgetAudit(
-          telemetry.env,
-          {
-            apiKeyId: telemetry.apiKeyId,
-            userId: telemetry.userId,
-            toolName,
-            argsJson,
-            outcome,
-            latencyMs: Date.now() - started,
-            clientIp: telemetry.clientIp,
-          },
-          telemetry.execCtx,
-        );
-        return envelope;
-      }
-    }
-
     const logOnce = (): void => {
       fireAndForgetAudit(
         telemetry.env,
@@ -174,6 +149,10 @@ function withTelemetry(
       }
     };
 
+    // Schema validation runs AFTER rate-limit enforcement so malformed
+    // payloads still decrement the bucket (a compromised key cannot
+    // bypass rate limits by submitting invalid args). The registry adds
+    // strict-mode unknown-field rejection + a scrubbed error envelope.
     const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
     if (!decision.ok) {
       outcome = 'rate_limited';
@@ -190,6 +169,15 @@ function withTelemetry(
         }],
         isError: true,
       };
+    }
+
+    if ((MCP_TOOL_SCHEMAS as Record<string, unknown>)[toolName]) {
+      const v = validateToolArgs(toolName as McpToolName, args);
+      if (!v.ok) {
+        outcome = 'tool_error';
+        logOnce();
+        return validationErrorToToolResult(v.error);
+      }
     }
 
     try {
@@ -706,9 +694,34 @@ export async function handleMcpRequest(
     });
   }
 
-  // Auth check
+  const earlyClientIp =
+    request.headers.get('CF-Connecting-IP') ??
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
+    null;
+
   const auth = await validateAuth(request, env);
   if (!auth) {
+    // Feed auth failures into the anomaly detector so `auth_failure_burst`
+    // can fire on credential-brute-force. Audit-log at the same entry.
+    const alerts = anomalyDetector.ingest({
+      toolName: '__auth__',
+      apiKeyId: null,
+      userId: null,
+      clientIp: earlyClientIp,
+      outcome: 'auth_failed',
+      argsBytes: 0,
+      timestamp: Date.now(),
+    });
+    const dsn = env.SENTRY_DSN;
+    if (dsn && alerts.length) {
+      for (const alert of alerts) {
+        ctx.waitUntil(
+          sendToSentry(dsn, alert).catch((err) =>
+            console.error('[mcp-anomaly] sentry send failed:', err),
+          ),
+        );
+      }
+    }
     return new Response(
       JSON.stringify({
         error: 'Unauthorized',
@@ -734,13 +747,7 @@ export async function handleMcpRequest(
     userId: auth.userId,
   };
 
-  // Per-request telemetry context for SEC-01 rate limiting + SEC-06 audit.
-  // CF-Connecting-IP is the canonical client IP header on Cloudflare; falls
-  // back to X-Forwarded-For if the edge is behind a different proxy.
-  const clientIp =
-    request.headers.get('CF-Connecting-IP') ??
-    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
-    null;
+  const clientIp = earlyClientIp;
 
   // MCP-SEC-08: origin allowlist gate sits between auth + tool dispatch
   // so a valid-but-untrusted-origin key still gets rejected / challenged.

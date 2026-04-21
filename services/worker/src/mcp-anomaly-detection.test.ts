@@ -197,4 +197,42 @@ describe('sendToSentry', () => {
       'X-Sentry-Auth': expect.stringContaining('sentry_key=abc'),
     });
   });
+
+  it('scrubs raw IPs + apiKeyIds out of tags.fingerprint before shipping', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await sendToSentry('https://abc@o123.ingest.sentry.io/4567', {
+      signal: 'auth_failure_burst',
+      fingerprint: 'auth_failure_burst:10.0.0.5:42',
+      severity: 'error',
+      summary: '5 auth failures',
+      detail: { actor: '10.0.0.5', count: 5 },
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body)) as {
+      tags: { fingerprint: string };
+      extra: { actor: string };
+    };
+    expect(body.tags.fingerprint).not.toContain('10.0.0.5');
+    expect(body.tags.fingerprint).toContain('[IP_REDACTED]');
+    expect(body.extra.actor).toBe('[IP_REDACTED]');
+  });
+
+  it('scrubs long apiKeyId-like segments in fingerprint tags', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await sendToSentry('https://abc@o123.ingest.sentry.io/4567', {
+      signal: 'rapid_tool_cycling',
+      fingerprint: 'rapid_tool_cycling:key_abcdef1234567890:42',
+      severity: 'warning',
+      summary: 'cycling',
+      detail: {},
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body)) as {
+      tags: { fingerprint: string };
+    };
+    expect(body.tags.fingerprint).not.toContain('abcdef1234567890');
+    expect(body.tags.fingerprint).toContain('…');
+  });
 });

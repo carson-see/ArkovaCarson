@@ -124,7 +124,10 @@ export async function enforceOriginAllowlist(
 ): Promise<AllowlistDecision> {
   const kv = env.MCP_ORIGIN_ALLOWLIST_KV;
   if (!kv) return { ok: true, reason: 'no_kv_binding' };
-  if (!apiKeyId) return { ok: true, reason: 'no_kv_binding' };
+  // OAuth-bearer callers have no apiKeyId → no per-key KV entry to look
+  // up. Fall through to the "no entry" branch so the gate still
+  // challenges them instead of silently allowing. Tests lock this in.
+  if (!apiKeyId) return computeAllowlistDecision(null, req);
 
   let entry: AllowlistEntry | null = null;
   try {

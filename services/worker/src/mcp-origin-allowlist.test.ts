@@ -152,11 +152,12 @@ describe('enforceOriginAllowlist', () => {
     expect(result).toEqual({ ok: true, reason: 'no_kv_binding' });
   });
 
-  it('passes through when api key is null', async () => {
+  it('challenges when api key is null (no per-key KV entry to look up)', async () => {
     const env = makeEnv({});
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await enforceOriginAllowlist(env as any, null, makeReq());
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('challenge');
   });
 
   it('loads the KV entry and applies the decision', async () => {

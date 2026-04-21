@@ -211,31 +211,42 @@ export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): Anoma
   };
 }
 
-/**
- * Scrub alert detail before shipping to Sentry. IPv4 addresses in
- * `actor` fields and `apiKeyId` values are replaced with stable hashes
- * so the event is still pivotable but no raw identifier is persisted.
- * Constitution 1.4 applies to all Sentry events regardless of runtime.
- */
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+/** Replace IPv4 with a constant sentinel + truncate apiKeyId to a
+ *  non-reversible prefix. Constitution 1.4 applies to all Sentry events
+ *  regardless of runtime. Same scrubber runs on `tags.fingerprint` so
+ *  the indexed label does not leak raw identifiers. */
+function scrubValue(key: string, value: unknown): unknown {
+  if (typeof value === 'string' && IPV4_RE.test(value)) return '[IP_REDACTED]';
+  if (key === 'apiKeyId' && typeof value === 'string') return `key:${value.slice(0, 4)}…`;
+  return value;
+}
+
 function scrubAlertDetail(detail: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(detail)) {
-    if (typeof v === 'string' && /^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
-      out[k] = '[IP_REDACTED]';
-    } else if (k === 'apiKeyId' && typeof v === 'string') {
-      out[k] = `key:${v.slice(0, 4)}…`;
-    } else {
-      out[k] = v;
-    }
-  }
+  for (const [k, v] of Object.entries(detail)) out[k] = scrubValue(k, v);
   return out;
 }
 
-/**
- * Minimal Sentry envelope POST — the edge worker does not ship
- * `@sentry/node` (worker-incompatible). Call via `ctx.waitUntil` so a
- * slow Sentry response never blocks the MCP response.
- */
+/** Redact a fingerprint that embeds a raw IP or apiKeyId. Fingerprints
+ *  look like `signal:actor:bucket`; if the actor segment is an IP we
+ *  replace it, if it looks like a long opaque id we truncate it. */
+function scrubFingerprint(fp: string): string {
+  const parts = fp.split(':');
+  if (parts.length < 2) return fp;
+  for (let i = 1; i < parts.length - 1; i++) {
+    if (IPV4_RE.test(parts[i])) parts[i] = '[IP_REDACTED]';
+    else if (parts[i].length > 8 && /^[a-zA-Z0-9_-]+$/.test(parts[i])) {
+      parts[i] = `${parts[i].slice(0, 4)}…`;
+    }
+  }
+  return parts.join(':');
+}
+
+/** Minimal Sentry envelope POST — the edge worker does not ship
+ *  `@sentry/node` (worker-incompatible). Call via `ctx.waitUntil` so a
+ *  slow Sentry response never blocks the MCP response. */
 export async function sendToSentry(dsn: string, alert: AnomalyAlert): Promise<void> {
   const match = dsn.match(SENTRY_DSN_RE);
   if (!match) throw new Error('invalid Sentry DSN');
@@ -245,7 +256,7 @@ export async function sendToSentry(dsn: string, alert: AnomalyAlert): Promise<vo
     message: alert.summary,
     level: alert.severity,
     logger: 'mcp-anomaly',
-    tags: { signal: alert.signal, fingerprint: alert.fingerprint },
+    tags: { signal: alert.signal, fingerprint: scrubFingerprint(alert.fingerprint) },
     extra: scrubAlertDetail(alert.detail),
   };
 
