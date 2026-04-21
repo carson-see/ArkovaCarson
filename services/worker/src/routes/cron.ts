@@ -43,6 +43,7 @@ import { fetchStateBills, fetchMultipleStateBills } from '../jobs/openStatesFetc
 import { fetchCalBarAttorneys } from '../jobs/calbarFetcher.js';
 import { fetchFinraBrokers } from '../jobs/finraBrokerCheckFetcher.js';
 import { fetchSecIapdFirms } from '../jobs/secIapdFetcher.js';
+import { fetchEdgarFormAdv } from '../jobs/edgarFormAdvFetcher.js';
 import { fetchNpiProviders } from '../jobs/npiFetcher.js';
 import { fetchSamEntities, fetchSamExclusions } from '../jobs/samGovFetcher.js';
 import { fetchFccLicenses } from '../jobs/fccUlsFetcher.js';
@@ -728,6 +729,18 @@ cronRouter.post('/fetch-sec-iapd', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'SEC IAPD fetch failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SEC EDGAR Form ADV (investment adviser — IAPD WAF workaround, SCRUM-727) ───
+cronRouter.post('/fetch-edgar-form-adv', async (req, res) => {
+  try {
+    const maxRecords = req.body?.maxRecords ? parseInt(String(req.body.maxRecords), 10) : undefined;
+    const result = await fetchEdgarFormAdv(db, { maxRecords });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'EDGAR Form ADV fetch failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

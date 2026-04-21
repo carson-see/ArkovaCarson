@@ -23,6 +23,13 @@ export interface Env {
   // add the `kv_namespaces` entry to wrangler.toml.
   MCP_RATE_LIMIT_KV?: KVNamespace;
 
+  // MCP origin allowlist (SCRUM-985 MCP-SEC-08) — OPTIONAL binding.
+  // Stores per-API-key `{mode, cidrs, origins}` entries keyed as
+  // `allow:<api_key_id>`. When missing, the allowlist gate is a
+  // pass-through so dev / preview deploys don't have to provision it.
+  // Provision with: `wrangler kv:namespace create MCP_ORIGIN_ALLOWLIST_KV`.
+  MCP_ORIGIN_ALLOWLIST_KV?: KVNamespace;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;
@@ -32,6 +39,10 @@ export interface Env {
   // Authentication (AUDIT-03)
   CRON_SECRET: string;
   ALLOWED_ORIGINS: string; // comma-separated list of allowed CORS origins
+
+  // Sentry DSN — OPTIONAL. When present, MCP anomaly alerts are shipped
+  // to Sentry via the anomaly-detection module (SCRUM-987).
+  SENTRY_DSN?: string;
 
   // MCP-SEC-02: HMAC signing key for oracle_batch_verify envelopes.
   // Callers verify the signature to detect tampering.

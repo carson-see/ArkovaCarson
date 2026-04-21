@@ -31,8 +31,31 @@ import {
 import type { Env } from './env';
 import { fireAndForgetAudit, type McpAuditEntry } from './mcp-audit-log';
 import { enforceRateLimit } from './mcp-rate-limit';
+import {
+  enforceOriginAllowlist,
+  allowlistDecisionToResponse,
+} from './mcp-origin-allowlist';
+import {
+  createAnomalyDetector,
+  sendToSentry,
+  type AnomalyDetector,
+} from './mcp-anomaly-detection';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 import { signEnvelope } from './mcp-hmac';
+
+// Module-scope detector so heuristics span requests inside one CF
+// isolate. Request-scoped detectors could not observe cross-session
+// patterns like auth-failure burst or cross-tenant access.
+const anomalyDetector: AnomalyDetector = createAnomalyDetector();
+import {
+  MCP_TOOL_SCHEMAS,
+  validateToolArgs,
+  validationErrorToToolResult,
+  publicIdSchema,
+  contentHashSchema,
+  freeTextQuerySchema,
+  type McpToolName,
+} from './mcp-tool-schemas';
 
 /** Server identity */
 const SERVER_NAME = 'arkova-verification';
@@ -41,14 +64,9 @@ const SERVER_VERSION = '1.0.0';
 /** Map tool name → description from the single source of truth */
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
-// ── Input validators ─────────────────────────────────────────────────────
-// Tightened after the 2026-04-20 MCP security audit — bare `z.string()` let
-// callers submit arbitrary shapes into tools that hand the value to
-// Supabase REST / RPC paths. SHA256_HEX_RE is re-used from mcp-tools.ts.
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const publicIdSchema = z.string().regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>').max(64);
-const contentHashSchema = z.string().regex(SHA256_HEX_RE, 'content_hash must be 64 hex chars').length(64);
-const freeTextQuerySchema = z.string().min(1).max(500);
+// Leaf validators live in mcp-tool-schemas.ts; the registry is the
+// canonical per-tool boundary validator. `withTelemetry` runs the
+// registry's strict validator before any handler fires.
 
 /** Scrub tool handler errors before they reach the MCP client — raw
  *  `String(error)` was leaking stack traces + internal URLs. */
@@ -94,7 +112,7 @@ function withTelemetry(
     const argsJson = JSON.stringify(args ?? {});
     let outcome: McpAuditEntry['outcome'] = 'success';
 
-    const logOnce = (): void =>
+    const logOnce = (): void => {
       fireAndForgetAudit(
         telemetry.env,
         {
@@ -108,7 +126,31 @@ function withTelemetry(
         },
         telemetry.execCtx,
       );
+      const alerts = anomalyDetector.ingest({
+        toolName,
+        apiKeyId: telemetry.apiKeyId,
+        userId: telemetry.userId,
+        clientIp: telemetry.clientIp,
+        outcome,
+        argsBytes: argsJson.length,
+        timestamp: Date.now(),
+      });
+      const dsn = telemetry.env.SENTRY_DSN;
+      if (dsn && alerts.length) {
+        for (const alert of alerts) {
+          telemetry.execCtx.waitUntil(
+            sendToSentry(dsn, alert).catch((err) =>
+              console.error('[mcp-anomaly] sentry send failed:', err),
+            ),
+          );
+        }
+      }
+    };
 
+    // Schema validation runs AFTER rate-limit enforcement so malformed
+    // payloads still decrement the bucket (a compromised key cannot
+    // bypass rate limits by submitting invalid args). The registry adds
+    // strict-mode unknown-field rejection + a scrubbed error envelope.
     const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
     if (!decision.ok) {
       outcome = 'rate_limited';
@@ -125,6 +167,15 @@ function withTelemetry(
         }],
         isError: true,
       };
+    }
+
+    if ((MCP_TOOL_SCHEMAS as Record<string, unknown>)[toolName]) {
+      const v = validateToolArgs(toolName as McpToolName, args);
+      if (!v.ok) {
+        outcome = 'tool_error';
+        logOnce();
+        return validationErrorToToolResult(v.error);
+      }
     }
 
     try {
@@ -667,9 +718,34 @@ export async function handleMcpRequest(
     });
   }
 
-  // Auth check
+  const earlyClientIp =
+    request.headers.get('CF-Connecting-IP') ??
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
+    null;
+
   const auth = await validateAuth(request, env);
   if (!auth) {
+    // Feed auth failures into the anomaly detector so `auth_failure_burst`
+    // can fire on credential-brute-force. Audit-log at the same entry.
+    const alerts = anomalyDetector.ingest({
+      toolName: '__auth__',
+      apiKeyId: null,
+      userId: null,
+      clientIp: earlyClientIp,
+      outcome: 'auth_failed',
+      argsBytes: 0,
+      timestamp: Date.now(),
+    });
+    const dsn = env.SENTRY_DSN;
+    if (dsn && alerts.length) {
+      for (const alert of alerts) {
+        ctx.waitUntil(
+          sendToSentry(dsn, alert).catch((err) =>
+            console.error('[mcp-anomaly] sentry send failed:', err),
+          ),
+        );
+      }
+    }
     return new Response(
       JSON.stringify({
         error: 'Unauthorized',
@@ -695,13 +771,21 @@ export async function handleMcpRequest(
     userId: auth.userId,
   };
 
-  // Per-request telemetry context for SEC-01 rate limiting + SEC-06 audit.
-  // CF-Connecting-IP is the canonical client IP header on Cloudflare; falls
-  // back to X-Forwarded-For if the edge is behind a different proxy.
-  const clientIp =
-    request.headers.get('CF-Connecting-IP') ??
-    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
-    null;
+  const clientIp = earlyClientIp;
+
+  // MCP-SEC-08: origin allowlist gate sits between auth + tool dispatch
+  // so a valid-but-untrusted-origin key still gets rejected / challenged.
+  // `cfBotVerdict` is injected by Cloudflare bot-management when enabled.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cfBotVerdict = ((request as any).cf?.botManagement?.verdict as string | undefined) ?? null;
+  const allowlistDecision = await enforceOriginAllowlist(env, auth.apiKeyId, {
+    clientIp,
+    origin: request.headers.get('Origin'),
+    cfBotVerdict,
+  });
+  if (!allowlistDecision.ok) {
+    return allowlistDecisionToResponse(allowlistDecision, corsOrigin);
+  }
 
   const telemetry: RequestTelemetryContext = {
     env,

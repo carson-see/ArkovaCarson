@@ -12,12 +12,14 @@
 import type { Env } from './env';
 import { sha256Hex } from './mcp-crypto-utils';
 
+export type McpOutcome = 'success' | 'rate_limited' | 'tool_error' | 'auth_failed';
+
 export interface McpAuditEntry {
   apiKeyId: string | null;  // null for OAuth bearer; apiKeyId for X-API-Key
   userId: string;
   toolName: string;
   argsJson: string;
-  outcome: 'success' | 'rate_limited' | 'tool_error';
+  outcome: McpOutcome;
   latencyMs: number;
   clientIp: string | null;
 }

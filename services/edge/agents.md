@@ -1,5 +1,5 @@
 # agents.md — services/edge
-_Last updated: 2026-04-20_
+_Last updated: 2026-04-21_
 
 ## What This Folder Contains
 
@@ -34,6 +34,22 @@ Open (epic [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918)):
 - MCP-SEC-04 idempotency keys on `anchor_document`
 - MCP-SEC-05 prompt-injection defensive framing in prompt templates
 - MCP-SEC-06 audit logging on every MCP tool invocation
+
+### Landed 2026-04-21 (TRUST sprint)
+
+- **MCP-SEC-07** (SCRUM-984) — centralized Zod tool-argument registry at
+  `src/mcp-tool-schemas.ts`. `validateToolArgs(name, raw)` returns a
+  discriminated union; `withTelemetry` runs it in strict mode before any
+  handler fires. Error envelope drops `received` + stack-trace fields.
+- **MCP-SEC-08** (SCRUM-985) — origin allowlist gate at
+  `src/mcp-origin-allowlist.ts`. Reads `MCP_ORIGIN_ALLOWLIST_KV` entry
+  keyed `allow:<api_key_id>`; supports `allowlist|challenge|deny` modes,
+  IPv4 CIDRs + origin matches + CF bot-management verdict gate. Pure
+  `computeAllowlistDecision` is fully unit-tested.
+- **MCP-SEC-09** (SCRUM-987) — rolling-window anomaly detector at
+  `src/mcp-anomaly-detection.ts`. Heuristics: rapid tool cycling, auth
+  failure burst, cross-tenant enumeration, oversized args, rate-limit
+  storm. Dedupe + severity levels + Sentry envelope shipper.
 
 ## Do / Don't Rules
 

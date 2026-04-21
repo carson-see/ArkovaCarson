@@ -20,7 +20,7 @@ import {
   registrationStatusFromLatestForm,
   type EdgarSubmissionEnvelope,
   type FormAdvAdviser,
-} from './edgarFormAdvParser';
+} from './edgarFormAdvParser.js';
 
 function envelope(over: Partial<EdgarSubmissionEnvelope> = {}): EdgarSubmissionEnvelope {
   return {
