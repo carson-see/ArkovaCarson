@@ -16,5 +16,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "src/mcp-tools.test.ts", "src/mcp-tool-schemas.test.ts", "src/mcp-origin-allowlist.test.ts", "src/mcp-anomaly-detection.test.ts"]
+  "exclude": ["node_modules", "dist", "src/mcp-tools.test.ts", "src/mcp-tool-schemas.test.ts", "src/mcp-origin-allowlist.test.ts", "src/mcp-anomaly-detection.test.ts", "src/mcp-kill-switch.test.ts"]
 }
