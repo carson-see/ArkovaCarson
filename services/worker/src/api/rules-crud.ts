@@ -26,6 +26,40 @@ import {
 
 const UuidSchema = z.string().uuid();
 
+/**
+ * SEC-02 — every rule lifecycle event lands in `audit_events`. Non-fatal:
+ * a failed audit emit should never reject the user's write. Before/after
+ * diffs are passed in `details` JSON so auditors can reconstruct history.
+ */
+async function emitRuleAudit(
+  eventType:
+    | 'ORG_RULE_CREATED'
+    | 'ORG_RULE_UPDATED'
+    | 'ORG_RULE_DELETED'
+    | 'ORG_RULE_ENABLED'
+    | 'ORG_RULE_DISABLED',
+  params: {
+    actorId: string;
+    orgId: string;
+    ruleId: string;
+    details?: Record<string, unknown>;
+  },
+): Promise<void> {
+  try {
+    await db.from('audit_events').insert({
+      event_type: eventType,
+      event_category: 'SYSTEM',
+      actor_id: params.actorId,
+      org_id: params.orgId,
+      target_type: 'organization_rule',
+      target_id: params.ruleId,
+      details: JSON.stringify(params.details ?? {}),
+    });
+  } catch (err) {
+    logger.warn({ error: err, eventType, ruleId: params.ruleId }, 'rule audit emit failed');
+  }
+}
+
 export const UpdateOrgRuleInput = z
   .object({
     name: z.string().trim().min(1).max(100).optional(),
@@ -158,7 +192,22 @@ export async function handleCreateRule(
       return;
     }
 
-    res.status(201).json({ id: (data as { id?: string } | null)?.id });
+    const newId = (data as { id?: string } | null)?.id;
+    res.status(201).json({ id: newId });
+    if (newId) {
+      // Fire-and-forget: audit must not gate response latency.
+      void emitRuleAudit('ORG_RULE_CREATED', {
+        actorId: userId,
+        orgId,
+        ruleId: newId,
+        details: {
+          name: parsed.data.name,
+          trigger_type: parsed.data.trigger_type,
+          action_type: parsed.data.action_type,
+          enabled: parsed.data.enabled,
+        },
+      });
+    }
   } catch (err) {
     logger.error({ error: err }, 'handleCreateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
@@ -223,6 +272,28 @@ export async function handleUpdateRule(
       return;
     }
     res.json({ ok: true });
+    // SEC-02: emit granular audit event, fire-and-forget. `enabled` flip is
+    // the most auditor-relevant signal — dedicated types for on/off.
+    if (bodyParsed.data.enabled === true) {
+      void emitRuleAudit('ORG_RULE_ENABLED', {
+        actorId: userId,
+        orgId,
+        ruleId: idParsed.data,
+      });
+    } else if (bodyParsed.data.enabled === false) {
+      void emitRuleAudit('ORG_RULE_DISABLED', {
+        actorId: userId,
+        orgId,
+        ruleId: idParsed.data,
+      });
+    } else {
+      void emitRuleAudit('ORG_RULE_UPDATED', {
+        actorId: userId,
+        orgId,
+        ruleId: idParsed.data,
+        details: { patch: bodyParsed.data },
+      });
+    }
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
@@ -261,6 +332,11 @@ export async function handleDeleteRule(
       return;
     }
     res.json({ ok: true });
+    void emitRuleAudit('ORG_RULE_DELETED', {
+      actorId: userId,
+      orgId,
+      ruleId: idParsed.data,
+    });
   } catch (err) {
     logger.error({ error: err }, 'handleDeleteRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
