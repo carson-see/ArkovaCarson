@@ -30,6 +30,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-prompt-safety';
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
+import type { Env } from '../../../services/edge/src/env';
 
 describe('mcp-prompt-safety — fenceUserInput (SCRUM-923)', () => {
   it('wraps plain input in a <user_input> fence', () => {
@@ -156,12 +157,11 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     vi.restoreAllMocks();
   });
 
-  function makeEnv() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function makeEnv(): Env {
     return {
       SUPABASE_URL: 'https://stub.supabase.co',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
-    } as any;
+    } as unknown as Env;
   }
 
   it('posts a MCP_TOOL_CALL event with hashed args + hashed ip', async () => {
