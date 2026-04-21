@@ -140,6 +140,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
 
   useEffect(() => {
     if (isIndividual) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time init: skip fetch for individuals
       setLoading(false);
       return;
     }

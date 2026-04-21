@@ -43,6 +43,35 @@ describe('ApiUsageDashboard', () => {
     expect(screen.getAllByText('Unlimited').length).toBeGreaterThan(0);
   });
 
+  it('renders 0% bar width when unlimited and 0 requests used (SCRUM-953)', () => {
+    const unlimited: ApiUsageData = {
+      ...mockUsage,
+      used: 0,
+      limit: 'unlimited',
+      remaining: 'unlimited',
+    };
+    const { container } = render(<ApiUsageDashboard usage={unlimited} />);
+    const bars = container.querySelectorAll('.h-2.rounded-full.overflow-hidden > div');
+    for (const bar of bars) {
+      expect(bar.className).not.toContain('w-1/4');
+      const style = (bar as HTMLElement).style.width;
+      if (style) {
+        expect(style).toBe('0%');
+      }
+    }
+  });
+
+  it('shows usage count without misleading bar for unlimited tier with usage', () => {
+    const unlimited: ApiUsageData = {
+      ...mockUsage,
+      used: 500,
+      limit: 'unlimited',
+      remaining: 'unlimited',
+    };
+    render(<ApiUsageDashboard usage={unlimited} />);
+    expect(screen.getByText(/500 requests used/)).toBeInTheDocument();
+  });
+
   it('renders loading state', () => {
     render(<ApiUsageDashboard usage={null} loading={true} />);
     const spinner = document.querySelector('.animate-spin');

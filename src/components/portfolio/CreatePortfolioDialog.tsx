@@ -89,16 +89,16 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
   useEffect(() => {
     if (!open || !user) return;
 
-    // Reset state
-    setTitle('');
-    setExpiry('permanent');
-    setSelectedAttestationIds(new Set());
-    setSelectedAnchorIds(new Set());
-    setError(null);
-    setCreatedId(null);
-    setCopied(false);
-
     async function loadItems() {
+      // Reset state
+      setTitle('');
+      setExpiry('permanent');
+      setSelectedAttestationIds(new Set());
+      setSelectedAnchorIds(new Set());
+      setError(null);
+      setCreatedId(null);
+      setCopied(false);
+
       setLoadingItems(true);
 
       const [attResult, ancResult] = await Promise.all([

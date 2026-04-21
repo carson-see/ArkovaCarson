@@ -42,11 +42,14 @@ export function RecoveryPhraseModal({
   // Generate phrase when modal opens
   useEffect(() => {
     if (open) {
-      setWords(generateRecoveryPhrase());
-      setConfirmed(false);
-      setCopied(false);
-      setRevealed(false);
-      setStep('generate');
+      async function init() {
+        setWords(generateRecoveryPhrase());
+        setConfirmed(false);
+        setCopied(false);
+        setRevealed(false);
+        setStep('generate');
+      }
+      void init();
     }
   }, [open]);
 

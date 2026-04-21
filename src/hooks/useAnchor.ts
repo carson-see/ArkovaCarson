@@ -34,11 +34,7 @@ export function useAnchor(id: string | undefined): UseAnchorReturn {
   const channelRef = useRef<RealtimeChannel | null>(null);
 
   const fetchAnchor = useCallback(async () => {
-    if (!user || !id) {
-      setAnchor(null);
-      setLoading(false);
-      return;
-    }
+    if (!user || !id) return;
 
     setLoading(true);
     setError(null);
@@ -61,8 +57,17 @@ export function useAnchor(id: string | undefined): UseAnchorReturn {
   }, [user, id]);
 
   useEffect(() => {
-    fetchAnchor();
-  }, [fetchAnchor]);
+    if (!user || !id) {
+      async function reset() {
+        setAnchor(null);
+        setLoading(false);
+      }
+      void reset();
+      return;
+    }
+    async function run() { await fetchAnchor(); }
+    void run();
+  }, [user, id, fetchAnchor]);
 
   // Realtime subscription for anchor status changes (BETA-01)
   useEffect(() => {

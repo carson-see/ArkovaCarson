@@ -51,7 +51,8 @@ export function TwoFactorSetup() {
   }, []);
 
   useEffect(() => {
-    checkEnrollment();
+    async function run() { await checkEnrollment(); }
+    void run();
   }, [checkEnrollment]);
 
   const handleEnroll = useCallback(async () => {

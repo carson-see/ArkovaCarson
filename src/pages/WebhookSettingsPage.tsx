@@ -8,7 +8,7 @@
  * @see P7-TS-09
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -37,21 +37,43 @@ export function WebhookSettingsPage() {
     navigate(ROUTES.LOGIN);
   };
 
-  const fetchEndpoints = useCallback(async () => {
-    if (!profile?.org_id) return;
+  const orgId = profile?.org_id;
+
+  async function fetchEndpoints() {
+    if (!orgId) return;
     setLoading(true);
     const { data } = await supabase
       .from('webhook_endpoints')
       .select('id, url, events, is_active, created_at')
-      .eq('org_id', profile.org_id)
+      .eq('org_id', orgId)
       .order('created_at', { ascending: false });
     setEndpoints((data as WebhookEndpoint[]) ?? []);
     setLoading(false);
-  }, [profile?.org_id]);
+  }
 
   useEffect(() => {
-    fetchEndpoints();
-  }, [fetchEndpoints]);
+    if (!orgId) return;
+
+    const currentOrgId = orgId;
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      const { data } = await supabase
+        .from('webhook_endpoints')
+        .select('id, url, events, is_active, created_at')
+        .eq('org_id', currentOrgId)
+        .order('created_at', { ascending: false });
+      if (!cancelled) {
+        setEndpoints((data as WebhookEndpoint[]) ?? []);
+        setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => { cancelled = true; };
+  }, [orgId]);
 
   const handleAdd = async (url: string, events: string[]): Promise<string> => {
     const { data, error } = await supabase.rpc('create_webhook_endpoint', {

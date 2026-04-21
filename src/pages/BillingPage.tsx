@@ -82,6 +82,7 @@ export function BillingPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchBillingInfo();
   }, [fetchBillingInfo]);
 

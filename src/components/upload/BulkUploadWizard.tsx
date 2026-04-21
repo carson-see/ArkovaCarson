@@ -5,7 +5,7 @@
  * Uses real CSV parsing and backend batch execution with progress tracking.
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import {
   FileSpreadsheet,
   ArrowRight,
@@ -91,10 +91,9 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     error: bulkError,
   } = useBulkAnchors();
 
-  // Sync hook error into component error state so it renders in the UI
-  useEffect(() => {
-    if (bulkError) setError(bulkError);
-  }, [bulkError]);
+  // Sync hook error into component error state — derived inline instead of effect
+  // to avoid cascading renders from synchronous setState in useEffect.
+  const displayError = bulkError || error;
 
   const currentStepIndex = STEPS.findIndex((s) => s.key === step);
 
@@ -282,10 +281,10 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
       <Separator />
 
       <CardContent className="pt-6">
-        {error && (
+        {displayError && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{displayError}</AlertDescription>
           </Alert>
         )}
 

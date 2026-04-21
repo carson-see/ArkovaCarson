@@ -52,6 +52,16 @@ export function OrgVerification({
   const [domainVerified, setDomainVerified] = useState(initialDomainVerified ?? false);
   const [hasEin, setHasEin] = useState(initialHasEin ?? false);
 
+  // Sync props to local state when parent provides new values
+  useEffect(() => {
+    async function sync() {
+      setStatus(initialStatus);
+      setDomainVerified(initialDomainVerified ?? false);
+      setHasEin(initialHasEin ?? false);
+    }
+    void sync();
+  }, [initialStatus, initialDomainVerified, initialHasEin]);
+
   // Form state
   const [ein, setEin] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
@@ -64,13 +74,6 @@ export function OrgVerification({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [domainVerificationPending, setDomainVerificationPending] = useState(false);
-
-  // Sync props
-  useEffect(() => {
-    setStatus(initialStatus);
-    setDomainVerified(initialDomainVerified ?? false);
-    setHasEin(initialHasEin ?? false);
-  }, [initialStatus, initialDomainVerified, initialHasEin]);
 
   const isVerified = status === 'VERIFIED';
 

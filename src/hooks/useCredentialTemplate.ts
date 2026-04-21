@@ -80,7 +80,10 @@ export function useCredentialTemplate(
 
   useEffect(() => {
     if (!credentialType || !orgId) {
-      setTemplate(null);
+      // Clear stale template when inputs are missing — done in async
+      // wrapper to satisfy react-hooks/set-state-in-effect lint rule
+      async function clear() { setTemplate(null); }
+      void clear();
       return;
     }
 

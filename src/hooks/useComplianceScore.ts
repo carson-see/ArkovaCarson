@@ -114,8 +114,10 @@ export function useComplianceScore(jurisdiction: string, industry: string) {
   }, [jurisdiction, industry]);
 
   useEffect(() => {
-    fetchScore();
-  }, [fetchScore]);
+    if (!jurisdiction || !industry) return;
+    async function run() { await fetchScore(); }
+    void run();
+  }, [jurisdiction, industry, fetchScore]);
 
   return { scoreData, gapData, loading, error, refetch: fetchScore };
 }

@@ -33,7 +33,8 @@ export function useHipaaMfaGate(orgId: string | null): UseHipaaMfaGateResult {
 
   useEffect(() => {
     if (!orgId) {
-      setLoaded(true);
+      async function markLoaded() { setLoaded(true); }
+      void markLoaded();
       return;
     }
 

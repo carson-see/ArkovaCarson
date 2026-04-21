@@ -1,5 +1,13 @@
 # Arkova Bug Log
-_Last updated: 2026-04-21 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 62 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2)_
+_Last updated: 2026-04-21 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 63 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2 + 1 from 2026-04-21 10-story sprint)_
+
+## 2026-04-21 — 10-Story Sprint (SCRUM-916..925 + SCRUM-953)
+
+Sprint covered 10 Jira stories: MCP security hardening (SCRUM-920/921/922), calibration view (SCRUM-917), react-hooks cleanup (SCRUM-916), unlimited plan bar fix (SCRUM-953), jurisdiction deep-link (SCRUM-925), NCA-FU2b scaffolding, and MCP envelope signing. 1 bug found and fixed in-sprint.
+
+| ID | Severity | Summary | Fix | Regression Test |
+|----|----------|---------|-----|-----------------|
+| BUG-2026-04-21-014 | LOW | `ApiUsageDashboard` unlimited plan rendered a full progress bar at 100% width for users with `limit === 'unlimited'`, implying quota was exhausted. Cosmetic only — no functional impact. Found during SCRUM-953 implementation. | `UsageBar` now returns a dedicated unlimited layout: hides the bar entirely when `used === 0`, renders 0% width bar when used > 0. | `src/components/api/ApiUsageDashboard.test.tsx` — updated test asserts unlimited tier renders label text without full-width bar. |
 
 ## 2026-04-21 — Top-10 UAT Bug Fix Sprint
 

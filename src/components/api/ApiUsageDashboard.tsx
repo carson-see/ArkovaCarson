@@ -34,9 +34,6 @@ function UsageBar({ used, limit }: { used: number; limit: number | 'unlimited' }
           <span>{formatNumber(used)} {API_KEY_LABELS.REQUESTS_USED}</span>
           <span className="text-muted-foreground">{API_KEY_LABELS.UNLIMITED_TIER}</span>
         </div>
-        <div className="h-2 rounded-full bg-muted overflow-hidden">
-          <div className="h-full rounded-full bg-primary/40 w-1/4" />
-        </div>
       </div>
     );
   }
@@ -88,16 +85,13 @@ export function ApiUsageDashboard({
     // then fall back to a clean generic copy. The raw error still lands
     // in the console for triage.
     const lc = error.toLowerCase();
-    const isNetworkError = lc.includes('failed to fetch') || lc.includes('networkerror');
     const isAuthError = lc.includes('authentication') || lc.includes('401') || lc.includes('unauthorized');
-    if (!isNetworkError && !isAuthError) {
+    if (!isAuthError) {
       console.error('[ApiUsageDashboard] unclassified usage error:', error);
     }
-    const friendlyMessage = isNetworkError
-      ? API_KEY_LABELS.USAGE_UNAVAILABLE
-      : isAuthError
-        ? API_KEY_LABELS.USAGE_CREATE_KEY_HINT
-        : API_KEY_LABELS.USAGE_UNAVAILABLE;
+    const friendlyMessage = isAuthError
+      ? API_KEY_LABELS.USAGE_CREATE_KEY_HINT
+      : API_KEY_LABELS.USAGE_UNAVAILABLE;
     return (
       <Card className="shadow-card-rest">
         <CardContent className="py-8">

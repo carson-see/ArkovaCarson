@@ -10,6 +10,7 @@
  */
 
 import type { Env } from './env';
+import { sha256Hex } from './mcp-crypto-utils';
 
 export interface McpAuditEntry {
   apiKeyId: string | null;  // null for OAuth bearer; apiKeyId for X-API-Key
@@ -19,14 +20,6 @@ export interface McpAuditEntry {
   outcome: 'success' | 'rate_limited' | 'tool_error';
   latencyMs: number;
   clientIp: string | null;
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const bytes = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
 }
 
 /** Shorten an unknown error to a safe log line. `String(err)` can include a

@@ -127,6 +127,7 @@ export function AdminUserDetailPage() {
   }, [isAdmin, id]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchUserDetail();
   }, [fetchUserDetail]);
 

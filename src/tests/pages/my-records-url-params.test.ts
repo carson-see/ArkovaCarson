@@ -61,4 +61,11 @@ describe('MyRecordsPage deep-link URL-param parsing', () => {
   it('scrubbing an empty query returns an empty string', () => {
     expect(scrubDeepLinkParams('')).toBe('');
   });
+
+  it('jurisdiction is passed to SecureDocumentDialog (SCRUM-925)', () => {
+    const r = readDeepLinkIntent('?action=upload&credential_type=license&jurisdiction=FCRA');
+    expect(r.shouldAutoOpenUpload).toBe(true);
+    expect(r.credentialType).toBe('license');
+    expect(r.jurisdiction).toBe('FCRA');
+  });
 });

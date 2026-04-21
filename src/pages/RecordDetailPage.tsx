@@ -34,6 +34,7 @@ export function RecordDetailPage() {
   useEffect(() => {
     if (!anchor) return;
     const hasLineage = anchor.version_number > 1 || anchor.parent_anchor_id;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- clear lineage when anchor has no version history
     if (!hasLineage) { setLineage([]); return; }
 
     // Walk up to find root, then fetch all descendants
