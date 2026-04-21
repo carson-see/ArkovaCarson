@@ -17,6 +17,7 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import {
   TOOL_DEFINITIONS,
+  SHA256_HEX_RE,
   handleVerifyCredential,
   handleSearchCredentials,
   handleNessieQuery,
@@ -41,9 +42,8 @@ const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.desc
 // ── Input validators ─────────────────────────────────────────────────────
 // Tightened after the 2026-04-20 MCP security audit — bare `z.string()` let
 // callers submit arbitrary shapes into tools that hand the value to
-// Supabase REST / RPC paths. Explicit format checks fail closed.
+// Supabase REST / RPC paths. SHA256_HEX_RE is re-used from mcp-tools.ts.
 const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 const publicIdSchema = z.string().regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>').max(64);
 const contentHashSchema = z.string().regex(SHA256_HEX_RE, 'content_hash must be 64 hex chars').length(64);
 const freeTextQuerySchema = z.string().min(1).max(500);
