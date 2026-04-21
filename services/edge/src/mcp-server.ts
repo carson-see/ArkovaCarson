@@ -94,47 +94,9 @@ function withTelemetry(
   return async (args: AnyArgs): Promise<ToolResult> => {
     const started = Date.now();
     const argsJson = JSON.stringify(args ?? {});
-
-    const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
-    if (!decision.ok) {
-      fireAndForgetAudit(
-        telemetry.env,
-        {
-          apiKeyId: telemetry.apiKeyId,
-          userId: telemetry.userId,
-          toolName,
-          argsJson,
-          outcome: 'rate_limited',
-          latencyMs: Date.now() - started,
-          clientIp: telemetry.clientIp,
-        } satisfies McpAuditEntry,
-        telemetry.execCtx,
-      );
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify({
-              error: 'rate_limit_exceeded',
-              tool: decision.toolName,
-              limit_per_minute: decision.limit,
-              retry_after_seconds: decision.retryAfterSeconds,
-            }),
-          },
-        ],
-        isError: true,
-      };
-    }
-
     let outcome: McpAuditEntry['outcome'] = 'success';
-    try {
-      const result = await handler(args);
-      if (result.isError) outcome = 'tool_error';
-      return result;
-    } catch (err) {
-      outcome = 'tool_error';
-      throw err;
-    } finally {
+
+    const logOnce = (): void =>
       fireAndForgetAudit(
         telemetry.env,
         {
@@ -145,9 +107,37 @@ function withTelemetry(
           outcome,
           latencyMs: Date.now() - started,
           clientIp: telemetry.clientIp,
-        } satisfies McpAuditEntry,
+        },
         telemetry.execCtx,
       );
+
+    const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
+    if (!decision.ok) {
+      outcome = 'rate_limited';
+      logOnce();
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: 'rate_limit_exceeded',
+            tool: decision.toolName,
+            limit_per_minute: decision.limit,
+            retry_after_seconds: decision.retryAfterSeconds,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
+    try {
+      const result = await handler(args);
+      if (result.isError) outcome = 'tool_error';
+      return result;
+    } catch (err) {
+      outcome = 'tool_error';
+      throw err;
+    } finally {
+      logOnce();
     }
   };
 }

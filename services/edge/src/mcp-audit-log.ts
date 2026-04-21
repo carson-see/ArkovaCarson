@@ -2,22 +2,11 @@
  * MCP Tool-Call Audit Logging (SCRUM-924 MCP-SEC-06)
  *
  * Fire-and-forget insert into `audit_events` for every MCP tool invocation.
- * The audit trail is what makes every other security control investigable —
- * without it a compromised API key is a black hole.
+ * No raw PII: args + IP are SHA-256 hashed before writing.
  *
- * Schema reuses the existing audit_events table (id, event_type,
- * event_category, actor_id, target_type, target_id, org_id, details,
- * created_at). The `event_type` is always `'MCP_TOOL_CALL'` and
- * `event_category` is `'security'` so audit queries can filter by category.
- *
- * Design rules:
- * 1. Fire-and-forget: never await this in the tool's request path. Latency
- *    must not depend on audit-log availability.
- * 2. No PII in `details`: args are SHA-256 hashed. IP is hashed to stable
- *    token. No raw emails, fingerprints, or public IDs go to the log.
- * 3. Network failures swallowed: Cloudflare Worker console.error carries
- *    the detail for post-incident forensics, but a log failure never
- *    surfaces to the MCP client.
+ * The log is what makes every other security control investigable — without
+ * it a compromised API key is a black hole. Insert failures are swallowed
+ * so a log outage can't impact tool responses.
  */
 
 import type { Env } from './env';
@@ -26,13 +15,12 @@ export interface McpAuditEntry {
   apiKeyId: string | null;  // null for OAuth bearer; apiKeyId for X-API-Key
   userId: string;
   toolName: string;
-  argsJson: string;         // raw JSON of the tool args; this function hashes it
-  outcome: 'success' | 'rate_limited' | 'validation_error' | 'tool_error' | 'unauthorized';
+  argsJson: string;
+  outcome: 'success' | 'rate_limited' | 'tool_error';
   latencyMs: number;
-  clientIp: string | null;  // null if the Worker can't determine it
+  clientIp: string | null;
 }
 
-/** SHA-256 hex of an arbitrary string, using Web Crypto (CF Workers native). */
 async function sha256Hex(input: string): Promise<string> {
   const bytes = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -41,16 +29,22 @@ async function sha256Hex(input: string): Promise<string> {
     .join('');
 }
 
+/** Shorten an unknown error to a safe log line. `String(err)` can include a
+ *  PostgREST response body which in turn can echo the request we just sent —
+ *  that risks leaking authorization headers or user data through CF Logpush. */
+function safeErrLine(err: unknown): string {
+  if (err instanceof Error) return `${err.name}: ${err.message}`.slice(0, 200);
+  return String(err).slice(0, 200);
+}
+
 /**
- * Log an MCP tool invocation. Fire-and-forget: pass the returned promise to
- * `ctx.waitUntil()` or ignore it; never block the tool response on this.
+ * Log an MCP tool invocation. Callers should hand the returned promise to
+ * `ctx.waitUntil()` (via `fireAndForgetAudit` below) so the response latency
+ * doesn't depend on the audit-log round-trip.
  */
 export async function logMcpToolCall(env: Env, entry: McpAuditEntry): Promise<void> {
   try {
-    // Hash args so the log never contains raw PII (public_ids, fingerprints, etc).
     const argsHash = await sha256Hex(entry.argsJson);
-    // Hash IP for privacy-preserving per-actor correlation (CF Workers doesn't
-    // forward a raw IP by default; when present we hash it rather than store).
     const ipHash = entry.clientIp ? await sha256Hex(entry.clientIp) : null;
 
     const body = {
@@ -59,8 +53,8 @@ export async function logMcpToolCall(env: Env, entry: McpAuditEntry): Promise<vo
       actor_id: entry.userId,
       target_type: 'mcp_tool',
       target_id: entry.toolName,
-      // org_id is omitted — requires a join to org_members to resolve from
-      // userId; the audit query side can do that lookup on read.
+      // org_id left null — resolving from userId requires an org_members
+      // join, which the audit query side can do on read.
       details: JSON.stringify({
         api_key_id: entry.apiKeyId,
         args_hash: argsHash,
@@ -82,15 +76,12 @@ export async function logMcpToolCall(env: Env, entry: McpAuditEntry): Promise<vo
     });
 
     if (!response.ok) {
-      const status = response.status;
-      // Drain the body so the socket can be reused, but don't surface the
-      // content to callers.
+      // Drain the body so the socket can be reused; content never surfaces.
       await response.text().catch(() => '');
-      console.error(`[mcp-audit-log] insert failed (HTTP ${status}) for tool=${entry.toolName}`);
+      console.error(`[mcp-audit-log] insert failed (HTTP ${response.status}) for tool=${entry.toolName}`);
     }
   } catch (err) {
-    // Fire-and-forget never throws out. Error detail goes to CF logs only.
-    console.error('[mcp-audit-log] unexpected error:', err);
+    console.error(`[mcp-audit-log] unexpected: ${safeErrLine(err)}`);
   }
 }
 
