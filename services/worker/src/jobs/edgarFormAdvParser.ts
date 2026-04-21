@@ -116,7 +116,8 @@ export function mostRecentAdvFiling(
  * Map the latest ADV form type to a registration status bucket.
  *
  * `ADV-W` = notice of withdrawal → Terminated.
- * Everything else (ADV / ADV-E / ADV-NR / ADV/A) → Approved.
+ * `ADV-E` / `ADV-NR` = exam / non-registered filing → Pending.
+ * `ADV` / `ADV/A` = registered filing (or amendment) → Approved.
  *
  * The real IAPD API would give us a stronger signal (`Approved`,
  * `Pending`, `Under Review`, etc.); EDGAR submissions only reveal the
