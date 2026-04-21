@@ -88,19 +88,11 @@ describe('DataCorrectionForm — REG-19 / APP 13', () => {
     expect(screen.getByText(DATA_CORRECTION_LABELS.SUBMIT)).toBeDefined();
   });
 
-  it('does not fetch data_subject_requests when the flag is off', async () => {
-    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = '';
-    const { supabase } = await import('@/lib/supabase');
-    const fromSpy = supabase.from as unknown as ReturnType<typeof vi.fn>;
-    fromSpy.mockClear();
-    render(<DataCorrectionForm />);
-    await Promise.resolve();
-    const readCalls = fromSpy.mock.calls.filter((c) => c[0] === 'data_subject_requests');
-    expect(readCalls.length).toBe(0);
-  });
-
-  it('does not fetch when the flag is set to an explicit false value', async () => {
-    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = 'false';
+  it.each([
+    ['empty string (flag unset)', ''],
+    ['explicit "false"', 'false'],
+  ])('does not fetch data_subject_requests when the flag is %s', async (_label, flagValue) => {
+    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = flagValue;
     const { supabase } = await import('@/lib/supabase');
     const fromSpy = supabase.from as unknown as ReturnType<typeof vi.fn>;
     fromSpy.mockClear();

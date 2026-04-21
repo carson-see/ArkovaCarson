@@ -51,6 +51,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record } from '@/components/records';
 
 const statusConfig = {
@@ -329,16 +330,3 @@ export function MyRecordsPage() {
   );
 }
 
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
