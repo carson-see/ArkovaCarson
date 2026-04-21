@@ -5,7 +5,7 @@
  * create button, and usage dashboard.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -16,9 +16,13 @@ vi.mock('@/hooks/useAuth', () => ({
   }),
 }));
 
+const mockProfile = vi.hoisted(() => ({
+  current: { full_name: 'Test User', role: 'ORG_ADMIN' as string, org_id: 'org-1' as string | null },
+}));
+
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({
-    profile: { full_name: 'Test User', role: 'ORG_ADMIN', org_id: 'org-1' },
+    profile: mockProfile.current,
     loading: false,
   }),
 }));
@@ -71,6 +75,10 @@ function renderPage() {
 }
 
 describe('ApiKeySettingsPage', () => {
+  beforeEach(() => {
+    mockProfile.current = { full_name: 'Test User', role: 'ORG_ADMIN', org_id: 'org-1' };
+  });
+
   it('renders the page heading', () => {
     renderPage();
     expect(screen.getByText('API Keys')).toBeInTheDocument();
@@ -113,5 +121,18 @@ describe('ApiKeySettingsPage', () => {
   it('renders within AppShell layout', () => {
     renderPage();
     expect(screen.getByRole('main')).toBeInTheDocument();
+  });
+
+  it('renders org-required CTA for individual users and hides the key + usage UI (UAT 2026-04-18 Bug 3)', () => {
+    mockProfile.current = { full_name: 'Test User', role: 'INDIVIDUAL', org_id: null };
+    renderPage();
+    expect(screen.getByTestId('api-keys-org-required')).toBeInTheDocument();
+    // Engineering copy must not appear.
+    expect(screen.queryByText(/worker service/i)).toBeNull();
+    // Create + key-list UI must not appear for individuals.
+    expect(screen.queryByText('Create API Key')).toBeNull();
+    expect(screen.queryByText('Usage by Key')).toBeNull();
+    // Friendly org-required copy must appear instead.
+    expect(screen.getByText('API keys require an organisation')).toBeInTheDocument();
   });
 });

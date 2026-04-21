@@ -45,6 +45,7 @@ vi.mock('sonner', () => ({
 describe('DataCorrectionForm — REG-19 / APP 13', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = '1';
   });
 
   it('renders the correction form with proper labels', () => {
@@ -85,5 +86,27 @@ describe('DataCorrectionForm — REG-19 / APP 13', () => {
     // The description mentions 30 days — rendered by the parent card, but
     // we verify the component itself renders without error
     expect(screen.getByText(DATA_CORRECTION_LABELS.SUBMIT)).toBeDefined();
+  });
+
+  it('does not fetch data_subject_requests when the flag is off', async () => {
+    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = '';
+    const { supabase } = await import('@/lib/supabase');
+    const fromSpy = supabase.from as unknown as ReturnType<typeof vi.fn>;
+    fromSpy.mockClear();
+    render(<DataCorrectionForm />);
+    await Promise.resolve();
+    const readCalls = fromSpy.mock.calls.filter((c) => c[0] === 'data_subject_requests');
+    expect(readCalls.length).toBe(0);
+  });
+
+  it('does not fetch when the flag is set to an explicit false value', async () => {
+    (import.meta.env as Record<string, unknown>).VITE_ENABLE_DSAR_UI = 'false';
+    const { supabase } = await import('@/lib/supabase');
+    const fromSpy = supabase.from as unknown as ReturnType<typeof vi.fn>;
+    fromSpy.mockClear();
+    render(<DataCorrectionForm />);
+    await Promise.resolve();
+    const readCalls = fromSpy.mock.calls.filter((c) => c[0] === 'data_subject_requests');
+    expect(readCalls.length).toBe(0);
   });
 });

@@ -31,6 +31,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ComplianceScoreGauge } from '@/components/compliance/ComplianceScoreGauge';
 import { AuditMyOrganizationButton } from '@/components/compliance/AuditMyOrganizationButton';
+import { OrgRequiredCard } from '@/components/shared/OrgRequiredCard';
 import { AUDIT_MY_ORG_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { downloadAuditPdf } from '@/lib/compliancePdf';
@@ -132,7 +133,16 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
     downloadAuditPdf(audit, { orgName });
   });
 
+  // `/api/v1/compliance/audit` is org-scoped; individuals get 403.
+  // Short-circuit the fetch and render the org-required empty state
+  // instead of a raw HTTP error banner.
+  const isIndividual = !profileLoading && profile !== null && !profile.org_id;
+
   useEffect(() => {
+    if (isIndividual) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     async function load() {
       if (!fetchFn) {
@@ -161,7 +171,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
     return () => {
       cancelled = true;
     };
-  }, [fetchFn]);
+  }, [fetchFn, isIndividual]);
 
   const latest = history && history.length > 0 ? history[0] : null;
   const recommendations = latest?.metadata?.recommendations ?? null;
@@ -208,14 +218,23 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
 
         {loading && <div role="status" aria-live="polite" className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.SCORECARD_LOADING}</div>}
 
-        {error && (
+        {!loading && isIndividual && (
+          <OrgRequiredCard
+            data-testid="scorecard-org-required"
+            title={AUDIT_MY_ORG_LABELS.SCORECARD_ORG_REQUIRED_TITLE}
+            description={AUDIT_MY_ORG_LABELS.SCORECARD_ORG_REQUIRED_BODY}
+            ctaLabel={AUDIT_MY_ORG_LABELS.SCORECARD_ORG_REQUIRED_CTA}
+          />
+        )}
+
+        {error && !isIndividual && (
           <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm" data-testid="scorecard-error">
             <AlertTriangle className="mr-2 inline h-4 w-4 text-destructive" aria-hidden="true" />
             {error}
           </div>
         )}
 
-        {!loading && !error && !latest && (
+        {!loading && !error && !latest && !isIndividual && (
           <Card data-testid="scorecard-empty">
             <CardContent className="space-y-4 py-6">
               <p className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.SCORECARD_EMPTY}</p>

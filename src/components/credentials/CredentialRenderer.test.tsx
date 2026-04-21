@@ -169,6 +169,20 @@ describe('CredentialRenderer', () => {
       expect(screen.getByText('{"foo":"bar","count":42}')).toBeInTheDocument();
       expect(screen.queryByText('[object Object]')).not.toBeInTheDocument();
     });
+
+    it('formats ISO-8601 datetime metadata values as human dates (BUG-UAT5-09)', () => {
+      render(
+        <CredentialRenderer
+          metadata={{ issued_at: '2026-04-01T00:00:00Z' }}
+          status="REVOKED"
+        />
+      );
+      // Must not leak the raw ISO string to the public verify page.
+      expect(screen.queryByText('2026-04-01T00:00:00Z')).not.toBeInTheDocument();
+      // Must render a human-formatted date. "April 1, 2026" is the en-US
+      // long-form rendering used by the existing formatDate helper.
+      expect(screen.getByText('April 1, 2026')).toBeInTheDocument();
+    });
   });
 
   describe('Mode 3: No Metadata', () => {

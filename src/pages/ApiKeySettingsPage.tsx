@@ -8,7 +8,7 @@
  */
 
 import { Link, useNavigate } from 'react-router-dom';
-import { ExternalLink, BookOpen } from 'lucide-react';
+import { ExternalLink, BookOpen, Key } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useApiKeys, useApiUsage } from '@/hooks/useApiKeys';
@@ -17,16 +17,23 @@ import { ApiKeySettings } from '@/components/api/ApiKeySettings';
 import { ApiUsageDashboard } from '@/components/api/ApiUsageDashboard';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { OrgRequiredCard } from '@/components/shared/OrgRequiredCard';
 import { ROUTES } from '@/lib/routes';
-import { DEVELOPER_PAGE_LABELS as L } from '@/lib/copy';
+import { DEVELOPER_PAGE_LABELS as L, API_KEY_LABELS } from '@/lib/copy';
 import { PUBLIC_API_URL } from '@/lib/workerClient';
 
 export function ApiKeySettingsPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
-  const { keys, loading: keysLoading, error: keysError, createKey, revokeKey, deleteKey } = useApiKeys();
-  const { usage, loading: usageLoading, error: usageError } = useApiUsage();
+  // API keys are org-scoped (the worker rejects individual callers with
+  // "User must belong to an organization"). Gate the hooks on org
+  // membership so we don't burn worker round-trips + Sentry breadcrumbs
+  // for every individual-tier visit.
+  const isIndividual = !profileLoading && profile !== null && !profile.org_id;
+  const orgScoped = !profileLoading && !!profile?.org_id;
+  const { keys, loading: keysLoading, error: keysError, createKey, revokeKey, deleteKey } = useApiKeys({ enabled: orgScoped });
+  const { usage, loading: usageLoading, error: usageError } = useApiUsage({ enabled: orgScoped });
 
   const handleSignOut = async () => {
     await signOut();
@@ -66,19 +73,31 @@ export function ApiKeySettingsPage() {
           </CardContent>
         </Card>
 
-        <ApiKeySettings
-          keys={keys}
-          onCreate={createKey}
-          onRevoke={revokeKey}
-          onDelete={deleteKey}
-          loading={keysLoading}
-          fetchError={keysError}
-        />
-        <ApiUsageDashboard
-          usage={usage}
-          loading={usageLoading}
-          error={usageError}
-        />
+        {isIndividual ? (
+          <OrgRequiredCard
+            data-testid="api-keys-org-required"
+            icon={<Key className="h-5 w-5 text-primary" />}
+            title={API_KEY_LABELS.ORG_REQUIRED_TITLE}
+            description={API_KEY_LABELS.ORG_REQUIRED_BODY}
+            ctaLabel={API_KEY_LABELS.ORG_REQUIRED_CTA}
+          />
+        ) : (
+          <>
+            <ApiKeySettings
+              keys={keys}
+              onCreate={createKey}
+              onRevoke={revokeKey}
+              onDelete={deleteKey}
+              loading={keysLoading}
+              fetchError={keysError}
+            />
+            <ApiUsageDashboard
+              usage={usage}
+              loading={usageLoading}
+              error={usageError}
+            />
+          </>
+        )}
       </div>
     </AppShell>
   );
