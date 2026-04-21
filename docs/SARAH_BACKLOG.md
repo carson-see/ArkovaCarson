@@ -1,92 +1,54 @@
 # Sarah's Backlog
 
-**Last updated:** 2026-04-20
-**Scope rule:** Existing Jira stories and bugs only — no new epics, no Nessie (NPH/NTF/NDD/NSS/NVI/NMT), no Gemini Golden (GME/GME2-8).
+**Last verified:** 2026-04-20 (against live Jira, not CLAUDE.md Section 5 which is stale — nearly every item listed in §5 as "not started" is actually already Done)
+**Jira release:** [Sarah Sprint 1](https://arkova.atlassian.net/projects/SCRUM/versions/10200) (fixVersion = "Sarah Sprint 1")
+**Scope rule:** Existing Jira stories and bugs only — no new epics, no Nessie (NPH/NTF/NDD/NSS/NVI/NMT/KAU), no Gemini Golden (GME/GME2–GME11).
 
 ## Before you start any task
 
 1. Read `CLAUDE.md` (top-of-file note for you, plus the full Constitution — Section 1).
-2. Read `docs/BACKLOG.md` to confirm the ticket is still open and nothing has changed.
+2. Read `docs/BACKLOG.md` + live Jira to confirm the ticket is still open and nothing has changed. **Do not trust CLAUDE.md Section 5 in isolation — verify each story against live Jira before assuming it's open.**
 3. Read `HANDOFF.md` for current state + blockers.
 4. Read the Jira ticket itself and scan its comments for context.
 5. Read `agents.md` in every folder you plan to touch.
 6. **Commit to a branch; open a PR; stop.** Do not merge. Do not push to `main`.
 
-## Priority 1 — Ship-ready engineering (do these first)
+## Reality check — what's actually open for Sarah
 
-| # | Jira | Title | Effort | Why it's Sarah-ready |
-|---|------|-------|--------|----------------------|
-| 1 | [SCRUM-481 / GEO-10](https://arkova.atlassian.net/browse/SCRUM-481) | IndexNow submission for Bing | S | Pure engineering; call IndexNow API on publish. No external deps. |
-| 2 | [SCRUM-680 / INFRA-07](https://arkova.atlassian.net/browse/SCRUM-680) | Sentry — provision DSN + auth token in Vercel / Cloud Run | S | Code is already complete; needs env-var provisioning + deploy. |
-| 3 | [SCRUM-474 / GEO-15](https://arkova.atlassian.net/browse/SCRUM-474) | Image alt text — product screenshots | S | Add `alt=""` to remaining hero/marketing screenshots. Ranked last in GEO sprint. |
-| 4 | [SCRUM-482 / PH1-PAY-02](https://arkova.atlassian.net/browse/SCRUM-482) | Self-hosted x402 facilitator | M | Flag already enabled; needs USDC receiving address configured + facilitator deployed. |
+Most of the open Arkova backlog right now is Nessie / Gemini Golden training work, which is out of your scope. What's left that's engineering-feasible + not blocked on external procurement is a *short* list.
 
-## Priority 2 — International regulatory (docs + engineering mix, no AI)
+### Priority 1 — Primary ticket (start here)
 
-These stories need engineering deliverables (schema, API endpoints, privacy notices) but NO AI model work. Each one already has a parent Jira epic and the research done.
+| Jira | Title | Why it's Sarah-ready | Notes |
+|------|-------|----------------------|-------|
+| [SCRUM-727](https://arkova.atlassian.net/browse/SCRUM-727) | [NPH-15] SEC IAPD alternative data source | The pure parser already shipped in [PR #459](https://github.com/carson-see/ArkovaCarson/pull/459). Remaining: thin EDGAR fetcher (~120 LOC) + cron wiring + record anchoring. Fully scoped, tested parser is waiting. | Requires EDGAR User-Agent env var + 10 req/sec rate limit. See `services/worker/src/jobs/edgarFormAdvParser.ts` + `edgarFetcher.ts` for the pattern. |
 
-| # | Jira | Title | Effort | Notes |
-|---|------|-------|--------|-------|
-| 5 | [SCRUM-562 / REG-01](https://arkova.atlassian.net/browse/SCRUM-562) | FERPA disclosure log table + API | M | Supabase migration + `/api/v1/disclosures` endpoint + audit event wiring. |
-| 6 | [SCRUM-565 / REG-04](https://arkova.atlassian.net/browse/SCRUM-565) | FERPA requester verification workflow | M | Form + state machine + email confirmation; no AI. |
-| 7 | [SCRUM-566 / REG-05](https://arkova.atlassian.net/browse/SCRUM-566) | HIPAA MFA enforcement on covered accounts | S-M | Supabase Auth factor enforcement + feature flag. |
-| 8 | [SCRUM-567 / REG-06](https://arkova.atlassian.net/browse/SCRUM-567) | HIPAA session timeout | S | Idle-detection hook + toast + sign-out. Frontend-only. |
-| 9 | [SCRUM-570 / REG-09](https://arkova.atlassian.net/browse/SCRUM-570) | HIPAA breach notification procedure | S | Playbook doc in `docs/compliance/hipaa/`. |
-| 10 | [SCRUM-572 / REG-11](https://arkova.atlassian.net/browse/SCRUM-572) | Data subject rights workflow (shared across jurisdictions) | L | Engineered `data_subject_requests` table exists; build the ops UI for request triage. |
-| 11 | [SCRUM-579 / REG-18](https://arkova.atlassian.net/browse/SCRUM-579) | Australia NDB procedure doc | S | `docs/compliance/australia/ndb.md`. |
-| 12 | [SCRUM-580 / REG-19](https://arkova.atlassian.net/browse/SCRUM-580) | Data correction form — Australia APP 13 | S | Component already exists (`DataCorrectionForm`); needs jurisdiction wiring + tests extension. |
-| 13 | [SCRUM-586 / REG-25](https://arkova.atlassian.net/browse/SCRUM-586) | Nigeria NDPR privacy notice | S | Template doc; model it after the Kenya notice. |
-| 14 | [SCRUM-588 / REG-27](https://arkova.atlassian.net/browse/SCRUM-588) | International badges on compliance dashboard | S | UI + copy only. |
-| 15 | [SCRUM-589 / REG-28](https://arkova.atlassian.net/browse/SCRUM-589) | DPO designation UI on org settings | S | Org settings form field + Supabase column + audit event. |
+### Priority 2 — Follow-on work from open PRs (pending Carson's merge)
 
-## Priority 3 — Dependency hardening (documentation + policy)
+Once Carson merges the six open PRs from 2026-04-20, several Jira follow-ups fall out that Sarah can pick up:
 
-These stories are mostly procedural / documentation and keep us SOC 2 ready. No code risk.
+- After [PR #461](https://github.com/carson-see/ArkovaCarson/pull/461) merges: the Sarah note is live in CLAUDE.md — start there.
+- After [PR #459](https://github.com/carson-see/ArkovaCarson/pull/459) / [PR #460](https://github.com/carson-see/ArkovaCarson/pull/460) merge: Carson publishes video #1 → SCRUM-478 closes via one-line entry to `src/lib/geo/videos.ts`.
+- After [PR #458](https://github.com/carson-see/ArkovaCarson/pull/458) merges: edge worker redeploy (`wrangler deploy`) — but Claude cannot touch the running worker per `feedback_worker_hands_off`. Flag to Carson.
 
-| # | Jira | Title | Effort | Notes |
-|---|------|-------|--------|-------|
-| 16 | [SCRUM-660 / DEP-01](https://arkova.atlassian.net/browse/SCRUM-660) | Supabase disaster recovery plan + cold standby runbook | M | `docs/compliance/disaster-recovery.md` + quarterly-test calendar. |
-| 17 | [SCRUM-661 / DEP-02](https://arkova.atlassian.net/browse/SCRUM-661) | Cloudflare Tunnel failover procedure | S | Runbook + secondary tunnel identity. |
-| 18 | [SCRUM-662 / DEP-03](https://arkova.atlassian.net/browse/SCRUM-662) | Document missing security-critical dependencies | S | Cross-reference `package.json` vs SBOM. |
-| 19 | [SCRUM-663 / DEP-04](https://arkova.atlassian.net/browse/SCRUM-663) | Upgrade Express to v5 | M | Follow Express v5 migration guide; tests for async error handling. |
-| 20 | [SCRUM-664 / DEP-05](https://arkova.atlassian.net/browse/SCRUM-664) | Upgrade ESLint to v9 + Flat Config | M | Code-mod + config rewrite. |
-| 21 | [SCRUM-665 / DEP-06](https://arkova.atlassian.net/browse/SCRUM-665) | Pin security-critical dependency versions | S | Pin resolutions in `package.json` for crypto/auth libs. |
-| 22 | [SCRUM-667 / DEP-08](https://arkova.atlassian.net/browse/SCRUM-667) | Dependency update cadence + policy doc | S | Write the policy; link from CLAUDE.md. |
-| 23 | [SCRUM-668 / DEP-09](https://arkova.atlassian.net/browse/SCRUM-668) | SBOM generation in CI | S | CycloneDX or SPDX action in `.github/workflows/`. |
-| 24 | [SCRUM-669 / DEP-10](https://arkova.atlassian.net/browse/SCRUM-669) | License audit — GPL compatibility review | S | Run `license-checker`; file exceptions list. |
+### Priority 3 — Bugs surfaced in future UAT
 
-## Priority 4 — Dependabot bumps (framework upgrades)
+There are **zero open bugs** in Jira right now (verified 2026-04-20 via `statusCategory!=Done AND issuetype=Bug`). When Carson runs the next UAT click-through, bugs that surface will land in `docs/bugs/bug_log.md` + the [Bug Tracker Spreadsheet](https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4). Watch both for new rows.
 
-These are ready for Sarah once she's comfortable with the test suite. Each one is a single-PR upgrade.
+### Priority 4 — Dependabot PRs as they open
 
-| # | Jira | Bump | Notes |
-|---|------|------|-------|
-| 25 | [SCRUM-684](https://arkova.atlassian.net/browse/SCRUM-684) | TypeScript 6.x | Already bumped in `/services/worker`; apply to root. |
-| 26 | [SCRUM-686](https://arkova.atlassian.net/browse/SCRUM-686) | Stripe 22.x | Upgrade SDK + verify webhook tests. |
-| 27 | [SCRUM-687](https://arkova.atlassian.net/browse/SCRUM-687) | Zod 4.x | Migration: `.parse()` → throws vs returns. |
-| 28 | [SCRUM-689](https://arkova.atlassian.net/browse/SCRUM-689) | Vitest 4.x | Breaking: test file resolution. |
-| 29 | [SCRUM-691](https://arkova.atlassian.net/browse/SCRUM-691) | ESLint 10.x | Pairs with SCRUM-664 DEP-05. |
-| 30 | [SCRUM-692](https://arkova.atlassian.net/browse/SCRUM-692) | Lucide 1.x | Icon import refactor. |
-| 31 | [SCRUM-693](https://arkova.atlassian.net/browse/SCRUM-693) | node-cron 4.x | Worker-only; verify cron signature unchanged. |
-| 32 | [SCRUM-695](https://arkova.atlassian.net/browse/SCRUM-695) | React 19 | Biggest risk — run full E2E suite after upgrade. |
-
-## Priority 5 — Post-launch polish
-
-| # | Jira | Title | Effort | Notes |
-|---|------|-------|--------|-------|
-| 33 | [SCRUM-436 / MVP-13](https://arkova.atlassian.net/browse/SCRUM-436) | Organization logo upload | M | Storage bucket + RLS + settings form. |
-| 34 | [SCRUM-437 / MVP-14](https://arkova.atlassian.net/browse/SCRUM-437) | Embeddable verification widget | L | `embed.js` already exists; make it truly one-script-tag install. |
+Every time dependabot opens a chore PR, that's Sarah-ready (typecheck + test + upgrade the lockfile). Current state: 0 open dependabot PRs (all 2026-04-20 bumps already merged).
 
 ## Not on this list (and why)
 
-- Any Nessie work (NPH-*, NTF-*, NDD-*, NSS-*, NVI-*, NMT-*) — NVI-gated training, not Sarah's track.
-- Any Gemini Golden work (GME-*, GME2-*, …, GME8-*) — AI platform track, needs Vertex access + training budget.
-- KAU credential training (KAU-*) — Nessie-adjacent, tracked with NPH.
-- External procurement (SCRUM-517 pentest vendor, SCRUM-522 SOC 2 auditor, SCRUM-576/577 Kenya ODPC filing, SCRUM-477/478/479 GEO marketing launches) — all blocked on external action (vendor sign, regulator filing, video production). Carson + Matthew own the unblocks.
+- **Any Nessie work** (NPH-*, NTF-*, NDD-*, NSS-*, NVI-*, NMT-*, KAU-*) — NVI-gated, AI platform track.
+- **Any Gemini Golden work** (GME-*, GME2 through GME11 — currently 20+ open tickets in this range) — needs Vertex access + training budget + dataset curation; not Sarah's track.
+- **External procurement** (pentest vendor SCRUM-517, SOC 2 auditor SCRUM-522, Kenya ODPC filing SCRUM-576/577, GEO marketing launches SCRUM-477/478/479) — blocked on Carson/Matthew's external action, not ship-ready for an engineer.
+- **Worker deploy** (SCRUM-892 NPH-16-OPS) — per `feedback_worker_hands_off`, Claude cannot touch the running Cloud Run worker; Carson executes the gcloud commands.
 
 ## Working rhythm
 
-1. Pick the top unblocked ticket in Priority 1.
+1. Pick the top unblocked ticket (today: SCRUM-727 if you have an engineering session).
 2. Read the ticket + scan comments + scan linked PRs.
 3. Branch: `claude/YYYY-MM-DD-<short-slug>`.
 4. Write tests first (TDD MANDATE per CLAUDE.md §0).
@@ -97,8 +59,14 @@ These are ready for Sarah once she's comfortable with the test suite. Each one i
 ## When to add to this backlog
 
 Only add items that:
-- Are already filed as Jira stories or bugs, AND
+- Are already filed as Jira stories or bugs **and verified open in live Jira**, AND
 - Do not touch Nessie or Gemini Golden, AND
 - Have engineering deliverables that can ship in a single PR (no XL tasks that span multiple Jira tickets).
 
-Add by editing this file, never by amending an in-flight PR.
+Add by editing this file, never by amending an in-flight PR. The Jira `Sarah Sprint 1` release (fixVersion on tickets; label `sarah` + `sarah-sprint-1`) is the single source of truth — this doc is its companion.
+
+## Why this backlog is short
+
+CLAUDE.md Section 5 (the big story-status table) is structurally stale — it lists ~100 items as "not started" or "partial" but when queried against live Jira, the vast majority are already Done. An audit on 2026-04-20 found that all 34 tickets the first draft of this doc listed were already Done in Jira. The remaining genuinely-open-and-engineering-feasible work outside Nessie/Gemini is thin — mostly the SCRUM-727 fetcher and whatever UAT surfaces next.
+
+When Sarah clears SCRUM-727, the next move is to ask Carson to run a UAT click-through (he has the pattern from 2026-04-19) to surface whatever's newly broken — that's where the next round of Sarah-ready work will come from.
