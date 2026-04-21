@@ -231,6 +231,12 @@ export function CredentialRenderer({
     if (type === 'date' && typeof value === 'string') {
       return formatDate(value);
     }
+    // Auto-detect ISO-8601 datetime strings so non-template metadata
+    // keys (e.g. `issued_at` on the public verify page) render as a
+    // human date instead of the raw timestamp.
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
+      return formatDate(value);
+    }
     if (typeof value === 'object') {
       return JSON.stringify(value);
     }

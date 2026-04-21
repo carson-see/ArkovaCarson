@@ -68,9 +68,10 @@ async function fetchUsageData(): Promise<ApiUsageData> {
   return await res.json() as ApiUsageData;
 }
 
-export function useApiKeys() {
+export function useApiKeys(options: { enabled?: boolean } = {}) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const enabled = !!user && (options.enabled ?? true);
 
   const {
     data: keys = [],
@@ -79,7 +80,7 @@ export function useApiKeys() {
   } = useQuery({
     queryKey: queryKeys.apiKeys(user?.id ?? ''),
     queryFn: fetchKeysData,
-    enabled: !!user,
+    enabled,
     staleTime: 30_000,
   });
 
@@ -147,7 +148,7 @@ export function useApiKeys() {
 
   return {
     keys,
-    loading: !user ? false : loading,
+    loading: enabled ? loading : false,
     error: queryError ? (queryError as Error).message : null,
     createKey,
     revokeKey,
@@ -156,9 +157,10 @@ export function useApiKeys() {
   };
 }
 
-export function useApiUsage() {
+export function useApiUsage(options: { enabled?: boolean } = {}) {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const enabled = !!user && (options.enabled ?? true);
 
   const {
     data: usage = null,
@@ -167,7 +169,7 @@ export function useApiUsage() {
   } = useQuery({
     queryKey: queryKeys.apiUsage(user?.id ?? ''),
     queryFn: fetchUsageData,
-    enabled: !!user,
+    enabled,
     staleTime: 30_000,
   });
 
@@ -179,7 +181,7 @@ export function useApiUsage() {
 
   return {
     usage,
-    loading: !user ? false : loading,
+    loading: enabled ? loading : false,
     error: queryError ? (queryError as Error).message : null,
     refresh,
   };

@@ -175,6 +175,10 @@ export function App() {
           <Route path={ROUTES.ABOUT} element={<AboutPage />} />
           <Route path={ROUTES.PRIVACY} element={<PrivacyPage />} />
           <Route path={ROUTES.TERMS} element={<TermsPage />} />
+          {/* BUG-AUDIT-02 follow-up: `/contact` must resolve on the search
+              subdomain too — PublicVerifyPage's footer surfaces the
+              /contact link and silently 404-redirected on search.arkova.ai. */}
+          <Route path={ROUTES.CONTACT} element={<ContactPage />} />
           <Route path="*" element={<Navigate to={ROUTES.SEARCH} replace />} />
         </Routes>
         ) : (

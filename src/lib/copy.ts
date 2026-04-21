@@ -510,7 +510,10 @@ export const API_KEY_LABELS = {
   EXPIRED: 'Expired',
   LAST_USED: 'Last used',
   NEVER_USED: 'Never used',
-  FETCH_ERROR: 'Unable to load API keys. Ensure the worker service is running.',
+  FETCH_ERROR: 'Unable to load API keys. Please refresh and try again.',
+  ORG_REQUIRED_TITLE: 'API keys require an organisation',
+  ORG_REQUIRED_BODY: 'API keys are issued per organisation. Create or join one to start calling the Verification API.',
+  ORG_REQUIRED_CTA: 'Create organisation',
   SCOPE_VERIFY: 'Verify',
   SCOPE_BATCH: 'Batch',
   SCOPE_USAGE: 'Usage',
@@ -1507,8 +1510,8 @@ export const BILLING_PAGE_LABELS = {
 
 export const SYSTEM_HEALTH_LABELS = {
   CONNECTION_ERROR: 'Unable to connect to the server. Please check your connection and try again.',
-  WORKER_HINT: 'Ensure the worker service is running and accessible.',
-  WORKER_OFFLINE: 'Worker offline',
+  WORKER_HINT: 'The verification API backend appears unreachable. Check worker health on Cloud Run.',
+  WORKER_OFFLINE: 'Verification API offline',
 } as const;
 
 // =============================================================================
@@ -2060,6 +2063,10 @@ export const AUDIT_MY_ORG_LABELS = {
   SCORECARD_NO_JURISDICTION_DATA: 'No jurisdiction data.',
   SCORECARD_NO_GAPS: 'No open compliance gaps.',
   SCORECARD_TIMELINE_INSUFFICIENT: 'Not enough history yet.',
+  SCORECARD_ORG_REQUIRED_TITLE: 'Compliance audits are organisation-scoped',
+  SCORECARD_ORG_REQUIRED_BODY:
+    'Create or join an organisation to run a compliance audit across every jurisdiction you operate in.',
+  SCORECARD_ORG_REQUIRED_CTA: 'Create organisation',
 } as const;
 
 export const PRIVACY_NOTICE_LABELS = {

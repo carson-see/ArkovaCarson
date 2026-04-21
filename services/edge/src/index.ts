@@ -88,10 +88,12 @@ export default {
       return handleX402Facilitator(request, env);
     }
 
-    // MCP server — uses its own API key auth (handled internally)
+    // MCP server — uses its own API key auth (handled internally). Pass
+    // ExecutionContext through so tool handlers can fire-and-forget audit
+    // logs via ctx.waitUntil without blocking the response.
     if (url.pathname.startsWith('/mcp')) {
       const { handleMcpRequest } = await import('./mcp-server');
-      return handleMcpRequest(request, env);
+      return handleMcpRequest(request, env, ctx);
     }
 
     return new Response('arkova-edge: no matching route', { status: 404 });

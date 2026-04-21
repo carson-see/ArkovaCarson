@@ -25,8 +25,12 @@ import {
   handleVerifyDocument,
   handleVerifyBatch,
   type SupabaseConfig,
+  type ToolResult,
 } from './mcp-tools';
 import type { Env } from './env';
+import { fireAndForgetAudit, type McpAuditEntry } from './mcp-audit-log';
+import { enforceRateLimit } from './mcp-rate-limit';
+import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 
 /** Server identity */
 const SERVER_NAME = 'arkova-verification';
@@ -58,10 +62,93 @@ interface ScopedConfig extends SupabaseConfig {
   userId: string;
 }
 
+/** Per-request telemetry context — threaded into every tool invocation so
+ *  SEC-01 rate limiting + SEC-06 audit logging can scope to the caller. */
+interface RequestTelemetryContext {
+  env: Env;
+  execCtx: ExecutionContext;
+  apiKeyId: string | null;
+  userId: string;
+  clientIp: string | null;
+}
+
+/** Higher-order wrapper that gives every tool handler:
+ *   1. per-API-key rate limiting (SEC-01)
+ *   2. fire-and-forget audit logging with (toolName, outcome, latencyMs) (SEC-06)
+ *
+ *  Rate-limit denial returns an MCP tool error (no HTTP 429 — that'd bypass
+ *  the SDK's response envelope). Downstream agents can parse the error body
+ *  to read `retry_after_seconds`.
+ *
+ *  The `args` type is loosely-typed `Record<string, any>` to match the MCP
+ *  SDK's `ToolCb` signature (see `ToolCb` alias above). Call-sites destructure
+ *  the shape they expect; Zod has already validated the input by the time
+ *  this wrapper runs. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyArgs = Record<string, any>;
+function withTelemetry(
+  toolName: string,
+  handler: (args: AnyArgs) => Promise<ToolResult>,
+  telemetry: RequestTelemetryContext,
+): (args: AnyArgs) => Promise<ToolResult> {
+  return async (args: AnyArgs): Promise<ToolResult> => {
+    const started = Date.now();
+    const argsJson = JSON.stringify(args ?? {});
+    let outcome: McpAuditEntry['outcome'] = 'success';
+
+    const logOnce = (): void =>
+      fireAndForgetAudit(
+        telemetry.env,
+        {
+          apiKeyId: telemetry.apiKeyId,
+          userId: telemetry.userId,
+          toolName,
+          argsJson,
+          outcome,
+          latencyMs: Date.now() - started,
+          clientIp: telemetry.clientIp,
+        },
+        telemetry.execCtx,
+      );
+
+    const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
+    if (!decision.ok) {
+      outcome = 'rate_limited';
+      logOnce();
+      return {
+        content: [{
+          type: 'text' as const,
+          text: JSON.stringify({
+            error: 'rate_limit_exceeded',
+            tool: decision.toolName,
+            limit_per_minute: decision.limit,
+            retry_after_seconds: decision.retryAfterSeconds,
+          }),
+        }],
+        isError: true,
+      };
+    }
+
+    try {
+      const result = await handler(args);
+      if (result.isError) outcome = 'tool_error';
+      return result;
+    } catch (err) {
+      outcome = 'tool_error';
+      throw err;
+    } finally {
+      logOnce();
+    }
+  };
+}
+
 /**
  * Create and configure the MCP server with Arkova tools, resources, and prompts.
+ *
+ * `telemetry` carries the per-request context needed by SEC-01 rate limiting
+ * + SEC-06 audit logging. Every tool handler is wrapped by `withTelemetry`.
  */
-function createMcpServer(config: ScopedConfig): McpServer {
+function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContext): McpServer {
   const server = new McpServer({
     name: SERVER_NAME,
     version: SERVER_VERSION,
@@ -89,7 +176,11 @@ function createMcpServer(config: ScopedConfig): McpServer {
     'verify_credential',
     TOOL_DESC['verify_credential'],
     { public_id: publicIdSchema.describe('The credential\'s public identifier (e.g., ARK-2026-001)') },
-    async ({ public_id }) => handleVerifyCredential({ public_id }, config),
+    withTelemetry(
+      'verify_credential',
+      async ({ public_id }) => handleVerifyCredential({ public_id }, config),
+      telemetry,
+    ),
   );
 
   tool(
@@ -99,7 +190,11 @@ function createMcpServer(config: ScopedConfig): McpServer {
       query: freeTextQuerySchema.describe('Natural language search query'),
       max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
     },
-    async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
+    withTelemetry(
+      'search_credentials',
+      async ({ query, max_results }) => handleSearchCredentials({ query, max_results }, config),
+      telemetry,
+    ),
   );
 
   tool(
@@ -110,7 +205,11 @@ function createMcpServer(config: ScopedConfig): McpServer {
       mode: z.enum(['retrieval', 'context']).optional().describe('Query mode (default: retrieval)'),
       limit: z.number().int().min(1).max(50).optional().describe('Max results (default: 10, max: 50)'),
     },
-    async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
+    withTelemetry(
+      'nessie_query',
+      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
+      telemetry,
+    ),
   );
 
   tool(
@@ -123,15 +222,23 @@ function createMcpServer(config: ScopedConfig): McpServer {
       title: z.string().max(500).optional().describe('Document title'),
       source_url: z.string().url().max(2048).optional().describe('Original document URL'),
     },
-    async ({ content_hash, record_type, source, title, source_url }) =>
-      handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
+    withTelemetry(
+      'anchor_document',
+      async ({ content_hash, record_type, source, title, source_url }) =>
+        handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
+      telemetry,
+    ),
   );
 
   tool(
     'verify_document',
     TOOL_DESC['verify_document'],
     { content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document to verify') },
-    async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
+    withTelemetry(
+      'verify_document',
+      async ({ content_hash }) => handleVerifyDocument({ content_hash }, config),
+      telemetry,
+    ),
   );
 
   // ── INT-02: Batch verification ────────────────────────────────────────
@@ -146,7 +253,11 @@ function createMcpServer(config: ScopedConfig): McpServer {
         .max(100)
         .describe('Array of credential public IDs (max 100). Results returned in input order.'),
     },
-    async ({ public_ids }) => handleVerifyBatch({ public_ids }, config),
+    withTelemetry(
+      'verify_batch',
+      async ({ public_ids }) => handleVerifyBatch({ public_ids }, config),
+      telemetry,
+    ),
   );
 
   // ── Phase II Agentic Tools (PH2-AGENT-06) ─────────────────────────────
@@ -160,52 +271,60 @@ function createMcpServer(config: ScopedConfig): McpServer {
     {
       public_ids: z.array(publicIdSchema).min(1).max(25).describe('Array of Arkova public IDs to verify (max 25)'),
     },
-    async ({ public_ids }) => {
-      try {
-        const results = [];
-        for (const pid of public_ids) {
-          const result = await handleVerifyCredential({ public_id: pid }, config);
-          results.push({ public_id: pid, ...JSON.parse(result.content[0].text) });
+    withTelemetry(
+      'oracle_batch_verify',
+      async ({ public_ids }) => {
+        try {
+          const results = [];
+          for (const pid of public_ids) {
+            const result = await handleVerifyCredential({ public_id: pid }, config);
+            results.push({ public_id: pid, ...JSON.parse(result.content[0].text) });
+          }
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() }, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
         }
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() }, null, 2) }] };
-      } catch (error) {
-        return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }] };
-      }
-    },
+      },
+      telemetry,
+    ),
   );
 
   tool(
     'list_agents',
     'List AI agents registered to the authenticated caller\'s organization. Returns agent names, types, scopes, and status.',
     {},
-    async () => {
-      // MCP security fix 2026-04-20: prior implementation queried
-      // /rest/v1/agents?status=eq.active with the service-role key and no
-      // org filter — cross-org data leak. Replaced with SECURITY DEFINER
-      // RPC get_agents_for_user(p_user_id) (migration 0221) that joins
-      // through org_members and returns only the caller's org's agents.
-      try {
-        const resp = await fetch(
-          `${config.supabaseUrl}/rest/v1/rpc/get_agents_for_user`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              apikey: config.supabaseKey,
-              Authorization: `Bearer ${config.supabaseKey}`,
+    withTelemetry(
+      'list_agents',
+      async () => {
+        // MCP security fix 2026-04-20: prior implementation queried
+        // /rest/v1/agents?status=eq.active with the service-role key and no
+        // org filter — cross-org data leak. Replaced with SECURITY DEFINER
+        // RPC get_agents_for_user(p_user_id) (migration 0221) that joins
+        // through org_members and returns only the caller's org's agents.
+        try {
+          const resp = await fetch(
+            `${config.supabaseUrl}/rest/v1/rpc/get_agents_for_user`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                apikey: config.supabaseKey,
+                Authorization: `Bearer ${config.supabaseKey}`,
+              },
+              body: JSON.stringify({ p_user_id: config.userId }),
             },
-            body: JSON.stringify({ p_user_id: config.userId }),
-          },
-        );
-        if (!resp.ok) {
-          return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'list_agents') }] };
+          );
+          if (!resp.ok) {
+            return { content: [{ type: 'text' as const, text: safeErrorText(new Error(`HTTP ${resp.status}`), 'list_agents') }], isError: true };
+          }
+          const agents = await resp.json();
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: Array.isArray(agents) ? agents : [] }, null, 2) }] };
+        } catch (error) {
+          return { content: [{ type: 'text' as const, text: safeErrorText(error, 'list_agents') }], isError: true };
         }
-        const agents = await resp.json();
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ agents: Array.isArray(agents) ? agents : [] }, null, 2) }] };
-      } catch (error) {
-        return { content: [{ type: 'text' as const, text: safeErrorText(error, 'list_agents') }] };
-      }
-    },
+      },
+      telemetry,
+    ),
   );
 
   // ── Resources ─────────────────────────────────────────────────────────
@@ -269,17 +388,26 @@ function createMcpServer(config: ScopedConfig): McpServer {
 
   // ── Prompts ───────────────────────────────────────────────────────────
 
+  // NOTE: 2026-04-20 MCP security audit (SCRUM-923 / MCP-SEC-05) —
+  // user-supplied strings are wrapped in <user_input> fences via
+  // `fenceUserInput` + the `SAFETY_PREFIX` preamble tells the downstream
+  // LLM to treat fenced blocks as DATA, not INSTRUCTIONS. Prevents prompt
+  // injection of the form `query="ignore previous instructions..."`.
+
   prompt(
     'verify-credential',
     'Look up and verify a credential by its Arkova public ID',
-    { public_id: z.string().describe('Credential public ID (e.g., ARK-2026-001)') },
+    { public_id: publicIdSchema.describe('Credential public ID (e.g., ARK-2026-001)') },
     async ({ public_id }) => ({
       messages: [{
         role: 'user' as const,
         content: {
           type: 'text' as const,
-          text: `Please verify the credential with public ID "${public_id}" using the verify_credential tool. ` +
-            'Report the verification status, issuer, credential type, dates, and anchoring proof.',
+          text:
+            `${SAFETY_PREFIX}\n\n` +
+            `Please verify the credential whose public ID is provided below using the verify_credential tool. ` +
+            'Report the verification status, issuer, credential type, dates, and anchoring proof.\n\n' +
+            fenceUserInput(public_id, 'public_id'),
         },
       }],
     }),
@@ -288,14 +416,17 @@ function createMcpServer(config: ScopedConfig): McpServer {
   prompt(
     'search-and-verify',
     'Search for credentials matching a query and verify the top result',
-    { query: z.string().describe('What to search for') },
+    { query: freeTextQuerySchema.describe('What to search for') },
     async ({ query }) => ({
       messages: [{
         role: 'user' as const,
         content: {
           type: 'text' as const,
-          text: `Search for credentials matching "${query}" using search_credentials, then verify the top result ` +
-            'with verify_credential. Summarize your findings.',
+          text:
+            `${SAFETY_PREFIX}\n\n` +
+            `Run search_credentials with the query provided below, then verify the top result with verify_credential. ` +
+            'Summarize your findings.\n\n' +
+            fenceUserInput(query, 'query'),
         },
       }],
     }),
@@ -305,16 +436,19 @@ function createMcpServer(config: ScopedConfig): McpServer {
     'anchor-and-verify',
     'Anchor a document fingerprint and confirm it was submitted',
     {
-      content_hash: z.string().describe('SHA-256 fingerprint of the document'),
-      title: z.string().optional().describe('Document title'),
+      content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
+      title: z.string().max(500).optional().describe('Document title'),
     },
     async ({ content_hash, title }) => ({
       messages: [{
         role: 'user' as const,
         content: {
           type: 'text' as const,
-          text: `Anchor the document "${title ?? 'Untitled'}" with fingerprint ${content_hash} ` +
-            'using anchor_document, then verify it was submitted using verify_document.',
+          text:
+            `${SAFETY_PREFIX}\n\n` +
+            `Anchor the document described below using anchor_document, then verify it was submitted using verify_document.\n\n` +
+            fenceUserInput(title ?? 'Untitled', 'title') + '\n' +
+            fenceUserInput(content_hash, 'content_hash'),
         },
       }],
     }),
@@ -323,14 +457,17 @@ function createMcpServer(config: ScopedConfig): McpServer {
   prompt(
     'research-topic',
     'Research a topic using Nessie\'s verified intelligence engine',
-    { topic: z.string().describe('Research topic or question') },
+    { topic: freeTextQuerySchema.describe('Research topic or question') },
     async ({ topic }) => ({
       messages: [{
         role: 'user' as const,
         content: {
           type: 'text' as const,
-          text: `Use nessie_query in "context" mode to research: "${topic}". ` +
-            'Synthesize the findings and cite the anchored source documents.',
+          text:
+            `${SAFETY_PREFIX}\n\n` +
+            `Use nessie_query in "context" mode to research the topic provided below. ` +
+            'Synthesize the findings and cite the anchored source documents.\n\n' +
+            fenceUserInput(topic, 'topic'),
         },
       }],
     }),
@@ -350,10 +487,19 @@ function authFetch(url: string, init?: RequestInit): Promise<Response> {
     .finally(() => clearTimeout(timer));
 }
 
+/** Auth result shape — `apiKeyId` is present for X-API-Key auth, null for
+ *  OAuth Bearer. Rate limiting + audit logging use it as the actor id when
+ *  the caller is an API-key-holding agent. */
+interface AuthResult {
+  userId: string;
+  tier: string;
+  apiKeyId: string | null;
+}
+
 async function validateAuth(
   request: Request,
   env: Env,
-): Promise<{ userId: string; tier: string } | null> {
+): Promise<AuthResult | null> {
   const apiKey = request.headers.get('x-api-key');
   const authHeader = request.headers.get('authorization');
 
@@ -375,7 +521,7 @@ async function validateAuth(
 async function validateApiKey(
   apiKey: string,
   env: Env,
-): Promise<{ userId: string; tier: string } | null> {
+): Promise<AuthResult | null> {
   try {
     const response = await authFetch(`${env.SUPABASE_URL}/rest/v1/rpc/validate_api_key`, {
       method: 'POST',
@@ -387,8 +533,19 @@ async function validateApiKey(
       body: JSON.stringify({ p_api_key: apiKey }),
     });
     if (response.ok) {
-      const data = await response.json() as { user_id: string; tier: string } | null;
-      if (data) return { userId: data.user_id, tier: data.tier };
+      // The RPC may or may not return `api_key_id`; accept either shape.
+      // When absent the rate limiter degrades to per-user bucketing via
+      // userId (still accurate for per-caller counting).
+      const data = await response.json() as
+        | { user_id: string; tier: string; api_key_id?: string; id?: string }
+        | null;
+      if (data) {
+        return {
+          userId: data.user_id,
+          tier: data.tier,
+          apiKeyId: data.api_key_id ?? data.id ?? null,
+        };
+      }
     }
   } catch {
     // Fall through
@@ -399,7 +556,7 @@ async function validateApiKey(
 async function validateBearer(
   token: string,
   env: Env,
-): Promise<{ userId: string; tier: string } | null> {
+): Promise<AuthResult | null> {
   try {
     const response = await authFetch(`${env.SUPABASE_URL}/auth/v1/user`, {
       headers: {
@@ -409,7 +566,7 @@ async function validateBearer(
     });
     if (response.ok) {
       const user = await response.json() as { id: string };
-      return { userId: user.id, tier: 'authenticated' };
+      return { userId: user.id, tier: 'authenticated', apiKeyId: null };
     }
   } catch {
     // Fall through
@@ -462,6 +619,7 @@ function getCorsOrigin(request: Request, env: Env): string {
 export async function handleMcpRequest(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
 ): Promise<Response> {
   const url = new URL(request.url);
   const corsOrigin = getCorsOrigin(request, env);
@@ -513,8 +671,24 @@ export async function handleMcpRequest(
     userId: auth.userId,
   };
 
+  // Per-request telemetry context for SEC-01 rate limiting + SEC-06 audit.
+  // CF-Connecting-IP is the canonical client IP header on Cloudflare; falls
+  // back to X-Forwarded-For if the edge is behind a different proxy.
+  const clientIp =
+    request.headers.get('CF-Connecting-IP') ??
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
+    null;
+
+  const telemetry: RequestTelemetryContext = {
+    env,
+    execCtx: ctx,
+    apiKeyId: auth.apiKeyId,
+    userId: auth.userId,
+    clientIp,
+  };
+
   try {
-    const mcpServer = createMcpServer(config);
+    const mcpServer = createMcpServer(config, telemetry);
 
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),

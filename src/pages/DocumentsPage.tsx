@@ -46,6 +46,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ROUTES, recordDetailPath, verifyPath } from '@/lib/routes';
 import { CREDENTIAL_TYPE_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
+import { formatDate, formatFileSize } from '@/lib/formatters';
 import type { Record as AnchorRecord } from '@/components/records';
 
 // ---------------------------------------------------------------------------
@@ -712,20 +713,3 @@ function AttestationsList({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}

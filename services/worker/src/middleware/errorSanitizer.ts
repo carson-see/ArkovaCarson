@@ -24,6 +24,11 @@ const SENSITIVE_PATTERNS = [
   /\breplicate\b/gi,
   /\bvercel\b/gi,
   /\bcloud\s*run\b/gi,
+  // "worker service" phrasing leaked into the API-keys fetch-error card
+  // (UAT5-04 / UAT 2026-04-18 Bug 3). Redact the specific internal
+  // phrasing while keeping the more general word "worker" untouched —
+  // it's legitimate in async-job user-facing contexts.
+  /\bworker\s+service\b/gi,
   /v1beta\//gi,
   /v1alpha\//gi,
   /generativelanguage\.googleapis\.com/gi,
