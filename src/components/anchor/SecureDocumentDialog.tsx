@@ -51,6 +51,7 @@ interface SecureDocumentDialogProps {
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
   initialCredentialType?: string;
+  initialJurisdiction?: string;
 }
 
 type Step = 'upload' | 'extracting' | 'extraction-failed' | 'template' | 'confirm' | 'processing' | 'success' | 'error' | 'bulk' | 'attestation-review' | 'attestation-submitting';
@@ -70,6 +71,7 @@ export function SecureDocumentDialog({
   onOpenChange,
   onSuccess,
   initialCredentialType,
+  initialJurisdiction,
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
@@ -218,115 +220,10 @@ export function SecureDocumentDialog({
   // NCA-FU2 (SCRUM-906): Pre-select template when linked from compliance scorecard
   useEffect(() => {
     if (open && initialCredentialType && !selectedTemplate) {
-      autoSelectTemplate(initialCredentialType);
+      async function run() { await autoSelectTemplate(initialCredentialType!); }
+      void run();
     }
   }, [open, initialCredentialType, selectedTemplate, autoSelectTemplate]);
-
-  // Run AI extraction after file upload
-  const handleStartExtraction = useCallback(async () => {
-    if (!fileData) return;
-
-    setStep('extracting');
-    setExtractedFields([]);
-    setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
-
-    const result = await runExtraction(
-      fileData.file,
-      fileData.fingerprint,
-      selectedTemplate?.credential_type ?? 'OTHER',
-      (progress) => setExtractionProgress(progress),
-    );
-
-    if (result) {
-      setOverallConfidence(result.overallConfidence);
-      setCreditsRemaining(result.creditsRemaining);
-      setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
-
-      // Auto-detect document type and auto-select template
-      const typeField = result.fields.find(f => f.key === 'credentialType');
-      const detectedType = (typeField && typeField.confidence >= 0.5) ? typeField.value : 'OTHER';
-      await autoSelectTemplate(detectedType);
-
-      // Fire off template reconstruction in parallel (non-blocking)
-      const fieldsObj = result.fields.reduce<Record<string, unknown>>((acc, f) => {
-        acc[f.key] = f.value;
-        return acc;
-      }, {});
-      fetchTemplateReconstruction(fieldsObj, result.overallConfidence)
-        .then(tr => { if (tr) setTemplateResult(tr); })
-        .catch(() => { /* template reconstruction is best-effort */ });
-
-      // Apply template field schema: reorder, label, validate
-      const tmplResult = await applyTemplate(
-        result.fields,
-        detectedType,
-        profile?.org_id,
-      );
-
-      // Merge mapped + unmapped fields (template-ordered first, extras after)
-      const orderedFields = [...tmplResult.mappedFields, ...tmplResult.unmappedFields];
-
-      // Auto-accept all high-confidence fields
-      const autoAccepted = orderedFields.map(f =>
-        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
-      );
-      setExtractedFields(autoAccepted);
-
-      // One-click flow: skip confirm, go straight to anchoring
-      // Pass fields directly to avoid stale closure (React state not yet updated)
-      handleConfirm(autoAccepted);
-      return;
-    } else {
-      // Extraction failed — show recovery screen with retry/manual/skip options
-      toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
-      setExtractionProgress(null);
-      setStep('extraction-failed');
-      return;
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm defined after this callback; circular dep is intentional
-  }, [fileData, selectedTemplate, autoSelectTemplate]);
-
-  // Handle proceeding from upload step — always run AI extraction
-  const handleUploadContinue = useCallback(async () => {
-    if (!fileData) return;
-
-    if (aiEnabled) {
-      await handleStartExtraction();
-    } else {
-      // No AI — auto-select General Document and anchor immediately
-      await autoSelectTemplate('OTHER');
-      handleConfirm([]);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- handleConfirm/autoSelectTemplate defined after; circular dep is intentional
-  }, [fileData, aiEnabled, handleStartExtraction]);
-
-  // AI field callbacks
-  const handleFieldAccept = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
-    );
-  }, []);
-
-  const handleFieldReject = useCallback((key: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
-    );
-  }, []);
-
-  const handleFieldEdit = useCallback((key: string, value: string) => {
-    setExtractedFields(prev =>
-      prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
-    );
-  }, []);
-
-  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
-    setExtractedFields(prev =>
-      prev.map(f => {
-        const matched = fields.find(sf => sf.key === f.key);
-        return matched ? { ...f, status: 'accepted' as const } : f;
-      })
-    );
-  }, []);
 
   const handleConfirm = useCallback(async (fieldsOverride?: ExtractionField[]) => {
     if (!fileData || !user) return;
@@ -365,6 +262,9 @@ export function SecureDocumentDialog({
 
       // Merge AI tags from template reconstruction into metadata
       const metadata: Record<string, Json | undefined> = { ...acceptedFields } as Record<string, Json | undefined>;
+      if (initialJurisdiction && !metadata.jurisdiction) {
+        metadata.jurisdiction = initialJurisdiction;
+      }
       if (templateResult?.tags && templateResult.tags.length > 0) {
         metadata.ai_tags = templateResult.tags;
       }
@@ -427,7 +327,111 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, extractedFields, templateResult, onSuccess]);
+  }, [fileData, user, profile, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
+
+  // Run AI extraction after file upload
+  const handleStartExtraction = useCallback(async () => {
+    if (!fileData) return;
+
+    setStep('extracting');
+    setExtractedFields([]);
+    setExtractionProgress({ stage: 'ocr', progress: 0, message: 'Starting AI analysis...' });
+
+    const result = await runExtraction(
+      fileData.file,
+      fileData.fingerprint,
+      selectedTemplate?.credential_type ?? 'OTHER',
+      (progress) => setExtractionProgress(progress),
+    );
+
+    if (result) {
+      setOverallConfidence(result.overallConfidence);
+      setCreditsRemaining(result.creditsRemaining);
+      setExtractionProgress({ stage: 'complete', progress: 100, message: 'Extraction complete' });
+
+      // Auto-detect document type and auto-select template
+      const typeField = result.fields.find(f => f.key === 'credentialType');
+      const detectedType = (typeField && typeField.confidence >= 0.5) ? typeField.value : 'OTHER';
+      await autoSelectTemplate(detectedType);
+
+      // Fire off template reconstruction in parallel (non-blocking)
+      const fieldsObj = result.fields.reduce<Record<string, unknown>>((acc, f) => {
+        acc[f.key] = f.value;
+        return acc;
+      }, {});
+      fetchTemplateReconstruction(fieldsObj, result.overallConfidence)
+        .then(tr => { if (tr) setTemplateResult(tr); })
+        .catch(() => { /* template reconstruction is best-effort */ });
+
+      // Apply template field schema: reorder, label, validate
+      const tmplResult = await applyTemplate(
+        result.fields,
+        detectedType,
+        profile?.org_id,
+      );
+
+      // Merge mapped + unmapped fields (template-ordered first, extras after)
+      const orderedFields = [...tmplResult.mappedFields, ...tmplResult.unmappedFields];
+
+      // Auto-accept all high-confidence fields
+      const autoAccepted = orderedFields.map(f =>
+        f.confidence >= 0.5 ? { ...f, status: 'accepted' as const } : f
+      );
+      setExtractedFields(autoAccepted);
+
+      // One-click flow: skip confirm, go straight to anchoring
+      // Pass fields directly to avoid stale closure (React state not yet updated)
+      handleConfirm(autoAccepted);
+      return;
+    } else {
+      // Extraction failed — show recovery screen with retry/manual/skip options
+      toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
+      setExtractionProgress(null);
+      setStep('extraction-failed');
+      return;
+    }
+  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, profile?.org_id]);
+
+  // Handle proceeding from upload step — always run AI extraction
+  const handleUploadContinue = useCallback(async () => {
+    if (!fileData) return;
+
+    if (aiEnabled) {
+      await handleStartExtraction();
+    } else {
+      // No AI — auto-select General Document and anchor immediately
+      await autoSelectTemplate('OTHER');
+      handleConfirm([]);
+    }
+  }, [fileData, aiEnabled, handleStartExtraction, autoSelectTemplate, handleConfirm]);
+
+  // AI field callbacks
+  const handleFieldAccept = useCallback((key: string, value: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, value, status: 'accepted' as const } : f)
+    );
+  }, []);
+
+  const handleFieldReject = useCallback((key: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, status: 'rejected' as const } : f)
+    );
+  }, []);
+
+  const handleFieldEdit = useCallback((key: string, value: string) => {
+    setExtractedFields(prev =>
+      prev.map(f => f.key === key ? { ...f, value, status: 'edited' as const } : f)
+    );
+  }, []);
+
+  const handleAcceptAll = useCallback((fields: ExtractionField[]) => {
+    setExtractedFields(prev =>
+      prev.map(f => {
+        const matched = fields.find(sf => sf.key === f.key);
+        return matched ? { ...f, status: 'accepted' as const } : f;
+      })
+    );
+  }, []);
 
   const handleClose = useCallback(() => {
     setStep('upload');
@@ -694,6 +698,12 @@ export function SecureDocumentDialog({
                     <div className="flex justify-between">
                       <dt className="text-muted-foreground">Template</dt>
                       <dd className="font-medium">{selectedTemplate.name}</dd>
+                    </div>
+                  )}
+                  {initialJurisdiction && (
+                    <div className="flex justify-between">
+                      <dt className="text-muted-foreground">Jurisdiction</dt>
+                      <dd className="font-medium">{initialJurisdiction}</dd>
                     </div>
                   )}
                   {extractedFields.some(f => f.status === 'accepted' || f.status === 'edited') && (

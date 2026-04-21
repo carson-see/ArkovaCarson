@@ -271,10 +271,12 @@ export function useTreasuryBalance() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    void fetchAll();
+    async function run() { await fetchAll(); }
+    void run();
 
     pollRef.current = setInterval(() => {
-      void fetchAll();
+      async function poll() { await fetchAll(); }
+      void poll();
     }, POLL_INTERVAL_MS);
 
     return () => {

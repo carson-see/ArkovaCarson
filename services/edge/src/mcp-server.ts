@@ -24,6 +24,7 @@ import {
   handleAnchorDocument,
   handleVerifyDocument,
   handleVerifyBatch,
+  supabaseFetch,
   type SupabaseConfig,
   type ToolResult,
 } from './mcp-tools';
@@ -40,6 +41,7 @@ import {
   type AnomalyDetector,
 } from './mcp-anomaly-detection';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
+import { signEnvelope } from './mcp-hmac';
 
 // Module-scope detector so heuristics span requests inside one CF
 // isolate. Request-scoped detectors could not observe cross-session
@@ -73,12 +75,8 @@ function safeErrorText(err: unknown, context: string): string {
   return JSON.stringify({ error: `${context} failed`, code: 'TOOL_ERROR' });
 }
 
-/** Extended handler config — now includes the authenticated caller's
- *  user id so tools can scope queries instead of running service-role
- *  with no filter (the 2026-04-20 `list_agents` cross-org leak). */
-interface ScopedConfig extends SupabaseConfig {
-  userId: string;
-}
+/** Alias for tool config — userId now lives on SupabaseConfig (MCP-SEC-03). */
+type ScopedConfig = SupabaseConfig;
 
 /** Per-request telemetry context — threaded into every tool invocation so
  *  SEC-01 rate limiting + SEC-06 audit logging can scope to the caller. */
@@ -272,11 +270,31 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
       title: z.string().max(500).optional().describe('Document title'),
       source_url: z.string().url().max(2048).optional().describe('Original document URL'),
+      idempotency_key: z.string().uuid().optional().describe('Client-supplied UUID for retry deduplication'),
     },
     withTelemetry(
       'anchor_document',
-      async ({ content_hash, record_type, source, title, source_url }) =>
-        handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config),
+      async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
+        // MCP-SEC-04: dedupe on content_hash within 5-minute window (only when client supplies idempotency_key)
+        if (idempotency_key) {
+          const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+          const lookupResp = await supabaseFetch(config, `/rest/v1/public_records?content_hash=eq.${content_hash}&created_at=gte.${fiveMinAgo}&order=created_at.desc&limit=1`);
+          if (lookupResp.ok) {
+            const existing = await lookupResp.json() as Array<Record<string, unknown>>;
+            if (Array.isArray(existing) && existing.length > 0) {
+              const rec = existing[0];
+              return { content: [{ type: 'text' as const, text: JSON.stringify({
+                status: 'already_submitted',
+                record_id: rec.id,
+                public_id: rec.public_id,
+                content_hash,
+                message: 'Document was already submitted within the last 5 minutes. Returning existing record.',
+              }, null, 2) }] };
+            }
+          }
+        }
+        return handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config);
+      },
       telemetry,
     ),
   );
@@ -326,12 +344,18 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       'oracle_batch_verify',
       async ({ public_ids }) => {
         try {
-          const results = [];
-          for (const pid of public_ids) {
-            const result = await handleVerifyCredential({ public_id: pid }, config);
-            results.push({ public_id: pid, ...JSON.parse(result.content[0].text) });
-          }
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() }, null, 2) }] };
+          const results = await Promise.all(
+            public_ids.map(async (pid: string) => {
+              const result = await handleVerifyCredential({ public_id: pid }, config);
+              return { public_id: pid, ...JSON.parse(result.content[0].text) };
+            }),
+          );
+          const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
+          const signingKey = telemetry.env.MCP_SIGNING_KEY;
+          const body = signingKey
+            ? await signEnvelope(envelope, signingKey)
+            : envelope;
+          return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
         } catch (error) {
           return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
         }

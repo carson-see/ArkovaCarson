@@ -176,7 +176,8 @@ export function BatchAIDashboard() {
 
   // Initial fetch on mount
   useEffect(() => {
-    fetchJobs();
+    async function run() { await fetchJobs(); }
+    void run();
   }, [fetchJobs]);
 
   // Auto-refresh every 5s while jobs may be processing

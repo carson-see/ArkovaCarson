@@ -224,11 +224,13 @@ export function PipelineAdminPage() {
 
   useEffect(() => {
     if (isAdmin) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
       fetchStats();
       // Auto-refresh every 30 seconds
       const interval = setInterval(fetchStats, 30_000);
       return () => clearInterval(interval);
     } else {
+       
       setLoading(false);
     }
   }, [isAdmin, fetchStats]);
@@ -361,6 +363,7 @@ export function PipelineAdminPage() {
   // Re-fetch records when filters or page change
   useEffect(() => {
     if (isAdmin) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
       fetchRecords(recordsPage, filters);
     }
   }, [isAdmin, recordsPage, filters, fetchRecords]);

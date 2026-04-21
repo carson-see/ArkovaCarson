@@ -103,7 +103,8 @@ export function NessieInsights({ credentialType, issuerName, metadata, publicId:
   // Auto-run on mount if we have enough context
   useEffect(() => {
     if (!hasQueried && buildQuery()) {
-      runAnalysis();
+      async function run() { await runAnalysis(); }
+      void run();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

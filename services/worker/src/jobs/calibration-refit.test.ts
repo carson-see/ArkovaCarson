@@ -99,6 +99,12 @@ describe('runCalibrationRefit', () => {
     await expect(runCalibrationRefit()).rejects.toThrow('connection timeout');
   });
 
+  it('queries the calibration_features view (SCRUM-917)', async () => {
+    mockDbChain([]);
+    await runCalibrationRefit();
+    expect(db.from).toHaveBeenCalledWith('calibration_features');
+  });
+
   it('returns currentKnots from the production config', async () => {
     mockDbChain([]);
     const result = await runCalibrationRefit();

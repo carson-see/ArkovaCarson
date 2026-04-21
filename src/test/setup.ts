@@ -50,11 +50,15 @@ Object.defineProperty(globalThis, 'crypto', {
   writable: true,
 });
 
-// Mock clipboard API
-Object.defineProperty(navigator, 'clipboard', {
-  value: {
-    writeText: async () => {},
-    readText: async () => '',
-  },
-  writable: true,
-});
+// Mock clipboard API — only when the env has `navigator`. Node 20 (CI)
+// does not define it globally; `@vitest-environment node` tests would
+// crash at module load without this guard. Node 22+ and jsdom both do.
+if (typeof navigator !== 'undefined') {
+  Object.defineProperty(navigator, 'clipboard', {
+    value: {
+      writeText: async () => {},
+      readText: async () => '',
+    },
+    writable: true,
+  });
+}

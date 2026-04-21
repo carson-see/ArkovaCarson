@@ -117,8 +117,10 @@ export function PaymentAnalyticsPage() {
 
   useEffect(() => {
     if (isAdmin) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
       fetchStats();
     } else {
+       
       setLoading(false);
     }
   }, [isAdmin, fetchStats]);

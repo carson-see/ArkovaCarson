@@ -59,7 +59,8 @@ export function TemplateSelector({ orgId, onSelect, selectedId }: Readonly<Templ
   }, [orgId]);
 
   useEffect(() => {
-    fetchTemplates();
+    async function run() { await fetchTemplates(); }
+    void run();
   }, [fetchTemplates]);
 
   if (loading) {

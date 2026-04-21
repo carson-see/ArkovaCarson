@@ -25,6 +25,12 @@ interface CorrectionRequest {
   details: { description?: string } | null;
 }
 
+function daysRemaining(requestedAt: string): number {
+  const requested = new Date(requestedAt);
+  const deadline = new Date(requested.getTime() + 30 * 24 * 60 * 60 * 1000);
+  return Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+}
+
 export function DataCorrectionForm() {
   const { user } = useAuth();
   const [description, setDescription] = useState('');
@@ -50,7 +56,8 @@ export function DataCorrectionForm() {
 
   useEffect(() => {
     if (!user?.id) return;
-    fetchRequests();
+    async function run() { await fetchRequests(); }
+    void run();
   }, [user?.id, fetchRequests]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -99,12 +106,6 @@ export function DataCorrectionForm() {
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
-  }
-
-  function daysRemaining(requestedAt: string): number {
-    const requested = new Date(requestedAt);
-    const deadline = new Date(requested.getTime() + 30 * 24 * 60 * 60 * 1000);
-    return Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
   }
 
   return (

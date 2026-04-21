@@ -87,9 +87,12 @@ export function RequestAffiliationDialog({
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
-      setSearchQuery('');
-      setResults([]);
-      setSelectedOrg(null);
+      async function reset() {
+        setSearchQuery('');
+        setResults([]);
+        setSelectedOrg(null);
+      }
+      void reset();
     }
   }, [open]);
 

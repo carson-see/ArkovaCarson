@@ -145,8 +145,10 @@ function VirtualizedRecordsList({
   onDownloadProof,
   onRevokeRecord,
 }: Readonly<Omit<RecordsListProps, 'loading'>>) {
+  'use no memo'; // @tanstack/react-virtual returns mutable virtualizer objects incompatible with React Compiler
   const parentRef = useRef<HTMLDivElement>(null);
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- opted out via 'use no memo' above; virtualizer must remain mutable
   const virtualizer = useVirtualizer({
     count: records.length,
     getScrollElement: () => parentRef.current,

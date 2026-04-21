@@ -39,10 +39,13 @@ export function RecoveryPhraseModal({
   // Generate phrase once when modal opens
   useEffect(() => {
     if (open && phrase.length === 0) {
-      setPhrase(generateRecoveryPhrase());
-      setRevealed(false);
-      setCopied(false);
-      setAcknowledged(false);
+      async function init() {
+        setPhrase(generateRecoveryPhrase());
+        setRevealed(false);
+        setCopied(false);
+        setAcknowledged(false);
+      }
+      void init();
     }
   }, [open, phrase.length]);
 

@@ -23,6 +23,7 @@ import {
 const CONFIG = {
   supabaseUrl: 'https://test.supabase.co',
   supabaseKey: 'test-key',
+  userId: 'test-user-id',
 };
 
 const mockFetch = vi.fn();

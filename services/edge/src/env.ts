@@ -44,6 +44,10 @@ export interface Env {
   // to Sentry via the anomaly-detection module (SCRUM-987).
   SENTRY_DSN?: string;
 
+  // MCP-SEC-02: HMAC signing key for oracle_batch_verify envelopes.
+  // Callers verify the signature to detect tampering.
+  MCP_SIGNING_KEY?: string;
+
   // x402 Facilitator (Item #16, RISK-7)
   BASE_RPC_URL: string;
   USDC_CONTRACT_ADDRESS?: string;

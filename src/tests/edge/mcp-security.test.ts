@@ -1,10 +1,13 @@
 /**
- * Edge MCP security-helper tests (SCRUM-923 + SCRUM-919 + SCRUM-924).
+ * Edge MCP security-helper tests (SCRUM-923 + SCRUM-919 + SCRUM-924 + SCRUM-920).
+ *
+ * @vitest-environment node
  *
  * The edge worker doesn't have its own vitest harness yet. These tests
  * live under the frontend test suite — the helpers only touch Node 20+
  * platform APIs (crypto.subtle, fetch, Promise), so the behaviour is the
- * same across runtimes.
+ * same across runtimes. Node environment is required for full WebCrypto
+ * support (importKey/sign used by mcp-hmac).
  *
  * We ambient-declare just the CF Worker types the test needs. Importing
  * `@cloudflare/workers-types` globally would override Node's `Response`
@@ -26,10 +29,23 @@ declare global {
   interface MessageBatch<_T = unknown> { readonly __brand: 'MessageBatch' }
 }
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { webcrypto } from 'node:crypto';
+
+// Polyfill globalThis.crypto.subtle for Node test environment
+// (Cloudflare Workers provide this natively at runtime)
+beforeAll(() => {
+  if (!globalThis.crypto?.subtle?.importKey) {
+    Object.defineProperty(globalThis, 'crypto', {
+      value: webcrypto,
+      writable: true,
+    });
+  }
+});
 import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-prompt-safety';
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
+import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
 import type { Env } from '../../../services/edge/src/env';
 
 describe('mcp-prompt-safety — fenceUserInput (SCRUM-923)', () => {
@@ -239,5 +255,51 @@ describe('mcp-audit-log — logMcpToolCall (SCRUM-924)', () => {
     const details = JSON.parse(body.details);
     expect(details.ip_hash).toBeNull();
     globalThis.fetch = origFetch;
+  });
+});
+
+describe('mcp-hmac — signEnvelope / verifyEnvelope (SCRUM-920)', () => {
+  const TEST_KEY = 'test-signing-key-32-bytes-long!!';
+
+  it('signs an envelope and verification passes with the same key', async () => {
+    const payload = { query_id: 'q1', results: [{ public_id: 'ARK-DEG-ABC', verified: true }], queried_at: '2026-04-21T00:00:00Z' };
+    const signed = await signEnvelope(payload, TEST_KEY);
+
+    expect(signed.alg).toBe('HMAC-SHA256');
+    expect(signed.key_id).toBe('mcp-signing-v1');
+    expect(signed.signature).toMatch(/^[0-9a-f]{64}$/);
+    expect(signed.payload).toEqual(payload);
+
+    const valid = await verifyEnvelope(signed, TEST_KEY);
+    expect(valid).toBe(true);
+  });
+
+  it('fails verification when payload is tampered with', async () => {
+    const payload = { query_id: 'q2', results: [{ public_id: 'ARK-DEG-XYZ', verified: true }], queried_at: '2026-04-21T00:00:00Z' };
+    const signed = await signEnvelope(payload, TEST_KEY);
+
+    // Tamper with the results
+    const tampered = {
+      ...signed,
+      payload: { ...signed.payload, results: [{ public_id: 'ARK-DEG-XYZ', verified: false }] },
+    };
+
+    const valid = await verifyEnvelope(tampered, TEST_KEY);
+    expect(valid).toBe(false);
+  });
+
+  it('fails verification with a different key', async () => {
+    const payload = { query_id: 'q3', results: [], queried_at: '2026-04-21T00:00:00Z' };
+    const signed = await signEnvelope(payload, TEST_KEY);
+
+    const valid = await verifyEnvelope(signed, 'wrong-key-totally-different!!!!!!');
+    expect(valid).toBe(false);
+  });
+
+  it('produces deterministic signatures for the same payload + key', async () => {
+    const payload = { a: 1, b: 'hello' };
+    const s1 = await signEnvelope(payload, TEST_KEY);
+    const s2 = await signEnvelope(payload, TEST_KEY);
+    expect(s1.signature).toBe(s2.signature);
   });
 });

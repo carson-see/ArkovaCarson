@@ -126,6 +126,7 @@ export function DocumentsPage() {
   const initialCredentialType = searchParams.get('credential_type') ?? undefined;
   useEffect(() => {
     if (actionParam === 'upload') {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- URL-param driven one-time dialog open
       setSecureDialogOpen(true);
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
@@ -170,6 +171,7 @@ export function DocumentsPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchAttestations();
   }, [fetchAttestations]);
 

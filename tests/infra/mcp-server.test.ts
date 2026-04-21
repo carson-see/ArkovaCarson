@@ -45,6 +45,7 @@ describe('handleVerifyCredential', () => {
     const result = await handleVerifyCredential(input, {
       supabaseUrl: 'https://example.supabase.co',
       supabaseKey: 'test-key',
+      userId: 'test-user',
     });
 
     expect(result).toHaveProperty('content');
@@ -57,6 +58,7 @@ describe('handleVerifyCredential', () => {
     const result = await handleVerifyCredential(input, {
       supabaseUrl: 'https://example.supabase.co',
       supabaseKey: 'test-key',
+      userId: 'test-user',
     });
 
     expect(result.isError).toBe(true);
@@ -69,6 +71,7 @@ describe('handleSearchCredentials', () => {
     const result = await handleSearchCredentials(input, {
       supabaseUrl: 'https://example.supabase.co',
       supabaseKey: 'test-key',
+      userId: 'test-user',
     });
 
     expect(result).toHaveProperty('content');
@@ -80,6 +83,7 @@ describe('handleSearchCredentials', () => {
     const result = await handleSearchCredentials(input, {
       supabaseUrl: 'https://example.supabase.co',
       supabaseKey: 'test-key',
+      userId: 'test-user',
     });
 
     expect(result.isError).toBe(true);
@@ -90,6 +94,7 @@ describe('handleSearchCredentials', () => {
     const result = await handleSearchCredentials(input, {
       supabaseUrl: 'https://example.supabase.co',
       supabaseKey: 'test-key',
+      userId: 'test-user',
     });
 
     expect(result).toHaveProperty('content');
