@@ -28,6 +28,17 @@ const FORBIDDEN_TERMS = [
   'blockchain',
   'mining',
   String.raw`(?<![-\w])token(?![-\w])`,
+
+  // UX-03 (SCRUM-1029): engineering-copy leaks seen in 2026-04-18 UAT.
+  // API-keys page surfaced a raw error "Ensure the worker service is running"
+  // to end users. These terms should never appear in user-facing strings —
+  // if the error needs to mention infra, rewrite as "service" or "connection".
+  // Word-boundary regexes match the existing style and avoid mid-word false
+  // positives (e.g. "postgresql" shouldn't trip "postgrest").
+  String.raw`(?<![-\w])worker service(?![-\w])`,
+  String.raw`(?<![-\w])service_role(?![-\w])`,
+  String.raw`(?<![-\w])service role(?![-\w])`,
+  String.raw`(?<![-\w])postgrest(?![-\w])`,
 ];
 
 // File patterns to check (UI-facing files)
