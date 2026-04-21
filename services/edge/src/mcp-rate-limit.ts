@@ -1,33 +1,23 @@
 /**
  * MCP Per-API-Key Rate Limiting (SCRUM-919 MCP-SEC-01)
  *
- * Caps blast radius from a compromised API key. Buckets per
- * (api_key_id, tool_name) in one-minute windows using Cloudflare KV.
+ * Fixed-window counter per (api_key_id, tool_name) using Cloudflare KV.
+ * Known tradeoff: fixed-window allows a 2× burst at the boundary between
+ * consecutive windows. Switch to sliding window if abuse patterns show it
+ * matters (tracked as follow-up under MCP-SEC-01).
  *
- * The KV binding (`env.MCP_RATE_LIMIT_KV`) is OPTIONAL — when unset the
- * limiter logs one warning at module load and passes every request
- * through. That way preview / local / fork deploys don't break.
- *
- * Buckets:
- *   default               — 1000 req/min per API key
- *   nessie_query          —  100 req/min (Gemini budget protection)
- *   oracle_batch_verify   —   10 req/min (can multiply to 250 verifies)
- *   anchor_document       —   60 req/min (write path + future HMAC signing)
- *
- * Strategy: fixed-window counter stored as a KV JSON blob with TTL = 120s.
- * Fixed window has known burst behaviour at boundaries but is by far the
- * cheapest implementation on CF KV. Swap to sliding window if abuse patterns
- * demand it (tracked as a follow-up in the story).
+ * The KV binding (`env.MCP_RATE_LIMIT_KV`) is OPTIONAL — missing binding
+ * emits a one-time warning and passes every request through so preview /
+ * fork / local deploys don't break.
  */
 
 import type { Env } from './env';
 
-/** Per-tool request-per-minute budget. Tools missing from this map use `default`. */
 const TOOL_LIMITS_RPM: Record<string, number> = {
   default: 1000,
-  nessie_query: 100,
-  oracle_batch_verify: 10,
-  anchor_document: 60,
+  nessie_query: 100,        // Gemini budget protection
+  oracle_batch_verify: 10,  // 25× verify multiplier per call
+  anchor_document: 60,      // write path
 };
 
 export type RateLimitDecision =
