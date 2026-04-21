@@ -26,7 +26,7 @@ BEGIN
   -- Validate that the user exists
   SELECT EXISTS(SELECT 1 FROM auth.users WHERE auth.users.id = p_user_id) INTO v_user_exists;
   IF NOT v_user_exists THEN
-    RAISE EXCEPTION 'Invalid user_id: %', p_user_id;
+    RAISE EXCEPTION 'Unauthorized';
   END IF;
 
   -- Validate content_hash format (64 hex chars)

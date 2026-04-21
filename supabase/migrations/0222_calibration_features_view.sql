@@ -21,6 +21,9 @@ LEFT JOIN ai_usage_events aue
 WHERE em.confidence_scores IS NOT NULL
    OR aue.confidence IS NOT NULL;
 
+-- Only the service_role (cron jobs) should query this view.
+REVOKE ALL ON calibration_features FROM anon, authenticated;
+
 COMMENT ON VIEW calibration_features IS
   'Flattened view for the weekly calibration-refit cron (GME7.3). '
   'Joins anchors → extraction_manifests (confidence_scores.overall) '
