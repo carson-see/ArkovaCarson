@@ -1,5 +1,5 @@
 # Arkova Bug Log
-_Last updated: 2026-04-21 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 57 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint)_
+_Last updated: 2026-04-21 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 62 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2)_
 
 ## 2026-04-21 — Top-10 UAT Bug Fix Sprint
 
@@ -17,6 +17,18 @@ Systematic triage of every open bug across the bug log + UAT reports + Jira cros
 | BUG-2026-04-21-008 | MEDIUM | `useApiKeys` + `useApiUsage` fired GET `/api/v1/keys` + GET `/api/v1/usage` for every individual-tier visit to `/settings/api-keys` — the worker rejected both with 403 "User must belong to an organization", burning 2 round-trips + 2 Sentry breadcrumbs per mount. Found by `/simplify` efficiency review during this sprint. | Threaded `{ enabled?: boolean }` option through both hooks; `ApiKeySettingsPage` now passes `enabled: orgScoped` so the queries never fire for individuals. Default behavior unchanged for all existing callers. | Existing `ApiKeySettingsPage.test.tsx` stays green; `useApiKeys` signature is backwards-compatible (no mandatory arg). |
 
 Sprint also extracted a new `src/components/shared/OrgRequiredCard.tsx` to dedup the identical empty-state UI that appears on both `/compliance/scorecard` and `/settings/api-keys`. Single source of truth for "API keys require an organisation" / "Compliance audits are organisation-scoped" card shape.
+
+## 2026-04-21 — Top-10 UAT Bug Fix Sprint (Batch 2)
+
+Second tier of the sprint focused on silent-error surfacing, copy-leak closure, subdomain routing, and dead-code cleanup. 5 more bugs resolved in a follow-up commit.
+
+| ID | Severity | Summary | Fix | Regression Test |
+|----|----------|---------|-----|-----------------|
+| BUG-2026-04-21-009 | MEDIUM | Public `/search` (all 3 tabs) silently swallowed every error in `SearchPage.tsx` + `usePublicSearch.ts` catch blocks. Prod triage had to reproduce locally to see why a search failed. Root cause for BUG-UAT5-01 / BUG-001. | Added `console.error` with classifier prefixes (`[search]` / `[usePublicSearch]`) in every catch block. Raw errors now surface to devtools without changing the user-facing "Search failed." copy. | N/A (console-only fix); future e2e test can grep console output. |
+| BUG-2026-04-21-010 | LOW | `/contact` 404-redirected to `/search` on `search.arkova.ai` because `src/App.tsx` `searchOnly` <Routes> block was missing `ROUTES.CONTACT`. Footer "Contact" link in public-verify broken for every search-subdomain visitor. | Added `<Route path={ROUTES.CONTACT} element={<ContactPage />} />` to the searchOnly block. | Existing App router tests still pass; manual UAT: `https://search.arkova.ai/contact` now renders. |
+| BUG-2026-04-21-011 | MEDIUM | Worker `errorSanitizer` didn't scrub the phrasing "worker service" — the exact engineering-copy string that leaked on the API-keys card (UAT 2026-04-18 Bug 3). Would recur any time a worker error bubbled up verbatim. | Added `/\bworker\s+service\b/gi` to `SENSITIVE_PATTERNS`. Narrow enough that the standalone word "worker" (legit in async-job copy) is preserved. | `services/worker/src/middleware/errorSanitizer.test.ts` — 2 new tests: one asserts `Ensure the worker service is running.` redacts, the other asserts `background worker queued the anchor job` survives unchanged. |
+| BUG-2026-04-21-012 | MEDIUM | `ApiUsageDashboard` error branch rendered the raw `error` string for any non-network, non-auth error (BUG-UAT5-04 root cause). Surfaced internal wording directly to customers. | Default branch now renders `USAGE_UNAVAILABLE` copy and `console.error`s the raw error for triage. Network + auth classifier branches unchanged. | `ApiUsageDashboard.test.tsx` — updated `renders error state` test asserts the raw `"Failed to load"` does NOT render and the friendly fallback does. |
+| BUG-2026-04-21-013 | LOW | `src/lib/xlsxParser.ts` kept a `@ts-ignore` suppression for `read-excel-file/browser`'s subpath import — but `read-excel-file@9` ships `/browser` types, so the suppression is dead code that masks future type regressions. | Removed the suppression. Typecheck still exits 0. | `npx tsc --noEmit` (frontend) exit 0; no new test needed. |
 
 ## 2026-04-20 — Dependency-Bump Fix Sprint Bug Finds
 
