@@ -17,6 +17,10 @@ import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
+import { handleListPendingResolution, handleResolveQueue } from '../api/queue-resolution.js';
+import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
+import { handleTreasuryHealth } from '../api/treasury.js';
+import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
 import { getConnectionInfo } from '../utils/db.js';
 import { getRateLimitStoreSize } from '../utils/rateLimit.js';
@@ -165,6 +169,113 @@ adminRouter.post('/admin/users/:id/set-org', async (req, res) => {
     await handleSetOrg(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Set org request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── ARK-101 (SCRUM-1011): Anchor queue resolution ───
+// Authz: `list_pending_resolution_anchors` returns only caller's org rows;
+// `resolve_anchor_queue` enforces ORG_ADMIN role inside the RPC.
+adminRouter.get('/queue/pending', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleListPendingResolution(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Queue pending request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/queue/resolve', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleResolveQueue(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Queue resolve request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── ARK-104 (SCRUM-1014): Anchor lineage + supersede ───
+adminRouter.get('/anchor/:id/lineage', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAnchorLineage(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Anchor lineage request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/anchor/:id/supersede', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleSupersedeAnchor(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Anchor supersede request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── ARK-103 (SCRUM-1013): Treasury health (public to authed users) ───
+// Unlike /treasury/status (platform admin only), /treasury/health returns
+// ONLY USD + threshold + below flag — safe for org admins to see.
+adminRouter.get('/treasury/health', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleTreasuryHealth(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Treasury health request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── ARK-105/108 (SCRUM-1017/1020): Rules Engine CRUD ───
+adminRouter.get('/rules', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleListRules(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rules list request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/rules', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCreateRule(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rules create request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.patch('/rules/:id', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleUpdateRule(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rules update request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.delete('/rules/:id', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleDeleteRule(req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rules delete request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

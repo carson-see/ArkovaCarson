@@ -43,14 +43,67 @@ export const MIN_BATCH_SIZE = 1;
  * Skip if fewer than this many anchors pending AND oldest is under MAX_ANCHOR_AGE_MS.
  * Guarantees no anchor waits more than MAX_ANCHOR_AGE_MS regardless.
  */
-const MIN_BATCH_THRESHOLD = 5;
-const MAX_ANCHOR_AGE_MS = 10 * 60 * 1000; // 10 minutes
+export const MIN_BATCH_THRESHOLD = 5;
+export const MAX_ANCHOR_AGE_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * SCALE-2: Absolute hard cap for dynamic fee ceiling (sat/vB).
  * Even during severe backlogs, never exceed this rate.
  */
-const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
+export const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
+
+// =============================================================================
+// ARK-102 (SCRUM-1012): Pinned Trigger A/B/C decision points
+// =============================================================================
+//
+// The batch processor fires a Bitcoin transaction when ANY of three triggers
+// is satisfied. The audit tests in `batch-anchor.audit.test.ts` pin the
+// behavior of these triggers; the pure functions below make them
+// independently testable.
+
+/**
+ * Trigger A — Size-based: fire immediately when the claimed count is at or
+ * above BATCH_SIZE. Enforced implicitly by the claim loop (see
+ * `_processBatchAnchorsInner`), since we never claim more than BATCH_SIZE
+ * at once. Helper here is purely for documentation + audit pinning.
+ */
+export function triggerA_shouldFireOnSize(claimedCount: number): boolean {
+  return claimedCount >= BATCH_SIZE;
+}
+
+/**
+ * Trigger B — Age-based: even if pending count is below MIN_BATCH_THRESHOLD,
+ * force a batch when the oldest pending anchor has been waiting longer than
+ * MAX_ANCHOR_AGE_MS. Guarantees no anchor sits PENDING for more than that
+ * window (modulo cron cadence).
+ */
+export function triggerB_shouldFireOnAge(input: {
+  pendingCount: number;
+  oldestPendingAgeMs: number;
+}): boolean {
+  if (input.pendingCount === 0) return false;
+  if (input.pendingCount >= MIN_BATCH_THRESHOLD) return true;
+  return input.oldestPendingAgeMs >= MAX_ANCHOR_AGE_MS;
+}
+
+/**
+ * Trigger C — Fee-aware: defer the batch when the current fee rate exceeds
+ * the dynamic ceiling. The ceiling scales with backlog age so a very-stale
+ * backlog still ships, but bounded by ABSOLUTE_FEE_CAP_SAT_PER_VB.
+ *
+ * Returns the effective ceiling. Caller compares against the live rate.
+ */
+export function triggerC_computeFeeCeiling(input: {
+  baseCeiling: number;
+  oldestPendingAgeMs: number;
+}): number {
+  const THIRTY_MIN = 30 * 60 * 1000;
+  const ONE_HOUR = 60 * 60 * 1000;
+  let ceiling = input.baseCeiling;
+  if (input.oldestPendingAgeMs > ONE_HOUR) ceiling = input.baseCeiling * 4;
+  else if (input.oldestPendingAgeMs > THIRTY_MIN) ceiling = input.baseCeiling * 2;
+  return Math.min(ceiling, ABSOLUTE_FEE_CAP_SAT_PER_VB);
+}
 
 export interface BatchAnchorResult {
   processed: number;
@@ -145,7 +198,7 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
 
     const pendingCount = count ?? 0;
 
-    if (pendingCount < MIN_BATCH_THRESHOLD && oldestPendingAgeMs < MAX_ANCHOR_AGE_MS) {
+    if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
         { pendingCount, oldestAgeMs: oldestPendingAgeMs },
         'Below batch threshold and oldest anchor is fresh — deferring',
@@ -161,15 +214,7 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     if (chainClient.estimateCurrentFee) {
       const currentFee = await chainClient.estimateCurrentFee();
       const baseCeiling = config.maxFeeThresholdSatPerVbyte ?? 50;
-
-      // Dynamic ceiling: pay more when backlog is aging
-      let effectiveCeiling = baseCeiling;
-      if (oldestPendingAgeMs > 60 * 60 * 1000) {
-        effectiveCeiling = baseCeiling * 4; // 4x if >1 hour old
-      } else if (oldestPendingAgeMs > 30 * 60 * 1000) {
-        effectiveCeiling = baseCeiling * 2; // 2x if >30 min old
-      }
-      effectiveCeiling = Math.min(effectiveCeiling, ABSOLUTE_FEE_CAP_SAT_PER_VB);
+      const effectiveCeiling = triggerC_computeFeeCeiling({ baseCeiling, oldestPendingAgeMs });
 
       if (currentFee > effectiveCeiling) {
         logger.warn(

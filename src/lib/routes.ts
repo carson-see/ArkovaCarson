@@ -72,6 +72,9 @@ export const ROUTES = {
   // Compliance Intelligence
   COMPLIANCE_DASHBOARD: '/organization/compliance',
 
+  // Rules Engine (ARK-108)
+  RULE_BUILDER: '/organization/rules/new',
+
   // Phase III — Signatures & Compliance Center (PH3-ESIG)
   VERIFY_SIGNATURE: '/verify/signature/:signaturePublicId',
   SIGNATURE_COMPLIANCE: '/organization/signature-compliance',
