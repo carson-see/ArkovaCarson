@@ -131,6 +131,44 @@ Use a compliance automation platform (Vanta or Drata) to:
 
 1. Complete remaining BIA action items (SCRUM-515, 518, 520)
 2. Complete FERPA/HIPAA compliance stories (REG-01 through REG-10)
-3. Evaluate compliance automation platforms (Vanta vs Drata vs Secureframe)
+3. Evaluate compliance automation platforms (Vanta vs Drata vs Secureframe) — see SCRUM-964 TRUST-06
 4. Begin 6-month observation period (target: 2026-06-01)
 5. Engage SOC 2 auditor (target: Q4 2026)
+
+---
+
+## 6. Observation Window — SOC 2 Type II (TRUST-01 / SCRUM-959)
+
+> Appended 2026-04-21 as part of TRUST-01 to record the observation-window
+> dates + cadence. Paired with `soc2-evidence-cadence.md`.
+
+### Window dates
+
+| Item | Value |
+|------|-------|
+| Observation window — start | **2026-06-01** (Monday) |
+| Observation window — end | **2026-11-30** (Sunday) |
+| Window length | 183 days (6 months) |
+| Auditor kickoff (Type II fieldwork) | **2026-12-15** |
+| Report delivery target | **2027-02-28** |
+| Cut-off for observation changes | **2026-05-25** (one week freeze before window opens) |
+
+### What must be true on 2026-06-01
+
+- [ ] All in-scope controls documented in `soc2-type2-evidence-matrix.md`
+- [ ] Evidence-collection cadence live in `soc2-evidence-cadence.md`
+- [ ] Compliance automation platform selected (SCRUM-964 TRUST-06)
+- [ ] Pentest report on file from within 90 days (SCRUM-962 TRUST-04)
+- [ ] Cyber insurance policy bound (SCRUM-961 TRUST-03)
+- [ ] Access-review log has a minimum of one historical entry per quarter
+
+### How to apply
+
+- On the Monday of each calendar month, run through the cadence in
+  `docs/compliance/soc2-evidence-cadence.md`. Missed cadence = evidence
+  gap for the auditor — log each miss in the Bug Tracker spreadsheet.
+- At day 90 of the window, run a mid-window control self-assessment;
+  gaps surfaced here still have time to remediate without restarting
+  the window.
+- At day 180 (2026-11-30), freeze all control changes for 7 days, export
+  the evidence binder, and hand to auditor at kickoff.

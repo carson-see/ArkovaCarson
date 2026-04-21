@@ -30,7 +30,21 @@ import {
 import type { Env } from './env';
 import { fireAndForgetAudit, type McpAuditEntry } from './mcp-audit-log';
 import { enforceRateLimit } from './mcp-rate-limit';
+import {
+  enforceOriginAllowlist,
+  allowlistDecisionToResponse,
+} from './mcp-origin-allowlist';
+import { createAnomalyDetector, sendToSentry } from './mcp-anomaly-detection';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
+import {
+  MCP_TOOL_SCHEMAS,
+  validateToolArgs,
+  validationErrorToToolResult,
+  publicIdSchema,
+  contentHashSchema,
+  freeTextQuerySchema,
+  type McpToolName,
+} from './mcp-tool-schemas';
 
 /** Server identity */
 const SERVER_NAME = 'arkova-verification';
@@ -40,13 +54,10 @@ const SERVER_VERSION = '1.0.0';
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
 // ── Input validators ─────────────────────────────────────────────────────
-// Tightened after the 2026-04-20 MCP security audit — bare `z.string()` let
-// callers submit arbitrary shapes into tools that hand the value to
-// Supabase REST / RPC paths. SHA256_HEX_RE is re-used from mcp-tools.ts.
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const publicIdSchema = z.string().regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>').max(64);
-const contentHashSchema = z.string().regex(SHA256_HEX_RE, 'content_hash must be 64 hex chars').length(64);
-const freeTextQuerySchema = z.string().min(1).max(500);
+// MCP-SEC-07 / SCRUM-984: leaf validators live in mcp-tool-schemas.ts; the
+// inline shapes below reference them so the SDK's internal validation and
+// the centralized registry stay aligned. The registry is the canonical
+// per-tool boundary validator used by tests + MCP 2.x transports.
 
 /** Scrub tool handler errors before they reach the MCP client — raw
  *  `String(error)` was leaking stack traces + internal URLs. */
@@ -70,6 +81,7 @@ interface RequestTelemetryContext {
   apiKeyId: string | null;
   userId: string;
   clientIp: string | null;
+  anomaly: ReturnType<typeof createAnomalyDetector>;
 }
 
 /** Higher-order wrapper that gives every tool handler:
@@ -96,7 +108,34 @@ function withTelemetry(
     const argsJson = JSON.stringify(args ?? {});
     let outcome: McpAuditEntry['outcome'] = 'success';
 
-    const logOnce = (): void =>
+    // MCP-SEC-07 / SCRUM-984: belt-and-braces schema validation at the
+    // tool boundary. The SDK already validates against the inline Zod
+    // shape; the registry adds (1) strict-mode rejection of unknown
+    // fields, and (2) a scrubbed error envelope (no stack traces, no
+    // received values) on any validation miss.
+    if ((MCP_TOOL_SCHEMAS as Record<string, unknown>)[toolName]) {
+      const v = validateToolArgs(toolName as McpToolName, args);
+      if (!v.ok) {
+        outcome = 'tool_error';
+        const envelope = validationErrorToToolResult(v.error);
+        fireAndForgetAudit(
+          telemetry.env,
+          {
+            apiKeyId: telemetry.apiKeyId,
+            userId: telemetry.userId,
+            toolName,
+            argsJson,
+            outcome,
+            latencyMs: Date.now() - started,
+            clientIp: telemetry.clientIp,
+          },
+          telemetry.execCtx,
+        );
+        return envelope;
+      }
+    }
+
+    const logOnce = (): void => {
       fireAndForgetAudit(
         telemetry.env,
         {
@@ -110,6 +149,28 @@ function withTelemetry(
         },
         telemetry.execCtx,
       );
+      // MCP-SEC-09: feed anomaly detector + ship any fired alerts to Sentry
+      // fire-and-forget. We never block the MCP response on Sentry latency.
+      const alerts = telemetry.anomaly.ingest({
+        toolName,
+        apiKeyId: telemetry.apiKeyId,
+        userId: telemetry.userId,
+        clientIp: telemetry.clientIp,
+        outcome,
+        argsBytes: argsJson.length,
+        timestamp: Date.now(),
+      });
+      const dsn = telemetry.env.SENTRY_DSN;
+      if (dsn && alerts.length) {
+        for (const alert of alerts) {
+          telemetry.execCtx.waitUntil(
+            sendToSentry(dsn, alert).catch((err) =>
+              console.error('[mcp-anomaly] sentry send failed:', err),
+            ),
+          );
+        }
+      }
+    };
 
     const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
     if (!decision.ok) {
@@ -679,12 +740,34 @@ export async function handleMcpRequest(
     request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
     null;
 
+  // MCP-SEC-08: origin allowlist gate sits between auth + tool dispatch
+  // so a valid-but-untrusted-origin key still gets rejected / challenged.
+  // `cfBotVerdict` is injected by Cloudflare bot-management when enabled.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cfBotVerdict = ((request as any).cf?.botManagement?.verdict as string | undefined) ?? null;
+  const allowlistDecision = await enforceOriginAllowlist(env, auth.apiKeyId, {
+    clientIp,
+    origin: request.headers.get('Origin'),
+    cfBotVerdict,
+  });
+  if (!allowlistDecision.ok) {
+    return allowlistDecisionToResponse(allowlistDecision, corsOrigin);
+  }
+
+  // Each request instantiates a lightweight per-request detector. The
+  // rolling window is small enough that a request-scoped detector still
+  // catches patterns that span the tool calls inside a single MCP
+  // session; a cross-request detector would need a shared data store
+  // (tracked as follow-up — see MCP-SEC-09 doc).
+  const anomaly = createAnomalyDetector();
+
   const telemetry: RequestTelemetryContext = {
     env,
     execCtx: ctx,
     apiKeyId: auth.apiKeyId,
     userId: auth.userId,
     clientIp,
+    anomaly,
   };
 
   try {
