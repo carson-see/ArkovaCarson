@@ -34,8 +34,17 @@ import {
   enforceOriginAllowlist,
   allowlistDecisionToResponse,
 } from './mcp-origin-allowlist';
-import { createAnomalyDetector, sendToSentry } from './mcp-anomaly-detection';
+import {
+  createAnomalyDetector,
+  sendToSentry,
+  type AnomalyDetector,
+} from './mcp-anomaly-detection';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
+
+// Module-scope detector so heuristics span requests inside one CF
+// isolate. Request-scoped detectors could not observe cross-session
+// patterns like auth-failure burst or cross-tenant access.
+const anomalyDetector: AnomalyDetector = createAnomalyDetector();
 import {
   MCP_TOOL_SCHEMAS,
   validateToolArgs,
@@ -53,11 +62,9 @@ const SERVER_VERSION = '1.0.0';
 /** Map tool name → description from the single source of truth */
 const TOOL_DESC = Object.fromEntries(TOOL_DEFINITIONS.map((t) => [t.name, t.description]));
 
-// ── Input validators ─────────────────────────────────────────────────────
-// MCP-SEC-07 / SCRUM-984: leaf validators live in mcp-tool-schemas.ts; the
-// inline shapes below reference them so the SDK's internal validation and
-// the centralized registry stay aligned. The registry is the canonical
-// per-tool boundary validator used by tests + MCP 2.x transports.
+// Leaf validators live in mcp-tool-schemas.ts; the registry is the
+// canonical per-tool boundary validator. `withTelemetry` runs the
+// registry's strict validator before any handler fires.
 
 /** Scrub tool handler errors before they reach the MCP client — raw
  *  `String(error)` was leaking stack traces + internal URLs. */
@@ -81,7 +88,6 @@ interface RequestTelemetryContext {
   apiKeyId: string | null;
   userId: string;
   clientIp: string | null;
-  anomaly: ReturnType<typeof createAnomalyDetector>;
 }
 
 /** Higher-order wrapper that gives every tool handler:
@@ -108,11 +114,9 @@ function withTelemetry(
     const argsJson = JSON.stringify(args ?? {});
     let outcome: McpAuditEntry['outcome'] = 'success';
 
-    // MCP-SEC-07 / SCRUM-984: belt-and-braces schema validation at the
-    // tool boundary. The SDK already validates against the inline Zod
-    // shape; the registry adds (1) strict-mode rejection of unknown
-    // fields, and (2) a scrubbed error envelope (no stack traces, no
-    // received values) on any validation miss.
+    // Schema validation at the tool boundary. The SDK validates against
+    // the inline shape; the registry adds strict-mode unknown-field
+    // rejection and a scrubbed error envelope on any validation miss.
     if ((MCP_TOOL_SCHEMAS as Record<string, unknown>)[toolName]) {
       const v = validateToolArgs(toolName as McpToolName, args);
       if (!v.ok) {
@@ -149,9 +153,7 @@ function withTelemetry(
         },
         telemetry.execCtx,
       );
-      // MCP-SEC-09: feed anomaly detector + ship any fired alerts to Sentry
-      // fire-and-forget. We never block the MCP response on Sentry latency.
-      const alerts = telemetry.anomaly.ingest({
+      const alerts = anomalyDetector.ingest({
         toolName,
         apiKeyId: telemetry.apiKeyId,
         userId: telemetry.userId,
@@ -754,20 +756,12 @@ export async function handleMcpRequest(
     return allowlistDecisionToResponse(allowlistDecision, corsOrigin);
   }
 
-  // Each request instantiates a lightweight per-request detector. The
-  // rolling window is small enough that a request-scoped detector still
-  // catches patterns that span the tool calls inside a single MCP
-  // session; a cross-request detector would need a shared data store
-  // (tracked as follow-up — see MCP-SEC-09 doc).
-  const anomaly = createAnomalyDetector();
-
   const telemetry: RequestTelemetryContext = {
     env,
     execCtx: ctx,
     apiKeyId: auth.apiKeyId,
     userId: auth.userId,
     clientIp,
-    anomaly,
   };
 
   try {

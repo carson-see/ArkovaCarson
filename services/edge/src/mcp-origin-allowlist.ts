@@ -1,28 +1,15 @@
 /**
- * MCP IP / origin allowlist + Cloudflare bot-management gate
- * — MCP-SEC-08 / SCRUM-985.
+ * MCP IP / origin allowlist + Cloudflare bot-management gate.
  *
- * The MCP endpoint is open to the internet by default. API-key auth
- * protects it, but we want a pre-auth gate for service-to-service
- * callers so untrusted origins can't even reach the auth layer — this:
+ * Reads per-API-key allowlist entries from `MCP_ORIGIN_ALLOWLIST_KV`
+ * (keyed `allow:<api_key_id>`) and decides allow / challenge / reject.
+ * Sits between auth and tool dispatch so untrusted origins never reach
+ * the auth layer.
  *
- *   1. Reads per-API-key allowlist entries from the
- *      `MCP_ORIGIN_ALLOWLIST_KV` namespace.
- *   2. Checks the incoming request's origin / CIDR against the allowlist.
- *   3. Returns a decision telling the caller to either (a) accept, (b)
- *      challenge via Cloudflare Turnstile/bot-management, or (c) reject.
- *
- * Policy when the allowlist is EMPTY (no KV entry for the caller):
- *   - If `env.MCP_ORIGIN_ALLOWLIST_KV` is missing entirely → pass-through
- *     (dev / preview deploys do not ship a KV binding).
- *   - If the binding exists but no entry is set for this API key →
- *     default to `challenge` so the request is classified by Cloudflare's
- *     bot-management layer before it reaches the MCP server. Admins can
- *     opt an agent into skip-the-check by writing `{"mode":"allowlist",
- *     "cidrs":["0.0.0.0/0"]}` for that key.
- *
- * This module is pure — `computeAllowlistDecision()` is exported + tested
- * without the Workers runtime so CI can exercise every branch.
+ * When no KV binding or no entry exists for the key, we default to
+ * `challenge` — admins can opt a key out by writing a wildcard-CIDR
+ * entry. The module is pure; `computeAllowlistDecision()` is tested
+ * without the Workers runtime.
  */
 
 import type { Env } from './env';

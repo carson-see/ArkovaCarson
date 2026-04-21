@@ -15,14 +15,18 @@
  * fakes.
  */
 
-import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import {
+  computeContentHash,
+  delay,
+  isIngestionEnabled,
+  batchUpsertRecords,
+} from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   SIC_INVESTMENT_ADVICE,
   dedupeAdvisers,
-  edgarSubmissionsUrl,
   padCik,
   parseEdgarSubmission,
   type EdgarSubmissionEnvelope,
@@ -37,10 +41,10 @@ const DEFAULT_MAX_RECORDS = 2000;
 
 /** EDGAR company-tickers-exchange endpoint exposes SIC per firm. */
 const EDGAR_COMPANY_TICKERS_URL = 'https://www.sec.gov/files/company_tickers_exchange.json';
-
+const EDGAR_SUBMISSIONS_BASE = 'https://data.sec.gov/submissions';
 const SOURCE_NAME = 'edgar_form_adv';
 
-export interface AdviserInsertRow {
+export interface AdviserInsertRow extends Record<string, unknown> {
   source: string;
   source_id: string;
   source_url: string;
@@ -54,6 +58,11 @@ export interface EdgarFormAdvFetcherDeps {
   getFlag: () => Promise<boolean>;
   listInvestmentAdviserCiks: () => Promise<string[]>;
   fetchSubmissions: (cik: string) => Promise<EdgarSubmissionEnvelope | null>;
+  /**
+   * Returns `true` when the source_id is already on file. Kept on the
+   * deps interface so tests can stub; production path uses
+   * `batchUpsertRecords` which also ignores duplicates at the DB level.
+   */
   recordExists: (sourceId: string) => Promise<boolean>;
   insertRecord: (row: AdviserInsertRow) => Promise<void>;
 }
@@ -67,14 +76,6 @@ export interface FetchResult {
   skipped: number;
   errors: number;
   pagesProcessed: number;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function computeContentHash(content: string): string {
-  return createHash('sha256').update(content, 'utf-8').digest('hex');
 }
 
 function sourceIdFor(adviser: FormAdvAdviser): string {
@@ -239,7 +240,7 @@ export async function defaultListInvestmentAdviserCiks(): Promise<string[]> {
 }
 
 async function defaultFetchSubmissions(cik: string): Promise<EdgarSubmissionEnvelope | null> {
-  const url = `https://data.sec.gov/submissions/CIK${padCik(cik)}.json`;
+  const url = `${EDGAR_SUBMISSIONS_BASE}/CIK${padCik(cik)}.json`;
   await delay(EDGAR_RATE_LIMIT_MS);
   const envelope = await fetchJson<EdgarSubmissionEnvelope>(url);
   if (!envelope) return null;
@@ -251,27 +252,17 @@ async function defaultFetchSubmissions(cik: string): Promise<EdgarSubmissionEnve
  * tests — tests inject fakes directly.
  */
 export function makeSupabaseDeps(supabase: SupabaseClient): EdgarFormAdvFetcherDeps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = supabase as any;
   return {
-    getFlag: async () => {
-      const { data } = await supabase.rpc('get_flag', { p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION' });
-      return Boolean(data);
-    },
+    getFlag: () => isIngestionEnabled(supabase),
     listInvestmentAdviserCiks: defaultListInvestmentAdviserCiks,
     fetchSubmissions: defaultFetchSubmissions,
-    recordExists: async (sourceId) => {
-      const { data } = await db
-        .from('public_records')
-        .select('id')
-        .eq('source', SOURCE_NAME)
-        .eq('source_id', sourceId)
-        .limit(1);
-      return Array.isArray(data) && data.length > 0;
-    },
+    // Relies on unique `(source, source_id)` constraint — PG error
+    // 23505 on the upsert ignoreDuplicates path is the "already there"
+    // signal. No pre-check round-trip needed.
+    recordExists: async () => false,
     insertRecord: async (row) => {
-      const { error } = await db.from('public_records').insert(row);
-      if (error && error.code !== '23505') throw error;
+      const result = await batchUpsertRecords(supabase, [row]);
+      if (result.errors > 0) throw new Error('edgar form adv upsert failed');
     },
   };
 }
@@ -282,9 +273,4 @@ export async function fetchEdgarFormAdv(
   options: FetchOptions = {},
 ): Promise<FetchResult> {
   return fetchEdgarFormAdvAdvisers(makeSupabaseDeps(supabase), options);
-}
-
-/** Canonical landing-page URL for external linking (used in audit trails). */
-export function canonicalAdviserUrl(cik: string): string {
-  return edgarSubmissionsUrl(cik);
 }

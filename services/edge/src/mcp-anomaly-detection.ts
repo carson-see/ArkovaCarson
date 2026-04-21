@@ -1,31 +1,26 @@
 /**
- * MCP anomaly detection — MCP-SEC-09 / SCRUM-987.
+ * MCP anomaly detection — rolling-window heuristics over recent tool
+ * invocations. Every tool call from `withTelemetry` passes an
+ * `AnomalyEvent` through `ingest()`; when any heuristic fires we emit
+ * a Sentry event so exploitation attempts surface in minutes.
  *
- * Rolling-window heuristics over recent MCP tool invocations. Every
- * tool call from `withTelemetry` passes an `AnomalyEvent` through
- * `ingest()`; when any heuristic fires we emit a Sentry event (+
- * optional PagerDuty webhook) so exploitation attempts surface in
- * minutes instead of post-mortem.
+ * Heuristics:
+ *   1. `rapid_tool_cycling`   — N distinct tools in a window per key.
+ *   2. `auth_failure_burst`   — repeated auth failures per actor.
+ *   3. `cross_tenant_access`  — one key touching multiple orgs.
+ *   4. `oversized_args`       — single-call arg payload over budget.
+ *   5. `rate_limit_storm`     — ignored 429s per actor.
  *
- * Heuristics currently wired:
- *   1. **rapid_tool_cycling** — same API key hits > N distinct tools in
- *      a short window (cred-stuffer fingerprinting behaviour).
- *   2. **auth_failure_burst** — > N auth failures from the same IP/key
- *      within a window (credential brute force).
- *   3. **cross_tenant_access** — API key issues requests referencing
- *      public IDs from > N distinct orgs (potential enumeration).
- *   4. **oversized_args** — a single tool invocation exceeds the byte
- *      budget for that tool (possible prompt-injection payload).
- *   5. **rate_limit_storm** — same key gets throttled > N times in a
- *      window (tells us a bad actor is ignoring 429s).
+ * Dedupe: `${signal}:${key}:${minuteBucket}` is held for 5 minutes so
+ * one burst does not storm Sentry.
  *
- * Dedupe: a signal fingerprint (`${signal}:${key}:${minuteBucket}`) is
- * tracked for five minutes so a single burst doesn't trigger a page
- * storm in Sentry.
- *
- * Pure TypeScript — no Workers runtime APIs. Clock + Sentry emitter are
- * injected so tests are fully hermetic.
+ * Pure TypeScript — clock + Sentry sender are injected so tests are
+ * hermetic. The Workers runtime instantiates one detector at module
+ * scope in `mcp-server.ts` so heuristics can span requests inside a
+ * single isolate.
  */
+
+import type { McpOutcome } from './mcp-audit-log';
 
 export type AnomalySignal =
   | 'rapid_tool_cycling'
@@ -40,9 +35,7 @@ export interface AnomalyEvent {
   userId: string | null;
   orgId?: string | null;
   clientIp: string | null;
-  /** `success` | `tool_error` | `rate_limited` | `auth_failed`. */
-  outcome: 'success' | 'tool_error' | 'rate_limited' | 'auth_failed';
-  /** Size of the JSON-encoded tool arguments, in bytes. */
+  outcome: McpOutcome;
   argsBytes: number;
   /** Milliseconds since epoch. */
   timestamp: number;
@@ -57,29 +50,19 @@ export interface AnomalyAlert {
 }
 
 export interface AnomalyDetectorConfig {
-  /** Window length in ms for rolling heuristics. Default: 60s. */
+  /** Window length in ms. Default: 60s. */
   windowMs?: number;
-  /** Dedupe period in ms — same fingerprint won't re-alert within this. */
+  /** Dedupe period in ms. */
   dedupeMs?: number;
-  /** Rapid-cycle: distinct tools by one key in `windowMs` before we fire. */
   rapidToolCycleThreshold?: number;
-  /** Auth-failure-burst threshold per key/IP in `windowMs`. */
   authFailureThreshold?: number;
-  /** Cross-tenant: distinct org IDs per key before we fire. */
   crossTenantThreshold?: number;
-  /** Bytes above which a single invocation is considered oversized. */
   oversizedArgsThreshold?: number;
-  /** Rate-limited hits per key before we fire. */
   rateLimitStormThreshold?: number;
-  /** Emitter is injected so tests can capture alerts. */
   emit?: (alert: AnomalyAlert) => void;
-  /** Clock — defaults to `Date.now`. */
   now?: () => number;
 }
 
-interface StoredEvent extends AnomalyEvent {}
-
-/** Default thresholds — tuned for conservative alerting. */
 const DEFAULTS: Required<Omit<AnomalyDetectorConfig, 'emit' | 'now'>> = {
   windowMs: 60_000,
   dedupeMs: 5 * 60_000,
@@ -90,20 +73,19 @@ const DEFAULTS: Required<Omit<AnomalyDetectorConfig, 'emit' | 'now'>> = {
   rateLimitStormThreshold: 20,
 };
 
-/**
- * Create a detector. The returned object is the public surface used by
- * `withTelemetry` in mcp-server.ts.
- */
-export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): {
+const SENTRY_DSN_RE = /^https:\/\/([^@]+)@([^/]+)\/(\d+)$/;
+
+export interface AnomalyDetector {
   ingest: (event: AnomalyEvent) => AnomalyAlert[];
-  /** For tests + diagnostics. */
   snapshot: () => { events: number; dedupe: number };
-} {
+}
+
+export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): AnomalyDetector {
   const merged = { ...DEFAULTS, ...config };
   const now = config.now ?? (() => Date.now());
   const emit = config.emit;
 
-  const events: StoredEvent[] = [];
+  const events: AnomalyEvent[] = [];
   const dedupe = new Map<string, number>();
 
   function trimWindow(): void {
@@ -122,113 +104,105 @@ export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): {
     return true;
   }
 
-  function build(
-    signal: AnomalySignal,
-    keyPart: string,
-    severity: AnomalyAlert['severity'],
-    summary: string,
-    detail: Record<string, unknown>,
-  ): AnomalyAlert {
-    const bucket = Math.floor(now() / merged.windowMs);
-    return {
-      signal,
-      fingerprint: `${signal}:${keyPart}:${bucket}`,
-      severity,
-      summary,
-      detail,
-    };
-  }
-
-  function checkRapidCycling(ev: AnomalyEvent): AnomalyAlert | null {
-    if (!ev.apiKeyId) return null;
-    const windowStart = now() - merged.windowMs;
-    const tools = new Set<string>();
-    for (const e of events) {
-      if (e.timestamp < windowStart) continue;
-      if (e.apiKeyId === ev.apiKeyId) tools.add(e.toolName);
-    }
-    if (tools.size < merged.rapidToolCycleThreshold) return null;
-    return build('rapid_tool_cycling', ev.apiKeyId, 'warning',
-      `API key cycled across ${tools.size} tools in ${merged.windowMs / 1000}s`,
-      { apiKeyId: ev.apiKeyId, tools: [...tools] });
-  }
-
-  function checkAuthFailureBurst(ev: AnomalyEvent): AnomalyAlert | null {
-    if (ev.outcome !== 'auth_failed') return null;
-    const actor = ev.apiKeyId ?? ev.clientIp;
-    if (!actor) return null;
-    const windowStart = now() - merged.windowMs;
-    let count = 0;
-    for (const e of events) {
-      if (e.timestamp < windowStart) continue;
-      if (e.outcome !== 'auth_failed') continue;
-      if ((e.apiKeyId ?? e.clientIp) === actor) count++;
-    }
-    if (count < merged.authFailureThreshold) return null;
-    return build('auth_failure_burst', actor, 'error',
-      `${count} auth failures from ${actor} in ${merged.windowMs / 1000}s`,
-      { actor, count });
-  }
-
-  function checkCrossTenant(ev: AnomalyEvent): AnomalyAlert | null {
-    if (!ev.apiKeyId || !ev.orgId) return null;
-    const windowStart = now() - merged.windowMs;
-    const orgs = new Set<string>();
-    for (const e of events) {
-      if (e.timestamp < windowStart) continue;
-      if (e.apiKeyId === ev.apiKeyId && e.orgId) orgs.add(e.orgId);
-    }
-    if (orgs.size < merged.crossTenantThreshold) return null;
-    return build('cross_tenant_access', ev.apiKeyId, 'critical',
-      `API key referenced ${orgs.size} distinct orgs in ${merged.windowMs / 1000}s`,
-      { apiKeyId: ev.apiKeyId, orgs: [...orgs] });
-  }
-
-  function checkOversizedArgs(ev: AnomalyEvent): AnomalyAlert | null {
-    if (ev.argsBytes <= merged.oversizedArgsThreshold) return null;
-    const actor = ev.apiKeyId ?? ev.clientIp ?? 'unknown';
-    return build('oversized_args', `${actor}:${ev.toolName}`, 'warning',
-      `Tool ${ev.toolName} received ${ev.argsBytes}-byte payload`,
-      { tool: ev.toolName, bytes: ev.argsBytes, actor });
-  }
-
-  function checkRateLimitStorm(ev: AnomalyEvent): AnomalyAlert | null {
-    if (ev.outcome !== 'rate_limited') return null;
-    const actor = ev.apiKeyId ?? ev.clientIp;
-    if (!actor) return null;
-    const windowStart = now() - merged.windowMs;
-    let count = 0;
-    for (const e of events) {
-      if (e.timestamp < windowStart) continue;
-      if (e.outcome === 'rate_limited' && (e.apiKeyId ?? e.clientIp) === actor) count++;
-    }
-    if (count < merged.rateLimitStormThreshold) return null;
-    return build('rate_limit_storm', actor, 'warning',
-      `${count} rate-limit hits from ${actor} in ${merged.windowMs / 1000}s`,
-      { actor, count });
+  function bucket(): number {
+    return Math.floor(now() / merged.windowMs);
   }
 
   function ingest(event: AnomalyEvent): AnomalyAlert[] {
     events.push(event);
     trimWindow();
 
+    const keyActor = event.apiKeyId;
+    const ipActor = event.apiKeyId ?? event.clientIp;
+
+    // Single pass — each heuristic accumulates only what it needs.
+    const toolsByKey = new Set<string>();
+    const orgsByKey = new Set<string>();
+    let authFailuresForActor = 0;
+    let rateLimitsForActor = 0;
+
+    for (const e of events) {
+      if (keyActor && e.apiKeyId === keyActor) {
+        toolsByKey.add(e.toolName);
+        if (e.orgId) orgsByKey.add(e.orgId);
+      }
+      if (ipActor && (e.apiKeyId ?? e.clientIp) === ipActor) {
+        if (e.outcome === 'auth_failed') authFailuresForActor++;
+        if (e.outcome === 'rate_limited') rateLimitsForActor++;
+      }
+    }
+
     const fired: AnomalyAlert[] = [];
-    const candidates = [
-      checkRapidCycling(event),
-      checkAuthFailureBurst(event),
-      checkCrossTenant(event),
-      checkOversizedArgs(event),
-      checkRateLimitStorm(event),
-    ];
-    for (const alert of candidates) {
-      if (!alert) continue;
+    const b = bucket();
+
+    if (keyActor && toolsByKey.size >= merged.rapidToolCycleThreshold) {
+      fired.push({
+        signal: 'rapid_tool_cycling',
+        fingerprint: `rapid_tool_cycling:${keyActor}:${b}`,
+        severity: 'warning',
+        summary: `API key cycled across ${toolsByKey.size} tools in ${merged.windowMs / 1000}s`,
+        detail: { apiKeyId: keyActor, tools: [...toolsByKey] },
+      });
+    }
+
+    if (
+      event.outcome === 'auth_failed' &&
+      ipActor &&
+      authFailuresForActor >= merged.authFailureThreshold
+    ) {
+      fired.push({
+        signal: 'auth_failure_burst',
+        fingerprint: `auth_failure_burst:${ipActor}:${b}`,
+        severity: 'error',
+        summary: `${authFailuresForActor} auth failures from ${ipActor} in ${merged.windowMs / 1000}s`,
+        detail: { actor: ipActor, count: authFailuresForActor },
+      });
+    }
+
+    if (keyActor && event.orgId && orgsByKey.size >= merged.crossTenantThreshold) {
+      fired.push({
+        signal: 'cross_tenant_access',
+        fingerprint: `cross_tenant_access:${keyActor}:${b}`,
+        severity: 'critical',
+        summary: `API key referenced ${orgsByKey.size} distinct orgs in ${merged.windowMs / 1000}s`,
+        detail: { apiKeyId: keyActor, orgs: [...orgsByKey] },
+      });
+    }
+
+    if (event.argsBytes > merged.oversizedArgsThreshold) {
+      const actor = event.apiKeyId ?? event.clientIp ?? 'unknown';
+      fired.push({
+        signal: 'oversized_args',
+        fingerprint: `oversized_args:${actor}:${event.toolName}:${b}`,
+        severity: 'warning',
+        summary: `Tool ${event.toolName} received ${event.argsBytes}-byte payload`,
+        detail: { tool: event.toolName, bytes: event.argsBytes, actor },
+      });
+    }
+
+    if (
+      event.outcome === 'rate_limited' &&
+      ipActor &&
+      rateLimitsForActor >= merged.rateLimitStormThreshold
+    ) {
+      fired.push({
+        signal: 'rate_limit_storm',
+        fingerprint: `rate_limit_storm:${ipActor}:${b}`,
+        severity: 'warning',
+        summary: `${rateLimitsForActor} rate-limit hits from ${ipActor} in ${merged.windowMs / 1000}s`,
+        detail: { actor: ipActor, count: rateLimitsForActor },
+      });
+    }
+
+    const emitted: AnomalyAlert[] = [];
+    for (const alert of fired) {
       if (!shouldEmit(alert.fingerprint)) continue;
-      fired.push(alert);
+      emitted.push(alert);
       if (emit) {
         try { emit(alert); } catch (err) { console.error('[anomaly] emit failed:', err); }
       }
     }
-    return fired;
+    return emitted;
   }
 
   return {
@@ -238,17 +212,32 @@ export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): {
 }
 
 /**
- * Minimal Sentry "capture" wire — the edge worker can post to Sentry's
- * envelope endpoint directly without the full SDK. Use fire-and-forget
- * via `ctx.waitUntil` so a slow Sentry response never blocks the MCP
- * response.
+ * Scrub alert detail before shipping to Sentry. IPv4 addresses in
+ * `actor` fields and `apiKeyId` values are replaced with stable hashes
+ * so the event is still pivotable but no raw identifier is persisted.
+ * Constitution 1.4 applies to all Sentry events regardless of runtime.
  */
-export async function sendToSentry(
-  dsn: string,
-  alert: AnomalyAlert,
-): Promise<void> {
-  // DSN parsing: https://<key>@<host>/<project>
-  const match = dsn.match(/^https:\/\/([^@]+)@([^/]+)\/(\d+)$/);
+function scrubAlertDetail(detail: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(detail)) {
+    if (typeof v === 'string' && /^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
+      out[k] = '[IP_REDACTED]';
+    } else if (k === 'apiKeyId' && typeof v === 'string') {
+      out[k] = `key:${v.slice(0, 4)}…`;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Minimal Sentry envelope POST — the edge worker does not ship
+ * `@sentry/node` (worker-incompatible). Call via `ctx.waitUntil` so a
+ * slow Sentry response never blocks the MCP response.
+ */
+export async function sendToSentry(dsn: string, alert: AnomalyAlert): Promise<void> {
+  const match = dsn.match(SENTRY_DSN_RE);
   if (!match) throw new Error('invalid Sentry DSN');
   const [, key, host, projectId] = match;
 
@@ -257,7 +246,7 @@ export async function sendToSentry(
     level: alert.severity,
     logger: 'mcp-anomaly',
     tags: { signal: alert.signal, fingerprint: alert.fingerprint },
-    extra: alert.detail,
+    extra: scrubAlertDetail(alert.detail),
   };
 
   await fetch(`https://${host}/api/${projectId}/store/`, {
