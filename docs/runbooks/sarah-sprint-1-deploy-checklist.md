@@ -22,7 +22,7 @@ This doc is the single "what does the operator still need to do?" checklist. Wor
 | `MCP_RATE_LIMIT_KV` binding | ⚠️ Already provisioned (previous sprint) |
 | `MCP_ORIGIN_ALLOWLIST_KV` binding (SCRUM-985) | ❌ Needs provisioning |
 | `SENTRY_DSN` on edge worker (SCRUM-987) | ❌ Needs setting |
-| EDGAR Form ADV cron schedule (SCRUM-727) | ❌ Needs Cloud Scheduler entry |
+| EDGAR Form ADV cron schedule (SCRUM-727) | ✅ Done 2026-04-21 — `fetch-edgar-form-adv` scheduler job ENABLED, daily 03:00 UTC |
 | Drata SOW + connectors (SCRUM-964) | External — Carson's inbox |
 | Cyber-insurance broker RFP (SCRUM-961) | External — Carson's inbox |
 | CREST pentest RFP (SCRUM-962) | External — Carson's inbox |
@@ -30,6 +30,23 @@ This doc is the single "what does the operator still need to do?" checklist. Wor
 | CSA STAR L1 submission (SCRUM-960) | External — Carson's inbox |
 
 Pre-existing + external items are out of scope for this runbook; see the per-story execution runbooks in `docs/compliance/`.
+
+> **Important — edge deploy is NOT auto-triggered.** The Cloud Run
+> worker has a GH Actions workflow (`deploy-worker.yml`) that pushes
+> on every `main` merge. The Cloudflare edge worker does NOT. Every
+> time code in `services/edge/` lands on main, run `wrangler deploy`
+> by hand or the change does not go live. Follow-up to add a
+> `deploy-edge.yml` workflow is tracked as
+> [SCRUM-1032](https://arkova.atlassian.net/browse/SCRUM-1032).
+
+## 0. Deploy the edge worker (every merge)
+
+```bash
+cd services/edge
+npx wrangler deploy
+```
+
+**Verify after deploy:** `curl -I https://edge.arkova.ai/mcp/.well-known/oauth-protected-resource` should return 200 (no auth required for this path). If it 401s the deploy didn't take — re-check wrangler auth.
 
 ## 1. Provision `MCP_ORIGIN_ALLOWLIST_KV` — SCRUM-985
 
@@ -72,19 +89,23 @@ npx wrangler secret put SENTRY_DSN
 
 ## 3. Schedule the EDGAR Form ADV cron — SCRUM-727
 
-The `/cron/fetch-edgar-form-adv` endpoint is deployed via the Cloud Run worker (auto-deploy on merge). It needs a Cloud Scheduler entry to fire it nightly.
+**✅ DONE 2026-04-21.** Scheduler job `fetch-edgar-form-adv` created in
+`arkova1` / `us-central1`, ENABLED, runs daily at 03:00 UTC. Hits
+`/jobs/fetch-edgar-form-adv` (the worker mounts `cronRouter` at `/jobs`,
+not `/cron`). For reference / re-creation:
 
 ```bash
-gcloud scheduler jobs create http arkova-edgar-form-adv \
+gcloud scheduler jobs create http fetch-edgar-form-adv \
+  --location=us-central1 \
+  --project=arkova1 \
   --schedule="0 3 * * *" \
-  --uri="https://arkova-worker-<region>.run.app/cron/fetch-edgar-form-adv" \
+  --uri="https://arkova-worker-270018525501.us-central1.run.app/jobs/fetch-edgar-form-adv" \
   --http-method=POST \
-  --oidc-service-account-email=<scheduler-invoker@arkova1.iam.gserviceaccount.com> \
-  --oidc-token-audience="https://arkova-worker-<region>.run.app" \
+  --oidc-service-account-email="270018525501-compute@developer.gserviceaccount.com" \
+  --oidc-token-audience="https://arkova-worker-270018525501.us-central1.run.app" \
   --headers="Content-Type=application/json" \
   --message-body='{"maxRecords":2000}' \
-  --time-zone="UTC" \
-  --project=arkova1
+  --time-zone="UTC"
 ```
 
 **Verify:** tail Cloud Run logs the morning after the first firing:
