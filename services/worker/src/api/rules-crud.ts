@@ -4,7 +4,7 @@
  * GET  /api/rules               → list caller's org rules (newest first)
  * POST /api/rules               → create rule (enabled=false by default per ARK-110)
  * PATCH /api/rules/:id          → update rule (name/desc/enabled + optional config)
- * DELETE /api/rules/:id         → soft-delete rule
+ * DELETE /api/rules/:id         → hard-delete rule (no soft-delete column yet)
  *
  * Authz: every query is filtered by `caller_profile.org_id`; Supabase RLS on
  * `organization_rules` (migration 0224) enforces the same constraint in
@@ -48,7 +48,7 @@ async function emitRuleAudit(
   try {
     await db.from('audit_events').insert({
       event_type: eventType,
-      event_category: 'SYSTEM',
+      event_category: 'ORG',
       actor_id: params.actorId,
       org_id: params.orgId,
       target_type: 'organization_rule',

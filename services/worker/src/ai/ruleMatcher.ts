@@ -12,8 +12,9 @@
  * identical descriptions across orgs share a vector.
  *
  * CLAUDE.md §1.6: only PII-stripped metadata ever enters the embedder.
- * The caller is responsible for stripping — this module ASSUMES it's done
- * and emits a warning if it sees patterns that look like PII.
+ * The caller is responsible for stripping BEFORE calling `matchBySemantics`.
+ * This module does no PII detection of its own — upstream guarantees the
+ * input is safe to send to the embedder.
  */
 import crypto from 'node:crypto';
 import { cosineSimilarity as sharedCosineSimilarity } from './eval/semantic-similarity.js';
