@@ -34,9 +34,14 @@ function UsageBar({ used, limit }: { used: number; limit: number | 'unlimited' }
           <span>{formatNumber(used)} {API_KEY_LABELS.REQUESTS_USED}</span>
           <span className="text-muted-foreground">{API_KEY_LABELS.UNLIMITED_TIER}</span>
         </div>
-        <div className="h-2 rounded-full bg-muted overflow-hidden">
-          <div className="h-full rounded-full bg-primary/40 w-1/4" />
-        </div>
+        {used > 0 && (
+          <div className="h-2 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full rounded-full bg-primary/40"
+              style={{ width: '0%' }}
+            />
+          </div>
+        )}
       </div>
     );
   }

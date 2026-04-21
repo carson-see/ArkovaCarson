@@ -48,14 +48,10 @@ export function OnboardingRolePage() {
   const { loading, error, setRole, lookupOrgByEmail, joinOrgByDomain, clearError } = useOnboarding();
 
   // SCRUM-362: Disclaimer acceptance as first onboarding step
-  const [disclaimerAccepted, setDisclaimerAccepted] = useState(!!profile?.disclaimer_accepted_at);
-
-  // Sync disclaimer state when profile hydrates (profile is null on first render)
-  useEffect(() => {
-    if (profile?.disclaimer_accepted_at) {
-      setDisclaimerAccepted(true);
-    }
-  }, [profile?.disclaimer_accepted_at]);
+  // Derived from profile + local override (user can accept during this session)
+  const [localDisclaimerAccepted, setLocalDisclaimerAccepted] = useState(false);
+  const disclaimerAccepted = !!profile?.disclaimer_accepted_at || localDisclaimerAccepted;
+  const setDisclaimerAccepted = setLocalDisclaimerAccepted;
 
   const [orgMatch, setOrgMatch] = useState<{
     found: boolean;

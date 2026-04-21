@@ -68,7 +68,8 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   }, []);
 
   useEffect(() => {
-    fetchSubOrgs();
+    async function run() { await fetchSubOrgs(); }
+    void run();
   }, [fetchSubOrgs, orgId]);
 
   const handleApprove = useCallback(async (childOrgId: string) => {

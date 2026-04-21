@@ -72,11 +72,7 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<ReportType>('anchor_summary');
 
-  useEffect(() => {
-    fetchReports();
-  }, []);
-
-  async function fetchReports() {
+  const fetchReports = useCallback(async () => {
     setLoading(true);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase as any)
@@ -91,7 +87,11 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
       setReports(data || []);
     }
     setLoading(false);
-  }
+  }, []);
+
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   async function generateReport() {
     if (!hasReportsEntitlement) return;

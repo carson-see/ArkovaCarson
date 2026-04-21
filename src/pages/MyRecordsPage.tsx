@@ -77,6 +77,7 @@ export function MyRecordsPage() {
   // `?action=upload&credential_type=...`. URL params are scrubbed post-mount
   // so a page refresh doesn't re-open the dialog.
   const initialCredentialType = searchParams.get('credential_type') ?? undefined;
+  const initialJurisdiction = searchParams.get('jurisdiction') ?? undefined;
   const shouldAutoOpenUpload = searchParams.get('action') === 'upload';
   const [secureDialogOpen, setSecureDialogOpen] = useState(shouldAutoOpenUpload);
   const [searchQuery, setSearchQuery] = useState('');
@@ -325,6 +326,7 @@ export function MyRecordsPage() {
         onOpenChange={setSecureDialogOpen}
         onSuccess={handleSecureSuccess}
         initialCredentialType={initialCredentialType}
+        initialJurisdiction={initialJurisdiction}
       />
     </AppShell>
   );

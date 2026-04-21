@@ -31,7 +31,7 @@ export function useIdleTimeout({
   onTimeout,
   warningMinutes = 2,
 }: UseIdleTimeoutOptions): UseIdleTimeoutResult {
-  const lastActivityRef = useRef<number>(Date.now());
+  const lastActivityRef = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [isWarning, setIsWarning] = useState(false);
   const [minutesRemaining, setMinutesRemaining] = useState(timeoutMinutes);
@@ -49,6 +49,9 @@ export function useIdleTimeout({
   // Activity event listeners
   useEffect(() => {
     if (!isActive) return;
+
+    // Initialize on mount (avoids calling Date.now() during render)
+    lastActivityRef.current = Date.now();
 
     function onActivity() {
       lastActivityRef.current = Date.now();

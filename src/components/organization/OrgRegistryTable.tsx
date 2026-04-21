@@ -195,13 +195,17 @@ export function OrgRegistryTable({
   }, [orgId, currentPage, statusFilter, searchQuery, dateFrom, dateTo]);
 
   useEffect(() => {
-    fetchAnchors();
+    async function run() { await fetchAnchors(); }
+    void run();
   }, [fetchAnchors]);
 
   // Reset to page 1 when filters change
   useEffect(() => {
-    setCurrentPage(1);
-    setSelectedIds(new Set());
+    async function reset() {
+      setCurrentPage(1);
+      setSelectedIds(new Set());
+    }
+    void reset();
   }, [statusFilter, searchQuery, dateFrom, dateTo]);
 
   // Bulk selection handlers

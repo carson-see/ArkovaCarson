@@ -34,11 +34,14 @@ function useFeeHistory(feeRates: MempoolFeeRates | null) {
 
   useEffect(() => {
     if (feeRates) {
-      setHistory((prev) => {
-        const next = [...prev, feeRates.hour];
-        // Keep last 60 samples (60 min at 1/min refresh)
-        return next.slice(-60);
-      });
+      async function update() {
+        setHistory((prev) => {
+          const next = [...prev, feeRates!.hour];
+          // Keep last 60 samples (60 min at 1/min refresh)
+          return next.slice(-60);
+        });
+      }
+      void update();
     }
   }, [feeRates]);
 

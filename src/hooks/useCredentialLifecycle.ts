@@ -43,125 +43,133 @@ interface UseCredentialLifecycleResult {
 
 const EXPIRY_WARNING_DAYS = 30;
 
-export function useCredentialLifecycle(input: LifecycleInput | null): UseCredentialLifecycleResult {
-  return useMemo(() => {
-    if (!input) {
-      return {
-        events: [],
-        currentStatus: 'PENDING' as LifecycleStatus,
-        isActive: false,
-        isTerminal: false,
-        isExpiringSoon: false,
-        daysUntilExpiry: null,
-        progressPercent: 0,
-      };
-    }
+/**
+ * Pure module-level computation of lifecycle state.
+ * Accepts `now` as a parameter so the hook body never calls Date.now() directly.
+ */
+function computeLifecycle(input: LifecycleInput | null, now: number): UseCredentialLifecycleResult {
+  if (!input) {
+    return {
+      events: [],
+      currentStatus: 'PENDING' as LifecycleStatus,
+      isActive: false,
+      isTerminal: false,
+      isExpiringSoon: false,
+      daysUntilExpiry: null,
+      progressPercent: 0,
+    };
+  }
 
-    const events: LifecycleEvent[] = [];
-    const { status, createdAt, issuedAt, securedAt, revokedAt, revocationReason, expiresAt } = input;
+  const events: LifecycleEvent[] = [];
+  const { status, createdAt, issuedAt, securedAt, revokedAt, revocationReason, expiresAt } = input;
 
-    // Created — always present
+  // Created — always present
+  events.push({
+    type: 'CREATED',
+    timestamp: createdAt,
+    label: 'Created',
+    completed: true,
+    current: false,
+    terminal: false,
+  });
+
+  // Issued — only if issued_at exists
+  if (issuedAt) {
     events.push({
-      type: 'CREATED',
-      timestamp: createdAt,
-      label: 'Created',
+      type: 'ISSUED',
+      timestamp: issuedAt,
+      label: 'Issued',
       completed: true,
       current: false,
       terminal: false,
     });
+  }
 
-    // Issued — only if issued_at exists
-    if (issuedAt) {
-      events.push({
-        type: 'ISSUED',
-        timestamp: issuedAt,
-        label: 'Issued',
-        completed: true,
-        current: false,
-        terminal: false,
-      });
-    }
+  // Secured
+  if (status === 'PENDING') {
+    events.push({
+      type: 'SECURED',
+      timestamp: null,
+      label: 'Securing...',
+      completed: false,
+      current: true,
+      terminal: false,
+    });
+  } else {
+    events.push({
+      type: 'SECURED',
+      timestamp: securedAt ?? null,
+      label: 'Secured',
+      completed: true,
+      current: status === 'SECURED',
+      terminal: false,
+    });
+  }
 
-    // Secured
-    if (status === 'PENDING') {
-      events.push({
-        type: 'SECURED',
-        timestamp: null,
-        label: 'Securing...',
-        completed: false,
-        current: true,
-        terminal: false,
-      });
-    } else {
-      events.push({
-        type: 'SECURED',
-        timestamp: securedAt ?? null,
-        label: 'Secured',
-        completed: true,
-        current: status === 'SECURED',
-        terminal: false,
-      });
-    }
+  // Revoked
+  if (status === 'REVOKED') {
+    events.push({
+      type: 'REVOKED',
+      timestamp: revokedAt ?? null,
+      label: 'Revoked',
+      completed: true,
+      current: false,
+      terminal: true,
+      detail: revocationReason ?? undefined,
+    });
+  }
 
-    // Revoked
-    if (status === 'REVOKED') {
-      events.push({
-        type: 'REVOKED',
-        timestamp: revokedAt ?? null,
-        label: 'Revoked',
-        completed: true,
-        current: false,
-        terminal: true,
-        detail: revocationReason ?? undefined,
-      });
-    }
+  // Expired
+  if (status === 'EXPIRED') {
+    events.push({
+      type: 'EXPIRED',
+      timestamp: expiresAt ?? null,
+      label: 'Expired',
+      completed: true,
+      current: false,
+      terminal: true,
+    });
+  }
 
-    // Expired
-    if (status === 'EXPIRED') {
-      events.push({
-        type: 'EXPIRED',
-        timestamp: expiresAt ?? null,
-        label: 'Expired',
-        completed: true,
-        current: false,
-        terminal: true,
-      });
-    }
+  // Upcoming expiry for active records
+  if (expiresAt && status !== 'EXPIRED' && status !== 'REVOKED') {
+    events.push({
+      type: 'EXPIRES',
+      timestamp: expiresAt,
+      label: 'Expires',
+      completed: false,
+      current: false,
+      terminal: false,
+    });
+  }
 
-    // Upcoming expiry for active records
-    if (expiresAt && status !== 'EXPIRED' && status !== 'REVOKED') {
-      events.push({
-        type: 'EXPIRES',
-        timestamp: expiresAt,
-        label: 'Expires',
-        completed: false,
-        current: false,
-        terminal: false,
-      });
-    }
+  // Compute derived state
+  const isTerminal = status === 'REVOKED' || status === 'EXPIRED';
+  const isActive = status === 'SECURED';
 
-    // Compute derived state
-    const isTerminal = status === 'REVOKED' || status === 'EXPIRED';
-    const isActive = status === 'SECURED';
+  let daysUntilExpiry: number | null = null;
+  let isExpiringSoon = false;
+  if (expiresAt && isActive) {
+    const msUntilExpiry = new Date(expiresAt).getTime() - now;
+    daysUntilExpiry = Math.ceil(msUntilExpiry / (1000 * 60 * 60 * 24));
+    isExpiringSoon = daysUntilExpiry > 0 && daysUntilExpiry <= EXPIRY_WARNING_DAYS;
+  }
 
-    let daysUntilExpiry: number | null = null;
-    let isExpiringSoon = false;
-    if (expiresAt && isActive) {
-      const msUntilExpiry = new Date(expiresAt).getTime() - Date.now();
-      daysUntilExpiry = Math.ceil(msUntilExpiry / (1000 * 60 * 60 * 24));
-      isExpiringSoon = daysUntilExpiry > 0 && daysUntilExpiry <= EXPIRY_WARNING_DAYS;
-    }
+  const progressPercent = status === 'PENDING' ? 25 : status === 'SECURED' ? 75 : 100;
 
-    const progressPercent = status === 'PENDING' ? 25 : status === 'SECURED' ? 75 : 100;
+  return {
+    events,
+    currentStatus: status,
+    isActive,
+    isTerminal,
+    isExpiringSoon,
+    daysUntilExpiry,
+    progressPercent,
+  };
+}
 
-    return {
-      events,
-      currentStatus: status,
-      isActive,
-      isTerminal,
-      isExpiringSoon,
-      daysUntilExpiry,
-      progressPercent,
-    };
-  }, [input]);
+export function useCredentialLifecycle(input: LifecycleInput | null): UseCredentialLifecycleResult {
+  // eslint-disable-next-line react-hooks/purity -- Date.now() is intentionally read once per render for expiry computation
+  const now = Date.now();
+  return useMemo(() => computeLifecycle(input, now), [input, now]);
 }

@@ -90,11 +90,13 @@ export function PublicPortfolioPage() {
 
   useEffect(() => {
     if (!portfolioId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- guard: no portfolio ID means immediate not-found
       setState('not_found');
       return;
     }
 
     async function load() {
+       
       setState('loading');
 
       // Fetch portfolio

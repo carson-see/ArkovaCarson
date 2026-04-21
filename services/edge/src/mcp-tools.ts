@@ -79,13 +79,14 @@ export interface VerifyBatchInput {
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
+  userId: string;
 }
 
 // ---------------------------------------------------------------------------
 // Shared Fetch Helper
 // ---------------------------------------------------------------------------
 
-function supabaseFetch(
+export function supabaseFetch(
   config: SupabaseConfig,
   path: string,
   init?: RequestInit,
@@ -424,6 +425,33 @@ export async function handleAnchorDocument(
   }
 
   try {
+    // MCP-SEC-03: Use scoped RPC instead of direct service-role INSERT.
+    // Falls back to direct INSERT if the RPC doesn't exist yet (pre-0223).
+    const rpcResponse = await supabaseFetch(config, '/rest/v1/rpc/mcp_anchor_document', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_user_id: config.userId,
+        p_content_hash: input.content_hash,
+        p_record_type: input.record_type ?? 'document',
+        p_source: input.source ?? 'mcp',
+        p_title: input.title ?? null,
+        p_source_url: input.source_url ?? null,
+      }),
+    });
+
+    if (rpcResponse.ok) {
+      const records = await rpcResponse.json() as Array<Record<string, unknown>>;
+      const record = Array.isArray(records) ? records[0] : records;
+      return textResult({
+        status: 'submitted',
+        record_id: record?.id,
+        public_id: record?.public_id,
+        content_hash: input.content_hash,
+        message: 'Document fingerprint submitted for batch anchoring. Check status with verify_document.',
+      });
+    }
+
+    // Fallback: direct INSERT (pre-migration-0223 compat)
     const response = await supabaseFetch(config, '/rest/v1/public_records', {
       method: 'POST',
       headers: { Prefer: 'return=representation' },

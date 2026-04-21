@@ -7,7 +7,7 @@
  * Route: /organization/member/:memberId
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Mail, Calendar, User, FileText, Loader2 } from 'lucide-react';
@@ -84,45 +84,56 @@ export function MemberDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchMemberData = useCallback(async () => {
+  useEffect(() => {
     if (!memberId || !profile?.org_id) return;
 
-    setLoading(true);
-    setError(null);
+    const currentMemberId = memberId;
+    const orgId = profile.org_id;
 
-    // Fetch member profile — must be in same org
-    const { data: memberData, error: memberError } = await supabase
-      .from('profiles')
-      .select('id, email, full_name, avatar_url, role, created_at, org_id')
-      .eq('id', memberId)
-      .eq('org_id', profile.org_id)
-      .single();
+    let cancelled = false;
 
-    if (memberError || !memberData) {
-      setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
+    async function fetchMemberData() {
+      setLoading(true);
+      setError(null);
+
+      // Fetch member profile — must be in same org
+      const { data: memberData, error: memberError } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, avatar_url, role, created_at, org_id')
+        .eq('id', currentMemberId)
+        .eq('org_id', orgId)
+        .single();
+
+      if (cancelled) return;
+
+      if (memberError || !memberData) {
+        setError(MEMBER_DETAIL_LABELS.MEMBER_NOT_FOUND);
+        setLoading(false);
+        return;
+      }
+
+      setMember(memberData as MemberProfile);
+
+      // Fetch anchors created by this member within the org
+      const { data: anchorData } = await supabase
+        .from('anchors')
+        .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height')
+        .eq('user_id', currentMemberId)
+        .eq('org_id', orgId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(200);
+
+      if (cancelled) return;
+
+      setAnchors((anchorData ?? []) as typeof anchors);
       setLoading(false);
-      return;
     }
 
-    setMember(memberData as MemberProfile);
-
-    // Fetch anchors created by this member within the org
-    const { data: anchorData } = await supabase
-      .from('anchors')
-      .select('id, filename, fingerprint, status, credential_type, label, public_id, file_size, created_at, updated_at, chain_timestamp, chain_tx_id, chain_block_height')
-      .eq('user_id', memberId)
-      .eq('org_id', profile.org_id)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(200);
-
-    setAnchors((anchorData ?? []) as typeof anchors);
-    setLoading(false);
-  }, [memberId, profile?.org_id]);
-
-  useEffect(() => {
     fetchMemberData();
-  }, [fetchMemberData]);
+
+    return () => { cancelled = true; };
+  }, [memberId, profile?.org_id]);
 
   const handleSignOut = async () => {
     await signOut();

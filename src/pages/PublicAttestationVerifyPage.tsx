@@ -84,7 +84,9 @@ export function PublicAttestationVerifyPage() {
   useEffect(() => {
     if (!publicId) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loading/error reset before async fetch
     setLoading(true);
+     
     setError(null);
 
     fetch(`${WORKER_URL}/api/v1/attestations/${encodeURIComponent(publicId)}`)
