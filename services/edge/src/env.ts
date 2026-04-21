@@ -15,6 +15,14 @@ export interface Env {
   // Workers AI (INFRA-05)
   ARKOVA_AI: Ai;
 
+  // MCP rate limiting (SCRUM-919 MCP-SEC-01) — OPTIONAL binding.
+  // When present, MCP tool invocations are counted per (api_key_id, tool_name)
+  // in one-minute buckets. When missing (e.g. preview deploys, local dev),
+  // the rate limiter logs a one-time notice + passes every request through.
+  // Provision with: `wrangler kv:namespace create MCP_RATE_LIMIT_KV` then
+  // add the `kv_namespaces` entry to wrangler.toml.
+  MCP_RATE_LIMIT_KV?: KVNamespace;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;
