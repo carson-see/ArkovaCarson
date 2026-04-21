@@ -40,6 +40,7 @@ import {
   sendToSentry,
   type AnomalyDetector,
 } from './mcp-anomaly-detection';
+import { isMcpEnabled, mcpDisabledResponse } from './mcp-kill-switch';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 import { signEnvelope } from './mcp-hmac';
 
@@ -699,13 +700,14 @@ export async function handleMcpRequest(
   const url = new URL(request.url);
   const corsOrigin = getCorsOrigin(request, env);
 
-  // OAuth Protected Resource Metadata
+  // OAuth Protected Resource Metadata — always available so clients can
+  // still discover how to re-auth after the kill switch flips back.
   if (url.pathname === '/mcp/.well-known/oauth-protected-resource') {
     const baseUrl = `${url.protocol}//${url.host}`;
     return handleProtectedResourceMetadata(baseUrl);
   }
 
-  // CORS preflight
+  // CORS preflight — always allowed.
   if (request.method === 'OPTIONS') {
     return new Response(null, {
       status: 204,
@@ -716,6 +718,13 @@ export async function handleMcpRequest(
         'Access-Control-Max-Age': '86400',
       },
     });
+  }
+
+  // Kill-switch — MCP-SEC-10. Short-circuits the surface when the
+  // switchboard flag `ENABLE_MCP_SERVER` flips to false. 30s isolate
+  // cache keeps propagation inside the 60s SLA.
+  if (!(await isMcpEnabled({ env }))) {
+    return mcpDisabledResponse(corsOrigin);
   }
 
   const earlyClientIp =
