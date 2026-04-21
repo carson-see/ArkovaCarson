@@ -151,3 +151,37 @@ ENABLE_CONSTRAINED_DECODING=false   # NVI-16: vLLM JSON-schema whitelist for cit
 ENABLE_SYNTHETIC_DATA=false
 TRAINING_DATA_OUTPUT_PATH=
 ```
+
+## CIBA — Rules Engine + Security + Scale (worker only)
+
+Added by the CIBA v1.0 release (SCRUM-1010). All flags default to the safe value for production.
+
+```bash
+# SEC-01 — uniform webhook HMAC (SCRUM-1025)
+# Setting false in NODE_ENV=production causes the middleware to 500 the request
+# (fail-loud). dev/test can flip false to skip verification.
+ENABLE_WEBHOOK_HMAC=true
+
+# ARK-106 — rules engine execution worker (SCRUM-1018)
+# When false, the /jobs/rules-engine cron no-ops. Keep true unless draining.
+ENABLE_RULES_ENGINE=true
+
+# ARK-107 — scheduled queue reminders (SCRUM-1019)
+# When false, the /jobs/queue-reminders cron no-ops.
+ENABLE_QUEUE_REMINDERS=true
+
+# ARK-103 — treasury low-balance alerting (SCRUM-1013)
+# When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).
+ENABLE_TREASURY_ALERTS=true
+
+# ARK-103 — treasury alert dispatch targets
+# If either is missing the dispatcher logs a warning and skips that channel —
+# partial-configuration is allowed.
+SLACK_TREASURY_WEBHOOK_URL=          # Slack incoming webhook URL
+TREASURY_ALERT_EMAIL=                # single recipient address
+
+# ARK-103 — USD threshold below which the low-balance alert fires.
+# Default 50. Read by both cron dispatcher + /api/treasury/health endpoint.
+TREASURY_LOW_BALANCE_USD=50
+```
+

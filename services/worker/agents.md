@@ -1,9 +1,46 @@
 # agents.md — services/worker
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-21_
 
 ## What This Folder Contains
 
-Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, and cron job scheduling. Uses Supabase service_role key — never the anon key.
+Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## CIBA v1.0 additions (2026-04-21, PR #474)
+
+New modules this release:
+
+- **`api/queue-resolution.ts`** (ARK-101) — `GET /api/queue/pending`, `POST /api/queue/resolve`. Wraps `list_pending_resolution_anchors` + `resolve_anchor_queue` RPCs; Zod validation; RPC-error → HTTP status mapping in `mapRpcErrorToStatus` (re-used by `anchor-lineage.ts`).
+- **`api/anchor-lineage.ts`** (ARK-104) — `GET /api/anchor/:id/lineage`, `POST /api/anchor/:id/supersede`. Returns [root..head] + `head_public_id` from `is_current` flag.
+- **`api/rules-crud.ts`** (ARK-105/108) — `GET/POST/PATCH/DELETE /api/rules`. Cross-tenant writes guarded by explicit `.eq('org_id', callerOrg)` since the service_role client bypasses RLS. Fire-and-forget `emitRuleAudit` on every lifecycle event.
+- **`api/rules-draft.ts`** (ARK-110) — `buildDraftRule` pure fn + `makeHandleDraftRule` factory. Forces `enabled=false` + caller's `org_id` regardless of provider output. Blocks `FORWARD_TO_URL` outright. `RuleDraftProvider` interface is injectable — Gemini wiring is a follow-up.
+- **`jobs/treasury-alert.ts`** + **`jobs/treasury-alert-dispatcher.ts`** (ARK-103) — pure `decideTreasuryAlert` + Slack (AbortSignal.timeout 5s, redirect:manual) + email. Fail-closed on oracle outage.
+- **`jobs/rules-engine.ts`** (ARK-106) — claims pending rule events, bulk-fetches rules once per tick (`in('org_id', orgIds)` — NOT per-org round-trips), inserts executions with `ON CONFLICT DO NOTHING`.
+- **`jobs/queue-reminders.ts`** (ARK-107) — 15-min cron. `cronMatches` parses 5-field cron with DST-aware `Intl.DateTimeFormat` timezone handling.
+- **`jobs/batch-anchor.audit.test.ts`** (ARK-102) — pins triggerA (size) / triggerB (age) / triggerC (fee ceiling) decision points as pure helpers.
+- **`rules/schemas.ts`, `rules/evaluator.ts`, `rules/sanitizer.ts`** — Zod configs for 7 trigger types + 6 action types; pure evaluator covering all of them; SEC-02 prompt-injection sanitizer with 20-entry adversarial corpus.
+- **`middleware/webhookHmac.ts`** (SEC-01) — uniform webhook HMAC with per-tenant secret, replay window, 1 MB body cap, `redirect: 'manual'` + constant-time compare. Body-size gate runs BEFORE secret fetch.
+- **`middleware/perOrgRateLimit.ts`** (SCALE-01) — `requireOrgQuota({ kind, getOrgId })`. Fail-closed on DB error. Tier table pinned: FREE/PAID/ENTERPRISE.
+- **`integrations/connectors/schemas.ts`** + **`adapters.ts`** (INT-10/12) — Zod webhook payload schemas + pure vendor→canonical adapters for DocuSign, Adobe Sign, Google Drive, SharePoint/OneDrive, Veremark, Checkr.
+- **`ai/ruleMatcher.ts`** (ARK-109) — `matchBySemantics` with parallel cache reads + fire-and-forget cache writes. Reuses project-wide `cosineSimilarity` from `ai/eval/semantic-similarity.ts`. **PII strip is caller's responsibility — this module does no detection.**
+
+### Treasury access policy (updated 2026-04-21)
+
+Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-admin-only**. No carve-out for org admins. The health endpoint returns a narrower shape (USD + threshold + below flag only) but the access policy is identical.
+
+### New env vars (see `docs/reference/ENV.md`)
+
+`ENABLE_WEBHOOK_HMAC`, `ENABLE_RULES_ENGINE`, `ENABLE_QUEUE_REMINDERS`, `ENABLE_TREASURY_ALERTS`, `SLACK_TREASURY_WEBHOOK_URL`, `TREASURY_ALERT_EMAIL`, `TREASURY_LOW_BALANCE_USD`.
+
+### DO / DON'T for this folder
+
+- **DO** use `callRpc<T>(db, ...)` from `utils/rpc.ts` instead of `(db.rpc as any)(...)`.
+- **DO** use `extractAuthUserId` + pass `userId` into handlers that need org scoping.
+- **DO** fire-and-forget audit emits (`void emitRuleAudit(...)`) — never gate response latency on audit DB inserts.
+- **DO** use `AbortSignal.timeout(ms)` for outbound `fetch` instead of manual `AbortController` + `setTimeout`.
+- **DO** scope every write by `.eq('org_id', callerOrg)` on tables where the service_role client is used — RLS is bypassed.
+- **DON'T** import `generateFingerprint` here — it's client-side only (CLAUDE.md §1.6).
+- **DON'T** use `(db as any)` when the table is in `database.types.ts`; if you need the cast it means run `gen:types`.
+- **DON'T** touch Cloud Run deployment config — human-only per `feedback_worker_hands_off`.
 
 ## Recent Changes
 

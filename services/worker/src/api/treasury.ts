@@ -1,11 +1,13 @@
 /**
- * Treasury Status API — Arkova Internal Only
+ * Treasury APIs — Arkova Platform Admin Only
  *
- * GET /api/treasury/status
+ * GET /api/treasury/status — wallet + UTXOs + fees + anchor stats
+ * GET /api/treasury/health — USD aggregate + below-threshold flag
  *
- * Returns treasury wallet balance, UTXO count, fee estimates, and network info.
- * Gated behind platform admin email whitelist — never accessible to third-party
- * org admins or external users.
+ * Both endpoints are gated behind the platform admin whitelist — never
+ * accessible to org admins or external users. No exceptions. The
+ * handleTreasuryHealth endpoint returns a narrower shape (USD only, no
+ * wallet address) but the access policy is identical.
  *
  * Constitution refs:
  *   - 1.4: Treasury keys server-side only, never logged
@@ -181,9 +183,17 @@ const DEFAULT_TREASURY_THRESHOLD_USD = 50;
 const SATS_PER_BTC = 100_000_000;
 
 export async function handleTreasuryHealth(
+  userId: string,
   _req: import('express').Request,
   res: import('express').Response,
 ): Promise<void> {
+  // Same platform-admin gate as handleTreasuryStatus — USD aggregates are
+  // still treasury state and only Arkova operators should see them.
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
   try {
     // Parallel reads: cache + alert state. Matches the pattern in
     // services/worker/src/jobs/treasury-alert.ts.

@@ -221,14 +221,14 @@ adminRouter.post('/anchor/:id/supersede', async (req, res) => {
   }
 });
 
-// ─── ARK-103 (SCRUM-1013): Treasury health (public to authed users) ───
-// Unlike /treasury/status (platform admin only), /treasury/health returns
-// ONLY USD + threshold + below flag — safe for org admins to see.
+// ─── ARK-103 (SCRUM-1013): Treasury health — platform admin only ───
+// Matches /treasury/status access policy: no carve-out for org admins.
+// USD aggregates are still treasury state; only Arkova operators see them.
 adminRouter.get('/treasury/health', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleTreasuryHealth(req, res);
+    await handleTreasuryHealth(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Treasury health request failed');
     res.status(500).json({ error: 'Internal server error' });
