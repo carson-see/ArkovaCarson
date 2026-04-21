@@ -18,9 +18,8 @@ LEFT JOIN extraction_manifests em ON em.anchor_id = a.id
 LEFT JOIN ai_usage_events aue
   ON aue.fingerprint = a.fingerprint
   AND aue.event_type = 'extraction'
-WHERE
-  em.confidence_scores IS NOT NULL
-  OR aue.confidence IS NOT NULL;
+WHERE em.confidence_scores IS NOT NULL
+   OR aue.confidence IS NOT NULL;
 
 COMMENT ON VIEW calibration_features IS
   'Flattened view for the weekly calibration-refit cron (GME7.3). '

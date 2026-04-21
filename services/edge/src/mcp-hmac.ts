@@ -7,26 +7,33 @@
  * Uses WebCrypto API (available in Cloudflare Workers natively).
  */
 
+import { toHex, timingSafeEqual } from './mcp-crypto-utils';
+
 const ALG = 'HMAC';
 const HASH = 'SHA-256';
 const KEY_ID = 'mcp-signing-v1';
 
-function toHex(buf: ArrayBuffer): string {
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-}
+const keyCache = new Map<string, CryptoKey>();
 
-async function hmacSha256(key: string, message: string): Promise<string> {
+async function getOrImportKey(key: string): Promise<CryptoKey> {
+  const cached = keyCache.get(key);
+  if (cached) return cached;
   const enc = new TextEncoder();
-  const cryptoKey = await globalThis.crypto.subtle.importKey(
+  const imported = await crypto.subtle.importKey(
     'raw',
     enc.encode(key),
     { name: ALG, hash: HASH },
     false,
     ['sign'],
   );
-  const sig = await globalThis.crypto.subtle.sign(ALG, cryptoKey, enc.encode(message));
+  keyCache.set(key, imported);
+  return imported;
+}
+
+async function hmacSha256(key: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await getOrImportKey(key);
+  const sig = await crypto.subtle.sign(ALG, cryptoKey, enc.encode(message));
   return toHex(sig);
 }
 
@@ -52,5 +59,5 @@ export async function verifyEnvelope<T>(
 ): Promise<boolean> {
   const canonical = JSON.stringify(envelope.payload);
   const expected = await hmacSha256(signingKey, canonical);
-  return expected === envelope.signature;
+  return timingSafeEqual(expected, envelope.signature);
 }

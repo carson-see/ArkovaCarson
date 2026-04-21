@@ -58,8 +58,7 @@ function safeErrorText(err: unknown, context: string): string {
 }
 
 /** Alias for tool config — userId now lives on SupabaseConfig (MCP-SEC-03). */
-interface ScopedConfig extends SupabaseConfig {
-}
+type ScopedConfig = SupabaseConfig;
 
 /** Per-request telemetry context — threaded into every tool invocation so
  *  SEC-01 rate limiting + SEC-06 audit logging can scope to the caller. */
@@ -225,8 +224,8 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     withTelemetry(
       'anchor_document',
       async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
-        // MCP-SEC-04: dedupe on content_hash within 5-minute window
-        if (idempotency_key || content_hash) {
+        // MCP-SEC-04: dedupe on content_hash within 5-minute window (only when client supplies idempotency_key)
+        if (idempotency_key) {
           const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
           const lookupResp = await supabaseFetch(config, `/rest/v1/public_records?content_hash=eq.${content_hash}&created_at=gte.${fiveMinAgo}&order=created_at.desc&limit=1`);
           if (lookupResp.ok) {
@@ -294,11 +293,12 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
       'oracle_batch_verify',
       async ({ public_ids }) => {
         try {
-          const results = [];
-          for (const pid of public_ids) {
-            const result = await handleVerifyCredential({ public_id: pid }, config);
-            results.push({ public_id: pid, ...JSON.parse(result.content[0].text) });
-          }
+          const results = await Promise.all(
+            public_ids.map(async (pid: string) => {
+              const result = await handleVerifyCredential({ public_id: pid }, config);
+              return { public_id: pid, ...JSON.parse(result.content[0].text) };
+            }),
+          );
           const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
           const signingKey = telemetry.env.MCP_SIGNING_KEY;
           const body = signingKey
