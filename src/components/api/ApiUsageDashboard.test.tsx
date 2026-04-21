@@ -49,12 +49,15 @@ describe('ApiUsageDashboard', () => {
     expect(spinner).toBeTruthy();
   });
 
-  it('renders error state', () => {
+  it('renders the friendly fallback for unclassified errors (no raw error leak — BUG-UAT5-04)', () => {
     render(<ApiUsageDashboard usage={null} error="Failed to load" />);
-    expect(screen.getByText('Failed to load')).toBeInTheDocument();
+    // Raw "Failed to load" must NOT render — it would be an engineering-
+    // copy leak. The friendly USAGE_UNAVAILABLE copy is shown instead.
+    expect(screen.queryByText('Failed to load')).toBeNull();
+    expect(screen.getByText('Usage data unavailable — worker service not connected')).toBeInTheDocument();
   });
 
-  it('renders friendly message for network errors', () => {
+  it('renders the same friendly message for network errors (classified path)', () => {
     render(<ApiUsageDashboard usage={null} error="Failed to fetch" />);
     expect(screen.getByText('Usage data unavailable — worker service not connected')).toBeInTheDocument();
   });

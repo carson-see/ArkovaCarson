@@ -71,6 +71,19 @@ describe('errorSanitizer', () => {
     it('handles empty string', () => {
       expect(sanitizeErrorMessage('')).toBe('');
     });
+
+    it('redacts "worker service" phrasing (UAT 2026-04-18 Bug 3 / UAT5-04)', () => {
+      // Exact leaked string from the API-keys fetch error card.
+      expect(sanitizeErrorMessage('Ensure the worker service is running.'))
+        .not.toMatch(/worker\s+service/i);
+    });
+
+    it('preserves the standalone word "worker" (legit in async-job copy)', () => {
+      // The narrow `worker service` pattern must not collaterally damage
+      // phrases like "background worker queued the anchor job."
+      expect(sanitizeErrorMessage('background worker queued the anchor job'))
+        .toBe('background worker queued the anchor job');
+    });
   });
 
   describe('sanitizeErrorBody', () => {
