@@ -141,7 +141,7 @@ jobs:
         run: npm ci
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
@@ -187,7 +187,7 @@ jobs:
         run: npm ci
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
@@ -430,7 +430,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
