@@ -45,7 +45,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -99,7 +99,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -133,7 +133,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -141,7 +141,7 @@ jobs:
         run: npm ci
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
@@ -179,7 +179,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -187,7 +187,7 @@ jobs:
         run: npm ci
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
@@ -260,7 +260,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.ai-changed.outputs.changed == 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -304,7 +304,7 @@ jobs:
 
       - name: Setup Node.js
         if: steps.tla-changed.outputs.changed == 'true'
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -419,7 +419,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -430,7 +430,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51 # v1
+        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
         with:
           version: 1.123.0
 
@@ -487,7 +487,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
@@ -503,7 +503,7 @@ jobs:
       - name: Run Lighthouse CI
         # 512cc908 = v12.6.2. Previous pin 1b0e7c33 no longer resolves —
         # upstream force-retagged v12 2026-04-XX which broke CI until now.
-        uses: treosh/lighthouse-ci-action@512cc908a55bfb0ad231facca52adf3d3a651df4 # v12.6.2
+        uses: treosh/lighthouse-ci-action@3e7e23fb74242897f95c0ba9cabad3d0227b9b18 # v12.6.2
         with:
           configPath: '.lighthouserc.json'
           uploadArtifacts: true
@@ -534,7 +534,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
       - name: Install dependencies
