@@ -13,6 +13,7 @@ import { usePageMeta } from '@/hooks/usePageMeta';
 import { HOW_IT_WORKS_LABELS, PUBLIC_FOOTER_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { PublicFooter } from '@/components/shared/PublicFooter';
+import { YouTubeExplainerEmbed } from '@/components/seo/YouTubeExplainerEmbed';
 
 const STEPS = [
   {
@@ -134,6 +135,10 @@ export function HowItWorksPage() {
             {HOW_IT_WORKS_LABELS.HERO_SUBTITLE}
           </p>
         </div>
+
+        {/* Explainer video slot — renders only when a matching entry exists in VIDEOS.
+            See docs/marketing/video-publishing-checklist.md for the add-a-video workflow. */}
+        <YouTubeExplainerEmbed embedPage="https://arkova.ai/how-it-works" />
 
         {/* Steps */}
         <section className="mb-20" aria-label="How it works steps">

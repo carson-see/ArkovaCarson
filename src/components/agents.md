@@ -20,6 +20,7 @@ Domain-specific React components organized by feature area. Each subfolder has a
 | `public/` | Public pages | PublicVerifyPage, ProofDownload |
 | `records/` | Records list | RecordsList |
 | `reports/` | Reports | ReportsList |
+| `seo/` | SEO schema markup | VideoObjectSchema, YouTubeExplainerEmbed (GEO-11 / SCRUM-478) |
 | `upload/` | Bulk upload | BulkUploadWizard, CSVUploadWizard, CsvUploader |
 | `vault/` | Vault dashboard | VaultDashboard |
 | `verification/` | Public verification | PublicVerification (5-section result display) |
