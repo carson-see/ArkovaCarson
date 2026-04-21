@@ -38,10 +38,30 @@ export const UpdateOrgRuleInput = z
 
 export type UpdateOrgRuleInputT = z.infer<typeof UpdateOrgRuleInput>;
 
+/**
+ * Resolves the caller's org from their profile. Worker uses a service_role
+ * client, which bypasses RLS — every query here MUST explicitly scope by
+ * `org_id = callerOrg` to prevent cross-tenant writes.
+ */
+async function getCallerOrgId(userId: string): Promise<string | null> {
+  const { data } = await db
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+  return (data?.org_id as string | null) ?? null;
+}
+
 export async function handleListRules(
+  userId: string,
   _req: Request,
   res: Response,
 ): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
   try {
     // List view only needs summary fields — `trigger_config` / `action_config`
     // (which can hold full connector allowlists or embedded corpora) are
@@ -52,6 +72,7 @@ export async function handleListRules(
       .select(
         'id, org_id, name, description, enabled, trigger_type, action_type, created_at, updated_at',
       )
+      .eq('org_id', orgId)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -70,9 +91,16 @@ export async function handleListRules(
 }
 
 export async function handleCreateRule(
+  userId: string,
   req: Request,
   res: Response,
 ): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
   const parsed = CreateOrgRuleInput.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -81,6 +109,15 @@ export async function handleCreateRule(
         message: 'Invalid body',
         details: parsed.error.flatten(),
       },
+    });
+    return;
+  }
+
+  // Force rule's org_id to match the caller's org regardless of request body —
+  // prevents a caller from writing a rule into a different org by lying.
+  if (parsed.data.org_id !== orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'org_id does not match caller organization' },
     });
     return;
   }
@@ -129,9 +166,16 @@ export async function handleCreateRule(
 }
 
 export async function handleUpdateRule(
+  userId: string,
   req: Request,
   res: Response,
 ): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
   const idParsed = UuidSchema.safeParse(req.params.id);
   if (!idParsed.success) {
     res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
@@ -171,7 +215,8 @@ export async function handleUpdateRule(
     const { error } = await (db as any)
       .from('organization_rules')
       .update(update)
-      .eq('id', idParsed.data);
+      .eq('id', idParsed.data)
+      .eq('org_id', orgId); // cross-tenant guard (service_role bypasses RLS)
     if (error) {
       logger.warn({ error }, 'organization_rules update failed');
       res.status(400).json({ error: { code: 'update_failed', message: error.message } });
@@ -185,9 +230,16 @@ export async function handleUpdateRule(
 }
 
 export async function handleDeleteRule(
+  userId: string,
   req: Request,
   res: Response,
 ): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
   const idParsed = UuidSchema.safeParse(req.params.id);
   if (!idParsed.success) {
     res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
@@ -201,7 +253,8 @@ export async function handleDeleteRule(
     const { error } = await (db as any)
       .from('organization_rules')
       .delete()
-      .eq('id', idParsed.data);
+      .eq('id', idParsed.data)
+      .eq('org_id', orgId); // cross-tenant guard (service_role bypasses RLS)
     if (error) {
       logger.warn({ error }, 'organization_rules delete failed');
       res.status(400).json({ error: { code: 'delete_failed', message: error.message } });

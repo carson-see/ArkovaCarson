@@ -238,9 +238,12 @@ export async function runTreasuryAlertCheck(
     logger.error({ error: err }, 'Treasury alert: email dispatch failed');
   }
 
-  // Record the alert so the re-fire dedup works next run.
+  // Record the alert so the re-fire dedup works next run. Failing to persist
+  // this leaves stale state → next tick may re-fire (spam) or fail to re-fire
+  // after the hourly window expires. Log loudly so ops can investigate; still
+  // return the decision so the cron sees the alert fired.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any)
+  const { error: stateErr } = await (db as any)
     .from('treasury_alert_state')
     .upsert(
       {
@@ -252,6 +255,12 @@ export async function runTreasuryAlertCheck(
       },
       { onConflict: 'key' },
     );
+  if (stateErr) {
+    logger.error(
+      { error: stateErr },
+      'Treasury alert: failed to persist dedup state — next tick may re-alert',
+    );
+  }
 
   return decision;
 }

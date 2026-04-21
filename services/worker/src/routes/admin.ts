@@ -240,7 +240,7 @@ adminRouter.get('/rules', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleListRules(req, res);
+    await handleListRules(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules list request failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -251,7 +251,7 @@ adminRouter.post('/rules', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleCreateRule(req, res);
+    await handleCreateRule(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules create request failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -262,7 +262,7 @@ adminRouter.patch('/rules/:id', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleUpdateRule(req, res);
+    await handleUpdateRule(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules update request failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -273,7 +273,7 @@ adminRouter.delete('/rules/:id', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleDeleteRule(req, res);
+    await handleDeleteRule(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules delete request failed');
     res.status(500).json({ error: 'Internal server error' });
