@@ -35,4 +35,6 @@ useDefault = true
   paths = [
     # API documentation contains example curl commands with placeholder credentials
     '''docs/api/.*\.md$''',
+    # Env var reference — templates with empty values, not real secrets
+    '''docs/reference/ENV\.md$''',
   ]
