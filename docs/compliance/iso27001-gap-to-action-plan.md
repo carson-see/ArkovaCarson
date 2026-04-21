@@ -140,7 +140,7 @@ Funding: Year-1 TRUST budget.
 ## 7. Cross-links
 
 - `iso27001-gap-analysis.md` — original control-by-control gap list.
-- `docs/compliance/iso27701-privacy-extension.md` (SCRUM-967) — adds
+- `docs/compliance/iso27701-privacy-extension-plan.md` (SCRUM-967) — adds
   privacy extension on top of 27001 certification.
 - `docs/compliance/soc2-evidence-cadence.md` — the evidence that gets
   reused.

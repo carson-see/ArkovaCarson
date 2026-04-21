@@ -8,7 +8,6 @@
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 
-// @ts-nocheck — edge source is outside worker rootDir; Vitest resolves at runtime
 import {
   isMcpEnabled,
   mcpDisabledResponse,
@@ -79,6 +78,19 @@ describe('isMcpEnabled', () => {
     (globalThis as any).fetch = fetchSpy;
     const result = await isMcpEnabled({ env: BASE_ENV });
     expect(result).toBe(true);
+  });
+
+  it('does not cache the fail-open result when the fetcher signals failure (null)', async () => {
+    const fetchSpy = vi.fn(async () => null);
+    const deps = { env: BASE_ENV, fetchFlag: fetchSpy };
+
+    const a = await isMcpEnabled(deps);
+    const b = await isMcpEnabled(deps);
+
+    expect(a).toBe(true);
+    expect(b).toBe(true);
+    // Uncached — next request should re-try the flag read.
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
 
