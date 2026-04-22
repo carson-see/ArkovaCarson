@@ -1,0 +1,81 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":semanticCommitTypeAll(chore)",
+    "schedule:weekly",
+    "group:monorepos",
+    "group:recommended"
+  ],
+  "labels": ["dependencies"],
+  "rangeStrategy": "pin",
+  "prHourlyLimit": 5,
+  "prConcurrentLimit": 10,
+  "timezone": "America/Chicago",
+  "schedule": ["before 6am on Monday"],
+  "packageRules": [
+    {
+      "description": "Group all patch-level production deps (auto-merge if CI green)",
+      "matchUpdateTypes": ["patch"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "production-patch-updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Group all minor-level production deps (require review)",
+      "matchUpdateTypes": ["minor"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "production-minor-updates",
+      "automerge": false
+    },
+    {
+      "description": "Group all patch-level dev deps (auto-merge if CI green)",
+      "matchUpdateTypes": ["patch"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "dev-patch-updates",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Group all minor-level dev deps",
+      "matchUpdateTypes": ["minor"],
+      "matchDepTypes": ["devDependencies"],
+      "groupName": "dev-minor-updates",
+      "automerge": false
+    },
+    {
+      "description": "Major version bumps require manual review",
+      "matchUpdateTypes": ["major"],
+      "automerge": false,
+      "labels": ["dependencies", "breaking"]
+    },
+    {
+      "description": "Pin GitHub Actions to exact SHA",
+      "matchManagers": ["github-actions"],
+      "pinDigests": true
+    },
+    {
+      "description": "Worker service deps",
+      "matchPaths": ["services/worker/**"],
+      "additionalBranchPrefix": "worker-",
+      "labels": ["dependencies", "worker"]
+    },
+    {
+      "description": "Edge service deps",
+      "matchPaths": ["services/edge/**"],
+      "additionalBranchPrefix": "edge-",
+      "labels": ["dependencies", "edge"]
+    }
+  ],
+  "ignoreDeps": [
+    "read-excel-file"
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": ["security"],
+    "automerge": false
+  }
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Pre-commit hook: TDD enforcement + lint + typecheck
+# Pre-commit hook: TDD enforcement + lint + typecheck + lockfile drift
 #
 # Install: git config core.hooksPath .githooks
 #
@@ -15,5 +15,16 @@ npx tsc --noEmit
 
 echo "=== Pre-commit: Lint ==="
 npm run lint
+
+# DEP-16: Warn if lockfile changed without a corresponding package.json change
+STAGED=$(git diff --cached --name-only)
+if echo "$STAGED" | grep -q 'package-lock.json'; then
+  if ! echo "$STAGED" | grep -q 'package.json'; then
+    echo ""
+    echo "WARNING: package-lock.json changed without a package.json change."
+    echo "This may indicate lockfile drift. Verify this is intentional."
+    echo ""
+  fi
+fi
 
 echo "=== Pre-commit: All checks passed ==="

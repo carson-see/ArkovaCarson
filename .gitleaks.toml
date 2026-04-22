@@ -1,10 +1,55 @@
 # Gitleaks configuration for Arkova
 # See: https://github.com/gitleaks/gitleaks#configuration
 # SEC-015: Test files are no longer blanket-excluded. Use specific regex allowlists.
+# DEP-14 (SCRUM-1004): Custom Arkova secret patterns added 2026-04-22.
 
 [extend]
 # Use the default gitleaks rules as a base
 useDefault = true
+
+# --- Custom Arkova secret patterns ---
+
+[[rules]]
+  id = "arkova-treasury-wif"
+  description = "Bitcoin Treasury WIF private key"
+  regex = '''BITCOIN_TREASURY_WIF\s*=\s*['"]?[5KL][1-9A-HJ-NP-Za-km-z]{50,51}['"]?'''
+  tags = ["arkova", "bitcoin", "critical"]
+
+[[rules]]
+  id = "arkova-hmac-secret"
+  description = "Arkova API Key HMAC Secret (non-test)"
+  regex = '''API_KEY_HMAC_SECRET\s*=\s*['"]?[a-f0-9]{32,}['"]?'''
+  tags = ["arkova", "hmac", "critical"]
+
+[[rules]]
+  id = "arkova-kms-key-id"
+  description = "GCP/AWS KMS Key Resource Name"
+  regex = '''(KMS_KEY_ID|KMS_KEY_RESOURCE_NAME)\s*=\s*['"]?(projects/|arn:aws:kms:)[^'"]+['"]?'''
+  tags = ["arkova", "kms", "high"]
+
+[[rules]]
+  id = "arkova-stripe-secret"
+  description = "Stripe secret key (live)"
+  regex = '''sk_live_[a-zA-Z0-9]{24,}'''
+  tags = ["arkova", "stripe", "critical"]
+
+[[rules]]
+  id = "arkova-stripe-webhook-secret"
+  description = "Stripe webhook signing secret (live)"
+  regex = '''whsec_[a-zA-Z0-9]{24,}'''
+  tags = ["arkova", "stripe", "high"]
+
+[[rules]]
+  id = "arkova-supabase-service-role"
+  description = "Supabase service role key (non-local)"
+  regex = '''SUPABASE_SERVICE_ROLE_KEY\s*=\s*['"]?eyJ[a-zA-Z0-9_-]{100,}['"]?'''
+  tags = ["arkova", "supabase", "critical"]
+
+[[rules]]
+  id = "arkova-sentry-dsn"
+  description = "Sentry DSN with auth token"
+  regex = '''https://[a-f0-9]{32}@[a-z0-9]+\.ingest\.sentry\.io/[0-9]+'''
+  tags = ["arkova", "sentry", "medium"]
 
 [allowlist]
   description = "Allow well-known Supabase local development JWTs and test fixture strings"

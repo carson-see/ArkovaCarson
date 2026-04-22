@@ -1,0 +1,46 @@
+name: Supply Chain Monitor
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'services/worker/package.json'
+      - 'services/worker/package-lock.json'
+      - 'services/edge/package.json'
+      - 'services/edge/package-lock.json'
+
+jobs:
+  socket-security:
+    name: Socket.dev Supply Chain Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Socket Security Analysis
+        uses: SocketDev/socket-security-py-action@main
+        with:
+          repo: ${{ github.repository }}
+        env:
+          SOCKET_SECURITY_API_KEY: ${{ secrets.SOCKET_SECURITY_API_KEY }}
+        # Non-blocking until SOCKET_SECURITY_API_KEY is provisioned.
+        # Remove continue-on-error once the API key is set in repository secrets.
+        continue-on-error: true
+
+  openssf-scorecard:
+    name: OpenSSF Scorecard (Dependency Review)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@da24556b548a50705dd671f47852072ea4c105d9 # v4
+        with:
+          fail-on-severity: critical
+          deny-licenses: GPL-3.0, AGPL-3.0, SSPL-1.0
+          comment-summary-in-pr: always

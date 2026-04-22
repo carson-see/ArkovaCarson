@@ -2,7 +2,8 @@
  * Nordic Vault Design System — CSS Class Existence Tests
  *
  * Validates that all atmospheric CSS classes documented in BRAND.md
- * are actually defined in src/index.css and tailwind.config.ts.
+ * are actually defined in src/index.css (which includes the @theme block
+ * since the Tailwind 4 migration — SCRUM-915).
  * Prevents silent regressions where components reference undefined classes.
  */
 
@@ -11,7 +12,6 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 
 const indexCss = readFileSync(resolve(__dirname, '../index.css'), 'utf-8');
-const tailwindConfig = readFileSync(resolve(__dirname, '../../tailwind.config.ts'), 'utf-8');
 
 describe('Nordic Vault CSS classes are defined in src/index.css', () => {
   const requiredClasses = [
@@ -46,7 +46,7 @@ describe('Nordic Vault CSS classes are defined in src/index.css', () => {
   }
 });
 
-describe('Nordic Vault shadow tokens are defined in tailwind.config.ts', () => {
+describe('Nordic Vault shadow tokens are defined in @theme', () => {
   const requiredShadows = [
     'glow-sm',
     'glow-md',
@@ -57,7 +57,7 @@ describe('Nordic Vault shadow tokens are defined in tailwind.config.ts', () => {
 
   for (const shadow of requiredShadows) {
     it(`defines shadow '${shadow}'`, () => {
-      expect(tailwindConfig).toContain(`'${shadow}'`);
+      expect(indexCss).toContain(shadow);
     });
   }
 });
@@ -71,7 +71,7 @@ describe('Nordic Vault keyframes are defined', () => {
     expect(indexCss).toContain('@keyframes float');
   });
 
-  it('defines fade-up keyframe in tailwind config', () => {
-    expect(tailwindConfig).toContain("'fade-up'");
+  it('defines fade-up keyframe in @theme block', () => {
+    expect(indexCss).toContain('fade-up');
   });
 });

@@ -855,12 +855,18 @@ export function SecureDocumentDialog({
         <DialogFooter>
           {step === 'upload' && (
             <>
+              {!fileData && (
+                <p className="text-xs text-muted-foreground mr-auto self-center" role="status">
+                  Select a document to continue
+                </p>
+              )}
               <Button variant="outline" onClick={handleClose}>
                 {SECURE_DIALOG_LABELS.CANCEL}
               </Button>
               <Button
                 onClick={handleUploadContinue}
                 disabled={!fileData}
+                aria-disabled={!fileData}
               >
                 {aiEnabled && fileData?.file.type === 'application/pdf' && (
                   <Sparkles className="mr-2 h-4 w-4" />

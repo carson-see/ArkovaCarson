@@ -14,7 +14,7 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-21-sarah-sprint-1-batch1`
+**Branch:** `claude/charming-cori-uXiQe`
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors. 0 PENDING (as of last known drain, 2026-04-09).
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
@@ -40,11 +40,20 @@ Status lives in Jira. Current elevated priorities:
 ## What just shipped (latest commits on this branch)
 
 ```
-2e6f4c2c refactor(docs-soot): trim CLAUDE.md 756→222 lines + banner BACKLOG.md
-f7d0bf20 refactor(docs-soot): Jira + Confluence become canonical source of truth
-20655cd2 refactor(sarah-sprint-1): simplify pass on PR #464
-15c94be1 feat(sarah-sprint-1): SCRUM-727 EDGAR Form ADV + SCRUM-984/985/987 MCP-SEC + SCRUM-959 SOC 2 cadence
+[current] feat(dep-hardening): 10 backlog items — SCRUM-949 bug fix + 8 DEP stories + SCRUM-915 TW4
 ```
+
+10-item batch:
+- SCRUM-949: SecureDocumentDialog Continue button disabled + helper text when no file
+- SCRUM-1004: Custom Gitleaks patterns (treasury WIF, HMAC, KMS, Stripe) + nightly scan
+- SCRUM-1005: Dependency pinning script + CI enforcement + .npmrc save-exact
+- SCRUM-1006: Lockfile SHA256 checksums per build + pre-commit drift warning
+- SCRUM-1003: Renovate bot config (replaces Dependabot) with automerge on patches
+- SCRUM-1001: Socket.dev + OpenSSF Dependency Review workflow
+- SCRUM-1002: CVE triage SLA runbook (CRITICAL 48h, HIGH 7d, MEDIUM 30d)
+- SCRUM-1009: Weekly EOL tracking via endoflife.date API
+- SCRUM-1007: .npmrc private registry scaffold (GCP Artifact Registry ready)
+- SCRUM-915: Tailwind CSS 3→4 (postcss plugin, @theme CSS config, deleted tailwind.config.ts)
 
 Full history: `git log --oneline`. Don't maintain a session-by-session narrative here — git preserves it.
 

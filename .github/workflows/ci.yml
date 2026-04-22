@@ -65,6 +65,17 @@ jobs:
         working-directory: services/worker
         run: npm ci && npm audit --audit-level=critical --omit=dev
 
+  # DEP-15: Dependency pinning enforcement — reject ^/~ ranges in production deps
+  dependency-pinning:
+    name: Dependency Pinning
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check production dependency pinning
+        run: bash scripts/check-dependency-pinning.sh
+
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
   # PRs being merged, not a retroactive check on main. On push events the
@@ -511,7 +522,7 @@ jobs:
         # Non-blocking until baseline is established
         continue-on-error: true
 
-  # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
+  # Lockfile integrity check (CISO Action-9 + DEP-16) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:
     name: Lockfile Integrity
     runs-on: ubuntu-latest
@@ -523,6 +534,20 @@ jobs:
         run: npx lockfile-lint --path package-lock.json --type npm --allowed-hosts npm --validate-https
       - name: Verify worker lockfile integrity
         run: npx lockfile-lint --path services/worker/package-lock.json --type npm --allowed-hosts npm --validate-https
+      - name: Record lockfile SHA256 checksums
+        run: |
+          echo "=== Lockfile SHA256 Checksums ==="
+          sha256sum package-lock.json | tee lockfile-checksums.txt
+          sha256sum services/worker/package-lock.json | tee -a lockfile-checksums.txt
+          if [ -f services/edge/package-lock.json ]; then
+            sha256sum services/edge/package-lock.json | tee -a lockfile-checksums.txt
+          fi
+      - name: Upload lockfile checksums
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lockfile-checksums
+          path: lockfile-checksums.txt
+          retention-days: 90
 
   # SBOM generation (CISO Action-10) — produce CycloneDX bill of materials on main
   sbom-generation:

@@ -1,0 +1,75 @@
+name: Dependency EOL Tracking
+
+on:
+  schedule:
+    # Run every Monday at 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  check-eol:
+    name: Check Runtime EOL Status
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Check runtime EOL dates
+        id: eol-check
+        run: |
+          WARNINGS=""
+          TODAY=$(date +%s)
+          NINETY_DAYS=$((90 * 86400))
+
+          check_eol() {
+            local product="$1"
+            local version="$2"
+            local response
+            response=$(curl -sf "https://endoflife.date/api/${product}/${version}.json" 2>/dev/null || echo "")
+            if [ -z "$response" ]; then
+              echo "WARNING: Could not fetch EOL data for ${product} ${version}"
+              return
+            fi
+            local eol_date
+            eol_date=$(echo "$response" | node -e "const d=require('fs').readFileSync('/dev/stdin','utf8');const j=JSON.parse(d);console.log(j.eol||'false')" 2>/dev/null || echo "false")
+            if [ "$eol_date" = "false" ] || [ "$eol_date" = "true" ]; then
+              if [ "$eol_date" = "true" ]; then
+                WARNINGS="${WARNINGS}\nCRITICAL: ${product} ${version} is ALREADY end-of-life!"
+              fi
+              return
+            fi
+            local eol_ts
+            eol_ts=$(date -d "$eol_date" +%s 2>/dev/null || echo "0")
+            local diff=$((eol_ts - TODAY))
+            if [ "$diff" -lt "$NINETY_DAYS" ] && [ "$diff" -gt 0 ]; then
+              local days_left=$((diff / 86400))
+              WARNINGS="${WARNINGS}\nWARNING: ${product} ${version} reaches EOL on ${eol_date} (${days_left} days remaining)"
+            elif [ "$diff" -le 0 ]; then
+              WARNINGS="${WARNINGS}\nCRITICAL: ${product} ${version} reached EOL on ${eol_date}!"
+            fi
+          }
+
+          # Check each runtime in our stack
+          check_eol "nodejs" "20"
+          check_eol "postgresql" "15"
+
+          if [ -n "$WARNINGS" ]; then
+            echo "has_warnings=true" >> "$GITHUB_OUTPUT"
+            # Write warnings to file for issue creation
+            echo -e "$WARNINGS" > /tmp/eol-warnings.txt
+            cat /tmp/eol-warnings.txt
+          else
+            echo "has_warnings=false" >> "$GITHUB_OUTPUT"
+            echo "All runtimes within support window."
+          fi
+
+      - name: Create issue if EOL approaching
+        if: steps.eol-check.outputs.has_warnings == 'true'
+        run: |
+          BODY=$(cat /tmp/eol-warnings.txt)
+          echo "EOL warnings detected:"
+          echo "$BODY"
+          echo ""
+          echo "Action required: Review and plan migration before EOL dates."
