@@ -14,13 +14,12 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-23-platform-v2-release-setup` (PR #476 — platform v2 release setup)
+**Branch:** `claude/2026-04-23-platform-v2-release-setup` (PR #476 — Platform v2 + Enterprise Hardening)
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
-**DB:** Supabase `vzwyaatejekddvltxyye`. CIBA migrations 0224–0231 merged to main with PR #474.
-**Tests:** 5,202+ green (3,841 worker + 1,361 frontend).
-**Active release:** `v1.0.0 — Platform v2 + Enterprise Hardening` (Jira fixVersion `10266`). 10 epics + 63 stories filed 2026-04-23.
+**DB:** Supabase `vzwyaatejekddvltxyye`. 212 migrations on prod; 8 CIBA migrations (0224–0231) staged on PR #476 for merge.
+**Tests:** 5,202+ green (3,841 worker + 1,361 frontend as of CIBA Sprint 3).
 
 ---
 
@@ -28,9 +27,9 @@
 
 ### CIBA v1.0 release — [SCRUM-1010](https://arkova.atlassian.net/browse/SCRUM-1010) (Jira version 10233)
 
-20 stories. PR [#474](https://github.com/carson-see/ArkovaCarson/pull/474) is open + green, awaiting review + merge.
+20 stories. PR [#476](https://github.com/carson-see/ArkovaCarson/pull/476) is open + green (SonarCloud PASSED, CodeRabbit rate-limited not blocking), awaiting review + merge.
 
-- **16 stories In Progress** (code shipped): SCRUM-1011..1023, 1025, 1026, 1029. 4 commits on branch: `29349961` (Sprint 1 foundation), `3994b2d5` (Sprint 2 worker layer), `5f4dbf14` (security + bug fixes), `fb3b9738` (Sprint 3 + review fixes).
+- **17 stories Done** (2026-04-23 closeout): SCRUM-1011..1023, 1025, 1026, 1029 (CIBA) + SCRUM-894 (API-RICH-01). All per-story Confluence pages updated + Jira transitioned. Commit chain on branch: `29349961` (Sprint 1) → `3994b2d5` (Sprint 2) → `5f4dbf14` + `d170c9a4` (Sprint 2 review) → `a77e7d9f` (Sprint 3) → `fb3b9738` (Sprint 3 review) → `8b8dc13` (treasury scope) → `0a4dfa8` (migration fix) → `38b6d03` (Sonar) → `09c9fb0` (SCRUM-894 audit).
 - **4 deferred** (To Do with explicit deferral comments):
   - [SCRUM-1024](https://arkova.atlassian.net/browse/SCRUM-1024) SCALE-02 — Cloud Run config is human-only (`feedback_worker_hands_off`).
   - [SCRUM-1027](https://arkova.atlassian.net/browse/SCRUM-1027) UX-01 — full onboarding wizard frontend; next sprint.
@@ -40,6 +39,7 @@
 **Open follow-ups on the release:**
 - Regenerate `database.types.ts` after migrations 0224–0231 apply to prod (requires live Supabase).
 - Policy decision resolved 2026-04-21: `handleTreasuryHealth` is now platform-admin-only (matches `handleTreasuryStatus`).
+- SCRUM-1015 (INT-10) + SCRUM-1016 (INT-12) marked **Done (scaffold)** — schemas + adapters shipped; production enablement awaits vendor onboarding (Google Cloud OAuth / Microsoft Partner / DocuSign Connect / Adobe Partner Portal).
 
 ### Other elevated priorities
 
@@ -151,4 +151,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-23. State: CIBA PR #474 merged to main; release `v1.0.0 — Platform v2 + Enterprise Hardening` filed with 10 epics + 63 stories on `claude/2026-04-23-platform-v2-release-setup`. GEMB2 is P0 gate on AI training work. Keep this file ≤150 lines._
+_Last refreshed: 2026-04-23 (CIBA closeout: 17 stories transitioned Jira→Done + Confluence updated; PR #476 green + awaiting human merge review). 4 deferred with rationale unchanged._

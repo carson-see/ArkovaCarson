@@ -203,6 +203,31 @@ describe('webhookHmac middleware', () => {
     expect(status).toHaveBeenCalledWith(401);
   });
 
+  it('rejects with 500 when rawBody is missing (route misconfigured)', async () => {
+    // With Express `json()` mounted upstream, req.body is parsed and rawBody
+    // is absent. The middleware must fail-closed rather than re-stringify
+    // (which would silently break HMAC verification on non-canonical JSON).
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-21T00:00:00Z'));
+    const now = String(Math.floor(Date.now() / 1000));
+    const mw = webhookHmac({ getSecret: () => SECRET });
+    const next = vi.fn() as NextFunction;
+    const { res, status } = mockRes();
+    await mw(
+      mockReq({
+        body: { a: 1 }, // parsed, no rawBody
+        headers: {
+          'x-signature-sha256': 'deadbeef'.repeat(8),
+          'x-signature-timestamp': now,
+        },
+      }),
+      res,
+      next,
+    );
+    expect(status).toHaveBeenCalledWith(500);
+    expect(next).not.toHaveBeenCalled();
+  });
+
   it('rejects bodies larger than maxBodyBytes with 413', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-04-21T00:00:00Z'));

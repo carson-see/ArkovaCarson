@@ -40,7 +40,7 @@ export interface TreasuryAlertDecision {
   reason: string;
   balance_usd: number | null;
   below_threshold: boolean;
-  /** null when below_threshold is false or price unknown */
+  /** true when the BTC/USD oracle or balance read was unavailable */
   price_unknown: boolean;
 }
 
@@ -204,6 +204,28 @@ export async function runTreasuryAlertCheck(
     logger.error({ error: cacheErr }, 'Treasury alert: failed to read cache');
   }
 
+  // alertStateResult.error was silently dropped — a transient DB read
+  // failure would be indistinguishable from "never alerted", so the
+  // re-fire dedup window would collapse and every tick would fire a
+  // fresh cross-threshold alert. Surface the error loudly and fail-
+  // closed: treat an unknown previous-alert state as "do not fire this
+  // tick" so we don't spam ops until reads recover.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const alertStateErr = (alertStateResult as any).error as unknown;
+  if (alertStateErr) {
+    logger.error(
+      { error: alertStateErr },
+      'Treasury alert: failed to read dedup state — skipping tick to avoid spam',
+    );
+    return {
+      should_fire: false,
+      reason: 'alert_state_read_failed',
+      balance_usd: null,
+      below_threshold: false,
+      price_unknown: true,
+    };
+  }
+
   const lastAlert = alertStateResult.data as
     | { below_threshold: boolean; updated_at: string }
     | null;
@@ -225,23 +247,20 @@ export async function runTreasuryAlertCheck(
   // an alert actually went out — otherwise both dispatchers failing silently
   // + upserting 'alerted' state suppresses the next re-fire and hides the outage.
   const slackPayload = buildSlackAlertPayload(decision);
-  let slackSent = false;
-  let emailSent = false;
-  try {
-    await dispatcher.sendSlack(slackPayload);
-    slackSent = true;
-  } catch (err) {
-    logger.error({ error: err }, 'Treasury alert: Slack dispatch failed');
-  }
-
-  try {
-    await dispatcher.sendEmail(
+  const [slackResult, emailResult] = await Promise.allSettled([
+    dispatcher.sendSlack(slackPayload),
+    dispatcher.sendEmail(
       slackPayload.text,
       `${slackPayload.text}\n\nReason: ${decision.reason}`,
-    );
-    emailSent = true;
-  } catch (err) {
-    logger.error({ error: err }, 'Treasury alert: email dispatch failed');
+    ),
+  ]);
+  const slackSent = slackResult.status === 'fulfilled';
+  const emailSent = emailResult.status === 'fulfilled';
+  if (slackResult.status === 'rejected') {
+    logger.error({ error: slackResult.reason }, 'Treasury alert: Slack dispatch failed');
+  }
+  if (emailResult.status === 'rejected') {
+    logger.error({ error: emailResult.reason }, 'Treasury alert: email dispatch failed');
   }
 
   // Both channels failed → do NOT upsert dedup state. Let the next tick

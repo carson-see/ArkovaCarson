@@ -101,9 +101,24 @@ export function webhookHmac(options: WebhookHmacOptions) {
 
     // Size gate BEFORE secret fetch — don't force a Secret Manager round-trip
     // to reject an oversized body.
+    //
+    // Strict rawBody requirement: connector webhooks MUST mount with a raw-body
+    // parser (express.raw or custom middleware) so this sees the exact bytes
+    // the sender signed. Falling back to JSON.stringify(parsed) is not safe —
+    // whitespace / unicode / key-order differences between the sender's bytes
+    // and our re-serialization flip HMACs silently, surfacing as
+    // invalid_signature with no way to diagnose from the logs. Fail-closed.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const rawBody: Buffer | string | undefined = (req as any).rawBody;
-    const bodyBytes = bodyToBytes(rawBody, req.body);
+    if (rawBody == null) {
+      logger.error(
+        { path: req.path },
+        'webhookHmac: rawBody missing — route must mount a raw-body parser before this middleware',
+      );
+      reject(req, res, 500, 'misconfigured_raw_body', options.onHmacFail);
+      return;
+    }
+    const bodyBytes = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody);
     if (bodyBytes.length > maxBodyBytes) {
       reject(req, res, 413, 'body_too_large', options.onHmacFail);
       return;
@@ -125,14 +140,10 @@ export function webhookHmac(options: WebhookHmacOptions) {
   };
 }
 
-function bodyToBytes(rawBody: Buffer | string | undefined, parsed: unknown): Buffer {
-  if (rawBody != null) {
-    return Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody);
-  }
-  if (parsed == null) return Buffer.alloc(0);
-  if (typeof parsed === 'string') return Buffer.from(parsed);
-  return Buffer.from(JSON.stringify(parsed));
-}
+// bodyToBytes was removed in favor of an inline strict rawBody check above.
+// The previous JSON.stringify(parsed) fallback silently broke HMACs when
+// Express's json() middleware was mounted upstream — re-stringification does
+// not reproduce the sender's wire bytes.
 
 /**
  * `sha256HMAC(secret, `${timestamp}.${body}`)` — the timestamp binds the

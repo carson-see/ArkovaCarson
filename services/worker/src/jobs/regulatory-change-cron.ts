@@ -16,6 +16,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { db } from '../utils/db.js';
+import { escapeHtml } from '../utils/html.js';
 import { logger } from '../utils/logger.js';
 import { sendEmail } from '../email/sender.js';
 import {
@@ -326,11 +327,3 @@ function renderImpactEmailHtml(impact: RegulatoryChangeImpact, scorecardUrl: str
   `;
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}

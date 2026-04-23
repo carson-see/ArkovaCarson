@@ -164,7 +164,8 @@
       "Bash(export PATH=\"/opt/homebrew/bin:$HOME/.nvm/versions/node/v25.6.1/bin:$PATH\")",
       "Bash(export PATH=\"/opt/homebrew/bin:$PATH\")",
       "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "mcp__52fad70b-47fd-4f28-948d-155ddb7ec81a__searchJiraIssuesUsingJql"
     ]
   },
   "enableAllProjectMcpServers": true,
