@@ -172,3 +172,4 @@ function containsMixedLatinCyrillic(text: string): boolean {
   }
   return false;
 }
+// CI retrigger 2026-04-22
