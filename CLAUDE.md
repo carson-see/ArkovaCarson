@@ -65,7 +65,7 @@ Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-202
 | Routing | react-router-dom v6. Named routes in `src/lib/routes.ts`. |
 | Worker | Node + Express in `services/worker/`. Webhooks, cron, anchoring. |
 | Payments | Stripe (SDK + webhooks). Worker-only, never browser. |
-| Chain | bitcoinjs-lib + AWS/GCP KMS. MockChainClient for tests. |
+| Chain | bitcoinjs-lib + GCP KMS (prod). Code-level AWS KMS provider is a non-deployed abstraction — do NOT claim AWS in customer-facing materials (`memory/feedback_no_aws.md`). MockChainClient for tests. |
 | Testing | Vitest + Playwright + RLS helpers. |
 | Formal verification | TLA PreCheck. `machines/bitcoinAnchor.machine.ts`. |
 | Ingress | Cloudflare Tunnel, Zero Trust. No public ports. |

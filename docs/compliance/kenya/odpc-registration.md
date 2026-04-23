@@ -114,7 +114,7 @@ Cross-reference: `../soc2-evidence.md`
 - Encryption: TLS 1.3 + AES-256 at rest
 - Access logging (audit events — see `../../confluence/04_audit_events.md`)
 - Annual penetration testing (last: 9 findings resolved, see project directive)
-- AWS/GCP KMS for Bitcoin treasury key management
+- GCP KMS for Bitcoin treasury key management
 - RLS enforced on 190+ migrations
 - Secrets never committed; environment variables only
 - Incident response plan (`../incident-response-plan.md`)

@@ -32,7 +32,7 @@ export interface SendEmailOptions {
   subject: string;
   html: string;
   /** Email type for audit logging */
-  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation' | 'domain_verification';
+  emailType: 'activation' | 'anchor_secured' | 'revocation' | 'notification' | 'invitation' | 'domain_verification' | 'treasury_alert' | 'queue_reminder';
   /** Related anchor ID for audit trail */
   anchorId?: string;
   /** Actor user ID (who triggered the send) */

@@ -68,6 +68,7 @@ const AuthCallbackPage = React.lazy(() => import('@/pages/AuthCallbackPage').the
 const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(m => ({ default: m.ReviewQueuePage })));
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
 const ComplianceDashboardPage = React.lazy(() => import('@/pages/ComplianceDashboardPage').then(m => ({ default: m.ComplianceDashboardPage })));
+const RuleBuilderPage = React.lazy(() => import('@/pages/RuleBuilderPage').then(m => ({ default: m.RuleBuilderPage })));
 const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
 const AdminUsersPage = React.lazy(() => import('@/pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
@@ -239,6 +240,7 @@ export function App() {
 
           {/* Compliance Intelligence */}
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* NCA-08 — Compliance Scorecard (post-audit landing) */}
           <Route path={ROUTES.COMPLIANCE_SCORECARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceScorecard"><ComplianceScorecardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

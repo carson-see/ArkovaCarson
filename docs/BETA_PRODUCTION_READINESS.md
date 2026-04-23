@@ -160,30 +160,29 @@ gh secret set SENTRY_AUTH_TOKEN --body <token>
 **Impact:** Enables readable stack traces in Sentry (currently minified).
 **Risk:** LOW — build-time only, doesn't affect runtime.
 
-### OPS-05: AWS KMS Key Provisioning (CRITICAL for mainnet)
+### OPS-05: GCP KMS Key Provisioning (CRITICAL for mainnet) — SUPERSEDED 2026-03
+
+> **Status update (2026-03):** Mainnet went live on **GCP KMS**, not AWS. The
+> snippet below is retained as historical record; `feedback_no_aws.md` codifies
+> the rule going forward. Live provisioning commands now read:
+>
+> ```bash
+> gcloud kms keys create arkova-btc-mainnet \
+>   --location=global --keyring=arkova-treasury \
+>   --purpose=asymmetric-signing --algorithm=ec-sign-secp256k1-sha256
+> ```
 
 ```bash
-# Create KMS key for Bitcoin transaction signing
+# (historical — AWS KMS was evaluated pre-launch but never deployed)
 aws kms create-key \
   --description "Arkova mainnet Bitcoin signing key" \
   --key-usage SIGN_VERIFY \
   --key-spec ECC_SECG_P256K1
-
-# Create alias
-aws kms create-alias \
-  --alias-name alias/arkova-btc-mainnet \
-  --target-key-id <key-id>
-
-# Grant worker service account access
-aws kms create-grant \
-  --key-id <key-id> \
-  --grantee-principal <worker-service-role-arn> \
-  --operations Sign
 ```
 
 **Impact:** Required for mainnet Bitcoin anchoring. Testnet uses WIF key (already working).
-**Risk:** MEDIUM — key management is critical. Follow AWS KMS best practices.
-**Dependencies:** AWS account with KMS access.
+**Risk:** MEDIUM — key management is critical.
+**Dependencies:** GCP account with Cloud KMS API enabled (prod path).
 
 ### OPS-06: Mainnet Treasury Funding (CRITICAL for mainnet)
 
@@ -266,7 +265,7 @@ aws kms create-grant \
 | Risk | Severity | Likelihood | Mitigation |
 |------|----------|------------|------------|
 | Migration failure on production | HIGH | LOW | All tested locally; rollback comments in each migration. `supabase db push` is transactional. |
-| Bitcoin mainnet key compromise | CRITICAL | LOW | AWS KMS with IAM, no raw keys. Treasury is non-custodial (no user funds). |
+| Bitcoin mainnet key compromise | CRITICAL | LOW | GCP KMS with IAM, no raw keys. Treasury is non-custodial (no user funds). |
 | Stripe webhook misconfiguration | HIGH | MEDIUM | Test mode → live mode transition. Verify signatures. Idempotent handlers. |
 | AI provider rate limits (Gemini) | MEDIUM | MEDIUM | Circuit breaker (5 failures/60s), CF Workers AI fallback, credit-based throttling. |
 | Database performance under load | MEDIUM | LOW | 12 composite indexes (AUDIT-17), RLS performance tested, pgvector HNSW indexes. |

@@ -83,7 +83,7 @@ The binding contractual clauses must include:
   - AES-256 encryption at rest
   - Row-Level Security on all database tables
   - Zero Trust network ingress (Cloudflare Tunnel)
-  - AWS/GCP KMS for cryptographic key management
+  - GCP KMS for cryptographic key management
   - MFA on administrative access
   - Annual penetration testing
 

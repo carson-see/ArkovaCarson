@@ -2,13 +2,27 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - staging
+    branches: [main, staging, develop]
+    # Skip docs-only changes — saves Actions minutes on public repo transition.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
-    branches:
-      - main
-      - staging
+    branches: [main, staging, develop]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+
+# Cancel stale CI runs when a new commit is pushed to the same PR / branch.
+# Saves ~30-50% of Actions minutes on active-dev branches where multiple
+# commits land in quick succession.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks

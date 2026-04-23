@@ -1,11 +1,13 @@
 /**
- * Treasury Status API — Arkova Internal Only
+ * Treasury APIs — Arkova Platform Admin Only
  *
- * GET /api/treasury/status
+ * GET /api/treasury/status — wallet + UTXOs + fees + anchor stats
+ * GET /api/treasury/health — USD aggregate + below-threshold flag
  *
- * Returns treasury wallet balance, UTXO count, fee estimates, and network info.
- * Gated behind platform admin email whitelist — never accessible to third-party
- * org admins or external users.
+ * Both endpoints are gated behind the platform admin whitelist — never
+ * accessible to org admins or external users. No exceptions. The
+ * handleTreasuryHealth endpoint returns a narrower shape (USD only, no
+ * wallet address) but the access policy is identical.
  *
  * Constitution refs:
  *   - 1.4: Treasury keys server-side only, never logged
@@ -156,4 +158,84 @@ export async function handleTreasuryStatus(
   }
 
   res.json(result);
+}
+
+// =============================================================================
+// ARK-103 (SCRUM-1013): Treasury Health — safe for any authed user
+// =============================================================================
+//
+// Unlike `/api/treasury/status` (platform-admin-only, leaks wallet address +
+// UTXOs), this endpoint returns ONLY aggregate USD numbers + the current
+// alert flag. Org admins surface this on their dashboard so they know when
+// fast-track anchoring is paused.
+
+export interface TreasuryHealthResponse {
+  balance_usd: number | null;
+  below_threshold: boolean;
+  threshold_usd: number;
+  /** Null when price oracle is stale or not configured. */
+  price_unknown: boolean;
+  last_alert_at: string | null;
+  last_updated_at: string | null;
+}
+
+const DEFAULT_TREASURY_THRESHOLD_USD = 50;
+const SATS_PER_BTC = 100_000_000;
+
+export async function handleTreasuryHealth(
+  userId: string,
+  _req: import('express').Request,
+  res: import('express').Response,
+): Promise<void> {
+  // Same platform-admin gate as handleTreasuryStatus — USD aggregates are
+  // still treasury state and only Arkova operators should see them.
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+  try {
+    // Parallel reads: cache + alert state. Matches the pattern in
+    // services/worker/src/jobs/treasury-alert.ts.
+    const [cacheResult, alertResult] = await Promise.all([
+      db
+        .from('treasury_cache')
+        .select('balance_confirmed_sats, btc_price_usd, updated_at')
+        .limit(1)
+        .maybeSingle(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db as any)
+        .from('treasury_alert_state')
+        .select('below_threshold, updated_at')
+        .eq('key', 'low_balance')
+        .maybeSingle(),
+    ]);
+
+    const cache = cacheResult.data as
+      | { balance_confirmed_sats: number | null; btc_price_usd: number | null; updated_at: string | null }
+      | null;
+    const alert = alertResult.data as
+      | { below_threshold: boolean; updated_at: string | null }
+      | null;
+
+    const thresholdUsd = Number(process.env.TREASURY_LOW_BALANCE_USD ?? DEFAULT_TREASURY_THRESHOLD_USD);
+    const priceUnknown = cache?.btc_price_usd == null || cache?.balance_confirmed_sats == null;
+    const balanceUsd = priceUnknown
+      ? null
+      : (cache!.balance_confirmed_sats! / SATS_PER_BTC) * (cache!.btc_price_usd as number);
+
+    const response: TreasuryHealthResponse = {
+      balance_usd: balanceUsd,
+      below_threshold: alert?.below_threshold ?? (balanceUsd != null && balanceUsd < thresholdUsd),
+      threshold_usd: thresholdUsd,
+      price_unknown: priceUnknown,
+      last_alert_at: alert?.updated_at ?? null,
+      last_updated_at: cache?.updated_at ?? null,
+    };
+
+    res.json(response);
+  } catch (err) {
+    logger.error({ error: err }, 'handleTreasuryHealth failed');
+    res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  }
 }

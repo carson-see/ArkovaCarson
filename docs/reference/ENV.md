@@ -40,11 +40,17 @@ FORCE_DYNAMIC_FEE_ESTIMATION=       # optional — force dynamic fees on signet/
 ```
 
 ## KMS signing (worker only)
+
+Production uses **GCP KMS only**. The "aws" value for `KMS_PROVIDER` is a
+code-level abstraction kept for future optionality but NOT deployed — see
+`memory/feedback_no_aws.md` and SCRUM-902. Do not claim AWS in
+customer-facing materials.
+
 ```bash
-KMS_PROVIDER=                       # "aws" | "gcp" — required for mainnet
-BITCOIN_KMS_KEY_ID=                 # AWS KMS key ID
-BITCOIN_KMS_REGION=                 # AWS region for KMS key
-GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path
+KMS_PROVIDER=gcp                    # "gcp" in prod; "aws" is non-deployed abstraction
+BITCOIN_KMS_KEY_ID=                 # (AWS path, non-deployed) KMS key ID
+BITCOIN_KMS_REGION=                 # (AWS path, non-deployed) region
+GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path (prod)
 GCP_KMS_PROJECT_ID=                 # optional — defaults to application default
 ```
 
@@ -151,3 +157,37 @@ ENABLE_CONSTRAINED_DECODING=false   # NVI-16: vLLM JSON-schema whitelist for cit
 ENABLE_SYNTHETIC_DATA=false
 TRAINING_DATA_OUTPUT_PATH=
 ```
+
+## CIBA — Rules Engine + Security + Scale (worker only)
+
+Added by the CIBA v1.0 release (SCRUM-1010). All flags default to the safe value for production.
+
+```bash
+# SEC-01 — uniform webhook HMAC (SCRUM-1025)
+# Setting false in NODE_ENV=production causes the middleware to 500 the request
+# (fail-loud). dev/test can flip false to skip verification.
+ENABLE_WEBHOOK_HMAC=true
+
+# ARK-106 — rules engine execution worker (SCRUM-1018)
+# When false, the /jobs/rules-engine cron no-ops. Keep true unless draining.
+ENABLE_RULES_ENGINE=true
+
+# ARK-107 — scheduled queue reminders (SCRUM-1019)
+# When false, the /jobs/queue-reminders cron no-ops.
+ENABLE_QUEUE_REMINDERS=true
+
+# ARK-103 — treasury low-balance alerting (SCRUM-1013)
+# When false, the /jobs/treasury-alert-check cron no-ops (no Slack/email fired).
+ENABLE_TREASURY_ALERTS=true
+
+# ARK-103 — treasury alert dispatch targets
+# If either is missing the dispatcher logs a warning and skips that channel —
+# partial-configuration is allowed.
+SLACK_TREASURY_WEBHOOK_URL=          # Slack incoming webhook URL
+TREASURY_ALERT_EMAIL=                # single recipient address
+
+# ARK-103 — USD threshold below which the low-balance alert fires.
+# Default 50. Read by both cron dispatcher + /api/treasury/health endpoint.
+TREASURY_LOW_BALANCE_USD=50
+```
+

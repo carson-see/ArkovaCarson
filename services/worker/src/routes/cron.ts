@@ -69,6 +69,10 @@ import { runCalibrationRefit } from '../jobs/calibration-refit.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
+import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
+import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.js';
+import { runQueueReminderJob } from '../jobs/queue-reminders.js';
+import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
@@ -273,6 +277,44 @@ cronRouter.post('/refresh-treasury-cache', async (_req, res) => {
     res.json({ success: true, balance: result.balance_confirmed_sats, updated_at: result.updated_at });
   } catch (error) {
     logger.error({ error }, 'Treasury cache refresh failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── ARK-103 (SCRUM-1013): Treasury Low-Balance Alert ───
+cronRouter.post('/treasury-alert-check', async (_req, res) => {
+  try {
+    const decision = await runTreasuryAlertCheck(buildTreasuryAlertDispatcher());
+    res.json({
+      fired: decision.should_fire,
+      reason: decision.reason,
+      below_threshold: decision.below_threshold,
+      price_unknown: decision.price_unknown,
+    });
+  } catch (error) {
+    logger.error({ error }, 'Treasury alert check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── ARK-107 (SCRUM-1019): Scheduled Queue Review Reminders ───
+cronRouter.post('/queue-reminders', async (_req, res) => {
+  try {
+    const result = await runQueueReminderJob();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Queue reminder job failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── ARK-106 (SCRUM-1018): Rules Engine Execution Pass ───
+cronRouter.post('/rules-engine', async (_req, res) => {
+  try {
+    const result = await runRulesEngine();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Rules engine pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
