@@ -604,16 +604,14 @@ function StepReview({ state }: StepProps) {
 
       {(Object.keys(state.trigger_config).length > 0 ||
         Object.keys(state.action_config).length > 0) && (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-muted-foreground">Show raw config</summary>
-          <pre className="mt-2 p-2 bg-muted rounded text-[11px] overflow-auto">
-            {JSON.stringify(
-              { trigger_config: state.trigger_config, action_config: state.action_config },
-              null,
-              2,
-            )}
-          </pre>
-        </details>
+        <div className="text-xs text-muted-foreground">
+          Configured: {Object.keys(state.trigger_config).length} trigger
+          {Object.keys(state.trigger_config).length === 1 ? '' : 's'} /{' '}
+          {Object.keys(state.action_config).length} action
+          {Object.keys(state.action_config).length === 1 ? '' : 's'} field
+          {Object.keys(state.action_config).length === 1 ? '' : 's'}. Raw values hidden
+          (may contain recipient emails, sender filters, or webhook targets).
+        </div>
       )}
 
       <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900 flex items-start gap-2">

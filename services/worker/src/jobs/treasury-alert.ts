@@ -221,10 +221,15 @@ export async function runTreasuryAlertCheck(
     return decision;
   }
 
-  // Dispatch.
+  // Dispatch. Track per-channel success so we only record dedup state when
+  // an alert actually went out — otherwise both dispatchers failing silently
+  // + upserting 'alerted' state suppresses the next re-fire and hides the outage.
   const slackPayload = buildSlackAlertPayload(decision);
+  let slackSent = false;
+  let emailSent = false;
   try {
     await dispatcher.sendSlack(slackPayload);
+    slackSent = true;
   } catch (err) {
     logger.error({ error: err }, 'Treasury alert: Slack dispatch failed');
   }
@@ -234,14 +239,27 @@ export async function runTreasuryAlertCheck(
       slackPayload.text,
       `${slackPayload.text}\n\nReason: ${decision.reason}`,
     );
+    emailSent = true;
   } catch (err) {
     logger.error({ error: err }, 'Treasury alert: email dispatch failed');
   }
 
-  // Record the alert so the re-fire dedup works next run. Failing to persist
-  // this leaves stale state → next tick may re-fire (spam) or fail to re-fire
-  // after the hourly window expires. Log loudly so ops can investigate; still
-  // return the decision so the cron sees the alert fired.
+  // Both channels failed → do NOT upsert dedup state. Let the next tick
+  // re-evaluate and retry. Return decision so the cron logs the attempt,
+  // but upstream can see stateErr-free path means nothing was persisted.
+  if (!slackSent && !emailSent) {
+    logger.error(
+      { decision, slackSent, emailSent },
+      'Treasury alert: BOTH Slack and email dispatch failed — dedup state NOT updated, retry next tick',
+    );
+    return decision;
+  }
+
+  // At least one channel sent. Record the alert so the re-fire dedup works
+  // next run. Failing to persist here leaves stale state → next tick may
+  // re-fire (spam) or fail to re-fire after the hourly window expires. Log
+  // loudly so ops can investigate; still return the decision so the cron
+  // sees the alert fired.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error: stateErr } = await (db as any)
     .from('treasury_alert_state')

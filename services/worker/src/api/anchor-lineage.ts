@@ -1,13 +1,14 @@
 /**
  * Anchor Lineage + Supersede API (ARK-104 — SCRUM-1014)
  *
- * GET  /api/anchor/:id/lineage        → full version chain (root..head)
- * POST /api/anchor/:id/supersede      → atomic supersede with new fingerprint
+ * GET  /api/anchor/:public_id/lineage  → full version chain (root..head)
+ * POST /api/anchor/:id/supersede       → atomic supersede with new fingerprint
  *
- * Backed by `get_anchor_lineage` + `supersede_anchor` RPCs (migration 0226).
- * The persistent-URI guarantee: any public_id in a lineage still resolves
- * via the verify page through `get_current_anchor_public_id`, so stale
- * ATS/VMS integration links keep working across re-anchors.
+ * Backed by `get_anchor_lineage` + `supersede_anchor` RPCs (migration 0226
+ * + 0232). Per CLAUDE.md §1.4, the GET handler exposes only `public_id` +
+ * derived fields — never the internal UUID. The persistent-URI guarantee
+ * still holds: any public_id in a lineage resolves via the verify page
+ * through `get_current_anchor_public_id`.
  */
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -24,11 +25,19 @@ export const SupersedeInput = z.object({
   reason: z.string().trim().max(2000).optional(),
 });
 
+/**
+ * Public shape returned by /api/anchor/:public_id/lineage.
+ *
+ * Intentionally omits the internal `anchors.id` UUID and `parent_anchor_id`
+ * (replaced with `parent_public_id`), plus `revocation_reason` which is
+ * admin-authored free-text that may contain PII or internal notes.
+ *
+ * Migration 0232 enforces this shape at the SQL layer.
+ */
 export interface LineageItem {
-  id: string;
-  public_id: string | null;
+  public_id: string;
   version_number: number;
-  parent_anchor_id: string | null;
+  parent_public_id: string | null;
   status: string;
   fingerprint: string;
   chain_tx_id: string | null;
@@ -36,40 +45,49 @@ export interface LineageItem {
   chain_timestamp: string | null;
   created_at: string;
   revoked_at: string | null;
-  revocation_reason: string | null;
   is_current: boolean;
 }
 
 const UuidSchema = z.string().uuid();
+// public_id is the external handle (short opaque string). Validated loosely —
+// the RPC does the authoritative existence check + returns 'Anchor not found'.
+const PublicIdSchema = z
+  .string()
+  .trim()
+  .min(1, 'public_id is required')
+  .max(128, 'public_id too long');
 
 /**
- * GET /api/anchor/:id/lineage
- * Returns [root, ..., head] for the lineage that contains `:id`.
- * Unauth-readable fields only (matches public verify behavior).
+ * GET /api/anchor/:public_id/lineage
+ * Returns [root, ..., head] for the lineage that contains `:public_id`.
+ * Accepts the caller-facing public_id — the internal UUID never crosses the
+ * HTTP boundary. Unauth-readable (matches public verify behavior).
  */
 export async function handleAnchorLineage(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const parsed = UuidSchema.safeParse(req.params.id);
+  const parsed = PublicIdSchema.safeParse(req.params.id);
   if (!parsed.success) {
     res.status(400).json({
-      error: { code: 'invalid_request', message: 'Invalid anchor id' },
+      error: { code: 'invalid_request', message: 'Invalid public_id' },
     });
     return;
   }
 
   try {
     const { data, error } = await callRpc<LineageItem[]>(db, 'get_anchor_lineage', {
-      p_anchor_id: parsed.data,
+      p_public_id: parsed.data,
     });
 
     if (error) {
       const status = mapRpcErrorToStatus(error.message ?? '');
+      // 500-class errors never leak raw RPC messages.
+      const isInternal = status >= 500;
       res.status(status).json({
         error: {
-          code: status === 404 ? 'not_found' : 'rpc_failed',
-          message: error.message ?? 'Lineage lookup failed',
+          code: status === 404 ? 'not_found' : isInternal ? 'internal' : 'rpc_failed',
+          message: isInternal ? 'Internal server error' : error.message ?? 'Lineage lookup failed',
         },
       });
       return;
@@ -125,6 +143,9 @@ export async function handleSupersedeAnchor(
 
     if (error) {
       const status = mapRpcErrorToStatus(error.message ?? '');
+      // Only 500-class leaks raw RPC messages. Everything else gets a client-
+      // actionable code mapped from the status — never 'conflict' for non-409.
+      const isInternal = status >= 500;
       res.status(status).json({
         error: {
           code:
@@ -135,7 +156,7 @@ export async function handleSupersedeAnchor(
                 : status === 409
                   ? 'conflict'
                   : 'internal',
-          message: error.message ?? 'Supersede failed',
+          message: isInternal ? 'Internal server error' : error.message ?? 'Supersede failed',
         },
       });
       return;

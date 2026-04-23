@@ -182,6 +182,13 @@ function checkTriggerFilters(rule: RuleRow, event: TriggerEvent): string | null 
     case 'SCHEDULED_CRON':
     case 'QUEUE_DIGEST':
       return null; // no additional filtering — caller gates cron by time
+    default: {
+      // Fail-closed: TypeScript enforces exhaustiveness at compile time, but if
+      // a new trigger type slips through (e.g. malformed row from DB), reject
+      // the event rather than silently matching with `undefined`.
+      const _exhaustive: never = rule.trigger_type;
+      return `unexpected_trigger_type:${String(_exhaustive)}`;
+    }
   }
 }
 

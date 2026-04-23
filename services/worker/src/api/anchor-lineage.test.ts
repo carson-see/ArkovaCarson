@@ -36,6 +36,7 @@ function mockReq(opts: { params?: Record<string, string>; body?: unknown } = {})
 }
 
 const VALID_UUID = '11111111-1111-1111-1111-111111111111';
+const VALID_PUBLIC_ID = 'pub-anchor-abc123';
 const VALID_HASH = 'a'.repeat(64);
 
 describe('SupersedeInput', () => {
@@ -67,26 +68,40 @@ describe('handleAnchorLineage', () => {
   beforeEach(() => rpcMock.mockReset());
   afterEach(() => vi.restoreAllMocks());
 
-  it('400s non-UUID id', async () => {
+  it('400s an empty public_id', async () => {
     const { res, status } = mockRes();
-    await handleAnchorLineage(mockReq({ params: { id: 'not-uuid' } }), res);
+    await handleAnchorLineage(mockReq({ params: { id: '' } }), res);
     expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('400s a public_id over 128 chars', async () => {
+    const { res, status } = mockRes();
+    await handleAnchorLineage(mockReq({ params: { id: 'x'.repeat(129) } }), res);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('calls RPC with p_public_id (never internal UUID)', async () => {
+    rpcMock.mockResolvedValue({ data: [], error: null });
+    const { res } = mockRes();
+    await handleAnchorLineage(mockReq({ params: { id: VALID_PUBLIC_ID } }), res);
+    // The second arg is the RPC params payload — must be the public-id key.
+    expect(rpcMock).toHaveBeenCalledWith('get_anchor_lineage', { p_public_id: VALID_PUBLIC_ID });
   });
 
   it('returns items + head_public_id with is_current item', async () => {
     rpcMock.mockResolvedValue({
       data: [
         {
-          id: VALID_UUID,
           public_id: 'pub-root',
           version_number: 1,
+          parent_public_id: null,
           status: 'SUPERSEDED',
           is_current: false,
         },
         {
-          id: '22222222-2222-2222-2222-222222222222',
           public_id: 'pub-head',
           version_number: 2,
+          parent_public_id: 'pub-root',
           status: 'SECURED',
           is_current: true,
         },
@@ -94,7 +109,7 @@ describe('handleAnchorLineage', () => {
       error: null,
     });
     const { res, json } = mockRes();
-    await handleAnchorLineage(mockReq({ params: { id: VALID_UUID } }), res);
+    await handleAnchorLineage(mockReq({ params: { id: VALID_PUBLIC_ID } }), res);
     expect(json).toHaveBeenCalledWith(
       expect.objectContaining({ count: 2, head_public_id: 'pub-head' }),
     );
@@ -102,11 +117,11 @@ describe('handleAnchorLineage', () => {
 
   it('falls back to last item when no is_current flag', async () => {
     rpcMock.mockResolvedValue({
-      data: [{ id: VALID_UUID, public_id: 'pub-only', is_current: false }],
+      data: [{ public_id: 'pub-only', is_current: false }],
       error: null,
     });
     const { res, json } = mockRes();
-    await handleAnchorLineage(mockReq({ params: { id: VALID_UUID } }), res);
+    await handleAnchorLineage(mockReq({ params: { id: VALID_PUBLIC_ID } }), res);
     expect(json).toHaveBeenCalledWith(
       expect.objectContaining({ head_public_id: 'pub-only' }),
     );
@@ -115,14 +130,14 @@ describe('handleAnchorLineage', () => {
   it('maps 404 on RPC "not found"', async () => {
     rpcMock.mockResolvedValue({ data: null, error: { message: 'Anchor not found' } });
     const { res, status } = mockRes();
-    await handleAnchorLineage(mockReq({ params: { id: VALID_UUID } }), res);
+    await handleAnchorLineage(mockReq({ params: { id: VALID_PUBLIC_ID } }), res);
     expect(status).toHaveBeenCalledWith(404);
   });
 
   it('returns empty array when RPC returns null data', async () => {
     rpcMock.mockResolvedValue({ data: null, error: null });
     const { res, json } = mockRes();
-    await handleAnchorLineage(mockReq({ params: { id: VALID_UUID } }), res);
+    await handleAnchorLineage(mockReq({ params: { id: VALID_PUBLIC_ID } }), res);
     expect(json).toHaveBeenCalledWith({ items: [], count: 0, head_public_id: null });
   });
 });
