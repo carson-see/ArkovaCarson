@@ -2,15 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
-    # Skip docs-only changes — saves Actions minutes on private repo.
+    branches: [main, staging, develop]
+    # Skip docs-only changes — saves Actions minutes on public repo transition.
     paths-ignore:
       - '**.md'
       - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
   pull_request:
-    branches: [main, develop]
+    branches: [main, staging, develop]
     paths-ignore:
       - '**.md'
       - 'docs/**'
