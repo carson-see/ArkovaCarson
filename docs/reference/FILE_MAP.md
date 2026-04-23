@@ -53,7 +53,7 @@ services/worker/
     chain/client.ts                          <- Async factory (initChainClient/getInitializedChainClient) + SupabaseChainIndexLookup
     chain/signet.ts                          <- BitcoinChainClient. Supports signet/testnet/mainnet via provider abstractions.
     chain/mock.ts                            <- In-memory mock for tests and development
-    chain/signing-provider.ts                <- WifSigningProvider (ECPair, signet/testnet) + KmsSigningProvider (AWS KMS, mainnet)
+    chain/signing-provider.ts                <- WifSigningProvider (ECPair, signet/testnet) + KmsSigningProvider (AWS KMS code-level abstraction; NOT deployed — prod signs via gcp-kms-signing-provider.ts)
     chain/fee-estimator.ts                   <- StaticFeeEstimator (fixed rate) + MempoolFeeEstimator (live API)
     chain/utxo-provider.ts                   <- RpcUtxoProvider (Bitcoin Core RPC) + MempoolUtxoProvider (Mempool.space REST) + factory
     chain/wallet.ts                          <- Treasury wallet utilities (keypair generation, address derivation, WIF validation)

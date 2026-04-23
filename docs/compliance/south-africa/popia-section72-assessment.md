@@ -69,7 +69,7 @@ Since the US does not have POPIA adequacy, Arkova must execute binding SCCs with
    - AES-256 encryption at rest
    - RLS on every Supabase table
    - Zero Trust ingress (Cloudflare Tunnel)
-   - AWS/GCP KMS for key management
+   - GCP KMS for key management
    - MFA on admin access
    - Annual penetration testing
 5. **Sub-processing** — no sub-processing without prior authorization; sub-processors bound by equivalent obligations

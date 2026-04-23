@@ -12,7 +12,7 @@ signatures/
   adesEngine.ts         — main orchestrator (sign + verify flows)
   adesEngine.test.ts    — engine tests (43 tests)
   pki/
-    hsmBridge.ts        — HSM signing (AWS KMS, GCP Cloud HSM, Mock)
+    hsmBridge.ts        — HSM signing abstraction (GCP Cloud HSM = prod; AWS KMS = non-deployed optionality per SCRUM-902; Mock for tests)
     certificateManager.ts — X.509 chain validation, parsing
     ocspClient.ts       — OCSP revocation checking with cache
     crlManager.ts       — CRL fetching with cache

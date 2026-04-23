@@ -11,7 +11,7 @@ _Consolidated: 2026-03-27 | Source: BACKLOG.md, HANDOFF.md, CLAUDE.md, bug_log.m
 |----|------|--------|-------------|
 | OPS-03 | Sentry DSN env vars | PENDING | Set `VITE_SENTRY_DSN` + `SENTRY_DSN` in Vercel + Cloud Run |
 | OPS-04 | Sentry source map upload | PENDING | Configure `SENTRY_AUTH_TOKEN` in CI |
-| OPS-05 | AWS KMS key provisioning | PENDING | Provision mainnet signing key in AWS KMS |
+| OPS-05 | GCP KMS key provisioning | DONE (2026-03; mainnet live) | `gcloud kms` key provisioned. AWS path intentionally not deployed — SCRUM-902. |
 | OPS-06 | Mainnet treasury funding | PENDING | Fund `bc1qtm2kk33k6ht4agt48kh7rfkmmhfkapqn4zwerc` (currently ~34k sats) |
 | OPS-07 | Key rotation (Stripe + service role) | PENDING | Rotate Stripe keys + Supabase service role key |
 | DEPLOY | Migrations 0108-0117 + 0120 | PENDING | Apply to production Supabase |

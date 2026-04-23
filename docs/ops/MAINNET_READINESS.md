@@ -15,7 +15,7 @@ All code paths for mainnet are implemented and tested:
 |-----------|--------|------|
 | BitcoinChainClient (mainnet network) | READY | `services/worker/src/chain/signet.ts` |
 | GCP KMS SigningProvider | READY | `services/worker/src/chain/gcp-kms-signing-provider.ts` |
-| AWS KMS SigningProvider | READY | `services/worker/src/chain/signing-provider.ts` |
+| AWS KMS SigningProvider | CODE-LEVEL ABSTRACTION (non-deployed; prod is GCP) | `services/worker/src/chain/signing-provider.ts` |
 | Chain client factory (mainnet branch) | READY | `services/worker/src/chain/client.ts:246-308` |
 | Mempool.space fee estimator (mainnet) | READY | `services/worker/src/chain/fee-estimator.ts` |
 | UTXO provider (mempool.space mainnet) | READY | `services/worker/src/chain/utxo-provider.ts` |

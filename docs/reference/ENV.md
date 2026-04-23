@@ -40,11 +40,17 @@ FORCE_DYNAMIC_FEE_ESTIMATION=       # optional — force dynamic fees on signet/
 ```
 
 ## KMS signing (worker only)
+
+Production uses **GCP KMS only**. The "aws" value for `KMS_PROVIDER` is a
+code-level abstraction kept for future optionality but NOT deployed — see
+`memory/feedback_no_aws.md` and SCRUM-902. Do not claim AWS in
+customer-facing materials.
+
 ```bash
-KMS_PROVIDER=                       # "aws" | "gcp" — required for mainnet
-BITCOIN_KMS_KEY_ID=                 # AWS KMS key ID
-BITCOIN_KMS_REGION=                 # AWS region for KMS key
-GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path
+KMS_PROVIDER=gcp                    # "gcp" in prod; "aws" is non-deployed abstraction
+BITCOIN_KMS_KEY_ID=                 # (AWS path, non-deployed) KMS key ID
+BITCOIN_KMS_REGION=                 # (AWS path, non-deployed) region
+GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path (prod)
 GCP_KMS_PROJECT_ID=                 # optional — defaults to application default
 ```
 
