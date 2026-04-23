@@ -16,7 +16,7 @@
  * Parent: SCRUM-1056 (SEC-HARDEN-03).
  */
 
-import { runChecks, type CheckResult } from "./runner";
+import { runChecks } from "./runner";
 import { checks } from "./checks";
 
 const args = process.argv.slice(2);
