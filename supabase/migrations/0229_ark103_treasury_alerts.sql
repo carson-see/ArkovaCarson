@@ -36,12 +36,14 @@ ALTER TABLE treasury_alert_state FORCE ROW LEVEL SECURITY;
 -- Platform admins can read for ops visibility; writes are service-role only.
 GRANT SELECT ON treasury_alert_state TO authenticated;
 
+-- Platform-admin gate is a boolean column on profiles, not a user_role enum
+-- value (user_role only has INDIVIDUAL / ORG_ADMIN per migration 0001).
 CREATE POLICY treasury_alert_state_select ON treasury_alert_state
   FOR SELECT TO authenticated
   USING (
     EXISTS (
       SELECT 1 FROM profiles
-      WHERE profiles.id = auth.uid() AND profiles.role = 'PLATFORM_ADMIN'
+      WHERE profiles.id = auth.uid() AND profiles.is_platform_admin = true
     )
   );
 
