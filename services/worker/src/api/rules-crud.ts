@@ -185,11 +185,11 @@ export async function handleCreateRule(
   }
 
   try {
-    // SEC-02 defense-in-depth: newly-created rules ALWAYS ship disabled, even
-    // if the caller requested `enabled=true`. ARK-108 wizard + ARK-110 NL
-    // authoring both route through here, so every rule gets a human flip
-    // before it can fire an action. Downstream auditors can grep for the
-    // ORG_RULE_ENABLED event as the true "rule went live" marker.
+    // SEC-02 defense-in-depth: newly-created rules ALWAYS ship disabled
+    // regardless of what the request body asks for. ARK-108 wizard + ARK-110
+    // NL authoring both route through here, so every rule gets an explicit
+    // human flip before it can fire an action. Downstream auditors can grep
+    // for the ORG_RULE_ENABLED event as the true "rule went live" marker.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
       .from('organization_rules')
@@ -224,7 +224,7 @@ export async function handleCreateRule(
           name: parsed.data.name,
           trigger_type: parsed.data.trigger_type,
           action_type: parsed.data.action_type,
-          enabled: parsed.data.enabled,
+          enabled: false,
         },
       });
     }
@@ -336,9 +336,10 @@ export async function handleUpdateRule(
       res.status(400).json({ error: { code: 'update_failed', message: error.message } });
       return;
     }
-    // Supabase returns success with count=0 when no row matched. Surface that
-    // as 404 so callers don't see a silent no-op as "success" (and auditors
-    // don't see an ORG_RULE_UPDATED event for a rule that wasn't written).
+    // count=0 means either the id was wrong or the rule belongs to another
+    // org. Surface as 404 so callers don't confuse a silent no-op with a
+    // successful write (and so auditors don't see ORG_RULE_UPDATED events
+    // for rules that didn't change).
     if (count === 0) {
       res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
       return;

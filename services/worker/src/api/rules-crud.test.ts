@@ -1,0 +1,449 @@
+/**
+ * ARK-112 (SCRUM-1120) — Rule CRUD API test coverage.
+ */
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Request, Response } from 'express';
+
+interface TerminalResult {
+  data?: unknown;
+  error?: unknown;
+  count?: number | null;
+}
+
+const stub: { from: ReturnType<typeof vi.fn> } = { from: vi.fn() };
+
+/**
+ * Minimal chained-builder stub. Records every verb+filter call in `calls`,
+ * resolves terminal awaits (`then`, `maybeSingle`, `single`) with the
+ * op-keyed `TerminalResult`.
+ */
+function tableMock(terminalByOp: {
+  select?: TerminalResult;
+  insert?: TerminalResult;
+  update?: TerminalResult;
+  delete?: TerminalResult;
+}): {
+  from: (table: string) => Record<string, unknown>;
+  calls: Array<{ method: string; args: unknown[] }>;
+} {
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+
+  function chain(terminal: TerminalResult): Record<string, unknown> {
+    const handler: Record<string, unknown> = {
+      // Post-mutation `.select(...)` (used by INSERT ... RETURNING id)
+      select: () => handler,
+      eq: (...args: unknown[]) => {
+        calls.push({ method: 'eq', args });
+        return handler;
+      },
+      order: () => handler,
+      limit: () => handler,
+      maybeSingle: async () => terminal,
+      single: async () => terminal,
+      then(onFulfilled: (v: TerminalResult) => unknown) {
+        return Promise.resolve(terminal).then(onFulfilled);
+      },
+    };
+    return handler;
+  }
+
+  const byOp: Record<string, TerminalResult> = {
+    select: terminalByOp.select ?? { data: [], error: null },
+    insert: terminalByOp.insert ?? { data: { id: 'rule-new' }, error: null },
+    update: terminalByOp.update ?? { error: null, count: 1 },
+    delete: terminalByOp.delete ?? { error: null, count: 1 },
+  };
+
+  const from = (_table: string) => ({
+    select: (...args: unknown[]) => {
+      calls.push({ method: 'select', args });
+      return chain(byOp.select);
+    },
+    insert: (...args: unknown[]) => {
+      calls.push({ method: 'insert', args });
+      return chain(byOp.insert);
+    },
+    update: (...args: unknown[]) => {
+      calls.push({ method: 'update', args });
+      return chain(byOp.update);
+    },
+    delete: (...args: unknown[]) => {
+      calls.push({ method: 'delete', args });
+      return chain(byOp.delete);
+    },
+  });
+
+  return { from, calls };
+}
+
+/**
+ * Swap a multi-call `db.from()` dispatcher for a scripted handler list.
+ * First call returns `handlers[0]`, second `handlers[1]`, etc. After the
+ * list is exhausted, repeats the last handler.
+ */
+function scriptedFrom(
+  ...handlers: Array<ReturnType<ReturnType<typeof tableMock>['from']>>
+): (_table: string) => ReturnType<ReturnType<typeof tableMock>['from']> {
+  let idx = 0;
+  return () => handlers[Math.min(idx++, handlers.length - 1)];
+}
+
+vi.mock('../utils/db.js', () => ({
+  // Pass-through — each test installs its own `stub.from` impl.
+  db: {
+    from: (...args: unknown[]) => (stub.from as (...a: unknown[]) => unknown)(...args),
+  },
+}));
+
+vi.mock('../utils/logger.js', () => ({
+  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+import {
+  handleCreateRule,
+  handleListRules,
+  handleUpdateRule,
+  handleDeleteRule,
+  UpdateOrgRuleInput,
+} from './rules-crud.js';
+
+// -- Fixtures ------------------------------------------------------------
+
+const USER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+const ORG_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+const OTHER_ORG_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+const RULE_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+
+function mockRes(): { res: Response; status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn> } {
+  const json = vi.fn();
+  const status = vi.fn().mockReturnValue({ json });
+  return { res: { status, json } as unknown as Response, status, json };
+}
+
+function mockReq(opts: { body?: unknown; params?: Record<string, string> } = {}): Request {
+  return {
+    body: opts.body ?? {},
+    params: opts.params ?? {},
+    headers: {},
+    query: {},
+  } as unknown as Request;
+}
+
+const VALID_CREATE_BODY = {
+  org_id: ORG_ID,
+  name: 'Anchor all DocuSigns',
+  description: 'Auto-anchor every signed envelope',
+  trigger_type: 'ESIGN_COMPLETED' as const,
+  trigger_config: { vendors: ['docusign'] },
+  action_type: 'AUTO_ANCHOR' as const,
+  action_config: { tag: 'ds' },
+  enabled: true, // caller asks for enabled — SEC-02 must force false
+};
+
+// Returns a profiles lookup stub that always returns the caller's org.
+function installAuthedCaller() {
+  const { from } = tableMock({
+    select: { data: { org_id: ORG_ID }, error: null },
+  });
+  stub.from.mockImplementation(from);
+}
+
+beforeEach(() => {
+  stub.from = vi.fn();
+});
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+// -- UpdateOrgRuleInput schema ------------------------------------------
+
+describe('UpdateOrgRuleInput', () => {
+  it('requires at least one field', () => {
+    const r = UpdateOrgRuleInput.safeParse({});
+    expect(r.success).toBe(false);
+  });
+
+  it('accepts a single field', () => {
+    const r = UpdateOrgRuleInput.safeParse({ enabled: true });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an empty name', () => {
+    const r = UpdateOrgRuleInput.safeParse({ name: '' });
+    expect(r.success).toBe(false);
+  });
+});
+
+// -- handleListRules -----------------------------------------------------
+
+describe('handleListRules', () => {
+  it('403s when caller has no org', async () => {
+    const { from } = tableMock({ select: { data: null, error: null } });
+    stub.from.mockImplementation(from);
+
+    const { res, status, json } = mockRes();
+    await handleListRules(USER_ID, mockReq(), res);
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'forbidden' }) }),
+    );
+  });
+
+  it('returns items + count when RPC succeeds', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rules = tableMock({
+      select: {
+        data: [{ id: RULE_ID, org_id: ORG_ID, name: 'r1', trigger_type: 'MANUAL_UPLOAD' }],
+        error: null,
+      },
+    });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rules.from('')));
+
+    const { res, json } = mockRes();
+    await handleListRules(USER_ID, mockReq(), res);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ count: 1, items: expect.any(Array) }),
+    );
+  });
+
+  it('returns 500 when list SELECT errors', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rules = tableMock({ select: { data: null, error: { message: 'db down' } } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rules.from('')));
+
+    const { res, status } = mockRes();
+    await handleListRules(USER_ID, mockReq(), res);
+    expect(status).toHaveBeenCalledWith(500);
+  });
+});
+
+// -- handleCreateRule ---------------------------------------------------
+
+describe('handleCreateRule', () => {
+  it('rejects a non-matching org_id with 403 (cross-tenant guard)', async () => {
+    installAuthedCaller();
+    const { res, status } = mockRes();
+    await handleCreateRule(
+      USER_ID,
+      mockReq({ body: { ...VALID_CREATE_BODY, org_id: OTHER_ORG_ID } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(403);
+  });
+
+  it('rejects invalid body with 400', async () => {
+    installAuthedCaller();
+    const { res, status } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: { name: 'x' } }), res);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('rejects inline secrets in trigger_config with code inline_secret', async () => {
+    installAuthedCaller();
+    const { res, status, json } = mockRes();
+    await handleCreateRule(
+      USER_ID,
+      mockReq({
+        body: {
+          ...VALID_CREATE_BODY,
+          trigger_config: {
+            vendors: ['docusign'],
+            api_key: 'AKIA1234567890', // inline secret → rejected
+          },
+        },
+      }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'inline_secret' }) }),
+    );
+  });
+
+  it('forces enabled=false on insert regardless of request body (SEC-02)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
+    const auditInsert = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), rulesInsert.from(''), auditInsert.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: VALID_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(201);
+    expect(json).toHaveBeenCalledWith({ id: RULE_ID });
+
+    // `enabled` MUST be false even though VALID_CREATE_BODY.enabled was true.
+    const insertCall = rulesInsert.calls.find((c) => c.method === 'insert');
+    expect(insertCall).toBeDefined();
+    const payload = insertCall!.args[0] as { enabled: boolean; name: string };
+    expect(payload.enabled).toBe(false);
+    expect(payload.name).toBe(VALID_CREATE_BODY.name);
+  });
+});
+
+// -- handleUpdateRule ---------------------------------------------------
+
+describe('handleUpdateRule', () => {
+  it('400s on invalid UUID param', async () => {
+    installAuthedCaller();
+    const { res, status } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: 'not-a-uuid' }, body: { enabled: true } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('400s when body has no fields', async () => {
+    installAuthedCaller();
+    const { res, status } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: {} }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('returns 404 when no rows match (update with count=0)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 0 } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rulesUpdate.from('')));
+
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { name: 'rename' } }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(404);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'not_found' }) }),
+    );
+  });
+
+  it('rejects inline-secret action_config with 400 inline_secret', async () => {
+    installAuthedCaller();
+    const { res, status, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({
+        params: { id: RULE_ID },
+        body: { action_config: { password: 'hunter2abc' } },
+      }),
+      res,
+    );
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'inline_secret' }) }),
+    );
+  });
+
+  it('happy path: partial update returns ok:true', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    expect(json).toHaveBeenCalledWith({ ok: true });
+  });
+
+  it('emits ORG_RULE_ENABLED audit when toggling enabled=true (SEC-02)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: true } }),
+      res,
+    );
+    // The audit fire-and-forget fires after res.json; wait a microtask for it.
+    await Promise.resolve();
+    await Promise.resolve();
+    const auditInsertCall = audit.calls.find((c) => c.method === 'insert');
+    expect(auditInsertCall).toBeDefined();
+    const payload = auditInsertCall!.args[0] as { event_type: string };
+    expect(payload.event_type).toBe('ORG_RULE_ENABLED');
+  });
+
+  it('emits ORG_RULE_DISABLED audit when toggling enabled=false (SEC-02)', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+    );
+
+    const { res } = mockRes();
+    await handleUpdateRule(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, body: { enabled: false } }),
+      res,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    const auditInsertCall = audit.calls.find((c) => c.method === 'insert');
+    expect(auditInsertCall).toBeDefined();
+    const payload = auditInsertCall!.args[0] as { event_type: string };
+    expect(payload.event_type).toBe('ORG_RULE_DISABLED');
+  });
+});
+
+// -- handleDeleteRule ---------------------------------------------------
+
+describe('handleDeleteRule', () => {
+  it('403s when caller has no org', async () => {
+    const noOrg = tableMock({ select: { data: null, error: null } });
+    stub.from.mockImplementation(noOrg.from);
+
+    const { res, status } = mockRes();
+    await handleDeleteRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+    expect(status).toHaveBeenCalledWith(403);
+  });
+
+  it('400s on invalid UUID', async () => {
+    installAuthedCaller();
+    const { res, status } = mockRes();
+    await handleDeleteRule(USER_ID, mockReq({ params: { id: 'nope' } }), res);
+    expect(status).toHaveBeenCalledWith(400);
+  });
+
+  it('returns 404 when no rows match', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesDelete = tableMock({ delete: { error: null, count: 0 } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rulesDelete.from('')));
+
+    const { res, status } = mockRes();
+    await handleDeleteRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it('happy path returns ok:true', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rulesDelete = tableMock({ delete: { error: null, count: 1 } });
+    const audit = tableMock({ insert: { data: null, error: null } });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), rulesDelete.from(''), audit.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleDeleteRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+    expect(json).toHaveBeenCalledWith({ ok: true });
+  });
+});
