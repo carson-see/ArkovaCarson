@@ -15,7 +15,7 @@
 
 ---
 
-## 0. MANDATORY METHODOLOGY (7 rules)
+## 0. MANDATORY METHODOLOGY (8 rules)
 
 ### 1. TDD
 Red-Green-Refactor. Write a failing test before production code. No `test.skip`, no "will add later."
@@ -37,6 +37,9 @@ Dev server up at 1280px and 375px. Screenshots in the PR. Regressions logged in 
 
 ### 7. Vertex endpoint hygiene
 Audit `gcloud ai endpoints list` before + after every tuning/eval/deploy run. Target 1–2 deployed in steady state. Never keep cold-spare endpoints deployed — model artifacts preserve redeploy path at no cost. See `memory/feedback_vertex_endpoint_hygiene.md`.
+
+### 8. Never work on `main`
+Feature branches only. Push as many commits as you want — GitHub Actions ignores all feature-branch pushes (every workflow in `.github/workflows/` triggers only on PR or on push to `main`/`develop`). CI runs **once** when the PR opens and on each update. Merges are human-gated per `memory/feedback_never_merge_without_ok.md`. This keeps Actions minutes near zero during iteration.
 
 ---
 
@@ -89,6 +92,7 @@ Banned in user-visible strings: Wallet, Gas, Hash, Block, Transaction, Crypto, B
 | Transaction | Network Receipt / Anchor Receipt |
 | Hash | Fingerprint |
 | Testnet / Mainnet | Test Environment / Production Network |
+| Issue Credential | Secure Document |
 
 All UI copy in `src/lib/copy.ts`. CI enforced: `npm run lint:copy`. Internal code may use technical names.
 

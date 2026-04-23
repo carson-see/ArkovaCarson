@@ -21,7 +21,8 @@
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:load": "vitest run tests/load",
-    "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'"
+    "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'",
+    "healthcheck": "tsx scripts/healthcheck/index.ts"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.1.0",
