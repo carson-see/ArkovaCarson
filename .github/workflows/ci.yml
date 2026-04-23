@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches:
+      - main
+      - staging
   pull_request:
-    branches: [main, develop]
+    branches:
+      - main
+      - staging
 
 env:
   # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks
