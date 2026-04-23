@@ -24,11 +24,15 @@ export interface AuditLogEntry {
   event_type: string;
   event_category: string;
   actor_id: string | null;
-  actor_email: string | null;
   org_id: string | null;
   target_type: string | null;
   target_id: string | null;
-  /** JSONB from Postgres, already stringified. Parsed here for structuredPayload. */
+  /**
+   * JSON string (the column is TEXT in Postgres but every caller writes
+   * JSON.stringify). Parsed here to expose a structured jsonPayload.
+   * Callers that include `actor_email` / `ip` / `user_agent` put them under
+   * `details`, not top-level — see CIBA queue-resolution + anchor-lineage.
+   */
   details: string | null;
   created_at: string;
 }
@@ -68,7 +72,6 @@ export async function writeAuditBatch(entries: AuditLogEntry[]): Promise<Set<str
         event_type: e.event_type,
         event_category: e.event_category,
         actor_id: e.actor_id,
-        actor_email: e.actor_email,
         org_id: e.org_id,
         target_type: e.target_type,
         target_id: e.target_id,

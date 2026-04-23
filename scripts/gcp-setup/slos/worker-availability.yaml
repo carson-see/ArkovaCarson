@@ -1,0 +1,20 @@
+# GCP Monitoring SLO — arkova-worker availability
+# Target: 99.9% of requests succeed over a rolling 28-day window.
+# Alerts fire at 2x error-budget burn (burn rate > 2.0 over 1h).
+
+displayName: "Worker availability (99.9% over 28d)"
+goal: 0.999
+rollingPeriod: 2419200s  # 28 days
+serviceLevelIndicator:
+  requestBased:
+    goodTotalRatio:
+      # Good = 2xx/3xx responses. Total = all requests.
+      goodServiceFilter: >
+        resource.type = "cloud_run_revision"
+        resource.labels.service_name = "arkova-worker"
+        metric.type = "run.googleapis.com/request_count"
+        metric.labels.response_code_class = "2xx"
+      totalServiceFilter: >
+        resource.type = "cloud_run_revision"
+        resource.labels.service_name = "arkova-worker"
+        metric.type = "run.googleapis.com/request_count"

@@ -1,0 +1,18 @@
+# GCP Monitoring SLO — Bitcoin batch-anchor job success
+# Target: 99% of batch-anchor jobs complete successfully over a 24-hour window.
+# The worker emits a custom metric `batch_anchor_run_result` with label
+# `result = "success" | "failed"`. Set that up via OpenTelemetry or explicit
+# Cloud Monitoring writes (see services/worker/src/jobs/batch-anchor.ts
+# follow-up SCRUM-1064).
+
+displayName: "Batch anchor success rate (99% over 24h)"
+goal: 0.99
+rollingPeriod: 86400s  # 24 hours
+serviceLevelIndicator:
+  requestBased:
+    goodTotalRatio:
+      goodServiceFilter: >
+        metric.type = "custom.googleapis.com/arkova/batch_anchor_run_result"
+        metric.labels.result = "success"
+      totalServiceFilter: >
+        metric.type = "custom.googleapis.com/arkova/batch_anchor_run_result"

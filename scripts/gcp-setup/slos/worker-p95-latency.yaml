@@ -1,0 +1,15 @@
+# GCP Monitoring SLO — arkova-worker p95 latency under 500ms
+# Target: 95% of requests complete in ≤ 500ms over a rolling 7-day window.
+
+displayName: "Worker p95 latency ≤ 500ms (95% over 7d)"
+goal: 0.95
+rollingPeriod: 604800s  # 7 days
+serviceLevelIndicator:
+  requestBased:
+    distributionCut:
+      distributionFilter: >
+        resource.type = "cloud_run_revision"
+        resource.labels.service_name = "arkova-worker"
+        metric.type = "run.googleapis.com/request_latencies"
+      range:
+        max: 500  # milliseconds

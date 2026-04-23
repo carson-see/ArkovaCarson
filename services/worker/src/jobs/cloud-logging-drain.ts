@@ -70,7 +70,8 @@ export async function runCloudLoggingDrain(): Promise<CloudLoggingDrainResult> {
 
       // Successful writes → delete from queue.
       if (writtenIds.size > 0) {
-        const { error: delErr, count } = await db
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: delErr, count } = await (db as any)
           .from('cloud_logging_queue')
           .delete({ count: 'exact' })
           .in('audit_id', [...writtenIds]);
@@ -104,7 +105,12 @@ export async function runCloudLoggingDrain(): Promise<CloudLoggingDrainResult> {
 async function claimBatch(): Promise<AuditLogEntry[]> {
   // Oldest-first, under retry cap. Using the service_role client bypasses
   // RLS — the table is locked down (migration 0235).
-  const { data: queueRows, error: qErr } = await db
+  //
+  // `cloud_logging_queue` is not yet in `database.types.ts` (types regen
+  // runs after migration 0235 applies to prod — SCRUM-1116 tracks that).
+  // Cast to `any` until then, consistent with CIBA's other new-table reads.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: queueRows, error: qErr } = await (db as any)
     .from('cloud_logging_queue')
     .select('audit_id')
     .lt('retry_count', 10)
@@ -121,13 +127,13 @@ async function claimBatch(): Promise<AuditLogEntry[]> {
 
   const { data: audit, error: aErr } = await db
     .from('audit_events')
-    .select('id, event_type, event_category, actor_id, actor_email, org_id, target_type, target_id, details, created_at')
+    .select('id, event_type, event_category, actor_id, org_id, target_type, target_id, details, created_at')
     .in('id', auditIds);
   if (aErr) {
     logger.error({ error: aErr, count: auditIds.length }, 'Cloud Logging drain: audit_events read failed');
     return [];
   }
-  return (audit as AuditLogEntry[] | null) ?? [];
+  return (audit as unknown as AuditLogEntry[] | null) ?? [];
 }
 
 async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Promise<void> {
