@@ -7,8 +7,9 @@
  * matched (rule, event) pair.
  *
  * This pass is idempotent-by-construction:
- *   - The SQL INSERT uses ON CONFLICT DO NOTHING on (rule_id, event_id)
- *     (enforced by migration 0224).
+ *   - The SQL INSERT uses ON CONFLICT DO NOTHING on (rule_id, trigger_event_id)
+ *     (enforced by migration 0224, unique index
+ *     idx_organization_rule_executions_idempotency).
  *   - A partial failure mid-batch leaves the remaining rows for the next pass.
  *
  * Action dispatch (AUTO_ANCHOR / NOTIFY / ...) is a *separate* worker —
@@ -133,6 +134,14 @@ function toTriggerEvent(ev: EventRow): TriggerEvent {
  * Persist matches as execution rows. Single upsert — DO NOTHING on conflict
  * preserves idempotency across retries. `PENDING` rows are picked up by the
  * action-dispatch worker in a follow-up pass.
+ *
+ * Schema alignment (migration 0224):
+ *   - `trigger_event_id` is the idempotency key (TEXT, unique within rule).
+ *     The claimed EventRow.id is a UUID string — safe to serialize.
+ *   - `match_reason` is not a top-level column; it lives under
+ *     `input_payload` as structured JSON. Keeping it nested means auditors
+ *     can extend the payload without schema churn.
+ *   - onConflict target matches idx_organization_rule_executions_idempotency.
  */
 async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: number; errored: boolean }> {
   if (inserts.length === 0) return { recorded: 0, errored: false };
@@ -143,12 +152,15 @@ async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: numbe
       .upsert(
         inserts.map((i) => ({
           rule_id: i.rule_id,
-          event_id: i.event_id,
+          trigger_event_id: i.event_id,
           org_id: i.org_id,
           status: i.needs_semantic_match ? 'AWAITING_SEMANTIC_MATCH' : 'PENDING',
-          match_reason: i.match_reason,
+          input_payload: {
+            match_reason: i.match_reason,
+            needs_semantic_match: i.needs_semantic_match,
+          },
         })),
-        { onConflict: 'rule_id,event_id', ignoreDuplicates: true },
+        { onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true },
       );
     if (error) {
       logger.warn({ error, attempted: inserts.length }, 'rule executions upsert had errors');

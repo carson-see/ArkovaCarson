@@ -32,11 +32,15 @@ export const ResolveQueueInput = z.object({
 
 export function mapRpcErrorToStatus(message: string): number {
   const lowered = message.toLowerCase();
-  if (lowered.includes('not found')) return 404;
+  // Auth-adjacent phrases checked FIRST — several of them contain the
+  // substring "not found" (e.g. "Profile not found" = forbidden, not 404).
+  // Matching on 'not found' first misclassified those as 404 + surfaced
+  // raw DB messages to unauthenticated clients.
   if (
     lowered.includes('insufficient_privilege') ||
     lowered.includes('different organization') ||
-    lowered.includes('only organization administrators')
+    lowered.includes('only organization administrators') ||
+    lowered.includes('profile not found')
   ) {
     return 403;
   }
@@ -45,10 +49,13 @@ export function mapRpcErrorToStatus(message: string): number {
     lowered.includes('check_violation') ||
     lowered.includes('already been superseded') ||
     lowered.includes('is already') ||
-    lowered.includes('legal hold')
+    lowered.includes('legal hold') ||
+    lowered.includes('external_file_id') // mismatch between selected anchor + requested set
   ) {
     return 409;
   }
+  // Generic "not found" (anchor, resource) only after auth + conflict checks.
+  if (lowered.includes('not found')) return 404;
   return 500;
 }
 
@@ -123,6 +130,10 @@ export async function handleResolveQueue(
     if (error) {
       const status = mapRpcErrorToStatus(error.message ?? '');
       logger.warn({ error }, 'resolve_anchor_queue RPC returned error');
+      // 500-class errors never leak raw RPC messages — the underlying error
+      // may include internal role names, column names, or trigger details
+      // that are useful in logs but not in the HTTP response.
+      const isInternal = status >= 500;
       res.status(status).json({
         error: {
           code:
@@ -133,7 +144,7 @@ export async function handleResolveQueue(
                 : status === 409
                   ? 'conflict'
                   : 'internal',
-          message: error.message ?? 'Resolve failed',
+          message: isInternal ? 'Internal server error' : error.message ?? 'Resolve failed',
         },
       });
       return;

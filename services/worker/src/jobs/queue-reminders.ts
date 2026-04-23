@@ -159,7 +159,8 @@ export async function runQueueReminderJob(
         'id, org_id, trigger_type, trigger_config, action_type, action_config, enabled',
       )
       .eq('enabled', true)
-      .in('trigger_type', ['SCHEDULED_CRON', 'QUEUE_DIGEST']);
+      .in('trigger_type', ['SCHEDULED_CRON', 'QUEUE_DIGEST'])
+      .limit(5000);
     if (error) {
       logger.warn({ error }, 'Queue reminder rule fetch failed');
       result.errors += 1;
@@ -195,27 +196,36 @@ export async function runQueueReminderJob(
   // Record one execution row per matching rule. The action-dispatcher
   // worker reads PENDING rows and sends the actual Slack/email/queue-digest
   // message (SEC-02 ensures the action dispatch is audit-logged).
+  //
+  // Schema alignment (migration 0224):
+  //   - `trigger_event_id` (TEXT, unique per rule) is the idempotency key.
+  //     Computed deterministically as `scheduled:{rule_id}:{fired_at}` so
+  //     cron re-fires within the same minute hit the unique index instead
+  //     of double-inserting.
+  //   - `match_reason` lives under `input_payload`, not top-level.
+  //   - Upsert with ignoreDuplicates matches the rules-engine idempotency.
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any)
       .from('organization_rule_executions')
-      .insert(
+      .upsert(
         inserts.map((i) => ({
           rule_id: i.rule_id,
           org_id: i.org_id,
+          trigger_event_id: `scheduled:${i.rule_id}:${i.fired_at}`,
           status: 'PENDING',
-          match_reason: 'scheduled_cron',
-          event_id: null,
+          input_payload: { match_reason: 'scheduled_cron', fired_at: i.fired_at },
         })),
+        { onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true },
       );
     if (error) {
-      logger.warn({ error, attempted: inserts.length }, 'Queue reminder insert had errors');
+      logger.warn({ error, attempted: inserts.length }, 'Queue reminder upsert had errors');
       result.errors += 1;
     } else {
       result.reminders_scheduled = inserts.length;
     }
   } catch (err) {
-    logger.error({ error: err }, 'Queue reminder insert threw');
+    logger.error({ error: err }, 'Queue reminder upsert threw');
     result.errors += 1;
   }
 

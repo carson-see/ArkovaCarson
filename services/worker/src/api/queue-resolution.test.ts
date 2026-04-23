@@ -74,13 +74,20 @@ describe('ResolveQueueInput', () => {
 
 describe('mapRpcErrorToStatus', () => {
   it.each([
+    // Resource-not-found (generic) → 404
     ['Anchor not found', 404],
-    ['Profile not found', 404],
+    ['Selected anchor not found', 404],
+    // "Profile not found" is an AUTH path — the RPC raises it when auth.uid()
+    // doesn't resolve. Must match 403 BEFORE the generic 'not found' check.
+    ['Profile not found', 403],
     ['Only organization administrators can resolve queued anchors', 403],
     ['Cannot resolve anchor from different organization', 403],
     ['insufficient_privilege', 403],
+    // Conflicts (state rejections)
     ['Anchor is not awaiting resolution (status: SUBMITTED)', 409],
     ['check_violation on something', 409],
+    ['Selected anchor external_file_id (a) does not match requested collision set (b)', 409],
+    // Fallthrough
     ['generic db error', 500],
   ])('maps %j → %i', (msg, code) => {
     expect(mapRpcErrorToStatus(msg)).toBe(code);
