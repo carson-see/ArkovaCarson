@@ -70,35 +70,18 @@ export interface SanitizerResult {
   rejection?: 'too_long' | 'empty' | 'emoji_flood' | 'all_invisible';
 }
 
-export function sanitizeRuleDraftInput(input: string): SanitizerResult {
-  const warnings: string[] = [];
+interface StripResult {
+  clean: string;
+  strippedInvisible: number;
+  strippedControl: number;
+}
 
-  // 1. Unicode NFC normalization — canonicalize homoglyph variants where
-  //    the codepoint has a canonical form. Doesn't catch Cyrillic-а vs
-  //    Latin-a style spoofing; we flag that separately below.
-  const normalized = typeof input === 'string' ? input.normalize('NFC') : '';
-  const originalLength = [...normalized].length;
+function isControlChar(cp: number, ch: string): boolean {
+  if (cp < 0x20) return !CONTROL_CHAR_ALLOWLIST.has(ch);
+  return cp === 0x7f || (cp >= 0x80 && cp <= 0x9f);
+}
 
-  if (originalLength === 0) {
-    return {
-      clean: '',
-      originalLength: 0,
-      cleanLength: 0,
-      warnings,
-      rejection: 'empty',
-    };
-  }
-  if (originalLength > MAX_INPUT_CHARS) {
-    return {
-      clean: '',
-      originalLength,
-      cleanLength: 0,
-      warnings,
-      rejection: 'too_long',
-    };
-  }
-
-  // 2. Strip control characters (except \n and \t) and invisible codepoints.
+function stripInvisibleAndControl(normalized: string): StripResult {
   let strippedInvisible = 0;
   let strippedControl = 0;
   const out: string[] = [];
@@ -108,65 +91,84 @@ export function sanitizeRuleDraftInput(input: string): SanitizerResult {
       strippedInvisible += 1;
       continue;
     }
-    // ASCII control range 0x00-0x1F except \n (0x0A) and \t (0x09), plus DEL and C1
-    if ((cp < 0x20 && !CONTROL_CHAR_ALLOWLIST.has(ch)) || cp === 0x7f || (cp >= 0x80 && cp <= 0x9f)) {
+    if (isControlChar(cp, ch)) {
       strippedControl += 1;
       continue;
     }
     out.push(ch);
   }
-  if (strippedInvisible > 0) {
-    warnings.push(`stripped ${strippedInvisible} invisible / bidi override character(s)`);
-  }
-  if (strippedControl > 0) {
-    warnings.push(`stripped ${strippedControl} control character(s)`);
-  }
+  return { clean: out.join(''), strippedInvisible, strippedControl };
+}
 
-  const clean = out.join('');
-  const cleanLength = [...clean].length;
-
-  if (cleanLength === 0) {
-    return {
-      clean,
-      originalLength,
-      cleanLength,
-      warnings,
-      rejection: 'all_invisible',
-    };
-  }
-
-  // 3. Non-BMP flood guard — emoji-heavy inputs inflate token count with
-  //    no meaningful signal. Reject > 50% non-BMP.
+function isEmojiFlood(clean: string, cleanLength: number): boolean {
   let nonBmp = 0;
   for (const ch of clean) {
-    const cp = ch.codePointAt(0)!;
-    if (cp > 0xffff) nonBmp += 1;
+    if (ch.codePointAt(0)! > 0xffff) nonBmp += 1;
   }
-  if (nonBmp * 2 > cleanLength) {
-    return {
-      clean,
-      originalLength,
-      cleanLength,
-      warnings,
-      rejection: 'emoji_flood',
-    };
-  }
+  return nonBmp * 2 > cleanLength;
+}
 
-  // 4. Surface-level jailbreak heuristics — informational.
+function detectContentWarnings(clean: string): string[] {
+  const warnings: string[] = [];
   for (const pattern of JAILBREAK_PATTERNS) {
     if (pattern.test(clean)) {
       warnings.push('input contains instruction-override language — treating as prose');
       break;
     }
   }
-
-  // 5. Homoglyph-ish warning: if input mixes Cyrillic + Latin in the same
-  //    alphabetic run, flag. Cheap heuristic using Unicode property escapes.
-  if (
-    /[A-Za-z].*[\p{Script=Cyrillic}]|[\p{Script=Cyrillic}].*[A-Za-z]/u.test(clean)
-  ) {
+  if (containsMixedLatinCyrillic(clean)) {
     warnings.push('input mixes Latin and Cyrillic letters — possible spoofing');
   }
+  return warnings;
+}
 
+export function sanitizeRuleDraftInput(input: string): SanitizerResult {
+  // 1. Unicode NFC normalization — canonicalize homoglyph variants where the
+  //    codepoint has a canonical form. Doesn't catch Cyrillic-а vs Latin-a
+  //    style spoofing; `containsMixedLatinCyrillic` flags that below.
+  const normalized = typeof input === 'string' ? input.normalize('NFC') : '';
+  const originalLength = [...normalized].length;
+
+  if (originalLength === 0) {
+    return { clean: '', originalLength: 0, cleanLength: 0, warnings: [], rejection: 'empty' };
+  }
+  if (originalLength > MAX_INPUT_CHARS) {
+    return { clean: '', originalLength, cleanLength: 0, warnings: [], rejection: 'too_long' };
+  }
+
+  const stripped = stripInvisibleAndControl(normalized);
+  const warnings: string[] = [];
+  if (stripped.strippedInvisible > 0) {
+    warnings.push(`stripped ${stripped.strippedInvisible} invisible / bidi override character(s)`);
+  }
+  if (stripped.strippedControl > 0) {
+    warnings.push(`stripped ${stripped.strippedControl} control character(s)`);
+  }
+
+  const clean = stripped.clean;
+  const cleanLength = [...clean].length;
+
+  if (cleanLength === 0) {
+    return { clean, originalLength, cleanLength, warnings, rejection: 'all_invisible' };
+  }
+  if (isEmojiFlood(clean, cleanLength)) {
+    return { clean, originalLength, cleanLength, warnings, rejection: 'emoji_flood' };
+  }
+
+  warnings.push(...detectContentWarnings(clean));
   return { clean, originalLength, cleanLength, warnings };
+}
+
+const LATIN_RE = /[A-Za-z]/;
+const CYRILLIC_RE = /\p{Script=Cyrillic}/u;
+
+function containsMixedLatinCyrillic(text: string): boolean {
+  let hasLatin = false;
+  let hasCyrillic = false;
+  for (const ch of text) {
+    if (!hasLatin && LATIN_RE.test(ch)) hasLatin = true;
+    if (!hasCyrillic && CYRILLIC_RE.test(ch)) hasCyrillic = true;
+    if (hasLatin && hasCyrillic) return true;
+  }
+  return false;
 }

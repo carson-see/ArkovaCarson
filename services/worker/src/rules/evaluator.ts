@@ -93,89 +93,113 @@ function readSemanticMatch(
   return { description: sm.description, threshold: thr };
 }
 
-export function evaluateRule(rule: RuleRow, event: TriggerEvent): EvaluationResult {
-  const skip: EvaluationResult = {
-    matched: false,
-    reason: 'skip',
-    needs_semantic_match: false,
-  };
+const SKIP_BASE: EvaluationResult = {
+  matched: false,
+  reason: 'skip',
+  needs_semantic_match: false,
+};
 
-  if (!rule.enabled) return { ...skip, reason: 'rule_disabled' };
-  if (rule.org_id !== event.org_id) return { ...skip, reason: 'org_mismatch' };
-  if (rule.trigger_type !== event.trigger_type) {
-    return { ...skip, reason: 'trigger_type_mismatch' };
+function skip(reason: string): EvaluationResult {
+  return { ...SKIP_BASE, reason };
+}
+
+/** Vendor allowlist guard reused by e-sign + workspace triggers. */
+function vendorRejected(
+  cfg: Record<string, unknown>,
+  eventVendor: string | undefined,
+): boolean {
+  const vendors = cfg.vendors as string[] | undefined;
+  return Boolean(vendors?.length && eventVendor && !vendors.includes(eventVendor));
+}
+
+function filenameRejected(
+  cfg: Record<string, unknown>,
+  eventFilename: string | undefined,
+): boolean {
+  return Boolean(cfg.filename_contains && !containsCI(eventFilename, cfg.filename_contains));
+}
+
+function senderEmailRejected(
+  cfg: Record<string, unknown>,
+  eventSender: string | undefined,
+): boolean {
+  return Boolean(
+    cfg.sender_email_equals &&
+      normalizeEmail(eventSender) !== normalizeEmail(cfg.sender_email_equals as string),
+  );
+}
+
+function evaluateEsignCompleted(cfg: Record<string, unknown>, event: TriggerEvent): string | null {
+  if (vendorRejected(cfg, event.vendor)) return 'vendor_filter_rejected';
+  if (filenameRejected(cfg, event.filename)) return 'filename_filter_rejected';
+  if (senderEmailRejected(cfg, event.sender_email)) return 'sender_email_filter_rejected';
+  return null;
+}
+
+function evaluateWorkspaceFileModified(
+  cfg: Record<string, unknown>,
+  event: TriggerEvent,
+): string | null {
+  if (vendorRejected(cfg, event.vendor)) return 'vendor_filter_rejected';
+  if (cfg.folder_path_starts_with && !startsWithCI(event.folder_path, cfg.folder_path_starts_with)) {
+    return 'folder_path_filter_rejected';
   }
+  if (filenameRejected(cfg, event.filename)) return 'filename_filter_rejected';
+  return null;
+}
 
+function evaluateConnectorDocumentReceived(
+  cfg: Record<string, unknown>,
+  event: TriggerEvent,
+): string | null {
+  if (cfg.connector_type && event.vendor && cfg.connector_type !== event.vendor) {
+    return 'connector_type_mismatch';
+  }
+  return null;
+}
+
+function evaluateEmailIntake(cfg: Record<string, unknown>, event: TriggerEvent): string | null {
+  if (senderEmailRejected(cfg, event.sender_email)) return 'sender_email_filter_rejected';
+  if (cfg.subject_contains && !containsCI(event.subject, cfg.subject_contains)) {
+    return 'subject_filter_rejected';
+  }
+  return null;
+}
+
+/** Per-trigger-type filter. Returns a rejection reason or null on pass. */
+function checkTriggerFilters(rule: RuleRow, event: TriggerEvent): string | null {
   const cfg = rule.trigger_config;
-  const semantic = readSemanticMatch(cfg);
-  const matchedPre: EvaluationResult = {
+  switch (rule.trigger_type) {
+    case 'ESIGN_COMPLETED':
+      return evaluateEsignCompleted(cfg, event);
+    case 'WORKSPACE_FILE_MODIFIED':
+      return evaluateWorkspaceFileModified(cfg, event);
+    case 'CONNECTOR_DOCUMENT_RECEIVED':
+      return evaluateConnectorDocumentReceived(cfg, event);
+    case 'EMAIL_INTAKE':
+      return evaluateEmailIntake(cfg, event);
+    case 'MANUAL_UPLOAD':
+    case 'SCHEDULED_CRON':
+    case 'QUEUE_DIGEST':
+      return null; // no additional filtering — caller gates cron by time
+  }
+}
+
+export function evaluateRule(rule: RuleRow, event: TriggerEvent): EvaluationResult {
+  if (!rule.enabled) return skip('rule_disabled');
+  if (rule.org_id !== event.org_id) return skip('org_mismatch');
+  if (rule.trigger_type !== event.trigger_type) return skip('trigger_type_mismatch');
+
+  const rejection = checkTriggerFilters(rule, event);
+  if (rejection) return skip(rejection);
+
+  const semantic = readSemanticMatch(rule.trigger_config);
+  return {
     matched: true,
     reason: 'matched',
     needs_semantic_match: Boolean(semantic),
     semantic_match: semantic,
   };
-
-  switch (rule.trigger_type) {
-    case 'ESIGN_COMPLETED': {
-      const vendors = cfg.vendors as string[] | undefined;
-      if (vendors?.length && event.vendor && !vendors.includes(event.vendor)) {
-        return { ...skip, reason: 'vendor_filter_rejected' };
-      }
-      if (cfg.filename_contains && !containsCI(event.filename, cfg.filename_contains)) {
-        return { ...skip, reason: 'filename_filter_rejected' };
-      }
-      if (
-        cfg.sender_email_equals &&
-        normalizeEmail(event.sender_email) !== normalizeEmail(cfg.sender_email_equals as string)
-      ) {
-        return { ...skip, reason: 'sender_email_filter_rejected' };
-      }
-      return matchedPre;
-    }
-
-    case 'WORKSPACE_FILE_MODIFIED': {
-      const vendors = cfg.vendors as string[] | undefined;
-      if (vendors?.length && event.vendor && !vendors.includes(event.vendor)) {
-        return { ...skip, reason: 'vendor_filter_rejected' };
-      }
-      if (
-        cfg.folder_path_starts_with &&
-        !startsWithCI(event.folder_path, cfg.folder_path_starts_with)
-      ) {
-        return { ...skip, reason: 'folder_path_filter_rejected' };
-      }
-      if (cfg.filename_contains && !containsCI(event.filename, cfg.filename_contains)) {
-        return { ...skip, reason: 'filename_filter_rejected' };
-      }
-      return matchedPre;
-    }
-
-    case 'CONNECTOR_DOCUMENT_RECEIVED': {
-      if (cfg.connector_type && event.vendor && cfg.connector_type !== event.vendor) {
-        return { ...skip, reason: 'connector_type_mismatch' };
-      }
-      return matchedPre;
-    }
-
-    case 'MANUAL_UPLOAD':
-    case 'SCHEDULED_CRON':
-    case 'QUEUE_DIGEST':
-      // No additional filtering — caller gates cron by time already.
-      return matchedPre;
-
-    case 'EMAIL_INTAKE': {
-      if (
-        cfg.sender_email_equals &&
-        normalizeEmail(event.sender_email) !== normalizeEmail(cfg.sender_email_equals as string)
-      ) {
-        return { ...skip, reason: 'sender_email_filter_rejected' };
-      }
-      if (cfg.subject_contains && !containsCI(event.subject, cfg.subject_contains)) {
-        return { ...skip, reason: 'subject_filter_rejected' };
-      }
-      return matchedPre;
-    }
-  }
 }
 
 /**

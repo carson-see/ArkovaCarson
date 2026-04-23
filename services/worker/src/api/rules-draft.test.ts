@@ -14,12 +14,6 @@ import { buildDraftRule, type RuleDraftProvider } from './rules-draft.js';
 
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 
-function fixedProvider(out: Parameters<RuleDraftProvider['propose']>[0] extends unknown ? unknown : never,
-): RuleDraftProvider {
-  void out;
-  throw new Error('unused');
-}
-
 function mockProvider(
   proposal: {
     candidate: Record<string, unknown>;
@@ -183,6 +177,3 @@ describe('buildDraftRule — org_id forced from caller', () => {
     if (r.ok) expect(r.draft_rule.org_id).toBe(ORG_ID);
   });
 });
-
-// keep the unused-import linter happy
-void fixedProvider;

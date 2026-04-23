@@ -272,32 +272,37 @@ export async function handleUpdateRule(
       return;
     }
     res.json({ ok: true });
-    // SEC-02: emit granular audit event, fire-and-forget. `enabled` flip is
-    // the most auditor-relevant signal — dedicated types for on/off.
-    if (bodyParsed.data.enabled === true) {
-      void emitRuleAudit('ORG_RULE_ENABLED', {
-        actorId: userId,
-        orgId,
-        ruleId: idParsed.data,
-      });
-    } else if (bodyParsed.data.enabled === false) {
-      void emitRuleAudit('ORG_RULE_DISABLED', {
-        actorId: userId,
-        orgId,
-        ruleId: idParsed.data,
-      });
-    } else {
-      void emitRuleAudit('ORG_RULE_UPDATED', {
-        actorId: userId,
-        orgId,
-        ruleId: idParsed.data,
-        details: { patch: bodyParsed.data },
-      });
-    }
+    void emitUpdateAudit(userId, orgId, idParsed.data, bodyParsed.data);
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
+}
+
+/**
+ * SEC-02: emit the granular audit event for a rule update. `enabled` flip is
+ * the most auditor-relevant signal — dedicated event types for on/off.
+ */
+async function emitUpdateAudit(
+  userId: string,
+  orgId: string,
+  ruleId: string,
+  patch: UpdateOrgRuleInputT,
+): Promise<void> {
+  if (patch.enabled === true) {
+    await emitRuleAudit('ORG_RULE_ENABLED', { actorId: userId, orgId, ruleId });
+    return;
+  }
+  if (patch.enabled === false) {
+    await emitRuleAudit('ORG_RULE_DISABLED', { actorId: userId, orgId, ruleId });
+    return;
+  }
+  await emitRuleAudit('ORG_RULE_UPDATED', {
+    actorId: userId,
+    orgId,
+    ruleId,
+    details: { patch },
+  });
 }
 
 export async function handleDeleteRule(

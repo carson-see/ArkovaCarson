@@ -49,6 +49,118 @@ interface EventRow {
  */
 const EVENTS_PER_TICK = 200;
 
+interface MatchInsert {
+  rule_id: string;
+  event_id: string;
+  org_id: string;
+  match_reason: string;
+  needs_semantic_match: boolean;
+}
+
+async function claimPendingEvents(): Promise<EventRow[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db.rpc as any)('claim_pending_rule_events', {
+      p_limit: EVENTS_PER_TICK,
+    });
+    if (error) {
+      // RPC may not exist yet in earlier environments — no-op pass.
+      logger.debug({ error }, 'claim_pending_rule_events unavailable — no-op pass');
+      return [];
+    }
+    return (data as EventRow[] | null) ?? [];
+  } catch (err) {
+    logger.warn({ error: err }, 'claim_pending_rule_events threw — treating as empty');
+    return [];
+  }
+}
+
+function groupEventsByOrg(events: EventRow[]): Map<string, EventRow[]> {
+  const byOrg = new Map<string, EventRow[]>();
+  for (const ev of events) {
+    const arr = byOrg.get(ev.org_id) ?? [];
+    arr.push(ev);
+    byOrg.set(ev.org_id, arr);
+  }
+  return byOrg;
+}
+
+/**
+ * ONE SELECT covering every org in this tick — previous per-org loop was N
+ * round-trips at Supabase latency. `in(...)` on a uuid list is index-friendly;
+ * RLS + `enabled=true` narrow to the ruleset we care about.
+ */
+async function fetchRulesByOrg(orgIds: string[]): Promise<Map<string, RuleRow[]> | null> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('organization_rules')
+      .select(
+        'id, org_id, name, enabled, trigger_type, trigger_config, action_type, action_config',
+      )
+      .in('org_id', orgIds)
+      .eq('enabled', true);
+    if (error) {
+      logger.warn({ error, orgIds: orgIds.length }, 'organization_rules bulk fetch failed');
+      return null;
+    }
+    const rulesByOrg = new Map<string, RuleRow[]>();
+    for (const row of ((data as unknown) as RuleRow[] | null) ?? []) {
+      const bucket = rulesByOrg.get(row.org_id) ?? [];
+      bucket.push(row);
+      rulesByOrg.set(row.org_id, bucket);
+    }
+    return rulesByOrg;
+  } catch (err) {
+    logger.error({ error: err }, 'organization_rules bulk fetch threw');
+    return null;
+  }
+}
+
+function toTriggerEvent(ev: EventRow): TriggerEvent {
+  return {
+    trigger_type: ev.trigger_type,
+    org_id: ev.org_id,
+    vendor: ev.vendor ?? undefined,
+    filename: ev.filename ?? undefined,
+    folder_path: ev.folder_path ?? undefined,
+    sender_email: ev.sender_email ?? undefined,
+    subject: ev.subject ?? undefined,
+  };
+}
+
+/**
+ * Persist matches as execution rows. Single upsert — DO NOTHING on conflict
+ * preserves idempotency across retries. `PENDING` rows are picked up by the
+ * action-dispatch worker in a follow-up pass.
+ */
+async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: number; errored: boolean }> {
+  if (inserts.length === 0) return { recorded: 0, errored: false };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any)
+      .from('organization_rule_executions')
+      .upsert(
+        inserts.map((i) => ({
+          rule_id: i.rule_id,
+          event_id: i.event_id,
+          org_id: i.org_id,
+          status: i.needs_semantic_match ? 'AWAITING_SEMANTIC_MATCH' : 'PENDING',
+          match_reason: i.match_reason,
+        })),
+        { onConflict: 'rule_id,event_id', ignoreDuplicates: true },
+      );
+    if (error) {
+      logger.warn({ error, attempted: inserts.length }, 'rule executions upsert had errors');
+      return { recorded: 0, errored: true };
+    }
+    return { recorded: inserts.length, errored: false };
+  } catch (err) {
+    logger.error({ error: err }, 'rule executions upsert threw');
+    return { recorded: 0, errored: true };
+  }
+}
+
 export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const result: RulesEnginePassResult = {
     events_processed: 0,
@@ -62,77 +174,18 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
     return result;
   }
 
-  // Phase 1: claim a chunk of pending events. The claim RPC flips
-  // pending_rule_events.status PENDING → CLAIMED atomically; if it doesn't
-  // exist yet (migration forward), fall back to selecting a sentinel batch.
-  let events: EventRow[] = [];
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db.rpc as any)('claim_pending_rule_events', {
-      p_limit: EVENTS_PER_TICK,
-    });
-    if (error) {
-      // RPC may not exist yet in earlier environments; return empty so the
-      // cron succeeds until the migration ships.
-      logger.debug({ error }, 'claim_pending_rule_events unavailable — no-op pass');
-      return result;
-    }
-    events = (data as EventRow[] | null) ?? [];
-  } catch (err) {
-    logger.warn({ error: err }, 'claim_pending_rule_events threw — treating as empty');
-    return result;
-  }
-
+  const events = await claimPendingEvents();
   if (events.length === 0) return result;
-
   result.events_processed = events.length;
 
-  // Phase 2: group events by org so we fetch each org's ruleset once.
-  const byOrg = new Map<string, EventRow[]>();
-  for (const ev of events) {
-    const arr = byOrg.get(ev.org_id) ?? [];
-    arr.push(ev);
-    byOrg.set(ev.org_id, arr);
-  }
-
-  // Phase 3: ONE SELECT covering every org in this tick — previous per-org
-  // loop was N round-trips at Supabase latency. `in(...)` on a uuid list is
-  // index-friendly; RLS + `enabled=true` narrow to the ruleset we care about.
-  const orgIds = [...byOrg.keys()];
-  const rulesByOrg = new Map<string, RuleRow[]>();
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any)
-      .from('organization_rules')
-      .select(
-        'id, org_id, name, enabled, trigger_type, trigger_config, action_type, action_config',
-      )
-      .in('org_id', orgIds)
-      .eq('enabled', true);
-    if (error) {
-      logger.warn({ error, orgIds: orgIds.length }, 'organization_rules bulk fetch failed');
-      result.errors += events.length;
-      return result;
-    }
-    for (const row of ((data as unknown) as RuleRow[] | null) ?? []) {
-      const bucket = rulesByOrg.get(row.org_id) ?? [];
-      bucket.push(row);
-      rulesByOrg.set(row.org_id, bucket);
-    }
-  } catch (err) {
-    logger.error({ error: err }, 'organization_rules bulk fetch threw');
+  const byOrg = groupEventsByOrg(events);
+  const rulesByOrg = await fetchRulesByOrg([...byOrg.keys()]);
+  if (!rulesByOrg) {
     result.errors += events.length;
     return result;
   }
 
-  const inserts: Array<{
-    rule_id: string;
-    event_id: string;
-    org_id: string;
-    match_reason: string;
-    needs_semantic_match: boolean;
-  }> = [];
-
+  const inserts: MatchInsert[] = [];
   for (const [orgId, orgEvents] of byOrg) {
     const rules = rulesByOrg.get(orgId) ?? [];
     if (rules.length === 0) {
@@ -140,16 +193,7 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
       continue;
     }
     for (const ev of orgEvents) {
-      const triggerEvent: TriggerEvent = {
-        trigger_type: ev.trigger_type,
-        org_id: ev.org_id,
-        vendor: ev.vendor ?? undefined,
-        filename: ev.filename ?? undefined,
-        folder_path: ev.folder_path ?? undefined,
-        sender_email: ev.sender_email ?? undefined,
-        subject: ev.subject ?? undefined,
-      };
-      const matches = evaluateRules(rules, triggerEvent);
+      const matches = evaluateRules(rules, toTriggerEvent(ev));
       if (matches.length === 0) {
         result.skipped += 1;
         continue;
@@ -166,35 +210,9 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
     }
   }
 
-  // Phase 4: persist matches. Single insert — DO NOTHING on conflict preserves
-  // idempotency across retries. An `executions` row in status PENDING is then
-  // picked up by the action-dispatch worker (not this file).
-  if (inserts.length > 0) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error } = await (db as any)
-        .from('organization_rule_executions')
-        .upsert(
-          inserts.map((i) => ({
-            rule_id: i.rule_id,
-            event_id: i.event_id,
-            org_id: i.org_id,
-            status: i.needs_semantic_match ? 'AWAITING_SEMANTIC_MATCH' : 'PENDING',
-            match_reason: i.match_reason,
-          })),
-          { onConflict: 'rule_id,event_id', ignoreDuplicates: true },
-        );
-      if (error) {
-        logger.warn({ error, attempted: inserts.length }, 'rule executions upsert had errors');
-        result.errors += 1;
-      } else {
-        result.matches_recorded = inserts.length;
-      }
-    } catch (err) {
-      logger.error({ error: err }, 'rule executions upsert threw');
-      result.errors += 1;
-    }
-  }
+  const persist = await persistMatches(inserts);
+  result.matches_recorded = persist.recorded;
+  if (persist.errored) result.errors += 1;
 
   logger.info(
     {
