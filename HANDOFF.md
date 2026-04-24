@@ -18,7 +18,11 @@
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
-**DB:** Supabase `vzwyaatejekddvltxyye`. **Migration drift reconciled 2026-04-24 EOD** — all of `0224_ark105_rules_engine` through `0254_onboarding_signup_workflow` applied to prod (had been missing for ~1 week; SCRUM-1182 fix). Ledger drift = 0 both directions. `0255_deferred_slow_indexes` applied as marker; the 4 deferred indexes (`anchors_unique_active_child_per_parent`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`, `idx_anchor_proofs_batch_id`) STILL need manual application via Dashboard SQL Editor — see `docs/runbooks/supabase/long-running-migrations.md`. Note 0218 `notifications` (org-scoped compliance alerts) and 0240 `user_notifications` (user-scoped platform notifications) coexist as distinct tables.
+**DB:** Supabase `vzwyaatejekddvltxyye`.
+- **Migration drift reconciled 2026-04-24 EOD** (SCRUM-1182) — all of `0224_ark105_rules_engine` through `0254_onboarding_signup_workflow` applied to prod after having been missing for ~1 week.
+- Ledger drift = 0 both directions via `npx supabase migration list`.
+- `0255_deferred_slow_indexes` applied as a no-op marker; four large-table indexes still need manual application via Dashboard SQL Editor — see [docs/runbooks/supabase/long-running-migrations.md](docs/runbooks/supabase/long-running-migrations.md). Source of truth is the 0255 header comment.
+- Note `0218 notifications` (org-scoped compliance alerts) and `0240 user_notifications` (user-scoped platform notifications) coexist as distinct tables.
 **Tests:** 3,997 worker + 1,421 frontend green on main as of Friday EOW. +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)

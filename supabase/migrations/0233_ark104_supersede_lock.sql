@@ -174,15 +174,12 @@ BEGIN
 END;
 $$;
 
--- NOTE: the DB-level unique partial index safeguard has been moved to
--- migration 0254_ark104_supersede_lock_index.sql because Supabase's
--- connection pooler enforces a hard statement timeout that SET LOCAL
--- cannot override, and the index build on the 1.4M-row anchors table
--- exceeds that ceiling.
---
--- 0254 is a standalone migration with a CREATE INDEX CONCURRENTLY
--- directive; it must be applied manually via the Supabase Dashboard
--- SQL Editor (which bypasses the pooler timeout) or via a direct psql
--- connection. Runbook: docs/runbooks/supabase/long-running-migrations.md
+-- NOTE: the DB-level unique partial index safeguard
+-- (anchors_unique_active_child_per_parent) has been moved to migration
+-- 0255_deferred_slow_indexes.sql — Supabase's connection pooler enforces
+-- a hard statement timeout that SET LOCAL cannot override, and the index
+-- build on the 1.4M-row anchors table exceeds that ceiling. Apply manually
+-- via Supabase Dashboard SQL Editor.
+-- Runbook: docs/runbooks/supabase/long-running-migrations.md
 
 COMMIT;

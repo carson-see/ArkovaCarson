@@ -25,9 +25,15 @@ Prior art in the repo: [`0255_deferred_slow_indexes.sql`](../../../supabase/migr
 1. Open Supabase Dashboard → project `vzwyaatejekddvltxyye` → **SQL
    Editor**. The dashboard editor bypasses the pooler's hard timeout.
 2. Copy the SQL from the header comment of the deferred-index migration.
-3. Run each `CREATE INDEX CONCURRENTLY` statement one at a time —
-   `CONCURRENTLY` cannot run inside a transaction, so don't wrap them in
-   `BEGIN/COMMIT`.
+3. Run each `CREATE INDEX` statement one at a time. Two options:
+   - **`CREATE INDEX CONCURRENTLY` (default)** — non-blocking, takes
+     2-3× longer but doesn't lock the table against writes. Cannot run
+     inside a `BEGIN/COMMIT` transaction.
+   - **Plain `CREATE INDEX` (maintenance window only)** — takes an
+     ACCESS EXCLUSIVE lock on the table for the duration of the build,
+     which blocks all concurrent writes. Faster total time. Only use
+     when you've paused writers (anchor worker, rules engine) for a
+     maintenance window; otherwise use CONCURRENTLY.
 4. After all statements complete, verify with:
    ```sql
    SELECT indexname, tablename
@@ -55,16 +61,12 @@ psql "postgresql://postgres:<password>@db.vzwyaatejekddvltxyye.supabase.co:5432/
 
 The direct connection has no pooler timeout.
 
-## Known deferred indexes (as of 2026-04-24)
+## Known deferred indexes
 
-Tracked in migration [`0255_deferred_slow_indexes.sql`](../../../supabase/migrations/0255_deferred_slow_indexes.sql):
-
-| Index | Table | Estimated rows | Origin migration |
-|---|---|---|---|
-| `anchors_unique_active_child_per_parent` | `anchors` | 1.4M | 0233 (ARK-104 supersede lock) |
-| `idx_anchors_pipeline_status` | `anchors` | 1.4M | 0242 (pipeline anchoring scale) |
-| `idx_public_records_source_id_trgm` | `public_records` | large, GIN trigram | 0242 |
-| `idx_anchor_proofs_batch_id` | `anchor_proofs` | large | 0243 (SCALE-02 disk hygiene) |
+Source of truth: [`supabase/migrations/0255_deferred_slow_indexes.sql`](../../../supabase/migrations/0255_deferred_slow_indexes.sql)
+header comment. Any time an index is added to 0255, reflect it in that
+file's comment block — do NOT list them here to avoid drift between
+the runbook and the migration.
 
 ## Preventing recurrence
 
@@ -78,6 +80,7 @@ Tracked in migration [`0255_deferred_slow_indexes.sql`](../../../supabase/migrat
 
 ## References
 
+- Related runbook: [`docs/runbooks/migration-drift-playbook.md`](../migration-drift-playbook.md) — how to detect / classify drift (complementary to this one which is how to apply)
 - [Supabase CLI db push docs](https://supabase.com/docs/reference/cli/supabase-db-push)
 - [Supabase statement timeout behaviour](https://supabase.com/docs/guides/troubleshooting/statement_timeout)
 - SCRUM-1182 — Migration drift incident (2026-04-24)

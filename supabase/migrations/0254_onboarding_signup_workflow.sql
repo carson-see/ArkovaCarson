@@ -1,4 +1,7 @@
--- Migration 0248: Onboarding signup workflow
+-- Migration 0254: Onboarding signup workflow
+-- (originally authored as 0248; renumbered during 2026-04-24 migration
+-- reconciliation because another 0248_* file already existed.
+-- Cross-refs: SCRUM-1154..1158 below.)
 --
 -- JIRA:
 --   SCRUM-1154 - Signup auth providers + verified email gate

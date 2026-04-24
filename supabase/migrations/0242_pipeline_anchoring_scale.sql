@@ -13,7 +13,7 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- NOTE: idx_anchors_pipeline_status and idx_public_records_source_id_trgm
--- moved to migration 0253_deferred_slow_indexes.sql — they cannot be built
+-- moved to migration 0255_deferred_slow_indexes.sql — they cannot be built
 -- via Supabase's CLI/pooler (hard statement timeout; 1.4M-row anchors +
 -- gin_trgm on public_records). Apply manually via Supabase Dashboard SQL
 -- Editor. Runbook: docs/runbooks/supabase/long-running-migrations.md
