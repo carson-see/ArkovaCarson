@@ -5,6 +5,7 @@
  * skips, Sentry capture, and audit logging stay centralized.
  */
 import { sendEmail, type SendResult } from '../email/sender.js';
+import { esc, SHARED_STYLES, wrapTemplate, formatUtc } from './_template.js';
 
 export interface GraceWarningEmailData {
   recipientEmail: string;
@@ -16,51 +17,10 @@ export interface GraceWarningEmailData {
   orgId?: string;
 }
 
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 const STYLES = {
-  container: 'font-family: "Helvetica Neue", Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 40px 20px; background-color: #ffffff;',
-  header: 'text-align: center; margin-bottom: 32px;',
-  logo: 'font-size: 24px; font-weight: 700; color: #0f172a;',
-  body: 'font-size: 16px; line-height: 1.6; color: #334155;',
-  button: 'display: inline-block; padding: 12px 32px; background-color: #0f172a; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 14px;',
+  ...SHARED_STYLES,
   notice: 'padding: 16px; background-color: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; color: #9a3412;',
-  footer: 'margin-top: 40px; padding-top: 20px; border-top: 1px solid #e2e8f0; font-size: 12px; color: #94a3b8; text-align: center;',
-  muted: 'color: #64748b; font-size: 14px;',
 } as const;
-
-function wrapTemplate(content: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin: 0; padding: 0; background-color: #f8fafc;">
-  <div style="${STYLES.container}">
-    <div style="${STYLES.header}">
-      <span style="${STYLES.logo}">Arkova</span>
-    </div>
-    <div style="${STYLES.body}">
-      ${content}
-    </div>
-    <div style="${STYLES.footer}">
-      <p>Arkova &mdash; Trusted Credential Infrastructure</p>
-      <p style="margin-top: 8px;">This is an automated message. Please do not reply directly.</p>
-    </div>
-  </div>
-</body>
-</html>`;
-}
-
-function formatUtc(value: string | Date): string {
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return 'the end of the grace period';
-  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
-}
 
 function remainingLabel(daysRemaining?: number): string {
   if (daysRemaining === undefined) return 'soon';
@@ -73,7 +33,7 @@ export function buildGraceWarningEmail(
   data: GraceWarningEmailData,
 ): { subject: string; html: string } {
   const orgName = esc(data.organizationName);
-  const deadline = esc(formatUtc(data.graceExpiresAt));
+  const deadline = esc(formatUtc(data.graceExpiresAt, 'the end of the grace period'));
   const remaining = esc(remainingLabel(data.daysRemaining));
   const billingUrl = esc(data.manageBillingUrl);
   const subject = `Action needed: update billing for ${orgName}`;
