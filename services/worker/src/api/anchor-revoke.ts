@@ -24,6 +24,12 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
 
   const { reason } = parsed.data;
 
+  const userId = (req as any).userId as string | undefined;
+  if (!userId) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required.' });
+    return;
+  }
+
   try {
     const { data: anchor, error: fetchError } = await db.from('anchors')
       .select('id, status, org_id, user_id')
@@ -31,6 +37,18 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
       .single();
 
     if (fetchError || !anchor) {
+      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      return;
+    }
+
+    // Verify the caller belongs to the anchor's org
+    const { data: membership } = await (db as any).from('org_memberships')
+      .select('role')
+      .eq('user_id', userId)
+      .eq('org_id', anchor.org_id)
+      .single();
+
+    if (!membership) {
       res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
       return;
     }

@@ -146,7 +146,7 @@ export function v2ErrorHandler(
     type: ProblemTypes.INTERNAL_ERROR,
     title: 'Internal Server Error',
     status: 500,
-    detail: config.nodeEnv !== 'production' ? err.message : undefined,
+    detail: config.nodeEnv === 'development' ? err.message : undefined,
     instance: req.originalUrl,
   });
 }

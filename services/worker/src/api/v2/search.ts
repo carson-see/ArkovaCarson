@@ -19,7 +19,6 @@ const SearchQuerySchema = z.object({
 
 interface SearchResult {
   type: SearchType;
-  id: string;
   public_id: string;
   score: number;
   snippet: string;
@@ -69,7 +68,6 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 
   return (data ?? []).map(org => ({
     type: 'org' as const,
-    id: org.id,
     public_id: org.slug ?? org.id,
     score: 1.0,
     snippet: org.display_name ?? '',
@@ -93,7 +91,6 @@ async function searchRecords(q: string, limit: number, offset: number): Promise<
 
   return (data ?? []).map(rec => ({
     type: 'record' as const,
-    id: rec.id,
     public_id: rec.public_id,
     score: 1.0,
     snippet: rec.title ?? rec.credential_type ?? '',
@@ -115,7 +112,6 @@ async function searchFingerprints(q: string, limit: number, offset: number): Pro
 
   return (data ?? []).map(rec => ({
     type: 'fingerprint' as const,
-    id: rec.id,
     public_id: rec.public_id,
     score: 1.0,
     snippet: rec.title ?? rec.fingerprint ?? '',
@@ -137,7 +133,6 @@ async function searchDocuments(q: string, limit: number, offset: number): Promis
 
   return (data ?? []).map(doc => ({
     type: 'document' as const,
-    id: doc.id,
     public_id: doc.public_id,
     score: 1.0,
     snippet: doc.title ?? '',

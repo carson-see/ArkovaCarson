@@ -1,9 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../utils/db.js', () => {
-  const mockSingle = vi.fn();
-  const mockInsert = vi.fn().mockResolvedValue({ error: null });
-  const mockRpc = vi.fn().mockResolvedValue({ error: null });
+  const _mockAnchorSingle = vi.fn();
+  const _mockMembershipSingle = vi.fn();
+  const _mockInsert = vi.fn().mockReturnValue({
+    then: (cb: any) => cb({ error: null }),
+  });
+  const _mockRpc = vi.fn().mockResolvedValue({ error: null });
   return {
     db: {
       from: vi.fn((table: string) => {
@@ -11,15 +14,23 @@ vi.mock('../utils/db.js', () => {
           return {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),
-            single: mockSingle,
+            single: _mockAnchorSingle,
           };
         }
-        return { insert: mockInsert };
+        if (table === 'org_memberships') {
+          return {
+            select: vi.fn().mockReturnThis(),
+            eq: vi.fn().mockReturnThis(),
+            single: _mockMembershipSingle,
+          };
+        }
+        return { insert: _mockInsert };
       }),
-      rpc: mockRpc,
+      rpc: _mockRpc,
     },
-    __mockSingle: mockSingle,
-    __mockRpc: mockRpc,
+    __mockAnchorSingle: _mockAnchorSingle,
+    __mockMembershipSingle: _mockMembershipSingle,
+    __mockRpc: _mockRpc,
   };
 });
 
@@ -34,13 +45,20 @@ vi.mock('../notifications/dispatcher.js', () => ({
 import express from 'express';
 import request from 'supertest';
 import { anchorRevokeRouter } from './anchor-revoke.js';
-import { db } from '../utils/db.js';
 
-const { __mockSingle: mockSingle, __mockRpc: mockRpc } = await import('../utils/db.js') as any;
+const {
+  __mockAnchorSingle: mockAnchorSingle,
+  __mockMembershipSingle: mockMembershipSingle,
+  __mockRpc: mockRpc,
+} = await import('../utils/db.js') as any;
 
 function buildApp() {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    (req as any).userId = 'u1';
+    next();
+  });
   app.use('/api/anchor', anchorRevokeRouter);
   return app;
 }
@@ -48,8 +66,12 @@ function buildApp() {
 describe('POST /api/anchor/:id/revoke', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSingle.mockResolvedValue({
+    mockAnchorSingle.mockResolvedValue({
       data: { id: 'a1', status: 'SECURED', org_id: 'org1', user_id: 'u1' },
+      error: null,
+    });
+    mockMembershipSingle.mockResolvedValue({
+      data: { role: 'ORG_ADMIN' },
       error: null,
     });
   });
@@ -79,7 +101,7 @@ describe('POST /api/anchor/:id/revoke', () => {
   });
 
   it('rejects non-SECURED anchor', async () => {
-    mockSingle.mockResolvedValueOnce({
+    mockAnchorSingle.mockResolvedValueOnce({
       data: { id: 'a1', status: 'PENDING', org_id: 'org1', user_id: 'u1' },
       error: null,
     });
@@ -93,7 +115,7 @@ describe('POST /api/anchor/:id/revoke', () => {
   });
 
   it('returns 404 for missing anchor', async () => {
-    mockSingle.mockResolvedValueOnce({ data: null, error: { message: 'not found' } });
+    mockAnchorSingle.mockResolvedValueOnce({ data: null, error: { message: 'not found' } });
 
     const app = buildApp();
     const res = await request(app)
@@ -101,6 +123,29 @@ describe('POST /api/anchor/:id/revoke', () => {
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(404);
+  });
+
+  it('returns 404 for anchor in another org', async () => {
+    mockMembershipSingle.mockResolvedValueOnce({ data: null, error: null });
+
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/anchor/a1/revoke')
+      .send({ reason: 'Test' });
+
+    expect(res.status).toBe(404);
+  });
+
+  it('returns 401 without auth', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use('/api/anchor', anchorRevokeRouter);
+
+    const res = await request(app)
+      .post('/api/anchor/a1/revoke')
+      .send({ reason: 'Test' });
+
+    expect(res.status).toBe(401);
   });
 
   it('returns 500 on RPC failure', async () => {

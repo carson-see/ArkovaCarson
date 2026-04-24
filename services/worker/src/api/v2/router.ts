@@ -8,7 +8,11 @@ import { searchRouter } from './search.js';
 export const apiV2Router = Router();
 
 apiV2Router.use(verificationApiGate());
-apiV2Router.use(apiKeyAuth(config.apiKeyHmacSecret ?? ''));
+
+if (!config.apiKeyHmacSecret) {
+  throw new Error('API_KEY_HMAC_SECRET is required when v2 API is mounted');
+}
+apiV2Router.use(apiKeyAuth(config.apiKeyHmacSecret));
 
 apiV2Router.use('/search', searchRouter);
 
