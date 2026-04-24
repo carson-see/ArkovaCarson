@@ -34,6 +34,7 @@ import { orgVerificationRouter } from './api/v1/orgVerification.js';
 import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { orgKybRouter } from './api/v1/org-kyb.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
+import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
@@ -173,6 +174,18 @@ app.use(
     next();
   },
   middeskWebhookRouter,
+);
+
+// ─── DocuSign Connect webhook (SCRUM-1101) — raw body required for HMAC ───
+app.use(
+  '/webhooks/docusign',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  docusignWebhookRouter,
 );
 
 // Gzip/brotli compression — 70-90% bandwidth reduction for JSON responses

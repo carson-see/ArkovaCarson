@@ -103,10 +103,12 @@ import {
   handleCreateRule,
   handleGetRule,
   handleListRuleExecutions,
+  handleRunRuleNow,
   handleListRules,
   handleTestRule,
   handleUpdateRule,
   handleDeleteRule,
+  resetManualRuleRunRateLimitForTests,
   UpdateOrgRuleInput,
 } from './rules-crud.js';
 
@@ -117,10 +119,16 @@ const ORG_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const OTHER_ORG_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
 const RULE_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
 
-function mockRes(): { res: Response; status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn> } {
+function mockRes(): {
+  res: Response;
+  status: ReturnType<typeof vi.fn>;
+  json: ReturnType<typeof vi.fn>;
+  setHeader: ReturnType<typeof vi.fn>;
+} {
   const json = vi.fn();
+  const setHeader = vi.fn();
   const status = vi.fn().mockReturnValue({ json });
-  return { res: { status, json } as unknown as Response, status, json };
+  return { res: { status, json, setHeader } as unknown as Response, status, json, setHeader };
 }
 
 function mockReq(
@@ -159,6 +167,7 @@ function adminMembership() {
 
 beforeEach(() => {
   stub.from = vi.fn();
+  resetManualRuleRunRateLimitForTests();
 });
 afterEach(() => {
   vi.clearAllMocks();
@@ -340,6 +349,135 @@ describe('handleListRuleExecutions', () => {
     await handleListRuleExecutions(USER_ID, mockReq({ params: { id: 'nope' } }), res);
 
     expect(status).toHaveBeenCalledWith(400);
+  });
+});
+
+// -- handleRunRuleNow ---------------------------------------------------
+
+function selectOne(data: unknown, error: unknown = null) {
+  return {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
+  };
+}
+
+function executionInsert(capture?: (row: Record<string, unknown>) => void, error: unknown = null) {
+  return {
+    insert: vi.fn((row: Record<string, unknown>) => {
+      capture?.(row);
+      return {
+        select: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({
+          data: error ? null : { id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' },
+          error,
+        }),
+      };
+    }),
+  };
+}
+
+function auditInsert() {
+  return {
+    insert: vi.fn().mockResolvedValue({ error: null }),
+  };
+}
+
+describe('handleRunRuleNow', () => {
+  it('queues a manual execution for an org-admin owned rule', async () => {
+    let insertedExecution: Record<string, unknown> | null = null;
+    stub.from.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return selectOne({ org_id: ORG_ID, role: 'ORG_ADMIN', is_platform_admin: false });
+      }
+      if (table === 'org_members') return selectOne({ role: 'admin' });
+      if (table === 'organization_rules') {
+        return selectOne({
+          id: RULE_ID,
+          org_id: ORG_ID,
+          name: 'DocuSign intake',
+          enabled: true,
+          trigger_type: 'ESIGN_COMPLETED',
+          action_type: 'QUEUE_FOR_REVIEW',
+        });
+      }
+      if (table === 'organization_rule_executions') {
+        return executionInsert((row) => {
+          insertedExecution = row;
+        });
+      }
+      return auditInsert();
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunRuleNow(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(status).toHaveBeenCalledWith(202);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      queued: true,
+      execution_id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      trigger_event_id: expect.stringMatching(/^manual:/),
+    }));
+    expect(insertedExecution).toMatchObject({
+      rule_id: RULE_ID,
+      org_id: ORG_ID,
+      status: 'PENDING',
+      input_payload: expect.objectContaining({
+        source: 'manual_run',
+        actor_user_id: USER_ID,
+        rule_name: 'DocuSign intake',
+      }),
+    });
+  });
+
+  it('rate-limits manual runs to 5 per minute per org', async () => {
+    stub.from.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return selectOne({ org_id: ORG_ID, role: 'ORG_ADMIN', is_platform_admin: false });
+      }
+      if (table === 'org_members') return selectOne({ role: 'admin' });
+      if (table === 'organization_rules') {
+        return selectOne({
+          id: RULE_ID,
+          org_id: ORG_ID,
+          name: 'Rule',
+          enabled: true,
+          trigger_type: 'MANUAL_UPLOAD',
+          action_type: 'NOTIFY',
+        });
+      }
+      if (table === 'organization_rule_executions') return executionInsert();
+      return auditInsert();
+    });
+
+    for (let i = 0; i < 5; i++) {
+      const { res } = mockRes();
+      await handleRunRuleNow(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+    }
+
+    const { res, status, json, setHeader } = mockRes();
+    await handleRunRuleNow(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(status).toHaveBeenCalledWith(429);
+    expect(setHeader).toHaveBeenCalledWith('Retry-After', expect.any(String));
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'rate_limited' }),
+    }));
+  });
+
+  it('does not spend rate-limit capacity for a foreign or missing rule', async () => {
+    stub.from.mockImplementation((table: string) => {
+      if (table === 'profiles') return selectOne({ org_id: ORG_ID });
+      if (table === 'org_members') return selectOne({ role: 'admin' });
+      if (table === 'organization_rules') return selectOne(null);
+      return auditInsert();
+    });
+
+    const { res, status } = mockRes();
+    await handleRunRuleNow(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(status).toHaveBeenCalledWith(404);
   });
 });
 

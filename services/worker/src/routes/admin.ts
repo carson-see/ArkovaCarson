@@ -20,7 +20,7 @@ import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleTreasuryHealth } from '../api/treasury.js';
-import { handleListRules, handleGetRule, handleListRuleExecutions, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
+import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../api/notifications.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
 import { getConnectionInfo } from '../utils/db.js';
@@ -277,6 +277,17 @@ adminRouter.get('/rules/:id/executions', async (req, res) => {
     await handleListRuleExecutions(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rule executions request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/rules/:id/run', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleRunRuleNow(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rule run request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
