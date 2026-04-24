@@ -52,6 +52,12 @@ interface EventRow {
   folder_path?: string | null;
   sender_email?: string | null;
   subject?: string | null;
+  /**
+   * Sanitized provider-specific metadata persisted on organization_rule_events
+   * (e.g. Drive parent_ids, file_id). Migration 0256 makes claim_pending_rule_events
+   * return this column; older worker builds against the pre-0256 RPC will see
+   * undefined here, which the evaluator treats as an empty payload.
+   */
   payload?: Record<string, unknown> | null;
 }
 

@@ -267,3 +267,32 @@ export function assertNoInlineSecrets(config: Record<string, unknown>): void {
     );
   }
 }
+
+// =============================================================================
+// Rule rejection reason codes
+// =============================================================================
+//
+// Stable string codes returned by the evaluator when a rule does NOT match.
+// Promoted to a frozen object so:
+//   - the rules-engine worker can write them to organization_rule_executions
+//     for audit replay without each call site spelling them out,
+//   - downstream tooling (admin UI / Confluence audit pages) can dereference
+//     them rather than relying on free-text matches,
+//   - typos surface at type-check time instead of silently never matching.
+//
+// Add new codes here, never inline at the call site.
+export const RULE_REJECTION_REASON = {
+  RULE_DISABLED: 'rule_disabled',
+  ORG_MISMATCH: 'org_mismatch',
+  TRIGGER_TYPE_MISMATCH: 'trigger_type_mismatch',
+  VENDOR_FILTER_REJECTED: 'vendor_filter_rejected',
+  FILENAME_FILTER_REJECTED: 'filename_filter_rejected',
+  SENDER_EMAIL_FILTER_REJECTED: 'sender_email_filter_rejected',
+  FOLDER_PATH_FILTER_REJECTED: 'folder_path_filter_rejected',
+  DRIVE_FOLDER_FILTER_REJECTED: 'drive_folder_filter_rejected',
+  CONNECTOR_TYPE_MISMATCH: 'connector_type_mismatch',
+  SUBJECT_FILTER_REJECTED: 'subject_filter_rejected',
+} as const;
+
+export type RuleRejectionReason =
+  (typeof RULE_REJECTION_REASON)[keyof typeof RULE_REJECTION_REASON];

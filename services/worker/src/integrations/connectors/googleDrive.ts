@@ -8,6 +8,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
+import { GOOGLE_DRIVE_VENDOR as CONNECTORS_GOOGLE_DRIVE_VENDOR } from '../../constants/connectors.js';
 import {
   DRIVE_DEFAULT_SCOPES,
   buildAuthorizationUrl,
@@ -20,7 +21,9 @@ import {
 } from '../oauth/drive.js';
 import type { ConnectorCanonicalEventT } from './schemas.js';
 
-export const GOOGLE_DRIVE_VENDOR = 'google_drive' as const;
+// Re-export the canonical constant from constants/connectors.ts so consumers
+// can keep importing it from this module without owning the literal here.
+export const GOOGLE_DRIVE_VENDOR = CONNECTORS_GOOGLE_DRIVE_VENDOR;
 export const GOOGLE_DRIVE_WATCH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const GOOGLE_DRIVE_WATCH_RENEWAL_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -105,13 +108,22 @@ function nextId(deps: Pick<GoogleDriveConnectorDeps, 'idFactory'>): string {
   return (deps.idFactory ?? randomUUID)();
 }
 
+// Reject anything that's not already a safe Secret Manager segment. The prior
+// implementation silently rewrote unsafe chars to '_', which made
+// `'abc xyz'` and `'abc_xyz'` collapse to the same secret name and share an
+// OAuth credential — a cross-tenant token mix-up surface. Now we fail-closed
+// at construction time.
+const SAFE_SECRET_SEGMENT = /^[a-zA-Z0-9_-]{1,64}$/;
+
 function secretSegment(value: string, label: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new GoogleDriveConnectorError(`${label} is required`);
-  if (/[/.\\]/.test(trimmed)) {
-    throw new GoogleDriveConnectorError(`${label} contains invalid path characters`);
+  if (!SAFE_SECRET_SEGMENT.test(trimmed)) {
+    throw new GoogleDriveConnectorError(
+      `${label} must match /^[A-Za-z0-9_-]{1,64}$/ (no whitespace, no path separators, no diacritics)`,
+    );
   }
-  return trimmed.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return trimmed;
 }
 
 export function buildGoogleDriveTokenSecretName(args: {
@@ -302,9 +314,18 @@ export async function disconnectGoogleDriveConnection(args: {
     });
   }
 
-  if (tokens?.refresh_token || tokens?.access_token) {
+  // Revoke the access_token (per-grant) rather than the refresh_token
+  // (which Google revokes globally for the (user, client) pair). Revoking
+  // the refresh_token would kill any *other* org this same end user has
+  // connected — disconnecting Drive from org A would silently log them out
+  // of org B. Falling back to refresh_token only when no access_token is
+  // stored, since "no revoke at all" is worse than a broad revoke for the
+  // single-org case.
+  // See: https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke
+  const tokenToRevoke = tokens?.access_token ?? tokens?.refresh_token;
+  if (tokenToRevoke) {
     await revokeOAuthToken({
-      token: tokens.refresh_token ?? tokens.access_token,
+      token: tokenToRevoke,
       deps: deps.drive,
     });
   }

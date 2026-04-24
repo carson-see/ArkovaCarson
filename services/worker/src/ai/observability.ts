@@ -67,6 +67,13 @@ const FREE_TEXT_REDACTIONS: Array<[RegExp, string]> = [
   [/\b[a-f0-9]{64}\b/gi, '[sha256_redacted]'],
   [/\b(?:sk|rk|gho|ghp|AIza|rp)_[A-Za-z0-9_-]{12,}\b/g, '[token_redacted]'],
   [/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, 'Bearer [token_redacted]'],
+  // Order matters: JWT pattern must precede Google OAuth, because a serialized
+  // JWT cannot start with `ya29.` and we want each pattern to match its own
+  // token shape rather than each pattern matching the same thing redundantly.
+  // JWT: three base64url segments separated by dots (header.payload.sig).
+  [/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '[jwt_redacted]'],
+  // Google OAuth access_token (short-lived, ~205 chars, prefix `ya29.`).
+  [/\bya29\.[A-Za-z0-9_-]+/g, '[google_oauth_redacted]'],
 ];
 
 export function isArizeTracingConfigured(env: NodeJS.ProcessEnv = process.env): boolean {

@@ -54,6 +54,7 @@ import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { webhooksRouter } from './webhooks.js';
 import { atsWebhookRouter } from './webhooks/ats.js';
+import { driveWebhookRouter } from './webhooks/drive.js';
 import { auditExportRouter } from './audit-export.js';
 import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
@@ -279,6 +280,12 @@ router.use('/grc', grcFeatureGate(), requireAuth, grcRouter);
 
 // ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
 router.use('/webhooks/ats', atsWebhookRouter);
+
+// ─── Google Drive push notifications — channel-token verified (SCRUM-1099) ───
+// Drive POSTs are headers-only; auth is via X-Goog-Channel-ID lookup +
+// X-Goog-Channel-Token constant-time compare. No HMAC because Drive does
+// not sign payloads.
+router.use('/webhooks/drive', driveWebhookRouter);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 // INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
