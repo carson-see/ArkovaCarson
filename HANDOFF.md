@@ -14,7 +14,7 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-23-platform-v2-release-setup` (PR #476 — Platform v2 + Enterprise Hardening)
+**Branch:** `claude/2026-04-23-ciba-harden-03-treasury-health` (SCRUM-1116 CIBA-HARDEN-03 — treasury health DB error handling + defensive env-var parse). PRs #474/476/477/478 all merged to main on 2026-04-24.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
