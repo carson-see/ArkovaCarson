@@ -1,31 +1,42 @@
 /**
- * Rule Template Gallery (UX-01 — SCRUM-1027)
- *
- * Static, pre-baked rule starter packs surfaced in the admin onboarding
- * wizard. Each template maps directly to the POST /api/rules payload shape
- * from services/worker/src/rules/schemas.ts — selecting one lets a
- * non-technical admin ship a working automation in a single click.
- *
- * Rules ship disabled (SEC-02 defense). The onboarding flow transitions the
- * admin to the rules list so they flip the toggle after eyeballing the
- * generated config.
+ * Rule Template Gallery (UX-01 — SCRUM-1027). Pre-baked starter packs for
+ * the admin onboarding wizard; rules always ship disabled per SEC-02.
  */
+
+// Mirrors services/worker/src/rules/schemas.ts discriminated unions.
+// Kept local (not imported) so the frontend bundle stays small; a typo
+// surfaces as a Zod 400 from POST /api/rules, which is an acceptable
+// integration-test boundary.
+export type TriggerType =
+  | 'ESIGN_COMPLETED'
+  | 'WORKSPACE_FILE_MODIFIED'
+  | 'CONNECTOR_DOCUMENT_RECEIVED'
+  | 'MANUAL_UPLOAD'
+  | 'SCHEDULED_CRON'
+  | 'QUEUE_DIGEST'
+  | 'EMAIL_INTAKE';
+
+export type ActionType =
+  | 'AUTO_ANCHOR'
+  | 'FAST_TRACK_ANCHOR'
+  | 'QUEUE_FOR_REVIEW'
+  | 'FLAG_COLLISION'
+  | 'NOTIFY'
+  | 'FORWARD_TO_URL';
+
+export type TemplateIconName = 'FileSignature' | 'Users' | 'ClipboardCheck';
 
 export interface RuleTemplate {
   id: string;
-  /** Card headline — plain language, no jargon. */
   title: string;
-  /** 1–2 sentence pitch. */
   pitch: string;
-  /** Emoji or lucide-react icon name (rendered by the wizard). */
-  icon: string;
-  /** Request body fields for POST /api/rules (minus org_id, which the wizard fills). */
+  icon: TemplateIconName;
   rule: {
     name: string;
     description: string;
-    trigger_type: string;
+    trigger_type: TriggerType;
     trigger_config: Record<string, unknown>;
-    action_type: string;
+    action_type: ActionType;
     action_config: Record<string, unknown>;
   };
 }

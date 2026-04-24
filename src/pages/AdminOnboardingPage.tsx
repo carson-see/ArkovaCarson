@@ -13,9 +13,10 @@
  * Each step analytics event fires `onboarding_wizard_step_<n>` so Product
  * can measure the funnel.
  */
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   CheckCircle,
@@ -31,17 +32,18 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
-import { RULE_TEMPLATES, type RuleTemplate } from '@/lib/ruleTemplates';
+import { RULE_TEMPLATES, type RuleTemplate, type TemplateIconName } from '@/lib/ruleTemplates';
 
-const ICONS: Record<string, typeof FileSignature> = {
+const ICONS = {
   FileSignature,
   Users,
   ClipboardCheck,
-};
+} as const satisfies Record<TemplateIconName, typeof FileSignature>;
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
@@ -80,10 +82,8 @@ function WizardInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selected = useMemo<RuleTemplate | null>(
-    () => RULE_TEMPLATES.find((t) => t.id === selectedId) ?? null,
-    [selectedId],
-  );
+  const selected: RuleTemplate | null =
+    RULE_TEMPLATES.find((t) => t.id === selectedId) ?? null;
 
   function goNext(): void {
     trackStep(step, { via: 'next' });
@@ -166,13 +166,10 @@ function WizardInner() {
             {step === 5 && <StepDone />}
 
             {error && (
-              <p
-                className="text-sm text-red-600"
-                role="alert"
-                data-testid="onboarding-error"
-              >
-                {error}
-              </p>
+              <Alert variant="destructive" data-testid="onboarding-error">
+                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
 
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pt-4 border-t">
