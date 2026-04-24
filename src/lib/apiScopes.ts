@@ -21,10 +21,14 @@ export const API_V2_SCOPES = [
 // Legacy v1 scopes still accepted by the worker for backward compatibility.
 // `usage:read` and `keys:manage` are enforced by routes in
 // services/worker/src/api/v1/router.ts (see :218, :221).
+// `batch` / `usage` are short-form aliases the v1 schema has accepted since
+// before the colon-prefixed canonical names existed.
 export const LEGACY_API_SCOPES = [
   'verify',
   'verify:batch',
+  'batch',
   'usage:read',
+  'usage',
   'keys:manage',
 ] as const;
 
@@ -53,7 +57,9 @@ export const API_SCOPE_LABELS: Record<ApiScope, string> = {
   'admin:rules': API_KEY_LABELS.SCOPE_ADMIN_RULES,
   verify: API_KEY_LABELS.SCOPE_VERIFY,
   'verify:batch': API_KEY_LABELS.SCOPE_BATCH,
+  batch: API_KEY_LABELS.SCOPE_BATCH,
   'usage:read': API_KEY_LABELS.SCOPE_USAGE,
+  usage: API_KEY_LABELS.SCOPE_USAGE,
   'keys:manage': API_KEY_LABELS.SCOPE_USAGE,
 };
 
@@ -66,7 +72,9 @@ export const API_SCOPE_BADGE_CLASSES: Record<ApiScope, string> = {
   'admin:rules': 'bg-rose-50 text-rose-700 border-rose-200',
   verify: 'bg-blue-50 text-blue-700 border-blue-200',
   'verify:batch': 'bg-violet-50 text-violet-700 border-violet-200',
+  batch: 'bg-violet-50 text-violet-700 border-violet-200',
   'usage:read': 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  usage: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   'keys:manage': 'bg-emerald-50 text-emerald-700 border-emerald-200',
 };
 
