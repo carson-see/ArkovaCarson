@@ -64,6 +64,11 @@ beforeEach(() => {
 });
 
 describe('publicRecordEmbedder', () => {
+  it('uses the shared 10k pipeline batch cap', async () => {
+    const { EMBED_BATCH_SIZE } = await import('../publicRecordEmbedder.js');
+    expect(EMBED_BATCH_SIZE).toBe(10_000);
+  });
+
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
 

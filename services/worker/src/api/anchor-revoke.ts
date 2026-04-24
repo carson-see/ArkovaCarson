@@ -10,7 +10,7 @@ const RevokeSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
-anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
+anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res: Response) => {
   const anchorId = req.params.id;
   const parsed = RevokeSchema.safeParse(req.body);
 
@@ -74,11 +74,12 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
 
     db.from('audit_events').insert({
       event_type: 'anchor.revoked',
-      entity_type: 'anchor',
-      entity_id: anchorId,
+      event_category: 'ANCHOR',
+      actor_id: userId,
+      target_type: 'anchor',
+      target_id: anchorId,
       org_id: anchor.org_id,
-      user_id: anchor.user_id,
-      metadata: { reason, revoked_at: new Date().toISOString() },
+      details: JSON.stringify({ reason, revoked_at: new Date().toISOString() }),
     }).then(({ error }) => {
       if (error) logger.error({ error, anchorId }, 'Failed to write revocation audit event');
     });
@@ -86,7 +87,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
     void emitNotification({
       type: 'anchor_revoked',
       userId: anchor.user_id,
-      organizationId: anchor.org_id,
+      organizationId: anchor.org_id ?? undefined,
       payload: { anchorId, reason },
     });
 

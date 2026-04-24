@@ -85,7 +85,14 @@ describe('GET /api/v2/search', () => {
 
   it('supports type=org filter', async () => {
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '1', slug: 'acme', display_name: 'Acme Corp', about: 'A company' }],
+      data: [{
+        id: '1',
+        public_id: 'org_acme',
+        display_name: 'Acme Corp',
+        description: 'A company',
+        domain: 'acme.com',
+        website_url: 'https://acme.com',
+      }],
       error: null,
     });
 
@@ -94,13 +101,13 @@ describe('GET /api/v2/search', () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].type).toBe('org');
-    expect(res.body.results[0].public_id).toBe('acme');
+    expect(res.body.results[0].public_id).toBe('org_acme');
   });
 
   it('supports type=fingerprint with exact match', async () => {
     const fp = 'abc123def456';
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '2', public_id: 'pk_2', fingerprint: fp, title: 'Test Doc', status: 'SECURED' }],
+      data: [{ id: '2', public_id: 'pk_2', fingerprint: fp, filename: 'Test Doc.pdf', status: 'SECURED' }],
       error: null,
     });
 
@@ -112,7 +119,7 @@ describe('GET /api/v2/search', () => {
 
   it('supports cursor-based pagination', async () => {
     const items = Array.from({ length: 50 }, (_, i) => ({
-      id: `${i}`, public_id: `pk_${i}`, title: `Doc ${i}`, credential_type: 'DEGREE', status: 'SECURED', fingerprint: `fp${i}`,
+      id: `${i}`, public_id: `pk_${i}`, filename: `Doc ${i}.pdf`, credential_type: 'DEGREE', status: 'SECURED', fingerprint: `fp${i}`,
     }));
     mockOrder.mockResolvedValueOnce({ data: items, error: null });
 
@@ -125,7 +132,7 @@ describe('GET /api/v2/search', () => {
 
   it('returns null cursor when results < limit', async () => {
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '1', public_id: 'pk_1', title: 'Only One', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
+      data: [{ id: '1', public_id: 'pk_1', filename: 'Only One.pdf', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
       error: null,
     });
 

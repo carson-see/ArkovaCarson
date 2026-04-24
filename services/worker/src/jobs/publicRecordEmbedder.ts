@@ -15,9 +15,11 @@ import { GEMINI_EMBEDDING_MODEL } from '../ai/gemini-config.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { resolveAnchorBatchSize } from './anchor-batching.js';
+import { config } from '../config.js';
 
-/** Batch size for embedding generation — NPH-03: increased to clear 1.34M backlog */
-const EMBED_BATCH_SIZE = 2000;
+/** Batch size for embedding generation — pinned to Bitcoin batch scale. */
+export const EMBED_BATCH_SIZE = resolveAnchorBatchSize(config.batchAnchorMaxSize);
 
 /** Number of concurrent embedding API calls */
 const EMBED_CONCURRENCY = 25;

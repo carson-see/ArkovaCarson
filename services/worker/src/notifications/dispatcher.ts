@@ -1,5 +1,6 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import type { Json } from '../types/database.types.js';
 
 export type NotificationType =
   | 'queue_run_completed'
@@ -12,7 +13,7 @@ export interface NotificationPayload {
   type: NotificationType;
   userId: string;
   organizationId?: string;
-  payload: Record<string, unknown>;
+  payload: Json;
 }
 
 function toRow(n: NotificationPayload) {

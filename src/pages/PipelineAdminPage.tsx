@@ -46,6 +46,13 @@ interface PipelineStats {
   anchoredRecords: number;
   pendingRecords: number;
   embeddedRecords: number;
+  anchorLinkedRecords: number;
+  pendingRecordLinks: number;
+  pendingAnchorRecords: number;
+  broadcastingRecords: number;
+  submittedRecords: number;
+  securedRecords: number;
+  cacheUpdatedAt: string | null;
   bySource: Record<string, number>;
   byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }>;
   recentErrors: number;
@@ -63,6 +70,8 @@ interface PublicRecord {
   metadata: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  anchor_status?: string | null;
+  chain_tx_id?: string | null;
 }
 
 interface AnchorDetails {
@@ -150,6 +159,13 @@ export function PipelineAdminPage() {
       let anchoredRecords = 0;
       let pendingRecords = 0;
       let embeddedRecords = 0;
+      let anchorLinkedRecords = 0;
+      let pendingRecordLinks = 0;
+      let pendingAnchorRecords = 0;
+      let broadcastingRecords = 0;
+      let submittedRecords = 0;
+      let securedRecords = 0;
+      let cacheUpdatedAt: string | null = null;
       const bySource: Record<string, number> = {};
 
       try {
@@ -158,12 +174,23 @@ export function PipelineAdminPage() {
           const data = await response.json() as {
             totalRecords: number; anchoredRecords: number;
             pendingRecords: number; embeddedRecords: number;
+            anchorLinkedRecords?: number; pendingRecordLinks?: number;
+            pendingAnchorRecords?: number; broadcastingRecords?: number;
+            submittedRecords?: number; securedRecords?: number;
+            cacheUpdatedAt?: string | null;
             bySource: Record<string, number>;
           };
           totalRecords = data.totalRecords;
           anchoredRecords = data.anchoredRecords;
           pendingRecords = data.pendingRecords;
           embeddedRecords = data.embeddedRecords;
+          anchorLinkedRecords = data.anchorLinkedRecords ?? data.anchoredRecords;
+          pendingRecordLinks = data.pendingRecordLinks ?? 0;
+          pendingAnchorRecords = data.pendingAnchorRecords ?? 0;
+          broadcastingRecords = data.broadcastingRecords ?? 0;
+          submittedRecords = data.submittedRecords ?? 0;
+          securedRecords = data.securedRecords ?? 0;
+          cacheUpdatedAt = data.cacheUpdatedAt ?? null;
           Object.assign(bySource, data.bySource);
         } else {
           throw new Error(`Worker returned ${response.status}`);
@@ -173,9 +200,16 @@ export function PipelineAdminPage() {
         const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
         if (!rpcError && pipelineStats) {
           totalRecords = pipelineStats.total_records ?? 0;
-          anchoredRecords = pipelineStats.anchored_records ?? 0;
-          pendingRecords = pipelineStats.pending_records ?? 0;
+          anchorLinkedRecords = pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records ?? 0;
+          pendingRecordLinks = pipelineStats.pending_record_links ?? 0;
+          pendingAnchorRecords = pipelineStats.pending_anchor_records ?? 0;
+          broadcastingRecords = pipelineStats.broadcasting_records ?? 0;
+          submittedRecords = pipelineStats.submitted_records ?? 0;
+          securedRecords = pipelineStats.secured_records ?? 0;
+          anchoredRecords = pipelineStats.bitcoin_anchored_records ?? pipelineStats.anchored_records ?? 0;
+          pendingRecords = pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records ?? 0;
           embeddedRecords = pipelineStats.embedded_records ?? 0;
+          cacheUpdatedAt = typeof pipelineStats.cache_updated_at === 'string' ? pipelineStats.cache_updated_at : null;
         }
 
         const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
@@ -208,6 +242,13 @@ export function PipelineAdminPage() {
         anchoredRecords: anchoredRecords ?? 0,
         pendingRecords: pendingRecords ?? 0,
         embeddedRecords: embeddedRecords ?? 0,
+        anchorLinkedRecords: anchorLinkedRecords ?? anchoredRecords ?? 0,
+        pendingRecordLinks: pendingRecordLinks ?? 0,
+        pendingAnchorRecords: pendingAnchorRecords ?? 0,
+        broadcastingRecords: broadcastingRecords ?? 0,
+        submittedRecords: submittedRecords ?? 0,
+        securedRecords: securedRecords ?? 0,
+        cacheUpdatedAt,
         bySource,
         byCredentialType,
         recentErrors: 0,
@@ -215,7 +256,22 @@ export function PipelineAdminPage() {
     } catch (err) {
       console.error('PipelineAdminPage: failed to fetch stats', err);
       // Stats fetch failed — set empty state so UI doesn't hang on skeleton
-      setStats({ totalRecords: 0, anchoredRecords: 0, pendingRecords: 0, embeddedRecords: 0, bySource: {}, byCredentialType: {}, recentErrors: 0  });
+      setStats({
+        totalRecords: 0,
+        anchoredRecords: 0,
+        pendingRecords: 0,
+        embeddedRecords: 0,
+        anchorLinkedRecords: 0,
+        pendingRecordLinks: 0,
+        pendingAnchorRecords: 0,
+        broadcastingRecords: 0,
+        submittedRecords: 0,
+        securedRecords: 0,
+        cacheUpdatedAt: null,
+        bySource: {},
+        byCredentialType: {},
+        recentErrors: 0,
+      });
     } finally {
       setLoading(false);
     }
@@ -345,6 +401,7 @@ export function PipelineAdminPage() {
         p_source: currentFilters.source !== 'all' ? currentFilters.source : null,
         p_record_type: currentFilters.recordType !== 'all' ? currentFilters.recordType : null,
         p_anchor_status: currentFilters.anchorStatus !== 'all' ? currentFilters.anchorStatus : null,
+        p_search: currentFilters.search.trim() || null,
       });
 
       if (rpcError) throw rpcError;
@@ -500,12 +557,14 @@ export function PipelineAdminPage() {
             value={stats?.anchoredRecords}
             icon={<ArkovaIcon className="h-5 w-5 text-emerald-400" />}
             loading={loading}
+            subtitle={`${(stats?.submittedRecords ?? 0).toLocaleString()} submitted / ${(stats?.securedRecords ?? 0).toLocaleString()} confirmed`}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_PENDING}
             value={stats?.pendingRecords}
             icon={<AlertCircle className="h-5 w-5 text-amber-400" />}
             loading={loading}
+            subtitle={`${(stats?.pendingRecordLinks ?? 0).toLocaleString()} unlinked / ${(stats?.pendingAnchorRecords ?? 0).toLocaleString()} queued / ${(stats?.broadcastingRecords ?? 0).toLocaleString()} broadcasting`}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_EMBEDDED}
@@ -903,14 +962,18 @@ export function PipelineAdminPage() {
                             </span>
                           </TableCell>
                           <TableCell className="py-2">
-                            {record.anchor_id ? (
+                            {record.chain_tx_id && (record.anchor_status === 'SUBMITTED' || record.anchor_status === 'SECURED') ? (
                               <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
                                 <ArkovaIcon className="h-3 w-3 mr-1" />
-                                Anchored
+                                Bitcoin
+                              </Badge>
+                            ) : record.anchor_id ? (
+                              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
+                                {record.anchor_status ?? 'Queued'}
                               </Badge>
                             ) : (
                               <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
-                                Pending
+                                Unlinked
                               </Badge>
                             )}
                           </TableCell>
@@ -1306,7 +1369,7 @@ function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; s
       <CardContent>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <QualityMetric label="Embedding Coverage" value={`${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${metrics.unembedded.toLocaleString()} unembedded`} />
-          <QualityMetric label="Anchor Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending`} />
+          <QualityMetric label="Bitcoin Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending Bitcoin`} />
           <QualityMetric label="Type Classification" value={`${metrics.classifiedPct}%`} width={metrics.classifiedWidth} color="bg-[#00d4ff]" detail={`${metrics.otherCount.toLocaleString()} unclassified (OTHER)`} />
           <QualityMetric label="Data Sources Active" value={`${metrics.activeSources} / ${sourceConfigCount}`} width={metrics.sourcePct} color="bg-amber-400" detail={`${metrics.inactiveSources} sources not yet ingested`} />
         </div>

@@ -122,8 +122,8 @@ const ConfigSchema = z.object({
   // Batch Anchoring (BTC-001)
   /** Batch anchor processing interval in minutes (default: 10) */
   batchAnchorIntervalMinutes: z.coerce.number().min(1).max(60).default(10),
-  /** Maximum anchors per batch transaction (default: 100, max: 10000) */
-  batchAnchorMaxSize: z.coerce.number().min(1).max(10000).default(100),
+  /** Maximum anchors per batch transaction (default: 10000, max: 10000) */
+  batchAnchorMaxSize: z.coerce.number().min(1).max(10000).default(10000),
   /** Maximum fee rate (sat/vB) for batch anchoring — queue if exceeded (BTC-002) */
   maxFeeThresholdSatPerVbyte: z.coerce.number().min(1).default(50),
 

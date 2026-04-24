@@ -56,8 +56,8 @@ function sanitizeFilterValue(v: string): string {
 async function searchOrgs(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('organizations')
-    .select('id, slug, display_name, about')
-    .or(`display_name.ilike.%${safe}%,about.ilike.%${safe}%,slug.ilike.%${safe}%`)
+    .select('id, public_id, display_name, description, domain, website_url')
+    .or(`display_name.ilike.%${safe}%,description.ilike.%${safe}%,domain.ilike.%${safe}%`)
     .range(offset, offset + limit - 1)
     .order('display_name');
 
@@ -68,18 +68,22 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 
   return (data ?? []).map(org => ({
     type: 'org' as const,
-    public_id: org.slug ?? org.id,
+    public_id: org.public_id ?? org.id,
     score: 1.0,
     snippet: org.display_name ?? '',
-    metadata: { about: org.about },
+    metadata: {
+      description: org.description,
+      domain: org.domain,
+      website_url: org.website_url,
+    },
   }));
 }
 
 async function searchRecords(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, title, credential_type, status, fingerprint')
-    .or(`title.ilike.%${safe}%,credential_type.ilike.%${safe}%`)
+    .select('id, public_id, filename, description, credential_type, status, fingerprint')
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -91,16 +95,16 @@ async function searchRecords(q: string, limit: number, offset: number): Promise<
 
   return (data ?? []).map(rec => ({
     type: 'record' as const,
-    public_id: rec.public_id,
+    public_id: rec.public_id ?? rec.id,
     score: 1.0,
-    snippet: rec.title ?? rec.credential_type ?? '',
+    snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
     metadata: { credential_type: rec.credential_type, status: rec.status },
   }));
 }
 
 async function searchFingerprints(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, fingerprint, title, status')
+    .select('id, public_id, fingerprint, filename, status')
     .eq('fingerprint', q)
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -112,17 +116,18 @@ async function searchFingerprints(q: string, limit: number, offset: number): Pro
 
   return (data ?? []).map(rec => ({
     type: 'fingerprint' as const,
-    public_id: rec.public_id,
+    public_id: rec.public_id ?? rec.id,
     score: 1.0,
-    snippet: rec.title ?? rec.fingerprint ?? '',
+    snippet: rec.filename ?? rec.fingerprint ?? '',
     metadata: { status: rec.status },
   }));
 }
 
 async function searchDocuments(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+  const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, title, metadata, credential_type, status')
-    .ilike('title', `%${sanitizeFilterValue(q)}%`)
+    .select('id, public_id, filename, description, metadata, credential_type, status')
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 
@@ -133,9 +138,9 @@ async function searchDocuments(q: string, limit: number, offset: number): Promis
 
   return (data ?? []).map(doc => ({
     type: 'document' as const,
-    public_id: doc.public_id,
+    public_id: doc.public_id ?? doc.id,
     score: 1.0,
-    snippet: doc.title ?? '',
+    snippet: doc.filename ?? doc.description ?? '',
     metadata: { credential_type: doc.credential_type, status: doc.status },
   }));
 }

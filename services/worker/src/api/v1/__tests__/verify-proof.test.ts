@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { verifyProofRouter } from '../verify-proof.js';
+import { buildProofResponse, verifyProofRouter } from '../verify-proof.js';
 import type { ProofLookup, ProofAnchorData, MerkleProofResponse } from '../verify-proof.js';
 
 /** Build a test app with injected lookup */
@@ -186,5 +186,22 @@ describe('BTC-003: GET /verify/:publicId/proof', () => {
     const res = await request(app).get('/ARK-2026-TEST-001/proof');
     expect(res.status).toBe(200);
     expect(res.body.batch_id).toBeNull();
+  });
+
+  it('prefers proof rows over legacy metadata when both exist', () => {
+    const result = buildProofResponse(
+      ANCHORED_RECORD,
+      {
+        merkle_root: 'row-root',
+        proof_path: [{ hash: 'row-proof', position: 'left' }],
+        batch_id: 'row-batch',
+      },
+    );
+
+    expect(result).toMatchObject({
+      merkle_root: 'row-root',
+      merkle_proof: [{ hash: 'row-proof', position: 'left' }],
+      batch_id: 'row-batch',
+    });
   });
 });

@@ -19,7 +19,9 @@ import { logger } from '../utils/logger.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
+import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { config } from '../config.js';
+import { POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -28,7 +30,7 @@ import { config } from '../config.js';
  * Env override only allowed to go LOWER (for testing), never below 100.
  */
 export const BATCH_SIZE = Math.min(
-  Math.max(parseInt(process.env.BATCH_ANCHOR_MAX_SIZE ?? '10000', 10) || 10000, 100),
+  resolveAnchorBatchSize(config.batchAnchorMaxSize),
   10000,
 );
 
@@ -130,8 +132,6 @@ export interface BatchAnchorResult {
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
  */
-const POSTGREST_ROW_LIMIT = 1000;
-
 /**
  * SCALE-3: In-process mutex — prevents overlapping batch runs when cron fires
  * faster than batch processing completes. Same pattern as confirmation checker.
@@ -349,6 +349,23 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
 
   const processed = typeof updatedCount === 'number' ? updatedCount : (claimedAnchors.length);
 
+  try {
+    await upsertAnchorProofs(
+      db,
+      claimedAnchors.map((anchor) => ({
+        anchorId: anchor.id,
+        receiptId: receipt.receiptId,
+        blockHeight: receipt.blockHeight ?? null,
+        blockTimestamp: receipt.blockTimestamp ?? null,
+        merkleRoot: tree.root,
+        proofPath: tree.proofs.get(anchor.fingerprint) ?? [],
+        batchId,
+      })),
+    );
+  } catch (proofError) {
+    logger.warn({ error: proofError, batchId }, 'Failed to persist Merkle proofs for batch anchors');
+  }
+
   // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
   try {
     const byType = new Map<string | null, string[]>();
@@ -484,6 +501,15 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
     // Fallback: try individual updates if RPC not available
     logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed in legacy path — falling back to individual updates');
     let updatedCount = 0;
+    const proofRows: Array<{
+      anchorId: string;
+      receiptId: string;
+      blockHeight: number | null;
+      blockTimestamp: string | null;
+      merkleRoot: string;
+      proofPath: unknown;
+      batchId: string;
+    }> = [];
 
     for (const anchor of pendingAnchors) {
       const { error: updateError, count: updateCount } = await db
@@ -493,11 +519,6 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
           chain_tx_id: receipt.receiptId,
           chain_block_height: receipt.blockHeight,
           chain_timestamp: receipt.blockTimestamp,
-          metadata: JSON.parse(JSON.stringify({
-            ...(typeof anchor.metadata === 'object' && anchor.metadata !== null ? anchor.metadata : {}),
-            merkle_root: tree.root,
-            batch_id: batchId,
-          })),
           compliance_controls: getComplianceControlIds(anchor.credential_type),
         })
         .eq('id', anchor.id)
@@ -512,6 +533,21 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
         continue;
       }
       updatedCount++;
+      proofRows.push({
+        anchorId: anchor.id,
+        receiptId: receipt.receiptId,
+        blockHeight: receipt.blockHeight ?? null,
+        blockTimestamp: receipt.blockTimestamp ?? null,
+        merkleRoot: tree.root,
+        proofPath: tree.proofs.get(anchor.fingerprint) ?? [],
+        batchId,
+      });
+    }
+
+    try {
+      await upsertAnchorProofs(db, proofRows);
+    } catch (proofError) {
+      logger.warn({ error: proofError, batchId }, 'Failed to persist Merkle proofs in legacy batch path');
     }
 
     logger.info({ batchId, count: updatedCount, total: pendingAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Legacy batch anchor processing complete (fallback)');
