@@ -14,10 +14,32 @@ interface V2ApiKeyRateLimitOptions {
 
 const DEFAULT_WINDOW_MS = 60_000;
 const DEFAULT_MAX_REQUESTS = 1_000;
+const CLEANUP_INTERVAL_MS = 5 * 60_000;
 const entries = new Map<string, RateLimitEntry>();
+
+// Periodic cleanup of expired buckets so the Map can't grow unbounded under
+// high cardinality (rotating keys, varying paths). Mirrors the pattern in
+// services/worker/src/middleware/x402PayerRateLimit.ts.
+const cleanupTimer: NodeJS.Timeout | null = (() => {
+  if (typeof setInterval !== 'function') return null;
+  const timer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of entries) {
+      if (entry.resetAt <= now) {
+        entries.delete(key);
+      }
+    }
+  }, CLEANUP_INTERVAL_MS);
+  if (typeof timer.unref === 'function') timer.unref();
+  return timer;
+})();
 
 export function resetV2ApiKeyRateLimit(): void {
   entries.clear();
+}
+
+export function stopV2ApiKeyRateLimitCleanup(): void {
+  if (cleanupTimer) clearInterval(cleanupTimer);
 }
 
 export function createV2ApiKeyRateLimit(options: V2ApiKeyRateLimitOptions = {}) {
@@ -26,7 +48,15 @@ export function createV2ApiKeyRateLimit(options: V2ApiKeyRateLimitOptions = {}) 
   const now = options.now ?? Date.now;
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    const key = req.apiKey?.keyId ?? req.ip ?? 'anonymous';
+    // Skip rate-limiting for unauthenticated requests so the downstream auth
+    // / scope guard can return 401 instead of 429. Anonymous clients will be
+    // rejected by apiKeyAuth before they ever reach the per-key bucket here.
+    if (!req.apiKey) {
+      next();
+      return;
+    }
+
+    const key = req.apiKey.keyId;
     const entryKey = `${req.baseUrl}${req.path}:${key}`;
     const current = now();
     let entry = entries.get(entryKey);

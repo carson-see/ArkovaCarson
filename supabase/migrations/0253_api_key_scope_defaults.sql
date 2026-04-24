@@ -1,15 +1,11 @@
 -- SCRUM-1106: Correct API key scope defaults/backfill for API v2 least-privilege enforcement.
 -- ROLLBACK:
--- DO $$ BEGIN
---   IF EXISTS (
---     SELECT 1 FROM information_schema.columns
---     WHERE table_schema = 'public' AND table_name = 'api_keys' AND column_name = 'scopes'
---   ) THEN
---     ALTER TABLE public.api_keys ALTER COLUMN scopes SET DEFAULT ARRAY['verify'];
---   END IF;
--- END $$;
--- UPDATE public.api_keys SET scopes = ARRAY['verify'] WHERE scopes = ARRAY['read:search'];
--- ALTER TABLE IF EXISTS public.api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
+-- UPDATE public.api_keys
+--   SET scopes = ARRAY['verify']::text[]
+--   WHERE scopes = ARRAY['read:search', 'verify']::text[]
+--      OR scopes = ARRAY['read:search']::text[];
+-- ALTER TABLE public.api_keys ALTER COLUMN scopes SET DEFAULT ARRAY['verify'];
+-- ALTER TABLE public.api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 -- NOTIFY pgrst, 'reload schema';
 
 DO $$
@@ -26,15 +22,20 @@ BEGIN
   END IF;
 END $$;
 
+-- Backfill: only legacy verify-default keys and empty/null arrays receive the
+-- new default scope. Keys with explicit scopes (set by the customer or another
+-- migration) are left untouched to avoid silent privilege expansion.
 UPDATE public.api_keys
 SET scopes = (
   SELECT ARRAY(
     SELECT DISTINCT scope
-    FROM unnest(COALESCE(scopes, ARRAY[]::text[]) || ARRAY['read:search']) AS scope
+    FROM unnest(scopes || ARRAY['read:search']) AS scope
     ORDER BY scope
   )
 )
-WHERE NOT ('read:search' = ANY(scopes));
+WHERE scopes = ARRAY['verify']::text[]
+   OR scopes = ARRAY[]::text[]
+   OR scopes IS NULL;
 
 DO $$
 BEGIN
@@ -53,7 +54,8 @@ BEGIN
     ALTER TABLE public.api_keys
       ADD CONSTRAINT api_keys_scopes_known_values
       CHECK (
-        scopes <@ ARRAY[
+        array_length(scopes, 1) >= 1
+        AND scopes <@ ARRAY[
           'read:records',
           'read:orgs',
           'read:search',
@@ -68,8 +70,7 @@ BEGIN
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_api_keys_scopes
-  ON public.api_keys USING gin (scopes);
+-- Index idx_api_keys_scopes already created by 0239_api_key_scopes.sql
 
 DO $$
 BEGIN

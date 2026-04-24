@@ -33,6 +33,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { API_KEY_LABELS } from '@/lib/copy';
+import { SELECTABLE_API_SCOPES, DEFAULT_API_KEY_SCOPES } from '@/lib/apiScopes';
 import { ApiKeyScopeDisplay } from './ApiKeyScopeDisplay';
 import type { ApiKeyMasked, ApiKeyCreated } from '@/hooks/useApiKeys';
 
@@ -45,13 +46,7 @@ interface ApiKeySettingsProps {
   fetchError?: string | null;
 }
 
-const AVAILABLE_SCOPES = [
-  { id: 'read:search', label: API_KEY_LABELS.SCOPE_READ_SEARCH },
-  { id: 'read:records', label: API_KEY_LABELS.SCOPE_READ_RECORDS },
-  { id: 'read:orgs', label: API_KEY_LABELS.SCOPE_READ_ORGS },
-  { id: 'write:anchors', label: API_KEY_LABELS.SCOPE_WRITE_ANCHORS },
-  { id: 'admin:rules', label: API_KEY_LABELS.SCOPE_ADMIN_RULES },
-];
+const AVAILABLE_SCOPES = SELECTABLE_API_SCOPES;
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('en-US', {
@@ -82,7 +77,7 @@ export function ApiKeySettings({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<'form' | 'secret'>('form');
   const [name, setName] = useState('');
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(['read:search']);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([...DEFAULT_API_KEY_SCOPES]);
   const [expiryDays, setExpiryDays] = useState('');
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [creating, setCreating] = useState(false);
@@ -94,7 +89,7 @@ export function ApiKeySettings({
   const resetForm = () => {
     setPhase('form');
     setName('');
-    setSelectedScopes(['read:search']);
+    setSelectedScopes([...DEFAULT_API_KEY_SCOPES]);
     setExpiryDays('');
     setCreatedKey(null);
     setCreating(false);
