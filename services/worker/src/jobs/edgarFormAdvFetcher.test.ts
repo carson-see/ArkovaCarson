@@ -16,9 +16,16 @@ vi.mock('../config.js', () => ({
   config: { edgarUserAgent: 'Arkova test@example.com' },
 }));
 
+// Stub the pipeline delay so the fetch tests don't sit on a 150ms sleep.
+vi.mock('../utils/pipeline.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/pipeline.js')>();
+  return { ...actual, delay: async () => undefined };
+});
+
 import type { EdgarSubmissionEnvelope } from './edgarFormAdvParser.js';
 import {
   fetchEdgarFormAdvAdvisers,
+  defaultListInvestmentAdviserCiks,
   type EdgarFormAdvFetcherDeps,
 } from './edgarFormAdvFetcher.js';
 
@@ -164,5 +171,58 @@ describe('fetchEdgarFormAdvAdvisers', () => {
 
     expect(result.inserted).toBe(1);
     expect(inserts).toHaveLength(1);
+  });
+});
+
+describe('defaultListInvestmentAdviserCiks', () => {
+  function stubFetch(payload: unknown, ok = true): ReturnType<typeof vi.fn> {
+    const spy = vi.fn(async () =>
+      new Response(JSON.stringify(payload), {
+        status: ok ? 200 : 500,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = spy;
+    return spy;
+  }
+
+  it('filters advisers (SIC 6282) from the column-oriented ticker file', async () => {
+    stubFetch({
+      fields: ['cik', 'name', 'ticker', 'exchange', 'sic'],
+      data: [
+        [320193, 'Acme Advisers', 'ACME', 'NASDAQ', '6282'],
+        [111111, 'Widget Co', 'WDGT', 'NYSE', '3990'],
+        [789019, 'Bedrock Capital', 'BED', 'NYSE', '6282'],
+      ],
+    });
+    const ciks = await defaultListInvestmentAdviserCiks();
+    expect(ciks).toEqual(['320193', '789019']);
+  });
+
+  it('returns [] when the ticker file has no `sic` column (no silent full-pipeline flood)', async () => {
+    stubFetch({
+      fields: ['cik', 'name', 'ticker', 'exchange'],
+      data: [
+        [320193, 'Acme Advisers', 'ACME', 'NASDAQ'],
+        [789019, 'Bedrock Capital', 'BED', 'NYSE'],
+      ],
+    });
+    const ciks = await defaultListInvestmentAdviserCiks();
+    expect(ciks).toEqual([]);
+  });
+
+  it('throws on upstream non-OK so cron surfaces the failure rather than reporting "0 records, success"', async () => {
+    stubFetch({ error: 'WAF block' }, false);
+    await expect(defaultListInvestmentAdviserCiks()).rejects.toThrow(/EDGAR upstream non-OK/);
+  });
+
+  it('filters advisers from the legacy array-shaped feed', async () => {
+    stubFetch([
+      { cik_str: 320193, sic: '6282' },
+      { cik_str: 111111, sic: '3990' },
+    ]);
+    const ciks = await defaultListInvestmentAdviserCiks();
+    expect(ciks).toEqual(['320193']);
   });
 });

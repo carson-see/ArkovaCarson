@@ -1,6 +1,10 @@
 /**
  * KAU-03/04: Australia compliance data fetcher.
  * Thin wrapper around jurisdictionFetcher with Australian statutes and case law config.
+ *
+ * KAU-06 (SCRUM-754): Adds OAIC Notifiable Data Breach Scheme Part IIIC
+ * procedure records. 30-day assessment window + eligible-breach criteria
+ * get ingested as dedicated records so Nessie RAG can cite OAIC guidance.
  */
 
 import { fetchJurisdictionCompliance, type JurisdictionFetchResult, type StatuteDefinition } from './jurisdictionFetcher.js';
@@ -57,6 +61,52 @@ const AU_STATUTES: StatuteDefinition[] = [
       { id: 'AU-NDB-03', title: 'Assessing a suspected breach', section: 'NDB Scheme' },
       { id: 'AU-NDB-04', title: 'Notifying the Commissioner', section: 'NDB Scheme' },
       { id: 'AU-NDB-05', title: 'Notifying individuals', section: 'NDB Scheme' },
+    ],
+  },
+  // KAU-06 (SCRUM-754): Privacy Act Part IIIC detailed NDB procedure records.
+  // These are separate from the AU-NDB overview guidelines above — each record
+  // answers one specific RAG question ("what is the assessment window",
+  // "who must be notified", etc.) with the statutory citation.
+  {
+    title: 'Privacy Act Part IIIC — Notifiable Data Breach Scheme detailed procedures',
+    sourceId: 'AU-OAIC-NDB',
+    url: 'https://www.oaic.gov.au/privacy/notifiable-data-breaches/preparing-for-and-responding-to-data-breaches',
+    sections: [
+      {
+        id: 'AU-OAIC-NDB-01',
+        title: 'Privacy Act s26WA — Eligible data breach: unauthorised access/disclosure or loss AND likely to result in serious harm to any affected individual',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-02',
+        title: 'Privacy Act s26WE — Suspected breach assessment must complete within 30 days of APP entity becoming aware',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-03',
+        title: 'Privacy Act s26WB/C — Notification without undue delay after assessment: Commissioner (s26WB) and affected individuals (s26WC) in parallel',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-04',
+        title: 'Privacy Act s26WK — Required statement content: identity of entity, description of breach, kinds of information involved, recommended steps for affected individuals',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-05',
+        title: 'Privacy Act s26WF — Exemption: remedial action taken before serious harm likely, and no longer an eligible breach',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-06',
+        title: 'Privacy Act s13G/80W — Civil penalties: up to AUD 50M / 30% of adjusted turnover / 3x benefit for serious or repeated interference with privacy (post-2022 uplift)',
+        section: 'Part IIIC',
+      },
+      {
+        id: 'AU-OAIC-NDB-07',
+        title: 'OAIC annual NDB statistics: health providers, finance, education, recruitment, legal — top 5 sectors for reported eligible breaches',
+        section: 'Part IIIC',
+      },
     ],
   },
 ];

@@ -212,14 +212,26 @@ export function createAnomalyDetector(config: AnomalyDetectorConfig = {}): Anoma
 }
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+const IPV4_ANYWHERE_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+// IPv6: two alternations — compressed (contains `::`) or full (8 groups).
+// The compressed alt greedy-matches `(hex:){2+}(:hex*){1+}`; the full alt
+// matches `(hex:){3,7}hex`. Deliberately anchored via surrounding regex —
+// no `\b` because `:` breaks word boundaries around `::`.
+const IPV6_ANYWHERE_RE = /(?:[0-9a-fA-F]{1,4}:){2,}(?::[0-9a-fA-F]{0,4})+|(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{1,4}/g;
+const LONG_OPAQUE_ID_RE = /[a-zA-Z0-9_-]{9,}/g;
+const IP_SENTINEL = '[IP_REDACTED]';
+// Substituted for `[IP_REDACTED]` during the opaque-ID pass so the
+// sentinel's internal characters aren't themselves truncated.
+const SENTINEL_PLACEHOLDER = '\u0000IPR\u0000';
 
 /** Replace IPv4 with a constant sentinel + truncate apiKeyId to a
  *  non-reversible prefix. Constitution 1.4 applies to all Sentry events
  *  regardless of runtime. Same scrubber runs on `tags.fingerprint` so
  *  the indexed label does not leak raw identifiers. */
 function scrubValue(key: string, value: unknown): unknown {
-  if (typeof value === 'string' && IPV4_RE.test(value)) return '[IP_REDACTED]';
-  if (key === 'apiKeyId' && typeof value === 'string') return `key:${value.slice(0, 4)}…`;
+  if (typeof value !== 'string') return value;
+  if (IPV4_RE.test(value)) return '[IP_REDACTED]';
+  if (key === 'apiKeyId') return `key:${value.slice(0, 4)}…`;
   return value;
 }
 
@@ -227,6 +239,23 @@ function scrubAlertDetail(detail: Record<string, unknown>): Record<string, unkno
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(detail)) out[k] = scrubValue(k, v);
   return out;
+}
+
+/** Redact free-form strings (summary, message) before shipping to Sentry.
+ *  Summaries are built with template literals that can embed raw IPs or
+ *  apiKeyIds (e.g. "5 auth failures from 10.0.0.5 in 60s"); CLAUDE.md §1.4
+ *  applies to Sentry `message` the same as `extra`. Walks the whole string
+ *  rather than anchoring like `scrubValue`. IP sentinel is swapped for a
+ *  placeholder during the opaque-id pass so the opaque-id regex does not
+ *  eat the sentinel's own internal characters. */
+export function scrubFreeText(text: string): string {
+  const withIpsRedacted = text
+    .replace(IPV4_ANYWHERE_RE, IP_SENTINEL)
+    .replace(IPV6_ANYWHERE_RE, IP_SENTINEL);
+  return withIpsRedacted
+    .split(IP_SENTINEL).join(SENTINEL_PLACEHOLDER)
+    .replace(LONG_OPAQUE_ID_RE, (m) => `${m.slice(0, 4)}…`)
+    .split(SENTINEL_PLACEHOLDER).join(IP_SENTINEL);
 }
 
 /** Redact a fingerprint that embeds a raw IP or apiKeyId. Fingerprints
@@ -253,7 +282,7 @@ export async function sendToSentry(dsn: string, alert: AnomalyAlert): Promise<vo
   const [, key, host, projectId] = match;
 
   const payload = {
-    message: alert.summary,
+    message: scrubFreeText(alert.summary),
     level: alert.severity,
     logger: 'mcp-anomaly',
     tags: { signal: alert.signal, fingerprint: scrubFingerprint(alert.fingerprint) },

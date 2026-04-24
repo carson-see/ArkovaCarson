@@ -3,6 +3,8 @@
  *
  * GET  /api/rules               → list caller's org rules (newest first)
  * GET  /api/rules/:id           → fetch a full rule for review/edit
+ * GET  /api/rules/:id/executions → recent execution history for one rule
+ * POST /api/rules/test          → simulate a rule against a sample event
  * POST /api/rules               → create rule (enabled=false by default per ARK-110)
  * PATCH /api/rules/:id          → update rule (name/desc/enabled + optional config)
  * DELETE /api/rules/:id         → hard-delete rule (no soft-delete column yet)
@@ -24,8 +26,32 @@ import {
   assertNoInlineSecrets,
   validateRuleConfigs,
 } from '../rules/schemas.js';
+import { evaluateRule, type TriggerEvent, type RuleRow } from '../rules/evaluator.js';
 
 const UuidSchema = z.string().uuid();
+const ExecutionLimitSchema = z.coerce.number().int().min(1).max(100).default(25);
+
+const TestRuleDefinitionInput = CreateOrgRuleInput.omit({ org_id: true })
+  .extend({
+    org_id: z.string().uuid().optional(),
+    enabled: z.boolean().optional(),
+  });
+
+const TestTriggerEventInput = z.object({
+  org_id: z.string().uuid().optional(),
+  trigger_type: CreateOrgRuleInput.shape.trigger_type,
+  vendor: z.string().trim().min(1).max(100).optional(),
+  filename: z.string().trim().min(1).max(500).optional(),
+  folder_path: z.string().trim().min(1).max(1000).optional(),
+  sender_email: z.string().email().toLowerCase().optional(),
+  subject: z.string().trim().min(1).max(500).optional(),
+});
+
+const TestRuleInput = z.object({
+  rule: TestRuleDefinitionInput,
+  event: TestTriggerEventInput,
+  assume_enabled: z.boolean().default(true),
+});
 
 /**
  * SEC-02 — every rule lifecycle event lands in `audit_events`. Non-fatal:
@@ -161,7 +187,7 @@ export async function handleListRules(
     const { data, error } = await (db as any)
       .from('organization_rules')
       .select(
-        'id, org_id, name, description, enabled, trigger_type, action_type, created_at, updated_at',
+        'id, org_id, name, description, enabled, trigger_type, action_type, created_at, updated_at, last_executed_at',
       )
       .eq('org_id', orgId)
       .order('created_at', { ascending: false })
@@ -227,6 +253,164 @@ export async function handleGetRule(
     logger.error({ error: err }, 'handleGetRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
+}
+
+export async function handleListRuleExecutions(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
+  const idParsed = UuidSchema.safeParse(req.params.id);
+  if (!idParsed.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
+    return;
+  }
+  const limitParsed = ExecutionLimitSchema.safeParse(req.query.limit);
+  if (!limitParsed.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid limit' } });
+    return;
+  }
+
+  try {
+    // First prove the rule belongs to the caller org. Returning [] for a
+    // foreign rule would be ambiguous and makes tenancy incidents harder to
+    // diagnose during support.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rule, error: ruleError } = await (db as any)
+      .from('organization_rules')
+      .select('id')
+      .eq('id', idParsed.data)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (ruleError) {
+      logger.warn({ error: ruleError, ruleId: idParsed.data }, 'rule history ownership check failed');
+      res.status(500).json({ error: { code: 'history_failed', message: 'Failed to load rule history' } });
+      return;
+    }
+    if (!rule) {
+      res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('organization_rule_executions')
+      .select(
+        'id, rule_id, trigger_event_id, status, input_payload, output_payload, error, attempt_count, duration_ms, started_at, completed_at, created_at',
+      )
+      .eq('rule_id', idParsed.data)
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(limitParsed.data);
+
+    if (error) {
+      logger.warn({ error, ruleId: idParsed.data }, 'organization_rule_executions history fetch failed');
+      res.status(500).json({ error: { code: 'history_failed', message: 'Failed to load rule history' } });
+      return;
+    }
+
+    const items = (data ?? []) as Array<Record<string, unknown>>;
+    res.json({ items, count: items.length, limit: limitParsed.data });
+  } catch (err) {
+    logger.error({ error: err }, 'handleListRuleExecutions unexpected error');
+    res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  }
+}
+
+export async function handleTestRule(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
+  const parsed = TestRuleInput.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: {
+        code: 'invalid_request',
+        message: 'Invalid body',
+        details: parsed.error.flatten(),
+      },
+    });
+    return;
+  }
+
+  const ruleOrgId = parsed.data.rule.org_id ?? orgId;
+  const eventOrgId = parsed.data.event.org_id ?? orgId;
+  if (ruleOrgId !== orgId || eventOrgId !== orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Rule test must stay within caller organization' },
+    });
+    return;
+  }
+
+  if (!(await requireOrgAdmin(userId, orgId, res))) return;
+
+  const ruleInput = {
+    org_id: orgId,
+    name: parsed.data.rule.name,
+    description: parsed.data.rule.description,
+    trigger_type: parsed.data.rule.trigger_type,
+    trigger_config: parsed.data.rule.trigger_config,
+    action_type: parsed.data.rule.action_type,
+    action_config: parsed.data.rule.action_config,
+    enabled: parsed.data.rule.enabled ?? false,
+  };
+
+  try {
+    validateRuleConfigs(ruleInput);
+    assertNoInlineSecrets(ruleInput.trigger_config);
+    assertNoInlineSecrets(ruleInput.action_config);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Invalid rule config';
+    const code = /secret/i.test(message) ? 'inline_secret' : 'invalid_config';
+    res.status(400).json({ error: { code, message } });
+    return;
+  }
+
+  const evaluatedEnabled = parsed.data.assume_enabled ? true : ruleInput.enabled;
+  const rule: RuleRow = {
+    id: 'test-rule',
+    org_id: orgId,
+    name: ruleInput.name,
+    enabled: evaluatedEnabled,
+    trigger_type: ruleInput.trigger_type,
+    trigger_config: ruleInput.trigger_config,
+    action_type: ruleInput.action_type,
+    action_config: ruleInput.action_config,
+  };
+  const event: TriggerEvent = {
+    ...parsed.data.event,
+    org_id: orgId,
+  };
+  const result = evaluateRule(rule, event);
+
+  res.json({
+    ok: true,
+    persisted: false,
+    matched: result.matched,
+    reason: result.reason,
+    needs_semantic_match: result.needs_semantic_match,
+    semantic_match: result.semantic_match,
+    evaluated_enabled: evaluatedEnabled,
+    action_type: ruleInput.action_type,
+    action_preview: {
+      action_type: ruleInput.action_type,
+      config: ruleInput.action_config,
+    },
+  });
 }
 
 export async function handleCreateRule(

@@ -67,6 +67,31 @@ pg_repack -k \
 
 After repack, retry the redundant-index cleanup migration if it has not already landed.
 
+### Live execution note: 2026-04-24
+
+- A native `pg_repack 1.5.2` client was built and verified against the installed extension version on Supabase.
+- The Supabase CLI login role can connect natively, but must use `PGOPTIONS='-c role=postgres'` because `cli_login_postgres` is `NOINHERIT` even though it is a member of `postgres`.
+- A live `pg_repack` attempt on `public.anchors` was started with `--no-order`, `--no-kill-backend`, and a long lock timeout. The run was aborted intentionally because the table is hot enough for `ACCESS EXCLUSIVE` lock attempts to start queueing production `anchors` traffic.
+- The immediate blocker was an in-flight `autovacuum: VACUUM ANALYZE public.anchors`, followed by concurrent confirmation updates on `anchors`.
+- Operational conclusion: run `pg_repack` only during a real maintenance window or after explicitly pausing the anchoring jobs and waiting for `anchors` traffic to drain.
+
+Useful control-plane levers:
+
+- `ENABLE_PROD_NETWORK_ANCHORING`
+- `ENABLE_PUBLIC_RECORD_ANCHORING`
+- `ENABLE_ATTESTATION_ANCHORING`
+
+These flags can be toggled in `switchboard_flags` to suppress new background `anchors` writes during the maintenance window, but they should be restored immediately after the reclaim attempt.
+
+Upgrade/right-size readiness observed on 2026-04-24:
+
+- Upgrade eligibility: `true`
+- Current app version: `supabase-postgres-17.6.1.063`
+- Latest eligible app version: `supabase-postgres-17.6.1.105`
+- Supabase estimated duration: `1 hour`
+
+That eligible in-place upgrade is the path that will right-size disk after `pg_repack` has reduced the underlying database size.
+
 ## Retry index cleanup
 
 If `0244_scale02_anchor_index_cleanup.sql` times out on a busy period, retry it during a lower-traffic window:

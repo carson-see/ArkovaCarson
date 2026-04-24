@@ -38,6 +38,15 @@ describe('ipInCidr', () => {
   it('accepts exact-match /32', () => {
     expect(ipInCidr('192.168.1.1', '192.168.1.1/32')).toBe(true);
   });
+  it('rejects out-of-range prefix lengths (/33, /99, /-1)', () => {
+    expect(ipInCidr('10.0.0.5', '10.0.0.0/33')).toBe(false);
+    expect(ipInCidr('10.0.0.5', '10.0.0.0/99')).toBe(false);
+    expect(ipInCidr('10.0.0.5', '10.0.0.0/-1')).toBe(false);
+  });
+  it('rejects octets > 255', () => {
+    expect(ipInCidr('10.0.0.999', '10.0.0.0/24')).toBe(false);
+    expect(ipInCidr('10.0.0.5', '256.0.0.0/8')).toBe(false);
+  });
 });
 
 describe('computeAllowlistDecision — no entry', () => {
@@ -187,6 +196,37 @@ describe('enforceOriginAllowlist', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await enforceOriginAllowlist(env as any, 'key-1', makeReq());
     expect(result.reason).toBe('challenge');
+  });
+
+  it('fails safe to challenge when KV entry is malformed JSON', async () => {
+    const env = {
+      MCP_ORIGIN_ALLOWLIST_KV: {
+        get: async () => '{not json',
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await enforceOriginAllowlist(env as any, 'key-1', makeReq());
+    expect(result.reason).toBe('challenge');
+  });
+
+  it('fails safe to challenge when KV entry fails schema validation', async () => {
+    const env = {
+      MCP_ORIGIN_ALLOWLIST_KV: {
+        get: async () => JSON.stringify({ mode: 'allowlist', cidrs: ['0.0.0.0/0'], wat: true }),
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await enforceOriginAllowlist(env as any, 'key-1', makeReq());
+    // Strict schema rejects unknown keys, so a tampered entry never opens.
+    expect(result.reason).toBe('challenge');
+  });
+
+  it('honors a valid deny entry end-to-end', async () => {
+    const env = makeEnv({ 'allow:key-deny': { mode: 'deny' } });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await enforceOriginAllowlist(env as any, 'key-deny', makeReq());
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe('rejected');
   });
 });
 

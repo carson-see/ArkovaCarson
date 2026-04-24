@@ -193,7 +193,14 @@ function getEdgarUserAgent(): string {
   return config.edgarUserAgent || 'Arkova contact@arkova.ai';
 }
 
+/**
+ * Fetch JSON with EDGAR's 10 req/s fair-access policy honored on every
+ * call. Distinguishes transport failure (throws) from "feed empty / parse
+ * failure" (returns null) so upstream callers can count real errors
+ * instead of silently reporting success when EDGAR is 403/503-ing.
+ */
 async function fetchJson<T>(url: string): Promise<T | null> {
+  await delay(EDGAR_RATE_LIMIT_MS);
   const response = await fetch(url, {
     headers: {
       'User-Agent': getEdgarUserAgent(),
@@ -202,7 +209,7 @@ async function fetchJson<T>(url: string): Promise<T | null> {
   });
   if (!response.ok) {
     logger.warn({ url, status: response.status }, 'EDGAR Form ADV: upstream non-OK');
-    return null;
+    throw new Error(`EDGAR upstream non-OK (${response.status}) for ${url}`);
   }
   try {
     return (await response.json()) as T;
@@ -215,6 +222,11 @@ async function fetchJson<T>(url: string): Promise<T | null> {
  * Walk the public company_tickers_exchange.json file, return CIKs whose
  * SIC matches Investment Advice (6282). EDGAR publishes this nightly;
  * it's a stable, WAF-free feed.
+ *
+ * When the feed has no `sic` field (SEC has historically shipped this
+ * file with only `cik`/`name`/`ticker`/`exchange`), we can't identify
+ * investment advisers — return empty rather than flooding the pipeline
+ * with every public-company CIK.
  */
 export async function defaultListInvestmentAdviserCiks(): Promise<string[]> {
   const envelope = await fetchJson<TickerFileEnvelope | TickerFileRow[]>(EDGAR_COMPANY_TICKERS_URL);
@@ -231,17 +243,22 @@ export async function defaultListInvestmentAdviserCiks(): Promise<string[]> {
   const data = envelope.data ?? [];
   const cikIdx = fields.indexOf('cik');
   const sicIdx = fields.indexOf('sic');
-  if (cikIdx < 0) return [];
+  if (cikIdx < 0 || sicIdx < 0) {
+    logger.warn(
+      { fields },
+      'EDGAR Form ADV: ticker file missing cik/sic columns — cannot filter advisers',
+    );
+    return [];
+  }
 
   return data
-    .filter((row) => sicIdx < 0 || String(row[sicIdx] ?? '') === SIC_INVESTMENT_ADVICE)
+    .filter((row) => String(row[sicIdx] ?? '') === SIC_INVESTMENT_ADVICE)
     .map((row) => String(row[cikIdx] ?? ''))
     .filter(Boolean);
 }
 
 async function defaultFetchSubmissions(cik: string): Promise<EdgarSubmissionEnvelope | null> {
   const url = `${EDGAR_SUBMISSIONS_BASE}/CIK${padCik(cik)}.json`;
-  await delay(EDGAR_RATE_LIMIT_MS);
   const envelope = await fetchJson<EdgarSubmissionEnvelope>(url);
   if (!envelope) return null;
   return { ...envelope, cik };

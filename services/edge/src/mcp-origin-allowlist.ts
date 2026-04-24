@@ -12,6 +12,7 @@
  * without the Workers runtime.
  */
 
+import { z } from 'zod';
 import type { Env } from './env';
 
 /** Decision returned by the gate. */
@@ -20,26 +21,23 @@ export type AllowlistDecision =
   | { ok: false; reason: 'challenge'; retryable: true }
   | { ok: false; reason: 'rejected'; retryable: false };
 
-/** Per-API-key KV record shape. */
-export interface AllowlistEntry {
-  /**
-   * `allowlist` → only requests matching `cidrs` / `origins` succeed.
-   * `challenge` → unmatched requests get a bot-management challenge.
-   * `deny`      → rejected outright (used for revoked keys).
-   */
-  mode: 'allowlist' | 'challenge' | 'deny';
-  /** IPv4 or IPv6 CIDRs. `0.0.0.0/0` and `::/0` are wildcards. */
-  cidrs?: string[];
-  /** Exact `Origin` header matches. Empty → not checked. */
-  origins?: string[];
-  /**
-   * When `true`, the Cloudflare bot-management verdict on the request
-   * must be in `acceptableVerdicts` before the request is allowed.
-   */
-  requireBotVerdict?: boolean;
-  /** Accepted CF bot-management verdict labels. */
-  acceptableVerdicts?: Array<'LIKELY_HUMAN' | 'LIKELY_AUTOMATED' | 'VERIFIED_BOT'>;
-}
+/** Zod schema for the per-API-key KV record. CLAUDE.md §1.2 requires Zod
+ *  on every write path — KV entries enter the edge via a write path the
+ *  edge does not control (Cloudflare dashboard), so a malformed or
+ *  tampered entry must fail closed rather than silently grant access. */
+const ALLOWLIST_ENTRY_SCHEMA = z
+  .object({
+    mode: z.enum(['allowlist', 'challenge', 'deny']),
+    cidrs: z.array(z.string()).optional(),
+    origins: z.array(z.string()).optional(),
+    requireBotVerdict: z.boolean().optional(),
+    acceptableVerdicts: z
+      .array(z.enum(['LIKELY_HUMAN', 'LIKELY_AUTOMATED', 'VERIFIED_BOT']))
+      .optional(),
+  })
+  .strict();
+
+export type AllowlistEntry = z.infer<typeof ALLOWLIST_ENTRY_SCHEMA>;
 
 /** Narrow request fields the pure gate needs. */
 export interface AllowlistRequest {
@@ -51,7 +49,9 @@ export interface AllowlistRequest {
 
 /**
  * IPv4 CIDR match. IPv6 is left to the Cloudflare WAF — CIDRs here are
- * expected to be IPv4 + the `::/0` wildcard for "any IPv6".
+ * expected to be IPv4 + the `::/0` wildcard for "any IPv6". Out-of-range
+ * prefix lengths (e.g. `/33`, `/-1`) return false rather than producing a
+ * garbage mask from JS's 32-bit shift semantics.
  */
 export function ipInCidr(ip: string, cidr: string): boolean {
   if (cidr === '0.0.0.0/0') return ip.includes('.');
@@ -59,12 +59,13 @@ export function ipInCidr(ip: string, cidr: string): boolean {
 
   const [base, bitsStr] = cidr.split('/');
   const bits = Number(bitsStr);
-  if (!base || Number.isNaN(bits)) return false;
+  if (!base || !Number.isInteger(bits) || bits < 0 || bits > 32) return false;
 
   const baseParts = base.split('.').map(Number);
   const ipParts = ip.split('.').map(Number);
   if (baseParts.length !== 4 || ipParts.length !== 4) return false;
-  if (baseParts.some((n) => Number.isNaN(n)) || ipParts.some((n) => Number.isNaN(n))) return false;
+  if (baseParts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
+  if (ipParts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return false;
 
   const toInt = (parts: number[]): number => parts.reduce((acc, p) => ((acc << 8) | p) >>> 0, 0);
   const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
@@ -132,7 +133,17 @@ export async function enforceOriginAllowlist(
   let entry: AllowlistEntry | null = null;
   try {
     const raw = await kv.get(`allow:${apiKeyId}`);
-    entry = raw ? (JSON.parse(raw) as AllowlistEntry) : null;
+    if (raw) {
+      const parsed = ALLOWLIST_ENTRY_SCHEMA.safeParse(JSON.parse(raw));
+      if (!parsed.success) {
+        // Malformed / tampered / schema-incompatible entry → fail closed.
+        console.error(
+          '[mcp-origin-allowlist] KV entry failed schema validation; fail-safe to challenge',
+        );
+        return { ok: false, reason: 'challenge', retryable: true };
+      }
+      entry = parsed.data;
+    }
   } catch (err) {
     console.error('[mcp-origin-allowlist] KV read failed; fail-safe to challenge:', err);
     return { ok: false, reason: 'challenge', retryable: true };

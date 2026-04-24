@@ -235,4 +235,58 @@ describe('sendToSentry', () => {
     expect(body.tags.fingerprint).not.toContain('abcdef1234567890');
     expect(body.tags.fingerprint).toContain('…');
   });
+
+  it('scrubs raw IPv4 out of Sentry message (alert.summary)', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await sendToSentry('https://abc@o123.ingest.sentry.io/4567', {
+      signal: 'auth_failure_burst',
+      fingerprint: 'auth_failure_burst:x:42',
+      severity: 'error',
+      summary: '5 auth failures from 203.0.113.42 in 60s',
+      detail: {},
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body)) as {
+      message: string;
+    };
+    expect(body.message).not.toContain('203.0.113.42');
+    expect(body.message).toContain('[IP_REDACTED]');
+  });
+
+  it('scrubs raw IPv6 out of Sentry message', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await sendToSentry('https://abc@o123.ingest.sentry.io/4567', {
+      signal: 'auth_failure_burst',
+      fingerprint: 'auth_failure_burst:x:42',
+      severity: 'error',
+      summary: 'burst from 2001:db8:85a3::8a2e:370:7334 observed',
+      detail: {},
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body)) as {
+      message: string;
+    };
+    expect(body.message).not.toContain('2001:db8');
+    expect(body.message).toContain('[IP_REDACTED]');
+  });
+
+  it('truncates long opaque apiKeyId-like tokens in Sentry message', async () => {
+    const fetchSpy = vi.fn(async () => new Response(null, { status: 200 }));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (globalThis as any).fetch = fetchSpy;
+    await sendToSentry('https://abc@o123.ingest.sentry.io/4567', {
+      signal: 'rapid_tool_cycling',
+      fingerprint: 'rapid_tool_cycling:x:42',
+      severity: 'warning',
+      summary: 'API key key_abcdef1234567890 cycled across 6 tools',
+      detail: {},
+    });
+    const body = JSON.parse(String((fetchSpy.mock.calls[0][1] as RequestInit).body)) as {
+      message: string;
+    };
+    expect(body.message).not.toContain('abcdef1234567890');
+    expect(body.message).toContain('…');
+  });
 });

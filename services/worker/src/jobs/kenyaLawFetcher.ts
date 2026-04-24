@@ -1,6 +1,11 @@
 /**
  * KAU-01/02: Kenya compliance data fetcher.
  * Thin wrapper around jurisdictionFetcher with Kenya-specific statutes and case law config.
+ *
+ * KAU-06 (SCRUM-754): Adds Notifiable Data Breach procedures backfill. The
+ * 72-hour KDPA §43 timeline + ODPC guidance get ingested as dedicated
+ * records so Nessie RAG can answer breach-notification questions with
+ * authoritative citations.
  */
 
 import { fetchJurisdictionCompliance, type JurisdictionFetchResult, type StatuteDefinition } from './jurisdictionFetcher.js';
@@ -34,6 +39,49 @@ const KENYA_STATUTES: StatuteDefinition[] = [
       { id: 'KE-DPR-2021-R12', title: 'Cross-border data transfer', section: 'Part IV' },
       { id: 'KE-DPR-2021-R18', title: 'Data breach notification', section: 'Part V' },
       { id: 'KE-DPR-2021-R22', title: 'Complaints handling', section: 'Part VI' },
+    ],
+  },
+  // KAU-06 (SCRUM-754): Kenya Notifiable Data Breach procedures.
+  {
+    title: 'Kenya ODPC Data Breach Notification Procedures (KDPA §43)',
+    sourceId: 'KE-ODPC-NDB',
+    url: 'https://www.odpc.go.ke/data-breach-notification-procedures/',
+    sections: [
+      {
+        id: 'KE-ODPC-NDB-01',
+        title: 'KDPA §43(1) — Mandatory breach notification to Commissioner within 72 hours of becoming aware',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-02',
+        title: 'KDPA §43(2) — Notification to affected data subjects without undue delay when high risk to rights and freedoms',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-03',
+        title: 'KDPA §43(3) — Required content: nature of breach, categories + approximate number of records, likely consequences, mitigation measures taken',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-04',
+        title: 'KDPA §43(4) — Processor obligation: notify controller without undue delay',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-05',
+        title: 'KDPA §63 — Penalties: up to KES 5,000,000 or 1% of annual turnover, whichever is lower, per contravention',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-06',
+        title: 'ODPC Guidance Note 2022 — Exemption for breaches unlikely to result in risk to rights and freedoms',
+        section: 'NDB Procedures',
+      },
+      {
+        id: 'KE-ODPC-NDB-07',
+        title: 'ODPC Form BR-1 — Breach notification template (controller, timeline, categories, mitigation, contact)',
+        section: 'NDB Procedures',
+      },
     ],
   },
   {
