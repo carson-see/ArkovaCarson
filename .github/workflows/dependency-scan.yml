@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
   pull-requests: write
   security-events: write
 
@@ -29,6 +30,21 @@ jobs:
           - { name: embed, path: packages/embed }
     steps:
       - uses: actions/checkout@v4
+
+      - id: gcp-auth
+        name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - id: sonatype-secrets
+        name: Pull Sonatype creds from GCP Secret Manager
+        uses: google-github-actions/get-secretmanager-secrets@v2
+        with:
+          secrets: |
+            user:arkova1/sonatype_oss_index_user
+            token:arkova1/sonatype_oss_index_token
 
       - uses: actions/setup-node@v6
         with:
@@ -51,16 +67,16 @@ jobs:
         id: scan
         working-directory: ${{ matrix.workspace.path }}
         env:
-          SONATYPE_USER: ${{ secrets.SONATYPE_OSS_INDEX_USER }}
-          SONATYPE_TOKEN: ${{ secrets.SONATYPE_OSS_INDEX_TOKEN }}
+          SONATYPE_USER: ${{ steps.sonatype-secrets.outputs.user }}
+          SONATYPE_TOKEN: ${{ steps.sonatype-secrets.outputs.token }}
         run: |
-          if [ -z "$SONATYPE_USER" ] || [ -z "$SONATYPE_TOKEN" ]; then
-            echo "::warning::SONATYPE_OSS_INDEX_USER/TOKEN not configured — skipping scan for ${{ matrix.workspace.name }}"
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
           jq '{coordinates: .}' purls.json > req.json
-          curl -sSf -u "$SONATYPE_USER:$SONATYPE_TOKEN" \
+          if [ -n "$SONATYPE_USER" ]; then
+            AUTH_OPTS=(-u "$SONATYPE_USER:$SONATYPE_TOKEN")
+          else
+            AUTH_OPTS=(-H "Authorization: Bearer $SONATYPE_TOKEN")
+          fi
+          curl -sSf "${AUTH_OPTS[@]}" \
             -H "Content-Type: application/json" \
             -X POST https://ossindex.sonatype.org/api/v3/component-report \
             -d @req.json > report.json
@@ -82,7 +98,7 @@ jobs:
           fi
 
       - name: Upload SBOM artifact
-        if: always() && steps.scan.outputs.skipped != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ matrix.workspace.name }}
