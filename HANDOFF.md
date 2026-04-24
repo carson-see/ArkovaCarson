@@ -14,37 +14,51 @@
 
 ## Now
 
-**Branch:** `claude/charming-cori-gCiQU` (Platform v2 sprint — 10 backlog stories, PR #484). CIBA-HARDEN + GEMB2/SEC-HARDEN scaffolds + Sarah's lint cleanup all merged 2026-04-24 (PRs #479 / #480 / #481 / #483 / #485).
+**Branch:** `main` (post-merge sync). All 6 PRs from the 2026-04-23→24 wave shipped: #479 CIBA-HARDEN-03, #480 CIBA-HARDEN-04/05/06, #481 GEMB2 + SEC-HARDEN runbooks, #483 SEC-HARDEN-03 healthcheck, #484 Platform v2 10-story sprint, #485 lint-cleanup + secret-audit CLI.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
-**DB:** Supabase `vzwyaatejekddvltxyye`. 212 migrations on prod; 8 CIBA migrations (0224–0231) staged on PR #476 for merge.
-**Tests:** 5,202+ green (3,841 worker + 1,361 frontend as of CIBA Sprint 3).
+**DB:** Supabase `vzwyaatejekddvltxyye`. Migrations through 0241 on prod (0236 rules_executions comment fix + 0239 api_key_scopes + 0240 user_notifications + 0241 anchor_revoked_by added this wave). Note 0218 `notifications` (org-scoped compliance alerts) and 0240 `user_notifications` (user-scoped platform notifications) coexist as distinct tables.
+**Tests:** ~5,400+ green across worker + frontend suites after this wave.
 
 ---
 
 ## Open, current
 
-### CIBA v1.0 release — [SCRUM-1010](https://arkova.atlassian.net/browse/SCRUM-1010) (Jira version 10233)
+### 2026-04-24 merge wave — 6 PRs landed
 
-20 stories. PR [#476](https://github.com/carson-see/ArkovaCarson/pull/476) is open + green (SonarCloud PASSED, CodeRabbit rate-limited not blocking), awaiting review + merge.
+19 Jira stories transitioned To Do / In Progress → Done:
 
-- **17 stories Done** (2026-04-23 closeout): SCRUM-1011..1023, 1025, 1026, 1029 (CIBA) + SCRUM-894 (API-RICH-01). All per-story Confluence pages updated + Jira transitioned. Commit chain on branch: `29349961` (Sprint 1) → `3994b2d5` (Sprint 2) → `5f4dbf14` + `d170c9a4` (Sprint 2 review) → `a77e7d9f` (Sprint 3) → `fb3b9738` (Sprint 3 review) → `8b8dc13` (treasury scope) → `0a4dfa8` (migration fix) → `38b6d03` (Sonar) → `09c9fb0` (SCRUM-894 audit).
-- **4 deferred** (To Do with explicit deferral comments):
-  - [SCRUM-1024](https://arkova.atlassian.net/browse/SCRUM-1024) SCALE-02 — Cloud Run config is human-only (`feedback_worker_hands_off`).
-  - [SCRUM-1027](https://arkova.atlassian.net/browse/SCRUM-1027) UX-01 — full onboarding wizard frontend; next sprint.
-  - [SCRUM-1028](https://arkova.atlassian.net/browse/SCRUM-1028) UX-02 — queue dashboard frontend; next sprint.
-  - [SCRUM-1030](https://arkova.atlassian.net/browse/SCRUM-1030) INT-13 — ATS/BGC connector; vendor + FCRA legal blocked.
+| PR | Commit | Scope | Stories closed |
+|---|---|---|---|
+| [#479](https://github.com/carson-see/ArkovaCarson/pull/479) | [8fe808d](https://github.com/carson-see/ArkovaCarson/commit/8fe808d) | CIBA-HARDEN-03 treasury health DB-error 500 + defensive env parse | SCRUM-1116 |
+| [#480](https://github.com/carson-see/ArkovaCarson/pull/480) | [dc67331](https://github.com/carson-see/ArkovaCarson/commit/dc67331) | CIBA-HARDEN-04/05/06 rule wizard + worker quality + docs + migration 0236 comment-fix | SCRUM-1117, 1118, 1119 |
+| [#481](https://github.com/carson-see/ArkovaCarson/pull/481) | [fe05139](https://github.com/carson-see/ArkovaCarson/commit/fe05139) | GEMB2 Vertex AI reference client + SEC-HARDEN-01/02 rotation/Secret Manager runbooks | SCRUM-1050, 1051, 1052, 1053, 1054, 1055 |
+| [#483](https://github.com/carson-see/ArkovaCarson/pull/483) | [2bc9386](https://github.com/carson-see/ArkovaCarson/commit/2bc9386) | SEC-HARDEN-03 healthcheck CLI — 5 new service checks + 24 tests | SCRUM-1056 |
+| [#484](https://github.com/carson-see/ArkovaCarson/pull/484) | [47a6fbe](https://github.com/carson-see/ArkovaCarson/commit/47a6fbe) | Platform v2 sprint — API v2 problem+JSON, secret rotation reminder, api_key_scopes, Vertex client, anchor revoke, cloud-logging-sink coverage, v2 search, ADMIN-VIEW copy rename, `user_notifications` table | SCRUM-1057, 1058, 1059, 1061, 1088, 1092, 1093, 1095 |
+| [#485](https://github.com/carson-see/ArkovaCarson/pull/485) | [ae44be7](https://github.com/carson-see/ArkovaCarson/commit/ae44be7) | Lint-cleanup + `scripts/secrets/` secret-audit CLI (9 tests) | SCRUM-1055 (Sarah's branch; CLI prep) |
 
-**Open follow-ups on the release:**
-- Regenerate `database.types.ts` after migrations 0224–0231 apply to prod (requires live Supabase).
-- Policy decision resolved 2026-04-21: `handleTreasuryHealth` is now platform-admin-only (matches `handleTreasuryStatus`).
-- SCRUM-1015 (INT-10) + SCRUM-1016 (INT-12) marked **Done (scaffold)** — schemas + adapters shipped; production enablement awaits vendor onboarding (Google Cloud OAuth / Microsoft Partner / DocuSign Connect / Adobe Partner Portal).
+### Migration inventory added this wave
 
-### v1.0.0 progress (2026-04-23 session)
+- `0236_ark105_rules_executions_comment_fix.sql` (#480) — compensating `COMMENT ON TABLE` removes "24h" wording that contradicted the permanent unique index.
+- `0239_api_key_scopes.sql` (#484) — `scopes text[]` + GIN index + RLS on `api_keys`.
+- `0240_user_notifications.sql` (#484) — user-scoped platform notifications; **distinct** from 0218's org-scoped `notifications`. Five-event enum: queue_run_completed, rule_fired, version_available_for_review, treasury_alert, anchor_revoked.
+- `0241_anchor_revoked_by.sql` (#484) — `revoked_by uuid` on `anchors` for ADMIN-VIEW-04 audit trail.
 
-- **[SCRUM-1056](https://arkova.atlassian.net/browse/SCRUM-1056) SEC-HARDEN-03 (healthcheck CLI)** — PR [#483](https://github.com/carson-see/ArkovaCarson/pull/483) open. Added 5 missing service checks (github / confluence / vercel / figma / sam-gov), TDD coverage in `tests/infra/healthcheck.test.ts` (24 tests), and `scripts/healthcheck/README.md`. Awaiting review + merge.
-- **Cleanup:** PR [#482](https://github.com/carson-see/ArkovaCarson/pull/482) extends `.gitignore` for `* 3.*` Finder duplicates + removes 3 stale evaluator copies in `services/worker/src/rules/`.
+### Remaining CIBA v1.0 release deferrals (unchanged)
+
+4 stories still To Do with explicit deferral rationale:
+
+- [SCRUM-1024](https://arkova.atlassian.net/browse/SCRUM-1024) SCALE-02 — Cloud Run config human-only (`feedback_worker_hands_off`).
+- [SCRUM-1027](https://arkova.atlassian.net/browse/SCRUM-1027) UX-01 — full onboarding wizard frontend; next sprint.
+- [SCRUM-1028](https://arkova.atlassian.net/browse/SCRUM-1028) UX-02 — queue dashboard frontend; next sprint.
+- [SCRUM-1030](https://arkova.atlassian.net/browse/SCRUM-1030) INT-13 — ATS/BGC connector; vendor + FCRA legal blocked.
+
+**Follow-ups on the wave (not blockers):**
+
+- Regenerate `services/worker/src/types/database.types.ts` after migrations 0236–0241 apply to prod. Blocked on human applying the migration (`feedback_worker_hands_off`).
+- Human-execute SEC-HARDEN-01 rotation + SEC-HARDEN-02 Secret Manager migration per runbooks at `docs/runbooks/sec-harden/`.
+- Human-run GEMB2-01 benchmark (`services/worker/scripts/benchmark-gemini2.ts`) with ADC + paste results into the Confluence "GEMB2-01 benchmark" page; unblocks GEMB2-02 implementation.
 
 ### Other elevated priorities
 
