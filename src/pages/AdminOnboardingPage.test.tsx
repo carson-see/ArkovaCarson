@@ -49,7 +49,6 @@ describe('AdminOnboardingPage', () => {
     // throw `TypeError: Cannot redefine property: clipboard` in jsdom.
     // Deleting before each test makes user-event's install path a fresh
     // create instead of a redefine.
-    // @ts-expect-error Navigator doesn't type clipboard as optional.
     delete (navigator as unknown as { clipboard?: unknown }).clipboard;
   });
   afterEach(() => {
