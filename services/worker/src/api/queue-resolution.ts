@@ -15,6 +15,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
+import { processBatchAnchors } from '../jobs/batch-anchor.js';
 
 export interface PendingResolutionAnchor {
   id: string;
@@ -170,6 +171,114 @@ export async function handleResolveQueue(
     }
   } catch (err) {
     logger.error({ error: err }, 'handleResolveQueue unexpected error');
+    res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  }
+}
+
+interface CallerProfile {
+  org_id?: string | null;
+  role?: string | null;
+  is_platform_admin?: boolean | null;
+}
+
+async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
+  const { data, error } = await db
+    .from('profiles')
+    .select('org_id, role, is_platform_admin')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (error) {
+    logger.warn({ error, userId }, 'profiles lookup failed for queue run');
+    return null;
+  }
+
+  return (data as CallerProfile | null) ?? null;
+}
+
+async function isOrgAdmin(
+  userId: string,
+  orgId: string,
+  profile: CallerProfile | null,
+): Promise<boolean> {
+  const { data: membership, error: membershipError } = await db
+    .from('org_members')
+    .select('role')
+    .eq('user_id', userId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+
+  if (membershipError) {
+    logger.warn({ error: membershipError, userId, orgId }, 'org admin lookup failed for queue run');
+  }
+
+  const memberRole = (membership as { role?: string } | null)?.role;
+  return (
+    memberRole === 'owner' ||
+    memberRole === 'admin' ||
+    profile?.role === 'ORG_ADMIN' ||
+    profile?.is_platform_admin === true
+  );
+}
+
+/**
+ * POST /api/queue/run
+ * Organization admins can force a batch run for their own org queue. The
+ * underlying claim RPC still owns row locking and PENDING → BROADCASTING, so
+ * this endpoint cannot bypass the worker safety rails or claim another org's
+ * anchors.
+ */
+export async function handleRunOrgAnchorQueue(
+  userId: string,
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  const profile = await getCallerProfile(userId);
+  const orgId = profile?.org_id ?? null;
+  if (!orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'No organization on profile' },
+    });
+    return;
+  }
+
+  if (!(await isOrgAdmin(userId, orgId, profile))) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
+    });
+    return;
+  }
+
+  try {
+    const result = await processBatchAnchors({
+      orgId,
+      force: true,
+      failIfRunning: true,
+      workerId: `org-run-${orgId}-${userId}`,
+    });
+
+    if (result.error) {
+      res.status(500).json({
+        error: { code: 'run_failed', message: result.error },
+      });
+      return;
+    }
+
+    res.json({ ok: true, ...result });
+    void emitOrgAdminNotifications({
+      type: 'queue_run_completed',
+      organizationId: orgId,
+      payload: {
+        triggeredBy: userId,
+        trigger: 'manual',
+        processed: result.processed,
+        batchId: result.batchId,
+        txId: result.txId,
+        merkleRoot: result.merkleRoot,
+      },
+    });
+  } catch (err) {
+    logger.error({ error: err, orgId, userId }, 'manual org queue run failed');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
 }

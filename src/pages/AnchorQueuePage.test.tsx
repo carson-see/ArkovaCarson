@@ -14,8 +14,15 @@ import { BrowserRouter } from 'react-router-dom';
 import { AnchorQueuePage } from './AnchorQueuePage';
 
 const workerFetchMock = vi.fn();
+const supabaseFromMock = vi.fn();
 vi.mock('@/lib/workerClient', () => ({
   workerFetch: (...args: unknown[]) => workerFetchMock(...args),
+}));
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: {
+    from: (...args: unknown[]) => supabaseFromMock(...args),
+  },
 }));
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -41,9 +48,29 @@ function renderPage() {
   );
 }
 
+function mockOrgRole(role: string | null = 'admin') {
+  const chain: {
+    eq: ReturnType<typeof vi.fn>;
+    maybeSingle: ReturnType<typeof vi.fn>;
+  } = {
+    eq: vi.fn(),
+    maybeSingle: vi.fn().mockResolvedValue({
+      data: role ? { role } : null,
+      error: null,
+    }),
+  };
+  chain.eq.mockReturnValue(chain);
+  return { select: vi.fn().mockReturnValue(chain), chain };
+}
+
 describe('AnchorQueuePage', () => {
+  let orgRoleMock: ReturnType<typeof mockOrgRole>;
+
   beforeEach(() => {
     workerFetchMock.mockReset();
+    supabaseFromMock.mockReset();
+    orgRoleMock = mockOrgRole('admin');
+    supabaseFromMock.mockReturnValue(orgRoleMock);
   });
   afterEach(() => {
     vi.clearAllMocks();
@@ -57,6 +84,9 @@ describe('AnchorQueuePage', () => {
     await waitFor(() => {
       expect(screen.getByText(/You're all caught up/)).toBeInTheDocument();
     });
+    expect(supabaseFromMock).toHaveBeenCalledWith('org_members');
+    expect(orgRoleMock.chain.eq).toHaveBeenCalledWith('user_id', 'u-1');
+    expect(orgRoleMock.chain.eq).toHaveBeenCalledWith('org_id', 'org-1');
   });
 
   it('groups pending anchors by external_file_id', async () => {
@@ -196,5 +226,44 @@ describe('AnchorQueuePage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Anchor not found');
     });
+  });
+
+  it('lets org admins run their anchoring queue and refreshes pending items', async () => {
+    workerFetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [] }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            processed: 12,
+            batchId: 'batch_1_12',
+            merkleRoot: 'a'.repeat(64),
+            txId: 'tx-1',
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [] }), { status: 200 }),
+      );
+
+    renderPage();
+    const runButton = await screen.findByTestId('queue-run');
+    fireEvent.click(runButton);
+
+    await waitFor(() => {
+      expect(workerFetchMock).toHaveBeenCalledTimes(3);
+    });
+    expect(workerFetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/queue/run',
+      { method: 'POST' },
+      120_000,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Run complete. 12 anchors submitted in batch_1_12.',
+    );
   });
 });

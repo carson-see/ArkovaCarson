@@ -3395,6 +3395,7 @@ export type Database = {
         Args: {
           p_exclude_pipeline?: boolean
           p_limit?: number
+          p_org_id?: string
           p_worker_id?: string
         }
         Returns: {

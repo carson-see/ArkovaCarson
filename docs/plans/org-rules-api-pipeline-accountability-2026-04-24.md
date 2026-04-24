@@ -10,6 +10,7 @@ implementation map next to the code reviewed in the pipeline PR.
 - `SCRUM-1125` - Public and private organization profiles with member privacy and sub-org visibility.
 - `SCRUM-1126` - Smart queue rules and version control for automatic document anchoring.
 - `SCRUM-1127` - Make the API usable for API-key users and agents across search, records, fingerprints, documents, and organizations.
+- `SCRUM-1129` - Organization-admin manual anchoring run for the caller's own queue.
 
 ## Implementation Update - SCRUM-1125 Through SCRUM-1127
 
@@ -29,13 +30,14 @@ Completed in this PR:
   org pages can surface queue/job/version-review activity.
 - API-key clients now have direct v2 search aliases for organizations,
   records, fingerprints, and documents in addition to `/api/v2/search`.
+- Org admins now have a manual `Run` action on the review queue. The worker
+  scopes the run to the caller's organization, reuses the same 10,000-anchor
+  Bitcoin batch path, and fails closed if the org-scoped claim RPC is missing
+  or another batch run is already active.
 
 Still tracked as follow-up work before production can claim the full product
 contract:
 
-- `SCRUM-1129` - Add an org-scoped manual `Run anchoring job` endpoint/button with an admin
-  guard. The existing batch anchor job is platform/global, so exposing it as-is
-  would be unsafe.
 - `SCRUM-1130` - Add a durable 24-hour org queue scheduler with last-run tracking and
   idempotency keys.
 - `SCRUM-1131` - Replace JSON config editing with first-class form controls for each rule
@@ -63,12 +65,15 @@ Code touched in this PR:
 
 - `services/worker/src/jobs/anchor-batching.ts`
 - `services/worker/src/jobs/batch-anchor.ts`
+- `services/worker/src/api/queue-resolution.ts`
 - `services/worker/src/jobs/publicRecordAnchor.ts`
 - `services/worker/src/jobs/publicRecordEmbedder.ts`
 - `services/worker/src/api/admin-pipeline-stats.ts`
+- `src/pages/AnchorQueuePage.tsx`
 - `src/pages/PipelineAdminPage.tsx`
 - `supabase/migrations/0242_pipeline_anchoring_scale.sql`
 - `supabase/migrations/0243_scale02_anchor_disk_hygiene.sql`
+- `supabase/migrations/0246_claim_pending_anchors_org_scope.sql`
 
 ## Organization Page Contract
 
@@ -102,6 +107,14 @@ Queue execution rule: the queue runs when an org admin manually presses Run or
 every 24 hours, whichever happens first. Only organization admins can manually
 trigger an anchoring job. Multiple versions of the same external document must
 go through version review before the chosen version anchors.
+
+Current implementation status:
+
+- Manual Run is implemented for org admins through `POST /api/queue/run` and
+  the `Run` button on `AnchorQueuePage`.
+- `claim_pending_anchors` accepts `p_org_id`; manual runs cannot claim anchors
+  outside the caller's organization.
+- The 24-hour durable scheduler remains tracked under `SCRUM-1130`.
 
 Current code inventory:
 

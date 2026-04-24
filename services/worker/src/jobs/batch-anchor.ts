@@ -126,7 +126,34 @@ export interface BatchAnchorResult {
   batchId: string | null;
   merkleRoot: string | null;
   txId: string | null;
+  error?: string;
 }
+
+export interface BatchAnchorOptions {
+  /** Limit claimed anchors to one organization. Used by org-admin queue runs. */
+  orgId?: string | null;
+  /** Bypass small/fresh queue deferral. Fee and treasury guards still apply. */
+  force?: boolean;
+  /** Diagnostic worker id stored on claimed anchors. */
+  workerId?: string;
+  /** Return a visible error instead of a quiet no-op when another batch is active. */
+  failIfRunning?: boolean;
+}
+
+type ClaimPendingAnchorRow = {
+  id: string;
+  fingerprint: string;
+  metadata: unknown;
+  user_id?: string;
+  org_id?: string;
+  public_id?: string;
+  credential_type?: string;
+};
+
+type ClaimPendingAnchorsRpc = (
+  fn: 'claim_pending_anchors',
+  params: Record<string, unknown>,
+) => Promise<{ data: ClaimPendingAnchorRow[] | null; error: { message?: string } | null }>;
 
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
@@ -151,24 +178,30 @@ let batchProcessingRunning = false;
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
  * SCALE-3: In-process mutex prevents overlapping runs
  */
-export async function processBatchAnchors(): Promise<BatchAnchorResult> {
+export async function processBatchAnchors(
+  options: BatchAnchorOptions = {},
+): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // SCALE-3: Mutex — skip if already running
   if (batchProcessingRunning) {
     logger.info('Batch processing skipped — already in progress');
+    if (options.failIfRunning) {
+      return { ...EMPTY, error: 'Batch processing is already in progress' };
+    }
     return EMPTY;
   }
   batchProcessingRunning = true;
   try {
-    return await _processBatchAnchorsInner();
+    return await _processBatchAnchorsInner(options);
   } finally {
     batchProcessingRunning = false;
   }
 }
 
-async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
+async function _processBatchAnchorsInner(options: BatchAnchorOptions): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
+  const orgId = options.orgId ?? null;
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = getChainClient();
@@ -187,11 +220,14 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
   // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
   let oldestPendingAgeMs = 0;
   try {
-    const { data: stats } = await db
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let oldestQuery = (db as any)
       .from('anchors')
       .select('created_at')
       .eq('status', 'PENDING')
-      .is('deleted_at', null)
+      .is('deleted_at', null);
+    if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
+    const { data: stats } = await oldestQuery
       .order('created_at', { ascending: true })
       .limit(1)
       .single();
@@ -204,15 +240,18 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
 
     // Count pending (cheap — uses index)
-    const { count } = await db
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let countQuery = (db as any)
       .from('anchors')
       .select('id', { count: 'exact', head: true })
       .eq('status', 'PENDING')
       .is('deleted_at', null);
+    if (orgId) countQuery = countQuery.eq('org_id', orgId);
+    const { count } = await countQuery;
 
     const pendingCount = count ?? 0;
 
-    if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
+    if (!options.force && !triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       // CIBA-HARDEN-05: the old message said "oldest anchor is fresh" but
       // this branch also fires when pendingCount is 0 (no pending rows at
       // all, so the "oldest" concept is meaningless). Neutral log keeps
@@ -249,25 +288,29 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
   }
 
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
-  const allClaimed: Array<{ id: string; fingerprint: string; metadata: unknown; user_id?: string; org_id?: string; public_id?: string; credential_type?: string }> = [];
+  const allClaimed: ClaimPendingAnchorRow[] = [];
   let remaining = BATCH_SIZE;
 
   while (remaining > 0) {
     const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
     // Wrapped in 30s timeout to prevent batch job from hanging
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let chunkResult: { data: any; error: any };
+    let chunkResult: { data: ClaimPendingAnchorRow[] | null; error: { message?: string } | null };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chunkResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
-        p_worker_id: `batch-${process.pid}`,
+      const claimParams: Record<string, unknown> = {
+        p_worker_id: options.workerId ?? `batch-${process.pid}`,
         p_limit: chunkSize,
         p_exclude_pipeline: false,
-      }), 30_000);
+      };
+      if (orgId) claimParams.p_org_id = orgId;
+      const claimPendingAnchors = db.rpc as unknown as ClaimPendingAnchorsRpc;
+      chunkResult = await withDbTimeout(
+        () => claimPendingAnchors('claim_pending_anchors', claimParams),
+        30_000,
+      );
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
       if (allClaimed.length === 0) {
-        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+        return { ...EMPTY, error: 'Timed out claiming pending anchors' };
       }
       break; // Proceed with what we have
     }
@@ -275,6 +318,10 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
 
     if (claimError) {
       if (allClaimed.length === 0) {
+        if (orgId) {
+          logger.error({ error: claimError, orgId }, 'claim_pending_anchors failed for org-scoped batch');
+          return { ...EMPTY, error: claimError.message ?? 'Failed to claim organization anchors' };
+        }
         logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
         return legacyProcessBatchAnchors();
       }
@@ -297,7 +344,7 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE }, 'Claimed anchors for batch processing');
+  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE, orgId }, 'Claimed anchors for batch processing');
 
   const fingerprints = claimedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
 
