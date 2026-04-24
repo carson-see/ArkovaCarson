@@ -1107,6 +1107,132 @@ export const COMPLIANCE_LABELS = {
 } as const;
 
 // =============================================================================
+// RULE BUILDER WIZARD (ARK-108 / CIBA-HARDEN-04)
+// =============================================================================
+
+export const RULE_TRIGGER_COPY = {
+  ESIGN_COMPLETED: {
+    label: 'E-signature completed',
+    desc: 'When a DocuSign or Adobe Sign envelope is signed.',
+  },
+  WORKSPACE_FILE_MODIFIED: {
+    label: 'Workspace file modified',
+    desc: 'When a file changes in Google Drive, SharePoint, or OneDrive.',
+  },
+  CONNECTOR_DOCUMENT_RECEIVED: {
+    label: 'Connector delivered a document',
+    desc: 'When a partner (Veremark, Checkr, ...) posts a completed report.',
+  },
+  MANUAL_UPLOAD: {
+    label: 'Manual upload',
+    desc: 'When a user uploads through the web app.',
+  },
+  SCHEDULED_CRON: {
+    label: 'Schedule',
+    desc: 'On a recurring schedule (e.g. daily at 9am).',
+  },
+  QUEUE_DIGEST: {
+    label: 'Queue review digest',
+    desc: 'A daily/weekly digest of the review queue.',
+  },
+  EMAIL_INTAKE: {
+    label: 'Email intake',
+    desc: 'When a document arrives at your org intake address.',
+  },
+} as const;
+
+export const RULE_ACTION_COPY = {
+  AUTO_ANCHOR: {
+    label: 'Secure the document',
+    desc: 'Anchor it on the network automatically.',
+  },
+  FAST_TRACK_ANCHOR: {
+    label: 'Fast-track secure',
+    desc: 'Priority batch (paid plans only).',
+  },
+  QUEUE_FOR_REVIEW: {
+    label: 'Queue for admin review',
+    desc: 'Surface on the review dashboard; admin decides.',
+  },
+  FLAG_COLLISION: {
+    label: 'Flag version collision',
+    desc: 'If multiple versions arrive within a window, flag them for review.',
+  },
+  NOTIFY: {
+    label: 'Notify',
+    desc: 'Email and/or Slack the team.',
+  },
+  FORWARD_TO_URL: {
+    label: 'Forward to a URL',
+    desc: 'POST the event to a pre-allowlisted webhook target.',
+  },
+} as const;
+
+export const RULE_WIZARD_LABELS = {
+  PAGE_TITLE: 'Build a new rule',
+  PAGE_SUBTITLE:
+    "Describe what should happen and when. New rules always land disabled — flip them on after you've reviewed the summary.",
+  STEP_INDICATOR: ['Trigger', 'Configure', 'Action', 'Review'] as const,
+  STEP_HEADING: (n: 1 | 2 | 3 | 4) => `Step ${n} of 4`,
+  BACK: 'Back',
+  NEXT: 'Next',
+  SAVE: 'Save as disabled',
+  SAVING: 'Saving…',
+  FIELD_RULE_NAME: 'Rule name',
+  FIELD_RULE_NAME_PLACEHOLDER: 'e.g. Auto-secure signed MSAs',
+  FIELD_DESCRIPTION: 'Description (optional)',
+  FIELD_DESCRIPTION_PLACEHOLDER: 'What does this rule do, in plain English?',
+  FIELD_TRIGGER: 'Trigger',
+  FIELD_TRIGGER_PLACEHOLDER: 'Pick what should start this rule',
+  FIELD_FILENAME_CONTAINS: 'Filename contains (optional)',
+  FIELD_FILENAME_CONTAINS_PLACEHOLDER_MSA: 'e.g. MSA',
+  FIELD_FILENAME_CONTAINS_PLACEHOLDER_SOW: 'e.g. SOW',
+  FIELD_SENDER_EMAIL: 'Sender email equals (optional)',
+  FIELD_SENDER_EMAIL_PLACEHOLDER: 'hr@acme.com',
+  FIELD_FOLDER_PATH: 'Folder path starts with (optional)',
+  FIELD_FOLDER_PATH_PLACEHOLDER: '/HR/Contracts/',
+  FIELD_CONNECTOR: 'Connector',
+  FIELD_CONNECTOR_PLACEHOLDER: 'Pick a connector',
+  FIELD_CRON: 'Schedule (cron expression)',
+  FIELD_CRON_PLACEHOLDER: '0,30 9,16 * * *',
+  FIELD_CRON_HINT_PREFIX:
+    'Five fields: minute hour day-of-month month day-of-week. Example: ',
+  FIELD_CRON_HINT_EXAMPLE: '0 9 * * *',
+  FIELD_CRON_HINT_SUFFIX: ' runs at 9 AM every day.',
+  FIELD_TIMEZONE: 'Timezone',
+  NO_CONFIG_MESSAGE:
+    'This trigger has no additional configuration. Move on to pick an action.',
+  FIELD_ACTION: 'Action',
+  FIELD_ACTION_PLACEHOLDER: 'Pick what should happen',
+  FIELD_NOTIFY_EMAILS: 'Email recipients (comma-separated)',
+  FIELD_NOTIFY_EMAILS_PLACEHOLDER: 'alice@acme.com, bob@acme.com',
+  FIELD_NOTIFY_CHANNELS: 'Channels',
+  FIELD_COLLISION_WINDOW: 'Collision window (minutes)',
+  FIELD_FORWARD_URL: 'Target URL',
+  FIELD_FORWARD_URL_PLACEHOLDER: 'https://ops.example.com/hooks/arkova',
+  FIELD_FORWARD_URL_HINT: "Worker will refuse any URL not on your org's allowlist.",
+  FIELD_HMAC_HANDLE: 'HMAC secret handle',
+  FIELD_HMAC_HANDLE_PLACEHOLDER: 'sm:acme_forward_secret',
+  FIELD_HMAC_HANDLE_HINT:
+    'Reference the handle of a Secret Manager entry (e.g. sm:acme_forward_secret). Never paste the raw secret here — the worker resolves the handle at runtime.',
+  REVIEW_NAME: 'Name',
+  REVIEW_STATUS_ON_SAVE: 'Status on save',
+  REVIEW_STATUS_DISABLED: 'Disabled',
+  REVIEW_TRIGGER: 'Trigger',
+  REVIEW_ACTION: 'Action',
+  REVIEW_CONFIGURED_PREFIX: 'Configured: ',
+  REVIEW_TRIGGER_RAW_HIDDEN:
+    '. Raw values hidden (may contain recipient emails, sender filters, or webhook targets).',
+  REVIEW_DISABLED_BANNER:
+    "New rules ship disabled. Enable from the rules list after checking the summary.",
+  ERR_PICK_TRIGGER: 'Pick a trigger to continue.',
+  ERR_PICK_ACTION: 'Pick an action to continue.',
+  ERR_NO_ORG: 'No organization selected.',
+  ERR_NAME_REQUIRED: 'Name is required.',
+  ERR_INVALID_CONFIG_PREFIX: 'Fix the highlighted fields before continuing: ',
+} as const;
+
+// =============================================================================
 // NESSIE INTELLIGENCE (NMT-07)
 // =============================================================================
 
