@@ -124,65 +124,69 @@ describe('handleTreasuryStatus', () => {
   });
 });
 
-// ─── CIBA-HARDEN-03: handleTreasuryHealth DB error paths ─────────────────────
+// ─── CIBA-HARDEN-03: handleTreasuryHealth helpers ────────────────────────────
+
+function mockProfilesAdminTrue(): unknown {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        single: vi
+          .fn()
+          .mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
+      }),
+    }),
+  };
+}
+
+function mockTreasuryCacheRead(error: { message: string } | null): unknown {
+  return {
+    select: vi.fn().mockReturnValue({
+      limit: vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
+      }),
+    }),
+  };
+}
+
+function mockTreasuryAlertRead(error: { message: string } | null): unknown {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
+      }),
+    }),
+  };
+}
+
+async function runHealthWithTableErrors({
+  cacheError,
+  alertError,
+}: {
+  cacheError?: { message: string } | null;
+  alertError?: { message: string } | null;
+}): Promise<Response> {
+  const { db } = await import('../utils/db.js');
+  // Route by table name so platformAdmin lookup stays on profiles and
+  // treasury_cache / treasury_alert_state each get their own chain result.
+  vi.mocked(db.from).mockImplementation(((table: string) => {
+    if (table === 'profiles') return mockProfilesAdminTrue() as never;
+    if (table === 'treasury_cache') return mockTreasuryCacheRead(cacheError ?? null) as never;
+    if (table === 'treasury_alert_state')
+      return mockTreasuryAlertRead(alertError ?? null) as never;
+    throw new Error(`Unexpected db.from('${table}')`);
+  }) as never);
+  const res = createMockRes();
+  await handleTreasuryHealth('admin-123', {} as Request, res);
+  return res;
+}
+
 describe('handleTreasuryHealth — DB error 500', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  async function runWithTableErrors({
-    cacheError,
-    alertError,
-  }: {
-    cacheError?: { message: string } | null;
-    alertError?: { message: string } | null;
-  }): Promise<Response> {
-    const { db } = await import('../utils/db.js');
-    // Route by table name so platformAdmin lookup stays on profiles and
-    // treasury_cache / treasury_alert_state each get their own chain result.
-    vi.mocked(db.from).mockImplementation(((table: string) => {
-      if (table === 'profiles') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              single: vi
-                .fn()
-                .mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
-            }),
-          }),
-        } as never;
-      }
-      if (table === 'treasury_cache') {
-        return {
-          select: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              maybeSingle: vi
-                .fn()
-                .mockResolvedValue({ data: null, error: cacheError ?? null }),
-            }),
-          }),
-        } as never;
-      }
-      if (table === 'treasury_alert_state') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              maybeSingle: vi
-                .fn()
-                .mockResolvedValue({ data: null, error: alertError ?? null }),
-            }),
-          }),
-        } as never;
-      }
-      throw new Error(`Unexpected db.from('${table}')`);
-    }) as never);
-    const res = createMockRes();
-    await handleTreasuryHealth('admin-123', {} as Request, res);
-    return res;
-  }
-
   it('returns 500 with source: treasury_cache when cache read errors', async () => {
-    const res = await runWithTableErrors({ cacheError: { message: 'connection reset' } });
+    const res = await runHealthWithTableErrors({ cacheError: { message: 'connection reset' } });
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'treasury_cache' }),
@@ -190,7 +194,7 @@ describe('handleTreasuryHealth — DB error 500', () => {
   });
 
   it('returns 500 with source: treasury_alert_state when alert read errors', async () => {
-    const res = await runWithTableErrors({ alertError: { message: 'timeout' } });
+    const res = await runHealthWithTableErrors({ alertError: { message: 'timeout' } });
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ source: 'treasury_alert_state' }),
@@ -198,7 +202,7 @@ describe('handleTreasuryHealth — DB error 500', () => {
   });
 
   it('returns 200 when both reads succeed (no false 500)', async () => {
-    const res = await runWithTableErrors({});
+    const res = await runHealthWithTableErrors({});
     expect(res.status).not.toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ threshold_usd: 50, price_unknown: true }),
