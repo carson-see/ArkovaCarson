@@ -86,22 +86,6 @@ export const SUSPICIOUS_PHRASES: readonly string[] = [
   'no attendance required',
 ];
 
-/** Common fraud signal categories */
-const FRAUD_SIGNAL_TYPES = [
-  'unaccredited_institution',
-  'suspicious_formatting',
-  'date_inconsistency',
-  'missing_security_features',
-  'known_diploma_mill',
-  'impossible_timeline',
-  'font_mismatch',
-  'altered_content',
-  'metadata_tampering',
-  'missing_seal_or_watermark',
-  'suspicious_degree_title',
-  'no_verification_possible',
-] as const;
-
 // ============================================================
 // Augmentation strategies
 // ============================================================

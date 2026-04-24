@@ -6,18 +6,33 @@ import type { Request, Response } from 'express';
 
 // Mock db + logger BEFORE importing the SUT so the SUT captures the mocked modules.
 const rpcMock = vi.fn();
+const fromMock = vi.fn();
+const emitOrgAdminNotificationsMock = vi.fn();
+const processBatchAnchorsMock = vi.fn();
 
 vi.mock('../utils/db.js', () => ({
-  db: { rpc: (...args: unknown[]) => rpcMock(...args) },
+  db: {
+    rpc: (...args: unknown[]) => rpcMock(...args),
+    from: (...args: unknown[]) => fromMock(...args),
+  },
 }));
 
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../notifications/dispatcher.js', () => ({
+  emitOrgAdminNotifications: (...args: unknown[]) => emitOrgAdminNotificationsMock(...args),
+}));
+
+vi.mock('../jobs/batch-anchor.js', () => ({
+  processBatchAnchors: (...args: unknown[]) => processBatchAnchorsMock(...args),
+}));
+
 import {
   handleListPendingResolution,
   handleResolveQueue,
+  handleRunOrgAnchorQueue,
   ResolveQueueInput,
   mapRpcErrorToStatus,
 } from './queue-resolution.js';
@@ -35,6 +50,21 @@ function mockReq(opts: { body?: unknown; query?: Record<string, string> } = {}):
     query: opts.query ?? {},
     headers: {},
   } as unknown as Request;
+}
+
+function selectMaybeSingle(data: unknown, error: unknown = null) {
+  const chain: {
+    eq: ReturnType<typeof vi.fn>;
+    maybeSingle: ReturnType<typeof vi.fn>;
+  } = {
+    eq: vi.fn(),
+    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
+  };
+  chain.eq.mockReturnValue(chain);
+  return {
+    select: vi.fn().mockReturnValue(chain),
+    chain,
+  };
 }
 
 describe('ResolveQueueInput', () => {
@@ -149,7 +179,11 @@ describe('handleListPendingResolution', () => {
 });
 
 describe('handleResolveQueue', () => {
-  beforeEach(() => rpcMock.mockReset());
+  beforeEach(() => {
+    rpcMock.mockReset();
+    fromMock.mockReset();
+    emitOrgAdminNotificationsMock.mockReset();
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it('rejects invalid body with 400', async () => {
@@ -171,6 +205,36 @@ describe('handleResolveQueue', () => {
       res,
     );
     expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+  });
+
+  it('notifies admins for the selected anchor organization', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    const eq = vi.fn().mockReturnValue({ maybeSingle });
+    const select = vi.fn().mockReturnValue({ eq });
+    fromMock.mockReturnValue({ select });
+
+    const { res } = mockRes();
+    await handleResolveQueue(
+      mockReq({
+        body: {
+          external_file_id: 'drive-123',
+          selected_anchor_id: '11111111-1111-1111-1111-111111111111',
+        },
+      }),
+      res,
+      'user-1',
+    );
+
+    expect(fromMock).toHaveBeenCalledWith('anchors');
+    expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
+      type: 'queue_run_completed',
+      organizationId: 'org-1',
+      payload: expect.objectContaining({
+        resolutionId: 'res-1',
+        actorUserId: 'user-1',
+      }),
+    });
   });
 
   it('maps RPC 403 for insufficient privileges', async () => {
@@ -234,5 +298,104 @@ describe('handleResolveQueue', () => {
     expect(json).toHaveBeenCalledWith({
       error: expect.objectContaining({ code: 'not_found' }),
     });
+  });
+});
+
+describe('handleRunOrgAnchorQueue', () => {
+  beforeEach(() => {
+    fromMock.mockReset();
+    processBatchAnchorsMock.mockReset();
+    emitOrgAdminNotificationsMock.mockReset();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('rejects callers without an organization', async () => {
+    fromMock.mockReturnValueOnce(selectMaybeSingle({ org_id: null, role: 'ORG_ADMIN' }));
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'forbidden', message: 'No organization on profile' },
+    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-admin organization members', async () => {
+    fromMock
+      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'INDIVIDUAL' }))
+      .mockReturnValueOnce(selectMaybeSingle({ role: 'member' }));
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'forbidden', message: 'Only organization admins can run anchoring jobs' },
+    });
+    expect(processBatchAnchorsMock).not.toHaveBeenCalled();
+  });
+
+  it('runs the caller org queue and notifies admins', async () => {
+    fromMock
+      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'INDIVIDUAL' }))
+      .mockReturnValueOnce(selectMaybeSingle({ role: 'admin' }));
+    processBatchAnchorsMock.mockResolvedValue({
+      processed: 42,
+      batchId: 'batch-1',
+      merkleRoot: 'a'.repeat(64),
+      txId: 'tx-1',
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({
+      orgId: 'org-1',
+      force: true,
+      failIfRunning: true,
+      workerId: 'org-run-org-1-user-1',
+    });
+    expect(json).toHaveBeenCalledWith({
+      ok: true,
+      processed: 42,
+      batchId: 'batch-1',
+      merkleRoot: 'a'.repeat(64),
+      txId: 'tx-1',
+    });
+    expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
+      type: 'queue_run_completed',
+      organizationId: 'org-1',
+      payload: expect.objectContaining({
+        triggeredBy: 'user-1',
+        trigger: 'manual',
+        processed: 42,
+        batchId: 'batch-1',
+      }),
+    });
+  });
+
+  it('returns run_failed when the batch worker reports a scoped claim failure', async () => {
+    fromMock
+      .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'ORG_ADMIN' }))
+      .mockReturnValueOnce(selectMaybeSingle(null));
+    processBatchAnchorsMock.mockResolvedValue({
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      error: 'Failed to claim organization anchors',
+    });
+
+    const { res, status, json } = mockRes();
+    await handleRunOrgAnchorQueue('user-1', mockReq(), res);
+
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'run_failed', message: 'Failed to claim organization anchors' },
+    });
+    expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
   });
 });

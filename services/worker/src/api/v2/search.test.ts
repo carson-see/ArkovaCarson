@@ -5,6 +5,7 @@ const mockOr = vi.fn().mockReturnThis();
 const mockIlike = vi.fn().mockReturnThis();
 const mockEq = vi.fn().mockReturnThis();
 const mockIn = vi.fn().mockReturnThis();
+const mockIs = vi.fn().mockReturnThis();
 const mockRange = vi.fn().mockReturnThis();
 const mockOrder = vi.fn().mockResolvedValue({ data: [], error: null });
 
@@ -16,6 +17,7 @@ vi.mock('../../utils/db.js', () => ({
       ilike: mockIlike,
       eq: mockEq,
       in: mockIn,
+      is: mockIs,
       range: mockRange,
       order: mockOrder,
     })),
@@ -40,7 +42,7 @@ vi.mock('../../middleware/apiKeyAuth.js', () => ({
 
 import express from 'express';
 import request from 'supertest';
-import { searchRouter } from './search.js';
+import { buildSearchHandler, searchRouter } from './search.js';
 import { v2ErrorHandler } from './problem.js';
 
 function buildApp() {
@@ -85,7 +87,14 @@ describe('GET /api/v2/search', () => {
 
   it('supports type=org filter', async () => {
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '1', slug: 'acme', display_name: 'Acme Corp', about: 'A company' }],
+      data: [{
+        id: '1',
+        public_id: 'org_acme',
+        display_name: 'Acme Corp',
+        description: 'A company',
+        domain: 'acme.com',
+        website_url: 'https://acme.com',
+      }],
       error: null,
     });
 
@@ -94,13 +103,13 @@ describe('GET /api/v2/search', () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].type).toBe('org');
-    expect(res.body.results[0].public_id).toBe('acme');
+    expect(res.body.results[0].public_id).toBe('org_acme');
   });
 
   it('supports type=fingerprint with exact match', async () => {
     const fp = 'abc123def456';
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '2', public_id: 'pk_2', fingerprint: fp, title: 'Test Doc', status: 'SECURED' }],
+      data: [{ id: '2', public_id: 'pk_2', fingerprint: fp, filename: 'Test Doc.pdf', status: 'SECURED' }],
       error: null,
     });
 
@@ -108,11 +117,12 @@ describe('GET /api/v2/search', () => {
     const res = await request(app).get(`/search?q=${fp}&type=fingerprint`);
     expect(res.status).toBe(200);
     expect(res.body.results[0].type).toBe('fingerprint');
+    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org1');
   });
 
   it('supports cursor-based pagination', async () => {
     const items = Array.from({ length: 50 }, (_, i) => ({
-      id: `${i}`, public_id: `pk_${i}`, title: `Doc ${i}`, credential_type: 'DEGREE', status: 'SECURED', fingerprint: `fp${i}`,
+      id: `${i}`, public_id: `pk_${i}`, filename: `Doc ${i}.pdf`, credential_type: 'DEGREE', status: 'SECURED', fingerprint: `fp${i}`,
     }));
     mockOrder.mockResolvedValueOnce({ data: items, error: null });
 
@@ -125,7 +135,7 @@ describe('GET /api/v2/search', () => {
 
   it('returns null cursor when results < limit', async () => {
     mockOrder.mockResolvedValueOnce({
-      data: [{ id: '1', public_id: 'pk_1', title: 'Only One', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
+      data: [{ id: '1', public_id: 'pk_1', filename: 'Only One.pdf', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
       error: null,
     });
 
@@ -160,5 +170,43 @@ describe('GET /api/v2/search', () => {
     const app = buildApp();
     const res = await request(app).get('/search?q=test&limit=200');
     expect(res.status).toBe(400);
+  });
+
+  it('supports direct resource search aliases', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{
+        id: '1',
+        public_id: 'org_acme',
+        display_name: 'Acme Corp',
+        description: 'A company',
+        domain: 'acme.com',
+        website_url: 'https://acme.com',
+      }],
+      error: null,
+    });
+
+    const app = express();
+    app.use('/organizations', buildSearchHandler('org'));
+    app.use(v2ErrorHandler);
+
+    const res = await request(app).get('/organizations?q=acme');
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].type).toBe('org');
+    expect(mockOr).toHaveBeenCalledWith(expect.stringContaining('display_name.ilike'));
+  });
+
+  it('scopes document search to public secured records plus the API key org', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '2', public_id: 'pk_2', filename: 'Contract.pdf', credential_type: 'LEGAL', status: 'PENDING' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=Contract&type=document');
+
+    expect(res.status).toBe(200);
+    expect(mockIn).toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
+    expect(mockIs).toHaveBeenCalledWith('deleted_at', null);
+    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org1');
   });
 });

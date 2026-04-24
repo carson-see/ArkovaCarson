@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Secrets the SEC-HARDEN-02 epic expects to see under Secret Manager. */
+/** Required secrets the production worker must receive from Secret Manager. */
 export const EXPECTED_SECRETS = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
@@ -40,12 +40,16 @@ export const EXPECTED_SECRETS = [
   "BITCOIN_RPC_URL",
   "UPSTASH_REDIS_REST_URL",
   "UPSTASH_REDIS_REST_TOKEN",
-  "ANTHROPIC_API_KEY",
   "RUNPOD_API_KEY",
   "EDGAR_USER_AGENT",
   "SAM_GOV_API_KEY",
   "CLOUDFLARE_API_TOKEN",
   "CLOUDFLARE_TUNNEL_TOKEN",
+] as const;
+
+/** Optional secrets may be present, but missing values do not block production deploys. */
+export const OPTIONAL_SECRETS = [
+  "ANTHROPIC_API_KEY",
 ] as const;
 
 export type SecretBinding = { envVar: string; secretPath: string };
@@ -76,6 +80,11 @@ export type AuditRow = {
   secretPath: string | null;
 };
 
+function auditMark(row: AuditRow, required: boolean): string {
+  if (row.bound) return "✓";
+  return required ? "✗" : "○";
+}
+
 /** Diff expected-list against current Cloud Run bindings. */
 export function auditDrift(
   bindings: SecretBinding[],
@@ -89,15 +98,22 @@ export function auditDrift(
   }));
 }
 
-function formatTable(rows: AuditRow[]): string {
+function formatTable(requiredRows: AuditRow[], optionalRows: AuditRow[]): string {
+  const rows = [...requiredRows, ...optionalRows];
   const pad = Math.max(...rows.map((r) => r.envVar.length));
   const lines = rows.map((r) => {
-    const mark = r.bound ? "✓" : "✗";
-    const path = r.secretPath ?? "(missing — needs `gcloud secrets create`)";
+    const required = requiredRows.includes(r);
+    const mark = auditMark(r, required);
+    const path = r.secretPath ?? (required ? "(missing — needs `gcloud secrets create`)" : "(optional — not configured)");
     return `${mark} ${r.envVar.padEnd(pad)}  ${path}`;
   });
-  const missing = rows.filter((r) => !r.bound).length;
-  return [...lines, "", `${rows.length - missing}/${rows.length} bound. ${missing} drift.`].join("\n");
+  const missingRequired = requiredRows.filter((r) => !r.bound).length;
+  return [
+    ...lines,
+    "",
+    `${requiredRows.length - missingRequired}/${requiredRows.length} required bound. ${missingRequired} drift.`,
+    `${optionalRows.filter((r) => r.bound).length}/${optionalRows.length} optional bound.`,
+  ].join("\n");
 }
 
 function main(): void {
@@ -108,14 +124,21 @@ function main(): void {
   const yaml = readFileSync(yamlPath, "utf-8");
   const bindings = parseDeployWorkerSecrets(yaml);
   const rows = auditDrift(bindings);
+  const optionalRows = auditDrift(bindings, OPTIONAL_SECRETS);
+  const missing = rows.filter((r) => !r.bound);
 
   if (json) {
-    console.log(JSON.stringify({ rows, missing: rows.filter((r) => !r.bound).map((r) => r.envVar) }, null, 2));
+    console.log(JSON.stringify({
+      rows,
+      optionalRows,
+      missing: missing.map((r) => r.envVar),
+      optionalMissing: optionalRows.filter((r) => !r.bound).map((r) => r.envVar),
+    }, null, 2));
   } else {
-    console.log(formatTable(rows));
+    console.log(formatTable(rows, optionalRows));
   }
 
-  process.exit(rows.every((r) => r.bound) ? 0 : 1);
+  process.exit(missing.length === 0 ? 0 : 1);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

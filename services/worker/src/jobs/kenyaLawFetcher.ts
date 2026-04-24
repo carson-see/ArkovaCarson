@@ -67,7 +67,7 @@ export async function fetchKenyaComplianceData(
       ],
       source: 'kenya_caselaw',
       court: 'Kenya Courts',
-      parseResults: (body, term) => {
+      parseResults: (body) => {
         try {
           const data = JSON.parse(body) as { results?: Array<{ id: string; title: string; url: string; summary?: string }> };
           return (data.results ?? []).map((c) => ({

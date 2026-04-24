@@ -16,6 +16,8 @@ import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStr
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
 
+export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 5_500;
+
 export interface ExtractionField {
   key: string;
   value: string;
@@ -120,19 +122,27 @@ export async function runExtraction(
       : strippingReport.strippedText;
 
     const workerUrl = WORKER_URL;
-    const response = await fetch(`${workerUrl}/api/v1/ai/extract`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        strippedText: truncatedText,
-        credentialType,
-        fingerprint,
-        issuerHint: options?.issuerHint,
-      }),
-    });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_EXTRACTION_REQUEST_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await fetch(`${workerUrl}/api/v1/ai/extract`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          strippedText: truncatedText,
+          credentialType,
+          fingerprint,
+          issuerHint: options?.issuerHint,
+        }),
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeout);
+    }
 
     if (!response.ok) {
       const errorBody = await response.json().catch(() => ({}));
@@ -172,7 +182,9 @@ export async function runExtraction(
     };
   } catch (err) {
     let message = 'Extraction failed';
-    if (err instanceof TypeError && err.message.includes('fetch')) {
+    if (isAbortError(err)) {
+      message = 'AI analysis timed out. The document can still be secured without metadata.';
+    } else if (err instanceof TypeError && err.message.includes('fetch')) {
       message = 'Unable to connect to the server. Please check your connection and try again.';
     } else if (err instanceof Error) {
       message = err.message;
@@ -180,6 +192,13 @@ export async function runExtraction(
     onProgress?.({ stage: 'error', progress: 0, message });
     return null;
   }
+}
+
+function isAbortError(err: unknown): boolean {
+  return typeof err === 'object'
+    && err !== null
+    && 'name' in err
+    && (err as { name: unknown }).name === 'AbortError';
 }
 
 // ─── Template Reconstruction ───

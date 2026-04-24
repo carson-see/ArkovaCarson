@@ -19,7 +19,6 @@ import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { logger } from '../../utils/logger.js';
 import { FULL_GOLDEN_DATASET } from '../eval/golden-dataset.js';
-import { EXTRACTION_SYSTEM_PROMPT } from '../prompts/extraction.js';
 import type { GoldenDatasetEntry } from '../eval/types.js';
 
 // ============================================================================

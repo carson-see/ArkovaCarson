@@ -14,10 +14,9 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { computeContentHash, delay } from '../utils/pipeline.js';
+import { computeContentHash } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const RATE_LIMIT_MS = 300;
 const MAX_PER_RUN = 1000;
 const INSERT_BATCH_SIZE = 100;
 
@@ -38,7 +37,7 @@ async function fetchHipaaBreaches(
   supabase: SupabaseClient,
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
   let inserted = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
 
   // HHS publishes a downloadable breach report — try the CSV endpoint

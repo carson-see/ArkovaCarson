@@ -102,6 +102,59 @@ describe('GeminiProvider', () => {
       expect(result.tokensUsed).toBe(150);
     });
 
+    it('salvages valid extraction fields instead of failing on schema drift', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => JSON.stringify({
+            credentialType: 'CLE',
+            issuerName: 'State Bar of Michigan',
+            creditHours: '3.5',
+            fraudSignals: [{ signal: 'font_mismatch', severity: 'low' }, 'date_mismatch'],
+            unexpectedModelNote: 'extra keys should not fail the whole extraction',
+            confidence: '0.78',
+          }),
+          usageMetadata: { totalTokenCount: 120 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.extractMetadata({
+        ...request,
+        credentialType: 'CLE',
+      });
+
+      expect(result.fields.credentialType).toBe('CLE');
+      expect(result.fields.issuerName).toBe('State Bar of Michigan');
+      expect(result.fields.creditHours).toBe(3.5);
+      expect(result.fields.fraudSignals).toContain('font_mismatch');
+      expect(result.fields.fraudSignals).toContain('date_mismatch');
+      expect(result.fields).not.toHaveProperty('unexpectedModelNote');
+      expect(result.confidence).toBeGreaterThan(0);
+    });
+
+    it('parses fenced JSON responses instead of failing extraction', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => [
+            '```json',
+            JSON.stringify({
+              credentialType: 'DEGREE',
+              issuerName: 'University of Michigan',
+              confidence: 0.82,
+            }),
+            '```',
+          ].join('\n'),
+          usageMetadata: { totalTokenCount: 90 },
+        },
+      });
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.extractMetadata(request);
+
+      expect(result.fields.credentialType).toBe('DEGREE');
+      expect(result.fields.issuerName).toBe('University of Michigan');
+    });
+
     it('clamps confidence to [0, 1] range', async () => {
       mockGenerateContent.mockResolvedValue({
         response: {

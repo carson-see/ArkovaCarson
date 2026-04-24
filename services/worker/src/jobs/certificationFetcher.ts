@@ -34,11 +34,9 @@ interface CertFetchResult {
 async function fetchCfaCharterholders(
   supabase: SupabaseClient,
 ): Promise<CertFetchResult> {
-  // CFA charterholder search via their public API
-  const CFA_SEARCH_URL = 'https://www.cfainstitute.org/en/about/governance/policies/verification-of-charterholder-status';
-  let inserted = 0;
-  let skipped = 0;
-  let errors = 0;
+  const inserted = 0;
+  const skipped = 0;
+  const errors = 0;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { count: existingCount } = await (supabase as any)

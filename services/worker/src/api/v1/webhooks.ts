@@ -23,7 +23,6 @@
 
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
-import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { isPrivateUrlResolved, signPayload } from '../../webhooks/delivery.js';

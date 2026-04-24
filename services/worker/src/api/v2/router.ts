@@ -3,7 +3,8 @@ import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';
 import { config } from '../../config.js';
 import { v2ErrorHandler } from './problem.js';
-import { searchRouter } from './search.js';
+import { requireScopeV2 } from './scopeGuard.js';
+import { buildSearchHandler, searchRouter } from './search.js';
 
 export const apiV2Router = Router();
 
@@ -15,5 +16,9 @@ if (!config.apiKeyHmacSecret) {
 apiV2Router.use(apiKeyAuth(config.apiKeyHmacSecret));
 
 apiV2Router.use('/search', searchRouter);
+apiV2Router.get('/organizations', requireScopeV2('read:search'), buildSearchHandler('org'));
+apiV2Router.get('/records', requireScopeV2('read:search'), buildSearchHandler('record'));
+apiV2Router.get('/fingerprints', requireScopeV2('read:search'), buildSearchHandler('fingerprint'));
+apiV2Router.get('/documents', requireScopeV2('read:search'), buildSearchHandler('document'));
 
 apiV2Router.use(v2ErrorHandler);

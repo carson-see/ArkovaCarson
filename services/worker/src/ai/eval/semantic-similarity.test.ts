@@ -9,7 +9,6 @@ import {
   semanticFaithfulness,
   semanticRelevance,
   semanticRiskDetection,
-  type SemanticScoringOptions,
 } from './semantic-similarity.js';
 
 describe('semantic-similarity', () => {

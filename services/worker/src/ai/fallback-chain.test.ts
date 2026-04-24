@@ -8,8 +8,8 @@
  * - Does NOT fall back on validation/parse errors (those are content issues, not model issues)
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { FallbackChainProvider, type FallbackMetrics } from './fallback-chain.js';
+import { describe, it, expect } from 'vitest';
+import { FallbackChainProvider } from './fallback-chain.js';
 import type { IAIProvider, ExtractionRequest, ExtractionResult, EmbeddingResult, ProviderHealth } from './types.js';
 
 function makeRequest(): ExtractionRequest {

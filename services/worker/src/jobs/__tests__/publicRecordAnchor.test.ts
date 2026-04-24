@@ -3,16 +3,19 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // ---- Hoisted mocks ----
 const {
   mockRpc, mockInsert, mockUpdate, mockSelectChain,
-  mockSubmitFingerprint, mockLogger,
+  mockSubmitFingerprint, mockLogger, mockAnchorProofsUpsert,
 } = vi.hoisted(() => {
   const mockRpc = vi.fn();
   const mockInsert = vi.fn();
   const mockUpdate = vi.fn();
   const mockSubmitFingerprint = vi.fn();
+  const mockAnchorProofsUpsert = vi.fn().mockResolvedValue({ error: null });
   const mockLogger = {
     info: vi.fn(),
     warn: vi.fn(),
@@ -38,6 +41,7 @@ const {
     mockRpc, mockInsert, mockUpdate, mockSubmitFingerprint,
     mockSelectChain: { chain: selectChain, limit: mockLimit, order: mockOrder, single: mockSingle, range: mockRange },
     mockLogger,
+    mockAnchorProofsUpsert,
   };
 });
 
@@ -70,6 +74,14 @@ vi.mock('../../chain/client.js', () => ({
 
 function createMockSupabase(records: Array<Record<string, unknown>> = []) {
   const _updateEq = vi.fn().mockResolvedValue({ error: null });
+  const anchorRows = records.map((record, i) => ({
+    id: `anchor-uuid-${i}`,
+    fingerprint: record.content_hash,
+    status: 'PENDING',
+    chain_tx_id: null,
+    metadata: {},
+  }));
+  const claimedAnchorRows = anchorRows.map((row) => ({ ...row, status: 'BROADCASTING' }));
 
   let insertCallCount = 0;
   mockInsert.mockImplementation((anchor: Record<string, unknown>) => ({
@@ -98,6 +110,24 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mockSelectChain.range.mockResolvedValue({ data: records as any, error: null });
 
+  const anchorsSelectByIds = {
+    in: vi.fn(() => ({
+      is: vi.fn().mockResolvedValue({ data: anchorRows, error: null }),
+    })),
+  };
+  const anchorsBroadcastingUpdate = {
+    in: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        select: vi.fn().mockResolvedValue({ data: claimedAnchorRows, error: null }),
+      })),
+    })),
+  };
+  const anchorsPendingUpdate = {
+    in: vi.fn(() => ({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    })),
+  };
+
   return {
     rpc: mockRpc,
     from: vi.fn((table: string) => {
@@ -113,6 +143,20 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
           })),
         };
       }
+      if (table === 'anchors') {
+        return {
+          select: vi.fn(() => anchorsSelectByIds),
+          insert: mockInsert,
+          update: vi.fn((payload: Record<string, unknown>) => (
+            payload.status === 'BROADCASTING' ? anchorsBroadcastingUpdate : anchorsPendingUpdate
+          )),
+        };
+      }
+      if (table === 'anchor_proofs') {
+        return {
+          upsert: mockAnchorProofsUpsert,
+        };
+      }
       return {
         select: vi.fn(() => mockSelectChain.chain),
         insert: mockInsert,
@@ -124,6 +168,7 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAnchorProofsUpsert.mockResolvedValue({ error: null });
 });
 
 describe('publicRecordAnchor', () => {
@@ -218,11 +263,12 @@ describe('publicRecordAnchor', () => {
       title: `Test Filing ${i}`,
     }));
 
-    // First RPC call = get_flag (returns true), subsequent = batch_insert_anchors (returns anchor array)
+    // RPC calls: get_flag, batch_insert_anchors, finalize_public_record_anchor_batch
     const anchorResults = records.map((r, i) => ({ id: `anchor-uuid-${i}`, fingerprint: r.content_hash }));
     mockRpc
       .mockResolvedValueOnce({ data: true })  // get_flag
-      .mockResolvedValueOnce({ data: anchorResults });  // batch_insert_anchors
+      .mockResolvedValueOnce({ data: anchorResults })  // batch_insert_anchors
+      .mockResolvedValueOnce({ data: { records_updated: records.length, anchors_updated: records.length } });  // finalize
 
     const mockSupa = createMockSupabase(records);
 
@@ -241,5 +287,65 @@ describe('publicRecordAnchor', () => {
     expect(result.merkleRoot).toBeTruthy();
     expect(result.txId).toBe('tx_mock_123');
     expect(result.batchId).toMatch(/^pr_batch_/);
+    expect(result.processed).toBe(records.length);
+  });
+
+  it('persists proof rows outside anchors metadata after finalize', async () => {
+    const records = Array.from({ length: 2 }, (_, i) => ({
+      id: `record-${i}`,
+      content_hash: (i.toString(16).padStart(2, '0')).repeat(32),
+      metadata: {},
+      source: 'edgar',
+      source_id: `CIK-${i}`,
+      source_url: `https://sec.gov/filing/${i}`,
+      record_type: '10-K',
+      title: `Test Filing ${i}`,
+    }));
+
+    const anchorResults = records.map((r, i) => ({ id: `anchor-uuid-${i}`, fingerprint: r.content_hash }));
+    mockRpc
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: anchorResults })
+      .mockResolvedValueOnce({ data: { records_updated: records.length, anchors_updated: records.length } });
+
+    mockSubmitFingerprint.mockResolvedValue({
+      receiptId: 'tx_mock_123',
+      blockHeight: 0,
+      blockTimestamp: new Date().toISOString(),
+      confirmations: 0,
+    });
+
+    const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await processPublicRecordAnchoring(createMockSupabase(records) as any);
+
+    expect(mockAnchorProofsUpsert).toHaveBeenCalledOnce();
+    expect(mockAnchorProofsUpsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          anchor_id: 'anchor-uuid-0',
+          receipt_id: 'tx_mock_123',
+          merkle_root: expect.any(String),
+          batch_id: expect.stringMatching(/^pr_batch_/),
+        }),
+      ]),
+      expect.objectContaining({ onConflict: 'anchor_id' }),
+    );
+  });
+
+  it('uses the shared 10k Bitcoin batch cap', async () => {
+    const { PUBLIC_RECORD_BATCH_SIZE } = await import('../publicRecordAnchor.js');
+    expect(PUBLIC_RECORD_BATCH_SIZE).toBe(10_000);
+  });
+
+  it('keeps duplicate record links eligible after the shared anchor is finalized', () => {
+    const sql = readFileSync(
+      resolve(process.cwd(), '../../supabase/migrations/0248_finalize_public_record_anchor_duplicates.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("a.status IN ('SUBMITTED', 'SECURED')");
+    expect(sql).toContain('a.chain_tx_id = p_tx_id');
+    expect(sql).toContain('UPDATE public_records pr');
   });
 });

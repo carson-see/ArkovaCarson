@@ -48,6 +48,26 @@ vi.mock('@/lib/supabase', () => {
   };
 });
 
+vi.mock('@/lib/workerClient', () => ({
+  workerFetch: vi.fn().mockResolvedValue({
+    ok: true,
+    json: vi.fn().mockResolvedValue({
+      totalRecords: 10000,
+      anchoredRecords: 9000,
+      pendingRecords: 1000,
+      embeddedRecords: 8000,
+      anchorLinkedRecords: 9500,
+      pendingRecordLinks: 500,
+      pendingAnchorRecords: 450,
+      broadcastingRecords: 50,
+      submittedRecords: 7000,
+      securedRecords: 2000,
+      cacheUpdatedAt: '2026-04-24T12:00:00Z',
+      bySource: {},
+    }),
+  }),
+}));
+
 import { PipelineAdminPage } from './PipelineAdminPage';
 
 describe('PipelineAdminPage', () => {
@@ -67,6 +87,16 @@ describe('PipelineAdminPage', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Refresh')).toBeInTheDocument();
+  });
+
+  it('labels anchoring metrics as customer-facing anchoring status', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText('Records Anchored')).toBeInTheDocument();
+    expect(await screen.findByText('Pending Anchoring')).toBeInTheDocument();
   });
 
   it('shows access restricted for non-admin', async () => {

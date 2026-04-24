@@ -42,7 +42,6 @@ gcloud run services describe arkova-worker --region us-central1 \
 | `GEMINI_API_KEY` | Cloud Run env | `google-api-key-general` (after SEC-HARDEN-01) |
 | `TOGETHER_API_KEY` | Cloud Run env | `together-api-key` |
 | `RUNPOD_API_KEY` | Cloud Run env | `runpod-api-key` |
-| `ANTHROPIC_API_KEY` | Cloud Run env | `anthropic-api-key` |
 | `COURTLISTENER_API_TOKEN` | Cloud Run env | `courtlistener-api-token` |
 | `OPENSTATES_API_KEY` | Cloud Run env | `openstates-api-key` |
 | `SAM_GOV_API_KEY` | Cloud Run env | `sam-gov-api-key` |
@@ -53,6 +52,12 @@ gcloud run services describe arkova-worker --region us-central1 \
 | `CLOUDFLARE_API_TOKEN` | Cloud Run env | `cloudflare-api-token` |
 | `CLOUDFLARE_TUNNEL_TOKEN` | Cloud Run env | `cloudflare-tunnel-token` |
 | `SLACK_TREASURY_WEBHOOK_URL` | Cloud Run env (ARK-103) | `slack-treasury-webhook-url` |
+
+Optional tooling-only secrets:
+
+| Env var | Purpose | Target Secret Manager path |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | Optional NVI-07 distillation + NVI-12 LLM-judge benchmark only; production worker uses Gemini unless `AI_PROVIDER=anthropic` is explicitly enabled later. | `anthropic-api-key` |
 
 Edge functions (Supabase) + Cloudflare edge workers are in scope:
 

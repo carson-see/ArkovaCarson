@@ -69,6 +69,12 @@ export interface ProofAnchorData {
   metadata: Record<string, unknown> | null;
 }
 
+export interface ProofRecordData {
+  merkle_root: string | null;
+  proof_path: unknown;
+  batch_id?: string | null;
+}
+
 /**
  * Validate that a merkle_proof array from metadata has the correct shape.
  */
@@ -83,33 +89,63 @@ export function isValidProofArray(arr: unknown): arr is MerkleProofEntry[] {
   );
 }
 
+function extractStoredProof(
+  proof: ProofRecordData | null,
+): { merkleRoot: string; merkleProof: MerkleProofEntry[]; batchId: string | null } | ProofErrorResponse | null {
+  if (!proof?.merkle_root || !proof.proof_path) return null;
+  if (!isValidProofArray(proof.proof_path)) {
+    return { error: 'Merkle proof data is malformed' };
+  }
+  return {
+    merkleRoot: proof.merkle_root,
+    merkleProof: proof.proof_path,
+    batchId: proof.batch_id ? String(proof.batch_id) : null,
+  };
+}
+
+function extractMetadataProof(
+  metadata: Record<string, unknown> | null,
+): { merkleRoot: string; merkleProof: MerkleProofEntry[]; batchId: string | null } | ProofErrorResponse | null {
+  if (!metadata?.merkle_root || !metadata.merkle_proof) return null;
+  if (typeof metadata.merkle_root !== 'string') {
+    return { error: 'Merkle proof data is malformed' };
+  }
+  if (metadata.batch_id != null && typeof metadata.batch_id !== 'string') {
+    return { error: 'Merkle proof data is malformed' };
+  }
+  if (!isValidProofArray(metadata.merkle_proof)) {
+    return { error: 'Merkle proof data is malformed' };
+  }
+  return {
+    merkleRoot: metadata.merkle_root,
+    merkleProof: metadata.merkle_proof,
+    batchId: metadata.batch_id ?? null,
+  };
+}
+
 /**
  * Build the proof response from anchor data.
  * Extracted for testability.
  */
 export function buildProofResponse(
   anchor: ProofAnchorData,
+  proof: ProofRecordData | null = null,
 ): MerkleProofResponse | ProofErrorResponse | null {
-  const meta = anchor.metadata;
-  if (!meta || !meta.merkle_proof || !meta.merkle_root) {
-    return null; // signals "no proof available"
-  }
-
-  if (!isValidProofArray(meta.merkle_proof)) {
-    return { error: 'Merkle proof data is malformed' };
-  }
+  const proofSource = extractStoredProof(proof) ?? extractMetadataProof(anchor.metadata);
+  if (!proofSource) return null;
+  if ('error' in proofSource) return proofSource;
 
   const isAnchored = anchor.status === 'SECURED' || anchor.status === 'SUBMITTED';
 
   return {
     public_id: anchor.public_id,
     fingerprint: anchor.fingerprint,
-    merkle_root: String(meta.merkle_root),
-    merkle_proof: meta.merkle_proof,
+    merkle_root: proofSource.merkleRoot,
+    merkle_proof: proofSource.merkleProof,
     tx_id: anchor.chain_tx_id,
     block_height: anchor.chain_block_height,
     block_timestamp: anchor.chain_timestamp,
-    batch_id: meta.batch_id ? String(meta.batch_id) : null,
+    batch_id: proofSource.batchId,
     verified: isAnchored,
   };
 }
@@ -134,9 +170,12 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       anchor = await lookup.lookupByPublicId(publicId);
     } else {
       const { db } = await import('../../utils/db.js');
+      // Generated DB types do not yet reflect the latest proof-table fields.
+      // Keep the casts narrow to this route.
+      const dbAny = db as any;
       const { data, error } = await db
         .from('anchors')
-        .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata')
+        .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata')
         .eq('public_id', publicId)
         .is('deleted_at', null)
         .single();
@@ -144,6 +183,12 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       if (error || !data) {
         anchor = null;
       } else {
+        const { data: proofData } = await dbAny
+          .from('anchor_proofs')
+          .select('merkle_root, proof_path, batch_id')
+          .eq('anchor_id', data.id)
+          .maybeSingle();
+
         anchor = {
           public_id: data.public_id ?? '',
           fingerprint: data.fingerprint,
@@ -155,6 +200,49 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
             ? data.metadata as Record<string, unknown>
             : null,
         };
+
+        const result = buildProofResponse(
+          anchor,
+          proofData
+            ? {
+                merkle_root: proofData.merkle_root ?? null,
+                proof_path: proofData.proof_path ?? null,
+                batch_id: proofData.batch_id ?? null,
+              }
+            : null,
+        );
+
+        if (result === null) {
+          res.status(404).json({
+            error: 'No Merkle proof available for this record. It may not have been batch-anchored.',
+          } as ProofErrorResponse);
+          return;
+        }
+
+        if ('error' in result) {
+          res.status(500).json(result);
+          return;
+        }
+
+        if ((req.query.format as string | undefined) === 'signed') {
+          const signer = resolveSigner();
+          if (!signer) {
+            res.status(503).json({
+              error:
+                'Signed proof bundle is not configured in this environment. Set PROOF_SIGNING_KEY_PEM + PROOF_SIGNING_KEY_ID or call without ?format=signed.',
+            } as ProofErrorResponse);
+            return;
+          }
+          const bundle = await createSignedBundle({
+            payload: result as unknown as Record<string, unknown>,
+            sign: signer.sign,
+          });
+          res.json(bundle);
+          return;
+        }
+
+        res.json(result);
+        return;
       }
     }
 

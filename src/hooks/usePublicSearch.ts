@@ -159,8 +159,30 @@ export interface CredentialBreakdown {
   count: number;
 }
 
+export interface PublicOrgMember {
+  member_key?: string | null;
+  profile_public_id: string | null;
+  display_name: string;
+  avatar_url: string | null;
+  role: string;
+  is_public_profile: boolean;
+}
+
+export interface PublicSubOrganization {
+  org_id: string;
+  public_id: string | null;
+  display_name: string;
+  domain: string | null;
+  description: string | null;
+  logo_url: string | null;
+  org_type: string | null;
+  website_url: string | null;
+  verification_status: string | null;
+}
+
 export interface OrgProfile {
   org_id: string;
+  public_id: string | null;
   display_name: string;
   domain: string | null;
   description: string | null;
@@ -172,10 +194,13 @@ export interface OrgProfile {
   location: string | null;
   founded_date: string | null;
   industry_tag: string | null;
+  verification_status: string | null;
   created_at: string;
   total_credentials: number;
   secured_credentials: number;
   credential_breakdown: CredentialBreakdown[];
+  public_members: PublicOrgMember[];
+  sub_organizations: PublicSubOrganization[];
 }
 
 interface UseOrgProfileReturn {
@@ -215,6 +240,74 @@ export function useOrgProfile(): UseOrgProfileReturn {
       }
 
       setProfile(result as OrgProfile);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load profile');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { profile, loading, error, fetchProfile };
+}
+
+// ── Public Member Profile ────────────────────────────────────────────────────
+
+export interface PublicMemberOrganization {
+  org_id: string;
+  public_id: string | null;
+  display_name: string;
+  domain: string | null;
+  logo_url: string | null;
+  verification_status: string | null;
+  role: string;
+}
+
+export interface PublicMemberProfile {
+  public_id: string;
+  display_name: string;
+  avatar_url: string | null;
+  bio: string | null;
+  social_links: Record<string, string> | null;
+  created_at: string;
+  organizations: PublicMemberOrganization[];
+}
+
+interface UsePublicMemberProfileReturn {
+  profile: PublicMemberProfile | null;
+  loading: boolean;
+  error: string | null;
+  fetchProfile: (publicId: string) => Promise<void>;
+}
+
+export function usePublicMemberProfile(): UsePublicMemberProfileReturn {
+  const [profile, setProfile] = useState<PublicMemberProfile | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchProfile = useCallback(async (publicId: string) => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase as any).rpc(
+        'get_public_member_profile',
+        { p_public_id: publicId },
+      );
+
+      if (rpcError) {
+        setError(rpcError.message);
+        return;
+      }
+
+      const result = Array.isArray(data) ? data[0]?.get_public_member_profile ?? data[0] : data;
+
+      if (result?.error) {
+        setError(result.error as string);
+        return;
+      }
+
+      setProfile(result as PublicMemberProfile);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load profile');
     } finally {

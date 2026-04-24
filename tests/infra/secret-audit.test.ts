@@ -7,6 +7,7 @@ import {
   parseDeployWorkerSecrets,
   auditDrift,
   EXPECTED_SECRETS,
+  OPTIONAL_SECRETS,
 } from '../../scripts/secrets/audit-env';
 
 describe('parseDeployWorkerSecrets', () => {
@@ -95,16 +96,20 @@ describe('EXPECTED_SECRETS contract', () => {
       'CLOUDFLARE_API_TOKEN',
       'CLOUDFLARE_TUNNEL_TOKEN',
       'SAM_GOV_API_KEY',
-      'ANTHROPIC_API_KEY',
       'RUNPOD_API_KEY',
     ];
     for (const r of required) expect(EXPECTED_SECRETS).toContain(r);
   });
 
+  it('keeps optional Anthropic usage out of the production-required gate', () => {
+    expect(EXPECTED_SECRETS).not.toContain('ANTHROPIC_API_KEY');
+    expect(OPTIONAL_SECRETS).toContain('ANTHROPIC_API_KEY');
+  });
+
   it('has no duplicate entries', () => {
     const seen = new Set<string>();
     const dupes: string[] = [];
-    for (const s of EXPECTED_SECRETS) {
+    for (const s of [...EXPECTED_SECRETS, ...OPTIONAL_SECRETS]) {
       if (seen.has(s)) dupes.push(s);
       seen.add(s);
     }

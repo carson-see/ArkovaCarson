@@ -17,9 +17,18 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 
 export interface PipelineStatsResponse {
   totalRecords: number;
+  /** Records with a Bitcoin tx id (SUBMITTED or SECURED), not merely an internal anchor row. */
   anchoredRecords: number;
+  /** Records still missing a Bitcoin tx (unlinked, PENDING, or BROADCASTING). */
   pendingRecords: number;
   embeddedRecords: number;
+  anchorLinkedRecords: number;
+  pendingRecordLinks: number;
+  pendingAnchorRecords: number;
+  broadcastingRecords: number;
+  submittedRecords: number;
+  securedRecords: number;
+  cacheUpdatedAt: string | null;
   bySource: Record<string, number>;
 }
 
@@ -42,6 +51,14 @@ export async function handlePipelineStats(
     let anchoredRecords = 0;
     let pendingRecords = 0;
     let embeddedRecords = 0;
+    let anchorLinkedRecords = 0;
+    let pendingRecordLinks = 0;
+    let pendingAnchorRecords = 0;
+    let broadcastingRecords = 0;
+    let submittedRecords = 0;
+    let securedRecords = 0;
+    let cacheUpdatedAt: string | null = null;
+    let usedPipelineRpc = false;
     const bySource: Record<string, number> = {};
 
     const [pipelineResult, sourceResult] = await Promise.allSettled([
@@ -54,9 +71,27 @@ export async function handlePipelineStats(
       const rpcResp = pipelineResult.value as { data: Record<string, unknown> | null; error: unknown };
       if (rpcResp.data && !rpcResp.error) {
         totalRecords = Number(rpcResp.data.total_records ?? 0);
-        anchoredRecords = Number(rpcResp.data.anchored_records ?? 0);
-        pendingRecords = Number(rpcResp.data.pending_records ?? 0);
+        anchorLinkedRecords = Number(rpcResp.data.anchor_linked_records ?? rpcResp.data.anchored_records ?? 0);
+        pendingRecordLinks = Number(rpcResp.data.pending_record_links ?? 0);
+        pendingAnchorRecords = Number(rpcResp.data.pending_anchor_records ?? 0);
+        broadcastingRecords = Number(rpcResp.data.broadcasting_records ?? 0);
+        submittedRecords = Number(rpcResp.data.submitted_records ?? 0);
+        securedRecords = Number(rpcResp.data.secured_records ?? 0);
+        anchoredRecords = Number(
+          rpcResp.data.bitcoin_anchored_records ??
+          rpcResp.data.anchored_records ??
+          0,
+        );
+        pendingRecords = Number(
+          rpcResp.data.pending_bitcoin_records ??
+          rpcResp.data.pending_records ??
+          0,
+        );
         embeddedRecords = Number(rpcResp.data.embedded_records ?? 0);
+        cacheUpdatedAt = typeof rpcResp.data.cache_updated_at === 'string'
+          ? rpcResp.data.cache_updated_at
+          : null;
+        usedPipelineRpc = true;
       } else {
         logger.warn({ error: rpcResp.error }, 'get_pipeline_stats RPC returned error, falling back to count queries');
       }
@@ -65,21 +100,32 @@ export async function handlePipelineStats(
     }
 
     // Fallback: direct count queries (may be slow on large tables)
-    if (totalRecords === 0 && pipelineResult.status === 'rejected') {
+    if (!usedPipelineRpc) {
+      const dbAny = db as any;
       const countResults = await Promise.allSettled([
         db.from('public_records').select('*', { count: 'exact', head: true }),
         db.from('public_records').select('*', { count: 'exact', head: true }).not('anchor_id', 'is', null),
         db.from('public_records').select('*', { count: 'exact', head: true }).is('anchor_id', null),
         db.from('public_record_embeddings').select('*', { count: 'exact', head: true }),
+        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'PENDING').is('deleted_at', null),
+        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'BROADCASTING').is('deleted_at', null),
+        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'SUBMITTED').not('chain_tx_id', 'is', null).is('deleted_at', null),
+        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'SECURED').not('chain_tx_id', 'is', null).is('deleted_at', null),
       ]);
       const cval = <T>(i: number): T | null => {
         const r = countResults[i];
         return r.status === 'fulfilled' ? (r.value as T) : null;
       };
       totalRecords = cval<{ count: number }>(0)?.count ?? 0;
-      anchoredRecords = cval<{ count: number }>(1)?.count ?? 0;
-      pendingRecords = cval<{ count: number }>(2)?.count ?? 0;
+      anchorLinkedRecords = cval<{ count: number }>(1)?.count ?? 0;
+      pendingRecordLinks = cval<{ count: number }>(2)?.count ?? 0;
       embeddedRecords = cval<{ count: number }>(3)?.count ?? 0;
+      pendingAnchorRecords = cval<{ count: number }>(4)?.count ?? 0;
+      broadcastingRecords = cval<{ count: number }>(5)?.count ?? 0;
+      submittedRecords = cval<{ count: number }>(6)?.count ?? 0;
+      securedRecords = cval<{ count: number }>(7)?.count ?? 0;
+      anchoredRecords = submittedRecords + securedRecords;
+      pendingRecords = pendingRecordLinks + pendingAnchorRecords + broadcastingRecords;
     }
 
     // Extract source breakdown
@@ -97,6 +143,13 @@ export async function handlePipelineStats(
       anchoredRecords,
       pendingRecords,
       embeddedRecords,
+      anchorLinkedRecords,
+      pendingRecordLinks,
+      pendingAnchorRecords,
+      broadcastingRecords,
+      submittedRecords,
+      securedRecords,
+      cacheUpdatedAt,
       bySource,
     } satisfies PipelineStatsResponse);
   } catch (error) {

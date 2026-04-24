@@ -101,6 +101,7 @@ vi.mock('../utils/logger.js', () => ({
 
 import {
   handleCreateRule,
+  handleGetRule,
   handleListRules,
   handleUpdateRule,
   handleDeleteRule,
@@ -146,6 +147,10 @@ function installAuthedCaller() {
     select: { data: { org_id: ORG_ID }, error: null },
   });
   stub.from.mockImplementation(from);
+}
+
+function adminMembership() {
+  return tableMock({ select: { data: { role: 'admin' }, error: null } });
 }
 
 beforeEach(() => {
@@ -217,6 +222,54 @@ describe('handleListRules', () => {
   });
 });
 
+// -- handleGetRule ------------------------------------------------------
+
+describe('handleGetRule', () => {
+  it('returns scoped rule details including configs', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rules = tableMock({
+      select: {
+        data: {
+          id: RULE_ID,
+          org_id: ORG_ID,
+          name: 'Anchor all DocuSigns',
+          trigger_type: 'ESIGN_COMPLETED',
+          trigger_config: { vendors: ['docusign'] },
+          action_type: 'AUTO_ANCHOR',
+          action_config: { tag: 'ds' },
+          enabled: false,
+        },
+        error: null,
+      },
+    });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rules.from('')));
+
+    const { res, json } = mockRes();
+    await handleGetRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        item: expect.objectContaining({
+          id: RULE_ID,
+          trigger_config: { vendors: ['docusign'] },
+          action_config: { tag: 'ds' },
+        }),
+      }),
+    );
+  });
+
+  it('returns 404 when the rule is outside the caller org scope', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const rules = tableMock({ select: { data: null, error: null } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rules.from('')));
+
+    const { res, status } = mockRes();
+    await handleGetRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(status).toHaveBeenCalledWith(404);
+  });
+});
+
 // -- handleCreateRule ---------------------------------------------------
 
 describe('handleCreateRule', () => {
@@ -239,7 +292,9 @@ describe('handleCreateRule', () => {
   });
 
   it('rejects inline secrets in trigger_config with code inline_secret', async () => {
-    installAuthedCaller();
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from('')));
     const { res, status, json } = mockRes();
     await handleCreateRule(
       USER_ID,
@@ -262,10 +317,11 @@ describe('handleCreateRule', () => {
 
   it('forces enabled=false on insert regardless of request body (SEC-02)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesInsert = tableMock({ insert: { data: { id: RULE_ID }, error: null } });
     const auditInsert = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), rulesInsert.from(''), auditInsert.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), rulesInsert.from(''), auditInsert.from('')),
     );
 
     const { res, status, json } = mockRes();
@@ -280,6 +336,25 @@ describe('handleCreateRule', () => {
     const payload = insertCall!.args[0] as { enabled: boolean; name: string };
     expect(payload.enabled).toBe(false);
     expect(payload.name).toBe(VALID_CREATE_BODY.name);
+  });
+
+  it('rejects non-admin rule creation with 403', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = tableMock({ select: { data: { role: 'member' }, error: null } });
+    const fallbackProfile = tableMock({
+      select: { data: { role: 'INDIVIDUAL', is_platform_admin: false }, error: null },
+    });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), membership.from(''), fallbackProfile.from('')),
+    );
+
+    const { res, status, json } = mockRes();
+    await handleCreateRule(USER_ID, mockReq({ body: VALID_CREATE_BODY }), res);
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'forbidden' }) }),
+    );
   });
 });
 
@@ -310,8 +385,9 @@ describe('handleUpdateRule', () => {
 
   it('returns 404 when no rows match (update with count=0)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesUpdate = tableMock({ update: { error: null, count: 0 } });
-    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rulesUpdate.from('')));
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from('')));
 
     const { res, status, json } = mockRes();
     await handleUpdateRule(
@@ -344,10 +420,11 @@ describe('handleUpdateRule', () => {
 
   it('happy path: partial update returns ok:true', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();
@@ -361,10 +438,11 @@ describe('handleUpdateRule', () => {
 
   it('emits ORG_RULE_ENABLED audit when toggling enabled=true (SEC-02)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res } = mockRes();
@@ -384,10 +462,11 @@ describe('handleUpdateRule', () => {
 
   it('emits ORG_RULE_DISABLED audit when toggling enabled=false (SEC-02)', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesUpdate = tableMock({ update: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), rulesUpdate.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), rulesUpdate.from(''), audit.from('')),
     );
 
     const { res } = mockRes();
@@ -426,8 +505,9 @@ describe('handleDeleteRule', () => {
 
   it('returns 404 when no rows match', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesDelete = tableMock({ delete: { error: null, count: 0 } });
-    stub.from.mockImplementation(scriptedFrom(profiles.from(''), rulesDelete.from('')));
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from(''), rulesDelete.from('')));
 
     const { res, status } = mockRes();
     await handleDeleteRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
@@ -436,10 +516,11 @@ describe('handleDeleteRule', () => {
 
   it('happy path returns ok:true', async () => {
     const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
     const rulesDelete = tableMock({ delete: { error: null, count: 1 } });
     const audit = tableMock({ insert: { data: null, error: null } });
     stub.from.mockImplementation(
-      scriptedFrom(profiles.from(''), rulesDelete.from(''), audit.from('')),
+      scriptedFrom(profiles.from(''), membership.from(''), rulesDelete.from(''), audit.from('')),
     );
 
     const { res, json } = mockRes();

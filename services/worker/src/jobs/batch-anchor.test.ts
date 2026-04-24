@@ -76,6 +76,7 @@ vi.mock('../chain/client.js', () => ({
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
+const mockAnchorProofsUpsert = vi.hoisted(() => vi.fn().mockResolvedValue({ error: null }));
 
 vi.mock('../utils/db.js', () => {
   // Legacy select chain for fallback path
@@ -93,6 +94,11 @@ vi.mock('../utils/db.js', () => {
           return {
             select: vi.fn(() => selectChain),
             update: mockAnchorsUpdate,
+          };
+        }
+        if (table === 'anchor_proofs') {
+          return {
+            upsert: mockAnchorProofsUpsert,
           };
         }
         return {};
@@ -131,6 +137,7 @@ describe('processBatchAnchors', () => {
     // Default: RPC returns empty (no pending anchors)
     mockDbRpc.mockResolvedValue({ data: [], error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
+    mockAnchorProofsUpsert.mockResolvedValue({ error: null });
     setUpdateResult({ error: null, count: 1 });
   });
 
@@ -168,6 +175,53 @@ describe('processBatchAnchors', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it('passes org scope and manual worker id to the claim RPC', async () => {
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A], error: null })
+      .mockResolvedValueOnce({ data: 1, error: null });
+
+    await processBatchAnchors({
+      orgId: '11111111-1111-1111-1111-111111111111',
+      force: true,
+      workerId: 'org-run-worker',
+    });
+
+    expect(mockDbRpc).toHaveBeenNthCalledWith(1, 'claim_pending_anchors', {
+      p_worker_id: 'org-run-worker',
+      p_limit: expect.any(Number),
+      p_exclude_pipeline: false,
+      p_org_id: '11111111-1111-1111-1111-111111111111',
+    });
+  });
+
+  it('fails closed for org-scoped claim errors instead of using global legacy fallback', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'missing p_org_id argument' },
+    });
+
+    const result = await processBatchAnchors({
+      orgId: '11111111-1111-1111-1111-111111111111',
+      force: true,
+    });
+
+    expect(result).toEqual({
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      error: 'missing p_org_id argument',
+    });
+    expect(mockDbRpc).toHaveBeenCalledTimes(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.any(Object),
+        orgId: '11111111-1111-1111-1111-111111111111',
+      }),
+      'claim_pending_anchors failed for org-scoped batch',
     );
   });
 
@@ -248,6 +302,27 @@ describe('processBatchAnchors', () => {
     expect(submitCall).toBeDefined();
     expect(submitCall![1].p_merkle_root).toBeTruthy();
     expect(submitCall![1].p_merkle_root).toHaveLength(64);
+  });
+
+  it('persists proof rows outside anchors after a successful batch', async () => {
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null })
+      .mockResolvedValueOnce({ data: 2, error: null });
+
+    await processBatchAnchors();
+
+    expect(mockAnchorProofsUpsert).toHaveBeenCalledOnce();
+    expect(mockAnchorProofsUpsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          anchor_id: 'anchor-a',
+          receipt_id: MOCK_RECEIPT.receiptId,
+          merkle_root: expect.any(String),
+          batch_id: expect.stringMatching(/^batch_/),
+        }),
+      ]),
+      expect.objectContaining({ onConflict: 'anchor_id' }),
+    );
   });
 
   it('marks all anchors as SUBMITTED via bulk RPC after successful publish', async () => {

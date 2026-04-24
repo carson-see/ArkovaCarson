@@ -53,11 +53,17 @@ function sanitizeFilterValue(v: string): string {
   return v.replace(/[%_\\,().]/g, c => `\\${c}`);
 }
 
+function visibleAnchorScope(orgId: string | null | undefined): string {
+  return orgId
+    ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
+    : 'status.eq.SECURED';
+}
+
 async function searchOrgs(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('organizations')
-    .select('id, slug, display_name, about')
-    .or(`display_name.ilike.%${safe}%,about.ilike.%${safe}%,slug.ilike.%${safe}%`)
+    .select('id, public_id, display_name, description, domain, website_url')
+    .or(`display_name.ilike.%${safe}%,description.ilike.%${safe}%,domain.ilike.%${safe}%`)
     .range(offset, offset + limit - 1)
     .order('display_name');
 
@@ -68,19 +74,30 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 
   return (data ?? []).map(org => ({
     type: 'org' as const,
-    public_id: org.slug ?? org.id,
+    public_id: org.public_id ?? org.id,
     score: 1.0,
     snippet: org.display_name ?? '',
-    metadata: { about: org.about },
+    metadata: {
+      description: org.description,
+      domain: org.domain,
+      website_url: org.website_url,
+    },
   }));
 }
 
-async function searchRecords(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+async function searchRecords(
+  q: string,
+  limit: number,
+  offset: number,
+  orgId?: string | null,
+): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, title, credential_type, status, fingerprint')
-    .or(`title.ilike.%${safe}%,credential_type.ilike.%${safe}%`)
+    .select('id, public_id, filename, description, credential_type, status, fingerprint')
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
+    .is('deleted_at', null)
+    .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 
@@ -91,17 +108,25 @@ async function searchRecords(q: string, limit: number, offset: number): Promise<
 
   return (data ?? []).map(rec => ({
     type: 'record' as const,
-    public_id: rec.public_id,
+    public_id: rec.public_id ?? rec.id,
     score: 1.0,
-    snippet: rec.title ?? rec.credential_type ?? '',
+    snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
     metadata: { credential_type: rec.credential_type, status: rec.status },
   }));
 }
 
-async function searchFingerprints(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+async function searchFingerprints(
+  q: string,
+  limit: number,
+  offset: number,
+  orgId?: string | null,
+): Promise<SearchResult[]> {
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, fingerprint, title, status')
+    .select('id, public_id, fingerprint, filename, status')
     .eq('fingerprint', q)
+    .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
+    .is('deleted_at', null)
+    .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 
@@ -112,17 +137,26 @@ async function searchFingerprints(q: string, limit: number, offset: number): Pro
 
   return (data ?? []).map(rec => ({
     type: 'fingerprint' as const,
-    public_id: rec.public_id,
+    public_id: rec.public_id ?? rec.id,
     score: 1.0,
-    snippet: rec.title ?? rec.fingerprint ?? '',
+    snippet: rec.filename ?? rec.fingerprint ?? '',
     metadata: { status: rec.status },
   }));
 }
 
-async function searchDocuments(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+async function searchDocuments(
+  q: string,
+  limit: number,
+  offset: number,
+  orgId?: string | null,
+): Promise<SearchResult[]> {
+  const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, title, metadata, credential_type, status')
-    .ilike('title', `%${sanitizeFilterValue(q)}%`)
+    .select('id, public_id, filename, description, metadata, credential_type, status')
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
+    .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
+    .is('deleted_at', null)
+    .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 
@@ -133,17 +167,15 @@ async function searchDocuments(q: string, limit: number, offset: number): Promis
 
   return (data ?? []).map(doc => ({
     type: 'document' as const,
-    public_id: doc.public_id,
+    public_id: doc.public_id ?? doc.id,
     score: 1.0,
-    snippet: doc.title ?? '',
+    snippet: doc.filename ?? doc.description ?? '',
     metadata: { credential_type: doc.credential_type, status: doc.status },
   }));
 }
 
-searchRouter.get(
-  '/',
-  requireScopeV2('read:search'),
-  async (req: Request, res: Response, next: NextFunction) => {
+export function buildSearchHandler(forcedType?: Exclude<SearchType, 'all'>) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const parsed = SearchQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       next(ProblemError.validationError(
@@ -152,7 +184,9 @@ searchRouter.get(
       return;
     }
 
-    const { q, type, cursor, limit } = parsed.data;
+    const { q, cursor, limit } = parsed.data;
+    const type = forcedType ?? parsed.data.type;
+    const orgId = req.apiKey?.orgId ?? null;
     const cursorData = decodeCursor(cursor);
     const offset = cursorData?.offset ?? 0;
 
@@ -163,19 +197,19 @@ searchRouter.get(
         const perType = Math.ceil(limit / 4);
         const [orgs, records, fingerprints, documents] = await Promise.all([
           searchOrgs(q, perType, offset),
-          searchRecords(q, perType, offset),
-          searchFingerprints(q, perType, offset),
-          searchDocuments(q, perType, offset),
+          searchRecords(q, perType, offset, orgId),
+          searchFingerprints(q, perType, offset, orgId),
+          searchDocuments(q, perType, offset, orgId),
         ]);
         results = [...orgs, ...records, ...fingerprints, ...documents].slice(0, limit);
       } else if (type === 'org') {
         results = await searchOrgs(q, limit, offset);
       } else if (type === 'record') {
-        results = await searchRecords(q, limit, offset);
+        results = await searchRecords(q, limit, offset, orgId);
       } else if (type === 'fingerprint') {
-        results = await searchFingerprints(q, limit, offset);
+        results = await searchFingerprints(q, limit, offset, orgId);
       } else if (type === 'document') {
-        results = await searchDocuments(q, limit, offset);
+        results = await searchDocuments(q, limit, offset, orgId);
       }
 
       const nextCursor = results.length >= limit
@@ -191,5 +225,11 @@ searchRouter.get(
     } catch (err) {
       next(err);
     }
-  },
+  };
+}
+
+searchRouter.get(
+  '/',
+  requireScopeV2('read:search'),
+  buildSearchHandler(),
 );

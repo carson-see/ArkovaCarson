@@ -85,7 +85,7 @@ export function crossReferenceDocuments(anchors: CrossRefAnchor[]): CrossRefResu
     }
   }
 
-  for (const [key, group] of typeMap) {
+  for (const [, group] of typeMap) {
     if (group.length > 1) {
       findings.push({
         type: 'DUPLICATE_CREDENTIAL',

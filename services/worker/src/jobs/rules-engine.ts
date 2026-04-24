@@ -16,6 +16,14 @@
  * this runner only records "matched". A follow-up cron pass reads executions
  * in state PENDING and dispatches, so dispatch retries are independent from
  * evaluation retries.
+ *
+ * Queue lifecycle:
+ *   - claim_pending_rule_events() flips PENDING → CLAIMED.
+ *   - This worker persists any rule matches.
+ *   - complete_claimed_rule_events() flips CLAIMED → PROCESSED only after the
+ *     match write succeeds.
+ *   - release_claimed_rule_events() flips CLAIMED → PENDING/FAILED on worker
+ *     errors so custom-rule events are not stranded forever.
  */
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -25,6 +33,7 @@ import {
   type TriggerEvent,
   type TriggerType,
 } from '../rules/evaluator.js';
+import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 
 export interface RulesEnginePassResult {
   events_processed: number;
@@ -73,6 +82,43 @@ async function claimPendingEvents(): Promise<EventRow[]> {
   } catch (err) {
     logger.warn({ error: err }, 'claim_pending_rule_events threw — treating as empty');
     return [];
+  }
+}
+
+async function completeClaimedEvents(eventIds: string[]): Promise<boolean> {
+  if (eventIds.length === 0) return true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db.rpc as any)('complete_claimed_rule_events', {
+      p_event_ids: eventIds,
+    });
+    if (error) {
+      logger.warn({ error, count: eventIds.length }, 'complete_claimed_rule_events failed');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ error: err, count: eventIds.length }, 'complete_claimed_rule_events threw');
+    return false;
+  }
+}
+
+async function releaseClaimedEvents(eventIds: string[], message: string): Promise<boolean> {
+  if (eventIds.length === 0) return true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db.rpc as any)('release_claimed_rule_events', {
+      p_event_ids: eventIds,
+      p_error: message,
+    });
+    if (error) {
+      logger.warn({ error, count: eventIds.length }, 'release_claimed_rule_events failed');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ error: err, count: eventIds.length }, 'release_claimed_rule_events threw');
+    return false;
   }
 }
 
@@ -173,6 +219,52 @@ async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: numbe
   }
 }
 
+function buildMatchInserts(
+  byOrg: Map<string, EventRow[]>,
+  rulesByOrg: Map<string, RuleRow[]>,
+  result: RulesEnginePassResult,
+): MatchInsert[] {
+  const inserts: MatchInsert[] = [];
+  for (const [orgId, orgEvents] of byOrg) {
+    const rules = rulesByOrg.get(orgId) ?? [];
+    if (rules.length === 0) {
+      result.skipped += orgEvents.length;
+      continue;
+    }
+
+    for (const ev of orgEvents) {
+      const matches = evaluateRules(rules, toTriggerEvent(ev));
+      if (matches.length === 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      inserts.push(...matches.map(({ rule, result: match }) => ({
+        rule_id: rule.id,
+        event_id: ev.id,
+        org_id: ev.org_id,
+        match_reason: match.reason,
+        needs_semantic_match: match.needs_semantic_match,
+      })));
+    }
+  }
+  return inserts;
+}
+
+async function notifyRuleMatches(inserts: MatchInsert[]): Promise<void> {
+  const byNotificationOrg = new Map<string, number>();
+  for (const insert of inserts) {
+    byNotificationOrg.set(insert.org_id, (byNotificationOrg.get(insert.org_id) ?? 0) + 1);
+  }
+  await Promise.all([...byNotificationOrg.entries()].map(([orgId, matchesRecorded]) =>
+    emitOrgAdminNotifications({
+      type: 'rule_fired',
+      organizationId: orgId,
+      payload: { matchesRecorded },
+    }),
+  ));
+}
+
 export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const result: RulesEnginePassResult = {
     events_processed: 0,
@@ -189,42 +281,33 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const events = await claimPendingEvents();
   if (events.length === 0) return result;
   result.events_processed = events.length;
+  const eventIds = events.map((ev) => ev.id);
 
   const byOrg = groupEventsByOrg(events);
   const rulesByOrg = await fetchRulesByOrg([...byOrg.keys()]);
   if (!rulesByOrg) {
     result.errors += events.length;
+    const released = await releaseClaimedEvents(eventIds, 'Rules fetch failed');
+    if (!released) result.errors += 1;
     return result;
   }
 
-  const inserts: MatchInsert[] = [];
-  for (const [orgId, orgEvents] of byOrg) {
-    const rules = rulesByOrg.get(orgId) ?? [];
-    if (rules.length === 0) {
-      result.skipped += orgEvents.length;
-      continue;
-    }
-    for (const ev of orgEvents) {
-      const matches = evaluateRules(rules, toTriggerEvent(ev));
-      if (matches.length === 0) {
-        result.skipped += 1;
-        continue;
-      }
-      for (const { rule, result: r } of matches) {
-        inserts.push({
-          rule_id: rule.id,
-          event_id: ev.id,
-          org_id: ev.org_id,
-          match_reason: r.reason,
-          needs_semantic_match: r.needs_semantic_match,
-        });
-      }
-    }
-  }
+  const inserts = buildMatchInserts(byOrg, rulesByOrg, result);
 
   const persist = await persistMatches(inserts);
   result.matches_recorded = persist.recorded;
-  if (persist.errored) result.errors += 1;
+  if (persist.errored) {
+    result.errors += 1;
+    const released = await releaseClaimedEvents(eventIds, 'Rule execution persistence failed');
+    if (!released) result.errors += 1;
+    return result;
+  }
+
+  const completed = await completeClaimedEvents(eventIds);
+  if (!completed) result.errors += 1;
+  if (persist.recorded > 0) {
+    await notifyRuleMatches(inserts);
+  }
 
   logger.info(
     {

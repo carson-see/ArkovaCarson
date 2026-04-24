@@ -99,7 +99,6 @@ export function detectGaps(input: GapDetectorInput): GapDetectorResult {
   const priority_order = missing_required.map(m => m.type);
 
   const totalRequired = requiredTypes.size;
-  const totalPresent = totalRequired - missing_required.length;
 
   let summary: string;
   if (missing_required.length === 0) {

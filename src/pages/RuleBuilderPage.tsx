@@ -164,7 +164,7 @@ export function RuleBuilderPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error?.message ?? `Save failed (${res.status})`);
       }
-      navigate(ROUTES.COMPLIANCE_DASHBOARD);
+      navigate(ROUTES.RULES);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed');
     } finally {

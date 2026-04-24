@@ -48,6 +48,42 @@ import {
 } from './gemini-config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
+const STRING_EXTRACTION_FIELDS = new Set([
+  'credentialType',
+  'subType',
+  'issuerName',
+  'recipientIdentifier',
+  'issuedDate',
+  'expiryDate',
+  'fieldOfStudy',
+  'degreeLevel',
+  'licenseNumber',
+  'accreditingBody',
+  'jurisdiction',
+  'creditType',
+  'barNumber',
+  'activityNumber',
+  'providerName',
+  'approvedBy',
+  'einNumber',
+  'taxExemptStatus',
+  'governingBody',
+  'crdNumber',
+  'firmName',
+  'finraRegistration',
+  'seriesLicenses',
+  'entityType',
+  'stateOfFormation',
+  'registeredAgent',
+  'goodStandingStatus',
+  'suggestedType',
+  'reasoning',
+  'confidenceReasoning',
+  'description',
+]);
+const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours']);
+const STRING_ARRAY_EXTRACTION_FIELDS = new Set(['fraudSignals', 'concerns']);
+const BOOLEAN_EXTRACTION_FIELDS = new Set(['issuerVerified']);
 
 // Vertex AI tuned model config (Gemini Golden fine-tune)
 // Set GEMINI_TUNED_MODEL to the Vertex AI endpoint resource path to enable.
@@ -158,12 +194,18 @@ export class GeminiProvider implements IAIProvider {
 
       // Parse and validate (shared path for both tuned and standard)
       // NMT-02: Strip JS-style comments that tuned/reasoning models may emit
-      const parsed = JSON.parse(stripJsonComments(text));
-      const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0.5;
+      const parsed = parseExtractionJson(text);
+      const confidence = coerceConfidence(parsed.confidence);
       const { confidence: _, ...rawFields } = parsed;
-      const validated = ExtractedFieldsSchema.safeParse(rawFields);
+      const sanitizedFields = sanitizeExtractedFields(rawFields);
+      const validated = ExtractedFieldsSchema.safeParse(sanitizedFields);
       if (!validated.success) {
-        logger.warn({ zodError: validated.error.message, model: this.tunedModelPath ?? this.modelName }, 'Extraction schema validation failed');
+        logger.warn({
+          zodError: validated.error.message,
+          model: this.tunedModelPath ?? this.modelName,
+          rawKeys: Object.keys(rawFields),
+          sanitizedKeys: Object.keys(sanitizedFields),
+        }, 'Extraction schema validation failed after salvage');
         throw new Error('Extraction schema validation failed');
       }
 
@@ -581,6 +623,131 @@ export class GeminiProvider implements IAIProvider {
     this.recordFailure();
     throw lastError;
   }
+}
+
+function parseExtractionJson(text: string): Record<string, unknown> {
+  const cleaned = stripJsonComments(text).trim();
+  const unfenced = stripMarkdownJsonFence(cleaned);
+
+  try {
+    return ensureJsonObject(JSON.parse(unfenced));
+  } catch (initialError) {
+    const start = unfenced.indexOf('{');
+    const end = unfenced.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return ensureJsonObject(JSON.parse(unfenced.slice(start, end + 1)));
+    }
+    throw initialError;
+  }
+}
+
+function stripMarkdownJsonFence(cleaned: string): string {
+  if (!cleaned.startsWith('```')) return cleaned;
+
+  const firstLineBreak = cleaned.indexOf('\n');
+  const withoutOpeningFence = firstLineBreak >= 0
+    ? cleaned.slice(firstLineBreak + 1)
+    : cleaned.slice(3);
+  const trimmed = withoutOpeningFence.trim();
+
+  return trimmed.endsWith('```')
+    ? trimmed.slice(0, -3).trim()
+    : trimmed;
+}
+
+function ensureJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error('Extraction response was not a JSON object');
+}
+
+function coerceConfidence(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0.5;
+}
+
+function sanitizeExtractedFields(rawFields: Record<string, unknown>): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(rawFields)) {
+    const coerced = coerceExtractionField(key, value);
+    if (coerced !== undefined) sanitized[key] = coerced;
+  }
+
+  return sanitized;
+}
+
+function coerceExtractionField(key: string, value: unknown): unknown {
+  if (STRING_EXTRACTION_FIELDS.has(key)) {
+    return coerceString(value, key === 'description' ? 500 : undefined);
+  }
+
+  if (NUMBER_EXTRACTION_FIELDS.has(key)) {
+    return coerceNumber(value);
+  }
+
+  if (STRING_ARRAY_EXTRACTION_FIELDS.has(key)) {
+    const coerced = coerceStringArray(value);
+    return coerced.length > 0 ? coerced : undefined;
+  }
+
+  if (BOOLEAN_EXTRACTION_FIELDS.has(key)) {
+    return coerceBoolean(value);
+  }
+
+  return undefined;
+}
+
+function coerceString(value: unknown, maxLength?: number): string | undefined {
+  let text: string | undefined;
+  if (typeof value === 'string') text = value;
+  if (typeof value === 'number' || typeof value === 'boolean') text = String(value);
+  if (Array.isArray(value)) {
+    text = value
+      .map((item) => coerceString(item))
+      .filter((item): item is string => Boolean(item))
+      .join(', ');
+  }
+
+  const trimmed = text?.trim();
+  if (!trimmed) return undefined;
+  return maxLength ? trimmed.slice(0, maxLength) : trimmed;
+}
+
+function coerceNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function coerceStringArray(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((item) => {
+      if (typeof item === 'object' && item !== null) {
+        const record = item as Record<string, unknown>;
+        return coerceString(record.signal ?? record.code ?? record.description ?? record.message ?? JSON.stringify(record));
+      }
+      return coerceString(item);
+    })
+    .filter((item): item is string => Boolean(item));
+}
+
+function coerceBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    if (/^true$/i.test(value.trim())) return true;
+    if (/^false$/i.test(value.trim())) return false;
+  }
+  return undefined;
 }
 
 // ─── Template Reconstruction Types ───

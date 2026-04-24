@@ -19,7 +19,10 @@ import { logger } from '../utils/logger.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
+import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { config } from '../config.js';
+import { POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
+import type { ChainReceipt } from '../chain/types.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -28,7 +31,7 @@ import { config } from '../config.js';
  * Env override only allowed to go LOWER (for testing), never below 100.
  */
 export const BATCH_SIZE = Math.min(
-  Math.max(parseInt(process.env.BATCH_ANCHOR_MAX_SIZE ?? '10000', 10) || 10000, 100),
+  resolveAnchorBatchSize(config.batchAnchorMaxSize),
   10000,
 );
 
@@ -124,14 +127,41 @@ export interface BatchAnchorResult {
   batchId: string | null;
   merkleRoot: string | null;
   txId: string | null;
+  error?: string;
 }
+
+export interface BatchAnchorOptions {
+  /** Limit claimed anchors to one organization. Used by org-admin queue runs. */
+  orgId?: string | null;
+  /** Bypass small/fresh queue deferral. Fee and treasury guards still apply. */
+  force?: boolean;
+  /** Diagnostic worker id stored on claimed anchors. */
+  workerId?: string;
+  /** Return a visible error instead of a quiet no-op when another batch is active. */
+  failIfRunning?: boolean;
+}
+
+type ClaimPendingAnchorRow = {
+  id: string;
+  fingerprint: string;
+  metadata: unknown;
+  user_id?: string;
+  org_id?: string;
+  public_id?: string;
+  credential_type?: string;
+};
+
+type ClaimPendingAnchorsRpc = (
+  fn: 'claim_pending_anchors',
+  params: Record<string, unknown>,
+) => Promise<{ data: ClaimPendingAnchorRow[] | null; error: { message?: string } | null }>;
+
+const EMPTY_BATCH_RESULT: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
  */
-const POSTGREST_ROW_LIMIT = 1000;
-
 /**
  * SCALE-3: In-process mutex — prevents overlapping batch runs when cron fires
  * faster than batch processing completes. Same pattern as confirmation checker.
@@ -151,209 +181,246 @@ let batchProcessingRunning = false;
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
  * SCALE-3: In-process mutex prevents overlapping runs
  */
-export async function processBatchAnchors(): Promise<BatchAnchorResult> {
-  const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
-
+export async function processBatchAnchors(
+  options: BatchAnchorOptions = {},
+): Promise<BatchAnchorResult> {
   // SCALE-3: Mutex — skip if already running
   if (batchProcessingRunning) {
     logger.info('Batch processing skipped — already in progress');
-    return EMPTY;
+    if (options.failIfRunning) {
+      return { ...EMPTY_BATCH_RESULT, error: 'Batch processing is already in progress' };
+    }
+    return EMPTY_BATCH_RESULT;
   }
   batchProcessingRunning = true;
   try {
-    return await _processBatchAnchorsInner();
+    return await _processBatchAnchorsInner(options);
   } finally {
     batchProcessingRunning = false;
   }
 }
 
-async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
-  const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
-
-  // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
-  const chainClient = getChainClient();
+async function treasuryHasFunds(chainClient: ReturnType<typeof getChainClient>): Promise<boolean> {
   try {
-    if (chainClient.hasFunds) {
-      const funded = await chainClient.hasFunds();
-      if (!funded) {
-        logger.warn('Treasury empty — skipping batch anchor processing until funded');
-        return EMPTY;
-      }
-    }
+    if (!chainClient.hasFunds) return true;
+    const funded = await chainClient.hasFunds();
+    if (!funded) logger.warn('Treasury empty — skipping batch anchor processing until funded');
+    return funded;
   } catch (err) {
     logger.warn({ error: err }, 'Pre-flight UTXO check failed — proceeding cautiously');
+    return true;
   }
+}
 
-  // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
-  let oldestPendingAgeMs = 0;
+async function getPendingStats(orgId: string | null): Promise<{ pendingCount: number; oldestPendingAgeMs: number; hasPending: boolean }> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let oldestQuery = (db as any)
+    .from('anchors')
+    .select('created_at')
+    .eq('status', 'PENDING')
+    .is('deleted_at', null);
+  if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
+  const { data: stats } = await oldestQuery
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .single();
+
+  if (!stats) return { pendingCount: 0, oldestPendingAgeMs: 0, hasPending: false };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let countQuery = (db as any)
+    .from('anchors')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'PENDING')
+    .is('deleted_at', null);
+  if (orgId) countQuery = countQuery.eq('org_id', orgId);
+  const { count } = await countQuery;
+
+  return {
+    pendingCount: count ?? 0,
+    oldestPendingAgeMs: Date.now() - new Date(stats.created_at).getTime(),
+    hasPending: true,
+  };
+}
+
+async function shouldDeferForBatchRules(options: BatchAnchorOptions, orgId: string | null): Promise<{ defer: boolean; oldestPendingAgeMs: number }> {
   try {
-    const { data: stats } = await db
-      .from('anchors')
-      .select('created_at')
-      .eq('status', 'PENDING')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single();
-
-    if (!stats) {
+    const stats = await getPendingStats(orgId);
+    if (!stats.hasPending) {
       logger.debug('No pending anchors — skipping batch');
-      return EMPTY;
+      return { defer: true, oldestPendingAgeMs: 0 };
     }
-
-    oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
-
-    // Count pending (cheap — uses index)
-    const { count } = await db
-      .from('anchors')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'PENDING')
-      .is('deleted_at', null);
-
-    const pendingCount = count ?? 0;
-
-    if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
-      // CIBA-HARDEN-05: the old message said "oldest anchor is fresh" but
-      // this branch also fires when pendingCount is 0 (no pending rows at
-      // all, so the "oldest" concept is meaningless). Neutral log keeps
-      // grep-ability without implying we saw a row.
+    if (!options.force && !triggerB_shouldFireOnAge(stats)) {
       logger.debug(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
-        `Deferring batch (pending=${pendingCount}, oldestAgeMs=${oldestPendingAgeMs})`,
+        { pendingCount: stats.pendingCount, oldestAgeMs: stats.oldestPendingAgeMs },
+        `Deferring batch (pending=${stats.pendingCount}, oldestAgeMs=${stats.oldestPendingAgeMs})`,
       );
-      return EMPTY;
+      return { defer: true, oldestPendingAgeMs: stats.oldestPendingAgeMs };
     }
+    return { defer: false, oldestPendingAgeMs: stats.oldestPendingAgeMs };
   } catch (err) {
     logger.warn({ error: err }, 'Smart batch skip check failed — proceeding with batch');
+    return { defer: false, oldestPendingAgeMs: 0 };
   }
+}
 
-  // Phase 0c: SCALE-2 — Pre-claim fee check with dynamic ceiling
+async function feeCheckAllowsBatch(
+  chainClient: ReturnType<typeof getChainClient>,
+  oldestPendingAgeMs: number,
+): Promise<boolean> {
   try {
-    if (chainClient.estimateCurrentFee) {
-      const currentFee = await chainClient.estimateCurrentFee();
-      const baseCeiling = config.maxFeeThresholdSatPerVbyte ?? 50;
-      const effectiveCeiling = triggerC_computeFeeCeiling({ baseCeiling, oldestPendingAgeMs });
+    if (!chainClient.estimateCurrentFee) return true;
+    const currentFee = await chainClient.estimateCurrentFee();
+    const baseCeiling = config.maxFeeThresholdSatPerVbyte ?? 50;
+    const effectiveCeiling = triggerC_computeFeeCeiling({ baseCeiling, oldestPendingAgeMs });
 
-      if (currentFee > effectiveCeiling) {
-        logger.warn(
-          { currentFee, effectiveCeiling, baseCeiling, oldestPendingAgeMs },
-          'Fee rate exceeds ceiling — deferring batch until fees drop',
-        );
-        return EMPTY;
-      }
-
-      logger.debug({ currentFee, effectiveCeiling }, 'Fee pre-check passed');
+    if (currentFee > effectiveCeiling) {
+      logger.warn(
+        { currentFee, effectiveCeiling, baseCeiling, oldestPendingAgeMs },
+        'Fee rate exceeds ceiling — deferring batch until fees drop',
+      );
+      return false;
     }
+
+    logger.debug({ currentFee, effectiveCeiling }, 'Fee pre-check passed');
+    return true;
   } catch (err) {
     logger.warn({ error: err }, 'Pre-claim fee check failed — proceeding cautiously');
+    return true;
   }
+}
 
-  // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
-  const allClaimed: Array<{ id: string; fingerprint: string; metadata: unknown; user_id?: string; org_id?: string; public_id?: string; credential_type?: string }> = [];
+type ClaimBatchResult =
+  | { kind: 'claimed'; anchors: ClaimPendingAnchorRow[] }
+  | { kind: 'empty' }
+  | { kind: 'legacy' }
+  | { kind: 'error'; message: string };
+
+function buildClaimParams(options: BatchAnchorOptions, orgId: string | null, chunkSize: number): Record<string, unknown> {
+  const claimParams: Record<string, unknown> = {
+    p_worker_id: options.workerId ?? `batch-${process.pid}`,
+    p_limit: chunkSize,
+    p_exclude_pipeline: false,
+  };
+  if (orgId) claimParams.p_org_id = orgId;
+  return claimParams;
+}
+
+function handleClaimError(
+  claimError: { message?: string },
+  allClaimed: ClaimPendingAnchorRow[],
+  orgId: string | null,
+): ClaimBatchResult | null {
+  if (allClaimed.length > 0) {
+    logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
+    return { kind: 'claimed', anchors: allClaimed };
+  }
+  if (orgId) {
+    logger.error({ error: claimError, orgId }, 'claim_pending_anchors failed for org-scoped batch');
+    return { kind: 'error', message: claimError.message ?? 'Failed to claim organization anchors' };
+  }
+  logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
+  return { kind: 'legacy' };
+}
+
+async function claimAnchorsForBatch(options: BatchAnchorOptions, orgId: string | null): Promise<ClaimBatchResult> {
+  const allClaimed: ClaimPendingAnchorRow[] = [];
   let remaining = BATCH_SIZE;
+  const claimPendingAnchors = db.rpc as unknown as ClaimPendingAnchorsRpc;
 
   while (remaining > 0) {
     const chunkSize = Math.min(remaining, POSTGREST_ROW_LIMIT);
-    // Wrapped in 30s timeout to prevent batch job from hanging
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let chunkResult: { data: any; error: any };
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      chunkResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
-        p_worker_id: `batch-${process.pid}`,
-        p_limit: chunkSize,
-        p_exclude_pipeline: false,
-      }), 30_000);
+      const { data: chunk, error } = await withDbTimeout(
+        () => claimPendingAnchors('claim_pending_anchors', buildClaimParams(options, orgId, chunkSize)),
+        30_000,
+      );
+      if (error) return handleClaimError(error, allClaimed, orgId) ?? { kind: 'empty' };
+      if (!chunk || !Array.isArray(chunk) || chunk.length === 0) break;
+      allClaimed.push(...chunk);
+      remaining -= chunk.length;
+      if (chunk.length < chunkSize) break;
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
-      if (allClaimed.length === 0) {
-        return { processed: 0, batchId: null, merkleRoot: null, txId: null };
-      }
-      break; // Proceed with what we have
-    }
-    const { data: chunk, error: claimError } = chunkResult;
-
-    if (claimError) {
-      if (allClaimed.length === 0) {
-        logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
-        return legacyProcessBatchAnchors();
-      }
-      // Partial claim succeeded — proceed with what we have
-      logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
+      if (allClaimed.length === 0) return { kind: 'error', message: 'Timed out claiming pending anchors' };
       break;
     }
-
-    if (!chunk || !Array.isArray(chunk) || chunk.length === 0) break;
-    allClaimed.push(...chunk);
-    remaining -= chunk.length;
-
-    // If we got fewer than requested, no more PENDING anchors
-    if (chunk.length < chunkSize) break;
   }
 
-  const claimedAnchors = allClaimed;
+  return allClaimed.length > 0 ? { kind: 'claimed', anchors: allClaimed } : { kind: 'empty' };
+}
 
-  if (claimedAnchors.length < MIN_BATCH_SIZE) {
-    return { processed: 0, batchId: null, merkleRoot: null, txId: null };
-  }
-
-  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE }, 'Claimed anchors for batch processing');
-
-  const fingerprints = claimedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
-
-  // Phase 2: Build Merkle tree
-  const tree = buildMerkleTree(fingerprints);
-
-  // Phase 3: Publish Merkle root to chain
-  let receipt;
+async function submitBatchMerkleRoot(merkleRoot: string, count: number): Promise<ChainReceipt | null> {
   try {
     const chainClient = getChainClient();
-    receipt = await chainClient.submitFingerprint({
-      fingerprint: tree.root,
+    const receipt = await chainClient.submitFingerprint({
+      fingerprint: merkleRoot,
       timestamp: new Date().toISOString(),
     });
+    if (receipt?.receiptId) return receipt;
+    logger.error({ merkleRoot }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
+    return null;
   } catch (error) {
-    logger.error({ error, merkleRoot: tree.root, count: claimedAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
-    await bulkRevertToPending(claimedAnchors.map(a => a.id));
-    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
+    logger.error({ error, merkleRoot, count }, 'Batch anchor chain submission failed — bulk reverting claims');
+    return null;
   }
+}
 
-  if (!receipt || !receipt.receiptId) {
-    logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
-    await bulkRevertToPending(claimedAnchors.map(a => a.id));
-    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
-  }
-
-  // Phase 4: Bulk update all claimed anchors BROADCASTING → SUBMITTED in one RPC call
-  // (Individual PostgREST updates timeout under load — use DB-side bulk function)
-  const batchId = `batch_${Date.now()}_${claimedAnchors.length}`;
-  const anchorIds = claimedAnchors.map((a: { id: string }) => a.id);
-
+async function submitClaimedAnchors(
+  claimedAnchors: ClaimPendingAnchorRow[],
+  receipt: ChainReceipt,
+  merkleRoot: string,
+  batchId: string,
+): Promise<number | null> {
+  const anchorIds = claimedAnchors.map((a) => a.id);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: updatedCount, error: bulkError } = await (db.rpc as any)('submit_batch_anchors', {
     p_anchor_ids: anchorIds,
     p_tx_id: receipt.receiptId,
     p_block_height: receipt.blockHeight ?? null,
     p_block_timestamp: receipt.blockTimestamp ?? null,
-    p_merkle_root: tree.root,
+    p_merkle_root: merkleRoot,
     p_batch_id: batchId,
   });
 
   if (bulkError) {
-    // M1: Revert to PENDING instead of N+1 individual updates.
-    // Let the recovery cron re-process these on the next run.
     logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed — bulk reverting claimed anchors to PENDING');
-    await bulkRevertToPending(claimedAnchors.map(a => a.id));
-    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: receipt.receiptId };
+    await bulkRevertToPending(anchorIds);
+    return null;
   }
+  return typeof updatedCount === 'number' ? updatedCount : claimedAnchors.length;
+}
 
-  const processed = typeof updatedCount === 'number' ? updatedCount : (claimedAnchors.length);
+async function persistBatchProofs(
+  claimedAnchors: ClaimPendingAnchorRow[],
+  receipt: ChainReceipt,
+  merkleRoot: string,
+  proofs: Map<string, unknown>,
+  batchId: string,
+): Promise<void> {
+  try {
+    await upsertAnchorProofs(
+      db,
+      claimedAnchors.map((anchor) => ({
+        anchorId: anchor.id,
+        receiptId: receipt.receiptId,
+        blockHeight: receipt.blockHeight ?? null,
+        blockTimestamp: receipt.blockTimestamp ?? null,
+        merkleRoot,
+        proofPath: proofs.get(anchor.fingerprint) ?? [],
+        batchId,
+      })),
+    );
+  } catch (proofError) {
+    logger.warn({ error: proofError, batchId }, 'Failed to persist Merkle proofs for batch anchors');
+  }
+}
 
-  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
+async function applyComplianceControls(claimedAnchors: ClaimPendingAnchorRow[]): Promise<void> {
   try {
     const byType = new Map<string | null, string[]>();
     for (const anchor of claimedAnchors) {
-      const ct = (anchor as { credential_type?: string | null }).credential_type ?? null;
+      const ct = anchor.credential_type ?? null;
       if (!byType.has(ct)) byType.set(ct, []);
       byType.get(ct)!.push(anchor.id);
     }
@@ -365,6 +432,59 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
   } catch (complianceErr) {
     logger.warn({ error: complianceErr }, 'Non-fatal: failed to set compliance_controls on batch anchors');
   }
+}
+
+async function _processBatchAnchorsInner(options: BatchAnchorOptions): Promise<BatchAnchorResult> {
+  const orgId = options.orgId ?? null;
+
+  // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
+  const chainClient = getChainClient();
+  if (!(await treasuryHasFunds(chainClient))) return EMPTY_BATCH_RESULT;
+
+  // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
+  const batchRules = await shouldDeferForBatchRules(options, orgId);
+  if (batchRules.defer) return EMPTY_BATCH_RESULT;
+
+  // Phase 0c: SCALE-2 — Pre-claim fee check with dynamic ceiling
+  if (!(await feeCheckAllowsBatch(chainClient, batchRules.oldestPendingAgeMs))) return EMPTY_BATCH_RESULT;
+
+  // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
+  const claimResult = await claimAnchorsForBatch(options, orgId);
+  if (claimResult.kind === 'legacy') return legacyProcessBatchAnchors();
+  if (claimResult.kind === 'error') return { ...EMPTY_BATCH_RESULT, error: claimResult.message };
+  if (claimResult.kind === 'empty') return EMPTY_BATCH_RESULT;
+  const claimedAnchors = claimResult.anchors;
+
+  if (claimedAnchors.length < MIN_BATCH_SIZE) {
+    return EMPTY_BATCH_RESULT;
+  }
+
+  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE, orgId }, 'Claimed anchors for batch processing');
+
+  const fingerprints = claimedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
+
+  // Phase 2: Build Merkle tree
+  const tree = buildMerkleTree(fingerprints);
+
+  // Phase 3: Publish Merkle root to chain
+  const receipt = await submitBatchMerkleRoot(tree.root, claimedAnchors.length);
+  if (!receipt) {
+    await bulkRevertToPending(claimedAnchors.map(a => a.id));
+    return { ...EMPTY_BATCH_RESULT, merkleRoot: tree.root };
+  }
+
+  // Phase 4: Bulk update all claimed anchors BROADCASTING → SUBMITTED in one RPC call
+  // (Individual PostgREST updates timeout under load — use DB-side bulk function)
+  const batchId = `batch_${Date.now()}_${claimedAnchors.length}`;
+  const processed = await submitClaimedAnchors(claimedAnchors, receipt, tree.root, batchId);
+  if (processed === null) {
+    return { processed: 0, batchId: null, merkleRoot: tree.root, txId: receipt.receiptId };
+  }
+
+  await persistBatchProofs(claimedAnchors, receipt, tree.root, tree.proofs, batchId);
+
+  // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
+  await applyComplianceControls(claimedAnchors);
 
   logger.info(
     {
@@ -484,6 +604,15 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
     // Fallback: try individual updates if RPC not available
     logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed in legacy path — falling back to individual updates');
     let updatedCount = 0;
+    const proofRows: Array<{
+      anchorId: string;
+      receiptId: string;
+      blockHeight: number | null;
+      blockTimestamp: string | null;
+      merkleRoot: string;
+      proofPath: unknown;
+      batchId: string;
+    }> = [];
 
     for (const anchor of pendingAnchors) {
       const { error: updateError, count: updateCount } = await db
@@ -493,11 +622,6 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
           chain_tx_id: receipt.receiptId,
           chain_block_height: receipt.blockHeight,
           chain_timestamp: receipt.blockTimestamp,
-          metadata: JSON.parse(JSON.stringify({
-            ...(typeof anchor.metadata === 'object' && anchor.metadata !== null ? anchor.metadata : {}),
-            merkle_root: tree.root,
-            batch_id: batchId,
-          })),
           compliance_controls: getComplianceControlIds(anchor.credential_type),
         })
         .eq('id', anchor.id)
@@ -512,6 +636,21 @@ async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
         continue;
       }
       updatedCount++;
+      proofRows.push({
+        anchorId: anchor.id,
+        receiptId: receipt.receiptId,
+        blockHeight: receipt.blockHeight ?? null,
+        blockTimestamp: receipt.blockTimestamp ?? null,
+        merkleRoot: tree.root,
+        proofPath: tree.proofs.get(anchor.fingerprint) ?? [],
+        batchId,
+      });
+    }
+
+    try {
+      await upsertAnchorProofs(db, proofRows);
+    } catch (proofError) {
+      logger.warn({ error: proofError, batchId }, 'Failed to persist Merkle proofs in legacy batch path');
     }
 
     logger.info({ batchId, count: updatedCount, total: pendingAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Legacy batch anchor processing complete (fallback)');
