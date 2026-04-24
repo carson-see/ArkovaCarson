@@ -14,6 +14,74 @@ export type Database = {
   }
   public: {
     Tables: {
+      agents: {
+        Row: {
+          agent_type: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes: string[]
+          callback_url: string | null
+          created_at: string
+          description: string | null
+          framework: string | null
+          id: string
+          last_active_at: string | null
+          metadata: Json | null
+          name: string
+          org_id: string
+          registered_by: string
+          revoked_at: string | null
+          status: Database["public"]["Enums"]["agent_status"]
+          suspended_at: string | null
+          updated_at: string
+          version: string | null
+        }
+        Insert: {
+          agent_type?: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes?: string[]
+          callback_url?: string | null
+          created_at?: string
+          description?: string | null
+          framework?: string | null
+          id?: string
+          last_active_at?: string | null
+          metadata?: Json | null
+          name: string
+          org_id: string
+          registered_by: string
+          revoked_at?: string | null
+          status?: Database["public"]["Enums"]["agent_status"]
+          suspended_at?: string | null
+          updated_at?: string
+          version?: string | null
+        }
+        Update: {
+          agent_type?: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes?: string[]
+          callback_url?: string | null
+          created_at?: string
+          description?: string | null
+          framework?: string | null
+          id?: string
+          last_active_at?: string | null
+          metadata?: Json | null
+          name?: string
+          org_id?: string
+          registered_by?: string
+          revoked_at?: string | null
+          status?: Database["public"]["Enums"]["agent_status"]
+          suspended_at?: string | null
+          updated_at?: string
+          version?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_credits: {
         Row: {
           created_at: string
@@ -373,6 +441,7 @@ export type Database = {
           credential_type: Database["public"]["Enums"]["credential_type"] | null
           deleted_at: string | null
           description: string | null
+          directory_info_opt_out: boolean
           expires_at: string | null
           file_mime: string | null
           file_size: number | null
@@ -395,6 +464,7 @@ export type Database = {
           revocation_tx_id: string | null
           revoked_at: string | null
           status: Database["public"]["Enums"]["anchor_status"]
+          sub_type: string | null
           updated_at: string
           user_id: string
           version_number: number
@@ -411,6 +481,7 @@ export type Database = {
             | null
           deleted_at?: string | null
           description?: string | null
+          directory_info_opt_out?: boolean
           expires_at?: string | null
           file_mime?: string | null
           file_size?: number | null
@@ -433,6 +504,7 @@ export type Database = {
           revocation_tx_id?: string | null
           revoked_at?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
+          sub_type?: string | null
           updated_at?: string
           user_id: string
           version_number?: number
@@ -449,6 +521,7 @@ export type Database = {
             | null
           deleted_at?: string | null
           description?: string | null
+          directory_info_opt_out?: boolean
           expires_at?: string | null
           file_mime?: string | null
           file_size?: number | null
@@ -471,6 +544,7 @@ export type Database = {
           revocation_tx_id?: string | null
           revoked_at?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
+          sub_type?: string | null
           updated_at?: string
           user_id?: string
           version_number?: number
@@ -543,10 +617,15 @@ export type Database = {
       }
       api_keys: {
         Row: {
+          access_purpose: string | null
+          agent_id: string | null
           created_at: string
           created_by: string
           expires_at: string | null
+          ferpa_exception_category: string | null
+          ferpa_verified: boolean
           id: string
+          institution_type: string | null
           is_active: boolean
           key_hash: string
           key_prefix: string
@@ -559,10 +638,15 @@ export type Database = {
           scopes: string[]
         }
         Insert: {
+          access_purpose?: string | null
+          agent_id?: string | null
           created_at?: string
           created_by: string
           expires_at?: string | null
+          ferpa_exception_category?: string | null
+          ferpa_verified?: boolean
           id?: string
+          institution_type?: string | null
           is_active?: boolean
           key_hash: string
           key_prefix: string
@@ -575,10 +659,15 @@ export type Database = {
           scopes?: string[]
         }
         Update: {
+          access_purpose?: string | null
+          agent_id?: string | null
           created_at?: string
           created_by?: string
           expires_at?: string | null
+          ferpa_exception_category?: string | null
+          ferpa_verified?: boolean
           id?: string
+          institution_type?: string | null
           is_active?: boolean
           key_hash?: string
           key_prefix?: string
@@ -591,6 +680,13 @@ export type Database = {
           scopes?: string[]
         }
         Relationships: [
+          {
+            foreignKeyName: "api_keys_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "api_keys_org_id_fkey"
             columns: ["org_id"]
@@ -944,6 +1040,139 @@ export type Database = {
           },
         ]
       }
+      compliance_audits: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          error_code: string | null
+          error_message: string | null
+          gaps: Json
+          id: string
+          jurisdiction_filter: string[] | null
+          metadata: Json
+          org_id: string
+          overall_grade: string
+          overall_score: number
+          per_jurisdiction: Json
+          quarantines: Json
+          started_at: string
+          status: string
+          triggered_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          gaps?: Json
+          id?: string
+          jurisdiction_filter?: string[] | null
+          metadata?: Json
+          org_id: string
+          overall_grade: string
+          overall_score: number
+          per_jurisdiction?: Json
+          quarantines?: Json
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          gaps?: Json
+          id?: string
+          jurisdiction_filter?: string[] | null
+          metadata?: Json
+          org_id?: string
+          overall_grade?: string
+          overall_score?: number
+          per_jurisdiction?: Json
+          quarantines?: Json
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compliance_audits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      compliance_scores: {
+        Row: {
+          created_at: string
+          expiring_documents: Json | null
+          grade: string
+          id: string
+          industry_code: string
+          jurisdiction_code: string
+          last_calculated: string
+          missing_documents: Json | null
+          nessie_analysis_id: string | null
+          org_id: string
+          present_documents: Json | null
+          recommendations: Json | null
+          score: number
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          expiring_documents?: Json | null
+          grade: string
+          id?: string
+          industry_code: string
+          jurisdiction_code: string
+          last_calculated?: string
+          missing_documents?: Json | null
+          nessie_analysis_id?: string | null
+          org_id: string
+          present_documents?: Json | null
+          recommendations?: Json | null
+          score: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          expiring_documents?: Json | null
+          grade?: string
+          id?: string
+          industry_code?: string
+          jurisdiction_code?: string
+          last_calculated?: string
+          missing_documents?: Json | null
+          nessie_analysis_id?: string | null
+          org_id?: string
+          present_documents?: Json | null
+          recommendations?: Json | null
+          score?: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compliance_scores_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       credential_embeddings: {
         Row: {
           anchor_id: string
@@ -1217,6 +1446,59 @@ export type Database = {
           },
         ]
       }
+      emergency_access_grants: {
+        Row: {
+          approver_id: string | null
+          created_at: string
+          expires_at: string
+          granted_at: string
+          grantee_id: string
+          id: string
+          org_id: string
+          reason: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          scope: string
+        }
+        Insert: {
+          approver_id?: string | null
+          created_at?: string
+          expires_at: string
+          granted_at?: string
+          grantee_id: string
+          id?: string
+          org_id: string
+          reason: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+        }
+        Update: {
+          approver_id?: string | null
+          created_at?: string
+          expires_at?: string
+          granted_at?: string
+          grantee_id?: string
+          id?: string
+          org_id?: string
+          reason?: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "emergency_access_grants_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       entitlements: {
         Row: {
           created_at: string
@@ -1411,6 +1693,78 @@ export type Database = {
           },
           {
             foreignKeyName: "extraction_manifests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ferpa_disclosure_log: {
+        Row: {
+          api_key_id: string | null
+          created_at: string
+          disclosed_at: string
+          disclosed_by: string | null
+          disclosure_exception: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids: string[]
+          id: string
+          legitimate_interest: string
+          notes: string | null
+          org_id: string
+          requesting_party_name: string
+          requesting_party_org: string | null
+          requesting_party_type: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained: boolean
+          student_opt_out_checked: boolean
+          verification_event_id: string | null
+        }
+        Insert: {
+          api_key_id?: string | null
+          created_at?: string
+          disclosed_at?: string
+          disclosed_by?: string | null
+          disclosure_exception?: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids?: string[]
+          id?: string
+          legitimate_interest: string
+          notes?: string | null
+          org_id: string
+          requesting_party_name: string
+          requesting_party_org?: string | null
+          requesting_party_type?: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained?: boolean
+          student_opt_out_checked?: boolean
+          verification_event_id?: string | null
+        }
+        Update: {
+          api_key_id?: string | null
+          created_at?: string
+          disclosed_at?: string
+          disclosed_by?: string | null
+          disclosure_exception?: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids?: string[]
+          id?: string
+          legitimate_interest?: string
+          notes?: string | null
+          org_id?: string
+          requesting_party_name?: string
+          requesting_party_org?: string | null
+          requesting_party_type?: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained?: boolean
+          student_opt_out_checked?: boolean
+          verification_event_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ferpa_disclosure_log_api_key_id_fkey"
+            columns: ["api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ferpa_disclosure_log_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1750,6 +2104,93 @@ export type Database = {
           },
         ]
       }
+      job_queue: {
+        Row: {
+          attempts: number
+          created_at: string
+          id: string
+          last_error: string | null
+          max_attempts: number
+          payload: Json
+          priority: number
+          scheduled_for: string | null
+          status: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload?: Json
+          priority?: number
+          scheduled_for?: string | null
+          status?: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload?: Json
+          priority?: number
+          scheduled_for?: string | null
+          status?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      jurisdiction_rules: {
+        Row: {
+          created_at: string
+          details: Json | null
+          effective_date: string | null
+          expiry_date: string | null
+          id: string
+          industry_code: string
+          jurisdiction_code: string
+          optional_credential_types: string[] | null
+          regulatory_reference: string | null
+          required_credential_types: string[]
+          rule_name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          effective_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          industry_code: string
+          jurisdiction_code: string
+          optional_credential_types?: string[] | null
+          regulatory_reference?: string | null
+          required_credential_types?: string[]
+          rule_name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          effective_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          industry_code?: string
+          jurisdiction_code?: string
+          optional_credential_types?: string[] | null
+          regulatory_reference?: string | null
+          required_credential_types?: string[]
+          rule_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       memberships: {
         Row: {
           created_at: string
@@ -1785,6 +2226,53 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notifications: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          link: string | null
+          org_id: string
+          payload: Json
+          read_at: string | null
+          severity: string
+          title: string
+          type: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
+          id?: string
+          link?: string | null
+          org_id: string
+          payload?: Json
+          read_at?: string | null
+          severity?: string
+          title: string
+          type: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          link?: string | null
+          org_id?: string
+          payload?: Json
+          read_at?: string | null
+          severity?: string
+          title?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notifications_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -1830,6 +2318,7 @@ export type Database = {
           affiliation_grace_expires_at: string | null
           created_at: string
           description: string | null
+          directory_info_fields: string[]
           display_name: string
           domain: string | null
           domain_verification_method: string | null
@@ -1839,6 +2328,7 @@ export type Database = {
           domain_verified_at: string | null
           ein_tax_id: string | null
           founded_date: string | null
+          hipaa_mfa_required: boolean
           id: string
           industry_tag: string | null
           legal_name: string
@@ -1852,6 +2342,7 @@ export type Database = {
           parent_approved_at: string | null
           parent_org_id: string | null
           public_id: string | null
+          session_timeout_minutes: number
           twitter_url: string | null
           updated_at: string
           verification_status: string
@@ -1862,6 +2353,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           created_at?: string
           description?: string | null
+          directory_info_fields?: string[]
           display_name: string
           domain?: string | null
           domain_verification_method?: string | null
@@ -1871,6 +2363,7 @@ export type Database = {
           domain_verified_at?: string | null
           ein_tax_id?: string | null
           founded_date?: string | null
+          hipaa_mfa_required?: boolean
           id?: string
           industry_tag?: string | null
           legal_name: string
@@ -1884,6 +2377,7 @@ export type Database = {
           parent_approved_at?: string | null
           parent_org_id?: string | null
           public_id?: string | null
+          session_timeout_minutes?: number
           twitter_url?: string | null
           updated_at?: string
           verification_status?: string
@@ -1894,6 +2388,7 @@ export type Database = {
           affiliation_grace_expires_at?: string | null
           created_at?: string
           description?: string | null
+          directory_info_fields?: string[]
           display_name?: string
           domain?: string | null
           domain_verification_method?: string | null
@@ -1903,6 +2398,7 @@ export type Database = {
           domain_verified_at?: string | null
           ein_tax_id?: string | null
           founded_date?: string | null
+          hipaa_mfa_required?: boolean
           id?: string
           industry_tag?: string | null
           legal_name?: string
@@ -1916,6 +2412,7 @@ export type Database = {
           parent_approved_at?: string | null
           parent_org_id?: string | null
           public_id?: string | null
+          session_timeout_minutes?: number
           twitter_url?: string | null
           updated_at?: string
           verification_status?: string
@@ -1977,6 +2474,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pipeline_dashboard_cache: {
+        Row: {
+          cache_key: string
+          cache_value: Json
+          updated_at: string
+        }
+        Insert: {
+          cache_key: string
+          cache_value: Json
+          updated_at?: string
+        }
+        Update: {
+          cache_key?: string
+          cache_value?: Json
+          updated_at?: string
+        }
+        Relationships: []
       }
       plans: {
         Row: {
@@ -2977,44 +3492,6 @@ export type Database = {
           },
         ]
       }
-      user_notifications: {
-        Row: {
-          created_at: string
-          id: string
-          organization_id: string | null
-          payload: Json
-          read_at: string | null
-          type: Database["public"]["Enums"]["notification_type"]
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          organization_id?: string | null
-          payload?: Json
-          read_at?: string | null
-          type: Database["public"]["Enums"]["notification_type"]
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          organization_id?: string | null
-          payload?: Json
-          read_at?: string | null
-          type?: Database["public"]["Enums"]["notification_type"]
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "user_notifications_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       verification_events: {
         Row: {
           anchor_id: string | null
@@ -3330,6 +3807,19 @@ export type Database = {
         }
         Relationships: []
       }
+      v_slow_queries: {
+        Row: {
+          calls: number | null
+          max_time_ms: number | null
+          mean_time_ms: number | null
+          query_preview: string | null
+          queryid: number | null
+          rows: number | null
+          stddev_ms: number | null
+          total_time_sec: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       activate_user: {
@@ -3391,11 +3881,32 @@ export type Database = {
         Args: { p_lock_duration_seconds?: number; p_worker_id: string }
         Returns: string
       }
+      claim_next_job: {
+        Args: { p_now: string; p_type: string }
+        Returns: {
+          attempts: number
+          created_at: string
+          id: string
+          last_error: string | null
+          max_attempts: number
+          payload: Json
+          priority: number
+          scheduled_for: string | null
+          status: string
+          type: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "job_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_pending_anchors: {
         Args: {
           p_exclude_pipeline?: boolean
           p_limit?: number
-          p_org_id?: string
           p_worker_id?: string
         }
         Returns: {
@@ -3451,6 +3962,17 @@ export type Database = {
         Args: { p_endpoint_id: string }
         Returns: undefined
       }
+      finalize_public_record_anchor_batch: {
+        Args: {
+          p_batch_id?: string
+          p_block_height?: number
+          p_block_timestamp?: string
+          p_items: Json
+          p_merkle_root?: string
+          p_tx_id: string
+        }
+        Returns: Json
+      }
       generate_anchor_public_id: {
         Args: { category?: string }
         Returns: string
@@ -3460,7 +3982,20 @@ export type Database = {
         Returns: string
       }
       generate_public_id: { Args: never; Returns: string }
+      get_agents_for_user: {
+        Args: { p_user_id: string }
+        Returns: {
+          agent_type: string
+          allowed_scopes: string[]
+          created_at: string
+          framework: string
+          id: string
+          name: string
+          status: string
+        }[]
+      }
       get_anchor_status_counts: { Args: never; Returns: Json }
+      get_anchor_status_counts_fast: { Args: never; Returns: Json }
       get_anchor_tx_stats: { Args: never; Returns: Json }
       get_anchor_type_counts: {
         Args: never
@@ -3468,6 +4003,13 @@ export type Database = {
           count: number
           credential_type: string
           status: string
+        }[]
+      }
+      get_caller_role: { Args: never; Returns: string }
+      get_distinct_record_types: {
+        Args: never
+        Returns: {
+          record_type: string
         }[]
       }
       get_edgar_shard_counts: { Args: never; Returns: Json }
@@ -3508,6 +4050,7 @@ export type Database = {
           status: string
         }[]
       }
+      get_org_anchor_stats: { Args: { p_org_id: string }; Returns: Json }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -3561,6 +4104,16 @@ export type Database = {
           website_url: string
         }[]
       }
+      get_public_records_page: {
+        Args: {
+          p_anchor_status?: string
+          p_page?: number
+          p_page_size?: number
+          p_record_type?: string
+          p_source?: string
+        }
+        Returns: Json
+      }
       get_public_records_stats: { Args: never; Returns: Json }
       get_public_template: {
         Args: { p_credential_type: string; p_org_id: string }
@@ -3581,7 +4134,12 @@ export type Database = {
           title: string
         }[]
       }
+      get_user_anchor_stats: { Args: { p_user_id: string }; Returns: Json }
       get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
+      get_user_monthly_anchor_count: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }
       hypopg: { Args: never; Returns: Record<string, unknown>[] }
@@ -3637,6 +4195,7 @@ export type Database = {
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
       is_user_verified: { Args: { p_user_id: string }; Returns: boolean }
       join_org_by_domain: { Args: { p_org_id: string }; Returns: Json }
+      link_public_records_to_anchors: { Args: { p_items: Json }; Returns: Json }
       link_recipient_on_signup: {
         Args: { p_email_hash: string; p_user_id: string }
         Returns: number
@@ -3662,12 +4221,20 @@ export type Database = {
           stuck_since: string
         }[]
       }
+      refresh_cache_anchor_status_counts: { Args: never; Returns: undefined }
+      refresh_cache_anchor_tx_stats: { Args: never; Returns: undefined }
+      refresh_cache_anchor_type_counts: { Args: never; Returns: undefined }
+      refresh_cache_by_source: { Args: never; Returns: undefined }
+      refresh_cache_pipeline_stats: { Args: never; Returns: undefined }
+      refresh_cache_record_types: { Args: never; Returns: undefined }
+      refresh_pipeline_dashboard_cache: { Args: never; Returns: Json }
       refresh_stats_cache: { Args: never; Returns: undefined }
       refresh_stats_materialized_views: { Args: never; Returns: undefined }
       release_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
-      revoke_anchor:
-        | { Args: { anchor_id: string }; Returns: undefined }
-        | { Args: { anchor_id: string; reason?: string }; Returns: undefined }
+      revoke_anchor: {
+        Args: { anchor_id: string; reason?: string }
+        Returns: undefined
+      }
       sanitize_metadata_for_public: {
         Args: { p_metadata: Json }
         Returns: Json
@@ -3722,12 +4289,14 @@ export type Database = {
         Returns: Json[]
       }
       search_public_issuers: {
-        Args: { p_limit?: number; p_query: string }
+        Args: { p_limit?: number; p_offset?: number; p_query: string }
         Returns: {
           credential_count: number
-          org_domain: string
-          org_id: string
-          org_name: string
+          display_name: string
+          id: string
+          legal_name: string
+          public_id: string
+          verified: boolean
         }[]
       }
       search_public_record_embeddings: {
@@ -3767,6 +4336,13 @@ export type Database = {
       }
     }
     Enums: {
+      agent_status: "active" | "suspended" | "revoked"
+      agent_type:
+        | "llm_agent"
+        | "ats_integration"
+        | "hr_platform"
+        | "compliance_tool"
+        | "custom"
       ai_report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
       anchor_status:
         | "PENDING"
@@ -3823,22 +4399,42 @@ export type Database = {
         | "MEDICAL"
         | "MILITARY"
         | "IDENTITY"
+        | "ACCREDITATION"
       credit_transaction_type:
         | "ALLOCATION"
         | "PURCHASE"
         | "DEDUCTION"
         | "EXPIRY"
         | "REFUND"
+      ferpa_exception_category:
+        | "99.31(a)(1)"
+        | "99.31(a)(2)"
+        | "99.31(a)(3)"
+        | "99.31(a)(4)"
+        | "99.31(a)(5)"
+        | "99.31(a)(6)"
+        | "99.31(a)(7)"
+        | "99.31(a)(8)"
+        | "99.31(a)(9)"
+        | "99.31(a)(10)"
+        | "99.31(a)(11)"
+        | "99.31(a)(12)"
+        | "other"
+      ferpa_party_type:
+        | "school_official"
+        | "employer"
+        | "government"
+        | "accreditor"
+        | "financial_aid"
+        | "research"
+        | "health_safety"
+        | "subpoena"
+        | "directory_info"
+        | "other"
       grc_platform: "vanta" | "drata" | "anecdotes"
       grc_sync_status: "pending" | "syncing" | "success" | "failed"
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
       job_status: "pending" | "processing" | "completed" | "failed"
-      notification_type:
-        | "queue_run_completed"
-        | "rule_fired"
-        | "version_available_for_review"
-        | "treasury_alert"
-        | "anchor_revoked"
       org_member_role: "owner" | "admin" | "member" | "compliance_officer"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
       report_status: "pending" | "generating" | "completed" | "failed"
@@ -3982,6 +4578,14 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      agent_status: ["active", "suspended", "revoked"],
+      agent_type: [
+        "llm_agent",
+        "ats_integration",
+        "hr_platform",
+        "compliance_tool",
+        "custom",
+      ],
       ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
       anchor_status: [
         "PENDING",
@@ -4042,6 +4646,7 @@ export const Constants = {
         "MEDICAL",
         "MILITARY",
         "IDENTITY",
+        "ACCREDITATION",
       ],
       credit_transaction_type: [
         "ALLOCATION",
@@ -4049,6 +4654,33 @@ export const Constants = {
         "DEDUCTION",
         "EXPIRY",
         "REFUND",
+      ],
+      ferpa_exception_category: [
+        "99.31(a)(1)",
+        "99.31(a)(2)",
+        "99.31(a)(3)",
+        "99.31(a)(4)",
+        "99.31(a)(5)",
+        "99.31(a)(6)",
+        "99.31(a)(7)",
+        "99.31(a)(8)",
+        "99.31(a)(9)",
+        "99.31(a)(10)",
+        "99.31(a)(11)",
+        "99.31(a)(12)",
+        "other",
+      ],
+      ferpa_party_type: [
+        "school_official",
+        "employer",
+        "government",
+        "accreditor",
+        "financial_aid",
+        "research",
+        "health_safety",
+        "subpoena",
+        "directory_info",
+        "other",
       ],
       grc_platform: ["vanta", "drata", "anecdotes"],
       grc_sync_status: ["pending", "syncing", "success", "failed"],
@@ -4075,3 +4707,4 @@ export const Constants = {
     },
   },
 } as const
+
