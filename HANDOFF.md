@@ -14,7 +14,7 @@
 
 ## Now
 
-**Branch:** `codex/rule-simulator-api` — PR pending for SCRUM-727/985/987 hardening pass (security + coverage gaps). All 6 PRs from the 2026-04-23→24 wave already shipped to main: #479 CIBA-HARDEN-03, #480 CIBA-HARDEN-04/05/06, #481 GEMB2 + SEC-HARDEN runbooks, #483 SEC-HARDEN-03 healthcheck, #484 Platform v2 10-story sprint, #485 lint-cleanup + secret-audit CLI.
+**Branch:** `claude/2026-04-24-scrum-727-985-987-hardening` — PR #493 for SCRUM-727/985/987 hardening pass (security + coverage gaps surfaced during code review). 2026-04-24 wave already on main: #487 kenya dupe cleanup, #488 AI reliability + 10k batching + org rules, #490 onboarding signup, #491 rule simulator/history + KAU-06 NDB, #492 postcss bump.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
