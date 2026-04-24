@@ -214,4 +214,21 @@ MIDDESK_WEBHOOK_SECRET=
 # flips to prod so a missing or mis-typed var is always the safer sandbox
 # path. Change via runbook Sandbox → production cutover.
 MIDDESK_SANDBOX=true
+
+# ─── SCRUM-1168 / SCRUM-1169 — Google Drive integration ───
+# See docs/runbooks/integrations/drive.md for GCP OAuth app setup.
+# OAuth tokens are KMS-encrypted before persistence; cleartext never lands
+# in Postgres.
+
+# OAuth 2.0 client credentials from the GCP Console OAuth app. The
+# redirect URI registered in the OAuth app must match exactly the
+# worker's callback route (https://<worker>/api/v1/integrations/google_drive/oauth/callback).
+GOOGLE_OAUTH_CLIENT_ID=
+GOOGLE_OAUTH_CLIENT_SECRET=
+
+# Dedicated KMS key for encrypting OAuth refresh tokens. Falls back to
+# GCP_KMS_KEY_RESOURCE_NAME (the Bitcoin signing key) when unset, but a
+# dedicated key is strongly preferred so a chain-signing compromise does
+# not leak OAuth tokens. Value is the full KMS resource name.
+GCP_KMS_INTEGRATION_TOKEN_KEY=
 ```
