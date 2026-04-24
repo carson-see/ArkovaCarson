@@ -26,6 +26,7 @@
  */
 
 import { logger } from '../../utils/logger.js';
+import { GEMINI_EMBEDDING_V2_MODEL } from '../gemini-config.js';
 
 /**
  * Vertex AI location. US-only residency for all Arkova calls. CLAUDE.md §1.4
@@ -35,12 +36,14 @@ import { logger } from '../../utils/logger.js';
 export const GEMB2_LOCATION = 'us-central1';
 
 /**
- * Model ID for Gemini Embedding 2. The `@` suffix pins the stable version —
- * Vertex silently rotates `latest` which is a non-starter for eval
- * reproducibility (past incident: Gemini Golden F1 dropped 3 pts overnight
- * after a silent rotate).
+ * Model ID for Gemini Embedding 2. Delegates to `gemini-config.ts` so the
+ * deprecation monitor (GME-05) + version-pin audit trail see a single source
+ * of truth, and so a future rotation is a one-line change in gemini-config.
+ * The `@` suffix pins the stable version — Vertex silently rotates `latest`
+ * which is a non-starter for eval reproducibility (past incident: Gemini
+ * Golden F1 dropped 3 pts overnight after a silent rotate).
  */
-export const GEMB2_MODEL = 'gemini-embedding-2@001';
+export const GEMB2_MODEL = GEMINI_EMBEDDING_V2_MODEL;
 
 /**
  * HTTP auth scheme for Vertex bearer tokens. Pulled out so the one call-site
