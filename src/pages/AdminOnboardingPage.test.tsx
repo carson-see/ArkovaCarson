@@ -43,13 +43,6 @@ function renderPage() {
 describe('AdminOnboardingPage', () => {
   beforeEach(() => {
     workerFetchMock.mockReset();
-    // `userEvent.setup()` in v14 installs its own `navigator.clipboard` stub
-    // via Object.defineProperty. When the global test setup
-    // (src/test/setup.ts) has already defined clipboard, the redefine can
-    // throw `TypeError: Cannot redefine property: clipboard` in jsdom.
-    // Deleting before each test makes user-event's install path a fresh
-    // create instead of a redefine.
-    delete (navigator as unknown as { clipboard?: unknown }).clipboard;
   });
   afterEach(() => {
     vi.clearAllMocks();
