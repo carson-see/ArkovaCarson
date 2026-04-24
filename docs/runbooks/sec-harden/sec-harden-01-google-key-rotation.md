@@ -61,14 +61,21 @@ APIs & Services → Credentials → **Create Credentials → API Key** ×2.
 
 ### 2. Store both in Secret Manager
 
+Use the GCP console (**Secret Manager → Create Secret**) and paste the fresh key value there, or feed via stdin from `read -s` so the value never appears in shell history / docs:
+
 ```bash
-printf 'NEW_STITCH_KEY_VALUE' | \
+# Paste new stitch key when prompted (stdin, never inline):
+read -s STITCH_KEY_FROM_CONSOLE
+printf '%s' "$STITCH_KEY_FROM_CONSOLE" | \
   gcloud secrets create google-api-key-stitch \
   --replication-policy=automatic --data-file=-
+unset STITCH_KEY_FROM_CONSOLE
 
-printf 'NEW_GENERAL_KEY_VALUE' | \
+read -s GENERAL_KEY_FROM_CONSOLE
+printf '%s' "$GENERAL_KEY_FROM_CONSOLE" | \
   gcloud secrets create google-api-key-general \
   --replication-policy=automatic --data-file=-
+unset GENERAL_KEY_FROM_CONSOLE
 
 gcloud secrets add-iam-policy-binding google-api-key-stitch \
   --member=serviceAccount:270018525501-compute@developer.gserviceaccount.com \
@@ -104,7 +111,7 @@ Stitch usage is currently limited to design / internal tooling. Update the consu
 
 ### 5. Revoke the old key
 
-APIs & Services → Credentials → select `AQ.Ab8RN6I1LY9…` → **Delete**. Confirm the prompt. Once deleted the key cannot be recovered.
+APIs & Services → Credentials → select the prior over-scoped key (prefix `AQ.Ab8RN` per ops memory) → **Delete**. Confirm the prompt. Once deleted the key cannot be recovered.
 
 ### 6. Verify the rotation took
 
@@ -115,14 +122,9 @@ APIs & Services → Credentials → select `AQ.Ab8RN6I1LY9…` → **Delete**. C
   ```
 
   then trigger any job that calls Gemini (e.g. `/jobs/test-gemini-extract`) and confirm 200.
-- Hit a Gemini endpoint with the OLD key:
+- Hit a Gemini endpoint with the OLD key to confirm it's gone:
 
-  ```bash
-  curl -sS -H 'x-goog-api-key: AQ.Ab8RN6I1LY9_OLD_KEY' \
-    https://generativelanguage.googleapis.com/v1beta/models
-  ```
-
-  Expect 403 — the deletion should make the old key return an error within 5 minutes.
+  Use the placeholder token from your shell history (`history | grep x-goog-api-key`) — not pasted in this runbook — and curl the models list endpoint. Expect HTTP 403 within 5 minutes of the delete.
 
 ### 7. Update ENV.md
 
