@@ -1,0 +1,136 @@
+name: sonatype-scan
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/package.json'
+      - '**/package-lock.json'
+      - '.github/workflows/dependency-scan.yml'
+  schedule:
+    - cron: '0 12 * * 1'
+
+permissions:
+  contents: read
+  id-token: write   # WIF auth needs this
+
+jobs:
+  sonatype-oss-index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - { name: root, path: . }
+          - { name: worker, path: services/worker }
+          - { name: edge, path: services/edge }
+          - { name: embed, path: packages/embed }
+          # packages/sdk excluded — no lockfile yet
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - id: gcp-auth
+        name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2.1.13
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - id: sonatype-secrets
+        name: Pull Sonatype token from GCP Secret Manager
+        continue-on-error: true   # don't block PRs if IAM not yet granted on `sonatype` secret
+        uses: google-github-actions/get-secretmanager-secrets@a8440875e1c2892062aef9061228d4f1af8f919b  # v2.2.3
+        with:
+          secrets: |
+            token:arkova1/sonatype
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.workspace.path }}/package-lock.json
+
+      - name: Install deps (${{ matrix.workspace.name }})
+        working-directory: ${{ matrix.workspace.path }}
+        run: npm ci --no-audit --no-fund
+
+      - name: Generate dependency manifest
+        working-directory: ${{ matrix.workspace.path }}
+        run: |
+          # Preserve stderr so peer-dep warnings surface in the Actions log.
+          npm ls --all --json --omit=dev > deps.json || true
+          jq '[.. | objects | select(.version) | "pkg:npm/\(.name)@\(.version)"] | unique' deps.json > purls.json
+          echo "PURL count: $(jq length purls.json)"
+
+      - name: Sonatype OSS Index scan
+        id: scan
+        if: steps.sonatype-secrets.outputs.token != ''
+        working-directory: ${{ matrix.workspace.path }}
+        env:
+          SONATYPE_TOKEN: ${{ steps.sonatype-secrets.outputs.token }}
+        run: |
+          # Sonatype OSS Index caps `coordinates` at 128 entries per request.
+          # Split purls into 128-entry batches, POST each, concatenate the arrays.
+          jq -c '[_nwise(128)]' purls.json > batches.json
+          echo "[]" > report.json
+          BATCH_COUNT=$(jq length batches.json)
+          echo "Posting $BATCH_COUNT batch(es) to OSS Index"
+          for i in $(seq 0 $((BATCH_COUNT - 1))); do
+            jq ".[$i] | {coordinates: .}" batches.json > req.json
+            curl -sSf -H "Authorization: Bearer $SONATYPE_TOKEN" \
+              -H "Content-Type: application/json" \
+              -X POST https://ossindex.sonatype.org/api/v3/component-report \
+              -d @req.json > batch-report.json
+            jq -s '.[0] + .[1]' report.json batch-report.json > report.json.tmp
+            mv report.json.tmp report.json
+          done
+          HIGH=$(jq '[.[] | .vulnerabilities[]? | select((.cvssScore // 0) >= 7)] | length' report.json)
+          MED=$(jq '[.[] | .vulnerabilities[]? | select((.cvssScore // 0) >= 4 and (.cvssScore // 0) < 7)] | length' report.json)
+          echo "high=$HIGH" >> "$GITHUB_OUTPUT"
+          echo "medium=$MED" >> "$GITHUB_OUTPUT"
+          {
+            echo "## ${{ matrix.workspace.name }} dependency scan"
+            echo ""
+            echo "- HIGH (CVSS ≥ 7): **$HIGH**"
+            echo "- MEDIUM (CVSS 4-6.9): **$MED**"
+            echo ""
+            jq -r '.[] | select(.vulnerabilities | length > 0) | "- `\(.coordinates)` — \(.vulnerabilities | length) issue(s)"' report.json | head -30
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$HIGH" -gt 0 ]; then
+            echo "::error::${{ matrix.workspace.name }}: $HIGH HIGH-severity vulnerabilities — see job summary"
+            exit 1
+          fi
+
+      - name: Warn if scan was skipped (no Sonatype token)
+        if: steps.sonatype-secrets.outputs.token == ''
+        run: |
+          {
+            echo "## ${{ matrix.workspace.name }} dependency scan — SKIPPED"
+            echo ""
+            echo "GCP Workload Identity Federation could not access the \`sonatype\` secret in project \`arkova1\` (PERMISSION_DENIED)."
+            echo ""
+            echo "Grant access:"
+            echo ""
+            echo '```bash'
+            echo 'SA="$(gh secret get GCP_SERVICE_ACCOUNT)"   # or look up in repo settings'
+            echo 'gcloud secrets add-iam-policy-binding sonatype \'
+            echo '  --project=arkova1 \'
+            echo "  --member=\"serviceAccount:\$SA\" \\"
+            echo '  --role="roles/secretmanager.secretAccessor"'
+            echo '```'
+            echo ""
+            echo "Once granted, the scan starts running on the next PR — no further code changes needed. See [docs/runbooks/mcp/sonatype.md](docs/runbooks/mcp/sonatype.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::Sonatype scan skipped — IAM not granted on arkova1/sonatype secret"
+
+      - name: Upload SBOM artifact
+        if: always() && steps.sonatype-secrets.outputs.token != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sbom-${{ matrix.workspace.name }}
+          path: |
+            ${{ matrix.workspace.path }}/deps.json
+            ${{ matrix.workspace.path }}/purls.json
+            ${{ matrix.workspace.path }}/report.json
+          retention-days: 90
