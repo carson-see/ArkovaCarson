@@ -43,6 +43,21 @@ export const GEMB2_LOCATION = 'us-central1';
 export const GEMB2_MODEL = 'gemini-embedding-2@001';
 
 /**
+ * HTTP auth scheme for Vertex bearer tokens. Pulled out so the one call-site
+ * doesn't hide a stringly-typed literal; keeps scheme changes (unlikely but
+ * possible, e.g. regional GCP variants) auditable.
+ */
+const AUTH_SCHEME = 'Bearer';
+
+/**
+ * Follow-up: swap the standalone `Gemini2Client` below for a class that
+ * implements `IAIProvider` (services/worker/src/ai/types.ts) so the factory
+ * selects it via the `AI_PROVIDER` env var alongside the existing Gemini /
+ * Cloudflare providers. Out of scope for the GEMB2-01 spike — lands with
+ * GEMB2-02 (SCRUM-1051) when we also wire the RAG hot path over.
+ */
+
+/**
  * Matryoshka dimensions supported by Gemini Embedding 2. Caller picks one
  * per call; Vertex server truncates (and optionally re-normalizes) before
  * returning. Storage cost scales linearly with dim — always use the
@@ -162,7 +177,7 @@ export function createGemini2Client(opts: Gemini2ClientOptions): Gemini2Client {
     const res = await doFetch(endpoint, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
+        Authorization: `${AUTH_SCHEME} ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),

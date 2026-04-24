@@ -63,7 +63,13 @@ async function main(): Promise<void> {
     throw new Error(`Corpus is empty: ${args.corpus}`);
   }
 
-  // Defer the SDK import so unit tests can skip google-auth-library entirely.
+  // Use google-auth-library directly here (not services/worker/src/utils/
+  // gcp-auth.ts) because this harness runs locally against Application
+  // Default Credentials (`gcloud auth application-default login`).
+  // `getGcpAccessToken` in gcp-auth.ts only supports Cloud Run metadata +
+  // GCP_SA_KEY_JSON — the production hot path. Humans running this benchmark
+  // shouldn't need a service-account key; ADC is the expected credential.
+  // Deferred import so unit tests can skip google-auth-library entirely.
   const { GoogleAuth } = await import('google-auth-library');
   const googleAuth = new GoogleAuth({
     scopes: ['https://www.googleapis.com/auth/cloud-platform'],
