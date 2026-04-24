@@ -4,6 +4,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
+import { createV2ScopeRateLimit } from './rateLimit.js';
 
 export const searchRouter = Router();
 
@@ -243,5 +244,6 @@ export function buildSearchHandler(forcedType?: Exclude<SearchType, 'all'>) {
 searchRouter.get(
   '/',
   requireScopeV2('read:search'),
+  createV2ScopeRateLimit('read:search'),
   buildSearchHandler(),
 );

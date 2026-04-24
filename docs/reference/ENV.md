@@ -116,6 +116,17 @@ UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
 ```
 
+## API v2 per-scope rate limits (worker only)
+Defaults are used when unset. Values are requests per minute per API key per scope.
+
+```bash
+API_V2_RATE_LIMIT_READ_SEARCH_PER_MIN=1000
+API_V2_RATE_LIMIT_READ_RECORDS_PER_MIN=500
+API_V2_RATE_LIMIT_READ_ORGS_PER_MIN=500
+API_V2_RATE_LIMIT_WRITE_ANCHORS_PER_MIN=100
+API_V2_RATE_LIMIT_ADMIN_RULES_PER_MIN=50
+```
+
 ## Sentry
 ```bash
 VITE_SENTRY_DSN=

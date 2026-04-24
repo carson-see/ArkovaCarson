@@ -13,7 +13,8 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 | What you want to do | Read this |
 |---|---|
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
-| Anchor + verify from Python | [`sdks/python`](../../sdks/python/) |
+| Anchor + verify from Python | [`arkova`](../../packages/arkova-py/README.md) |
+| Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |
 | Let an AI agent (Claude / LangChain / AutoGen) verify credentials | [MCP tool reference](./mcp-tools.md) |
@@ -29,7 +30,7 @@ Arkova exposes its verification platform through five complementary surfaces. Pi
 
 ### 1. REST API — `https://arkova-worker-270018525501.us-central1.run.app/api/v1`
 
-The foundation. Everything else wraps this. Public endpoints (verify, batch verify) require no auth. Authenticated endpoints take an API key via `X-API-Key` or `Authorization: Bearer ak_live_...`.
+The foundation. v1 is frozen and now publishes a 12-month deprecation calendar. Public endpoints (verify, batch verify) require no auth. Authenticated endpoints take an API key via `X-API-Key` or `Authorization: Bearer ak_live_...`.
 
 | Group | Endpoints | Auth | Docs |
 |---|---|---|---|
@@ -41,7 +42,21 @@ The foundation. Everything else wraps this. Public endpoints (verify, batch veri
 | CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/record` | API key + x402 | [OpenAPI](./openapi.yaml) |
 | Attestations | `POST/GET/PATCH /attestations` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 
-### 2. TypeScript SDK — `@arkova/sdk`
+### 2. API v2 — `https://api.arkova.ai/v2`
+
+Agent-ready REST surface for search, fingerprint verification, public anchor lookup, and organization context. API v2 uses scoped API keys and RFC 7807 `application/problem+json` errors.
+
+| Scope | Default quota | Endpoints |
+|---|---:|---|
+| `read:search` | 1,000 req/min | `/search`, `/organizations`, `/records`, `/fingerprints`, `/documents` |
+| `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}` |
+| `read:orgs` | 500 req/min | `/orgs` |
+| `write:anchors` | 100 req/min | Reserved for v2 write endpoints |
+| `admin:rules` | 50 req/min | Reserved for v2 admin endpoints |
+
+📖 [v1 to v2 migration guide](./v2-migration.md)
+
+### 3. TypeScript SDK — `@arkova/sdk`
 
 A thin wrapper around the REST API. Three lines of code to anchor and verify. Includes a programmable webhooks namespace, batch verify, error handling, and x402 micropayment support.
 
@@ -54,7 +69,20 @@ const result = await arkova.verify(receipt.publicId);
 
 📖 [Full SDK reference](../../packages/sdk/README.md)
 
-### 3. Embeddable widget — `@arkova/embed`
+### 4. Python SDK — `arkova`
+
+Typed Python 3.10+ client with sync and async entry points. Install with `pip install arkova`.
+
+```python
+from arkova import Arkova
+
+with Arkova(api_key="ak_live_...") as arkova:
+    results = arkova.search("registered nurse", type="record")
+```
+
+📖 [Full Python SDK reference](../../packages/arkova-py/README.md) and [example notebook](./arkova-py-example.ipynb)
+
+### 5. Embeddable widget — `@arkova/embed`
 
 A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification badge on any third-party site.
 
@@ -65,7 +93,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 📖 [Full embed reference](../../packages/embed/README.md)
 
-### 4. MCP server — `https://edge.arkova.ai/mcp`
+### 6. MCP server — `https://edge.arkova.ai/mcp`
 
 Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, and `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
@@ -82,7 +110,7 @@ Model Context Protocol endpoint for AI agents. New integrations should prefer th
 
 📖 [Full MCP tool reference](./mcp-tools.md)
 
-### 5. Webhooks (outbound) — your URL
+### 7. Webhooks (outbound) — your URL
 
 Arkova POSTs HMAC-SHA256-signed JSON to your endpoint when anchors transition state. Three event types:
 
@@ -116,6 +144,9 @@ API keys are scoped to a single organization. RLS enforces isolation server-side
 |---|---|---|
 | Anonymous | 100 req/min per IP | Public verify without API key |
 | Authenticated | 1,000 req/min per API key | Most authenticated endpoints |
+| API v2 `read:records` / `read:orgs` | 500 req/min per API key per scope | v2 record and organization tools |
+| API v2 `write:anchors` | 100 req/min per API key per scope | v2 write endpoints |
+| API v2 `admin:rules` | 50 req/min per API key per scope | v2 admin endpoints |
 | Batch | 10 req/min per API key | `POST /verify/batch`, webhook CRUD, batch attestations |
 | AI | 30 req/min per user | Nessie query, AI extraction, semantic search |
 
@@ -159,7 +190,7 @@ The `/api/v1/*` schema is **frozen**. Per [Constitution 1.8](../../CLAUDE.md#18-
 - Breaking changes require a `/api/v2/` prefix and a 12-month deprecation period.
 - Existing fields are never renamed, removed, or have their types changed.
 
-If you build against `/api/v1`, your integration will keep working.
+v1 responses now include `Deprecation: Sun, 23 Apr 2027 00:00:00 GMT; link="<https://arkova.ai/docs/v2-migration>; rel=successor-version"`. See the [migration guide](./v2-migration.md) for the full calendar.
 
 ---
 
@@ -168,6 +199,8 @@ If you build against `/api/v1`, your integration will keep working.
 | File | What's in it |
 |---|---|
 | [`README.md`](./README.md) | This file — top-level developer docs index |
+| [`v2-migration.md`](./v2-migration.md) | v1 deprecation calendar and v2 migration guide |
+| [`v1-deprecation-communication-plan.md`](./v1-deprecation-communication-plan.md) | Customer email plan and SOC 2 evidence checklist |
 | [`webhooks.md`](./webhooks.md) | Comprehensive webhook CRUD guide: schemas, HMAC verification (Node/Python/Go), retry policy, SSRF rules |
 | [`mcp-tools.md`](./mcp-tools.md) | MCP server tool reference for AI agents |
 | [`openapi.yaml`](./openapi.yaml) | Machine-readable OpenAPI 3.0 spec — all REST endpoints |
@@ -176,7 +209,7 @@ External:
 
 - [`packages/sdk/README.md`](../../packages/sdk/README.md) — `@arkova/sdk` TypeScript SDK
 - [`packages/embed/README.md`](../../packages/embed/README.md) — `@arkova/embed` embeddable widget
-- [`sdks/python/`](../../sdks/python/) — Python SDK
+- [`packages/arkova-py/`](../../packages/arkova-py/) — Python SDK
 - [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs) — Hosted Swagger UI
 
 ---
@@ -185,6 +218,9 @@ External:
 
 | Date | Story | What shipped |
 |---|---|---|
+| 2026-04-24 | SCRUM-1110 | v1 deprecation calendar, migration guide, and production `Deprecation` header wiring. |
+| 2026-04-24 | SCRUM-1111 | API v2 per-scope rate limits backed by Upstash Redis with documented env overrides. |
+| 2026-04-24 | SCRUM-1112 | Python SDK package (`pip install arkova`) with sync/async typed clients and publish workflow. |
 | 2026-04-11 | INT-09 (SCRUM-645) | Webhook CRUD via API — register, list, update, delete webhooks programmatically. Closes the API-only loop. |
 | 2026-04-11 | INT-01 (SCRUM-642) | TypeScript SDK extended with `verifyBatch` + full `webhooks` namespace + enriched `ArkovaError`. |
 | 2026-04-11 | INT-03 (SCRUM-644) | Embeddable verification bundle (`@arkova/embed`) — vanilla JS, single script tag. |

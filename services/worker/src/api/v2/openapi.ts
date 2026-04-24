@@ -6,7 +6,7 @@ export const openApiV2Spec = {
     title: 'Arkova Verification API v2',
     version: '0.2.0',
     description:
-      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers.',
+      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Scope-aware quotas are enforced per API key: read:search 1,000/min, read:records 500/min, read:orgs 500/min, write:anchors 100/min, and admin:rules 50/min.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -155,7 +155,12 @@ export const openApiV2Spec = {
       NotFound: { description: 'Requested resource was not found.', content: { 'application/problem+json': { schema: { $ref: '#/components/schemas/ProblemDetail' } } } },
       RateLimited: {
         description: 'Rate limit exceeded.',
-        headers: { 'Retry-After': { schema: { type: 'integer' }, description: 'Seconds to wait before retrying.' } },
+        headers: {
+          'Retry-After': { schema: { type: 'integer' }, description: 'Seconds to wait before retrying.' },
+          'X-RateLimit-Limit': { schema: { type: 'integer' }, description: 'Per-minute scope quota for this API key.' },
+          'X-RateLimit-Remaining': { schema: { type: 'integer' }, description: 'Requests remaining in the current scope bucket.' },
+          'X-RateLimit-Reset': { schema: { type: 'integer' }, description: 'Unix timestamp when the current scope bucket resets.' },
+        },
         content: { 'application/problem+json': { schema: { $ref: '#/components/schemas/ProblemDetail' } } },
       },
       InternalError: { description: 'Unexpected server error.', content: { 'application/problem+json': { schema: { $ref: '#/components/schemas/ProblemDetail' } } } },
