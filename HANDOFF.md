@@ -14,7 +14,7 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-23-ciba-harden-03-treasury-health` (SCRUM-1116 CIBA-HARDEN-03 — treasury health DB error handling + defensive env-var parse). PRs #474/476/477/478 all merged to main on 2026-04-24.
+**Branch:** `claude/charming-cori-gCiQU` (Platform v2 sprint — 10 backlog stories, PR #484). CIBA-HARDEN + GEMB2/SEC-HARDEN scaffolds + Sarah's lint cleanup all merged 2026-04-24 (PRs #479 / #480 / #481 / #483 / #485).
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
@@ -83,13 +83,27 @@ Confluence per-epic audit pages live at `/spaces/A`, watched (appear in user's A
 ## What just shipped (latest commits on this branch)
 
 ```
-fb3b9738 fix(CIBA Sprint 3 review): correct audit category + remove unimplemented PII claim + doc drift
-a77e7d9f feat(CIBA Sprint 3): SEC-01/02 + SCALE-01 + ARK-109/110 + UX-03 (6 stories)
-5f4dbf14 fix(CIBA Sprint 2 review): cross-tenant rule writes + silent treasury-alert upsert
-d170c9a4 fix(CIBA Sprint 2 review): remove stale deleted_at refs + tighten 5xx error code
-3994b2d5 feat(CIBA Sprint 2): worker endpoints + execution worker + rules engine UI (10 stories)
-29349961 feat(CIBA Sprint 1): Rules Engine data model + Document Lineage supersede + Treasury alerting
+14c5bef fix(security): HMAC secret validation, PII removal, org ownership check
+04cb8cb refactor: simplify sprint code — reuse gcp-auth, fix ilike injection, remove doc comments
+cb33243 feat: Platform v2 sprint — 10 backlog stories (SCRUM-1056 through SCRUM-1095)
 ```
+
+### Platform v2 sprint (2026-04-24) — 10 stories coded + reviewed
+
+| Story | Title | Scope |
+|---|---|---|
+| SCRUM-1056 | API v2 RFC 7807 error model | `problem.ts`, `v2ErrorHandler` |
+| SCRUM-1057 | Secret rotation reminder | 90-day cadence, Slack alerts |
+| SCRUM-1058 | API key scopes | Migration 0236, `scopeGuard.ts` |
+| SCRUM-1059 | VITE_* env audit | `src/lib/env.ts`, `vite-env.d.ts` |
+| SCRUM-1061 | Vertex AI SDK client | `vertex-client.ts`, reuses `gcp-auth.ts` |
+| SCRUM-1063 | Cloud Logging sink tests | 5 tests for existing sink |
+| SCRUM-1088 | v2 search endpoint | cursor pagination, sanitized ilike |
+| SCRUM-1092 | Copy lint enforcement | "Issue Credential" → "Secure Document" |
+| SCRUM-1093 | Notifications table + dispatcher | Migration 0237, `dispatcher.ts` |
+| SCRUM-1095 | Anchor revocation API | Migration 0238, org ownership check |
+
+54 tests across 8 new test files, all passing. Security review completed: HMAC hardening, PII stripping, ilike injection fix, org ownership verification.
 
 Full history: `git log --oneline`.
 
@@ -156,4 +170,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-23 (CIBA closeout: 17 stories transitioned Jira→Done + Confluence updated; PR #476 green + awaiting human merge review). 4 deferred with rationale unchanged._
+_Last refreshed: 2026-04-24 (Platform v2 sprint: 10 stories coded + reviewed + Jira updated + Confluence pages created. PR pending for branch `claude/charming-cori-gCiQU`). CIBA PR #476 still awaiting human merge._
