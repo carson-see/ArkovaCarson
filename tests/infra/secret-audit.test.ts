@@ -38,6 +38,16 @@ describe('parseDeployWorkerSecrets', () => {
       { envVar: 'X', secretPath: 'projects/arkova1/secrets/x:5' },
     ]);
   });
+
+  it('accumulates bindings from multiple --set-secrets lines (defends against workflow split)', () => {
+    const yaml = `
+            --set-secrets "FOO=foo-secret:latest,BAR=bar-secret:latest" \\
+            --set-env-vars "NODE_ENV=production" \\
+            --set-secrets "BAZ=baz-secret:latest"
+    `;
+    const bindings = parseDeployWorkerSecrets(yaml);
+    expect(bindings.map((b) => b.envVar)).toEqual(['FOO', 'BAR', 'BAZ']);
+  });
 });
 
 describe('auditDrift', () => {

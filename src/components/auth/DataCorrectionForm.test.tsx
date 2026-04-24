@@ -1,4 +1,4 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: data_correction_requests writes use RLS via auth.uid() in the policy, not query-level user_id filter */
+/* eslint-disable arkova/no-unscoped-service-test -- Frontend: data_subject_requests writes use RLS via auth.uid() in the policy, not query-level user_id filter */
 /**
  * Tests for Data Correction Form — REG-19 / APP 13 (SCRUM-580)
  */

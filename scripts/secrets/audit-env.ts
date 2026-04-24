@@ -50,20 +50,24 @@ export const EXPECTED_SECRETS = [
 
 export type SecretBinding = { envVar: string; secretPath: string };
 
-/** Parse a `--set-secrets "K=v:tag,K2=v2:tag"` line into ENV→secret-path bindings. */
+/**
+ * Parse every `--set-secrets "K=v:tag,K2=v2:tag"` occurrence in the YAML into
+ * ENV→secret-path bindings. Uses `matchAll` (global regex) so a workflow that
+ * splits the flag list across multiple `--set-secrets` invocations (common
+ * once the inventory grows past ~20 secrets) still surfaces every binding —
+ * a single-match parse would silently drop everything after the first line
+ * and make `auditDrift` report bogus missing-bindings.
+ */
 export function parseDeployWorkerSecrets(yamlContent: string): SecretBinding[] {
-  const match = yamlContent.match(/--set-secrets\s+"([^"]+)"/);
-  if (!match) return [];
-  return match[1]
-    .split(",")
-    .map((pair) => pair.trim())
-    .filter(Boolean)
-    .map((pair) => {
+  const bindings: SecretBinding[] = [];
+  for (const match of yamlContent.matchAll(/--set-secrets\s+"([^"]+)"/g)) {
+    for (const pair of match[1].split(",").map((p) => p.trim()).filter(Boolean)) {
       const eq = pair.indexOf("=");
-      if (eq < 0) return null;
-      return { envVar: pair.slice(0, eq), secretPath: pair.slice(eq + 1) };
-    })
-    .filter((b): b is SecretBinding => b !== null);
+      if (eq < 0) continue;
+      bindings.push({ envVar: pair.slice(0, eq), secretPath: pair.slice(eq + 1) });
+    }
+  }
+  return bindings;
 }
 
 export type AuditRow = {
