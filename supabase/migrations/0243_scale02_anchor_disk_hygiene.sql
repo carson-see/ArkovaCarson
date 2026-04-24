@@ -33,9 +33,11 @@ ALTER TABLE public.anchor_proofs
 ALTER TABLE public.anchor_proofs
   ALTER COLUMN block_timestamp DROP NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_anchor_proofs_batch_id
-  ON public.anchor_proofs (batch_id)
-  WHERE batch_id IS NOT NULL;
+-- NOTE: idx_anchor_proofs_batch_id moved to migration
+-- 0255_deferred_slow_indexes.sql — pooler statement timeout blocks the
+-- build when anchor_proofs has millions of rows. Apply manually via
+-- Supabase Dashboard SQL Editor.
+-- Runbook: docs/runbooks/supabase/long-running-migrations.md
 
 COMMENT ON COLUMN public.anchor_proofs.batch_id IS
   'Internal Merkle batch identifier for batch-anchored records.';

@@ -174,20 +174,12 @@ BEGIN
 END;
 $$;
 
--- DB-level safeguard: at most one active (non-deleted, non-revoked) child per
--- parent. Matches the semantic "a lineage is a chain, not a tree." If the
--- FOR UPDATE lock above fails for any reason, the second INSERT hits this
--- index and errors out with a unique violation rather than forking silently.
---
--- The index is partial + conditional so re-supersede flows after an admin
--- revokes a failed child still work.
-CREATE UNIQUE INDEX IF NOT EXISTS anchors_unique_active_child_per_parent
-  ON anchors (parent_anchor_id)
-  WHERE parent_anchor_id IS NOT NULL
-    AND deleted_at IS NULL
-    AND status NOT IN ('REVOKED');
-
-COMMENT ON INDEX anchors_unique_active_child_per_parent IS
-  'ARK-104 hardening (migration 0233): at most one non-revoked, non-deleted child per parent anchor. Enforces lineage is a chain, not a tree, even if application-level locks fail.';
+-- NOTE: the DB-level unique partial index safeguard
+-- (anchors_unique_active_child_per_parent) has been moved to migration
+-- 0255_deferred_slow_indexes.sql — Supabase's connection pooler enforces
+-- a hard statement timeout that SET LOCAL cannot override, and the index
+-- build on the 1.4M-row anchors table exceeds that ceiling. Apply manually
+-- via Supabase Dashboard SQL Editor.
+-- Runbook: docs/runbooks/supabase/long-running-migrations.md
 
 COMMIT;

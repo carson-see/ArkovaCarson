@@ -58,7 +58,16 @@ jobs:
           set -eo pipefail
 
           if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (typical for forks/Dependabot)."
+            # For fork/Dependabot PRs the token legitimately isn't available.
+            # For main-branch pushes it's an ops misconfiguration — fail loudly.
+            # The 2026-04-24 migration-drift incident (SCRUM-1182) happened
+            # because this block was silently passing on main for weeks while
+            # SUPABASE_ACCESS_TOKEN wasn't provisioned in Actions secrets.
+            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "::error title=Migration drift check NOT RUN::SUPABASE_ACCESS_TOKEN is not configured in GitHub Actions secrets. Provision at https://app.supabase.com/account/tokens with 'All projects' scope, add as Actions secret SUPABASE_ACCESS_TOKEN. This check cannot protect against drift until then."
+              exit 1
+            fi
+            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (expected for forks/Dependabot PRs; main-branch pushes fail loudly)."
             exit 0
           fi
 
@@ -72,12 +81,32 @@ jobs:
 
           # Fetch prod applied migrations. Supabase Management API returns an
           # array of { version, name, ... }.
-          prod_response=$(curl --silent --fail --show-error \
+          # Capture HTTP status separately so we can distinguish auth failure
+          # (token expired/revoked) from genuine API errors.
+          http_status=$(curl --silent --output /tmp/prod_response.json -w '%{http_code}' \
             -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
-            "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/migrations") || {
-              echo "::error::Failed to query Supabase Management API for migrations list."
+            "https://api.supabase.com/v1/projects/${SUPABASE_PROJECT_REF}/database/migrations") || true
+          prod_response=$(cat /tmp/prod_response.json 2>/dev/null || echo "")
+
+          if [ "$http_status" = "401" ] || [ "$http_status" = "403" ]; then
+            # Token is invalid/expired/revoked. Same posture as missing token:
+            # fail loud on main pushes, skip on PRs so a stale token doesn't
+            # block unrelated work. Operators should rotate at
+            # https://app.supabase.com/account/tokens.
+            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "::error title=Migration drift check auth failure::SUPABASE_ACCESS_TOKEN returned HTTP $http_status from Supabase Management API. The secret is set but the token is expired/revoked/insufficient. Rotate at https://app.supabase.com/account/tokens (scope: All projects) and update the SUPABASE_ACCESS_TOKEN Actions secret."
               exit 1
-            }
+            fi
+            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN returned HTTP $http_status — token is set but invalid. Skipping on PR; operator must rotate before next main push."
+            exit 0
+          fi
+
+          if [ "$http_status" != "200" ]; then
+            echo "::error::Failed to query Supabase Management API for migrations list (HTTP $http_status)."
+            echo "Response preview:"
+            echo "$prod_response" | head -5
+            exit 1
+          fi
 
           # Extract names. jq filter: .[].name. Fallback: grep.
           prod_names=$(echo "$prod_response" | jq -r '.[].name' 2>/dev/null | sort -u)
