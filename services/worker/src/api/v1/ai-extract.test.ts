@@ -206,7 +206,7 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
     // Confidence is now calibrated: raw 0.92 maps to 0.92 via calibration knots (1030-entry recalibration)
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(responseJson).toEqual(
       expect.objectContaining({
         fields: expect.objectContaining({
@@ -251,7 +251,7 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
 
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(responseJson.subType).toBeNull();
     expect(responseJson.fraudSignals).toBeNull();
     expect(responseJson.confidenceScores).toBeDefined();
@@ -287,7 +287,7 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
 
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     // Calibrated confidence should differ from raw 0.75
     expect(responseJson.confidence).not.toBe(0.75);
     // Should be calibrated to ~0.83 (piecewise linear interpolation, 1030-entry knots)
@@ -371,7 +371,7 @@ describe('AI Extraction Endpoint', () => {
       await vi.advanceTimersByTimeAsync(AI_EXTRACTION_LATENCY_BUDGET_MS);
       await pending;
 
-      const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+      const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
       expect(res.status).not.toHaveBeenCalledWith(500);
       expect(responseJson).toEqual(
         expect.objectContaining({
@@ -424,7 +424,7 @@ describe('AI Extraction Endpoint', () => {
     ]);
 
     expect(result).toBe('resolved');
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(responseJson.provider).toBe('gemini');
     expect(responseJson.tags).toBeUndefined();
   });

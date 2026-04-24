@@ -219,6 +219,52 @@ async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: numbe
   }
 }
 
+function buildMatchInserts(
+  byOrg: Map<string, EventRow[]>,
+  rulesByOrg: Map<string, RuleRow[]>,
+  result: RulesEnginePassResult,
+): MatchInsert[] {
+  const inserts: MatchInsert[] = [];
+  for (const [orgId, orgEvents] of byOrg) {
+    const rules = rulesByOrg.get(orgId) ?? [];
+    if (rules.length === 0) {
+      result.skipped += orgEvents.length;
+      continue;
+    }
+
+    for (const ev of orgEvents) {
+      const matches = evaluateRules(rules, toTriggerEvent(ev));
+      if (matches.length === 0) {
+        result.skipped += 1;
+        continue;
+      }
+
+      inserts.push(...matches.map(({ rule, result: match }) => ({
+        rule_id: rule.id,
+        event_id: ev.id,
+        org_id: ev.org_id,
+        match_reason: match.reason,
+        needs_semantic_match: match.needs_semantic_match,
+      })));
+    }
+  }
+  return inserts;
+}
+
+async function notifyRuleMatches(inserts: MatchInsert[]): Promise<void> {
+  const byNotificationOrg = new Map<string, number>();
+  for (const insert of inserts) {
+    byNotificationOrg.set(insert.org_id, (byNotificationOrg.get(insert.org_id) ?? 0) + 1);
+  }
+  await Promise.all([...byNotificationOrg.entries()].map(([orgId, matchesRecorded]) =>
+    emitOrgAdminNotifications({
+      type: 'rule_fired',
+      organizationId: orgId,
+      payload: { matchesRecorded },
+    }),
+  ));
+}
+
 export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const result: RulesEnginePassResult = {
     events_processed: 0,
@@ -246,30 +292,7 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
     return result;
   }
 
-  const inserts: MatchInsert[] = [];
-  for (const [orgId, orgEvents] of byOrg) {
-    const rules = rulesByOrg.get(orgId) ?? [];
-    if (rules.length === 0) {
-      result.skipped += orgEvents.length;
-      continue;
-    }
-    for (const ev of orgEvents) {
-      const matches = evaluateRules(rules, toTriggerEvent(ev));
-      if (matches.length === 0) {
-        result.skipped += 1;
-        continue;
-      }
-      for (const { rule, result: r } of matches) {
-        inserts.push({
-          rule_id: rule.id,
-          event_id: ev.id,
-          org_id: ev.org_id,
-          match_reason: r.reason,
-          needs_semantic_match: r.needs_semantic_match,
-        });
-      }
-    }
-  }
+  const inserts = buildMatchInserts(byOrg, rulesByOrg, result);
 
   const persist = await persistMatches(inserts);
   result.matches_recorded = persist.recorded;
@@ -283,17 +306,7 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const completed = await completeClaimedEvents(eventIds);
   if (!completed) result.errors += 1;
   if (persist.recorded > 0) {
-    const byNotificationOrg = new Map<string, number>();
-    for (const insert of inserts) {
-      byNotificationOrg.set(insert.org_id, (byNotificationOrg.get(insert.org_id) ?? 0) + 1);
-    }
-    await Promise.all([...byNotificationOrg.entries()].map(([orgId, matchesRecorded]) =>
-      emitOrgAdminNotifications({
-        type: 'rule_fired',
-        organizationId: orgId,
-        payload: { matchesRecorded },
-      }),
-    ));
+    await notifyRuleMatches(inserts);
   }
 
   logger.info(

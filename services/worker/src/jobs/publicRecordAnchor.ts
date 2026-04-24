@@ -29,6 +29,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { config } from '../config.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { POSTGREST_ROW_LIMIT, resolveAnchorBatchSize } from './anchor-batching.js';
+import type { ChainReceipt } from '../chain/types.js';
 
 /** Max records per batch — one Bitcoin TX can commit up to 10k pipeline anchors. */
 export const PUBLIC_RECORD_BATCH_SIZE = resolveAnchorBatchSize(config.batchAnchorMaxSize);
@@ -79,6 +80,32 @@ interface RecordAnchorItem {
 
 interface FinalizeRecordAnchorItem extends RecordAnchorItem {
   merkle_proof: unknown;
+}
+
+interface PipelineOwner {
+  ownerId: string;
+  ownerOrgId: string | null;
+}
+
+interface PipelineAnchorInsert {
+  user_id: string;
+  org_id: string | null;
+  fingerprint: string;
+  filename: string;
+  credential_type: string;
+  status: 'PENDING';
+  description?: string;
+  metadata: {
+    pipeline_source: string;
+    source_id: string;
+    source_url: string | null;
+    record_type: string;
+  };
+}
+
+interface RecordAnchorPartition {
+  alreadyAnchoredItems: RecordAnchorItem[];
+  pendingRecordItems: Array<{ record: PipelinePublicRecord; anchor: PipelineAnchorRow }>;
 }
 
 let publicRecordAnchoringRunning = false;
@@ -280,7 +307,7 @@ async function linkExistingPublicRecordAnchors(
 async function finalizePublicRecordAnchorBatch(
   client: SupabaseClient,
   items: FinalizeRecordAnchorItem[],
-  receipt: { receiptId: string; blockHeight?: number | null; blockTimestamp?: string | null },
+  receipt: ChainReceipt,
   merkleRoot: string,
   batchId: string,
 ): Promise<{ recordsUpdated: number; anchorsUpdated: number }> {
@@ -331,6 +358,224 @@ async function finalizePublicRecordAnchorBatch(
   return { recordsUpdated, anchorsUpdated };
 }
 
+async function publicRecordAnchoringEnabled(client: SupabaseClient): Promise<boolean> {
+  const { data: enabled } = await client.rpc('get_flag', {
+    p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
+  });
+  if (!enabled) logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
+  return Boolean(enabled);
+}
+
+async function fetchPipelineOwner(client: SupabaseClient): Promise<PipelineOwner | null> {
+  const { data: adminProfile, error: adminError } = await client
+    .from('profiles')
+    .select('id, org_id')
+    .eq('email', PIPELINE_OWNER_EMAIL)
+    .single();
+
+  if (adminError || !adminProfile) {
+    logger.error({ error: adminError }, `Platform admin ${PIPELINE_OWNER_EMAIL} not found — cannot create anchors`);
+    return null;
+  }
+
+  return {
+    ownerId: adminProfile.id as string,
+    ownerOrgId: (adminProfile.org_id as string) ?? null,
+  };
+}
+
+const PRIORITY_SOURCES = ['courtlistener', 'edgar', 'federal_register', 'dapip'];
+const PUBLIC_RECORD_SELECT = 'id, source, source_id, source_url, record_type, title, content_hash, metadata';
+
+async function fetchRecordsForSource(
+  client: SupabaseClient,
+  source: string,
+  limit: number,
+): Promise<PipelinePublicRecord[]> {
+  const records: PipelinePublicRecord[] = [];
+  for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
+    const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
+    const { data: chunk, error } = await client
+      .from('public_records')
+      .select(PUBLIC_RECORD_SELECT)
+      .is('anchor_id', null)
+      .eq('source', source)
+      .order('created_at', { ascending: true })
+      .range(offset, offset + chunkSize - 1);
+
+    if (error) {
+      logger.error({ error, offset, source }, 'Failed to fetch priority records chunk');
+      break;
+    }
+    if (!chunk || chunk.length === 0) break;
+    records.push(...(chunk as PipelinePublicRecord[]));
+    if (chunk.length < chunkSize) break;
+  }
+  return records;
+}
+
+async function fetchNonPriorityRecords(
+  client: SupabaseClient,
+  limit: number,
+): Promise<PipelinePublicRecord[]> {
+  const records: PipelinePublicRecord[] = [];
+  for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
+    const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
+    const { data: chunk, error } = await client
+      .from('public_records')
+      .select(PUBLIC_RECORD_SELECT)
+      .is('anchor_id', null)
+      .not('source', 'in', `(${PRIORITY_SOURCES.join(',')})`)
+      .order('created_at', { ascending: true })
+      .range(offset, offset + chunkSize - 1);
+
+    if (error) {
+      logger.error({ error, offset }, 'Failed to fetch remaining records chunk');
+      break;
+    }
+    if (!chunk || chunk.length === 0) break;
+    records.push(...(chunk as PipelinePublicRecord[]));
+    if (chunk.length < chunkSize) break;
+  }
+  return records;
+}
+
+async function fetchUnanchoredPublicRecords(client: SupabaseClient): Promise<PipelinePublicRecord[]> {
+  const records: PipelinePublicRecord[] = [];
+  for (const source of PRIORITY_SOURCES) {
+    if (records.length >= PUBLIC_RECORD_BATCH_SIZE) break;
+    records.push(...await fetchRecordsForSource(client, source, PUBLIC_RECORD_BATCH_SIZE - records.length));
+  }
+
+  if (records.length < PUBLIC_RECORD_BATCH_SIZE) {
+    records.push(...await fetchNonPriorityRecords(client, PUBLIC_RECORD_BATCH_SIZE - records.length));
+  }
+  return records;
+}
+
+function publicRecordDescription(record: PipelinePublicRecord): string | null {
+  const meta = record.metadata ?? {};
+  return (
+    (typeof meta.abstract === 'string' ? meta.abstract : null)
+    ?? (typeof meta.description === 'string' ? meta.description : null)
+    ?? (typeof meta.summary === 'string' ? meta.summary : null)
+  )?.slice(0, 500) ?? null;
+}
+
+function buildPipelineAnchorInsert(record: PipelinePublicRecord, owner: PipelineOwner): PipelineAnchorInsert {
+  const description = publicRecordDescription(record);
+  return {
+    user_id: owner.ownerId,
+    org_id: owner.ownerOrgId,
+    fingerprint: record.content_hash,
+    filename: buildAnchorFilename(record),
+    credential_type: mapCredentialType(record.source),
+    status: 'PENDING',
+    ...(description ? { description } : {}),
+    metadata: {
+      pipeline_source: record.source,
+      source_id: record.source_id,
+      source_url: record.source_url,
+      record_type: record.record_type,
+    },
+  };
+}
+
+async function findExistingAnchor(
+  client: SupabaseClient,
+  ownerId: string,
+  fingerprint: string,
+): Promise<{ id: string; fingerprint: string } | null> {
+  const { data: existing } = await client
+    .from('anchors')
+    .select('id, fingerprint')
+    .eq('user_id', ownerId)
+    .eq('fingerprint', fingerprint)
+    .is('deleted_at', null)
+    .single();
+  return (existing as { id: string; fingerprint: string } | null) ?? null;
+}
+
+async function insertAnchorSerialFallback(
+  client: SupabaseClient,
+  chunk: PipelineAnchorInsert[],
+  ownerId: string,
+): Promise<Array<{ id: string; fingerprint: string }>> {
+  const created: Array<{ id: string; fingerprint: string }> = [];
+  for (const anchor of chunk) {
+    const { data: inserted, error: insertError } = await client
+      .from('anchors')
+      .insert(anchor)
+      .select('id, fingerprint')
+      .single();
+
+    if (insertError?.code === '23505') {
+      const existing = await findExistingAnchor(client, ownerId, anchor.fingerprint);
+      if (existing) created.push(existing);
+      continue;
+    }
+    if (insertError) {
+      logger.error({ error: insertError, fingerprint: anchor.fingerprint }, 'Failed to create anchor');
+      continue;
+    }
+    if (inserted) created.push(inserted as { id: string; fingerprint: string });
+  }
+  return created;
+}
+
+async function insertAnchorChunk(
+  client: SupabaseClient,
+  chunk: PipelineAnchorInsert[],
+  chunkStart: number,
+  ownerId: string,
+): Promise<Array<{ id: string; fingerprint: string }>> {
+  const { data: result, error: rpcError } = await client.rpc('batch_insert_anchors', {
+    p_anchors: chunk,
+  });
+
+  if (rpcError) {
+    logger.error({ error: rpcError, chunkIndex: chunkStart, chunkSize: chunk.length }, 'Batch insert RPC failed — falling back to serial inserts');
+    return insertAnchorSerialFallback(client, chunk, ownerId);
+  }
+
+  const anchors = (result ?? []) as Array<{ id: string; fingerprint: string }>;
+  logger.info({ chunk: Math.floor(chunkStart / ANCHOR_INSERT_CHUNK) + 1, inserted: anchors.length }, 'Batch insert chunk complete');
+  return anchors;
+}
+
+async function createPublicRecordAnchors(
+  client: SupabaseClient,
+  anchorInserts: PipelineAnchorInsert[],
+  ownerId: string,
+): Promise<Array<{ id: string; fingerprint: string }>> {
+  const createdAnchors: Array<{ id: string; fingerprint: string }> = [];
+  for (let i = 0; i < anchorInserts.length; i += ANCHOR_INSERT_CHUNK) {
+    const chunk = anchorInserts.slice(i, i + ANCHOR_INSERT_CHUNK);
+    createdAnchors.push(...await insertAnchorChunk(client, chunk, i, ownerId));
+  }
+  return createdAnchors;
+}
+
+function partitionRecordAnchors(
+  records: PipelinePublicRecord[],
+  anchorRows: PipelineAnchorRow[],
+): RecordAnchorPartition {
+  const anchorByFingerprint = new Map(anchorRows.map((a) => [a.fingerprint, a]));
+  const alreadyAnchoredItems: RecordAnchorItem[] = [];
+  const pendingRecordItems: Array<{ record: PipelinePublicRecord; anchor: PipelineAnchorRow }> = [];
+
+  for (const record of records) {
+    const anchor = anchorByFingerprint.get(record.content_hash);
+    if (!anchor) continue;
+    if (isBitcoinAnchored(anchor)) {
+      alreadyAnchoredItems.push({ record_id: record.id, anchor_id: anchor.id });
+    } else if (anchor.status === 'PENDING') {
+      pendingRecordItems.push({ record, anchor });
+    }
+  }
+  return { alreadyAnchoredItems, pendingRecordItems };
+}
+
 /**
  * Process unanchored public records: create individual anchors + Merkle-batch to chain.
  */
@@ -361,91 +606,16 @@ async function processPublicRecordAnchoringInner(
 ): Promise<PublicRecordAnchorResult> {
   const client = supabase ?? db;
 
-  // Check switchboard flag
-  const { data: enabled } = await client.rpc('get_flag', {
-    p_flag_key: 'ENABLE_PUBLIC_RECORD_ANCHORING',
-  });
-  if (!enabled) {
-    logger.info('ENABLE_PUBLIC_RECORD_ANCHORING is disabled — skipping');
+  if (!(await publicRecordAnchoringEnabled(client))) {
     return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  // Resolve platform admin user_id for anchor ownership
-  const { data: adminProfile, error: adminError } = await client
-    .from('profiles')
-    .select('id, org_id')
-    .eq('email', PIPELINE_OWNER_EMAIL)
-    .single();
-
-  if (adminError || !adminProfile) {
-    logger.error({ error: adminError }, `Platform admin ${PIPELINE_OWNER_EMAIL} not found — cannot create anchors`);
+  const owner = await fetchPipelineOwner(client);
+  if (!owner) {
     return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  const ownerId = adminProfile.id as string;
-  const ownerOrgId = (adminProfile.org_id as string) ?? null;
-
-  // Fetch unanchored public records in chunks (PostgREST caps at 1000 rows per request)
-  // Prioritize compliance sources: courtlistener, edgar, federal_register first
-  const PRIORITY_SOURCES = ['courtlistener', 'edgar', 'federal_register', 'dapip'];
-  const records: PipelinePublicRecord[] = [];
-
-  // Phase 1: Fetch priority compliance sources first
-  for (const prioritySource of PRIORITY_SOURCES) {
-    if (records.length >= PUBLIC_RECORD_BATCH_SIZE) break;
-    const remaining = PUBLIC_RECORD_BATCH_SIZE - records.length;
-
-    for (let offset = 0; offset < remaining; offset += POSTGREST_ROW_LIMIT) {
-      const chunkSize = Math.min(POSTGREST_ROW_LIMIT, remaining - offset);
-      const { data: chunk, error: chunkError } = await client
-        .from('public_records')
-        .select('id, source, source_id, source_url, record_type, title, content_hash, metadata')
-        .is('anchor_id', null)
-        .eq('source', prioritySource)
-        .order('created_at', { ascending: true })
-        .range(offset, offset + chunkSize - 1);
-
-      if (chunkError) {
-        logger.error({ error: chunkError, offset, source: prioritySource }, 'Failed to fetch priority records chunk');
-        break;
-      }
-      if (!chunk || chunk.length === 0) break;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      records.push(...(chunk as any));
-      if (chunk.length < chunkSize) break;
-    }
-  }
-
-  // Phase 2: Fill remaining capacity with any other unconverted records
-  if (records.length < PUBLIC_RECORD_BATCH_SIZE) {
-    const remaining = PUBLIC_RECORD_BATCH_SIZE - records.length;
-
-    for (let offset = 0; offset < remaining; offset += POSTGREST_ROW_LIMIT) {
-      const chunkSize = Math.min(POSTGREST_ROW_LIMIT, remaining - offset);
-      const { data: chunk, error: chunkError } = await client
-        .from('public_records')
-        .select('id, source, source_id, source_url, record_type, title, content_hash, metadata')
-        .is('anchor_id', null)
-        .not('source', 'in', `(${PRIORITY_SOURCES.join(',')})`)
-        .order('created_at', { ascending: true })
-        .range(offset, offset + chunkSize - 1);
-
-      if (chunkError) {
-        logger.error({ error: chunkError, offset }, 'Failed to fetch remaining records chunk');
-        break;
-      }
-      if (!chunk || chunk.length === 0) break;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      records.push(...(chunk as any));
-      if (chunk.length < chunkSize) break;
-    }
-  }
-  const fetchError: Error | null = null;
-
-  if (fetchError) {
-    logger.error({ error: fetchError }, 'Failed to fetch unanchored public records');
-    return { processed: 0, anchorsCreated: 0, batchId: null, merkleRoot: null, txId: null };
-  }
+  const records = await fetchUnanchoredPublicRecords(client);
 
   if (!records || records.length < MIN_BATCH_SIZE) {
     logger.info({ count: records?.length ?? 0 }, 'No unanchored records to process');
@@ -457,76 +627,8 @@ async function processPublicRecordAnchoringInner(
   logger.info({ recordCount: records.length, batchSize: PUBLIC_RECORD_BATCH_SIZE }, 'Creating individual anchors for public records');
 
   // Step 1: Create individual anchor records for each public record
-  const anchorInserts = records.map((r) => {
-    // Pull description from public record metadata (abstract, description, summary)
-    const meta = r.metadata ?? {};
-    const description = (
-      (typeof meta.abstract === 'string' ? meta.abstract : null)
-      ?? (typeof meta.description === 'string' ? meta.description : null)
-      ?? (typeof meta.summary === 'string' ? meta.summary : null)
-    )?.slice(0, 500) ?? null;
-
-    return {
-      user_id: ownerId,
-      org_id: ownerOrgId,
-      fingerprint: r.content_hash,
-      filename: buildAnchorFilename(r),
-      credential_type: mapCredentialType(r.source),
-      status: 'PENDING' as const,
-      ...(description ? { description } : {}),
-      metadata: {
-        pipeline_source: r.source,
-        source_id: r.source_id,
-        source_url: r.source_url,
-        record_type: r.record_type,
-      },
-    };
-  });
-
-  // Batch insert via server-side RPC — handles partial unique index ON CONFLICT.
-  const createdAnchors: Array<{ id: string; fingerprint: string }> = [];
-
-  for (let i = 0; i < anchorInserts.length; i += ANCHOR_INSERT_CHUNK) {
-    const chunk = anchorInserts.slice(i, i + ANCHOR_INSERT_CHUNK);
-    const { data: result, error: rpcError } = await client.rpc('batch_insert_anchors', {
-      p_anchors: chunk,
-    });
-
-    if (rpcError) {
-      logger.error({ error: rpcError, chunkIndex: i, chunkSize: chunk.length }, 'Batch insert RPC failed — falling back to serial inserts');
-      // Fallback: serial insert for this chunk only
-      for (const anchor of chunk) {
-        const { data: inserted, error: insertError } = await client
-          .from('anchors')
-          .insert(anchor)
-          .select('id, fingerprint')
-          .single();
-
-        if (insertError) {
-          if (insertError.code === '23505') {
-            const { data: existing } = await client
-              .from('anchors')
-              .select('id, fingerprint')
-              .eq('user_id', ownerId)
-              .eq('fingerprint', anchor.fingerprint)
-              .is('deleted_at', null)
-              .single();
-            if (existing) createdAnchors.push(existing as { id: string; fingerprint: string });
-            continue;
-          }
-          logger.error({ error: insertError, fingerprint: anchor.fingerprint }, 'Failed to create anchor');
-          continue;
-        }
-        if (inserted) createdAnchors.push(inserted as { id: string; fingerprint: string });
-      }
-      continue;
-    }
-
-    // RPC returns jsonb array of {id, fingerprint}
-    const anchors = (result ?? []) as Array<{ id: string; fingerprint: string }>;
-    createdAnchors.push(...anchors);
-    logger.info({ chunk: Math.floor(i / ANCHOR_INSERT_CHUNK) + 1, inserted: anchors.length }, 'Batch insert chunk complete');
-  }
+  const anchorInserts = records.map((record) => buildPipelineAnchorInsert(record, owner));
+  const createdAnchors = await createPublicRecordAnchors(client, anchorInserts, owner.ownerId);
 
   logger.info({ created: createdAnchors.length, total: records.length }, 'Anchor records created (batch RPC)');
 
@@ -538,20 +640,7 @@ async function processPublicRecordAnchoringInner(
   // Step 2: Resolve anchor status. Already-submitted duplicate records can be
   // linked without burning another Bitcoin transaction.
   const anchorRows = await fetchAnchorRows(client, createdAnchors.map((a) => a.id));
-  const anchorByFingerprint = new Map(anchorRows.map((a) => [a.fingerprint, a]));
-  const alreadyAnchoredItems: RecordAnchorItem[] = [];
-  const pendingRecordItems: Array<{ record: PipelinePublicRecord; anchor: PipelineAnchorRow }> = [];
-
-  for (const record of records) {
-    const anchor = anchorByFingerprint.get(record.content_hash);
-    if (!anchor) continue;
-
-    if (isBitcoinAnchored(anchor)) {
-      alreadyAnchoredItems.push({ record_id: record.id, anchor_id: anchor.id });
-    } else if (anchor.status === 'PENDING') {
-      pendingRecordItems.push({ record, anchor });
-    }
-  }
+  const { alreadyAnchoredItems, pendingRecordItems } = partitionRecordAnchors(records, anchorRows);
 
   const alreadyAnchored = await linkExistingPublicRecordAnchors(client, alreadyAnchoredItems);
   if (alreadyAnchored > 0) {

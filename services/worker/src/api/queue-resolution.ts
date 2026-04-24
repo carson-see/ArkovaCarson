@@ -18,7 +18,7 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
 
-export { mapRpcErrorToStatus };
+export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
 export interface PendingResolutionAnchor {
   id: string;
@@ -34,6 +34,13 @@ export const ResolveQueueInput = z.object({
   selected_anchor_id: z.string().uuid(),
   reason: z.string().trim().max(2000).optional(),
 });
+
+function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'conflict' | 'internal' {
+  if (status === 403) return 'forbidden';
+  if (status === 404) return 'not_found';
+  if (status === 409) return 'conflict';
+  return 'internal';
+}
 
 /**
  * GET /api/queue/pending
@@ -113,14 +120,7 @@ export async function handleResolveQueue(
       const isInternal = status >= 500;
       res.status(status).json({
         error: {
-          code:
-            status === 403
-              ? 'forbidden'
-              : status === 404
-                ? 'not_found'
-                : status === 409
-                  ? 'conflict'
-                  : 'internal',
+          code: rpcErrorCodeForStatus(status),
           message: isInternal ? 'Internal server error' : error.message ?? 'Resolve failed',
         },
       });

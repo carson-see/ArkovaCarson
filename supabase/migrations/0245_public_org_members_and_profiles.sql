@@ -130,7 +130,7 @@ BEGIN
   INTO profile_row
   FROM profiles
   WHERE public_id = p_public_id
-    AND is_public_profile = true;
+    AND is_public_profile;
 
   IF profile_row IS NULL THEN
     RETURN jsonb_build_object('error', 'Profile not found');

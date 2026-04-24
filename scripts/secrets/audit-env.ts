@@ -80,6 +80,11 @@ export type AuditRow = {
   secretPath: string | null;
 };
 
+function auditMark(row: AuditRow, required: boolean): string {
+  if (row.bound) return "✓";
+  return required ? "✗" : "○";
+}
+
 /** Diff expected-list against current Cloud Run bindings. */
 export function auditDrift(
   bindings: SecretBinding[],
@@ -98,7 +103,7 @@ function formatTable(requiredRows: AuditRow[], optionalRows: AuditRow[]): string
   const pad = Math.max(...rows.map((r) => r.envVar.length));
   const lines = rows.map((r) => {
     const required = requiredRows.includes(r);
-    const mark = r.bound ? "✓" : required ? "✗" : "○";
+    const mark = auditMark(r, required);
     const path = r.secretPath ?? (required ? "(missing — needs `gcloud secrets create`)" : "(optional — not configured)");
     return `${mark} ${r.envVar.padEnd(pad)}  ${path}`;
   });

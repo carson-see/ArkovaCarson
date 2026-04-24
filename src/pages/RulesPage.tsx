@@ -112,10 +112,10 @@ export function RulesPage() {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
+    const timer = globalThis.setTimeout(() => {
       fetchRules().catch(() => undefined);
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => globalThis.clearTimeout(timer);
   }, [fetchRules]);
 
   async function patchRule(ruleId: string, body: Record<string, unknown>): Promise<boolean> {

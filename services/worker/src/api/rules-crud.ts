@@ -330,6 +330,61 @@ type PatchValidationResult =
   | { kind: 'ok' }
   | { kind: 'error'; status: number; body: Record<string, unknown> };
 
+type ParsedUpdateRuleRequest =
+  | { kind: 'ok'; ruleId: string; patch: UpdateOrgRuleInputT }
+  | { kind: 'error'; status: number; body: Record<string, unknown> };
+
+function parseUpdateRuleRequest(req: Request): ParsedUpdateRuleRequest {
+  const idParsed = UuidSchema.safeParse(req.params.id);
+  if (!idParsed.success) {
+    return { kind: 'error', status: 400, body: { error: { code: 'invalid_request', message: 'Invalid id' } } };
+  }
+
+  const bodyParsed = UpdateOrgRuleInput.safeParse(req.body);
+  if (!bodyParsed.success) {
+    return {
+      kind: 'error',
+      status: 400,
+      body: {
+        error: {
+          code: 'invalid_request',
+          message: 'Invalid body',
+          details: bodyParsed.error.flatten(),
+        },
+      },
+    };
+  }
+
+  return { kind: 'ok', ruleId: idParsed.data, patch: bodyParsed.data };
+}
+
+function validatePatchSecrets(patch: UpdateOrgRuleInputT): PatchValidationResult {
+  try {
+    if (patch.trigger_config) assertNoInlineSecrets(patch.trigger_config);
+    if (patch.action_config) assertNoInlineSecrets(patch.action_config);
+    return { kind: 'ok' };
+  } catch (err) {
+    return {
+      kind: 'error',
+      status: 400,
+      body: {
+        error: {
+          code: 'inline_secret',
+          message: err instanceof Error ? err.message : 'Secret detected in config',
+        },
+      },
+    };
+  }
+}
+
+function buildRuleUpdate(patch: UpdateOrgRuleInputT): Record<string, unknown> {
+  const update: Record<string, unknown> = {};
+  for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config'] as const) {
+    if (patch[k] !== undefined) update[k] = patch[k];
+  }
+  return update;
+}
+
 /**
  * When a caller patches trigger_config or action_config, re-validate the
  * resulting rule against the Zod schema BEFORE writing. Without this, a
@@ -398,40 +453,21 @@ export async function handleUpdateRule(
     return;
   }
 
-  const idParsed = UuidSchema.safeParse(req.params.id);
-  if (!idParsed.success) {
-    res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
+  const parsed = parseUpdateRuleRequest(req);
+  if (parsed.kind === 'error') {
+    res.status(parsed.status).json(parsed.body);
     return;
   }
-  const bodyParsed = UpdateOrgRuleInput.safeParse(req.body);
-  if (!bodyParsed.success) {
-    res.status(400).json({
-      error: {
-        code: 'invalid_request',
-        message: 'Invalid body',
-        details: bodyParsed.error.flatten(),
-      },
-    });
-    return;
-  }
-
-  try {
-    if (bodyParsed.data.trigger_config) assertNoInlineSecrets(bodyParsed.data.trigger_config);
-    if (bodyParsed.data.action_config) assertNoInlineSecrets(bodyParsed.data.action_config);
-  } catch (err) {
-    res.status(400).json({
-      error: {
-        code: 'inline_secret',
-        message: err instanceof Error ? err.message : 'Secret detected in config',
-      },
-    });
+  const secretValidation = validatePatchSecrets(parsed.patch);
+  if (secretValidation.kind === 'error') {
+    res.status(secretValidation.status).json(secretValidation.body);
     return;
   }
 
   if (!(await requireOrgAdmin(userId, orgId, res))) return;
 
   try {
-    const validation = await validatePatchAgainstCurrent(idParsed.data, orgId, bodyParsed.data);
+    const validation = await validatePatchAgainstCurrent(parsed.ruleId, orgId, parsed.patch);
     if (validation.kind === 'error') {
       res.status(validation.status).json(validation.body);
       return;
@@ -442,15 +478,12 @@ export async function handleUpdateRule(
     // truth meant a race could set the column to the handler's pre-commit
     // `new Date()` instead of the DB commit time, and the trigger has always
     // been authoritative for audit.
-    const update: Record<string, unknown> = {};
-    for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config'] as const) {
-      if (bodyParsed.data[k] !== undefined) update[k] = bodyParsed.data[k];
-    }
+    const update = buildRuleUpdate(parsed.patch);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error, count } = await (db as any)
       .from('organization_rules')
       .update(update, { count: 'exact' })
-      .eq('id', idParsed.data)
+      .eq('id', parsed.ruleId)
       .eq('org_id', orgId); // cross-tenant guard (service_role bypasses RLS)
     if (error) {
       logger.warn({ error }, 'organization_rules update failed');
@@ -466,7 +499,7 @@ export async function handleUpdateRule(
       return;
     }
     res.json({ ok: true });
-    void emitUpdateAudit(userId, orgId, idParsed.data, bodyParsed.data);
+    void emitUpdateAudit(userId, orgId, parsed.ruleId, parsed.patch);
   } catch (err) {
     logger.error({ error: err }, 'handleUpdateRule unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });

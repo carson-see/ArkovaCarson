@@ -226,7 +226,7 @@ BEGIN
     claimed.external_file_id, claimed.filename, claimed.folder_path,
     claimed.sender_email, claimed.subject
   FROM claimed
-  ORDER BY claimed.id;
+  ORDER BY claimed.id ASC;
 END;
 $$;
 
