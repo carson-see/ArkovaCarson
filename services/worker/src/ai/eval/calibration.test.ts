@@ -429,7 +429,7 @@ describe('getPerTypeCalibrationKnots (GME7.1 — SCRUM-854)', () => {
 
   it('each type has valid knot arrays', () => {
     const knots = getPerTypeCalibrationKnots();
-    for (const [type, typeKnots] of Object.entries(knots)) {
+    for (const [, typeKnots] of Object.entries(knots)) {
       expect(typeKnots.length).toBeGreaterThan(0);
       expect(typeKnots[0][0]).toBe(0);
       expect(typeKnots[typeKnots.length - 1][0]).toBe(1);

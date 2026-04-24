@@ -384,10 +384,12 @@ export function SecureDocumentDialog({
       handleConfirm(autoAccepted);
       return;
     } else {
-      // Extraction failed — show recovery screen with retry/manual/skip options
+      // AI analysis is core enrichment, but it must not hold the secure-document hot path hostage.
+      // Continue with the record when the analysis service is unavailable.
       toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
       setExtractionProgress(null);
-      setStep('extraction-failed');
+      await autoSelectTemplate('OTHER');
+      handleConfirm([]);
       return;
     }
   }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, profile?.org_id]);

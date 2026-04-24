@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { crossReferenceDocuments, type CrossRefAnchor, type CrossRefFinding } from './cross-reference.js';
+import { crossReferenceDocuments, type CrossRefAnchor } from './cross-reference.js';
 
 const makeAnchor = (overrides: Partial<CrossRefAnchor> = {}): CrossRefAnchor => ({
   id: 'a1',

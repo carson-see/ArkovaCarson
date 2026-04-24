@@ -965,7 +965,7 @@ export function PipelineAdminPage() {
                             {record.chain_tx_id && (record.anchor_status === 'SUBMITTED' || record.anchor_status === 'SECURED') ? (
                               <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
                                 <ArkovaIcon className="h-3 w-3 mr-1" />
-                                Bitcoin
+                                Anchored
                               </Badge>
                             ) : record.anchor_id ? (
                               <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
@@ -1369,7 +1369,7 @@ function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; s
       <CardContent>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <QualityMetric label="Embedding Coverage" value={`${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${metrics.unembedded.toLocaleString()} unembedded`} />
-          <QualityMetric label="Bitcoin Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending Bitcoin`} />
+          <QualityMetric label="Anchoring Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending anchoring`} />
           <QualityMetric label="Type Classification" value={`${metrics.classifiedPct}%`} width={metrics.classifiedWidth} color="bg-[#00d4ff]" detail={`${metrics.otherCount.toLocaleString()} unclassified (OTHER)`} />
           <QualityMetric label="Data Sources Active" value={`${metrics.activeSources} / ${sourceConfigCount}`} width={metrics.sourcePct} color="bg-amber-400" detail={`${metrics.inactiveSources} sources not yet ingested`} />
         </div>

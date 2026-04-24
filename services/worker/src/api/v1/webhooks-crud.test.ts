@@ -11,7 +11,6 @@ import {
   CreateWebhookSchema,
   UpdateWebhookSchema,
   ListWebhooksQuerySchema,
-  VALID_WEBHOOK_EVENTS,
 } from './webhooks-schemas.js';
 
 // ─── CreateWebhookSchema ───────────────────────────────────────────────────

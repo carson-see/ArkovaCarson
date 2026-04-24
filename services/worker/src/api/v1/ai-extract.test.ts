@@ -25,6 +25,10 @@ vi.mock('../../ai/factory.js', () => ({
   createExtractionProvider: vi.fn(),
 }));
 
+vi.mock('../../ai/gemini.js', () => ({
+  GeminiProvider: vi.fn(),
+}));
+
 vi.mock('../../ai/cost-tracker.js', () => ({
   checkAICredits: vi.fn(),
   deductAICredits: vi.fn(),
@@ -33,9 +37,10 @@ vi.mock('../../ai/cost-tracker.js', () => ({
 
 import { db } from '../../utils/db.js';
 import { createExtractionProvider } from '../../ai/factory.js';
+import { GeminiProvider } from '../../ai/gemini.js';
 import { checkAICredits, deductAICredits } from '../../ai/cost-tracker.js';
 import { Request, Response } from 'express';
-import { aiExtractRouter } from './ai-extract.js';
+import { AI_EXTRACTION_LATENCY_BUDGET_MS, aiExtractRouter } from './ai-extract.js';
 
 function getPostHandler() {
   const layer = (aiExtractRouter as { stack: Array<{ route?: { methods: { post: boolean }; stack: Array<{ handle: (...args: unknown[]) => unknown }> } }> }).stack
@@ -64,9 +69,28 @@ const validBody = {
   issuerHint: 'University of Michigan',
 };
 
+type AIExtractResponse = Record<string, unknown> & {
+  confidence?: number;
+  provider?: string;
+  tags?: unknown;
+  subType?: unknown;
+  fraudSignals?: unknown;
+  confidenceScores?: unknown;
+  fields?: Record<string, unknown>;
+  degraded?: boolean;
+  creditsRemaining?: unknown;
+};
+
 describe('AI Extraction Endpoint', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (GeminiProvider as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      generateTags: vi.fn().mockResolvedValue({
+        tags: ['credential'],
+        documentType: 'degree',
+        category: 'education',
+      }),
+    }));
   });
 
   it('returns 401 when not authenticated', async () => {
@@ -204,7 +228,7 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
     // Confidence is now calibrated: raw 0.92 maps to 0.92 via calibration knots (1030-entry recalibration)
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
     expect(responseJson).toEqual(
       expect.objectContaining({
         fields: expect.objectContaining({
@@ -280,7 +304,7 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
 
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
     expect(responseJson.subType).toBeNull();
     expect(responseJson.fraudSignals).toBeNull();
     expect(responseJson.confidenceScores).toBeDefined();
@@ -347,14 +371,14 @@ describe('AI Extraction Endpoint', () => {
 
     await handler!(req, res);
 
-    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
     // Calibrated confidence should differ from raw 0.75
     expect(responseJson.confidence).not.toBe(0.75);
     // Should be calibrated to ~0.83 (piecewise linear interpolation, 1030-entry knots)
     expect(responseJson.confidence).toBeCloseTo(0.83, 2);
   });
 
-  it('returns 503 on circuit breaker open', async () => {
+  it('returns degraded fallback metadata on circuit breaker open', async () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
@@ -403,10 +427,16 @@ describe('AI Extraction Endpoint', () => {
     });
 
     await handler!(req, res);
-    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.status).not.toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'fast-fallback',
+        degraded: true,
+      }),
+    );
   });
 
-  it('returns 500 on unexpected error', async () => {
+  it('returns degraded fallback metadata on unexpected provider error', async () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
@@ -455,9 +485,155 @@ describe('AI Extraction Endpoint', () => {
     });
 
     await handler!(req, res);
-    expect(res.status).toHaveBeenCalledWith(500);
     expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: 'extraction_failed' }),
+      expect.objectContaining({
+        provider: 'fast-fallback',
+        degraded: true,
+      }),
     );
+  });
+
+  it('returns a fast fallback when the AI provider exceeds the latency budget', async () => {
+    vi.useFakeTimers();
+    try {
+      const handler = getPostHandler();
+      const { req, res } = createMockReqRes(validBody, 'user-123');
+
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+        if (table === 'ai_usage_events') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    not: vi.fn().mockReturnValue({
+                      order: vi.fn().mockReturnValue({
+                        limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                      }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            insert: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }
+        if (table === 'extraction_manifests') {
+          return {
+            insert: vi.fn().mockReturnValue({
+              then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+            }),
+          };
+        }
+        return {
+          select: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
+          single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
+        };
+      });
+
+      (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+        monthlyAllocation: 500,
+        usedThisMonth: 10,
+        remaining: 490,
+        hasCredits: true,
+      });
+
+      (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+        extractMetadata: vi.fn().mockReturnValue(new Promise(() => {})),
+      });
+
+      const pending = handler!(req, res);
+      await vi.advanceTimersByTimeAsync(AI_EXTRACTION_LATENCY_BUDGET_MS);
+      await pending;
+
+      const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+      expect(res.status).not.toHaveBeenCalledWith(500);
+      expect(responseJson).toEqual(
+        expect.objectContaining({
+          provider: 'fast-fallback',
+          degraded: true,
+          creditsRemaining: 490,
+        }),
+      );
+      expect(responseJson.fields).toEqual(
+        expect.objectContaining({
+          credentialType: 'DEGREE',
+          issuerName: 'University of Michigan',
+        }),
+      );
+      expect(deductAICredits).toHaveBeenCalledWith('org-456', 'user-123', -1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not block the extraction response on slow best-effort tagging', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+      if (table === 'ai_usage_events') {
+        return {
+          select: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  not: vi.fn().mockReturnValue({
+                    order: vi.fn().mockReturnValue({
+                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+                    }),
+                  }),
+                }),
+              }),
+            }),
+          }),
+          insert: vi.fn().mockResolvedValue({ error: null }),
+        };
+      }
+      if (table === 'extraction_manifests') {
+        return {
+          insert: vi.fn().mockReturnValue({
+            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
+          }),
+        };
+      }
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
+      };
+    });
+
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+      monthlyAllocation: 500,
+      usedThisMonth: 10,
+      remaining: 490,
+      hasCredits: true,
+    });
+
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+      extractMetadata: vi.fn().mockResolvedValue({
+        fields: { credentialType: 'DEGREE', issuerName: 'University of Michigan' },
+        confidence: 0.92,
+        provider: 'gemini',
+        tokensUsed: 150,
+      }),
+    });
+    (GeminiProvider as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      generateTags: vi.fn().mockReturnValue(new Promise(() => {})),
+    }));
+
+    const result = await Promise.race([
+      Promise.resolve(handler!(req, res)).then(() => 'resolved'),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 25)),
+    ]);
+
+    expect(result).toBe('resolved');
+    const responseJson = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0] as AIExtractResponse;
+    expect(responseJson.provider).toBe('gemini');
+    expect(responseJson.tags).toBeUndefined();
   });
 });

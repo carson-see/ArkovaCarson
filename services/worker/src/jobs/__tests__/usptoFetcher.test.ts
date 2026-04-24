@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Readable } from 'node:stream';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';

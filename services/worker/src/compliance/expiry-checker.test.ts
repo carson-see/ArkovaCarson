@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { categorizeExpiringDocuments, type ExpiryAnchor, type ExpiryCategory } from './expiry-checker.js';
+import { categorizeExpiringDocuments, type ExpiryAnchor } from './expiry-checker.js';
 
 function daysFromNow(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();

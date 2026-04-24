@@ -5,12 +5,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { BatchProcessor, type BatchResult } from './batch-processing.js';
+import { BatchProcessor } from './batch-processing.js';
 import type { IAIProvider, ExtractionRequest, ExtractionResult, EmbeddingResult, ProviderHealth } from './types.js';
 
 const mockProvider: IAIProvider = {
   name: 'mock',
-  async extractMetadata(req: ExtractionRequest): Promise<ExtractionResult> {
+  async extractMetadata(_req: ExtractionRequest): Promise<ExtractionResult> {
     return {
       fields: { credentialType: 'DEGREE' },
       confidence: 0.9,

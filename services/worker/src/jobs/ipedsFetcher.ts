@@ -95,12 +95,12 @@ export async function fetchIpedsInstitutions(
   logger.info({ year, offset, maxPerRun: MAX_PER_RUN }, 'IPEDS institution fetch starting');
 
   let inserted = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
   let total = 0;
   const batch: Array<Record<string, unknown>> = [];
 
-  let page = Math.floor(offset / 100);
+  const page = Math.floor(offset / 100);
   const maxPages = Math.ceil(MAX_PER_RUN / 100);
 
   for (let p = 0; p < maxPages; p++) {

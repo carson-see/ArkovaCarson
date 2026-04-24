@@ -9,30 +9,6 @@ import { describe, it, expect } from 'vitest';
 import { SUBTYPE_BACKFILL } from './golden-dataset-subtype-backfill.js';
 import { FULL_GOLDEN_DATASET } from './golden-dataset.js';
 
-/** Valid subType values by credential type */
-const VALID_SUBTYPES: Record<string, string[]> = {
-  DEGREE: ['associate', 'bachelor', 'master', 'doctorate', 'honorary', 'professional_jd', 'professional_md', 'professional_dds', 'professional_pharmd', 'professional_edd'],
-  LICENSE: [
-    'nursing_rn', 'nursing_lpn', 'medical_md', 'pharmacist', 'law_bar_admission',
-    'real_estate', 'engineering_pe', 'teaching', 'cpa', 'cosmetology',
-    'dental', 'veterinary', 'pilot', 'notary', 'architect', 'social_work',
-    'psychology', 'optometry', 'chiropractic', 'electrician', 'plumber',
-    'speech_language_pathology', 'general',
-  ],
-  CERTIFICATE: [
-    'professional_certification', 'it_certification', 'accreditation_certificate',
-    'completion_certificate', 'training_certificate', 'trade_certification',
-  ],
-  TRANSCRIPT: [
-    'official_undergraduate', 'official_graduate', 'unofficial',
-    'international_wes', 'high_school',
-  ],
-  CLE: ['ethics_cle', 'general_cle', 'specialized_cle', 'elimination_of_bias'],
-  PROFESSIONAL: [
-    'board_certification', 'residency', 'fellowship', 'membership',
-  ],
-};
-
 describe('GRE-06: Golden Dataset SubType Backfill', () => {
   const backfillEntries = Object.entries(SUBTYPE_BACKFILL);
   const backfillIds = new Set(Object.keys(SUBTYPE_BACKFILL));

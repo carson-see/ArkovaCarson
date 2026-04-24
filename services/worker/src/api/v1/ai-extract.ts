@@ -18,10 +18,100 @@ import { getExtractionPromptVersion } from '../../ai/prompts/extraction.js';
 import { calibrateConfidenceByProvider } from '../../ai/eval/calibration.js';
 import { buildExtractionManifest } from '../../ai/extraction-manifest.js';
 import { GeminiProvider } from '../../ai/gemini.js';
+import type { ExtractedFields, ExtractionResult } from '../../ai/types.js';
+import type { Json } from '../../types/database.types.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
+export const AI_EXTRACTION_LATENCY_BUDGET_MS = 4_500;
+
+class ExtractionLatencyError extends Error {
+  constructor() {
+    super(`AI extraction latency budget exceeded (${AI_EXTRACTION_LATENCY_BUDGET_MS}ms)`);
+    this.name = 'ExtractionLatencyError';
+  }
+}
+
+function withLatencyBudget<T>(operation: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new ExtractionLatencyError()), AI_EXTRACTION_LATENCY_BUDGET_MS);
+  });
+
+  return Promise.race([operation, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
+}
+
+function buildFastFallbackExtraction(params: {
+  strippedText: string;
+  credentialType: string;
+  issuerHint?: string;
+  reason: string;
+}): ExtractionResult {
+  const fields: ExtractedFields = {
+    credentialType: params.credentialType,
+  };
+
+  const issuerName = inferIssuerName(params.strippedText, params.issuerHint);
+  if (issuerName) fields.issuerName = issuerName;
+
+  const issuedDate = inferIssuedDate(params.strippedText);
+  if (issuedDate) fields.issuedDate = issuedDate;
+
+  const jurisdiction = inferJurisdiction(params.strippedText);
+  if (jurisdiction) fields.jurisdiction = jurisdiction;
+
+  return {
+    fields,
+    confidence: issuerName ? 0.35 : 0.25,
+    provider: 'fast-fallback',
+    modelVersion: 'fast-fallback-v1',
+    confidenceReasoning: `Degraded extraction returned because ${params.reason}.`,
+  };
+}
+
+function inferIssuerName(strippedText: string, issuerHint?: string): string | undefined {
+  const hint = issuerHint?.trim();
+  if (hint) return hint.slice(0, 160);
+
+  const lines = strippedText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 2 && line.length <= 160)
+    .filter((line) => !/^\[[A-Z_]+_REDACTED\]$/.test(line));
+
+  const issuerLine = lines.find((line) =>
+    /\b(university|college|institute|school|academy|board|council|commission|department|ministry|authority|registry|corporation|corp\.?|inc\.?|ltd\.?|llc|society)\b/i.test(line),
+  );
+
+  return issuerLine ?? lines[0];
+}
+
+function inferIssuedDate(strippedText: string): string | undefined {
+  const dateMatch = strippedText.match(/\b(?:20|19)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b/);
+  return dateMatch?.[0]?.replace(/\//g, '-').replace(/\./g, '-');
+}
+
+function inferJurisdiction(strippedText: string): string | undefined {
+  if (/\bKenya|KDPA|ODPC\b/i.test(strippedText)) return 'Kenya';
+  if (/\bAustralia|OAIC|AHPRA|TEQSA|Privacy Act\b/i.test(strippedText)) return 'Australia';
+  if (/\bUnited States|USA|U\.S\.A\.|U\.S\.\b/i.test(strippedText)) return 'United States';
+  return undefined;
+}
+
+function enqueueTagGeneration(fields: Record<string, unknown>): void {
+  void Promise.resolve()
+    .then(async () => {
+      const gemini = new GeminiProvider();
+      await gemini.generateTags(fields);
+    })
+    .catch((tagErr: unknown) => {
+      logger.warn({ error: tagErr }, 'Auto-tagging failed (non-fatal)');
+    });
+}
 
 router.post('/', async (req: Request, res: Response) => {
   const userId = req.authUserId;
@@ -47,10 +137,9 @@ router.post('/', async (req: Request, res: Response) => {
 
   try {
     // Parallel: fetch profile + check extraction cache simultaneously
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [profileResult, cacheResult] = await Promise.all([
       db.from('profiles').select('org_id').eq('id', userId).single(),
-      (db as any)
+      db
         .from('ai_usage_events')
         .select('result_json, confidence')
         .eq('fingerprint', fingerprint)
@@ -106,21 +195,44 @@ router.post('/', async (req: Request, res: Response) => {
     // Call AI provider
     const startMs = Date.now();
     const provider = createExtractionProvider('user_upload');
-    let result;
+    let result: ExtractionResult;
+    let degraded = false;
+    let fallbackReason: string | undefined;
+    let deductedCredit = false;
     try {
-      result = await provider.extractMetadata({
+      deductedCredit = deducted === true;
+      result = await withLatencyBudget(
+        provider.extractMetadata({
+          strippedText,
+          credentialType,
+          fingerprint,
+          issuerHint,
+        }),
+      );
+    } catch (extractionError) {
+      fallbackReason = extractionError instanceof ExtractionLatencyError
+        ? 'provider latency budget was exceeded'
+        : 'provider extraction failed';
+      degraded = true;
+
+      // RISK-6: Synchronous refund on extraction failure
+      if (deductedCredit) {
+        const refunded = await deductAICredits(orgId, userId, -1);
+        if (!refunded) {
+          logger.warn({ orgId, userId }, 'Failed to refund AI credit after extraction failure');
+        }
+      }
+
+      logger.warn(
+        { error: extractionError, provider: provider.name, credentialType, fingerprint },
+        'AI extraction provider unavailable; returning fast fallback metadata',
+      );
+      result = buildFastFallbackExtraction({
         strippedText,
         credentialType,
-        fingerprint,
         issuerHint,
+        reason: fallbackReason,
       });
-    } catch (extractionError) {
-      // RISK-6: Synchronous refund on extraction failure
-      const refunded = await deductAICredits(orgId, userId, -1);
-      if (!refunded) {
-        logger.warn({ orgId, userId }, 'Failed to refund AI credit after extraction failure');
-      }
-      throw extractionError;
     }
     const durationMs = Date.now() - startMs;
 
@@ -130,7 +242,9 @@ router.post('/', async (req: Request, res: Response) => {
     // overconfident (knots map DOWN). Using the Gemini function on a Nessie
     // result re-inflates already-calibrated values.
     const rawConfidence = result.confidence;
-    const calibrated = calibrateConfidenceByProvider(result.provider, rawConfidence);
+    const calibrated = degraded
+      ? rawConfidence
+      : calibrateConfidenceByProvider(result.provider, rawConfidence);
 
     // Structured observability log — AI extraction latency + quality metrics
     logger.info({
@@ -155,13 +269,14 @@ router.post('/', async (req: Request, res: Response) => {
       eventType: 'extraction',
       provider: result.provider,
       tokensUsed: result.tokensUsed,
-      creditsConsumed: 1,
+      creditsConsumed: degraded ? 0 : 1,
       fingerprint,
       confidence: calibrated,
       durationMs,
       success: true,
       promptVersion,
       resultJson: result.fields as Record<string, unknown>,
+      errorMessage: fallbackReason,
     }).catch(() => {
       // Swallow — logging should not fail the request
     });
@@ -179,19 +294,18 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
     // Non-blocking DB insert — manifest is audit trail, should not fail extraction
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (db as any).from('extraction_manifests').insert({
+    void Promise.resolve(db.from('extraction_manifests').insert({
       fingerprint: manifest.fingerprint,
       model_id: manifest.modelId,
       model_version: manifest.modelVersion,
-      extracted_fields: manifest.extractedFields,
-      confidence_scores: manifest.confidenceScores,
+      extracted_fields: manifest.extractedFields as Json,
+      confidence_scores: manifest.confidenceScores as unknown as Json,
       manifest_hash: manifest.manifestHash,
       org_id: orgId ?? null,
       user_id: userId,
       extraction_timestamp: manifest.extractionTimestamp,
       prompt_version: manifest.promptVersion ?? null,
-    }).then(({ error }: { error: unknown }) => {
+    })).then(({ error }) => {
       if (error) {
         logger.warn({ error, fingerprint }, 'Failed to store extraction manifest');
       }
@@ -199,35 +313,23 @@ router.post('/', async (req: Request, res: Response) => {
       logger.warn({ error: err, fingerprint }, 'Failed to store extraction manifest');
     });
 
-    // Auto-generate tags in parallel (non-blocking — best-effort enrichment)
-    let tags: string[] | undefined;
-    let documentType: string | undefined;
-    let category: string | undefined;
-    try {
-      const gemini = new GeminiProvider();
-      const tagsResult = await gemini.generateTags(result.fields as Record<string, unknown>);
-      tags = tagsResult.tags;
-      documentType = tagsResult.documentType;
-      category = tagsResult.category;
-    } catch (tagErr) {
-      // Tagging is best-effort — don't fail extraction
-      logger.warn({ error: tagErr }, 'Auto-tagging failed (non-fatal)');
-    }
-
     const fields = result.fields as Record<string, unknown>;
+    if (!degraded) {
+      // Auto-tagging is enrichment only. It must never block the upload hot path.
+      enqueueTagGeneration(fields);
+    }
 
     res.json({
       fields,
       confidence: calibrated,
       provider: result.provider,
-      creditsRemaining: creditBalance ? creditBalance.remaining - 1 : null,
-      tags,
-      documentType,
-      category,
+      creditsRemaining: creditBalance ? (degraded ? creditBalance.remaining : creditBalance.remaining - 1) : null,
       manifestHash: manifest.manifestHash,
       confidenceScores: manifest.confidenceScores ?? null,
       subType: fields.subType ?? null,
       fraudSignals: fields.fraudSignals ?? null,
+      degraded,
+      fallbackReason: fallbackReason ?? null,
     });
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : 'Unknown error';

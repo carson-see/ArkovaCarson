@@ -44,8 +44,6 @@ interface LicenseFetchResult {
 async function fetchCaNursing(
   supabase: SupabaseClient,
 ): Promise<LicenseFetchResult> {
-  // CA BRN License Verification API
-  const baseUrl = 'https://www.rn.ca.gov/consumers/verification.shtml';
   let inserted = 0;
   let skipped = 0;
   let errors = 0;
@@ -129,7 +127,7 @@ async function fetchCaNursing(
       }
 
       await delay(RATE_LIMIT_MS);
-    } catch (err) {
+    } catch {
       errors++;
     }
   }

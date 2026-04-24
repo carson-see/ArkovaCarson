@@ -7,7 +7,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { REASONING_FEWSHOTS } from './reasoning-fewshots.js';
-import type { ReasoningFewShotExample } from './reasoning-fewshots.js';
 
 /** All credential types that must have at least one few-shot example */
 const REQUIRED_TYPES = [

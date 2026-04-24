@@ -25,7 +25,7 @@ vi.mock('./supabase', () => ({
   },
 }));
 
-import { runExtraction } from './aiExtraction';
+import { AI_EXTRACTION_REQUEST_TIMEOUT_MS, runExtraction } from './aiExtraction';
 import { extractText } from './ocrWorker';
 import { stripPII } from './piiStripper';
 import { supabase } from './supabase';
@@ -220,6 +220,56 @@ describe('aiExtraction orchestrator', () => {
         message: expect.stringContaining('Unable to connect'),
       }),
     );
+  });
+
+  it('times out the worker request so Secure Document can continue', async () => {
+    vi.useFakeTimers();
+    try {
+      (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+        text: 'University of Michigan\nBachelor of Science',
+        pageCount: 1,
+        method: 'pdfjs',
+        durationMs: 100,
+      });
+
+      (stripPII as ReturnType<typeof vi.fn>).mockReturnValue({
+        strippedText: 'University of Michigan\nBachelor of Science',
+        piiFound: [],
+        redactionCount: 0,
+        originalLength: 39,
+        strippedLength: 39,
+      });
+
+      global.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit): Promise<Response> => new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'));
+        });
+      })) as typeof fetch;
+
+      const progressCb = vi.fn();
+      const file = new File(['dummy'], 'degree.pdf', { type: 'application/pdf' });
+      const pending = runExtraction(
+        file,
+        'a'.repeat(64),
+        'DEGREE',
+        progressCb,
+        { enableNER: false },
+      );
+
+      await vi.advanceTimersByTimeAsync(AI_EXTRACTION_REQUEST_TIMEOUT_MS);
+      const result = await pending;
+
+      expect(result).toBeNull();
+      expect(progressCb).toHaveBeenCalledWith(
+        expect.objectContaining({
+          stage: 'error',
+          message: expect.stringContaining('timed out'),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('reports progress through all stages', async () => {

@@ -24,7 +24,7 @@ describe('GME-20: Model Version Pinning', () => {
     });
 
     it('each pin has model ID, pinnedAt date, and verifiedAt date', () => {
-      for (const [role, pin] of Object.entries(MODEL_VERSION_PINS)) {
+      for (const [, pin] of Object.entries(MODEL_VERSION_PINS)) {
         expect(pin).toHaveProperty('modelId');
         expect(pin).toHaveProperty('pinnedAt');
         expect(pin).toHaveProperty('verifiedAt');

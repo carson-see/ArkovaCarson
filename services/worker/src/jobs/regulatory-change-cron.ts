@@ -66,7 +66,7 @@ export async function runRegulatoryChangeCron(
     errors: 0,
   };
 
-  let orgs: Array<{ org_id: string; last_audit_at: string }> = [];
+  const orgs: Array<{ org_id: string; last_audit_at: string }> = [];
   try {
     const { data } = await database
       .from('compliance_audits')
@@ -128,14 +128,15 @@ async function computeImpactForOrg(
   lastAuditAt: string,
   rules: JurisdictionRule[],
 ): Promise<{ impact: RegulatoryChangeImpact; currentAudit: OrgAuditResult } | null> {
-  const { data: previous } = await database
+  const previousResult = await database
     .from('compliance_audits')
     .select('*')
     .eq('org_id', orgId)
     .eq('status', 'COMPLETED')
     .order('started_at', { ascending: false })
     .limit(1)
-    .maybeSingle?.();
+    .maybeSingle();
+  const { data: previous } = previousResult;
   if (!previous) return null;
 
   const ruleChange = detectRuleChangesSince(rules as unknown as Array<{
@@ -156,7 +157,7 @@ async function computeImpactForOrg(
   }
 
   // Org + anchors for a fresh audit pass.
-  const { data: org } = await database.from('organizations').select('jurisdictions, industry').eq('id', orgId).maybeSingle?.();
+  const { data: org } = await database.from('organizations').select('jurisdictions, industry').eq('id', orgId).maybeSingle();
   const jurisdictions = Array.isArray(org?.jurisdictions) ? (org.jurisdictions as string[]) : [];
   const industry = (org?.industry as string | null) ?? 'accounting';
   const pairs: JurisdictionPair[] = jurisdictions.map((j) => ({
@@ -326,4 +327,3 @@ function renderImpactEmailHtml(impact: RegulatoryChangeImpact, scorecardUrl: str
     </div>
   `;
 }
-

@@ -91,14 +91,14 @@ async function fetchSectionText(title: number, section: string): Promise<string 
 /**
  * Recursively collect all section identifiers from a structure tree.
  */
-function collectSections(nodes: EcfrSection[], prefix: string = ''): Array<{ identifier: string; label: string }> {
+function collectSections(nodes: EcfrSection[]): Array<{ identifier: string; label: string }> {
   const sections: Array<{ identifier: string; label: string }> = [];
   for (const node of nodes) {
     if (node.type === 'section' && !node.reserved) {
       sections.push({ identifier: node.identifier, label: node.label || node.title });
     }
     if (node.children) {
-      sections.push(...collectSections(node.children, node.identifier));
+      sections.push(...collectSections(node.children));
     }
   }
   return sections;

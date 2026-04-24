@@ -14,10 +14,9 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { computeContentHash, delay } from '../utils/pipeline.js';
+import { computeContentHash } from '../utils/pipeline.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const RATE_LIMIT_MS = 500;
 const INSERT_BATCH_SIZE = 50;
 
 interface CeFetchResult {
@@ -35,7 +34,7 @@ async function fetchNasbaCpeSponsors(
   supabase: SupabaseClient,
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
   let inserted = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
 
   try {
@@ -113,7 +112,7 @@ async function fetchAccmeProviders(
   supabase: SupabaseClient,
 ): Promise<{ inserted: number; skipped: number; errors: number }> {
   let inserted = 0;
-  let skipped = 0;
+  const skipped = 0;
   let errors = 0;
 
   try {

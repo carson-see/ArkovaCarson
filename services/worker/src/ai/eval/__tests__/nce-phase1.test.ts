@@ -21,7 +21,6 @@ import {
 // NCE-05: Eval scoring functions
 import {
   scoreCitationAccuracy,
-  scoreFaithfulness,
   scoreAnswerRelevance,
   scoreRiskDetection,
   pearsonCorrelation,

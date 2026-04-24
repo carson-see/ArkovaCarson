@@ -14,7 +14,7 @@ import {
   DIPLOMA_MILLS,
   SUSPICIOUS_PHRASES,
 } from './fraud-training-pipeline.js';
-import type { FraudTrainingExample, FraudPipelineResult } from './fraud-training-pipeline.js';
+import type { FraudTrainingExample } from './fraud-training-pipeline.js';
 
 vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),

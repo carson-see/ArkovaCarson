@@ -89,14 +89,14 @@ describe('PipelineAdminPage', () => {
     expect(screen.getByText('Refresh')).toBeInTheDocument();
   });
 
-  it('labels anchoring metrics as Bitcoin status, not internal link status', async () => {
+  it('labels anchoring metrics as customer-facing anchoring status', async () => {
     render(
       <MemoryRouter>
         <PipelineAdminPage />
       </MemoryRouter>,
     );
-    expect(await screen.findByText('Bitcoin Anchored')).toBeInTheDocument();
-    expect(await screen.findByText('Pending Bitcoin')).toBeInTheDocument();
+    expect(await screen.findByText('Records Anchored')).toBeInTheDocument();
+    expect(await screen.findByText('Pending Anchoring')).toBeInTheDocument();
   });
 
   it('shows access restricted for non-admin', async () => {

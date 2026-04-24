@@ -41,7 +41,7 @@ interface CronRuleRow {
 /**
  * 5-field cron matcher: "m h dom mon dow".
  *
- * Supports `*` wildcards and comma-separated lists. Steps (`*​/5`) and ranges
+ * Supports wildcard and comma-separated lists. Step expressions and ranges
  * (`1-5`) are not supported — rules authored via the wizard (ARK-108) are
  * constrained to fixed hours/minutes + day-of-week lists.
  *
