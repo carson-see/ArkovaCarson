@@ -27,6 +27,12 @@ const DEFAULT_VISION_MODEL = 'gemini-3-flash-preview';
 const DEFAULT_DISTILLATION_MODEL = 'gemini-3-flash-preview';
 // GME-18: Lighter model for low-stakes tasks (tags, classification)
 const DEFAULT_LITE_MODEL = 'gemini-3-flash-lite-preview';
+// GEMB2-01 (SCRUM-1050): Vertex AI Gemini Embedding 2 — the next-gen embedding
+// model. NOT wired into the production hot path yet — lives only in
+// `services/worker/src/ai/embeddings/gemini2.ts` as a reference client.
+// Registered here so the deprecation monitor (GME-05) can see the model ID,
+// and so the GEMB2-02 switch-over (SCRUM-1051) has a single slot to flip.
+const DEFAULT_EMBEDDING_V2_MODEL = 'gemini-embedding-2@001';
 
 // ─── Resolved model names (env overrides) ──────────────────────────
 /** Primary text generation model — extraction, tags, templates, fraud */
@@ -52,6 +58,16 @@ export const GEMINI_DISTILLATION_MODEL =
 /** GME-18: Lighter model for low-stakes tasks (tag generation, classification) */
 export const GEMINI_LITE_MODEL =
   process.env.GEMINI_LITE_MODEL ?? DEFAULT_LITE_MODEL;
+
+/**
+ * GEMB2-01 (SCRUM-1050): Vertex AI Gemini Embedding 2 model ID. Not active on
+ * the production hot path — use `GEMINI_EMBEDDING_MODEL` for that. This
+ * constant is the single source of truth referenced by
+ * `services/worker/src/ai/embeddings/gemini2.ts` so a future rotation is a
+ * one-line change.
+ */
+export const GEMINI_EMBEDDING_V2_MODEL =
+  process.env.GEMINI_EMBEDDING_V2_MODEL ?? DEFAULT_EMBEDDING_V2_MODEL;
 
 // ─── GME-20: Version Pin Metadata ─────────────────────────────────
 // Track when each model version was pinned and last verified.
@@ -95,6 +111,13 @@ export const MODEL_VERSION_PINS: Record<string, ModelVersionPin> = {
     pinnedAt: '2026-04-12',
     verifiedAt: '2026-04-12',
     notes: 'GME-18: cheaper/faster model for tags, classification',
+  },
+  embedding_v2: {
+    modelId: DEFAULT_EMBEDDING_V2_MODEL,
+    pinnedAt: '2026-04-23',
+    verifiedAt: '2026-04-23',
+    notes:
+      'GEMB2-01 (SCRUM-1050): reference implementation only. Not on the production hot path until GEMB2-02 ships with ENABLE_GEMB2_RAG=true.',
   },
 };
 
