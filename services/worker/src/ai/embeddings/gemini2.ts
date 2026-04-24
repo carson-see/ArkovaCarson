@@ -81,6 +81,14 @@ export interface EmbedRequest {
     | 'RETRIEVAL_QUERY'
     | 'SEMANTIC_SIMILARITY'
     | 'CLASSIFICATION';
+  /**
+   * Optional abort signal. When it aborts, the in-flight Vertex call is
+   * cancelled and `embed()` rejects with an `AbortError`. Matches the
+   * pattern established by cc4767c on the sibling gemini.ts client — a
+   * stalled Vertex response would otherwise hang callers indefinitely
+   * because node's `fetch` has no default timeout.
+   */
+  signal?: AbortSignal;
 }
 
 export interface EmbedResponse {
@@ -122,7 +130,14 @@ export interface Gemini2ClientOptions {
   model?: string;
   auth: AuthProvider;
   fetch?: FetchLike;
+  /**
+   * Default timeout in ms for any embed() call that doesn't pass its own
+   * `signal`. Matches gemini.ts (cc4767c) at 30_000. Set to 0 to disable.
+   */
+  defaultTimeoutMs?: number;
 }
+
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function createGemini2Client(opts: Gemini2ClientOptions): Gemini2Client {
   const projectId = opts.projectId ?? process.env.GCP_PROJECT_ID;
@@ -141,6 +156,7 @@ export function createGemini2Client(opts: Gemini2ClientOptions): Gemini2Client {
   }
   const model = opts.model ?? GEMB2_MODEL;
   const doFetch: FetchLike = opts.fetch ?? ((input, init) => fetch(input, init));
+  const defaultTimeoutMs = opts.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const endpoint =
     `https://${location}-aiplatform.googleapis.com/v1/projects/${projectId}` +
@@ -173,15 +189,36 @@ export function createGemini2Client(opts: Gemini2ClientOptions): Gemini2Client {
       },
     };
 
+    // If the caller didn't pass a signal but defaultTimeoutMs > 0, install a
+    // timeout controller so a hung Vertex call can't stall the worker. When
+    // defaultTimeoutMs = 0 the call runs without a bound (caller's problem).
+    let timeoutController: AbortController | undefined;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let effectiveSignal: AbortSignal | undefined = req.signal;
+    if (!effectiveSignal && defaultTimeoutMs > 0) {
+      timeoutController = new AbortController();
+      effectiveSignal = timeoutController.signal;
+      timeoutHandle = setTimeout(
+        () => timeoutController?.abort(),
+        defaultTimeoutMs,
+      );
+    }
+
     const startedAt = Date.now();
-    const res = await doFetch(endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: `${AUTH_SCHEME} ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
+    let res: Response;
+    try {
+      res = await doFetch(endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: `${AUTH_SCHEME} ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: effectiveSignal,
+      });
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
     const latencyMs = Date.now() - startedAt;
 
     if (!res.ok) {

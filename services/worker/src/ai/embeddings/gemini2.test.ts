@@ -181,4 +181,58 @@ describe('createGemini2Client', () => {
     });
     await expect(client.embed({ text: 'x' })).rejects.toThrow(/empty access token/);
   });
+
+  // CIBA-HARDEN-03 / cc4767c parity — the client must propagate the caller's
+  // signal AND install a default timeout so stalled Vertex responses can't hang
+  // the worker.
+  it('passes through a caller-provided AbortSignal', async () => {
+    const fetchStub: FetchLike = vi.fn(async (_url, init) => {
+      if (init?.signal?.aborted) {
+        throw new DOMException('aborted', 'AbortError');
+      }
+      return okResponse(new Array(768).fill(0));
+    });
+    const client = createGemini2Client({
+      projectId: 'arkova1',
+      auth: makeAuth(),
+      fetch: fetchStub,
+    });
+    const ctrl = new AbortController();
+    ctrl.abort();
+    await expect(client.embed({ text: 'x', signal: ctrl.signal })).rejects.toThrow(
+      /aborted/,
+    );
+  });
+
+  it('installs a default timeout controller when no signal is passed', async () => {
+    let capturedSignal: AbortSignal | null = null;
+    const fetchStub: FetchLike = vi.fn(async (_url, init) => {
+      capturedSignal = init?.signal ?? null;
+      return okResponse(new Array(768).fill(0));
+    });
+    const client = createGemini2Client({
+      projectId: 'arkova1',
+      auth: makeAuth(),
+      fetch: fetchStub,
+    });
+    await client.embed({ text: 'x' });
+    expect(capturedSignal).not.toBeNull();
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('does not install a default timeout when defaultTimeoutMs=0', async () => {
+    let capturedSignal: AbortSignal | null | undefined = undefined;
+    const fetchStub: FetchLike = vi.fn(async (_url, init) => {
+      capturedSignal = init?.signal ?? null;
+      return okResponse(new Array(768).fill(0));
+    });
+    const client = createGemini2Client({
+      projectId: 'arkova1',
+      auth: makeAuth(),
+      fetch: fetchStub,
+      defaultTimeoutMs: 0,
+    });
+    await client.embed({ text: 'x' });
+    expect(capturedSignal).toBeNull();
+  });
 });
