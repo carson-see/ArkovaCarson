@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Bell, Building2, ListChecks, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
@@ -40,6 +40,7 @@ import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
+import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
@@ -50,6 +51,7 @@ type OrgMemberRole = 'owner' | 'admin' | 'member';
 export function OrgProfilePage() {
   const navigate = useNavigate();
   const { orgId } = useParams<{ orgId: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
@@ -94,6 +96,7 @@ export function OrgProfilePage() {
 
   // Sub-org affiliation state
   const [parentOrgName, setParentOrgName] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'settings' ? 'settings' : 'home');
 
   // Fetch user's role in this org
   useEffect(() => {
@@ -241,6 +244,23 @@ export function OrgProfilePage() {
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
   const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
+
+  useEffect(() => {
+    const driveResult = searchParams.get('drive');
+    const driveError = searchParams.get('drive_error');
+    if (driveResult === 'connected') {
+      toast.success('Google Drive connected.');
+    } else if (driveError) {
+      toast.error('Google Drive connection was not completed.');
+    }
+
+    if (driveResult || driveError) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('drive');
+      next.delete('drive_error');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -450,7 +470,7 @@ export function OrgProfilePage() {
         </CardContent>
 
         {/* Tabs integrated into the card bottom — like LinkedIn */}
-        <Tabs defaultValue="home" className="w-full">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
           <div className="border-t border-border/50 px-4 md:px-6">
             <TabsList className="h-auto bg-transparent p-0 gap-0">
               <TabsTrigger value="home" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-3 text-sm font-medium">
@@ -717,6 +737,10 @@ export function OrgProfilePage() {
                   hasEin={!!(organization as Record<string, unknown>)?.ein_tax_id}
                   onVerified={() => window.location.reload()}
                 />
+              </div>
+
+              <div className="mt-8">
+                <DriveConnectorCard orgId={orgId} />
               </div>
             </div>
 

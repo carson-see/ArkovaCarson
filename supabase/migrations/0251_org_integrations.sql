@@ -74,7 +74,7 @@ DROP TRIGGER IF EXISTS org_integrations_updated_at ON org_integrations;
 CREATE TRIGGER org_integrations_updated_at
   BEFORE UPDATE ON org_integrations
   FOR EACH ROW
-  EXECUTE FUNCTION moddatetime(updated_at);
+  EXECUTE FUNCTION extensions.moddatetime(updated_at);
 
 ALTER TABLE org_integrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_integrations FORCE ROW LEVEL SECURITY;
