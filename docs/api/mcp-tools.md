@@ -2,7 +2,7 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes six tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes ten tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 adds the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -38,12 +38,16 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 
 | # | Tool | Purpose | Story |
 |---|---|---|---|
-| 1 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
-| 2 | `search_credentials` | Semantic search across credentials | P8-S19 |
-| 3 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
-| 4 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
-| 5 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
-| 6 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 1 | **`search`** | **Agent-friendly v2 search across orgs, records, fingerprints, and documents** | **SCRUM-1107** |
+| 2 | **`verify`** | **Verify a SHA-256 document fingerprint** | **SCRUM-1107** |
+| 3 | **`list_orgs`** | **List org context for the authenticated caller** | **SCRUM-1107** |
+| 4 | **`get_anchor`** | **Fetch redacted public anchor metadata by public ID** | **SCRUM-1107** |
+| 5 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
+| 6 | `search_credentials` | Semantic search across credentials | P8-S19 |
+| 7 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
+| 8 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
+| 9 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
+| 10 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@arkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
@@ -54,6 +58,48 @@ All tool responses follow the MCP convention:
 ```
 
 When an error occurs, the response also includes `"isError": true`.
+
+---
+
+## v2 Agent Aliases
+
+The aliases below are intentionally named like OpenAPI function-call operations. Prefer them for new agent integrations; the legacy tool names remain stable for existing clients.
+
+### `search`
+
+Input:
+
+| Field | Type | Required | Description |
+|---|---|:---:|---|
+| `q` | string | yes | Natural language query or exact SHA-256 fingerprint |
+| `type` | `all`, `org`, `record`, `fingerprint`, `document` | no | Default `all` |
+| `max_results` | number | no | Default 10, max 50 |
+
+Example:
+
+```json
+{ "q": "Acme compliance certificate", "type": "document", "max_results": 5 }
+```
+
+### `verify`
+
+Input:
+
+| Field | Type | Required | Description |
+|---|---|:---:|---|
+| `fingerprint` | string | yes | 64-character SHA-256 document fingerprint |
+
+### `list_orgs`
+
+No input fields. Returns the caller's organization context as derived from the authenticated user and `org_members`.
+
+### `get_anchor`
+
+Input:
+
+| Field | Type | Required | Description |
+|---|---|:---:|---|
+| `public_id` | string | yes | Arkova public ID, for example `ARK-DOC-ABCDEF` |
 
 ---
 

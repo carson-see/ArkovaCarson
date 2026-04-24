@@ -15,7 +15,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  vi.clearAllMocks();
+  mockFetch.mockReset();
 });
 
 describe('Arkova', () => {
@@ -149,6 +149,105 @@ describe('query', () => {
   });
 });
 
+describe('API v2 agent methods', () => {
+  it('searches via /api/v2/search and maps snake_case fields', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        results: [{
+          type: 'org',
+          id: 'org-1',
+          public_id: 'org_acme',
+          score: 1,
+          snippet: 'Acme Corp',
+          metadata: { domain: 'acme.com' },
+        }],
+        next_cursor: 'cursor-1',
+      }),
+    });
+
+    const result = await client.search('acme', { type: 'org', limit: 5 });
+
+    expect(result.results[0].publicId).toBe('org_acme');
+    expect(result.nextCursor).toBe('cursor-1');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v2/search?q=acme&type=org&limit=5'),
+      expect.anything(),
+    );
+  });
+
+  it('verifies fingerprints via /api/v2/verify/:fingerprint', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const fingerprint = 'a'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        verified: true,
+        status: 'ACTIVE',
+        fingerprint,
+        public_id: 'ARK-DOC-ABC',
+        title: 'Contract.pdf',
+        anchor_timestamp: '2026-04-24T12:00:00Z',
+        network_receipt_id: 'tx-1',
+        record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+      }),
+    });
+
+    const result = await client.verifyFingerprint(fingerprint);
+
+    expect(result.publicId).toBe('ARK-DOC-ABC');
+    expect(result.networkReceiptId).toBe('tx-1');
+  });
+
+  it('maps RFC 7807 problem+json errors', async () => {
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 0 } });
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      headers: new Headers(),
+      json: async () => ({
+        type: 'https://arkova.ai/problems/invalid-scope',
+        title: 'Insufficient Scope',
+        status: 403,
+        detail: 'Missing read:records',
+        instance: '/api/v2/anchors/ARK-DOC-ABC',
+      }),
+    });
+
+    await expect(client.getAnchor('ARK-DOC-ABC')).rejects.toMatchObject({
+      statusCode: 403,
+      code: 'invalid-scope',
+      problem: expect.objectContaining({ title: 'Insufficient Scope' }),
+    });
+  });
+
+  it('retries 429 responses using Retry-After before succeeding', async () => {
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 1, sleep } });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '2' }),
+        json: async () => ({ error: 'rate_limit_exceeded' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ results: [], next_cursor: null }),
+      });
+
+    const result = await client.search('acme');
+
+    expect(result.results).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+  });
+});
+
 describe('verifyBatch', () => {
   it('returns empty array for empty input', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
@@ -223,7 +322,7 @@ describe('verifyBatch', () => {
   });
 
   it('throws ArkovaError with code on API failure', async () => {
-    const client = new Arkova({ apiKey: 'ak_test' });
+    const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 0 } });
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 429,

@@ -52,6 +52,12 @@ describe('ProblemError', () => {
     expect(err.problem.status).toBe(401);
   });
 
+  it('creates API-key authentication errors', () => {
+    expect(ProblemError.invalidApiKey().problem.type).toBe(ProblemTypes.INVALID_API_KEY);
+    expect(ProblemError.apiKeyRevoked().problem.type).toBe(ProblemTypes.API_KEY_REVOKED);
+    expect(ProblemError.apiKeyExpired().problem.type).toBe(ProblemTypes.API_KEY_EXPIRED);
+  });
+
   it('creates a validation error', () => {
     const err = ProblemError.validationError('Invalid cursor format');
     expect(err.problem.type).toBe(ProblemTypes.VALIDATION_ERROR);
@@ -72,6 +78,12 @@ describe('ProblemError', () => {
   it('creates an internal error', () => {
     const err = ProblemError.internalError();
     expect(err.problem.status).toBe(500);
+  });
+
+  it('creates a service-unavailable error', () => {
+    const err = ProblemError.serviceUnavailable();
+    expect(err.problem.type).toBe(ProblemTypes.SERVICE_UNAVAILABLE);
+    expect(err.problem.status).toBe(503);
   });
 });
 

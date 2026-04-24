@@ -23,6 +23,22 @@
   ],
   "tools": [
     {
+      "name": "search",
+      "description": "Agent-friendly v2 search across organizations, anchored records, fingerprints, and documents."
+    },
+    {
+      "name": "verify",
+      "description": "Verify whether a SHA-256 document fingerprint has been anchored."
+    },
+    {
+      "name": "list_orgs",
+      "description": "List the organizations available to the authenticated caller."
+    },
+    {
+      "name": "get_anchor",
+      "description": "Get redacted public anchor metadata by Arkova public ID."
+    },
+    {
       "name": "verify_credential",
       "description": "Verify a credential's authenticity and current status by its public identifier."
     },

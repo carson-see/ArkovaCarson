@@ -16,6 +16,14 @@ import type {
   CreateWebhookInput,
   UpdateWebhookInput,
   PaginatedWebhooks,
+  ProblemDetail,
+  RetryConfig,
+  SearchOptions,
+  SearchResponse,
+  SearchResult,
+  FingerprintVerification,
+  AnchorDetails,
+  OrganizationSummary,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
@@ -28,15 +36,29 @@ const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app
  */
 export const VERIFY_BATCH_SYNC_LIMIT = 20;
 
+const DEFAULT_RETRY_CONFIG: Required<Omit<RetryConfig, 'sleep'>> = {
+  retries: 2,
+  baseDelayMs: 250,
+  maxDelayMs: 5_000,
+};
+
 export class Arkova {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly x402Config?: ArkovaConfig['x402'];
+  private readonly retry: Required<Omit<RetryConfig, 'sleep'>>;
+  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(config: ArkovaConfig = {}) {
     this.baseUrl = (config.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.apiKey = config.apiKey;
     this.x402Config = config.x402;
+    this.retry = {
+      retries: config.retry?.retries ?? DEFAULT_RETRY_CONFIG.retries,
+      baseDelayMs: config.retry?.baseDelayMs ?? DEFAULT_RETRY_CONFIG.baseDelayMs,
+      maxDelayMs: config.retry?.maxDelayMs ?? DEFAULT_RETRY_CONFIG.maxDelayMs,
+    };
+    this.sleep = config.retry?.sleep ?? ((ms) => new Promise(resolve => setTimeout(resolve, ms)));
   }
 
   /**
@@ -164,6 +186,61 @@ export class Arkova {
     );
 
     return data.results.map(mapVerificationResult);
+  }
+
+  /**
+   * Search Arkova API v2 across organizations, records, fingerprints, and documents.
+   * Requires a key with `read:search`.
+   */
+  async search(q: string, options: SearchOptions = {}): Promise<SearchResponse> {
+    const params = new URLSearchParams({ q });
+    if (options.type) params.set('type', options.type);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.cursor) params.set('cursor', options.cursor);
+
+    const response = await this.fetch(`/api/v2/search?${params.toString()}`);
+    const data = await jsonOrThrow<{
+      results: Array<Record<string, unknown>>;
+      next_cursor: string | null;
+    }>(response, 'Search failed');
+
+    return {
+      results: data.results.map(mapSearchResult),
+      nextCursor: data.next_cursor,
+    };
+  }
+
+  /**
+   * Verify a SHA-256 document fingerprint through API v2.
+   * Requires a key with `read:records`.
+   */
+  async verifyFingerprint(fingerprint: string): Promise<FingerprintVerification> {
+    const response = await this.fetch(`/api/v2/verify/${encodeURIComponent(fingerprint)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Fingerprint verification failed');
+    return mapFingerprintVerification(data);
+  }
+
+  /**
+   * Fetch redacted public anchor metadata through API v2.
+   * Requires a key with `read:records`.
+   */
+  async getAnchor(publicId: string): Promise<AnchorDetails> {
+    const response = await this.fetch(`/api/v2/anchors/${encodeURIComponent(publicId)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Anchor lookup failed');
+    return mapAnchorDetails(data);
+  }
+
+  /**
+   * List the organization context attached to the current API key.
+   * Requires a key with `read:orgs`.
+   */
+  async listOrgs(): Promise<OrganizationSummary[]> {
+    const response = await this.fetch('/api/v2/orgs');
+    const data = await jsonOrThrow<{ organizations: Array<Record<string, unknown>> }>(
+      response,
+      'Organization list failed',
+    );
+    return data.organizations.map(mapOrganizationSummary);
   }
 
   /**
@@ -385,11 +462,70 @@ export class Arkova {
       headers['X-API-Key'] = this.apiKey;
     }
 
-    return globalThis.fetch(url, { ...init, headers });
+    const requestInit = { ...init, headers };
+    const method = (requestInit.method ?? 'GET').toUpperCase();
+    let attempt = 0;
+
+    while (true) {
+      try {
+        const response = await globalThis.fetch(url, requestInit);
+        if (!shouldRetryResponse(response) || attempt >= this.retry.retries) {
+          return response;
+        }
+        await this.sleep(retryDelayMs(response, attempt, this.retry));
+        attempt += 1;
+      } catch (err) {
+        if (!isSafeRetryMethod(method) || attempt >= this.retry.retries) {
+          throw err;
+        }
+        await this.sleep(backoffDelayMs(attempt, this.retry));
+        attempt += 1;
+      }
+    }
   }
 }
 
 // ─── Internal helpers ──────────────────────────────────────────────────
+
+function isSafeRetryMethod(method: string): boolean {
+  return method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+}
+
+function shouldRetryResponse(response: Response): boolean {
+  return response.status === 429 || response.status === 500 || response.status === 502 ||
+    response.status === 503 || response.status === 504;
+}
+
+function retryDelayMs(
+  response: Response,
+  attempt: number,
+  retry: Required<Omit<RetryConfig, 'sleep'>>,
+): number {
+  const retryAfter = parseRetryAfter(getHeader(response, 'Retry-After'));
+  return retryAfter ?? backoffDelayMs(attempt, retry);
+}
+
+function backoffDelayMs(attempt: number, retry: Required<Omit<RetryConfig, 'sleep'>>): number {
+  return Math.min(retry.maxDelayMs, retry.baseDelayMs * (2 ** attempt));
+}
+
+function parseRetryAfter(value: string | null): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+
+  const dateMs = Date.parse(value);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+  return null;
+}
+
+function getHeader(response: Response, name: string): string | null {
+  return typeof response.headers?.get === 'function'
+    ? response.headers.get(name)
+    : null;
+}
 
 /**
  * Parse a fetch Response as JSON; throw a typed ArkovaError with the
@@ -399,17 +535,42 @@ async function jsonOrThrow<T>(response: Response, failureLabel: string): Promise
   const json = (await response.json().catch(() => ({}))) as {
     message?: string;
     error?: string;
+    type?: string;
+    title?: string;
+    status?: number;
+    detail?: string;
+    instance?: string;
   } & T;
   if (!response.ok) {
+    const problem = isProblemDetail(json)
+      ? {
+          type: json.type,
+          title: json.title,
+          status: json.status,
+          detail: json.detail,
+          instance: json.instance,
+        }
+      : undefined;
+    const retryAfter = parseRetryAfter(getHeader(response, 'Retry-After')) ?? undefined;
     // Prefer server `message`, fall back to legacy endpoints that only send `error`,
     // then to a generic label. Code field is carried on the error for programmatic checks.
     throw new ArkovaError(
-      json.message ?? json.error ?? `${failureLabel}: HTTP ${response.status}`,
+      problem?.detail ?? json.message ?? json.error ?? `${failureLabel}: HTTP ${response.status}`,
       response.status,
-      json.error,
+      json.error ?? (problem ? problem.type.split('/').pop() : undefined),
+      problem,
+      retryAfter !== undefined ? Math.ceil(retryAfter / 1000) : undefined,
     );
   }
   return json as T;
+}
+
+function isProblemDetail(value: unknown): value is ProblemDetail {
+  return typeof value === 'object' &&
+    value !== null &&
+    typeof (value as ProblemDetail).type === 'string' &&
+    typeof (value as ProblemDetail).title === 'string' &&
+    typeof (value as ProblemDetail).status === 'number';
 }
 
 /** Shape a snake_case verification row from the REST API into camelCase. */
@@ -424,6 +585,57 @@ function mapVerificationResult(row: Record<string, unknown>): VerificationResult
     anchorTimestamp: row.anchor_timestamp as string,
     networkReceiptId: (row.network_receipt_id as string | null) ?? null,
     recordUri: row.record_uri as string,
+  };
+}
+
+function mapSearchResult(row: Record<string, unknown>): SearchResult {
+  return {
+    type: row.type as SearchResult['type'],
+    id: row.id as string,
+    publicId: row.public_id as string,
+    score: row.score as number,
+    snippet: row.snippet as string,
+    metadata: row.metadata as Record<string, unknown> | undefined,
+  };
+}
+
+function mapFingerprintVerification(row: Record<string, unknown>): FingerprintVerification {
+  return {
+    verified: row.verified as boolean,
+    status: row.status as string,
+    fingerprint: row.fingerprint as string,
+    publicId: (row.public_id as string | null) ?? null,
+    title: (row.title as string | null) ?? null,
+    anchorTimestamp: (row.anchor_timestamp as string | null) ?? null,
+    networkReceiptId: (row.network_receipt_id as string | null) ?? null,
+    recordUri: (row.record_uri as string | null) ?? null,
+  };
+}
+
+function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
+  return {
+    publicId: row.public_id as string,
+    verified: row.verified as boolean,
+    status: row.status as string,
+    issuerName: row.issuer_name as string,
+    credentialType: row.credential_type as string,
+    issuedDate: (row.issued_date as string | null) ?? null,
+    expiryDate: (row.expiry_date as string | null) ?? null,
+    anchorTimestamp: (row.anchor_timestamp as string | null) ?? null,
+    networkReceiptId: (row.network_receipt_id as string | null) ?? null,
+    recordUri: row.record_uri as string,
+    jurisdiction: row.jurisdiction as string | null | undefined,
+  };
+}
+
+function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSummary {
+  return {
+    id: row.id as string,
+    publicId: row.public_id as string,
+    displayName: row.display_name as string,
+    domain: (row.domain as string | null) ?? null,
+    websiteUrl: (row.website_url as string | null) ?? null,
+    verificationStatus: (row.verification_status as string | null) ?? null,
   };
 }
 
@@ -444,12 +656,24 @@ export class ArkovaError extends Error {
   readonly statusCode: number;
   /** Machine-readable error code (e.g., 'validation_error', 'not_found', 'invalid_url') */
   readonly code?: string;
+  /** RFC 7807 problem payload when returned by API v2 */
+  readonly problem?: ProblemDetail;
+  /** Retry-After value in seconds when the server asks the client to back off */
+  readonly retryAfter?: number;
 
-  constructor(message: string, statusCode: number, code?: string) {
+  constructor(
+    message: string,
+    statusCode: number,
+    code?: string,
+    problem?: ProblemDetail,
+    retryAfter?: number,
+  ) {
     super(message);
     this.name = 'ArkovaError';
     this.statusCode = statusCode;
     this.code = code;
+    this.problem = problem;
+    this.retryAfter = retryAfter;
   }
 }
 

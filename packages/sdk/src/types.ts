@@ -51,6 +51,17 @@ export interface PaginatedWebhooks {
   offset: number;
 }
 
+/** Retry configuration for transient API failures and rate limits */
+export interface RetryConfig {
+  /** Number of retry attempts after the initial request. Default: 2 */
+  retries?: number;
+  /** Initial exponential backoff delay in milliseconds. Default: 250 */
+  baseDelayMs?: number;
+  /** Maximum retry delay in milliseconds. Default: 5000 */
+  maxDelayMs?: number;
+  /** Override sleep for tests or custom runtimes */
+  sleep?: (ms: number) => Promise<void>;
+}
 
 /** SDK configuration */
 export interface ArkovaConfig {
@@ -58,6 +69,8 @@ export interface ArkovaConfig {
   apiKey?: string;
   /** Base URL for the Arkova API (default: https://arkova-worker-270018525501.us-central1.run.app) */
   baseUrl?: string;
+  /** Built-in retry handling for 429/5xx responses. Set retries=0 to disable. */
+  retry?: RetryConfig;
   /** Enable x402 auto-payment (requires USDC wallet) */
   x402?: {
     /** x402 facilitator URL */
@@ -67,6 +80,15 @@ export interface ArkovaConfig {
     /** Function to sign x402 payment */
     signPayment: (amount: string, payTo: string) => Promise<string>;
   };
+}
+
+/** RFC 7807 problem+json payload returned by API v2 errors */
+export interface ProblemDetail {
+  type: string;
+  title: string;
+  status: number;
+  detail?: string;
+  instance?: string;
 }
 
 /** Receipt returned after anchoring */
@@ -141,4 +163,60 @@ export interface NessieContextResult {
   confidence: number;
   model: string;
   query: string;
+}
+
+export type SearchType = 'all' | 'org' | 'record' | 'fingerprint' | 'document';
+
+export interface SearchOptions {
+  type?: SearchType;
+  limit?: number;
+  cursor?: string;
+}
+
+export interface SearchResult {
+  type: Exclude<SearchType, 'all'>;
+  id: string;
+  publicId: string;
+  score: number;
+  snippet: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  nextCursor: string | null;
+}
+
+export interface FingerprintVerification {
+  verified: boolean;
+  status: string;
+  fingerprint: string;
+  publicId: string | null;
+  title: string | null;
+  anchorTimestamp: string | null;
+  networkReceiptId: string | null;
+  recordUri: string | null;
+}
+
+export interface AnchorDetails {
+  publicId: string;
+  verified: boolean;
+  status: string;
+  issuerName: string;
+  credentialType: string;
+  issuedDate: string | null;
+  expiryDate: string | null;
+  anchorTimestamp: string | null;
+  networkReceiptId: string | null;
+  recordUri: string;
+  jurisdiction?: string | null;
+}
+
+export interface OrganizationSummary {
+  id: string;
+  publicId: string;
+  displayName: string;
+  domain: string | null;
+  websiteUrl: string | null;
+  verificationStatus: string | null;
 }

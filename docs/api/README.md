@@ -4,7 +4,7 @@
 
 This directory is the canonical home for Arkova's developer-facing API documentation. Everything here is written for engineers shipping integrations: REST endpoints, MCP tools, SDKs, embeddable widgets, and the webhook lifecycle.
 
-The full machine-readable API spec is at [`openapi.yaml`](./openapi.yaml). Hosted Swagger UI is at [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs).
+The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). The API v2 agent spec is published at `https://api.arkova.ai/v2/openapi.json` and mirrored by the worker at `/api/v2/openapi.json`. Hosted Swagger UI is at [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs).
 
 ---
 
@@ -18,6 +18,7 @@ The full machine-readable API spec is at [`openapi.yaml`](./openapi.yaml). Hoste
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |
 | Let an AI agent (Claude / LangChain / AutoGen) verify credentials | [MCP tool reference](./mcp-tools.md) |
 | Read the raw OpenAPI spec | [`openapi.yaml`](./openapi.yaml) |
+| Import the API v2 agent OpenAPI spec | `https://api.arkova.ai/v2/openapi.json` |
 | Browse interactively | [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs) |
 
 ---
@@ -66,7 +67,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ### 4. MCP server — `https://edge.arkova.ai/mcp`
 
-Model Context Protocol endpoint for AI agents. Six tools: `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
+Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, and `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
 ```json
 {
@@ -135,6 +136,18 @@ Every endpoint returns errors in the same shape:
 ```
 
 Common codes: `validation_error`, `invalid_url`, `verification_failed`, `authentication_required`, `not_found`, `rate_limit_exceeded`, `internal_error`.
+
+API v2 uses RFC 7807 `application/problem+json` on every error path:
+
+```json
+{
+  "type": "https://arkova.ai/problems/invalid-scope",
+  "title": "Insufficient Scope",
+  "status": 403,
+  "detail": "This API key does not have the required scope: read:records.",
+  "instance": "/api/v2/anchors/ARK-DOC-ABCDEF"
+}
+```
 
 ---
 
