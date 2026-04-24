@@ -24,8 +24,9 @@ import {
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
+import { supabase } from '@/lib/supabase';
 import { formatAge } from '@/lib/formatters';
-import { AlertTriangle, CheckCircle, Inbox, Keyboard, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Inbox, Keyboard, Loader2, Play } from 'lucide-react';
 
 interface PendingAnchor {
   id: string;
@@ -40,6 +41,17 @@ interface Group {
   external_file_id: string;
   rows: PendingAnchor[];
   oldest: PendingAnchor;
+}
+
+interface OrgRoleQuery {
+  eq(column: string, value: string): OrgRoleQuery;
+  maybeSingle(): Promise<{ data: { role?: string } | null; error: unknown }>;
+}
+
+interface OrgRoleReader {
+  from(table: 'org_members'): {
+    select(columns: 'role'): OrgRoleQuery;
+  };
 }
 
 const POLL_INTERVAL_MS = 30_000;
@@ -169,6 +181,15 @@ function useVisibilityAwarePolling(cb: () => Promise<unknown>, intervalMs: numbe
   }, [cb, intervalMs]);
 }
 
+function canRunAnchoringJob(profileRole?: string | null, isPlatformAdmin?: boolean, orgRole?: string | null): boolean {
+  return (
+    profileRole === 'ORG_ADMIN' ||
+    isPlatformAdmin === true ||
+    orgRole === 'owner' ||
+    orgRole === 'admin'
+  );
+}
+
 function QueueInner() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
@@ -179,6 +200,9 @@ function QueueInner() {
   const [selectedAnchorId, setSelectedAnchorId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [orgRole, setOrgRole] = useState<string | null>(null);
   const [focusIdx, setFocusIdx] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
 
@@ -206,6 +230,33 @@ function QueueInner() {
   }, []);
 
   useVisibilityAwarePolling(fetchPending, POLL_INTERVAL_MS);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadOrgRole() {
+      if (!user?.id || !profile?.org_id) {
+        setOrgRole(null);
+        return;
+      }
+      try {
+        const { data, error: roleError } = await (supabase as unknown as OrgRoleReader)
+          .from('org_members')
+          .select('role')
+          .eq('user_id', user.id)
+          .eq('org_id', profile.org_id)
+          .maybeSingle();
+        if (!cancelled) {
+          setOrgRole(roleError ? null : ((data as { role?: string } | null)?.role ?? null));
+        }
+      } catch {
+        if (!cancelled) setOrgRole(null);
+      }
+    }
+    void loadOrgRole();
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.org_id, user?.id]);
 
   const groups = useMemo(() => groupByExternal(rows), [rows]);
   const clampedFocus = Math.min(Math.max(focusIdx, 0), Math.max(0, groups.length - 1));
@@ -253,8 +304,40 @@ function QueueInner() {
     }
   }
 
+  async function runQueue(): Promise<void> {
+    setRunning(true);
+    setError(null);
+    setRunMessage(null);
+    try {
+      const res = await workerFetch('/api/queue/run', { method: 'POST' }, 120_000);
+      const body = (await res.json().catch(() => ({}))) as {
+        processed?: number;
+        batchId?: string | null;
+        txId?: string | null;
+        error?: { message?: string };
+      };
+      if (!res.ok) {
+        throw new Error(body.error?.message ?? `Run failed (${res.status})`);
+      }
+      const processed = body.processed ?? 0;
+      const suffix = processed === 1 ? '' : 's';
+      let message = 'Run complete. No pending anchors were ready to submit.';
+      if (processed > 0) {
+        const batchPart = body.batchId ? ` in ${body.batchId}` : '';
+        message = `Run complete. ${processed} anchor${suffix} submitted${batchPart}.`;
+      }
+      setRunMessage(message);
+      await fetchPending();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Run failed');
+    } finally {
+      setRunning(false);
+    }
+  }
+
   const pendingCount = rows.length;
   const oldestAge = groups[0] ? formatAge(groups[0].oldest.created_at) : null;
+  const canRunQueue = canRunAnchoringJob(profile?.role, profile?.is_platform_admin, orgRole);
 
   return (
     <AppShell
@@ -274,14 +357,37 @@ function QueueInner() {
               {formatQueueStatus(loading, pendingCount, oldestAge)}
             </p>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => setShowHelp(true)}
-            aria-label="Show keyboard shortcuts"
-          >
-            <Keyboard className="h-4 w-4 mr-1" aria-hidden="true" /> Shortcuts
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {canRunQueue && (
+              <Button
+                onClick={runQueue}
+                disabled={running}
+                data-testid="queue-run"
+              >
+                {running ? (
+                  <Loader2 className="h-4 w-4 mr-1 animate-spin" aria-hidden="true" />
+                ) : (
+                  <Play className="h-4 w-4 mr-1" aria-hidden="true" />
+                )}
+                {running ? 'Running…' : 'Run'}
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() => setShowHelp(true)}
+              aria-label="Show keyboard shortcuts"
+            >
+              <Keyboard className="h-4 w-4 mr-1" aria-hidden="true" /> Shortcuts
+            </Button>
+          </div>
         </header>
+
+        {runMessage && (
+          <Alert>
+            <CheckCircle className="h-4 w-4" aria-hidden="true" />
+            <AlertDescription>{runMessage}</AlertDescription>
+          </Alert>
+        )}
 
         {error && (
           <Alert variant="destructive">

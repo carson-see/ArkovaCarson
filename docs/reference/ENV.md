@@ -127,7 +127,7 @@ SENTRY_SAMPLE_RATE=0.1
 ```bash
 ENABLE_AI_FALLBACK=false
 GEMINI_API_KEY=
-ANTHROPIC_API_KEY=                   # required for NVI-07 distillation + NVI-12 LLM-judge benchmark
+ANTHROPIC_API_KEY=                   # optional — NVI-07 distillation + NVI-12 LLM-judge benchmark only
 GEMINI_MODEL=gemini-3-flash
 GEMINI_EMBEDDING_MODEL=gemini-embedding-001
 AI_PROVIDER=mock                    # gemini | nessie | together | cloudflare | replicate | mock
@@ -196,4 +196,3 @@ TREASURY_ALERT_EMAIL=                # single recipient address
 # Default 50. Read by both cron dispatcher + /api/treasury/health endpoint.
 TREASURY_LOW_BALANCE_USD=50
 ```
-

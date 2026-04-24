@@ -178,6 +178,53 @@ describe('processBatchAnchors', () => {
     );
   });
 
+  it('passes org scope and manual worker id to the claim RPC', async () => {
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A], error: null })
+      .mockResolvedValueOnce({ data: 1, error: null });
+
+    await processBatchAnchors({
+      orgId: '11111111-1111-1111-1111-111111111111',
+      force: true,
+      workerId: 'org-run-worker',
+    });
+
+    expect(mockDbRpc).toHaveBeenNthCalledWith(1, 'claim_pending_anchors', {
+      p_worker_id: 'org-run-worker',
+      p_limit: expect.any(Number),
+      p_exclude_pipeline: false,
+      p_org_id: '11111111-1111-1111-1111-111111111111',
+    });
+  });
+
+  it('fails closed for org-scoped claim errors instead of using global legacy fallback', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'missing p_org_id argument' },
+    });
+
+    const result = await processBatchAnchors({
+      orgId: '11111111-1111-1111-1111-111111111111',
+      force: true,
+    });
+
+    expect(result).toEqual({
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      error: 'missing p_org_id argument',
+    });
+    expect(mockDbRpc).toHaveBeenCalledTimes(1);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.any(Object),
+        orgId: '11111111-1111-1111-1111-111111111111',
+      }),
+      'claim_pending_anchors failed for org-scoped batch',
+    );
+  });
+
   // ---- Single anchor batch ----
 
   it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {

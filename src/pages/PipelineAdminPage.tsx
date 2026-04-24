@@ -518,6 +518,30 @@ export function PipelineAdminPage() {
 
   const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
   const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
+  const renderAnchorStatusBadge = (record: PublicRecord) => {
+    if (record.chain_tx_id && (record.anchor_status === 'SUBMITTED' || record.anchor_status === 'SECURED')) {
+      return (
+        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
+          <ArkovaIcon className="h-3 w-3 mr-1" />
+          Anchored
+        </Badge>
+      );
+    }
+
+    if (record.anchor_id) {
+      return (
+        <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
+          {record.anchor_status ?? 'Queued'}
+        </Badge>
+      );
+    }
+
+    return (
+      <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
+        Unlinked
+      </Badge>
+    );
+  };
 
   return (
     <AppShell user={user ?? undefined} onSignOut={signOut} profile={profile ?? undefined} profileLoading={profileLoading}>
@@ -962,20 +986,7 @@ export function PipelineAdminPage() {
                             </span>
                           </TableCell>
                           <TableCell className="py-2">
-                            {record.chain_tx_id && (record.anchor_status === 'SUBMITTED' || record.anchor_status === 'SECURED') ? (
-                              <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
-                                <ArkovaIcon className="h-3 w-3 mr-1" />
-                                Anchored
-                              </Badge>
-                            ) : record.anchor_id ? (
-                              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
-                                {record.anchor_status ?? 'Queued'}
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
-                                Unlinked
-                              </Badge>
-                            )}
+                            {renderAnchorStatusBadge(record)}
                           </TableCell>
                           <TableCell className="py-2 hidden md:table-cell">
                             <span className="text-xs text-muted-foreground">

@@ -16,6 +16,14 @@
  * this runner only records "matched". A follow-up cron pass reads executions
  * in state PENDING and dispatches, so dispatch retries are independent from
  * evaluation retries.
+ *
+ * Queue lifecycle:
+ *   - claim_pending_rule_events() flips PENDING → CLAIMED.
+ *   - This worker persists any rule matches.
+ *   - complete_claimed_rule_events() flips CLAIMED → PROCESSED only after the
+ *     match write succeeds.
+ *   - release_claimed_rule_events() flips CLAIMED → PENDING/FAILED on worker
+ *     errors so custom-rule events are not stranded forever.
  */
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -74,6 +82,43 @@ async function claimPendingEvents(): Promise<EventRow[]> {
   } catch (err) {
     logger.warn({ error: err }, 'claim_pending_rule_events threw — treating as empty');
     return [];
+  }
+}
+
+async function completeClaimedEvents(eventIds: string[]): Promise<boolean> {
+  if (eventIds.length === 0) return true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db.rpc as any)('complete_claimed_rule_events', {
+      p_event_ids: eventIds,
+    });
+    if (error) {
+      logger.warn({ error, count: eventIds.length }, 'complete_claimed_rule_events failed');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ error: err, count: eventIds.length }, 'complete_claimed_rule_events threw');
+    return false;
+  }
+}
+
+async function releaseClaimedEvents(eventIds: string[], message: string): Promise<boolean> {
+  if (eventIds.length === 0) return true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db.rpc as any)('release_claimed_rule_events', {
+      p_event_ids: eventIds,
+      p_error: message,
+    });
+    if (error) {
+      logger.warn({ error, count: eventIds.length }, 'release_claimed_rule_events failed');
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error({ error: err, count: eventIds.length }, 'release_claimed_rule_events threw');
+    return false;
   }
 }
 
@@ -190,11 +235,14 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const events = await claimPendingEvents();
   if (events.length === 0) return result;
   result.events_processed = events.length;
+  const eventIds = events.map((ev) => ev.id);
 
   const byOrg = groupEventsByOrg(events);
   const rulesByOrg = await fetchRulesByOrg([...byOrg.keys()]);
   if (!rulesByOrg) {
     result.errors += events.length;
+    const released = await releaseClaimedEvents(eventIds, 'Rules fetch failed');
+    if (!released) result.errors += 1;
     return result;
   }
 
@@ -225,7 +273,15 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
 
   const persist = await persistMatches(inserts);
   result.matches_recorded = persist.recorded;
-  if (persist.errored) result.errors += 1;
+  if (persist.errored) {
+    result.errors += 1;
+    const released = await releaseClaimedEvents(eventIds, 'Rule execution persistence failed');
+    if (!released) result.errors += 1;
+    return result;
+  }
+
+  const completed = await completeClaimedEvents(eventIds);
+  if (!completed) result.errors += 1;
   if (persist.recorded > 0) {
     const byNotificationOrg = new Map<string, number>();
     for (const insert of inserts) {

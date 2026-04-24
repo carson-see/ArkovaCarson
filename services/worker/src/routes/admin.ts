@@ -17,7 +17,7 @@ import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
-import { handleListPendingResolution, handleResolveQueue } from '../api/queue-resolution.js';
+import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleTreasuryHealth } from '../api/treasury.js';
 import { handleListRules, handleGetRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
@@ -195,6 +195,17 @@ adminRouter.post('/queue/resolve', async (req, res) => {
     await handleResolveQueue(req, res, userId);
   } catch (error) {
     logger.error({ error }, 'Queue resolve request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/queue/run', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleRunOrgAnchorQueue(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Queue run request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

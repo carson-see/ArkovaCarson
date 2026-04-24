@@ -107,13 +107,19 @@ function extractMetadataProof(
   metadata: Record<string, unknown> | null,
 ): { merkleRoot: string; merkleProof: MerkleProofEntry[]; batchId: string | null } | ProofErrorResponse | null {
   if (!metadata?.merkle_root || !metadata.merkle_proof) return null;
+  if (typeof metadata.merkle_root !== 'string') {
+    return { error: 'Merkle proof data is malformed' };
+  }
+  if (metadata.batch_id != null && typeof metadata.batch_id !== 'string') {
+    return { error: 'Merkle proof data is malformed' };
+  }
   if (!isValidProofArray(metadata.merkle_proof)) {
     return { error: 'Merkle proof data is malformed' };
   }
   return {
-    merkleRoot: String(metadata.merkle_root),
+    merkleRoot: metadata.merkle_root,
     merkleProof: metadata.merkle_proof,
-    batchId: metadata.batch_id ? String(metadata.batch_id) : null,
+    batchId: metadata.batch_id ?? null,
   };
 }
 

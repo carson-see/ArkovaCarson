@@ -15,7 +15,7 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
-import { mapRpcErrorToStatus } from './queue-resolution.js';
+import { mapRpcErrorToStatus } from './rpc-error-status.js';
 
 export const SupersedeInput = z.object({
   new_fingerprint: z
