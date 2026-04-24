@@ -248,7 +248,7 @@ describe('handleCreateRule', () => {
           ...VALID_CREATE_BODY,
           trigger_config: {
             vendors: ['docusign'],
-            api_key: 'AKIA1234567890', // inline secret → rejected
+            api_key: 'test-fake-value', // gitleaks:allow — sanitizer matches on key name, not value
           },
         },
       }),
