@@ -510,6 +510,126 @@ const EMPLOYMENT_ENTRIES: IntelligenceEvalEntry[] = [
   }),
 ];
 
+// ── KAU-06 (SCRUM-754): Kenya + Australia NDB RAG retrieval tests ────
+// Each entry is a concrete question about breach-notification procedures
+// that Nessie should answer from the kenyaLawFetcher + australiaLawFetcher
+// records (KE-ODPC-NDB-* and AU-OAIC-NDB-*). Retrieval success means the
+// expected record IDs appear in the citation set; answer-quality means
+// the expected key points (timelines, penalties, etc.) are surfaced.
+
+const KAU_NDB_ENTRIES: IntelligenceEvalEntry[] = [
+  {
+    id: 'nce-kau-ndb-001',
+    taskType: 'compliance_qa',
+    domain: 'kenya_ndb_procedures',
+    query: "What is Kenya's breach notification timeline to the Office of the Data Protection Commissioner under the KDPA 2019?",
+    contextDocIds: ['KE-ODPC-NDB-01'],
+    expectedKeyPoints: ['72 hours', 'becoming aware', 'Commissioner', 'KDPA'],
+    expectedRisks: [],
+    expectedCitations: ['KE-ODPC-NDB-01'],
+    minConfidence: 0.8,
+  },
+  {
+    id: 'nce-kau-ndb-002',
+    taskType: 'compliance_qa',
+    domain: 'kenya_ndb_procedures',
+    query: 'When must a Kenyan data controller notify affected data subjects of a personal data breach?',
+    contextDocIds: ['KE-ODPC-NDB-02'],
+    expectedKeyPoints: ['without undue delay', 'high risk', 'rights and freedoms', 'data subject'],
+    expectedRisks: [],
+    expectedCitations: ['KE-ODPC-NDB-02'],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'nce-kau-ndb-003',
+    taskType: 'compliance_qa',
+    domain: 'kenya_ndb_procedures',
+    query: 'What information must a Kenya breach notification to the Commissioner include?',
+    contextDocIds: ['KE-ODPC-NDB-03'],
+    expectedKeyPoints: ['nature of the breach', 'categories', 'approximate number', 'likely consequences', 'mitigation measures'],
+    expectedRisks: [],
+    expectedCitations: ['KE-ODPC-NDB-03'],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'nce-kau-ndb-004',
+    taskType: 'risk_analysis',
+    domain: 'kenya_ndb_procedures',
+    query: 'What are the penalty exposures for failing to notify a personal data breach in Kenya?',
+    contextDocIds: ['KE-ODPC-NDB-05'],
+    expectedKeyPoints: ['KES 5,000,000', '1% of annual turnover', 'per contravention'],
+    expectedRisks: ['regulatory fine', 'annual turnover penalty'],
+    expectedCitations: ['KE-ODPC-NDB-05'],
+    minConfidence: 0.7,
+  },
+  {
+    id: 'nce-kau-ndb-005',
+    taskType: 'compliance_qa',
+    domain: 'australia_ndb_procedures',
+    query: "What qualifies as an 'eligible data breach' under the Australian Privacy Act Part IIIC?",
+    contextDocIds: ['AU-OAIC-NDB-01'],
+    expectedKeyPoints: ['unauthorised access', 'unauthorised disclosure', 'loss', 'serious harm', 'affected individual'],
+    expectedRisks: [],
+    expectedCitations: ['AU-OAIC-NDB-01'],
+    minConfidence: 0.8,
+  },
+  {
+    id: 'nce-kau-ndb-006',
+    taskType: 'compliance_qa',
+    domain: 'australia_ndb_procedures',
+    query: "What is the Australian NDB scheme's assessment window for a suspected eligible data breach?",
+    contextDocIds: ['AU-OAIC-NDB-02'],
+    expectedKeyPoints: ['30 days', 'becoming aware', 'APP entity', 'assessment'],
+    expectedRisks: [],
+    expectedCitations: ['AU-OAIC-NDB-02'],
+    minConfidence: 0.8,
+  },
+  {
+    id: 'nce-kau-ndb-007',
+    taskType: 'compliance_qa',
+    domain: 'australia_ndb_procedures',
+    query: 'Who must an Australian APP entity notify after confirming an eligible data breach, and in what order?',
+    contextDocIds: ['AU-OAIC-NDB-03'],
+    expectedKeyPoints: ['Commissioner', 'affected individuals', 'without undue delay', 'in parallel'],
+    expectedRisks: [],
+    expectedCitations: ['AU-OAIC-NDB-03'],
+    minConfidence: 0.75,
+  },
+  {
+    id: 'nce-kau-ndb-008',
+    taskType: 'risk_analysis',
+    domain: 'australia_ndb_procedures',
+    query: 'What civil-penalty exposure does an Australian APP entity face for a serious or repeated privacy interference?',
+    contextDocIds: ['AU-OAIC-NDB-06'],
+    expectedKeyPoints: ['AUD 50', 'adjusted turnover', 'benefit', 'serious or repeated'],
+    expectedRisks: ['civil penalty', 'turnover-based penalty', 'post-2022 uplift'],
+    expectedCitations: ['AU-OAIC-NDB-06'],
+    minConfidence: 0.7,
+  },
+  {
+    id: 'nce-kau-ndb-009',
+    taskType: 'cross_reference',
+    domain: 'kenya_ndb_procedures',
+    query: 'Compare the Kenyan 72-hour notification window with the Australian 30-day assessment window — which is stricter and why?',
+    contextDocIds: ['KE-ODPC-NDB-01', 'AU-OAIC-NDB-02'],
+    expectedKeyPoints: ['72 hours', '30 days', 'Kenya stricter', 'assessment vs notification'],
+    expectedRisks: ['shorter Kenyan window', 'cross-jurisdictional exposure'],
+    expectedCitations: ['KE-ODPC-NDB-01', 'AU-OAIC-NDB-02'],
+    minConfidence: 0.7,
+  },
+  {
+    id: 'nce-kau-ndb-010',
+    taskType: 'recommendation',
+    domain: 'australia_ndb_procedures',
+    query: 'Which sectors report the most eligible data breaches to the OAIC each year?',
+    contextDocIds: ['AU-OAIC-NDB-07'],
+    expectedKeyPoints: ['health', 'finance', 'education', 'recruitment', 'legal'],
+    expectedRisks: [],
+    expectedCitations: ['AU-OAIC-NDB-07'],
+    minConfidence: 0.7,
+  },
+];
+
 // ── Combined Dataset ─────────────────────────────────────────────────
 
 export const INTELLIGENCE_EVAL_DATASET_V2: IntelligenceEvalEntry[] = [
@@ -518,6 +638,7 @@ export const INTELLIGENCE_EVAL_DATASET_V2: IntelligenceEvalEntry[] = [
   ...REGULATORY_ENTRIES,
   ...PATENT_ENTRIES,
   ...EMPLOYMENT_ENTRIES,
+  ...KAU_NDB_ENTRIES,
 ];
 
 /** Get entries by domain */
