@@ -1959,8 +1959,10 @@ import { GOLDEN_DATASET_PHASE15 } from './golden-dataset-phase15-reasoning.js';
 // import { GOLDEN_DATASET_PHASE16 } from './golden-dataset-phase16-compliance.js'; // TODO: uncomment when file created
 import { GOLDEN_DATASET_PHASE17 } from './golden-dataset-phase17-expansion.js';
 import { GOLDEN_DATASET_PHASE18_V7 } from './golden-dataset-phase18-v7-expansion.js';
+import { GOLDEN_DATASET_PHASE23_CONTRACTS } from './golden-dataset-phase23-contracts.js';
+import { GOLDEN_DATASET_PHASE24_CONTRACT_REASONING } from './golden-dataset-phase24-contract-reasoning.js';
 
-/** Full golden dataset: core (100) + extended (110) + phase2 (100) + phase3 (190) + phase4 (250) + phase5 (200) + phase6 (80) + phase7 (150) + phase8 (150) + phase9 (150) + phase10 (125) + phase11 (80) + phase12 (80) + phase13-fcra (20) + phase14 (120) + phase15 (14) + phase17 (~590) + phase18-v7 (170: RESUME+FINANCIAL+LEGAL+CE+ATTESTATION subtypes+MEDICAL+CHARITY+50 fraud seed) = ~2679 entries */
+/** Full golden dataset: core through phase18 (~2679) + phase23 contracts (1040) + phase24 contract reasoning (600) = ~4319 entries */
 export const FULL_GOLDEN_DATASET: GoldenDatasetEntry[] = [
   ...GOLDEN_DATASET,
   ...GOLDEN_DATASET_EXTENDED,
@@ -1981,6 +1983,8 @@ export const FULL_GOLDEN_DATASET: GoldenDatasetEntry[] = [
   // ...GOLDEN_DATASET_PHASE16, // TODO: uncomment when file created
   ...GOLDEN_DATASET_PHASE17,
   ...GOLDEN_DATASET_PHASE18_V7,
+  ...GOLDEN_DATASET_PHASE23_CONTRACTS,
+  ...GOLDEN_DATASET_PHASE24_CONTRACT_REASONING,
 ];
 
 /** Helper: get entries filtered by credential type */
