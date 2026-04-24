@@ -90,7 +90,8 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
   }, []);
 
   useEffect(() => {
-    fetchReports();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-fetch is the established pattern in this codebase
+    void fetchReports();
   }, [fetchReports]);
 
   async function generateReport() {

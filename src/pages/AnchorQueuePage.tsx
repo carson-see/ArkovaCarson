@@ -205,9 +205,7 @@ function QueueInner() {
     }
   }, []);
 
-  /* eslint-disable react-hooks/set-state-in-effect */
   useVisibilityAwarePolling(fetchPending, POLL_INTERVAL_MS);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   const groups = useMemo(() => groupByExternal(rows), [rows]);
   const clampedFocus = Math.min(Math.max(focusIdx, 0), Math.max(0, groups.length - 1));
