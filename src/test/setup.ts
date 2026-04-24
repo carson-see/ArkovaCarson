@@ -60,5 +60,9 @@ if (typeof navigator !== 'undefined') {
       readText: async () => '',
     },
     writable: true,
+    // `configurable: true` lets @testing-library/user-event reattach its own
+    // clipboard stub when `userEvent.setup()` is called — otherwise it throws
+    // `TypeError: Cannot redefine property: clipboard` in jsdom.
+    configurable: true,
   });
 }
