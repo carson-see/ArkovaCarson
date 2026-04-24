@@ -57,6 +57,46 @@ describe('TriggerConfig discriminator', () => {
     expect(parsed.config.semantic_match?.threshold).toBe(0.75);
   });
 
+  it('accepts a single Google Drive folder binding config', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        type: 'drive_folder',
+        folder_id: 'folder-123',
+        watch_channel_id: 'channel-123',
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.folder_id).toBe('folder-123');
+  });
+
+  it('accepts multiple Google Drive folder bindings per rule', () => {
+    const parsed = TriggerConfig.parse({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      config: {
+        vendors: ['google_drive'],
+        drive_folders: [
+          { type: 'drive_folder', folder_id: 'folder-a', folder_name: 'Legal' },
+          { type: 'drive_folder', folder_id: 'folder-b', folder_path: '/HR/Contracts' },
+        ],
+      },
+    });
+    if (parsed.trigger_type !== 'WORKSPACE_FILE_MODIFIED') throw new Error('narrow');
+    expect(parsed.config.drive_folders).toHaveLength(2);
+  });
+
+  it('rejects a Drive folder binding without folder_id', () => {
+    expect(() =>
+      TriggerConfig.parse({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        config: {
+          drive_folders: [{ type: 'drive_folder' }],
+        },
+      }),
+    ).toThrow();
+  });
+
   it('rejects semantic_match threshold above 1.0', () => {
     expect(() =>
       TriggerConfig.parse({

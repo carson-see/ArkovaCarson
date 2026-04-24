@@ -8,6 +8,12 @@
 | `deploy-worker.yml` | Cloud Run worker deployment | — |
 | `migration-drift.yml` | Read-only diff: local migrations vs prod applied set. Prevents the scorecard-outage class of bug. | SCRUM-908 |
 
+## SCRUM-1068 — Sonatype SCA
+
+- `ci.yml` includes a non-blocking `sonatype-sca` PR job for the first sprint.
+- The local GPL/AGPL/SSPL deny-list is always enforced with `npm run security:license-denylist`; legacy `snarkjs` GPL transitive packages are documented in `scripts/security/license-denylist.allowlist.json`.
+- Sonatype Lifecycle remote evaluation runs only when `SONATYPE_LIFECYCLE_URL`, `SONATYPE_LIFECYCLE_USERNAME`, `SONATYPE_LIFECYCLE_PASSWORD`, and `SONATYPE_LIFECYCLE_APPLICATION_ID` secrets exist.
+
 ## Patterns
 
 - Workflows use pinned action SHAs (not `@v4` tags) for supply-chain safety.

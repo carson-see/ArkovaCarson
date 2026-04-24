@@ -143,6 +143,14 @@ ENABLE_VERTEX_AI=false              # when true, Gemini Golden uses Vertex AI SD
 GCP_PROJECT_ID=arkova1              # GCP project for Vertex AI
 VERTEX_AI_REGION=us-central1        # Vertex region — US residency pinning
 GOOGLE_APPLICATION_CREDENTIALS=     # path to SA key JSON (Cloud Run uses metadata server)
+
+# SCRUM-1067 — Arize AX tracing (Nessie + Gemini Golden observability)
+ARIZE_TRACING_ENABLED=false         # true enables OTLP trace export
+ARIZE_API_KEY=                      # Arize AX API key, never committed
+ARIZE_SPACE_ID=                     # Arize AX space id
+ARIZE_PROJECT_NAME=arkova-ai-providers
+ARIZE_OTLP_ENDPOINT=https://otlp.arize.com/v1
+ARIZE_TRACING_CONSOLE=false         # optional local debugging exporter
 ```
 
 ## Together.ai (fallback LLM provider)
@@ -162,6 +170,19 @@ NESSIE_DOMAIN_ROUTING=false
 ENABLE_CONSTRAINED_DECODING=false   # NVI-16: vLLM JSON-schema whitelist for citation IDs at inference
 ENABLE_SYNTHETIC_DATA=false
 TRAINING_DATA_OUTPUT_PATH=
+```
+
+## Developer tooling / CI
+```bash
+# SCRUM-1068 — Sonatype MCP + SCA
+SONATYPE_GUIDE_MCP_TOKEN=           # local MCP token for https://mcp.guide.sonatype.com/mcp
+SONATYPE_LIFECYCLE_URL=             # GitHub Actions secret for Sonatype Lifecycle evaluation
+SONATYPE_LIFECYCLE_USERNAME=        # GitHub Actions secret
+SONATYPE_LIFECYCLE_PASSWORD=        # GitHub Actions secret
+SONATYPE_LIFECYCLE_APPLICATION_ID=  # GitHub Actions secret
+
+# SCRUM-1070 — Google Developer Knowledge MCP
+GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY= # local MCP API key for https://developerknowledge.googleapis.com/mcp
 ```
 
 ## CIBA — Rules Engine + Security + Scale (worker only)
@@ -215,10 +236,10 @@ MIDDESK_WEBHOOK_SECRET=
 # path. Change via runbook Sandbox → production cutover.
 MIDDESK_SANDBOX=true
 
-# ─── SCRUM-1168 / SCRUM-1169 — Google Drive integration ───
+# ─── SCRUM-1099 / SCRUM-1100 — Google Drive connector + rule binding ───
 # See docs/runbooks/integrations/drive.md for GCP OAuth app setup.
-# OAuth tokens are KMS-encrypted before persistence; cleartext never lands
-# in Postgres.
+# OAuth refresh tokens live in Secret Manager; Postgres stores connection
+# metadata and the Secret Manager handle only. Cleartext never lands there.
 
 # OAuth 2.0 client credentials from the GCP Console OAuth app. The
 # redirect URI registered in the OAuth app must match exactly the
@@ -226,11 +247,9 @@ MIDDESK_SANDBOX=true
 GOOGLE_OAUTH_CLIENT_ID=
 GOOGLE_OAUTH_CLIENT_SECRET=
 
-# Dedicated KMS key for encrypting OAuth refresh tokens. Falls back to
-# GCP_KMS_KEY_RESOURCE_NAME (the Bitcoin signing key) when unset, but a
-# dedicated key is strongly preferred so a chain-signing compromise does
-# not leak OAuth tokens. Value is the full KMS resource name.
-GCP_KMS_INTEGRATION_TOKEN_KEY=
+# Optional project override for the token Secret Manager backend. Defaults to
+# the worker's GCP project when unset.
+GCP_SECRET_MANAGER_PROJECT_ID=
 
 # ─── SCRUM-1101 — DocuSign connector ───
 # See docs/runbooks/integrations/docusign.md for DocuSign OAuth + Connect setup.

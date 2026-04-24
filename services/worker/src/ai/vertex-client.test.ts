@@ -8,6 +8,12 @@ vi.mock('../utils/gcp-auth.js', () => ({
   getGcpAccessToken: vi.fn().mockResolvedValue('mock-token'),
 }));
 
+const traceMock = vi.hoisted(() => ({
+  traceAiProviderCall: vi.fn(async (_options: unknown, fn: () => Promise<unknown>) => fn()),
+}));
+
+vi.mock('./observability.js', () => traceMock);
+
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
@@ -35,6 +41,16 @@ describe('vertexGenerate', () => {
 
     expect(result.text).toBe('{"name":"test"}');
     expect(result.tokensUsed).toBe(42);
+    expect(traceMock.traceAiProviderCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'vertex',
+        operation: 'generate',
+        model: 'gemini-3-flash-preview',
+        inputCharacterCount: 'Extract metadata'.length,
+      }),
+      expect.any(Function),
+      expect.any(Function),
+    );
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toContain(':generateContent');
@@ -76,6 +92,15 @@ describe('vertexEmbed', () => {
 
     expect(result.values).toEqual([0.1, 0.2, 0.3]);
     expect(result.dimensions).toBe(3);
+    expect(traceMock.traceAiProviderCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'vertex',
+        operation: 'embed',
+        model: 'gemini-embedding-001',
+        inputCharacterCount: 'Test text'.length,
+      }),
+      expect.any(Function),
+    );
   });
 });
 

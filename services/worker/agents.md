@@ -1,5 +1,5 @@
 # agents.md — services/worker
-_Last updated: 2026-04-23_
+_Last updated: 2026-04-24_
 
 ## What This Folder Contains
 
@@ -41,6 +41,18 @@ Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-ad
 ### New env vars (see `docs/reference/ENV.md`)
 
 `ENABLE_WEBHOOK_HMAC`, `ENABLE_RULES_ENGINE`, `ENABLE_QUEUE_REMINDERS`, `ENABLE_TREASURY_ALERTS`, `SLACK_TREASURY_WEBHOOK_URL`, `TREASURY_ALERT_EMAIL`, `TREASURY_LOW_BALANCE_USD`.
+
+### AI observability (SCRUM-1067)
+
+- `src/ai/observability.ts` initializes Arize AX tracing when `ARIZE_TRACING_ENABLED=true` and both `ARIZE_API_KEY` + `ARIZE_SPACE_ID` are present.
+- Provider spans are metadata-only: provider, operation, model/version, token count, latency, confidence, cost/drift/hallucination/failure-mode fields when available. Never attach stripped text, prompts, fingerprints, emails, API keys, or document content.
+- Together.ai, Vertex AI, and Gemini call paths are wrapped with `traceAiProviderCall`; exporter uses Arize's OTLP endpoint (`ARIZE_OTLP_ENDPOINT`, default `https://otlp.arize.com/v1`) and project name `ARIZE_PROJECT_NAME` (default `arkova-ai-providers`).
+
+### Google Drive connector v2 (SCRUM-1099 / SCRUM-1100)
+
+- `integrations/oauth/drive.ts` is the low-level Drive OAuth/watch client. Scope defaults are exactly `drive.file` + `drive.activity.readonly`; do not add broad Drive scopes without Jira/security review.
+- `integrations/connectors/googleDrive.ts` coordinates OAuth completion, Secret Manager token storage, 7-day watch renewal, disconnect cleanup (`channels.stop` + OAuth revoke), and canonical rule-event shaping. Persistence is injected: connection metadata may store `tokenSecretName`, never raw access/refresh tokens.
+- `rules/schemas.ts` + `rules/evaluator.ts` support Google Drive folder-bound rules via either the single AC shape `{ type: "drive_folder", folder_id, watch_channel_id }` or `drive_folders[]` for multiple folders. Evaluator matches Drive events by `payload.parent_ids`, `payload.file_id` / `external_file_id`, or optional resolved `folder_path`.
 
 ### DO / DON'T for this folder
 

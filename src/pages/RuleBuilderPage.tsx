@@ -12,7 +12,7 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, CheckCircle, Save } from 'lucide-react';
+import { ArrowLeft, ArrowRight, CheckCircle, Plus, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,13 @@ import {
 
 const TRIGGER_COPY = RULE_TRIGGER_COPY;
 const ACTION_COPY = RULE_ACTION_COPY;
+
+interface DriveFolderConfig {
+  type: 'drive_folder';
+  folder_id: string;
+  folder_name?: string;
+  folder_path?: string;
+}
 
 interface WizardState {
   step: 1 | 2 | 3 | 4;
@@ -350,7 +357,24 @@ function StepConfigure({ state, update }: StepProps) {
     const cfg = state.trigger_config as {
       folder_path_starts_with?: string;
       filename_contains?: string;
+      drive_folders?: DriveFolderConfig[];
     };
+    const driveFolders = cfg.drive_folders ?? [];
+    function setDriveFolder(index: number, patch: Partial<DriveFolderConfig>) {
+      const next = [...driveFolders];
+      next[index] = { ...next[index], ...patch, type: 'drive_folder' };
+      setCfg('drive_folders', next.filter((folder) => folder.folder_id || folder.folder_name || folder.folder_path));
+    }
+    function addDriveFolder() {
+      setCfg('drive_folders', [
+        ...driveFolders,
+        { type: 'drive_folder', folder_id: '' },
+      ]);
+    }
+    function removeDriveFolder(index: number) {
+      const next = driveFolders.filter((_, i) => i !== index);
+      setCfg('drive_folders', next.length > 0 ? next : undefined);
+    }
     return (
       <div className="space-y-4">
         <div>
@@ -368,6 +392,58 @@ function StepConfigure({ state, update }: StepProps) {
             value={cfg.filename_contains ?? ''}
             onChange={(e) => setCfg('filename_contains', e.target.value || undefined)}
           />
+        </div>
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <Label>{W.FIELD_DRIVE_FOLDERS}</Label>
+            <Button type="button" variant="outline" size="sm" onClick={addDriveFolder}>
+              <Plus className="h-4 w-4 mr-1" /> {W.ADD_DRIVE_FOLDER}
+            </Button>
+          </div>
+          {driveFolders.map((folder, index) => (
+            <div key={index} className="grid grid-cols-1 gap-2 rounded-md border p-3 md:grid-cols-[1fr_1fr_1fr_auto]">
+              <div>
+                <Label>{W.FIELD_DRIVE_FOLDER_ID}</Label>
+                <Input
+                  placeholder={W.FIELD_DRIVE_FOLDER_ID_PLACEHOLDER}
+                  value={folder.folder_id}
+                  onChange={(e) => setDriveFolder(index, { folder_id: e.target.value.trim() })}
+                />
+              </div>
+              <div>
+                <Label>{W.FIELD_DRIVE_FOLDER_NAME}</Label>
+                <Input
+                  placeholder={W.FIELD_DRIVE_FOLDER_NAME_PLACEHOLDER}
+                  value={folder.folder_name ?? ''}
+                  onChange={(e) =>
+                    setDriveFolder(index, { folder_name: e.target.value.trim() || undefined })
+                  }
+                />
+              </div>
+              <div>
+                <Label>{W.FIELD_DRIVE_FOLDER_PATH}</Label>
+                <Input
+                  placeholder={W.FIELD_DRIVE_FOLDER_PATH_PLACEHOLDER}
+                  value={folder.folder_path ?? ''}
+                  onChange={(e) =>
+                    setDriveFolder(index, { folder_path: e.target.value.trim() || undefined })
+                  }
+                />
+              </div>
+              <div className="flex items-end">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={W.REMOVE_DRIVE_FOLDER}
+                  title={W.REMOVE_DRIVE_FOLDER}
+                  onClick={() => removeDriveFolder(index)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );

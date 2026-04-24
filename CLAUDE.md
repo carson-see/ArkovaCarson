@@ -122,6 +122,8 @@ Documents never leave the user's device. Foundational privacy guarantee.
 - Every task keeps the repo green: `typecheck`, `lint`, `test`, `lint:copy`.
 - Coverage: 80% thresholds on critical paths.
 - E2E in `e2e/` with Playwright. Every user-facing flow requires an E2E spec before COMPLETE.
+- UI UAT defaults to local preview plus Chrome DevTools MCP for DOM, console, network, and screenshot proof. Use Vercel previews only for stakeholder demos or deploy-specific behavior.
+- Use Sequential Thinking MCP for high-risk multi-step implementation planning and Google Developer Knowledge MCP for current Google API / SDK behavior.
 
 ### 1.8 API versioning
 Verification API schema is frozen once published. No breaking changes without a `v2+` prefix and 12-month deprecation. Additive nullable fields are allowed without versioning.

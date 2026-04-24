@@ -47,10 +47,12 @@ interface EventRow {
   org_id: string;
   trigger_type: TriggerType;
   vendor?: string | null;
+  external_file_id?: string | null;
   filename?: string | null;
   folder_path?: string | null;
   sender_email?: string | null;
   subject?: string | null;
+  payload?: Record<string, unknown> | null;
 }
 
 /**
@@ -169,10 +171,12 @@ function toTriggerEvent(ev: EventRow): TriggerEvent {
     trigger_type: ev.trigger_type,
     org_id: ev.org_id,
     vendor: ev.vendor ?? undefined,
+    external_file_id: ev.external_file_id ?? undefined,
     filename: ev.filename ?? undefined,
     folder_path: ev.folder_path ?? undefined,
     sender_email: ev.sender_email ?? undefined,
     subject: ev.subject ?? undefined,
+    payload: ev.payload ?? undefined,
   };
 }
 

@@ -52,6 +52,10 @@ Plus test-hygiene fix: `src/ai/eval/__tests__/intelligence-eval-dataset.test.ts`
 - Updated `docs/compliance/kenya/filing-checklist.md` and Kenya README with SCRUM-1176 HakiChain local-support lane.
 - Jira board updated: SCRUM-1175 and SCRUM-1176 routed to Needs Human for Claude/counsel review after the docs PR.
 - Guardrail: leave `supabase/migrations` alone. Local worktree has unrelated dirty migration state and timestamp-prefixed files from other work.
+### 2026-04-24 — MCP-EXPAND / CONNECTORS-V2 first-six PR
+
+- PR [#508](https://github.com/carson-see/ArkovaCarson/pull/508) on branch `codex/mcp-connectors-first-six` covers SCRUM-1067, SCRUM-1068, SCRUM-1069, SCRUM-1070, SCRUM-1099, and SCRUM-1100 without migration changes. Scope: Arize/OpenTelemetry metadata-only traces for Together/Vertex/Gemini provider paths, eval-drift alert span helper, `.mcp.json` entries for Arize/Sonatype/Chrome DevTools/Sequential Thinking/Google Developer Knowledge MCPs, non-blocking Sonatype CI SCA with a blocking GPL/AGPL/SSPL denylist, Chrome DevTools local-UAT guidance, Google Drive OAuth/watch/Secret Manager service layer, Drive folder-bound rule configs/evaluator support, rule-wizard Drive folder bindings, and env/docs updates.
+- Validation: 91 focused worker tests green; 13 root tests green; license denylist green; root lint + copy lint + frontend typecheck green; changed worker files pass ESLint directly. Full worker lint/typecheck still blocked by pre-existing unrelated issues (`org-kyb.test.ts` unused mock, `stripe/handlers.test.ts` unused/tuple issue, and `user_notifications` generated-type drift).
 
 ### 2026-04-24 merge wave — 6 PRs landed
 

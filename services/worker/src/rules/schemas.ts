@@ -36,6 +36,7 @@ const SecretHandle = z.string().regex(/^sm:[a-z0-9_-]{1,64}$/i);
 // IANA timezone (cron reminders). We validate length/shape but defer hard
 // check to runtime (workers use `Intl.DateTimeFormat` availability).
 const TimezoneString = z.string().min(1).max(64);
+const DriveFolderId = z.string().trim().min(1).max(500);
 
 // Standard 5-field cron expression. Very loose regex — runtime parser in the
 // worker (cron-parser) does the real validation.
@@ -75,7 +76,33 @@ export const TriggerConfigWorkspaceFileModified = z.object({
     .optional(),
   folder_path_starts_with: z.string().max(500).optional(),
   filename_contains: z.string().max(200).optional(),
+  // SCRUM-1100: Drive-specific binding. `type/folder_id/watch_channel_id`
+  // keeps compatibility with the single-folder AC shape, while
+  // `drive_folders[]` supports multiple folder bindings per rule.
+  type: z.literal('drive_folder').optional(),
+  folder_id: DriveFolderId.optional(),
+  watch_channel_id: z.string().trim().min(1).max(500).optional(),
+  drive_folders: z
+    .array(
+      z.object({
+        type: z.literal('drive_folder'),
+        folder_id: DriveFolderId,
+        folder_name: z.string().trim().max(500).optional(),
+        folder_path: z.string().trim().max(2000).optional(),
+        watch_channel_id: z.string().trim().min(1).max(500).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
+}).superRefine((cfg, ctx) => {
+  if (cfg.type === 'drive_folder' && !cfg.folder_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['folder_id'],
+      message: 'folder_id is required when type is drive_folder',
+    });
+  }
 });
 
 export const TriggerConfigConnectorDocumentReceived = z.object({

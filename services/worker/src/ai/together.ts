@@ -29,6 +29,7 @@ import { EXTRACTION_SYSTEM_PROMPT, buildExtractionPrompt } from './prompts/extra
 import { logger } from '../utils/logger.js';
 import { verifyGrounding } from './grounding.js';
 import { runCrossFieldChecks, validateFieldsForType } from './crossFieldFraudChecks.js';
+import { traceAiProviderCall } from './observability.js';
 
 const TOGETHER_API_BASE = 'https://api.together.xyz/v1';
 const DEFAULT_MODEL = 'meta-llama/Meta-Llama-3.1-8B-Instruct';
@@ -163,18 +164,26 @@ export class TogetherProvider implements IAIProvider {
       const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
       try {
-        const response = await fetch(`${TOGETHER_API_BASE}/embeddings`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify({
+        const response = await traceAiProviderCall<Response>(
+          {
+            provider: 'together',
+            operation: 'embed',
             model: this.embeddingModelName,
-            input: text,
+            inputCharacterCount: text.length,
+          },
+          () => fetch(`${TOGETHER_API_BASE}/embeddings`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: this.embeddingModelName,
+              input: text,
+            }),
+            signal: controller.signal,
           }),
-          signal: controller.signal,
-        });
+        );
 
         if (!response.ok) {
           const errorBody = await response.text();
@@ -272,35 +281,49 @@ export class TogetherProvider implements IAIProvider {
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     try {
-      const response = await fetch(`${TOGETHER_API_BASE}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
-        },
-        body: JSON.stringify({
+      return await traceAiProviderCall<TogetherChatResponse>(
+        {
+          provider: 'together',
+          operation: 'chat_completion',
           model: this.modelName,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: options.temperature ?? 0.2,
-          max_tokens: options.max_tokens ?? 4096,
-          ...(options.response_format ? { response_format: options.response_format } : {}),
+          inputCharacterCount: systemPrompt.length + userPrompt.length,
+        },
+        async () => {
+          const response = await fetch(`${TOGETHER_API_BASE}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: this.modelName,
+              messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt },
+              ],
+              temperature: options.temperature ?? 0.2,
+              max_tokens: options.max_tokens ?? 4096,
+              ...(options.response_format ? { response_format: options.response_format } : {}),
+            }),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const errorBody = await response.text();
+            logger.error(
+              { status: response.status, errorBody, model: this.modelName },
+              'Together AI chat completion error',
+            );
+            throw new Error(`Together AI request failed (status ${response.status})`);
+          }
+
+          return (await response.json()) as TogetherChatResponse;
+        },
+        (response) => ({
+          modelVersion: response.model,
+          tokensUsed: response.usage?.total_tokens,
         }),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        logger.error(
-          { status: response.status, errorBody, model: this.modelName },
-          'Together AI chat completion error',
-        );
-        throw new Error(`Together AI request failed (status ${response.status})`);
-      }
-
-      return (await response.json()) as TogetherChatResponse;
+      );
     } finally {
       clearTimeout(timeout);
     }

@@ -51,8 +51,10 @@ export interface TriggerEvent {
   vendor?: string;
   filename?: string;
   folder_path?: string;
+  external_file_id?: string;
   sender_email?: string;
   subject?: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface EvaluationResult {
@@ -77,6 +79,16 @@ function containsCI(haystack: string | undefined, needle: unknown): boolean {
 function startsWithCI(haystack: string | undefined, needle: unknown): boolean {
   if (!haystack || typeof needle !== 'string' || !needle) return false;
   return haystack.toLowerCase().startsWith(needle.toLowerCase());
+}
+
+interface DriveFolderBinding {
+  folder_id: string;
+  folder_path?: string;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
 }
 
 function readSemanticMatch(
@@ -129,6 +141,53 @@ function filenameRejected(
   return Boolean(cfg.filename_contains && !containsCI(eventFilename, cfg.filename_contains));
 }
 
+function readDriveFolderBindings(cfg: Record<string, unknown>): DriveFolderBinding[] {
+  const bindings: DriveFolderBinding[] = [];
+  if (
+    cfg.type === 'drive_folder' &&
+    typeof cfg.folder_id === 'string' &&
+    cfg.folder_id.length > 0
+  ) {
+    bindings.push({
+      folder_id: cfg.folder_id,
+      folder_path: typeof cfg.folder_path === 'string' ? cfg.folder_path : undefined,
+    });
+  }
+
+  const configured = cfg.drive_folders;
+  if (Array.isArray(configured)) {
+    for (const entry of configured) {
+      if (!entry || typeof entry !== 'object') continue;
+      const folderId = (entry as { folder_id?: unknown }).folder_id;
+      if (typeof folderId !== 'string' || folderId.length === 0) continue;
+      const folderPath = (entry as { folder_path?: unknown }).folder_path;
+      bindings.push({
+        folder_id: folderId,
+        folder_path: typeof folderPath === 'string' ? folderPath : undefined,
+      });
+    }
+  }
+  return bindings;
+}
+
+function driveFolderRejected(cfg: Record<string, unknown>, event: TriggerEvent): boolean {
+  const bindings = readDriveFolderBindings(cfg);
+  if (bindings.length === 0) return false;
+  if (event.vendor !== 'google_drive') return true;
+
+  const parentIds = readStringArray(event.payload?.parent_ids);
+  const fileId =
+    typeof event.payload?.file_id === 'string'
+      ? event.payload.file_id
+      : event.external_file_id;
+
+  return !bindings.some((binding) => {
+    if (parentIds.includes(binding.folder_id)) return true;
+    if (fileId === binding.folder_id) return true;
+    return Boolean(binding.folder_path && startsWithCI(event.folder_path, binding.folder_path));
+  });
+}
+
 function senderEmailRejected(
   cfg: Record<string, unknown>,
   eventSender: string | undefined,
@@ -151,6 +210,7 @@ function evaluateWorkspaceFileModified(
   event: TriggerEvent,
 ): string | null {
   if (vendorRejected(cfg, event.vendor)) return 'vendor_filter_rejected';
+  if (driveFolderRejected(cfg, event)) return 'drive_folder_filter_rejected';
   if (cfg.folder_path_starts_with && !startsWithCI(event.folder_path, cfg.folder_path_starts_with)) {
     return 'folder_path_filter_rejected';
   }
