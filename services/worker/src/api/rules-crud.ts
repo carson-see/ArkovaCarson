@@ -234,6 +234,67 @@ export async function handleCreateRule(
   }
 }
 
+type PatchValidationResult =
+  | { kind: 'ok' }
+  | { kind: 'error'; status: number; body: Record<string, unknown> };
+
+/**
+ * When a caller patches trigger_config or action_config, re-validate the
+ * resulting rule against the Zod schema BEFORE writing. Without this, a
+ * PATCH with `{trigger_config: {anything: 'goes'}}` passes the inline-
+ * secret check but corrupts the stored rule — the rules engine then skips
+ * it with `unexpected_trigger_type` or silently fails to filter.
+ *
+ * Extracted from handleUpdateRule so its cognitive complexity stays under
+ * the SonarCloud 15 cap.
+ */
+async function validatePatchAgainstCurrent(
+  ruleId: string,
+  orgId: string,
+  patch: UpdateOrgRuleInputT,
+): Promise<PatchValidationResult> {
+  if (!patch.trigger_config && !patch.action_config) return { kind: 'ok' };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: current, error: readErr } = await (db as any)
+    .from('organization_rules')
+    .select('trigger_type, trigger_config, action_type, action_config, org_id')
+    .eq('id', ruleId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (readErr) {
+    logger.warn({ error: readErr }, 'organization_rules fetch for patch-validation failed');
+    return { kind: 'error', status: 500, body: { error: { code: 'internal', message: 'Internal server error' } } };
+  }
+  if (!current) {
+    return { kind: 'error', status: 404, body: { error: { code: 'not_found', message: 'Rule not found' } } };
+  }
+  const merged = {
+    org_id: current.org_id,
+    name: patch.name ?? 'patch-validation-probe',
+    description: patch.description,
+    trigger_type: current.trigger_type,
+    trigger_config: patch.trigger_config ?? current.trigger_config,
+    action_type: current.action_type,
+    action_config: patch.action_config ?? current.action_config,
+    enabled: false,
+  };
+  try {
+    validateRuleConfigs(merged);
+    return { kind: 'ok' };
+  } catch (err) {
+    return {
+      kind: 'error',
+      status: 400,
+      body: {
+        error: {
+          code: 'invalid_config',
+          message: err instanceof Error ? err.message : 'Config validation failed',
+        },
+      },
+    };
+  }
+}
+
 export async function handleUpdateRule(
   userId: string,
   req: Request,
@@ -276,49 +337,10 @@ export async function handleUpdateRule(
   }
 
   try {
-    // If the caller is patching trigger_config OR action_config, re-validate
-    // the resulting rule against the Zod schema BEFORE writing. Without this,
-    // a PATCH with `{trigger_config: {"anything": "goes"}}` passes the inline-
-    // secret check but corrupts the stored rule — the rules engine then skips
-    // it with `unexpected_trigger_type` or silently fails to filter.
-    if (bodyParsed.data.trigger_config || bodyParsed.data.action_config) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data: current, error: readErr } = await (db as any)
-        .from('organization_rules')
-        .select('trigger_type, trigger_config, action_type, action_config, org_id')
-        .eq('id', idParsed.data)
-        .eq('org_id', orgId)
-        .maybeSingle();
-      if (readErr) {
-        logger.warn({ error: readErr }, 'organization_rules fetch for patch-validation failed');
-        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
-        return;
-      }
-      if (!current) {
-        res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
-        return;
-      }
-      const merged = {
-        org_id: current.org_id,
-        name: bodyParsed.data.name ?? 'patch-validation-probe',
-        description: bodyParsed.data.description,
-        trigger_type: current.trigger_type,
-        trigger_config: bodyParsed.data.trigger_config ?? current.trigger_config,
-        action_type: current.action_type,
-        action_config: bodyParsed.data.action_config ?? current.action_config,
-        enabled: false,
-      };
-      try {
-        validateRuleConfigs(merged);
-      } catch (err) {
-        res.status(400).json({
-          error: {
-            code: 'invalid_config',
-            message: err instanceof Error ? err.message : 'Config validation failed',
-          },
-        });
-        return;
-      }
+    const validation = await validatePatchAgainstCurrent(idParsed.data, orgId, bodyParsed.data);
+    if (validation.kind === 'error') {
+      res.status(validation.status).json(validation.body);
+      return;
     }
 
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
