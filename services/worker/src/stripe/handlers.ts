@@ -11,7 +11,7 @@
 import type Stripe from 'stripe';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { createGracePeriod } from '../billing/reconciliation.js';
+import { callRpc } from '../utils/rpc.js';
 
 type StripeEvent = Stripe.Event;
 
@@ -24,6 +24,73 @@ const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
   medium_business: 'medium_business',
   enterprise: 'enterprise',
 };
+
+type StripeReference = string | { id?: string | null } | null | undefined;
+
+interface PaymentGraceTarget {
+  userId: string | null;
+  orgId: string | null;
+}
+
+function stripeReferenceId(ref: StripeReference): string | null {
+  if (typeof ref === 'string') return ref;
+  return ref?.id ?? null;
+}
+
+async function resolvePaymentGraceTarget(
+  stripeSubscriptionId: string,
+): Promise<PaymentGraceTarget> {
+  const { data: subscription, error } = await db
+    .from('subscriptions')
+    .select('user_id, org_id')
+    .eq('stripe_subscription_id', stripeSubscriptionId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ error, stripeSubscriptionId }, 'Failed to resolve subscription for payment grace');
+    throw error;
+  }
+
+  const userId = subscription?.user_id ?? null;
+  let orgId = subscription?.org_id ?? null;
+
+  if (!orgId && userId) {
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('org_id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (profileError) {
+      logger.error({ error: profileError, userId, stripeSubscriptionId }, 'Failed to resolve profile org for payment grace');
+      throw profileError;
+    }
+
+    orgId = profile?.org_id ?? null;
+  }
+
+  if (!orgId) {
+    logger.warn(
+      { stripeSubscriptionId, userId },
+      'Payment grace RPC skipped because no organization was found',
+    );
+  }
+
+  return { userId, orgId };
+}
+
+async function callPaymentGraceRpc(
+  rpcName: 'start_payment_grace' | 'clear_payment_grace',
+  orgId: string,
+  context: { invoiceId: string; stripeSubscriptionId: string },
+): Promise<void> {
+  const { error } = await callRpc<Record<string, unknown>>(db, rpcName, { p_org_id: orgId });
+  if (error) {
+    logger.error({ error, orgId, ...context }, `${rpcName} RPC failed`);
+    throw error;
+  }
+  logger.info({ orgId, ...context }, `${rpcName} RPC succeeded`);
+}
 
 // =========================================================================
 // Idempotency — billing_events table
@@ -389,16 +456,17 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
   const invoice = event.data.object as {
     id: string;
     customer: string;
-    subscription: string;
+    subscription: StripeReference;
   };
+  const stripeSubscriptionId = stripeReferenceId(invoice.subscription);
 
-  logger.warn({ invoiceId: invoice.id, subscription: invoice.subscription }, 'Payment failed');
+  logger.warn({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment failed');
 
-  if (invoice.subscription) {
+  if (stripeSubscriptionId) {
     const { error } = await db
       .from('subscriptions')
       .update({ status: 'past_due' })
-      .eq('stripe_subscription_id', invoice.subscription);
+      .eq('stripe_subscription_id', stripeSubscriptionId);
 
     if (error) {
       logger.error({ error, invoiceId: invoice.id }, 'Failed to update subscription to past_due');
@@ -406,25 +474,70 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
     }
   }
 
-  // Get user for audit log
-  if (invoice.subscription) {
-    const { data: sub } = await db
-      .from('subscriptions')
-      .select('user_id')
-      .eq('stripe_subscription_id', invoice.subscription)
-      .maybeSingle();
+  if (stripeSubscriptionId) {
+    const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
 
-    if (sub?.user_id) {
+    if (target.userId) {
       await db.from('audit_events').insert({
         event_type: 'payment.failed',
         event_category: 'ADMIN',
-        actor_id: sub.user_id,
+        actor_id: target.userId,
         details: `Payment failed for invoice: ${invoice.id}`,
       });
-
-      // RECON-5: Create 7-day grace period for failed payment recovery
-      await createGracePeriod(sub.user_id, invoice.subscription);
     }
+
+    if (target.orgId) {
+      await callPaymentGraceRpc('start_payment_grace', target.orgId, {
+        invoiceId: invoice.id,
+        stripeSubscriptionId,
+      });
+    }
+  }
+}
+
+/**
+ * Handle invoice.payment_succeeded
+ *
+ * Clears org payment grace and marks the subscription active again.
+ */
+export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> {
+  const invoice = event.data.object as {
+    id: string;
+    customer: string;
+    subscription: StripeReference;
+  };
+  const stripeSubscriptionId = stripeReferenceId(invoice.subscription);
+
+  logger.info({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment succeeded');
+
+  if (!stripeSubscriptionId) return;
+
+  const { error } = await db
+    .from('subscriptions')
+    .update({ status: 'active' })
+    .eq('stripe_subscription_id', stripeSubscriptionId);
+
+  if (error) {
+    logger.error({ error, invoiceId: invoice.id }, 'Failed to update subscription to active');
+    throw error;
+  }
+
+  const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
+
+  if (target.userId) {
+    await db.from('audit_events').insert({
+      event_type: 'payment.succeeded',
+      event_category: 'ADMIN',
+      actor_id: target.userId,
+      details: `Payment succeeded for invoice: ${invoice.id}`,
+    });
+  }
+
+  if (target.orgId) {
+    await callPaymentGraceRpc('clear_payment_grace', target.orgId, {
+      invoiceId: invoice.id,
+      stripeSubscriptionId,
+    });
   }
 }
 
@@ -545,6 +658,9 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
       break;
     case 'invoice.payment_failed':
       await handlePaymentFailed(event);
+      break;
+    case 'invoice.payment_succeeded':
+      await handlePaymentSucceeded(event);
       break;
     case 'identity.verification_session.verified':
       await handleIdentityVerified(event);
