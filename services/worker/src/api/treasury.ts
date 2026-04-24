@@ -211,6 +211,22 @@ export async function handleTreasuryHealth(
         .maybeSingle(),
     ]);
 
+    // CIBA-HARDEN-03: DB errors must not be treated as "everything's fine."
+    // Previously this code read .data and ignored .error, which meant a
+    // transient Supabase outage returned balance_usd: null + below_threshold:
+    // false — indistinguishable from a genuinely-healthy treasury. Return
+    // 500 so the health check fails loudly instead.
+    if (cacheResult.error) {
+      logger.error({ error: cacheResult.error }, 'Treasury health: cache read failed');
+      res.status(500).json({ error: 'Internal server error', source: 'treasury_cache' });
+      return;
+    }
+    if (alertResult.error) {
+      logger.error({ error: alertResult.error }, 'Treasury health: alert state read failed');
+      res.status(500).json({ error: 'Internal server error', source: 'treasury_alert_state' });
+      return;
+    }
+
     const cache = cacheResult.data as
       | { balance_confirmed_sats: number | null; btc_price_usd: number | null; updated_at: string | null }
       | null;
@@ -218,7 +234,12 @@ export async function handleTreasuryHealth(
       | { below_threshold: boolean; updated_at: string | null }
       | null;
 
-    const thresholdUsd = Number(process.env.TREASURY_LOW_BALANCE_USD ?? DEFAULT_TREASURY_THRESHOLD_USD);
+    // CIBA-HARDEN-03: parse TREASURY_LOW_BALANCE_USD defensively. An empty
+    // env var, a typo ("fifty"), or a negative value all used to silently
+    // become NaN → every balance was "below threshold" by accident, firing
+    // alerts on a healthy treasury. Fall back to DEFAULT on any non-finite
+    // or non-positive parse.
+    const thresholdUsd = parseThresholdUsd(process.env.TREASURY_LOW_BALANCE_USD);
     const priceUnknown = cache?.btc_price_usd == null || cache?.balance_confirmed_sats == null;
     const balanceUsd = priceUnknown
       ? null
@@ -238,4 +259,18 @@ export async function handleTreasuryHealth(
     logger.error({ error: err }, 'handleTreasuryHealth failed');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
+}
+
+/**
+ * Defensive parse of the TREASURY_LOW_BALANCE_USD env var.
+ *
+ * Rejects: undefined, empty string, NaN, non-finite, negative, zero.
+ * Any rejection falls back to DEFAULT_TREASURY_THRESHOLD_USD (50). Exported
+ * so treasury-alert.ts can share the same semantics (follow-up).
+ */
+export function parseThresholdUsd(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return DEFAULT_TREASURY_THRESHOLD_USD;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TREASURY_THRESHOLD_USD;
+  return parsed;
 }
