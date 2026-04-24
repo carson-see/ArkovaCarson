@@ -14,6 +14,7 @@
 
 ## Now
 
+**Codex batch PR in progress:** SCRUM-1104 / SCRUM-1105 / SCRUM-1106 on `codex/release-1104-1106`. Scope: Greenhouse/Lever connector spike doc, API v2 unified search hardening/OpenAPI freeze/rate-limit coverage, and API key v2 scope default/backfill migration `0253_api_key_scope_defaults.sql`. Codex must not apply or push Supabase migrations; this branch only writes the migration file for human review.
 **End of week:** Friday 2026-04-24 EOW. 56 commits landed on main Mon–Fri across 20+ merged PRs (#466–#493). Four PRs still open at EOW: #494 (SCRUM-1161 freemail blocklist), #495 (SCRUM-727/985 live infra + 1,500 adviser records), #496 (SCRUM-1162 Middesk KYB skeleton), and an unpushed WIP on `claude/2026-04-24-scrum-1168-1169-integration-oauth` (migration 0251 + `integrations/oauth/` dir). All four await human merge per `feedback_never_merge_without_ok`.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.

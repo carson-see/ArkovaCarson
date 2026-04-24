@@ -1,5 +1,5 @@
 # agents.md — components
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-24_
 
 ## What This Folder Contains
 Domain-specific React components organized by feature area. Each subfolder has a barrel `index.ts` export. `ui/` contains shadcn/ui primitives (do not edit).
@@ -29,6 +29,7 @@ Domain-specific React components organized by feature area. Each subfolder has a
 | `ui/` | shadcn/ui primitives | Do not edit — managed by shadcn CLI |
 
 ## Do / Don't Rules
+- Recent API key update: `api/ApiKeySettings.tsx` and `api/ApiKeyScopeDisplay.tsx` use the API v2 scope vocabulary (`read:records`, `read:orgs`, `read:search`, `write:anchors`, `admin:rules`) while still displaying legacy v1 scopes on existing keys.
 - DO: Place new components in the correct domain subfolder with barrel export
 - DO: Use hooks from `@/hooks/` for data — never `useState` for DB-backed data
 - DO: Source all UI strings from `@/lib/copy.ts`

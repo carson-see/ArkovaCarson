@@ -1,15 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { ProblemError } from './problem.js';
+import { API_V2_SCOPES, type ApiV2Scope } from '../apiScopes.js';
 
-export const VALID_SCOPES = [
-  'read:records',
-  'read:orgs',
-  'read:search',
-  'write:anchors',
-  'admin:rules',
-] as const;
-
-export type ApiScope = typeof VALID_SCOPES[number];
+export const VALID_SCOPES = API_V2_SCOPES;
+export type ApiScope = ApiV2Scope;
 
 export function requireScopeV2(scope: ApiScope) {
   return (req: Request, _res: Response, next: NextFunction): void => {

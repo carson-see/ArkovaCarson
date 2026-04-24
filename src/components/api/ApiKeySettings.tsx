@@ -46,9 +46,11 @@ interface ApiKeySettingsProps {
 }
 
 const AVAILABLE_SCOPES = [
-  { id: 'verify', label: API_KEY_LABELS.SCOPE_VERIFY, description: 'Single credential verification' },
-  { id: 'batch', label: API_KEY_LABELS.SCOPE_BATCH, description: 'Batch verification (up to 100)' },
-  { id: 'usage', label: API_KEY_LABELS.SCOPE_USAGE, description: 'View usage statistics' },
+  { id: 'read:search', label: API_KEY_LABELS.SCOPE_READ_SEARCH },
+  { id: 'read:records', label: API_KEY_LABELS.SCOPE_READ_RECORDS },
+  { id: 'read:orgs', label: API_KEY_LABELS.SCOPE_READ_ORGS },
+  { id: 'write:anchors', label: API_KEY_LABELS.SCOPE_WRITE_ANCHORS },
+  { id: 'admin:rules', label: API_KEY_LABELS.SCOPE_ADMIN_RULES },
 ];
 
 function formatDate(iso: string): string {
@@ -80,7 +82,7 @@ export function ApiKeySettings({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [phase, setPhase] = useState<'form' | 'secret'>('form');
   const [name, setName] = useState('');
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(['verify']);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>(['read:search']);
   const [expiryDays, setExpiryDays] = useState('');
   const [createdKey, setCreatedKey] = useState<ApiKeyCreated | null>(null);
   const [creating, setCreating] = useState(false);
@@ -92,7 +94,7 @@ export function ApiKeySettings({
   const resetForm = () => {
     setPhase('form');
     setName('');
-    setSelectedScopes(['verify']);
+    setSelectedScopes(['read:search']);
     setExpiryDays('');
     setCreatedKey(null);
     setCreating(false);
@@ -213,7 +215,6 @@ export function ApiKeySettings({
                             className="rounded border-gray-300"
                           />
                           <span className="text-sm font-medium">{scope.label}</span>
-                          <span className="text-xs text-muted-foreground">— {scope.description}</span>
                         </label>
                       ))}
                     </div>

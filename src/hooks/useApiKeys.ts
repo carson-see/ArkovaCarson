@@ -92,7 +92,7 @@ export function useApiKeys(options: { enabled?: boolean } = {}) {
 
   const createKey = useCallback(async (
     name: string,
-    scopes: string[] = ['verify'],
+    scopes: string[] = ['read:search'],
     expiresInDays?: number,
   ): Promise<ApiKeyCreated> => {
     const body: Record<string, unknown> = { name, scopes };

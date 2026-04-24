@@ -1,5 +1,5 @@
 # agents.md — services/worker
-_Last updated: 2026-04-23_
+_Last updated: 2026-04-24_
 
 ## What This Folder Contains
 
@@ -57,6 +57,7 @@ Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-ad
 
 | Date | Sprint | Change |
 |------|--------|--------|
+| 2026-04-24 | API-V2-01/02 | `api/v2/search.ts` now returns typed `id`/`public_id` search results and metadata-aware document filters. `api/v2/rateLimit.ts` applies the existing 1,000 req/min/key policy with RFC 7807 errors. `api/apiScopes.ts` centralizes the v2 scope vocabulary while preserving legacy v1 scope compatibility. |
 | 2026-03-10 ~12 PM | HARDENING-1 | 27 unit tests for `processAnchor()` + `processPendingAnchors()` (100% coverage on `anchor.ts`). Fixed silent audit event failure (BUG-H1-01). Deleted dead `anchorWithClaim.ts` (BUG-H1-02, BUG-H1-03). |
 | 2026-03-10 ~2 PM | HARDENING-2 | 32 new tests: MockChainClient contract (18), getChainClient factory (5), job claim/completion flow (9). Total: 59 worker tests. 100% coverage on `anchor.ts`, `chain/mock.ts`, `chain/client.ts`. |
 | 2026-03-10 ~4 PM | HARDENING-3 | 55 new tests: webhook delivery (30), Stripe client (7), Stripe handlers (18). Total: 114 worker tests. HMAC signature verification confirmed against `crypto.createHmac`. |

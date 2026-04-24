@@ -71,6 +71,33 @@ describe('ApiKeySettings', () => {
     });
   });
 
+  it('defaults new keys to the Search scope', async () => {
+    const onCreate = vi.fn().mockResolvedValue({ key: 'ak_live_test' } as ApiKeyCreated);
+    render(<ApiKeySettings {...defaultProps} onCreate={onCreate} />);
+
+    fireEvent.click(screen.getByText('Create API Key'));
+    fireEvent.change(await screen.findByLabelText('Key Name'), { target: { value: 'Search Key' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create API Key' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith('Search Key', ['read:search'], undefined);
+    });
+  });
+
+  it('lets admins select API v2 scopes on key creation', async () => {
+    const onCreate = vi.fn().mockResolvedValue({ key: 'ak_live_test' } as ApiKeyCreated);
+    render(<ApiKeySettings {...defaultProps} onCreate={onCreate} />);
+
+    fireEvent.click(screen.getByText('Create API Key'));
+    fireEvent.change(await screen.findByLabelText('Key Name'), { target: { value: 'Records Key' } });
+    fireEvent.click(screen.getByLabelText('Records'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create API Key' }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith('Records Key', ['read:search', 'read:records'], undefined);
+    });
+  });
+
   it('shows scope badges on key cards', () => {
     render(<ApiKeySettings {...defaultProps} />);
     expect(screen.getAllByText('Verify').length).toBeGreaterThan(0);

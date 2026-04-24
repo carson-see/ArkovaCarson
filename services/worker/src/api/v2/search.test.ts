@@ -103,7 +103,46 @@ describe('GET /api/v2/search', () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].type).toBe('org');
+    expect(res.body.results[0].id).toBe('1');
     expect(res.body.results[0].public_id).toBe('org_acme');
+  });
+
+  it('supports type=all across orgs, records, fingerprints, and documents', async () => {
+    mockOrder
+      .mockResolvedValueOnce({
+        data: [{
+          id: 'org-1',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          description: 'A company',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+        }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 'rec-1', public_id: 'ARK-1', filename: 'Acme Record.pdf', credential_type: 'LEGAL', status: 'SECURED', fingerprint: 'fp1' }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 'fp-1', public_id: 'ARK-FP', fingerprint: 'acme', filename: 'Fingerprint.pdf', status: 'SECURED' }],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        data: [{ id: 'doc-1', public_id: 'ARK-DOC', filename: 'Offer Letter.pdf', description: 'Acme', credential_type: 'LEGAL', status: 'PENDING' }],
+        error: null,
+      });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=acme&type=all&limit=8');
+
+    expect(res.status).toBe(200);
+    expect(res.body.results.map((r: { type: string }) => r.type)).toEqual([
+      'org',
+      'record',
+      'fingerprint',
+      'document',
+    ]);
   });
 
   it('supports type=fingerprint with exact match', async () => {
@@ -208,5 +247,30 @@ describe('GET /api/v2/search', () => {
     expect(mockIn).toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
     expect(mockIs).toHaveBeenCalledWith('deleted_at', null);
     expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org1');
+    expect(mockOr).toHaveBeenCalledWith(expect.stringContaining('metadata->>issuer.ilike'));
+  });
+
+  it('keeps synthetic 10K-row p95 latency below 200ms', async () => {
+    const app = buildApp();
+    const catalog = Array.from({ length: 10_000 }, (_, i) => ({
+      id: `record-${i}`,
+      public_id: `ARK-${i}`,
+      filename: `Record ${i}.pdf`,
+      credential_type: 'LEGAL',
+      status: 'SECURED',
+      fingerprint: `fp-${i}`,
+    }));
+    const durations: number[] = [];
+
+    for (let i = 0; i < 20; i += 1) {
+      mockOrder.mockResolvedValueOnce({ data: catalog.slice(i, i + 50), error: null });
+      const started = performance.now();
+      const res = await request(app).get('/search?q=Record&type=record&limit=50');
+      durations.push(performance.now() - started);
+      expect(res.status).toBe(200);
+    }
+
+    const p95 = durations.toSorted((a, b) => a - b)[Math.floor(durations.length * 0.95) - 1];
+    expect(p95).toBeLessThan(200);
   });
 });
