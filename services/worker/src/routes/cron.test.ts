@@ -242,6 +242,12 @@ vi.mock('../billing/reconciliation.js', () => ({
   processFailedPaymentRecovery: (...args: unknown[]) => mockProcessFailedPaymentRecovery(...args),
 }));
 
+const mockRunGraceExpirySweep = vi.fn().mockResolvedValue({ expired: 3 });
+vi.mock('../jobs/grace-expiry-sweep.js', () => ({
+  GRACE_EXPIRY_SWEEP_CRON: '*/15 * * * *',
+  runGraceExpirySweep: (...args: unknown[]) => mockRunGraceExpirySweep(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -945,6 +951,23 @@ describe('cron routes', () => {
   // ═══════════════════════════════════════
   // Billing Reconciliation Routes
   // ═══════════════════════════════════════
+
+  describe('POST /grace-expiry-sweep', () => {
+    it('returns grace expiry sweep result', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/grace-expiry-sweep');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ expired: 3 });
+      expect(mockRunGraceExpirySweep).toHaveBeenCalled();
+    });
+
+    it('returns 500 on failure', async () => {
+      mockRunGraceExpirySweep.mockRejectedValueOnce(new Error('fail'));
+      const app = createApp();
+      const res = await request(app).post('/cron/grace-expiry-sweep');
+      expect(res.status).toBe(500);
+    });
+  });
 
   describe('POST /reconcile-stripe', () => {
     it('returns result', async () => {

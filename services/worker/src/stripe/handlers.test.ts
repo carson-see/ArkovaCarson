@@ -29,6 +29,7 @@ const {
   profilesMaybeSingle,
   profilesUpdate,
   profilesUpdateEq,
+  mockCallRpc,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -36,6 +37,7 @@ const {
     error: vi.fn(),
     debug: vi.fn(),
   };
+  const mockCallRpc = vi.fn();
 
   // billing_events.select('id').eq('stripe_event_id', id).maybeSingle()
   const billingEventsMaybeSingle = vi.fn();
@@ -154,6 +156,7 @@ const {
     profilesMaybeSingle,
     profilesUpdate,
     profilesUpdateEq,
+    mockCallRpc,
   };
 });
 
@@ -161,9 +164,7 @@ const {
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
-vi.mock('../billing/reconciliation.js', () => ({
-  createGracePeriod: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('../utils/rpc.js', () => ({ callRpc: mockCallRpc }));
 
 // ---- System under test ----
 
@@ -173,6 +174,7 @@ import {
   handleSubscriptionUpdated,
   handleSubscriptionDeleted,
   handlePaymentFailed,
+  handlePaymentSucceeded,
 } from './handlers.js';
 
 // ---- Test fixtures ----
@@ -222,6 +224,12 @@ const PAYMENT_FAILED_EVENT = makeStripeEvent('invoice.payment_failed', {
   subscription: 'sub_test_001',
 });
 
+const PAYMENT_SUCCEEDED_EVENT = makeStripeEvent('invoice.payment_succeeded', {
+  id: 'inv_test_002',
+  customer: 'cus_test_001',
+  subscription: 'sub_test_001',
+});
+
 // ================================================================
 // Setup defaults
 // ================================================================
@@ -247,6 +255,7 @@ function setupDefaults() {
 
   // audit: succeeds
   auditInsert.mockResolvedValue({ error: null });
+  mockCallRpc.mockResolvedValue({ data: { ok: true }, error: null });
 }
 
 // ================================================================
@@ -282,6 +291,18 @@ describe('handleStripeWebhook', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ invoiceId: 'inv_test_001' }),
       'Payment failed',
+    );
+  });
+
+  it('routes invoice.payment_succeeded to handlePaymentSucceeded', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001', plan_id: 'plan-ind' },
+    });
+    await handleStripeWebhook(PAYMENT_SUCCEEDED_EVENT);
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'clear_payment_grace',
+      { p_org_id: 'org-001' },
     );
   });
 
@@ -897,6 +918,31 @@ describe('handlePaymentFailed', () => {
     );
   });
 
+  it('starts payment grace for the subscription organization', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    await handlePaymentFailed(PAYMENT_FAILED_EVENT);
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'start_payment_grace',
+      { p_org_id: 'org-001' },
+    );
+  });
+
+  it('falls back to the profile org when subscription org_id is missing', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: null },
+    });
+    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-from-profile' } });
+    await handlePaymentFailed(PAYMENT_FAILED_EVENT);
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'start_payment_grace',
+      { p_org_id: 'org-from-profile' },
+    );
+  });
+
   it('skips subscription update when no subscription on invoice', async () => {
     const noSubEvent = makeStripeEvent('invoice.payment_failed', {
       id: 'inv_test_002',
@@ -905,11 +951,93 @@ describe('handlePaymentFailed', () => {
     });
     await handlePaymentFailed(noSubEvent);
     expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+    expect(mockCallRpc).not.toHaveBeenCalled();
   });
 
   it('throws when subscription update fails', async () => {
     subscriptionsUpdate.eq.mockResolvedValue({ error: { message: 'db error' } });
-    await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toThrow('db error');
+    await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({ message: 'db error' });
     expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  it('throws when start_payment_grace fails', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc failed' } });
+    await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
+  });
+});
+
+// ================================================================
+// handlePaymentSucceeded
+// ================================================================
+
+describe('handlePaymentSucceeded', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('logs payment success', async () => {
+    await handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: 'inv_test_002', subscription: 'sub_test_001' }),
+      'Payment succeeded',
+    );
+  });
+
+  it('updates subscription to active', async () => {
+    await handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT);
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith({ status: 'active' });
+    expect(subscriptionsUpdate.eq).toHaveBeenCalledWith(
+      'stripe_subscription_id',
+      'sub_test_001',
+    );
+  });
+
+  it('clears payment grace for the subscription organization', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    await handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT);
+    expect(mockCallRpc).toHaveBeenCalledWith(
+      expect.anything(),
+      'clear_payment_grace',
+      { p_org_id: 'org-001' },
+    );
+  });
+
+  it('logs audit event for payment success', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    await handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT);
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'payment.succeeded',
+        event_category: 'ADMIN',
+        actor_id: 'user-001',
+      }),
+    );
+  });
+
+  it('skips subscription update and RPC when no subscription on invoice', async () => {
+    const noSubEvent = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_test_003',
+      customer: 'cus_test_002',
+      subscription: null,
+    });
+    await handlePaymentSucceeded(noSubEvent);
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+    expect(mockCallRpc).not.toHaveBeenCalled();
+  });
+
+  it('throws when clear_payment_grace fails', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', org_id: 'org-001' },
+    });
+    mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc failed' } });
+    await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
   });
 });
