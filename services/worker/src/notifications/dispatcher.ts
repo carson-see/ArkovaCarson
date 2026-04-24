@@ -1,10 +1,3 @@
-/**
- * Notification Dispatcher (SCRUM-1093)
- *
- * Fire-and-forget notification emission from worker modules.
- * Deduplicates treasury alerts against treasury_alert_state.
- */
-
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
@@ -22,14 +15,18 @@ export interface NotificationPayload {
   payload: Record<string, unknown>;
 }
 
+function toRow(n: NotificationPayload) {
+  return {
+    user_id: n.userId,
+    organization_id: n.organizationId ?? null,
+    type: n.type,
+    payload: n.payload,
+  };
+}
+
 export async function emitNotification(notification: NotificationPayload): Promise<void> {
   try {
-    const { error } = await db.from('notifications').insert({
-      user_id: notification.userId,
-      organization_id: notification.organizationId ?? null,
-      type: notification.type,
-      payload: notification.payload,
-    });
+    const { error } = await db.from('notifications').insert(toRow(notification));
 
     if (error) {
       logger.error({ error, type: notification.type }, 'Failed to emit notification');
@@ -45,14 +42,7 @@ export async function emitBulkNotifications(
   if (notifications.length === 0) return;
 
   try {
-    const rows = notifications.map(n => ({
-      user_id: n.userId,
-      organization_id: n.organizationId ?? null,
-      type: n.type,
-      payload: n.payload,
-    }));
-
-    const { error } = await db.from('notifications').insert(rows);
+    const { error } = await db.from('notifications').insert(notifications.map(toRow));
 
     if (error) {
       logger.error({ error, count: notifications.length }, 'Bulk notification insert failed');

@@ -1,16 +1,9 @@
-/**
- * GET /api/v2/search — Unified search (SCRUM-1105)
- *
- * Cursor-based pagination across orgs, records, fingerprints, documents.
- * Response shape: { results: [...], next_cursor: string | null }
- */
-
 import { Router, Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
-import { ProblemError, sendProblem } from './problem.js';
+import { ProblemError } from './problem.js';
 
 export const searchRouter = Router();
 
@@ -56,10 +49,16 @@ function encodeCursor(offset: number): string {
   return Buffer.from(JSON.stringify({ offset })).toString('base64url');
 }
 
+// Escape characters that have special meaning in PostgREST filter grammar
+function sanitizeFilterValue(v: string): string {
+  return v.replace(/[%_\\,().]/g, c => `\\${c}`);
+}
+
 async function searchOrgs(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+  const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('organizations')
     .select('id, slug, display_name, about')
-    .or(`display_name.ilike.%${q}%,about.ilike.%${q}%,slug.ilike.%${q}%`)
+    .or(`display_name.ilike.%${safe}%,about.ilike.%${safe}%,slug.ilike.%${safe}%`)
     .range(offset, offset + limit - 1)
     .order('display_name');
 
@@ -79,9 +78,10 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 }
 
 async function searchRecords(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+  const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
     .select('id, public_id, title, credential_type, status, fingerprint')
-    .or(`title.ilike.%${q}%,credential_type.ilike.%${q}%`)
+    .or(`title.ilike.%${safe}%,credential_type.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -126,7 +126,7 @@ async function searchFingerprints(q: string, limit: number, offset: number): Pro
 async function searchDocuments(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const { data, error } = await db.from('anchors')
     .select('id, public_id, title, metadata, credential_type, status')
-    .ilike('title', `%${q}%`)
+    .ilike('title', `%${sanitizeFilterValue(q)}%`)
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
 

@@ -1,13 +1,3 @@
-/**
- * Verification API v2 Router
- *
- * Mounts all /api/v2/* endpoints with:
- *   1. Feature gate (ENABLE_VERIFICATION_API)
- *   2. API key auth
- *   3. RFC 7807 error handling
- *   4. Scope-based access control
- */
-
 import { Router } from 'express';
 import { verificationApiGate } from '../../middleware/featureGate.js';
 import { apiKeyAuth } from '../../middleware/apiKeyAuth.js';

@@ -1,12 +1,3 @@
-/**
- * Anchor Revocation API (SCRUM-1095)
- *
- * POST /api/anchor/:id/revoke — worker-only (service_role)
- *
- * Revokes the claim (not the on-chain anchor, which is immutable).
- * Emits audit event + notification.
- */
-
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../utils/db.js';
@@ -63,13 +54,15 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
       return;
     }
 
-    void db.from('audit_events').insert({
+    db.from('audit_events').insert({
       event_type: 'anchor.revoked',
       entity_type: 'anchor',
       entity_id: anchorId,
       org_id: anchor.org_id,
       user_id: anchor.user_id,
       metadata: { reason, revoked_at: new Date().toISOString() },
+    }).then(({ error }) => {
+      if (error) logger.error({ error, anchorId }, 'Failed to write revocation audit event');
     });
 
     void emitNotification({

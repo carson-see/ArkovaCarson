@@ -1,12 +1,3 @@
-/**
- * Secret Rotation Reminder Job (SCRUM-1057)
- *
- * Checks Secret Manager metadata for secrets approaching 90-day rotation.
- * Posts to Slack #ops-alerts 7 days before expiry.
- *
- * Run: cron every 24h via Cloud Scheduler.
- */
-
 import { logger } from '../utils/logger.js';
 
 const ROTATION_PERIOD_DAYS = 90;

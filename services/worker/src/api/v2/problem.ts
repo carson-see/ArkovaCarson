@@ -1,10 +1,3 @@
-/**
- * RFC 7807 Problem Details for HTTP APIs
- *
- * All v2 error responses use application/problem+json.
- * v1 is frozen — this applies only to /api/v2/*.
- */
-
 import { Request, Response, NextFunction } from 'express';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -37,6 +30,7 @@ export const ProblemTypes = {
 
 export class ProblemError extends Error {
   public readonly problem: ProblemDetail;
+  public readonly retryAfter?: number;
 
   constructor(
     type: string,
@@ -57,7 +51,7 @@ export class ProblemError extends Error {
       429,
       detail ?? 'You have exceeded the allowed request rate. Please retry after the indicated period.',
     );
-    (err as ProblemError & { retryAfter: number }).retryAfter = retryAfter;
+    (err as { retryAfter: number }).retryAfter = retryAfter;
     return err;
   }
 
@@ -140,8 +134,8 @@ export function v2ErrorHandler(
       ...err.problem,
       instance: req.originalUrl,
     };
-    if ((err as ProblemError & { retryAfter?: number }).retryAfter) {
-      res.setHeader('Retry-After', String((err as ProblemError & { retryAfter?: number }).retryAfter));
+    if (err.retryAfter) {
+      res.setHeader('Retry-After', String(err.retryAfter));
     }
     sendProblem(res, problem);
     return;

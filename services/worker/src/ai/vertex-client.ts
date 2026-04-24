@@ -1,15 +1,5 @@
-/**
- * Vertex AI Client (SCRUM-1061)
- *
- * Service-account-authenticated client for Gemini Golden.
- * Replaces Developer API key (@google/generative-ai) with
- * Vertex AI SDK auth for VPC Service Controls, CMEK, US residency.
- *
- * Auth chain: GCP metadata server (Cloud Run) → GOOGLE_APPLICATION_CREDENTIALS → fail.
- * Nessie is NOT touched — it stays on Together.ai + Llama 3.1.
- */
-
 import { logger } from '../utils/logger.js';
+import { getGcpAccessToken } from '../utils/gcp-auth.js';
 
 const VERTEX_REGION = process.env.VERTEX_AI_REGION ?? 'us-central1';
 const VERTEX_PROJECT = process.env.GCP_PROJECT_ID ?? 'arkova1';
@@ -43,61 +33,8 @@ export interface VertexEmbeddingResponse {
   dimensions: number;
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
-
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
-    return cachedToken.token;
-  }
-
-  try {
-    const metaRes = await fetch(
-      'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
-      { headers: { 'Metadata-Flavor': 'Google' }, signal: AbortSignal.timeout(2000) },
-    );
-    if (metaRes.ok) {
-      const data = (await metaRes.json()) as { access_token: string; expires_in: number };
-      cachedToken = { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
-      return data.access_token;
-    }
-  } catch {
-    // Not on GCP — fall through to GOOGLE_APPLICATION_CREDENTIALS
-  }
-
-  const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!keyPath) {
-    throw new Error('No GCP credentials: set GOOGLE_APPLICATION_CREDENTIALS or run on Cloud Run');
-  }
-
-  const { readFileSync } = await import('node:fs');
-  const { createSign } = await import('node:crypto');
-  const key = JSON.parse(readFileSync(keyPath, 'utf-8')) as {
-    client_email: string; private_key: string; token_uri: string;
-  };
-  const now = Math.floor(Date.now() / 1000);
-  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
-  const payload = Buffer.from(JSON.stringify({
-    iss: key.client_email, sub: key.client_email,
-    aud: key.token_uri, iat: now, exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/cloud-platform',
-  })).toString('base64url');
-  const sig = createSign('RSA-SHA256').update(`${header}.${payload}`).sign(key.private_key, 'base64url');
-  const jwt = `${header}.${payload}.${sig}`;
-  const tokenRes = await fetch(key.token_uri, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-  });
-  if (!tokenRes.ok) {
-    throw new Error('Failed to get access token from service account key');
-  }
-  const tokenData = (await tokenRes.json()) as { access_token: string; expires_in: number };
-  cachedToken = { token: tokenData.access_token, expiresAt: Date.now() + tokenData.expires_in * 1000 };
-  return tokenData.access_token;
-}
-
 export async function vertexGenerate(req: VertexGenerateRequest): Promise<VertexGenerateResponse> {
-  const accessToken = await getAccessToken();
+  const accessToken = await getGcpAccessToken();
   const modelPath = `projects/${VERTEX_PROJECT}/locations/${VERTEX_REGION}/publishers/google/models/${req.model}`;
   const url = `${VERTEX_API_BASE}/${modelPath}:generateContent`;
 
@@ -146,7 +83,7 @@ export async function vertexGenerate(req: VertexGenerateRequest): Promise<Vertex
 }
 
 export async function vertexEmbed(req: VertexEmbeddingRequest): Promise<VertexEmbeddingResponse> {
-  const accessToken = await getAccessToken();
+  const accessToken = await getGcpAccessToken();
   const modelPath = `projects/${VERTEX_PROJECT}/locations/${VERTEX_REGION}/publishers/google/models/${req.model}`;
   const url = `${VERTEX_API_BASE}/${modelPath}:predict`;
 

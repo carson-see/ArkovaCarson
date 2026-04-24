@@ -1,7 +1,3 @@
-/**
- * v2 Scope Guard — enforces API key scopes with RFC 7807 errors.
- */
-
 import { Request, Response, NextFunction } from 'express';
 import { ProblemError } from './problem.js';
 
