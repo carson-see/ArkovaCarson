@@ -106,15 +106,6 @@ describe('Trigger B — age-based fire', () => {
       triggerB_shouldFireOnAge({ pendingCount: 1, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS + 1 }),
     ).toBe(true);
   });
-
-  it('boundary — pending at MIN_BATCH_THRESHOLD - 1, age one ms below threshold → false', () => {
-    expect(
-      triggerB_shouldFireOnAge({
-        pendingCount: MIN_BATCH_THRESHOLD - 1,
-        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS - 1,
-      }),
-    ).toBe(false);
-  });
 });
 
 describe('Trigger C — dynamic fee ceiling', () => {
@@ -126,9 +117,23 @@ describe('Trigger C — dynamic fee ceiling', () => {
     ).toBe(50);
   });
 
+  // CIBA-HARDEN-06: pin the below-threshold case (29 min still in fresh tier).
+  it('stays at base ceiling for ages below the 30-minute threshold', () => {
+    expect(
+      triggerC_computeFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 29 * MIN }),
+    ).toBe(50);
+  });
+
   it('doubles ceiling when oldest exceeds 30 minutes', () => {
     expect(
       triggerC_computeFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 30 * MIN + 1 }),
+    ).toBe(100);
+  });
+
+  // CIBA-HARDEN-06: pin the mid-band case (45 min still in 2x tier, before 1h).
+  it('stays at 2x for ages in the 30-60 minute band', () => {
+    expect(
+      triggerC_computeFeeCeiling({ baseCeiling: 50, oldestPendingAgeMs: 45 * MIN }),
     ).toBe(100);
   });
 

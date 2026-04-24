@@ -80,11 +80,26 @@ Both respect the `CLAUDE.md` §1.6 PII boundary — only client-side-stripped me
 | **UX-03** (SCRUM-1029) | `OrgRequiredGate` component + 4 UAT bug fixes |
 | **ARK-102** (SCRUM-1012) | Audit tests pinning Trigger A/B/C behavior |
 
-Out of scope in Sprint 1:
-- Full admin UI for queue (UX-02) or rule builder (ARK-108) — backend ready, UI in Sprint 2.
-- Rules Engine worker (ARK-106) — schema lands; worker in Sprint 2.
-- Gemini semantic match + NL authoring — Sprint 3.
-- Connectors (INT-10, INT-12, INT-13) — blocked on vendor accounts + legal.
+Sprint 1 scope evolved over three merge cycles (PR #474 → #478). What actually
+shipped across the three sprints:
+
+- UX-02 queue dashboard: **shipped** in PR #478 as `AnchorQueuePage.tsx`.
+- UX-01 onboarding wizard: **shipped** in PR #478 as `AdminOnboardingPage.tsx`.
+- ARK-108 rule builder: **shipped** in PR #474 + hardened in PR #479/this PR.
+- ARK-106 Rules Engine worker: **shipped** in PR #474 (`jobs/rules-engine.ts`).
+- ARK-109 Gemini semantic match: **shipped** in PR #474 (`ai/ruleMatcher.ts`).
+- ARK-110 NL authoring: **shipped** in PR #474 (worker endpoint + flag).
+
+Still out of scope (genuinely deferred):
+
+- **INT-10 / INT-12 (workspace + e-sign connectors)** — schemas + adapters
+  shipped (scaffold) in PR #474; production enablement blocked on vendor
+  onboarding (Google Cloud OAuth / Microsoft Partner / DocuSign Partner
+  Connect / Adobe Partner Portal).
+- **INT-13 (ATS / background-check)** — blocked on vendor data-sharing MSA +
+  FCRA legal review. Tracked as [SCRUM-1030](https://arkova.atlassian.net/browse/SCRUM-1030).
+- **SCALE-02 (Cloud Run autoscaling config)** — human-only task per
+  `memory/feedback_worker_hands_off`.
 
 ## 6. Migrations this PR
 
@@ -107,7 +122,44 @@ Out of scope in Sprint 1:
 ## 8. Confluence page map
 
 Epic: [CIBA](https://arkova.atlassian.net/wiki/spaces/A/pages/20414465)
-Per-story pages: children of the epic page, one per SCRUM-1011..1030.
+
+Per-story Confluence pages live as children of the CIBA epic page. The Jira
+story is the authoritative link — follow the `SCRUM-N` reference on each
+story's Confluence link panel. Stories with explicit Confluence pages:
+
+| Story | Topic | Confluence |
+|---|---|---|
+| SCRUM-1011 | ARK-101 Queue (resolve + reminders) | CIBA/ARK-101 |
+| SCRUM-1012 | ARK-102 Trigger A/B/C pinning | CIBA/ARK-102 |
+| SCRUM-1013 | ARK-103 Treasury alerting | CIBA/ARK-103 |
+| SCRUM-1014 | ARK-104 Document lineage supersede | CIBA/ARK-104 |
+| SCRUM-1015 | INT-10 Workspace connectors (scaffold) | CIBA/INT-10 |
+| SCRUM-1016 | INT-12 E-sign connectors (scaffold) | CIBA/INT-12 |
+| SCRUM-1017 | ARK-105 Rules data model | CIBA/ARK-105 |
+| SCRUM-1018 | ARK-106 Rules Engine worker | CIBA/ARK-106 |
+| SCRUM-1019 | ARK-107 Queue reminders cron | CIBA/ARK-107 |
+| SCRUM-1020 | ARK-108 Rule Builder wizard | CIBA/ARK-108 |
+| SCRUM-1021 | ARK-109 Gemini semantic match | CIBA/ARK-109 |
+| SCRUM-1022 | ARK-110 NL authoring endpoint | CIBA/ARK-110 |
+| SCRUM-1023 | SEC-01 Uniform webhook HMAC | CIBA/SEC-01 |
+| SCRUM-1024 | SCALE-02 Cloud Run config (deferred) | CIBA/SCALE-02 |
+| SCRUM-1025 | SEC-02 Rule-enable audit hardening | CIBA/SEC-02 |
+| SCRUM-1026 | SCALE-01 Per-org rate limiting | CIBA/SCALE-01 |
+| SCRUM-1027 | UX-01 Admin onboarding wizard | CIBA/UX-01 |
+| SCRUM-1028 | UX-02 Anchor queue dashboard | CIBA/UX-02 |
+| SCRUM-1029 | UX-03 OrgRequiredGate + UAT fixes | CIBA/UX-03 |
+| SCRUM-1030 | INT-13 ATS/BGC (deferred) | CIBA/INT-13 |
+
+Hardening sub-epic ([SCRUM-1113](https://arkova.atlassian.net/browse/SCRUM-1113)):
+
+| Story | Topic |
+|---|---|
+| SCRUM-1114 | CIBA-HARDEN-01 treasury scope (shipped in PR #474) |
+| SCRUM-1115 | CIBA-HARDEN-02 rule-CRUD + validator hardening (shipped in PR #474) |
+| SCRUM-1116 | CIBA-HARDEN-03 treasury health DB error handling (PR #479) |
+| SCRUM-1117 | CIBA-HARDEN-04 RuleBuilder copy + HMAC + validation (this PR) |
+| SCRUM-1118 | CIBA-HARDEN-05 worker quality batch (this PR) |
+| SCRUM-1119 | CIBA-HARDEN-06 docs + tests polish (this PR) |
 
 ## 9. Open decisions
 
