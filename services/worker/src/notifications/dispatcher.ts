@@ -26,7 +26,7 @@ function toRow(n: NotificationPayload) {
 
 export async function emitNotification(notification: NotificationPayload): Promise<void> {
   try {
-    const { error } = await db.from('notifications').insert(toRow(notification));
+    const { error } = await db.from('user_notifications').insert(toRow(notification));
 
     if (error) {
       logger.error({ error, type: notification.type }, 'Failed to emit notification');
@@ -42,7 +42,7 @@ export async function emitBulkNotifications(
   if (notifications.length === 0) return;
 
   try {
-    const { error } = await db.from('notifications').insert(notifications.map(toRow));
+    const { error } = await db.from('user_notifications').insert(notifications.map(toRow));
 
     if (error) {
       logger.error({ error, count: notifications.length }, 'Bulk notification insert failed');
@@ -53,7 +53,7 @@ export async function emitBulkNotifications(
 }
 
 export async function getUnreadCount(userId: string): Promise<number> {
-  const { count, error } = await db.from('notifications')
+  const { count, error } = await db.from('user_notifications')
     .select('id', { count: 'exact', head: true })
     .eq('user_id', userId)
     .is('read_at', null);
@@ -67,7 +67,7 @@ export async function getUnreadCount(userId: string): Promise<number> {
 }
 
 export async function markRead(notificationIds: string[], userId: string): Promise<void> {
-  const { error } = await db.from('notifications')
+  const { error } = await db.from('user_notifications')
     .update({ read_at: new Date().toISOString() })
     .in('id', notificationIds)
     .eq('user_id', userId);
