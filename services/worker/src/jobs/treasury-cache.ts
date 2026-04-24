@@ -13,7 +13,6 @@ import { addressFromWif } from '../chain/wallet.js';
 import { createUtxoProvider } from '../chain/utxo-provider.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
-import { fetchAnchorStats } from '../utils/anchor-stats.js';
 
 export interface TreasuryCacheData {
   balance_confirmed_sats: number;
@@ -60,8 +59,37 @@ function handleSettled<T>(
   logger.warn({ error: result.reason }, `Treasury cache: ${errorLabel}`);
 }
 
-// `fetchAnchorStats` lives in utils/anchor-stats.ts — shared with the
-// treasury status API (CIBA-HARDEN-03 de-dup).
+async function fetchAnchorStats(): Promise<Pick<TreasuryCacheData, 'total_secured' | 'total_pending' | 'last_secured_at' | 'last_24h_count'>> {
+  try {
+    const [
+      { count: securedCount },
+      { count: pendingCount },
+      { data: lastSecured },
+      { count: last24hCount },
+    ] = await Promise.all([
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .eq('status', 'SECURED').is('deleted_at', null),
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .eq('status', 'PENDING').is('deleted_at', null),
+      db.from('anchors').select('chain_timestamp')
+        .eq('status', 'SECURED').is('deleted_at', null)
+        .order('chain_timestamp', { ascending: false })
+        .limit(1),
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .is('deleted_at', null)
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    ]);
+    return {
+      total_secured: securedCount ?? 0,
+      total_pending: pendingCount ?? 0,
+      last_secured_at: lastSecured?.[0]?.chain_timestamp ?? null,
+      last_24h_count: last24hCount ?? 0,
+    };
+  } catch (err) {
+    logger.warn({ error: err }, 'Treasury cache: failed to fetch anchor stats');
+    return { total_secured: 0, total_pending: 0, last_secured_at: null, last_24h_count: 0 };
+  }
+}
 
 export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
   const data: TreasuryCacheData = {

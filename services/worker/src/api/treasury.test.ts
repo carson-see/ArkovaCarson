@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
-import { handleTreasuryStatus, handleTreasuryHealth } from './treasury.js';
+import { handleTreasuryStatus } from './treasury.js';
 
 // Mock dependencies
 vi.mock('../utils/db.js', () => ({
@@ -121,130 +121,5 @@ describe('handleTreasuryStatus', () => {
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     expect(response.wallet).toBeNull();
     expect(response.error).toContain('not configured');
-  });
-});
-
-// ─── CIBA-HARDEN-03: handleTreasuryHealth helpers ────────────────────────────
-
-function mockProfilesAdminTrue(): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        single: vi
-          .fn()
-          .mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
-      }),
-    }),
-  };
-}
-
-function mockTreasuryCacheRead(error: { message: string } | null): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      limit: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
-      }),
-    }),
-  };
-}
-
-function mockTreasuryAlertRead(error: { message: string } | null): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
-      }),
-    }),
-  };
-}
-
-async function runHealthWithTableErrors({
-  cacheError,
-  alertError,
-}: {
-  cacheError?: { message: string } | null;
-  alertError?: { message: string } | null;
-}): Promise<Response> {
-  const { db } = await import('../utils/db.js');
-  // Route by table name so platformAdmin lookup stays on profiles and
-  // treasury_cache / treasury_alert_state each get their own chain result.
-  vi.mocked(db.from).mockImplementation(((table: string) => {
-    if (table === 'profiles') return mockProfilesAdminTrue() as never;
-    if (table === 'treasury_cache') return mockTreasuryCacheRead(cacheError ?? null) as never;
-    if (table === 'treasury_alert_state')
-      return mockTreasuryAlertRead(alertError ?? null) as never;
-    throw new Error(`Unexpected db.from('${table}')`);
-  }) as never);
-  const res = createMockRes();
-  await handleTreasuryHealth('admin-123', {} as Request, res);
-  return res;
-}
-
-describe('handleTreasuryHealth — DB error 500', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('returns 500 with source: treasury_cache when cache read errors', async () => {
-    const res = await runHealthWithTableErrors({ cacheError: { message: 'connection reset' } });
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'treasury_cache' }),
-    );
-  });
-
-  it('returns 500 with source: treasury_alert_state when alert read errors', async () => {
-    const res = await runHealthWithTableErrors({ alertError: { message: 'timeout' } });
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ source: 'treasury_alert_state' }),
-    );
-  });
-
-  it('returns 200 when both reads succeed (no false 500)', async () => {
-    const res = await runHealthWithTableErrors({});
-    expect(res.status).not.toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({ threshold_usd: 50, price_unknown: true }),
-    );
-  });
-});
-
-// ─── CIBA-HARDEN-03: parseThresholdUsd ────────────────────────────────────────
-describe('parseThresholdUsd', () => {
-  // Dynamic import so vitest doesn't pre-evaluate the db mock block above for
-  // this pure fn — keeps the test isolated from the handler fixture.
-  it('returns default for undefined / empty / whitespace', async () => {
-    const { parseThresholdUsd } = await import('./treasury.js');
-    expect(parseThresholdUsd(undefined)).toBe(50);
-    expect(parseThresholdUsd('')).toBe(50);
-    expect(parseThresholdUsd('   ')).toBe(50);
-  });
-
-  it('returns default for non-numeric input', async () => {
-    const { parseThresholdUsd } = await import('./treasury.js');
-    expect(parseThresholdUsd('fifty')).toBe(50);
-    expect(parseThresholdUsd('NaN')).toBe(50);
-    expect(parseThresholdUsd('abc123')).toBe(50);
-  });
-
-  it('returns default for zero / negative', async () => {
-    const { parseThresholdUsd } = await import('./treasury.js');
-    expect(parseThresholdUsd('0')).toBe(50);
-    expect(parseThresholdUsd('-50')).toBe(50);
-    expect(parseThresholdUsd('-0.01')).toBe(50);
-  });
-
-  it('returns default for Infinity / -Infinity', async () => {
-    const { parseThresholdUsd } = await import('./treasury.js');
-    expect(parseThresholdUsd('Infinity')).toBe(50);
-    expect(parseThresholdUsd('-Infinity')).toBe(50);
-  });
-
-  it('returns parsed value for valid positive input', async () => {
-    const { parseThresholdUsd } = await import('./treasury.js');
-    expect(parseThresholdUsd('100')).toBe(100);
-    expect(parseThresholdUsd('25.5')).toBe(25.5);
-    expect(parseThresholdUsd('500')).toBe(500);
   });
 });

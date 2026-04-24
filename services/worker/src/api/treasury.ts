@@ -22,7 +22,6 @@ import { createFeeEstimator } from '../chain/fee-estimator.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
-import { fetchAnchorStats } from '../utils/anchor-stats.js';
 
 export interface TreasuryStatusResponse {
   wallet: {
@@ -127,16 +126,36 @@ export async function handleTreasuryStatus(
     logger.warn({ error: err }, 'Failed to estimate fees for treasury status');
   }
 
-  // 3. Anchor stats from Supabase (shared helper — same query as
-  //    treasury-cache cron, extracted to utils/anchor-stats.ts so SonarCloud
-  //    doesn't flag duplicate-lines density).
-  const stats = await fetchAnchorStats();
-  result.recentAnchors = {
-    totalSecured: stats.total_secured,
-    totalPending: stats.total_pending,
-    lastSecuredAt: stats.last_secured_at,
-    last24hCount: stats.last_24h_count,
-  };
+  // 3. Anchor stats from Supabase (always available)
+  try {
+    const [
+      { count: securedCount },
+      { count: pendingCount },
+      { data: lastSecured },
+      { count: last24hCount },
+    ] = await Promise.all([
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .eq('status', 'SECURED').is('deleted_at', null),
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .eq('status', 'PENDING').is('deleted_at', null),
+      db.from('anchors').select('chain_timestamp')
+        .eq('status', 'SECURED').is('deleted_at', null)
+        .order('chain_timestamp', { ascending: false })
+        .limit(1),
+      db.from('anchors').select('*', { count: 'exact', head: true })
+        .is('deleted_at', null)
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
+    ]);
+
+    result.recentAnchors = {
+      totalSecured: securedCount ?? 0,
+      totalPending: pendingCount ?? 0,
+      lastSecuredAt: lastSecured?.[0]?.chain_timestamp ?? null,
+      last24hCount: last24hCount ?? 0,
+    };
+  } catch (err) {
+    logger.warn({ error: err }, 'Failed to fetch anchor stats for treasury status');
+  }
 
   res.json(result);
 }
@@ -192,22 +211,6 @@ export async function handleTreasuryHealth(
         .maybeSingle(),
     ]);
 
-    // CIBA-HARDEN-03: DB errors must not be treated as "everything's fine."
-    // Previously this code read .data and ignored .error, which meant a
-    // transient Supabase outage returned balance_usd: null + below_threshold:
-    // false — indistinguishable from a genuinely-healthy treasury. Return
-    // 500 so the health check fails loudly instead.
-    if (cacheResult.error) {
-      logger.error({ error: cacheResult.error }, 'Treasury health: cache read failed');
-      res.status(500).json({ error: 'Internal server error', source: 'treasury_cache' });
-      return;
-    }
-    if (alertResult.error) {
-      logger.error({ error: alertResult.error }, 'Treasury health: alert state read failed');
-      res.status(500).json({ error: 'Internal server error', source: 'treasury_alert_state' });
-      return;
-    }
-
     const cache = cacheResult.data as
       | { balance_confirmed_sats: number | null; btc_price_usd: number | null; updated_at: string | null }
       | null;
@@ -215,12 +218,7 @@ export async function handleTreasuryHealth(
       | { below_threshold: boolean; updated_at: string | null }
       | null;
 
-    // CIBA-HARDEN-03: parse TREASURY_LOW_BALANCE_USD defensively. An empty
-    // env var, a typo ("fifty"), or a negative value all used to silently
-    // become NaN → every balance was "below threshold" by accident, firing
-    // alerts on a healthy treasury. Fall back to DEFAULT on any non-finite
-    // or non-positive parse.
-    const thresholdUsd = parseThresholdUsd(process.env.TREASURY_LOW_BALANCE_USD);
+    const thresholdUsd = Number(process.env.TREASURY_LOW_BALANCE_USD ?? DEFAULT_TREASURY_THRESHOLD_USD);
     const priceUnknown = cache?.btc_price_usd == null || cache?.balance_confirmed_sats == null;
     const balanceUsd = priceUnknown
       ? null
@@ -240,18 +238,4 @@ export async function handleTreasuryHealth(
     logger.error({ error: err }, 'handleTreasuryHealth failed');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
-}
-
-/**
- * Defensive parse of the TREASURY_LOW_BALANCE_USD env var.
- *
- * Rejects: undefined, empty string, NaN, non-finite, negative, zero.
- * Any rejection falls back to DEFAULT_TREASURY_THRESHOLD_USD (50). Exported
- * so treasury-alert.ts can share the same semantics (follow-up).
- */
-export function parseThresholdUsd(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === '') return DEFAULT_TREASURY_THRESHOLD_USD;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_TREASURY_THRESHOLD_USD;
-  return parsed;
 }
