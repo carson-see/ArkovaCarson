@@ -1,9 +1,20 @@
 # agents.md — services/worker
-_Last updated: 2026-04-21_
+_Last updated: 2026-04-23_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## CIBA hardening closeout (2026-04-23, PRs #479 / #480)
+
+- **`api/treasury.ts`** ([SCRUM-1116](https://arkova.atlassian.net/browse/SCRUM-1116)): `handleTreasuryHealth` now returns HTTP 500 with a `source` field on `cacheResult.error` / `alertResult.error`. New exported `parseThresholdUsd()` rejects NaN/empty/whitespace/non-finite/zero/negative and falls back to `DEFAULT_TREASURY_THRESHOLD_USD`.
+- **`api/rules-crud.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): `handleUpdateRule` drops the manual `updated_at` stamp — the DB trigger `set_organization_rules_updated_at` (migration 0224) is authoritative.
+- **`integrations/connectors/adapters.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): Google Drive adapter now passes `folder_path: null` instead of fabricating `/id1/id2` paths from opaque Drive parent IDs. Admin `folder_path_starts_with` rules silently didn't match Drive events; explicit null is correct until INT-10 resolves names via `files.get`.
+- **`jobs/batch-anchor.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): `triggerC_computeFeeCeiling` clamps inputs to ≥0 and output to `[0, ABSOLUTE_FEE_CAP_SAT_PER_VB]`. `triggerA_shouldFireOnSize` docstring now explicitly marks the function as audit-pinning-only (never called in production; claim loop enforces BATCH_SIZE structurally). Log message in the below-threshold branch rewritten so `pendingCount=0` doesn't claim "oldest anchor is fresh."
+- **`rules/schemas.test.ts`** ([SCRUM-1118](https://arkova.atlassian.net/browse/SCRUM-1118)): misleading "non-HTTPS URL" test renamed to "malformed target_url" — the test pins URL-format, not HTTPS enforcement.
+- **`jobs/batch-anchor.audit.test.ts`** ([SCRUM-1119](https://arkova.atlassian.net/browse/SCRUM-1119)): duplicate boundary test removed; two new triggerC tests cover mid-band (45 min → 100) + below-threshold (29 min → 50).
+
+Migration `0236_ark105_rules_executions_comment_fix.sql` is a compensating `COMMENT ON TABLE` fix — migration 0224's inline wording promised a "24h" idempotency window but the unique index is permanent. Per CLAUDE.md §1.2 we do not modify 0224.
 
 ## CIBA v1.0 additions (2026-04-21, PR #474)
 

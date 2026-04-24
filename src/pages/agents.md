@@ -1,10 +1,11 @@
 # agents.md — pages
-_Last updated: 2026-04-21_
+_Last updated: 2026-04-23_
 
 ## What This Folder Contains
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-04-23 CIBA-HARDEN-04 ([SCRUM-1117](https://arkova.atlassian.net/browse/SCRUM-1117)): `RuleBuilderPage.tsx` — extracted every user-visible string into `src/lib/copy.ts` (`RULE_TRIGGER_COPY`, `RULE_ACTION_COPY`, `RULE_WIZARD_LABELS`); added HMAC-handle field for the `FORWARD_TO_URL` action (worker schema requires `hmac_secret_handle: sm:...`); wired `nextStep()` + `handleSave()` to the new `src/lib/ruleSchemas.ts` frontend shadow so invalid cron / missing HMAC handle / empty NOTIFY channels fail client-side instead of POST-then-400. Pattern: any wizard POSTing to a Zod-validated worker endpoint should shadow the schema in `src/lib/` and pre-validate before advance.
 - 2026-04-21 Top-10 UAT sprint: `ComplianceScorecardPage.tsx` + `ApiKeySettingsPage.tsx` — both pages are org-scoped at the worker API layer but were rendering raw HTTP-403 / engineering-copy errors for individual-tier users (no `org_id`). Now detect `!profile.org_id` and short-circuit to the new shared `<OrgRequiredCard>` component (`src/components/shared/OrgRequiredCard.tsx`). For the API Keys page, the `useApiKeys` + `useApiUsage` hooks also now honor an `{ enabled }` option so individuals never fire the 403-bound worker calls at all. Pattern: any org-scoped page should mirror this.
 - 2026-03-11 SonarQube sprint: `MyRecordsPage.tsx`, `OrganizationPage.tsx`, `SettingsPage.tsx` — S3358 (nested ternary → if/else), S6582 (optional chaining). No behavioral changes.
 - 2026-03-07 Code-review fixes: `DashboardPage.tsx` — surfaced `revokeError` from `useRevokeAnchor` with dismissible Alert; used `recordDetailPath()` instead of hardcoded path; corrected docstring.
