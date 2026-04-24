@@ -9,6 +9,7 @@ export const searchRouter = Router();
 
 const SearchTypeEnum = z.enum(['all', 'org', 'record', 'fingerprint', 'document']);
 type SearchType = z.infer<typeof SearchTypeEnum>;
+type SearchResultType = Exclude<SearchType, 'all'>;
 
 const SearchQuerySchema = z.object({
   q: z.string().min(1).max(500),
@@ -18,7 +19,8 @@ const SearchQuerySchema = z.object({
 });
 
 interface SearchResult {
-  type: SearchType;
+  type: SearchResultType;
+  id: string;
   public_id: string;
   score: number;
   snippet: string;
@@ -74,6 +76,7 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 
   return (data ?? []).map(org => ({
     type: 'org' as const,
+    id: org.id,
     public_id: org.public_id ?? org.id,
     score: 1.0,
     snippet: org.display_name ?? '',
@@ -108,6 +111,7 @@ async function searchRecords(
 
   return (data ?? []).map(rec => ({
     type: 'record' as const,
+    id: rec.id,
     public_id: rec.public_id ?? rec.id,
     score: 1.0,
     snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
@@ -137,6 +141,7 @@ async function searchFingerprints(
 
   return (data ?? []).map(rec => ({
     type: 'fingerprint' as const,
+    id: rec.id,
     public_id: rec.public_id ?? rec.id,
     score: 1.0,
     snippet: rec.filename ?? rec.fingerprint ?? '',
@@ -153,7 +158,13 @@ async function searchDocuments(
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
     .select('id, public_id, filename, description, metadata, credential_type, status')
-    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
+    .or([
+      `filename.ilike.%${safe}%`,
+      `description.ilike.%${safe}%`,
+      `metadata->>issuer.ilike.%${safe}%`,
+      `metadata->>recipient.ilike.%${safe}%`,
+      `metadata->>title.ilike.%${safe}%`,
+    ].join(','))
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .or(visibleAnchorScope(orgId))
@@ -167,6 +178,7 @@ async function searchDocuments(
 
   return (data ?? []).map(doc => ({
     type: 'document' as const,
+    id: doc.id,
     public_id: doc.public_id ?? doc.id,
     score: 1.0,
     snippet: doc.filename ?? doc.description ?? '',

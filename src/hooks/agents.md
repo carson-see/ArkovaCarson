@@ -1,10 +1,11 @@
 # agents.md — hooks
-_Last updated: 2026-03-21_
+_Last updated: 2026-04-24_
 
 ## What This Folder Contains
 React hooks for data fetching and mutations against Supabase. Each hook encapsulates a single concern (auth, profile, anchors, revocation, export, etc.).
 
 ## Recent Changes
+- 2026-04-24 API-V2-02: `useApiKeys.ts` now defaults new keys to `read:search`, matching the v2 scope vocabulary and migration `0253_api_key_scope_defaults.sql`.
 - 2026-03-16 UF-01: Created `useCredentialTemplate.ts` — fetches template by credential_type + org_id. Two modes: authenticated (direct Supabase query) and public (RPC via `get_public_template`). Exports `parseTemplateFields()` and `TemplateDisplayData`/`TemplateField` types.
 - 2026-03-11 SonarQube sprint: `useAuth.ts` — S6582 (optional chaining), S7772 (node: prefix). `useCredentialTemplates.ts` — S6582 (optional chaining). No behavioral changes.
 - 2026-03-07 Code-review fix: `useProfile.ts` — separated `updating` state from `loading` state in `updateProfile()`. Prevents RouteGuard full-page spinner flash when toggling profile fields.

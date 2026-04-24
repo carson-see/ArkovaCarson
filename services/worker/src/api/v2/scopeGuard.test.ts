@@ -30,6 +30,13 @@ describe('requireScopeV2', () => {
     expect(next).toHaveBeenCalledWith();
   });
 
+  it.each(VALID_SCOPES)('passes through for %s when present', (scope) => {
+    const next = vi.fn();
+    const mw = requireScopeV2(scope);
+    mw(mockReq({ scopes: [scope] }), res, next);
+    expect(next).toHaveBeenCalledWith();
+  });
+
   it('rejects with ProblemError when scope is missing', () => {
     const next = vi.fn();
     const mw = requireScopeV2('write:anchors');
