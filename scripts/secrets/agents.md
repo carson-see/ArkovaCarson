@@ -4,7 +4,7 @@ _Last updated: 2026-04-24_
 
 ## What This Folder Contains
 
-SEC-HARDEN-02 secret-inventory audit tooling. The CLI here is the enforcement backbone for [SCRUM-1055](https://arkova.atlassian.net/browse/SCRUM-1055) — it flags drift between the expected Secret Manager inventory (`EXPECTED_SECRETS`) and the actual `--set-secrets` bindings in `.github/workflows/deploy-worker.yml`.
+SEC-HARDEN-02 secret-inventory audit tooling. The CLI here is the enforcement backbone for [SCRUM-1055](https://arkova.atlassian.net/browse/SCRUM-1055) — it flags drift between the required Secret Manager inventory (`EXPECTED_SECRETS`) and the actual `--set-secrets` bindings in `.github/workflows/deploy-worker.yml`, while reporting optional tooling-only secrets separately.
 
 | File | Purpose |
 |------|---------|
@@ -15,8 +15,8 @@ SEC-HARDEN-02 secret-inventory audit tooling. The CLI here is the enforcement ba
 
 - **Pure functions + thin CLI shell.** `parseDeployWorkerSecrets` and `auditDrift` are pure; the `main()` function is the only I/O boundary. Tests feed hardcoded YAML strings — never the real workflow file — so unit tests stay fast and isolated.
 - **`matchAll` for multi-line `--set-secrets`.** The workflow historically uses one `--set-secrets` line, but the inventory is growing and future splits across multiple invocations would silently break drift detection under a `match()` (non-global) parse. Use the global regex form + accumulate every binding.
-- **Inventory source of truth.** `EXPECTED_SECRETS` mirrors `docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md` (landing via PR #481). When that runbook's inventory changes, this constant changes in the same PR.
-- **Exit codes.** 0 when every expected secret is bound, 1 on any drift — so CI can gate on the script.
+- **Inventory source of truth.** `EXPECTED_SECRETS` mirrors required production worker secrets in `docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md`; `OPTIONAL_SECRETS` mirrors tooling-only or disabled-provider secrets. When that runbook's inventory changes, these constants change in the same PR.
+- **Exit codes.** 0 when every required expected secret is bound, 1 on any required drift — so CI can gate on the script without forcing unused optional providers into production.
 
 ## What NOT to do here
 
