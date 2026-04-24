@@ -183,6 +183,14 @@ app.use('/api/v1/org/sub-orgs', rateLimiters.api, requireAuthMw, orgSubOrgsRoute
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
 
+// Verification API v2 — RFC 7807 error model, scoped API keys
+import { apiV2Router } from './api/v2/router.js';
+app.use('/api/v2', apiV2Router);
+
+// Anchor revocation (SCRUM-1095) — requires auth, mounted under /api/anchor
+import { anchorRevokeRouter } from './api/anchor-revoke.js';
+app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
+
 // ─── 404 catch-all — JSON response for unmatched routes (BUG-14) ───
 // Must be after all route mounts, before error handlers.
 // Without this, Express returns plain text "Cannot GET /path" which breaks API clients.

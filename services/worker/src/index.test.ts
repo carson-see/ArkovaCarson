@@ -57,6 +57,7 @@ const {
     enableProdNetworkAnchoring: false,
     useMocks: true,
     frontendUrl: 'http://localhost:5173',
+    apiKeyHmacSecret: 'test-hmac-secret',
   };
   const mockDbFrom = vi.fn();
   const mockSupabaseGetUser = vi.fn();

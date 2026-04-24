@@ -43,7 +43,7 @@ export function DataCorrectionForm() {
     // deployed yet. Accept explicit truthy values only so `'0'` / `'false'`
     // / empty string all disable the feature.
     const flag = import.meta.env.VITE_ENABLE_DSAR_UI;
-    if (flag !== '1' && flag !== 'true' && flag !== true) return;
+    if (flag !== '1' && flag !== 'true') return;
     const { data, error } = await supabase
       .from('data_subject_requests')
       .select('id, status, requested_at, completed_at, details')

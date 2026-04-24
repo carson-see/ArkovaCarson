@@ -589,20 +589,23 @@ export const SECURE_DIALOG_LABELS = {
 } as const;
 
 // =============================================================================
-// ISSUE CREDENTIAL FORM
+// SECURE DOCUMENT FORM
 // =============================================================================
 
-export const ISSUE_CREDENTIAL_LABELS = {
-  TITLE: 'Issue Credential',
+export const SECURE_DOCUMENT_LABELS = {
+  TITLE: 'Secure Document',
   DESCRIPTION: 'Create a verifiable credential record for your organization.',
   PENDING_NOTICE: 'The credential will be created with Pending status and assigned a unique verification ID immediately.',
-  ISSUING_LOADING: 'Issuing...',
-  ISSUE_BUTTON: 'Issue Credential',
+  ISSUING_LOADING: 'Securing...',
+  ISSUE_BUTTON: 'Secure Document',
   VERIFICATION_LINK: 'Verification Link',
   COPY_LINK_ARIA: 'Copy verification link',
   HINT_UPLOAD_DOCUMENT: 'Upload a document to continue.',
   HINT_SELECT_TYPE: 'Select a credential type to continue.',
 } as const;
+
+/** @deprecated Use SECURE_DOCUMENT_LABELS — renamed per SCRUM-1092 */
+export const ISSUE_CREDENTIAL_LABELS = SECURE_DOCUMENT_LABELS;
 
 // =============================================================================
 // PUBLIC VERIFICATION DISPLAY
@@ -878,9 +881,9 @@ export const ONBOARDING_GUIDANCE_LABELS = {
   STEP_SHARE: 'Share your verification link',
   STEP_SHARE_DESC: 'Let others verify your credential.',
   // Empty states
-  EMPTY_ORG_RECORDS: 'No credentials issued yet',
-  EMPTY_ORG_RECORDS_DESC: 'Issue your first credential to get started.',
-  EMPTY_ORG_RECORDS_CTA: 'Issue Credential',
+  EMPTY_ORG_RECORDS: 'No documents secured yet',
+  EMPTY_ORG_RECORDS_DESC: 'Secure your first document to get started.',
+  EMPTY_ORG_RECORDS_CTA: 'Secure Document',
   EMPTY_INDIVIDUAL_RECORDS: 'Your vault is empty',
   EMPTY_INDIVIDUAL_RECORDS_DESC: 'Secure your first document to create a permanent record.',
   EMPTY_INDIVIDUAL_RECORDS_CTA: 'Secure Document',
@@ -893,7 +896,7 @@ export const ONBOARDING_GUIDANCE_LABELS = {
 export const ORG_PAGE_LABELS = {
   INVITE_MEMBER: 'Invite Member',
   BULK_UPLOAD: 'Bulk Upload',
-  ISSUE_CREDENTIAL: 'Issue Credential',
+  ISSUE_CREDENTIAL: 'Secure Document',
   BULK_UPLOAD_DIALOG_TITLE: 'Bulk Upload',
   PROMOTE_TO_ADMIN: 'Promote to Admin',
   DEMOTE_TO_MEMBER: 'Demote to Member',
