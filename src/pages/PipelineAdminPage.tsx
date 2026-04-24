@@ -95,6 +95,13 @@ interface RecordFilters {
 
 const PAGE_SIZE = 25;
 
+// SCRUM-1124: Pipeline jobs regularly exceed the 60s workerFetch default
+// after PR #488 raised batchAnchorMaxSize to 10k — a full batch run (embed +
+// Merkle + chain submit) takes 2–4 minutes. The 5-minute window lets the
+// worker finish before AbortError flips the button to red. The worker has no
+// request-level timeout; this only controls how long the browser waits.
+const PIPELINE_JOB_TIMEOUT_MS = 5 * 60_000;
+
 // ─── Pipeline Region + Source Config (module-scope to avoid re-allocation per render) ───
 
 type PipelineRegion = 'us' | 'au' | 'ke' | 'eu' | 'uk' | 'latam' | 'sea' | 'intl' | 'global';
@@ -301,9 +308,11 @@ export function PipelineAdminPage() {
   const triggerJob = useCallback(async (jobPath: string) => {
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
     try {
-      const response = await workerFetch(`/jobs/${jobPath}`, {
-        method: 'POST',
-      });
+      const response = await workerFetch(
+        `/jobs/${jobPath}`,
+        { method: 'POST' },
+        PIPELINE_JOB_TIMEOUT_MS,
+      );
       if (response.ok) {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
         // Refresh stats after a job completes — immediate, 3s, and 8s for DB propagation
