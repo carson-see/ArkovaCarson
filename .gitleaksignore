@@ -1,2 +1,10 @@
 3ef0677f01f989844b10c02862420549be42ec2e:services/worker/src/api/rules-crud.test.ts:generic-api-key:251
 622d94b7a1ac76bc2747ef8b9ad2c46e2cb6707a:services/worker/src/api/rules-crud.test.ts:generic-api-key:251
+# SEC-HARDEN-01 runbook — commit 3cd98ca shipped placeholder-shaped examples
+# (`NEW_STITCH_KEY_VALUE` + `-H 'x-goog-api-key: AQ.Ab8RN6I1LY9_OLD_KEY'`) that
+# tripped generic-api-key + curl-auth-header rules. Follow-up commit 1640fc9
+# rewrote the runbook to use `read -s` stdin + a prose verification step so
+# no key-shaped tokens remain on main going forward. These ignore lines cover
+# the historical commit so the PR's first-parent scan passes.
+3cd98ca14331900348937a24e915ee589f1338e3:docs/runbooks/sec-harden/sec-harden-01-google-key-rotation.md:generic-api-key:59
+3cd98ca14331900348937a24e915ee589f1338e3:docs/runbooks/sec-harden/sec-harden-01-google-key-rotation.md:curl-auth-header:114
