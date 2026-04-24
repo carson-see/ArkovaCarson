@@ -83,9 +83,11 @@ demo-assets/
 /app-*.png
 /search-*.png
 
-# macOS duplicate files
+# macOS duplicate files (Finder "name N.ext" pattern)
 *\ 2.*
 *\ 2/
+*\ 3.*
+*\ 3/
 
 # Binary artifacts
 *.sym
