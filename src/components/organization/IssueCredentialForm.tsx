@@ -356,7 +356,7 @@ export function IssueCredentialForm({
         setError(zodErr.issues.map((i) => i.message).join('; '));
       } else {
         setError(
-          err instanceof Error ? err.message : 'Failed to issue credential'
+          err instanceof Error ? err.message : 'Failed to secure document'
         );
       }
       toast.error(TOAST.CREDENTIAL_ISSUE_FAILED);
