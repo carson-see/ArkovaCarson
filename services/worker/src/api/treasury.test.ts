@@ -126,36 +126,21 @@ describe('handleTreasuryStatus', () => {
 
 // ─── CIBA-HARDEN-03: handleTreasuryHealth helpers ────────────────────────────
 
-function mockProfilesAdminTrue(): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        single: vi
-          .fn()
-          .mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
-      }),
-    }),
-  };
-}
-
-function mockTreasuryCacheRead(error: { message: string } | null): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      limit: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
-      }),
-    }),
-  };
-}
-
-function mockTreasuryAlertRead(error: { message: string } | null): unknown {
-  return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        maybeSingle: vi.fn().mockResolvedValue({ data: null, error }),
-      }),
-    }),
-  };
+/**
+ * Build a Supabase-style chainable mock from a dot-path + terminal resolve
+ * value. e.g. `buildChain('select.eq.single', {...})` yields the nested
+ * vi.fn().mockReturnValue({…}) tree that resolves at the leaf. Single
+ * factory means Sonar doesn't see structurally-identical mockReturnValue
+ * ladders across the three tables we stub.
+ */
+function buildChain(path: string, resolves: unknown): Record<string, unknown> {
+  const keys = path.split('.');
+  const leaf = keys[keys.length - 1];
+  let current: Record<string, unknown> = { [leaf]: vi.fn().mockResolvedValue(resolves) };
+  for (let i = keys.length - 2; i >= 0; i -= 1) {
+    current = { [keys[i]]: vi.fn().mockReturnValue(current) };
+  }
+  return current;
 }
 
 async function runHealthWithTableErrors({
@@ -169,10 +154,24 @@ async function runHealthWithTableErrors({
   // Route by table name so platformAdmin lookup stays on profiles and
   // treasury_cache / treasury_alert_state each get their own chain result.
   vi.mocked(db.from).mockImplementation(((table: string) => {
-    if (table === 'profiles') return mockProfilesAdminTrue() as never;
-    if (table === 'treasury_cache') return mockTreasuryCacheRead(cacheError ?? null) as never;
-    if (table === 'treasury_alert_state')
-      return mockTreasuryAlertRead(alertError ?? null) as never;
+    if (table === 'profiles') {
+      return buildChain('select.eq.single', {
+        data: { is_platform_admin: true },
+        error: null,
+      }) as never;
+    }
+    if (table === 'treasury_cache') {
+      return buildChain('select.limit.maybeSingle', {
+        data: null,
+        error: cacheError ?? null,
+      }) as never;
+    }
+    if (table === 'treasury_alert_state') {
+      return buildChain('select.eq.maybeSingle', {
+        data: null,
+        error: alertError ?? null,
+      }) as never;
+    }
     throw new Error(`Unexpected db.from('${table}')`);
   }) as never);
   const res = createMockRes();
