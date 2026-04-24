@@ -90,7 +90,10 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-fetch is the established pattern in this codebase
+    // Mount-fetch: `fetchReports` is a useCallback whose body is an awaited
+    // async function — setLoading / setReports land after the effect returns,
+    // so the rule's cascading-render concern doesn't apply here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- async callback batches its own state updates
     void fetchReports();
   }, [fetchReports]);
 
