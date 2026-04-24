@@ -57,6 +57,19 @@ export type { CalibrationResult, CalibrationBucket, TypeCalibrationResult } from
 export { GOLDEN_DATASET_PHASE12 } from './golden-dataset-phase12.js';
 export { GOLDEN_DATASET_PHASE13_FCRA } from './golden-dataset-phase13-fcra.js';
 export { GOLDEN_DATASET_PHASE14 } from './golden-dataset-phase14.js';
+export {
+  CONTRACT_PHASE23_FIELD_HISTOGRAM,
+  CONTRACT_PHASE23_TYPE_COUNTS,
+  GOLDEN_DATASET_PHASE23_CONTRACTS,
+} from './golden-dataset-phase23-contracts.js';
+export {
+  CONTRACT_REASONING_CATEGORY_COUNTS,
+  CONTRACT_REASONING_HUMAN_REVIEW_SAMPLE_SIZE,
+  GOLDEN_DATASET_PHASE24_CONTRACT_REASONING,
+} from './golden-dataset-phase24-contract-reasoning.js';
+export {
+  CONTRACT_RECOMMENDATION_URL_REGISTRY,
+} from './contract-recommendation-registry.js';
 
 export {
   scoreCitationAccuracy,

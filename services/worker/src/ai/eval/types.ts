@@ -45,6 +45,30 @@ export interface GroundTruthFields {
   seriesLicenses?: string;
   // Fraud signals
   fraudSignals?: string[];
+  // GME10 contract-specific extraction fields
+  contractType?: string;
+  contractReasoningType?: string;
+  parties?: string[];
+  signatories?: string[];
+  effectiveDate?: string;
+  termLength?: string;
+  autoRenewalTerms?: string;
+  noticeDeadline?: string;
+  paymentTerms?: string;
+  deliverables?: string[];
+  liabilityCap?: string;
+  indemnificationScope?: string;
+  terminationRights?: string;
+  governingLaw?: string;
+  venue?: string;
+  arbitrationClause?: string;
+  confidentialityTerm?: string;
+  riskFlags?: string[];
+  recommendationUrls?: string[];
+  templateDeviation?: string;
+  crossDocumentReference?: string;
+  signatoryAuthority?: string;
+  regulatoryGap?: string;
   // GRE-02: Reasoning fields (optional — existing entries don't need these)
   /** Expected reasoning pattern (for eval — does Gemini's reasoning match?) */
   reasoning?: string;
