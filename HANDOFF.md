@@ -14,7 +14,20 @@
 
 ## Now
 
-**Branch:** `claude/jolly-snyder-489d39` — [PR #498](https://github.com/carson-see/ArkovaCarson/pull/498) DRAFT. SCRUM-1124 regression hotfix: admin pipeline buttons on `app.arkova.ai/admin/pipeline` (Run Embedder / Run Anchoring / Run Batch Anchoring) flip red on every click after PR #488 raised `config.batchAnchorMaxSize` default 100→10000. A full run now takes 2–4 min vs the 60s `workerFetch` default — worker finishes fine, UI times out with AbortError. Fix raises per-call timeout to 5 min for `/jobs/*`. Two follow-ups called out in the PR body: (1) cross-instance advisory lock on `processPublicRecordAnchoring` to stop the in-memory-bool-only mutex from letting 3 Cloud Run instances hammer the same anchors rows (this is what's flooding Postgres logs with `23505` on `idx_anchors_user_fingerprint_unique` via `insertAnchorSerialFallback`); (2) Treasury "Last Activity 4/19" is a separate regression in `get_anchor_tx_stats` cache refresh (pg_cron 5s statement_timeout) likely caused by the same lock contention — needs gcloud-log verification once SSO renews.
+**Branches:** Two draft PRs this session, both SCRUM-1124 territory but distinct regressions:
+
+- [PR #498](https://github.com/carson-see/ArkovaCarson/pull/498) `claude/jolly-snyder-489d39` — admin pipeline button red-on-click fix (frontend, raise `/jobs/*` timeout to 5 min). Includes a `src/index.ts` functions-coverage threshold drop 40→35 to absorb the SCRUM-1162 Middesk route-mount dilution (commit [eeb5341](https://github.com/carson-see/ArkovaCarson/commit/eeb5341)).
+- [PR #501](https://github.com/carson-see/ArkovaCarson/pull/501) `claude/scrum-1124-cache-refresh-fix` — migration 0253: `refresh_cache_anchor_status_counts` replaces `count(*)` with `pg_class.reltuples` from the partial indexes `idx_anchors_pending_claim` / `idx_anchors_submitted_chain_tx`. `pipeline_dashboard_cache` has been frozen since 2026-04-19 18:51:58 UTC because every pg_cron refresh has been timing out at line 7 of that function (PENDING grew 62k → 397k under concurrent public-record-anchoring load). Already band-aided in prod via direct `INSERT ON CONFLICT` through Supabase MCP, so Treasury shows live `last_tx_time = 2026-04-24T12:18:53` right now.
+
+**Four regressions uncovered this session (not one):**
+
+1. **(A)** Admin buttons — fixed by #498.
+2. **(B)** Dashboard cache freeze — fixed by #501 + prod band-aid.
+3. **(C)** 1.07M SUBMITTED anchors have not moved to SECURED since **2026-04-15** (`SELECT MAX(created_at) WHERE status='SECURED'`). 9-day confirmation-checker regression. Not touched this session — needs new Jira story + investigator.
+4. **(D)** Batch Bitcoin broadcast stopped **2026-04-24 12:18 UTC** (before #488 merged at 17:02 UTC). Cloud Run logs show `claim_pending_anchors timed out in batch` every ~2 minutes since. The `claim_pending_anchors` RPC (migration 0246) cannot claim rows fast enough against the 397k-row PENDING queue — death spiral. Production-breaking, blocks new anchors. Not touched this session — needs new Jira story + owner.
+
+**Cross-cutting amplifier:** `publicRecordAnchoringRunning` is an in-memory bool, so 3 Cloud Run instances run concurrently, `batch_insert_anchors` hits statement_timeout, serial fallback floods 23505 on `idx_anchors_user_fingerprint_unique`. A cross-instance `pg_try_advisory_xact_lock` would mitigate. Separate follow-up.
+
 **Prior branch:** `claude/2026-04-24-scrum-727-985-987-hardening` — PR #493 for SCRUM-727/985/987 hardening pass (security + coverage gaps surfaced during code review). 2026-04-24 wave already on main: #487 kenya dupe cleanup, #488 AI reliability + 10k batching + org rules, #490 onboarding signup, #491 rule simulator/history + KAU-06 NDB, #492 postcss bump.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
