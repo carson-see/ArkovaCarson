@@ -343,7 +343,12 @@ export async function handleUpdateRule(
       return;
     }
 
-    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    // CIBA-HARDEN-05: rely on the DB trigger `set_organization_rules_updated_at`
+    // (migration 0224) instead of stamping `updated_at` here. Two sources of
+    // truth meant a race could set the column to the handler's pre-commit
+    // `new Date()` instead of the DB commit time, and the trigger has always
+    // been authoritative for audit.
+    const update: Record<string, unknown> = {};
     for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config'] as const) {
       if (bodyParsed.data[k] !== undefined) update[k] = bodyParsed.data[k];
     }

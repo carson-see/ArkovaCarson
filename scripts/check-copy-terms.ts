@@ -12,11 +12,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // Forbidden terms (case-insensitive)
 // Use custom boundaries (?<![-\w]) / (?![-\w]) rather than \b so that hyphenated
 // CSS values like "inline-block" / "flex-block" are NOT flagged as the word "block".
-const FORBIDDEN_TERMS = [
+export const FORBIDDEN_TERMS = [
   'wallet',
   'gas',
   String.raw`(?<![-\w])hash(?![-\w])`,
@@ -33,12 +34,18 @@ const FORBIDDEN_TERMS = [
   // API-keys page surfaced a raw error "Ensure the worker service is running"
   // to end users. These terms should never appear in user-facing strings —
   // if the error needs to mention infra, rewrite as "service" or "connection".
-  // Word-boundary regexes match the existing style and avoid mid-word false
-  // positives (e.g. "postgresql" shouldn't trip "postgrest").
   String.raw`(?<![-\w])worker service(?![-\w])`,
-  String.raw`(?<![-\w])service_role(?![-\w])`,
-  String.raw`(?<![-\w])service role(?![-\w])`,
-  String.raw`(?<![-\w])postgrest(?![-\w])`,
+  // CIBA-HARDEN-05: use [A-Za-z0-9] boundaries (not \w) so the pattern matches
+  // inside identifiers where adjacent chars include `_`, e.g. the env-var name
+  // SUPABASE_SERVICE_ROLE_KEY leaking into an error string. \w includes `_`
+  // which used to defeat the boundary and miss the most common leak vector.
+  String.raw`(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])`,
+  String.raw`(?<![A-Za-z0-9])service role(?![A-Za-z0-9])`,
+  // CIBA-HARDEN-05: PostgRESTError is the common TitleCase variant — match it
+  // too. Keep only the left ASCII-alnum boundary (no right boundary) so
+  // CamelCase continuations like "PostgRESTError" hit while genuine words
+  // (there's nothing English starting with "postgrest") don't false-positive.
+  String.raw`(?<![A-Za-z0-9])postgrest`,
 ];
 
 // File patterns to check (UI-facing files)
@@ -234,4 +241,10 @@ function main(): void {
   process.exit(1);
 }
 
-main();
+// Only run main when executed directly (not when imported by the test file).
+// CIBA-HARDEN-05: exporting FORBIDDEN_TERMS required guarding the top-level
+// main() call so vitest can import without triggering process.exit(0).
+const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (invokedAsScript) {
+  main();
+}

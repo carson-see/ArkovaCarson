@@ -117,9 +117,11 @@ describe('ActionConfig discriminator', () => {
     ).toThrow();
   });
 
-  it('rejects FORWARD_TO_URL with a non-HTTPS URL — Zod z.string().url() accepts http but tighter enforcement happens at runtime', () => {
-    // z.string().url() allows any URL; tighter domain allowlist is runtime.
-    // This test pins the *shape* — URL format is required, malformed rejected.
+  it('rejects FORWARD_TO_URL with a malformed (non-URL) target_url string', () => {
+    // CIBA-HARDEN-05: title used to claim this test enforced HTTPS, but
+    // z.string().url() accepts http://. The actual HTTPS / domain-allowlist
+    // enforcement happens at runtime against org settings — this test only
+    // pins the *shape*: target_url must parse as a URL, malformed rejected.
     expect(() =>
       ActionConfig.parse({
         action_type: 'FORWARD_TO_URL',

@@ -32,75 +32,19 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
+import {
+  RULE_ACTION_COPY,
+  RULE_TRIGGER_COPY,
+  RULE_WIZARD_LABELS as W,
+} from '@/lib/copy';
+import {
+  validateWizardConfigs,
+  type ActionType,
+  type TriggerType,
+} from '@/lib/ruleSchemas';
 
-type TriggerType =
-  | 'ESIGN_COMPLETED'
-  | 'WORKSPACE_FILE_MODIFIED'
-  | 'CONNECTOR_DOCUMENT_RECEIVED'
-  | 'MANUAL_UPLOAD'
-  | 'SCHEDULED_CRON'
-  | 'QUEUE_DIGEST'
-  | 'EMAIL_INTAKE';
-
-type ActionType =
-  | 'AUTO_ANCHOR'
-  | 'FAST_TRACK_ANCHOR'
-  | 'QUEUE_FOR_REVIEW'
-  | 'FLAG_COLLISION'
-  | 'NOTIFY'
-  | 'FORWARD_TO_URL';
-
-const TRIGGER_COPY: Record<TriggerType, { label: string; desc: string }> = {
-  ESIGN_COMPLETED: {
-    label: 'E-signature completed',
-    desc: 'When a DocuSign or Adobe Sign envelope is signed.',
-  },
-  WORKSPACE_FILE_MODIFIED: {
-    label: 'Workspace file modified',
-    desc: 'When a file changes in Google Drive, SharePoint, or OneDrive.',
-  },
-  CONNECTOR_DOCUMENT_RECEIVED: {
-    label: 'Connector delivered a document',
-    desc: 'When a partner (Veremark, Checkr, ...) posts a completed report.',
-  },
-  MANUAL_UPLOAD: {
-    label: 'Manual upload',
-    desc: 'When a user uploads through the web app.',
-  },
-  SCHEDULED_CRON: {
-    label: 'Schedule',
-    desc: 'On a recurring schedule (e.g. daily at 9am).',
-  },
-  QUEUE_DIGEST: {
-    label: 'Queue review digest',
-    desc: 'A daily/weekly digest of the review queue.',
-  },
-  EMAIL_INTAKE: {
-    label: 'Email intake',
-    desc: 'When a document arrives at your org intake address.',
-  },
-};
-
-const ACTION_COPY: Record<ActionType, { label: string; desc: string }> = {
-  AUTO_ANCHOR: { label: 'Secure the document', desc: 'Anchor it on the network automatically.' },
-  FAST_TRACK_ANCHOR: {
-    label: 'Fast-track secure',
-    desc: 'Priority batch (paid plans only).',
-  },
-  QUEUE_FOR_REVIEW: {
-    label: 'Queue for admin review',
-    desc: 'Surface on the review dashboard; admin decides.',
-  },
-  FLAG_COLLISION: {
-    label: 'Flag version collision',
-    desc: 'If multiple versions arrive within a window, flag them for review.',
-  },
-  NOTIFY: { label: 'Notify', desc: 'Email and/or Slack the team.' },
-  FORWARD_TO_URL: {
-    label: 'Forward to a URL',
-    desc: 'POST the event to a pre-allowlisted webhook target.',
-  },
-};
+const TRIGGER_COPY = RULE_TRIGGER_COPY;
+const ACTION_COPY = RULE_ACTION_COPY;
 
 interface WizardState {
   step: 1 | 2 | 3 | 4;
@@ -144,14 +88,29 @@ export function RuleBuilderPage() {
 
   function nextStep() {
     if (state.step === 1 && !state.trigger_type) {
-      setError('Pick a trigger to continue.');
+      setError(W.ERR_PICK_TRIGGER);
       return;
     }
     if (state.step === 3 && !state.action_type) {
-      setError('Pick an action to continue.');
+      setError(W.ERR_PICK_ACTION);
       return;
     }
     if (state.step === 4) return; // end
+    // CIBA-HARDEN-04: fail client-side on invalid trigger/action configs
+    // instead of letting the POST round-trip render a 400 in the wizard.
+    // The worker stays authoritative (duplicate parse on POST), but users
+    // shouldn't reach step 4 with a missing cron, unresolved HMAC handle,
+    // or unselected connector.
+    const issues = validateWizardConfigs({
+      trigger_type: state.trigger_type,
+      trigger_config: state.trigger_config,
+      action_type: state.action_type,
+      action_config: state.action_config,
+    });
+    if (issues.length > 0) {
+      setError(W.ERR_INVALID_CONFIG_PREFIX + issues.join('; '));
+      return;
+    }
     setError(null);
     update('step', (state.step + 1) as WizardState['step']);
   }
@@ -164,11 +123,24 @@ export function RuleBuilderPage() {
 
   async function handleSave() {
     if (!orgId) {
-      setError('No organization selected.');
+      setError(W.ERR_NO_ORG);
       return;
     }
     if (!state.name.trim()) {
-      setError('Name is required.');
+      setError(W.ERR_NAME_REQUIRED);
+      return;
+    }
+    // CIBA-HARDEN-04: belt-and-braces — repeat the config validation on Save
+    // in case a user skipped the wizard flow (e.g. browser autocomplete +
+    // synthetic form submit) and landed at step 4 with invalid values.
+    const issues = validateWizardConfigs({
+      trigger_type: state.trigger_type,
+      trigger_config: state.trigger_config,
+      action_type: state.action_type,
+      action_config: state.action_config,
+    });
+    if (issues.length > 0) {
+      setError(W.ERR_INVALID_CONFIG_PREFIX + issues.join('; '));
       return;
     }
     setSubmitting(true);
@@ -209,18 +181,15 @@ export function RuleBuilderPage() {
     >
       <div className="mx-auto max-w-3xl p-6 space-y-6">
         <header className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Build a new rule</h1>
-          <p className="text-sm text-muted-foreground">
-            Describe what should happen and when. New rules always land disabled — flip them on
-            after you've reviewed the summary.
-          </p>
+          <h1 className="text-2xl font-semibold tracking-tight">{W.PAGE_TITLE}</h1>
+          <p className="text-sm text-muted-foreground">{W.PAGE_SUBTITLE}</p>
         </header>
 
         <StepIndicator step={state.step} />
 
         <Card>
           <CardHeader>
-            <CardTitle>Step {state.step} of 4</CardTitle>
+            <CardTitle>{W.STEP_HEADING(state.step)}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
             {state.step === 1 && <StepTrigger state={state} update={update} patch={patch} />}
@@ -236,15 +205,15 @@ export function RuleBuilderPage() {
 
             <div className="flex items-center justify-between pt-4 border-t">
               <Button variant="ghost" onClick={prevStep} disabled={state.step === 1}>
-                <ArrowLeft className="h-4 w-4 mr-1" /> Back
+                <ArrowLeft className="h-4 w-4 mr-1" /> {W.BACK}
               </Button>
               {state.step < 4 ? (
                 <Button onClick={nextStep}>
-                  Next <ArrowRight className="h-4 w-4 ml-1" />
+                  {W.NEXT} <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               ) : (
                 <Button onClick={handleSave} disabled={submitting}>
-                  <Save className="h-4 w-4 mr-1" /> {submitting ? 'Saving…' : 'Save as disabled'}
+                  <Save className="h-4 w-4 mr-1" /> {submitting ? W.SAVING : W.SAVE}
                 </Button>
               )}
             </div>
@@ -256,7 +225,7 @@ export function RuleBuilderPage() {
 }
 
 function StepIndicator({ step }: { step: 1 | 2 | 3 | 4 }) {
-  const labels = ['Trigger', 'Configure', 'Action', 'Review'];
+  const labels = W.STEP_INDICATOR;
   return (
     <ol className="flex items-center gap-2 text-sm">
       {labels.map((label, idx) => {
@@ -295,26 +264,26 @@ function StepTrigger({ state, update, patch }: StepProps) {
   return (
     <div className="space-y-4">
       <div>
-        <Label htmlFor="rule-name">Rule name</Label>
+        <Label htmlFor="rule-name">{W.FIELD_RULE_NAME}</Label>
         <Input
           id="rule-name"
-          placeholder="e.g. Auto-secure signed MSAs"
+          placeholder={W.FIELD_RULE_NAME_PLACEHOLDER}
           value={state.name}
           onChange={(e) => update('name', e.target.value)}
         />
       </div>
       <div>
-        <Label htmlFor="rule-description">Description (optional)</Label>
+        <Label htmlFor="rule-description">{W.FIELD_DESCRIPTION}</Label>
         <Textarea
           id="rule-description"
-          placeholder="What does this rule do, in plain English?"
+          placeholder={W.FIELD_DESCRIPTION_PLACEHOLDER}
           value={state.description}
           onChange={(e) => update('description', e.target.value)}
           maxLength={1000}
         />
       </div>
       <div>
-        <Label htmlFor="trigger-type">Trigger</Label>
+        <Label htmlFor="trigger-type">{W.FIELD_TRIGGER}</Label>
         <Select
           value={state.trigger_type}
           onValueChange={(v) =>
@@ -322,7 +291,7 @@ function StepTrigger({ state, update, patch }: StepProps) {
           }
         >
           <SelectTrigger id="trigger-type">
-            <SelectValue placeholder="Pick what should start this rule" />
+            <SelectValue placeholder={W.FIELD_TRIGGER_PLACEHOLDER} />
           </SelectTrigger>
           <SelectContent>
             {(Object.keys(TRIGGER_COPY) as TriggerType[]).map((t) => (
@@ -358,17 +327,17 @@ function StepConfigure({ state, update }: StepProps) {
     return (
       <div className="space-y-4">
         <div>
-          <Label>Filename contains (optional)</Label>
+          <Label>{W.FIELD_FILENAME_CONTAINS}</Label>
           <Input
-            placeholder="e.g. MSA"
+            placeholder={W.FIELD_FILENAME_CONTAINS_PLACEHOLDER_MSA}
             value={cfg.filename_contains ?? ''}
             onChange={(e) => setCfg('filename_contains', e.target.value || undefined)}
           />
         </div>
         <div>
-          <Label>Sender email equals (optional)</Label>
+          <Label>{W.FIELD_SENDER_EMAIL}</Label>
           <Input
-            placeholder="hr@acme.com"
+            placeholder={W.FIELD_SENDER_EMAIL_PLACEHOLDER}
             value={cfg.sender_email_equals ?? ''}
             onChange={(e) => setCfg('sender_email_equals', e.target.value || undefined)}
           />
@@ -385,17 +354,17 @@ function StepConfigure({ state, update }: StepProps) {
     return (
       <div className="space-y-4">
         <div>
-          <Label>Folder path starts with (optional)</Label>
+          <Label>{W.FIELD_FOLDER_PATH}</Label>
           <Input
-            placeholder="/HR/Contracts/"
+            placeholder={W.FIELD_FOLDER_PATH_PLACEHOLDER}
             value={cfg.folder_path_starts_with ?? ''}
             onChange={(e) => setCfg('folder_path_starts_with', e.target.value || undefined)}
           />
         </div>
         <div>
-          <Label>Filename contains (optional)</Label>
+          <Label>{W.FIELD_FILENAME_CONTAINS}</Label>
           <Input
-            placeholder="e.g. SOW"
+            placeholder={W.FIELD_FILENAME_CONTAINS_PLACEHOLDER_SOW}
             value={cfg.filename_contains ?? ''}
             onChange={(e) => setCfg('filename_contains', e.target.value || undefined)}
           />
@@ -408,13 +377,13 @@ function StepConfigure({ state, update }: StepProps) {
     const cfg = state.trigger_config as { connector_type?: string };
     return (
       <div className="space-y-4">
-        <Label htmlFor="connector-type">Connector</Label>
+        <Label htmlFor="connector-type">{W.FIELD_CONNECTOR}</Label>
         <Select
           value={cfg.connector_type ?? ''}
           onValueChange={(v) => setCfg('connector_type', v)}
         >
           <SelectTrigger id="connector-type">
-            <SelectValue placeholder="Pick a connector" />
+            <SelectValue placeholder={W.FIELD_CONNECTOR_PLACEHOLDER} />
           </SelectTrigger>
           <SelectContent>
             {['veremark', 'checkr', 'hireright', 'goodhire', 'generic'].map((c) => (
@@ -433,19 +402,20 @@ function StepConfigure({ state, update }: StepProps) {
     return (
       <div className="space-y-4">
         <div>
-          <Label>Schedule (cron expression)</Label>
+          <Label>{W.FIELD_CRON}</Label>
           <Input
-            placeholder="0,30 9,16 * * *"
+            placeholder={W.FIELD_CRON_PLACEHOLDER}
             value={cfg.cron ?? ''}
             onChange={(e) => setCfg('cron', e.target.value)}
           />
           <p className="text-xs text-muted-foreground mt-1">
-            Five fields: minute hour day-of-month month day-of-week. Example: <code>0 9 * * *</code>{' '}
-            runs at 9 AM every day.
+            {W.FIELD_CRON_HINT_PREFIX}
+            <code>{W.FIELD_CRON_HINT_EXAMPLE}</code>
+            {W.FIELD_CRON_HINT_SUFFIX}
           </p>
         </div>
         <div>
-          <Label>Timezone</Label>
+          <Label>{W.FIELD_TIMEZONE}</Label>
           <Select
             value={cfg.timezone ?? 'UTC'}
             onValueChange={(v) => setCfg('timezone', v)}
@@ -468,11 +438,7 @@ function StepConfigure({ state, update }: StepProps) {
     );
   }
 
-  return (
-    <p className="text-sm text-muted-foreground">
-      This trigger has no additional configuration. Move on to pick an action.
-    </p>
-  );
+  return <p className="text-sm text-muted-foreground">{W.NO_CONFIG_MESSAGE}</p>;
 }
 
 function StepAction({ state, update, patch }: StepProps) {
@@ -483,7 +449,7 @@ function StepAction({ state, update, patch }: StepProps) {
   return (
     <div className="space-y-4">
       <div>
-        <Label htmlFor="action-type">Action</Label>
+        <Label htmlFor="action-type">{W.FIELD_ACTION}</Label>
         <Select
           value={state.action_type}
           onValueChange={(v) =>
@@ -491,7 +457,7 @@ function StepAction({ state, update, patch }: StepProps) {
           }
         >
           <SelectTrigger id="action-type">
-            <SelectValue placeholder="Pick what should happen" />
+            <SelectValue placeholder={W.FIELD_ACTION_PLACEHOLDER} />
           </SelectTrigger>
           <SelectContent>
             {(Object.keys(ACTION_COPY) as ActionType[]).map((a) => (
@@ -510,9 +476,9 @@ function StepAction({ state, update, patch }: StepProps) {
 
       {state.action_type === 'NOTIFY' && (
         <div className="space-y-2">
-          <Label>Email recipients (comma-separated)</Label>
+          <Label>{W.FIELD_NOTIFY_EMAILS}</Label>
           <Input
-            placeholder="alice@acme.com, bob@acme.com"
+            placeholder={W.FIELD_NOTIFY_EMAILS_PLACEHOLDER}
             value={((state.action_config.recipient_emails as string[] | undefined) ?? []).join(', ')}
             onChange={(e) =>
               setCfg(
@@ -524,7 +490,7 @@ function StepAction({ state, update, patch }: StepProps) {
               )
             }
           />
-          <Label>Channels</Label>
+          <Label>{W.FIELD_NOTIFY_CHANNELS}</Label>
           <div className="flex items-center gap-4">
             {(['email', 'slack'] as const).map((ch) => {
               const channels = (state.action_config.channels as string[] | undefined) ?? [];
@@ -550,7 +516,7 @@ function StepAction({ state, update, patch }: StepProps) {
 
       {state.action_type === 'FLAG_COLLISION' && (
         <div>
-          <Label>Collision window (minutes)</Label>
+          <Label>{W.FIELD_COLLISION_WINDOW}</Label>
           <Input
             type="number"
             min={1}
@@ -563,15 +529,29 @@ function StepAction({ state, update, patch }: StepProps) {
 
       {state.action_type === 'FORWARD_TO_URL' && (
         <div className="space-y-2">
-          <Label>Target URL</Label>
+          <Label htmlFor="forward-url">{W.FIELD_FORWARD_URL}</Label>
           <Input
-            placeholder="https://ops.example.com/hooks/arkova"
+            id="forward-url"
+            placeholder={W.FIELD_FORWARD_URL_PLACEHOLDER}
             value={(state.action_config.target_url as string | undefined) ?? ''}
             onChange={(e) => setCfg('target_url', e.target.value)}
           />
-          <p className="text-xs text-muted-foreground">
-            Worker will refuse any URL not on your org's allowlist.
-          </p>
+          <p className="text-xs text-muted-foreground">{W.FIELD_FORWARD_URL_HINT}</p>
+          {/* CIBA-HARDEN-04: worker schema requires hmac_secret_handle for
+              FORWARD_TO_URL. Collecting the handle (sm:name) here so the user
+              doesn't hit a 400 on save, and so the raw secret never touches
+              this UI. */}
+          <Label htmlFor="forward-hmac-handle">{W.FIELD_HMAC_HANDLE}</Label>
+          <Input
+            id="forward-hmac-handle"
+            placeholder={W.FIELD_HMAC_HANDLE_PLACEHOLDER}
+            value={(state.action_config.hmac_secret_handle as string | undefined) ?? ''}
+            onChange={(e) =>
+              setCfg('hmac_secret_handle', e.target.value.trim() || undefined)
+            }
+            data-testid="hmac-handle-input"
+          />
+          <p className="text-xs text-muted-foreground">{W.FIELD_HMAC_HANDLE_HINT}</p>
         </div>
       )}
     </div>
@@ -579,46 +559,42 @@ function StepAction({ state, update, patch }: StepProps) {
 }
 
 function StepReview({ state }: StepProps) {
+  const triggerCount = Object.keys(state.trigger_config).length;
+  const actionCount = Object.keys(state.action_config).length;
   return (
     <div className="space-y-4">
       <dl className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
         <div>
-          <dt className="text-muted-foreground">Name</dt>
+          <dt className="text-muted-foreground">{W.REVIEW_NAME}</dt>
           <dd className="font-medium">{state.name || '—'}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Status on save</dt>
+          <dt className="text-muted-foreground">{W.REVIEW_STATUS_ON_SAVE}</dt>
           <dd>
-            <Badge variant="outline">Disabled</Badge>
+            <Badge variant="outline">{W.REVIEW_STATUS_DISABLED}</Badge>
           </dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Trigger</dt>
+          <dt className="text-muted-foreground">{W.REVIEW_TRIGGER}</dt>
           <dd>{state.trigger_type ? TRIGGER_COPY[state.trigger_type].label : '—'}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">Action</dt>
+          <dt className="text-muted-foreground">{W.REVIEW_ACTION}</dt>
           <dd>{state.action_type ? ACTION_COPY[state.action_type].label : '—'}</dd>
         </div>
       </dl>
 
-      {(Object.keys(state.trigger_config).length > 0 ||
-        Object.keys(state.action_config).length > 0) && (
+      {(triggerCount > 0 || actionCount > 0) && (
         <div className="text-xs text-muted-foreground">
-          Configured: {Object.keys(state.trigger_config).length} trigger
-          {Object.keys(state.trigger_config).length === 1 ? '' : 's'} /{' '}
-          {Object.keys(state.action_config).length} action
-          {Object.keys(state.action_config).length === 1 ? '' : 's'} field
-          {Object.keys(state.action_config).length === 1 ? '' : 's'}. Raw values hidden
-          (may contain recipient emails, sender filters, or webhook targets).
+          {W.REVIEW_CONFIGURED_PREFIX}
+          {triggerCount} trigger{triggerCount === 1 ? '' : 's'} / {actionCount} action{actionCount === 1 ? '' : 's'} field{actionCount === 1 ? '' : 's'}
+          {W.REVIEW_TRIGGER_RAW_HIDDEN}
         </div>
       )}
 
       <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900 flex items-start gap-2">
         <Switch checked={false} disabled aria-label="disabled-indicator" />
-        <span>
-          New rules ship disabled. Enable from the rules list after checking the summary.
-        </span>
+        <span>{W.REVIEW_DISABLED_BANNER}</span>
       </div>
     </div>
   );
