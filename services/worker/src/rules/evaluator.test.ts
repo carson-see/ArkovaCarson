@@ -137,6 +137,22 @@ describe('evaluateRule — WORKSPACE_FILE_MODIFIED', () => {
   });
 });
 
+describe('evaluateRule — vendor allowlist fail-closed (CR review)', () => {
+  it('rejects when vendor allowlist is set but event vendor is missing', () => {
+    const r = evaluateRule(
+      rule({ trigger_config: { vendors: ['docusign'] } }),
+      event({ vendor: undefined }),
+    );
+    expect(r.matched).toBe(false);
+    expect(r.reason).toBe('vendor_filter_rejected');
+  });
+
+  it('still matches when no allowlist is configured and vendor is missing', () => {
+    const r = evaluateRule(rule({ trigger_config: {} }), event({ vendor: undefined }));
+    expect(r.matched).toBe(true);
+  });
+});
+
 describe('evaluateRule — CONNECTOR_DOCUMENT_RECEIVED', () => {
   it('matches when connector_type matches vendor', () => {
     const r = evaluateRule(

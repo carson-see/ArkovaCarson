@@ -12,6 +12,7 @@
  * `TREASURY_ALERT_EMAIL` recipient.
  */
 import { sendEmail } from '../email/sender.js';
+import { escapeHtml } from '../utils/html.js';
 import { logger } from '../utils/logger.js';
 import type { TreasuryAlertDispatcher } from './treasury-alert.js';
 
@@ -65,13 +66,4 @@ export function buildTreasuryAlertDispatcher(): TreasuryAlertDispatcher {
       }
     },
   };
-}
-
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

@@ -1,0 +1,13 @@
+[
+  { "name": "id",              "type": "STRING",    "mode": "REQUIRED" },
+  { "name": "event_type",      "type": "STRING",    "mode": "REQUIRED" },
+  { "name": "event_category",  "type": "STRING",    "mode": "REQUIRED" },
+  { "name": "actor_id",        "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "actor_email",     "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "org_id",          "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "target_type",     "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "target_id",       "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "details_json",    "type": "STRING",    "mode": "NULLABLE", "description": "details column from Postgres (may be JSON string)" },
+  { "name": "created_at",      "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "synced_at",       "type": "TIMESTAMP", "mode": "REQUIRED" }
+]

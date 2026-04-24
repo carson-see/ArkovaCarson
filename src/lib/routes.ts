@@ -75,6 +75,12 @@ export const ROUTES = {
   // Rules Engine (ARK-108)
   RULE_BUILDER: '/organization/rules/new',
 
+  // Admin Onboarding Wizard (UX-01 — SCRUM-1027)
+  ADMIN_ONBOARDING: '/organization/onboarding',
+
+  // Anchor Queue (UX-02 — SCRUM-1028): PENDING_RESOLUTION collision review
+  ANCHOR_QUEUE: '/organization/queue',
+
   // Phase III — Signatures & Compliance Center (PH3-ESIG)
   VERIFY_SIGNATURE: '/verify/signature/:signaturePublicId',
   SIGNATURE_COMPLIANCE: '/organization/signature-compliance',

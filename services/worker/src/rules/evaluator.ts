@@ -103,13 +103,23 @@ function skip(reason: string): EvaluationResult {
   return { ...SKIP_BASE, reason };
 }
 
-/** Vendor allowlist guard reused by e-sign + workspace triggers. */
+/** Vendor allowlist guard reused by e-sign + workspace triggers.
+ *
+ * Fail-closed semantics: if the rule specifies a vendor allowlist but the
+ * event has no vendor tag, REJECT. Previously this returned false (= pass),
+ * which meant a rule scoped to `vendors: ['docusign']` would match events
+ * from an unknown webhook source just because the source didn't set vendor.
+ * That's the opposite of what the admin configured — the allowlist must be
+ * strict to be meaningful.
+ */
 function vendorRejected(
   cfg: Record<string, unknown>,
   eventVendor: string | undefined,
 ): boolean {
   const vendors = cfg.vendors as string[] | undefined;
-  return Boolean(vendors?.length && eventVendor && !vendors.includes(eventVendor));
+  if (!vendors?.length) return false; // no filter configured
+  if (!eventVendor) return true; // filter set + event is vendor-unknown → reject
+  return !vendors.includes(eventVendor);
 }
 
 function filenameRejected(

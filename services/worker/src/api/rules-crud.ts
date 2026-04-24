@@ -46,17 +46,25 @@ async function emitRuleAudit(
   },
 ): Promise<void> {
   try {
-    await db.from('audit_events').insert({
+    // `audit_events.details` is TEXT (see migration 0006) with a 10000-char
+    // check constraint. JSON.stringify + truncate keeps auditor greppability
+    // while respecting the column limit. Supabase returns errors via `error`
+    // rather than throwing — check it explicitly so ops can diagnose drops.
+    const serialized = JSON.stringify(params.details ?? {}).slice(0, 10000);
+    const { error } = await db.from('audit_events').insert({
       event_type: eventType,
       event_category: 'ORG',
       actor_id: params.actorId,
       org_id: params.orgId,
       target_type: 'organization_rule',
       target_id: params.ruleId,
-      details: JSON.stringify(params.details ?? {}),
+      details: serialized,
     });
+    if (error) {
+      logger.warn({ error, eventType, ruleId: params.ruleId }, 'rule audit emit failed');
+    }
   } catch (err) {
-    logger.warn({ error: err, eventType, ruleId: params.ruleId }, 'rule audit emit failed');
+    logger.warn({ error: err, eventType, ruleId: params.ruleId }, 'rule audit emit threw');
   }
 }
 
@@ -78,11 +86,18 @@ export type UpdateOrgRuleInputT = z.infer<typeof UpdateOrgRuleInput>;
  * `org_id = callerOrg` to prevent cross-tenant writes.
  */
 async function getCallerOrgId(userId: string): Promise<string | null> {
-  const { data } = await db
+  const { data, error } = await db
     .from('profiles')
     .select('org_id')
     .eq('id', userId)
     .maybeSingle();
+  if (error) {
+    // RLS or transient failure. Log + fail-closed (null → 403) rather than
+    // leaking the error upstream as "no organization", which looks identical
+    // to a legitimate unaffiliated user and makes incidents invisible.
+    logger.warn({ error, userId }, 'profiles lookup failed in getCallerOrgId');
+    return null;
+  }
   return (data?.org_id as string | null) ?? null;
 }
 
@@ -170,6 +185,11 @@ export async function handleCreateRule(
   }
 
   try {
+    // SEC-02 defense-in-depth: newly-created rules ALWAYS ship disabled, even
+    // if the caller requested `enabled=true`. ARK-108 wizard + ARK-110 NL
+    // authoring both route through here, so every rule gets a human flip
+    // before it can fire an action. Downstream auditors can grep for the
+    // ORG_RULE_ENABLED event as the true "rule went live" marker.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
       .from('organization_rules')
@@ -181,7 +201,7 @@ export async function handleCreateRule(
         trigger_config: parsed.data.trigger_config,
         action_type: parsed.data.action_type,
         action_config: parsed.data.action_config,
-        enabled: parsed.data.enabled,
+        enabled: false,
       })
       .select('id')
       .single();
@@ -256,19 +276,71 @@ export async function handleUpdateRule(
   }
 
   try {
+    // If the caller is patching trigger_config OR action_config, re-validate
+    // the resulting rule against the Zod schema BEFORE writing. Without this,
+    // a PATCH with `{trigger_config: {"anything": "goes"}}` passes the inline-
+    // secret check but corrupts the stored rule — the rules engine then skips
+    // it with `unexpected_trigger_type` or silently fails to filter.
+    if (bodyParsed.data.trigger_config || bodyParsed.data.action_config) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: current, error: readErr } = await (db as any)
+        .from('organization_rules')
+        .select('trigger_type, trigger_config, action_type, action_config, org_id')
+        .eq('id', idParsed.data)
+        .eq('org_id', orgId)
+        .maybeSingle();
+      if (readErr) {
+        logger.warn({ error: readErr }, 'organization_rules fetch for patch-validation failed');
+        res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+        return;
+      }
+      if (!current) {
+        res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
+        return;
+      }
+      const merged = {
+        org_id: current.org_id,
+        name: bodyParsed.data.name ?? 'patch-validation-probe',
+        description: bodyParsed.data.description,
+        trigger_type: current.trigger_type,
+        trigger_config: bodyParsed.data.trigger_config ?? current.trigger_config,
+        action_type: current.action_type,
+        action_config: bodyParsed.data.action_config ?? current.action_config,
+        enabled: false,
+      };
+      try {
+        validateRuleConfigs(merged);
+      } catch (err) {
+        res.status(400).json({
+          error: {
+            code: 'invalid_config',
+            message: err instanceof Error ? err.message : 'Config validation failed',
+          },
+        });
+        return;
+      }
+    }
+
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
     for (const k of ['name', 'description', 'enabled', 'trigger_config', 'action_config'] as const) {
       if (bodyParsed.data[k] !== undefined) update[k] = bodyParsed.data[k];
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any)
+    const { error, count } = await (db as any)
       .from('organization_rules')
-      .update(update)
+      .update(update, { count: 'exact' })
       .eq('id', idParsed.data)
       .eq('org_id', orgId); // cross-tenant guard (service_role bypasses RLS)
     if (error) {
       logger.warn({ error }, 'organization_rules update failed');
       res.status(400).json({ error: { code: 'update_failed', message: error.message } });
+      return;
+    }
+    // Supabase returns success with count=0 when no row matched. Surface that
+    // as 404 so callers don't see a silent no-op as "success" (and auditors
+    // don't see an ORG_RULE_UPDATED event for a rule that wasn't written).
+    if (count === 0) {
+      res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
       return;
     }
     res.json({ ok: true });
@@ -326,14 +398,18 @@ export async function handleDeleteRule(
     // A future migration may add `deleted_at`; until then, DELETE removes
     // the row + cascades to `organization_rule_executions` via FK.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any)
+    const { error, count } = await (db as any)
       .from('organization_rules')
-      .delete()
+      .delete({ count: 'exact' })
       .eq('id', idParsed.data)
       .eq('org_id', orgId); // cross-tenant guard (service_role bypasses RLS)
     if (error) {
       logger.warn({ error }, 'organization_rules delete failed');
       res.status(400).json({ error: { code: 'delete_failed', message: error.message } });
+      return;
+    }
+    if (count === 0) {
+      res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
       return;
     }
     res.json({ ok: true });

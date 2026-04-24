@@ -1,0 +1,12 @@
+[
+  { "name": "id",              "type": "STRING",    "mode": "REQUIRED" },
+  { "name": "anchor_id",       "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "public_id",       "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "verifier_ip_hash","type": "STRING",    "mode": "NULLABLE", "description": "SHA-256 of the verifier IP — never store raw IPs" },
+  { "name": "user_agent",      "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "status",          "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "result",          "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "duration_ms",     "type": "INT64",     "mode": "NULLABLE" },
+  { "name": "created_at",      "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "synced_at",       "type": "TIMESTAMP", "mode": "REQUIRED" }
+]

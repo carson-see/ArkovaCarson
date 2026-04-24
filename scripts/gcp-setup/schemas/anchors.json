@@ -1,0 +1,21 @@
+[
+  { "name": "id",                  "type": "STRING",    "mode": "REQUIRED", "description": "anchors.id (UUID as string)" },
+  { "name": "public_id",           "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "org_id",              "type": "STRING",    "mode": "NULLABLE", "description": "organizations.id" },
+  { "name": "user_id",             "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "status",              "type": "STRING",    "mode": "REQUIRED" },
+  { "name": "version_number",      "type": "INT64",     "mode": "NULLABLE" },
+  { "name": "parent_anchor_id",    "type": "STRING",    "mode": "NULLABLE", "description": "internal UUID; analytics-only, never exposed externally" },
+  { "name": "fingerprint",         "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "filename",            "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "credential_type",     "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "chain_tx_id",         "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "chain_block_height",  "type": "INT64",     "mode": "NULLABLE" },
+  { "name": "chain_timestamp",     "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "legal_hold",          "type": "BOOL",      "mode": "NULLABLE" },
+  { "name": "revoked_at",          "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "revocation_reason",   "type": "STRING",    "mode": "NULLABLE" },
+  { "name": "created_at",          "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "updated_at",          "type": "TIMESTAMP", "mode": "NULLABLE" },
+  { "name": "synced_at",           "type": "TIMESTAMP", "mode": "REQUIRED", "description": "When this row was loaded into BQ" }
+]
