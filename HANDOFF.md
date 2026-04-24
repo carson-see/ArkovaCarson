@@ -14,12 +14,13 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-21-compliance-intelligence-epic` (PR #474 — CIBA v1.0)
+**Branch:** `claude/2026-04-23-platform-v2-release-setup` (PR #476 — platform v2 release setup)
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
-**Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K.
+**Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
-**DB:** Supabase `vzwyaatejekddvltxyye`. 212 migrations on prod; 8 new CIBA migrations (0224–0231) staged on PR #474 for merge.
-**Tests:** 5,202+ green (3,841 worker + 1,361 frontend as of 2026-04-21, end of CIBA Sprint 3).
+**DB:** Supabase `vzwyaatejekddvltxyye`. CIBA migrations 0224–0231 merged to main with PR #474.
+**Tests:** 5,202+ green (3,841 worker + 1,361 frontend).
+**Active release:** `v1.0.0 — Platform v2 + Enterprise Hardening` (Jira fixVersion `10266`). 10 epics + 63 stories filed 2026-04-23.
 
 ---
 
@@ -48,6 +49,29 @@
 - [SCRUM-827](https://arkova.atlassian.net/browse/SCRUM-827) GME7, [SCRUM-828](https://arkova.atlassian.net/browse/SCRUM-828) GME8, [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918) MCP-SEC — In Progress.
 - [SCRUM-1000](https://arkova.atlassian.net/browse/SCRUM-1000) AUDIT-FU — story-level Confluence backfill sprint (~250 pages).
 - NVI gate (epic [SCRUM-804](https://arkova.atlassian.net/browse/SCRUM-804)) = active. NDD/NSS/NTF paused.
+
+### v1.0.0 — Platform v2 + Enterprise Hardening (filed 2026-04-23)
+
+Single release encompassing enterprise hardening + the 2026-04-23 product-spec epics. Jira fixVersion `10266`. 10 epics:
+
+| Priority | Epic | Stories |
+|---|---|---|
+| **Highest (P0 — blocks AI training)** | [SCRUM-1040 GEMB2](https://arkova.atlassian.net/browse/SCRUM-1040) | SCRUM-1050..1053 |
+| **Highest** | [SCRUM-1041 SEC-HARDEN](https://arkova.atlassian.net/browse/SCRUM-1041) | SCRUM-1054..1060 |
+| High | [SCRUM-1042 GCP-MAX](https://arkova.atlassian.net/browse/SCRUM-1042) | SCRUM-1061..1066 |
+| High | [SCRUM-1043 SOC2-TYPE2](https://arkova.atlassian.net/browse/SCRUM-1043) | SCRUM-1072..1079 |
+| Medium | [SCRUM-1044 MCP-EXPAND](https://arkova.atlassian.net/browse/SCRUM-1044) | SCRUM-1067..1071 |
+| Low | [SCRUM-1045 GH-CI-OPT](https://arkova.atlassian.net/browse/SCRUM-1045) | SCRUM-1080..1083 |
+| Medium | [SCRUM-1046 PUBLIC-ORG](https://arkova.atlassian.net/browse/SCRUM-1046) | SCRUM-1084..1091 |
+| Medium | [SCRUM-1047 ADMIN-VIEW](https://arkova.atlassian.net/browse/SCRUM-1047) | SCRUM-1092..1098 |
+| Medium | [SCRUM-1048 CONNECTORS-V2](https://arkova.atlassian.net/browse/SCRUM-1048) | SCRUM-1099..1104 |
+| Medium | [SCRUM-1049 API-V2](https://arkova.atlassian.net/browse/SCRUM-1049) | SCRUM-1105..1112 |
+
+**Gate:** [SCRUM-1040 GEMB2](https://arkova.atlassian.net/browse/SCRUM-1040) blocks any further Nessie / Gemini Golden training work. Finish Gemini Embedding 2 integration before new eval or fine-tune rounds.
+
+**Scope clarification (from 2026-04-23 session):** Vertex consolidation covers Gemini Golden only. Nessie stays on Together.ai + Llama 3.1.
+
+Confluence per-epic audit pages live at `/spaces/A`, watched (appear in user's Activity feed). Manual star is a one-click in the UI if desired.
 
 ---
 
@@ -104,11 +128,16 @@ Full history: `git log --oneline`.
 
 | Date | Decision | Rationale |
 |---|---|---|
-| 2026-04-21 | `/api/treasury/health` is platform-admin-only (not org-admin) | Consistent with `/api/treasury/status`. USD aggregates are still treasury state — only Arkova operators see them. |
-| 2026-04-21 | Jira + Confluence are the canonical sources of truth | Repeated drift between CLAUDE.md / BACKLOG.md / Jira made auditor + stakeholder view unreliable. |
-| 2026-04-16 | Vertex endpoint hygiene mandate | Idle intermediate-checkpoint endpoints were silently billing. |
-| 2026-04-16 | NVI gate active for Nessie | FCRA/HIPAA/FERPA training data not verified against authoritative primary sources. |
-| 2026-04-15 | Nessie strategy reset | v5 "87.2% F1" headline was measured against a non-serverless model. |
+| 2026-04-23 | `search.arkova.ai` routes to `arkova.ai/o/:slug` via Cloudflare Worker (option c) | Brand-clean URL, single codebase, no auth-session leakage between public + app. |
+| 2026-04-23 | Local-folder watcher deferred (cloud connectors only in v1) | Requires Electron/Tauri desktop surface; 2–3 months of net-new scope. Cloud connectors (Drive + DocuSign) cover ~95% of admin use cases. |
+| 2026-04-23 | Vertex consolidation is Gemini-Golden-only | Nessie runs on Together.ai + Llama 3.1; no strategic reason to migrate it. |
+| 2026-04-23 | GEMB2 blocks further AI training | Avoid re-training against old embedder; Gemini Embedding 2 is the new ground truth. |
+| 2026-04-23 | Feature-branch push triggers are already absent from all workflows | Audit confirmed; GH-CI-OPT epic is documentation, not workflow rewrite. |
+| 2026-04-21 | `/api/treasury/health` is platform-admin-only (not org-admin) | Consistent with `/api/treasury/status`. USD aggregates are treasury state — only Arkova operators see them. |
+| 2026-04-21 | Jira + Confluence are the canonical sources of truth | Repeated drift between CLAUDE.md / BACKLOG.md / Jira made auditor + stakeholder view unreliable. `.md` files demoted to engineering notes. |
+| 2026-04-16 | Vertex endpoint hygiene mandate | Idle intermediate-checkpoint endpoints were silently billing. Target 1–2 deployed; always audit before/after tuning. |
+| 2026-04-16 | NVI gate active for Nessie | FCRA/HIPAA/FERPA training data not verified against authoritative primary sources. Pause NDD/NSS/NTF until NVI passes. |
+| 2026-04-15 | Nessie strategy reset | v5 "87.2% F1" headline was measured against a non-serverless model. Narrow extraction per LoRA; deploy-proof before training. |
 | 2026-03-22 | Pipeline anchoring creates individual anchors per document | Each document must appear in Treasury — batch-only is insufficient. |
 | 2026-03-22 | `VITE_CRON_SECRET` exposed to browser (admin-only pages) | Pipeline controls need auth; page gated to platform admins. |
 | 2026-03-14 | IAIProvider as single abstraction for all AI providers | Vendor independence. |
@@ -122,4 +151,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-21 (post-CIBA Sprint 3). State: 16 stories awaiting merge, 4 deferred with rationale._
+_Last refreshed: 2026-04-23. State: CIBA PR #474 merged to main; release `v1.0.0 — Platform v2 + Enterprise Hardening` filed with 10 epics + 63 stories on `claude/2026-04-23-platform-v2-release-setup`. GEMB2 is P0 gate on AI training work. Keep this file ≤150 lines._
