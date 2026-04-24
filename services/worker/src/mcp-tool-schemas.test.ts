@@ -31,6 +31,10 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
         'anchor_document',
         'verify_document',
         'verify_batch',
+        'search',
+        'verify',
+        'list_orgs',
+        'get_anchor',
         'oracle_batch_verify',
         'list_agents',
       ]),
@@ -97,6 +101,33 @@ describe('validateToolArgs — search_credentials', () => {
   it('rejects max_results > 50', () => {
     const result = validateToolArgs('search_credentials', { query: 'x', max_results: 500 });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe('validateToolArgs — agent v2 aliases', () => {
+  it('accepts search(q,type?)', () => {
+    const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 5 });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects unknown search type', () => {
+    const result = validateToolArgs('search', { q: 'acme', type: 'issuer' });
+    expect(result.ok).toBe(false);
+  });
+
+  it('accepts verify(fingerprint)', () => {
+    const result = validateToolArgs('verify', { fingerprint: VALID_HASH });
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts list_orgs with no arguments', () => {
+    const result = validateToolArgs('list_orgs', {});
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts get_anchor(public_id)', () => {
+    const result = validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID });
+    expect(result.ok).toBe(true);
   });
 });
 

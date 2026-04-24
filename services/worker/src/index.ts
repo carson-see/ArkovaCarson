@@ -193,6 +193,10 @@ app.get('/.well-known/openapi.json', (_req, res) => {
   res.redirect(301, '/api/docs/spec.json');
 });
 
+// Agent-ready v2 OpenAPI 3.1 spec — public for tool importers.
+import { apiV2OpenApiHandler } from './api/v2/openapi.js';
+app.get('/v2/openapi.json', apiV2OpenApiHandler);
+
 // Identity & org verification — internal (frontend-facing), not behind feature gate
 app.use('/api/v1/identity', rateLimiters.api, requireAuthMw, identityRouter);
 app.use('/api/v1/org', rateLimiters.api, requireAuthMw, orgVerificationRouter);

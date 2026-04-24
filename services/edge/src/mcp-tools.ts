@@ -76,6 +76,22 @@ export interface VerifyBatchInput {
   public_ids: string[];
 }
 
+export type AgentSearchType = 'all' | 'org' | 'record' | 'fingerprint' | 'document';
+
+export interface AgentSearchInput {
+  q: string;
+  type?: AgentSearchType;
+  max_results?: number;
+}
+
+export interface AgentVerifyInput {
+  fingerprint: string;
+}
+
+export interface AgentGetAnchorInput {
+  public_id: string;
+}
+
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
@@ -249,6 +265,69 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['public_ids'],
     },
   },
+  {
+    name: 'search',
+    description:
+      'Agent-friendly v2 search tool. Search organizations, anchored records, fingerprints, and documents by natural language query or exact fingerprint.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: {
+          type: 'string',
+          description: 'Natural language query or exact SHA-256 fingerprint.',
+        },
+        type: {
+          type: 'string',
+          description: 'Optional result filter: all, org, record, fingerprint, or document.',
+        },
+        max_results: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 10, max: 50).',
+        },
+      },
+      required: ['q'],
+    },
+  },
+  {
+    name: 'verify',
+    description:
+      'Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fingerprint: {
+          type: 'string',
+          description: '64-character SHA-256 document fingerprint.',
+        },
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'list_orgs',
+    description:
+      'List the organizations available to the authenticated caller. Use to establish org context before scoped searches.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'get_anchor',
+    description:
+      'Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: {
+          type: 'string',
+          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
+        },
+      },
+      required: ['public_id'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -366,6 +445,114 @@ export async function handleSearchCredentials(
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Search timed out'
       : `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
+}
+
+function parseToolJson(result: ToolResult): Record<string, unknown> | null {
+  try {
+    return JSON.parse(result.content[0]?.text ?? '{}') as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+async function searchAgentOrgs(
+  query: string,
+  config: SupabaseConfig,
+): Promise<Array<Record<string, unknown>>> {
+  const response = await supabaseFetch(config, '/rest/v1/rpc/search_organizations_public', {
+    method: 'POST',
+    body: JSON.stringify({ p_query: query }),
+  });
+  if (!response.ok) return [];
+
+  const rows = await response.json() as Array<Record<string, unknown>>;
+  return (Array.isArray(rows) ? rows : []).map((org, index) => ({
+    type: 'org',
+    rank: index + 1,
+    id: org.id,
+    public_id: org.id,
+    snippet: org.display_name ?? org.domain ?? '',
+    metadata: {
+      domain: org.domain ?? null,
+    },
+  }));
+}
+
+async function searchAgentRecords(
+  input: AgentSearchInput,
+  config: SupabaseConfig,
+): Promise<Array<Record<string, unknown>>> {
+  const result = await handleSearchCredentials(
+    { query: input.q, max_results: input.max_results },
+    config,
+  );
+  if (result.isError) return [];
+
+  const parsed = parseToolJson(result);
+  const records = parsed?.results;
+  if (!Array.isArray(records)) return [];
+
+  const resultType = input.type === 'document' ? 'document' : 'record';
+  return records.map((record, index) => ({
+    type: resultType,
+    rank: index + 1,
+    ...(record as Record<string, unknown>),
+  }));
+}
+
+/**
+ * Agent-friendly alias for API v2 `search(q,type?)`. The legacy
+ * `search_credentials` tool remains for backwards compatibility; this shape
+ * matches the OpenAPI 3.1 operationId consumed by function-call importers.
+ */
+export async function handleAgentSearch(
+  input: AgentSearchInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  if (!input.q || input.q.trim().length === 0) {
+    return errorResult('Error: q is required');
+  }
+
+  const maxResults = Math.min(input.max_results ?? 10, 50);
+  const type = input.type ?? 'all';
+
+  try {
+    if (type === 'fingerprint') {
+      if (!SHA256_HEX_RE.test(input.q)) {
+        return textResult({ query: input.q, total: 0, results: [] });
+      }
+      const result = await handleVerifyDocument({ content_hash: input.q }, config);
+      const parsed = parseToolJson(result);
+      const found = parsed && !(parsed.verified === false && typeof parsed.message === 'string');
+      return textResult({
+        query: input.q,
+        total: found ? 1 : 0,
+        results: found && parsed ? [{ type: 'fingerprint', rank: 1, ...parsed }] : [],
+      });
+    }
+
+    if (type === 'org') {
+      const orgs = await searchAgentOrgs(input.q, config);
+      return textResult({ query: input.q, total: orgs.length, results: orgs.slice(0, maxResults) });
+    }
+
+    if (type === 'record' || type === 'document') {
+      const records = await searchAgentRecords({ ...input, max_results: maxResults }, config);
+      return textResult({ query: input.q, total: records.length, results: records });
+    }
+
+    const [orgs, records] = await Promise.all([
+      searchAgentOrgs(input.q, config),
+      searchAgentRecords({ ...input, max_results: maxResults }, config),
+    ]);
+    const results = [...orgs, ...records].slice(0, maxResults);
+    return textResult({ query: input.q, total: results.length, results });
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Agent search timed out'
+      : `Agent search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
   }
 }
@@ -548,6 +735,63 @@ export async function handleVerifyDocument(
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Document verification timed out'
       : `Document verification failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
+}
+
+/** Agent-friendly alias for API v2 `verify(fingerprint)`. */
+export async function handleAgentVerify(
+  input: AgentVerifyInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  return handleVerifyDocument({ content_hash: input.fingerprint }, config);
+}
+
+/** Agent-friendly alias for API v2 `get_anchor(public_id)`. */
+export async function handleAgentGetAnchor(
+  input: AgentGetAnchorInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  return handleVerifyCredential({ public_id: input.public_id }, config);
+}
+
+/**
+ * List organizations available to the authenticated MCP caller by joining
+ * through org_members. The edge worker still uses the service-role key for
+ * PostgREST, so the user_id filter is explicit and never delegated to RLS.
+ */
+export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolResult> {
+  const params = new URLSearchParams({
+    user_id: `eq.${config.userId}`,
+    select: 'role,organizations(id,public_id,display_name,domain,website_url,verification_status)',
+    limit: '50',
+  });
+
+  try {
+    const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
+    if (!response.ok) {
+      return errorResult(`List organizations failed: HTTP ${response.status}`);
+    }
+
+    const memberships = await response.json() as Array<Record<string, unknown>>;
+    const organizations = (Array.isArray(memberships) ? memberships : []).map((membership) => {
+      const org = membership.organizations as Record<string, unknown> | null | undefined;
+      return {
+        id: org?.id,
+        public_id: org?.public_id ?? org?.id,
+        display_name: org?.display_name,
+        domain: org?.domain ?? null,
+        website_url: org?.website_url ?? null,
+        verification_status: org?.verification_status ?? null,
+        role: membership.role,
+      };
+    }).filter((org) => org.id);
+
+    return textResult({ organizations });
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'List organizations timed out'
+      : `List organizations failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
   }
 }

@@ -53,6 +53,14 @@ export const searchCredentialsSchema = z
   })
   .strict();
 
+export const agentSearchSchema = z
+  .object({
+    q: freeTextQuerySchema,
+    type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional(),
+    max_results: z.number().int().min(1).max(50).optional(),
+  })
+  .strict();
+
 export const nessieQuerySchema = z
   .object({
     query: freeTextQuerySchema,
@@ -91,6 +99,20 @@ export const oracleBatchVerifySchema = z
 
 export const listAgentsSchema = z.object({}).strict();
 
+export const agentVerifySchema = z
+  .object({
+    fingerprint: contentHashSchema,
+  })
+  .strict();
+
+export const agentListOrgsSchema = z.object({}).strict();
+
+export const agentGetAnchorSchema = z
+  .object({
+    public_id: publicIdSchema,
+  })
+  .strict();
+
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
   verify_credential: verifyCredentialSchema,
@@ -99,6 +121,10 @@ export const MCP_TOOL_SCHEMAS = {
   anchor_document: anchorDocumentSchema,
   verify_document: verifyDocumentSchema,
   verify_batch: verifyBatchSchema,
+  search: agentSearchSchema,
+  verify: agentVerifySchema,
+  list_orgs: agentListOrgsSchema,
+  get_anchor: agentGetAnchorSchema,
   oracle_batch_verify: oracleBatchVerifySchema,
   list_agents: listAgentsSchema,
 } as const;

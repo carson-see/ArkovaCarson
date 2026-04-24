@@ -270,7 +270,7 @@ describe('GET /api/v2/search', () => {
       expect(res.status).toBe(200);
     }
 
-    const p95 = durations.toSorted((a, b) => a - b)[Math.floor(durations.length * 0.95) - 1];
+    const p95 = durations.slice().sort((a: number, b: number) => a - b)[Math.floor(durations.length * 0.95) - 1];
     expect(p95).toBeLessThan(200);
   });
 });

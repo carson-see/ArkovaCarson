@@ -1,7 +1,7 @@
 # @arkova/sdk
 
 > The official TypeScript / JavaScript SDK for the Arkova verification API.
-> Anchor documents to a public network, verify them, batch-verify hundreds at once, and manage webhooks — all without ever opening the Arkova web app.
+> Anchor documents to a public network, call the API v2 agent tools, verify records, and manage webhooks — all without ever opening the Arkova web app.
 
 [![npm version](https://img.shields.io/npm/v/@arkova/sdk.svg)](https://www.npmjs.com/package/@arkova/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
@@ -15,6 +15,7 @@
 - [Anchoring](#anchoring)
 - [Verification](#verification)
 - [Batch verification](#batch-verification)
+- [API v2 agent tools](#api-v2-agent-tools)
 - [Webhook management](#webhook-management)
 - [Nessie semantic search](#nessie-semantic-search)
 - [Error handling](#error-handling)
@@ -56,7 +57,7 @@ console.log(receipt.publicId); // "ARK-2026-001"
 const result = await arkova.verify(receipt.publicId);
 console.log(result.verified); // true
 
-// 3. Verify hundreds at once
+// 3. Verify synchronous batches
 const batch = await arkova.verifyBatch(['ARK-2026-001', 'ARK-2026-002', 'ARK-2026-003']);
 
 // 4. Register a webhook so your system gets notified instead of polling
@@ -67,7 +68,11 @@ const webhook = await arkova.webhooks.create({
 console.log('Save this secret:', webhook.secret); // shown ONCE — store immediately
 ```
 
-That's it. No UI, no SDK calls to learn beyond `anchor`, `verify`, `verifyBatch`, and `webhooks.*`.
+That's it. No UI, no SDK calls to learn beyond `anchor`, `verify`, `verifyBatch`, v2 `search`, and `webhooks.*`.
+
+### 20-line document anchor example
+
+See [`examples/anchor-document.ts`](./examples/anchor-document.ts) for a complete Node 18+ script that anchors a local document and prints the public ID.
 
 ---
 
@@ -82,6 +87,9 @@ const arkova = new Arkova({
 
   /** Override the API base URL (default: production worker) */
   baseUrl: 'https://arkova-worker-270018525501.us-central1.run.app',
+
+  /** Optional retry tuning. 429 responses honor Retry-After automatically. */
+  retry: { retries: 2, baseDelayMs: 250, maxDelayMs: 5000 },
 
   /** Optional x402 micropayment config (machine-to-machine billing) */
   x402: {
@@ -173,7 +181,7 @@ When called with `(data, receipt)` and the SHA-256 hash of `data` doesn't match 
 
 ### `arkova.verifyBatch(publicIds)`
 
-Verify up to 100 credentials in a single round-trip. Results are returned in the same order as the input array.
+Verify up to 20 credentials in a single synchronous round-trip. Results are returned in the same order as the input array.
 
 ```typescript
 const results = await arkova.verifyBatch([
@@ -190,8 +198,29 @@ results.forEach((r, i) => {
 **Limits:**
 
 - Empty array → returns `[]` immediately, no network call.
-- More than 100 IDs → throws `ArkovaError` with `code: 'batch_too_large'` (no network call).
+- More than 20 IDs → throws `ArkovaError` with `code: 'batch_too_large'` (no network call).
 - Rate limit: **10 batch req/min per API key**.
+
+---
+
+## API v2 agent tools
+
+The SDK includes typed wrappers for the API v2 read-only agent operations described by the OpenAPI 3.1 spec at `https://api.arkova.ai/v2/openapi.json`.
+
+```typescript
+const { results } = await arkova.search('Acme compliance certificate', {
+  type: 'document',
+  limit: 5,
+});
+
+const fingerprint = await arkova.fingerprint('contract body');
+const verification = await arkova.verifyFingerprint(fingerprint);
+
+const anchor = await arkova.getAnchor(results[0].publicId);
+const orgs = await arkova.listOrgs();
+```
+
+Retries are built in for `429`, `500`, `502`, `503`, and `504`. For rate limits, the SDK reads `Retry-After` and waits before retrying. API v2 errors are exposed as `ArkovaError.problem` with the full RFC 7807 `{ type, title, status, detail, instance }` payload.
 
 ---
 
@@ -358,7 +387,7 @@ try {
 | `validation_error` | 400 | Request body or query failed validation |
 | `invalid_url` | 400 | Webhook URL targets private/internal IP (SSRF blocked) |
 | `verification_failed` | 400 | Webhook verification ping (`verify: true`) failed |
-| `batch_too_large` | 400 | More than 100 IDs passed to `verifyBatch` |
+| `batch_too_large` | 400 | More than 20 IDs passed to `verifyBatch` |
 | `authentication_required` | 401 | Missing or invalid API key |
 | `not_found` | 404 | Resource doesn't exist or belongs to another org |
 | `rate_limit_exceeded` | 429 | Exceeded the rate limit for this endpoint group |
@@ -405,6 +434,12 @@ import type {
   CreateWebhookInput,
   UpdateWebhookInput,
   PaginatedWebhooks,
+  ProblemDetail,
+  SearchOptions,
+  SearchResponse,
+  FingerprintVerification,
+  AnchorDetails,
+  OrganizationSummary,
 } from '@arkova/sdk';
 ```
 
@@ -442,7 +477,11 @@ Override with `baseUrl` config option for staging or local development.
 | `arkova.anchor(data)` | Anchor a document fingerprint |
 | `arkova.verify(publicId)` | Verify by public ID |
 | `arkova.verify(data, receipt)` | Verify by data + receipt (offline tamper check) |
-| `arkova.verifyBatch(publicIds)` | Verify up to 100 credentials at once |
+| `arkova.verifyBatch(publicIds)` | Verify up to 20 credentials at once |
+| `arkova.search(q, options?)` | API v2 search across orgs, records, fingerprints, and documents |
+| `arkova.verifyFingerprint(fingerprint)` | API v2 fingerprint verification |
+| `arkova.getAnchor(publicId)` | API v2 public anchor lookup |
+| `arkova.listOrgs()` | API v2 organization context for the API key |
 | `arkova.query(q, options?)` | Nessie retrieval search over public records |
 | `arkova.ask(q, options?)` | Nessie RAG with cited answer |
 | `arkova.webhooks.create(input)` | Register a webhook endpoint |
