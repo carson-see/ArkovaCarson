@@ -42,168 +42,99 @@ interface EndpointDef {
   params: EndpointParam[];
 }
 
+const API_KEY_PRICE = 'API key';
+const VERIFY_PRICE = '$0.002';
+const AI_PRICE = '$0.010';
+
+const searchTypeOptions: NonNullable<EndpointParam['options']> = [
+  { label: 'All', value: 'all' },
+  { label: 'Organizations', value: 'org' },
+  { label: 'Records', value: 'record' },
+  { label: 'Fingerprints', value: 'fingerprint' },
+  { label: 'Documents', value: 'document' },
+];
+
+const nessieModeOptions: NonNullable<EndpointParam['options']> = [
+  { label: 'Retrieval', value: 'retrieval' },
+  { label: 'Context', value: 'context' },
+];
+
+function textParam(name: string, label: string, placeholder: string, required = false): EndpointParam {
+  return { name, label, type: 'text', placeholder, required };
+}
+
+function selectParam(
+  name: string,
+  label: string,
+  options: NonNullable<EndpointParam['options']>,
+): EndpointParam {
+  return { name, label, type: 'select', options };
+}
+
+function endpoint(
+  method: EndpointDef['method'],
+  id: string,
+  path: string,
+  label: string,
+  price: string,
+  description: string,
+  params: EndpointParam[],
+): EndpointDef {
+  return { id, method, path, label, price, description, params };
+}
+
+function apiKeySearchEndpoint(
+  id: string,
+  path: string,
+  label: string,
+  description: string,
+  paramLabel: string,
+  placeholder: string,
+): EndpointDef {
+  return endpoint('GET', id, path, label, API_KEY_PRICE, description, [
+    textParam('q', paramLabel, placeholder, true),
+  ]);
+}
+
 const ENDPOINTS: EndpointDef[] = [
-  {
-    id: 'verify',
-    method: 'GET',
-    path: '/api/v1/verify/:publicId',
-    label: 'Verify Credential',
-    price: '$0.002',
-    description: 'Verify a credential by its public ID and receive full cryptographic proof.',
-    params: [
-      { name: 'publicId', label: 'Public ID', type: 'text', placeholder: 'abc123-def456', required: true },
-    ],
-  },
-  {
-    id: 'verify-batch',
-    method: 'POST',
-    path: '/api/v1/verify/batch',
-    label: 'Batch Verification',
-    price: '$0.002/item',
-    description: 'Verify multiple credentials in a single request. Up to 100 items per batch.',
-    params: [
-      { name: 'public_ids', label: 'Public IDs (comma-separated)', type: 'text', placeholder: 'abc123,def456,ghi789', required: true },
-    ],
-  },
-  {
-    id: 'v2-search',
-    method: 'GET',
-    path: '/api/v2/search',
-    label: 'Search Everything',
-    price: 'API key',
-    description: 'Search organizations, records, fingerprints, and documents with one API-key endpoint.',
-    params: [
-      { name: 'q', label: 'Search Query', type: 'text', placeholder: 'Acme, contract.pdf, or a SHA-256 fingerprint', required: true },
-      {
-        name: 'type',
-        label: 'Type',
-        type: 'select',
-        options: [
-          { label: 'All', value: 'all' },
-          { label: 'Organizations', value: 'org' },
-          { label: 'Records', value: 'record' },
-          { label: 'Fingerprints', value: 'fingerprint' },
-          { label: 'Documents', value: 'document' },
-        ],
-      },
-    ],
-  },
-  {
-    id: 'v2-organizations',
-    method: 'GET',
-    path: '/api/v2/organizations',
-    label: 'Search Organizations',
-    price: 'API key',
-    description: 'Find organization profiles by name, domain, or description.',
-    params: [
-      { name: 'q', label: 'Organization Query', type: 'text', placeholder: 'Acme University', required: true },
-    ],
-  },
-  {
-    id: 'v2-records',
-    method: 'GET',
-    path: '/api/v2/records',
-    label: 'Search Records',
-    price: 'API key',
-    description: 'Find anchored records by filename, description, or fingerprint.',
-    params: [
-      { name: 'q', label: 'Record Query', type: 'text', placeholder: 'employment contract', required: true },
-    ],
-  },
-  {
-    id: 'v2-fingerprints',
-    method: 'GET',
-    path: '/api/v2/fingerprints',
-    label: 'Search Fingerprints',
-    price: 'API key',
-    description: 'Look up exact SHA-256 fingerprints and get matching public record IDs.',
-    params: [
-      { name: 'q', label: 'Fingerprint', type: 'text', placeholder: '64-character SHA-256 hex', required: true },
-    ],
-  },
-  {
-    id: 'v2-documents',
-    method: 'GET',
-    path: '/api/v2/documents',
-    label: 'Search Documents',
-    price: 'API key',
-    description: 'Find document-like records by filename or description.',
-    params: [
-      { name: 'q', label: 'Document Query', type: 'text', placeholder: 'msa.pdf', required: true },
-    ],
-  },
-  {
-    id: 'entity',
-    method: 'GET',
-    path: '/api/v1/verify/entity',
-    label: 'Entity Lookup',
-    price: '$0.005',
-    description: 'Look up an entity by name, domain, or identifier across the credential registry.',
-    params: [
-      { name: 'name', label: 'Entity Name', type: 'text', placeholder: 'Acme University' },
-      { name: 'domain', label: 'Domain', type: 'text', placeholder: 'acme.edu' },
-      { name: 'identifier', label: 'Identifier', type: 'text', placeholder: 'OPEID:00123400' },
-    ],
-  },
-  {
-    id: 'compliance',
-    method: 'GET',
-    path: '/api/v1/compliance/check',
-    label: 'Compliance Check',
-    price: '$0.010',
-    description: 'Run a compliance check against an entity within a specific jurisdiction.',
-    params: [
-      { name: 'entity', label: 'Entity Name', type: 'text', placeholder: 'Acme Corp', required: true },
-      { name: 'jurisdiction', label: 'Jurisdiction', type: 'text', placeholder: 'US-CA' },
-    ],
-  },
-  {
-    id: 'regulatory',
-    method: 'GET',
-    path: '/api/v1/regulatory/lookup',
-    label: 'Regulatory Lookup',
-    price: '$0.002',
-    description: 'Query regulatory records by keyword and optionally filter by source.',
-    params: [
-      { name: 'query', label: 'Query', type: 'text', placeholder: 'higher education accreditation', required: true },
-      { name: 'source', label: 'Source Filter', type: 'text', placeholder: 'DAPIP' },
-    ],
-  },
-  {
-    id: 'cle',
-    method: 'GET',
-    path: '/api/v1/cle/verify',
-    label: 'CLE Verification',
-    price: '$0.005',
-    description: 'Verify CLE compliance for an attorney by bar number and jurisdiction.',
-    params: [
-      { name: 'barNumber', label: 'Bar Number', type: 'text', placeholder: '12345', required: true },
-      { name: 'jurisdiction', label: 'Jurisdiction', type: 'text', placeholder: 'CA' },
-    ],
-  },
-  {
-    id: 'ai-search',
-    method: 'POST',
-    path: '/api/v1/ai/search',
-    label: 'AI Semantic Search',
-    price: '$0.010',
-    description: 'Semantic search across the credential registry using natural language queries.',
-    params: [
-      { name: 'query', label: 'Search Query', type: 'text', placeholder: 'accredited nursing programs in California', required: true },
-    ],
-  },
-  {
-    id: 'nessie',
-    method: 'GET',
-    path: '/api/v1/nessie/query',
-    label: 'Nessie AI Query',
-    price: '$0.010',
-    description: 'Query the Nessie AI assistant for credential intelligence and regulatory insights.',
-    params: [
-      { name: 'query', label: 'Query', type: 'text', placeholder: 'What are the accreditation requirements for nursing schools?', required: true },
-      { name: 'mode', label: 'Mode', type: 'select', options: [{ label: 'Retrieval', value: 'retrieval' }, { label: 'Context', value: 'context' }] },
-    ],
-  },
+  endpoint('GET', 'verify', '/api/v1/verify/:publicId', 'Verify Credential', VERIFY_PRICE, 'Verify a credential by its public ID and receive full cryptographic proof.', [
+    textParam('publicId', 'Public ID', 'abc123-def456', true),
+  ]),
+  endpoint('POST', 'verify-batch', '/api/v1/verify/batch', 'Batch Verification', '$0.002/item', 'Verify multiple credentials in a single request. Up to 100 items per batch.', [
+    textParam('public_ids', 'Public IDs (comma-separated)', 'abc123,def456,ghi789', true),
+  ]),
+  endpoint('GET', 'v2-search', '/api/v2/search', 'Search Everything', API_KEY_PRICE, 'Search organizations, records, fingerprints, and documents with one API-key endpoint.', [
+    textParam('q', 'Search Query', 'Acme, contract.pdf, or a SHA-256 fingerprint', true),
+    selectParam('type', 'Type', searchTypeOptions),
+  ]),
+  apiKeySearchEndpoint('v2-organizations', '/api/v2/organizations', 'Search Organizations', 'Find organization profiles by name, domain, or description.', 'Organization Query', 'Acme University'),
+  apiKeySearchEndpoint('v2-records', '/api/v2/records', 'Search Records', 'Find anchored records by filename, description, or fingerprint.', 'Record Query', 'employment contract'),
+  apiKeySearchEndpoint('v2-fingerprints', '/api/v2/fingerprints', 'Search Fingerprints', 'Look up exact SHA-256 fingerprints and get matching public record IDs.', 'Fingerprint', '64-character SHA-256 hex'),
+  apiKeySearchEndpoint('v2-documents', '/api/v2/documents', 'Search Documents', 'Find document-like records by filename or description.', 'Document Query', 'msa.pdf'),
+  endpoint('GET', 'entity', '/api/v1/verify/entity', 'Entity Lookup', '$0.005', 'Look up an entity by name, domain, or identifier across the credential registry.', [
+    textParam('name', 'Entity Name', 'Acme University'),
+    textParam('domain', 'Domain', 'acme.edu'),
+    textParam('identifier', 'Identifier', 'OPEID:00123400'),
+  ]),
+  endpoint('GET', 'compliance', '/api/v1/compliance/check', 'Compliance Check', AI_PRICE, 'Run a compliance check against an entity within a specific jurisdiction.', [
+    textParam('entity', 'Entity Name', 'Acme Corp', true),
+    textParam('jurisdiction', 'Jurisdiction', 'US-CA'),
+  ]),
+  endpoint('GET', 'regulatory', '/api/v1/regulatory/lookup', 'Regulatory Lookup', VERIFY_PRICE, 'Query regulatory records by keyword and optionally filter by source.', [
+    textParam('query', 'Query', 'higher education accreditation', true),
+    textParam('source', 'Source Filter', 'DAPIP'),
+  ]),
+  endpoint('GET', 'cle', '/api/v1/cle/verify', 'CLE Verification', '$0.005', 'Verify CLE compliance for an attorney by bar number and jurisdiction.', [
+    textParam('barNumber', 'Bar Number', '12345', true),
+    textParam('jurisdiction', 'Jurisdiction', 'CA'),
+  ]),
+  endpoint('POST', 'ai-search', '/api/v1/ai/search', 'AI Semantic Search', AI_PRICE, 'Semantic search across the credential registry using natural language queries.', [
+    textParam('query', 'Search Query', 'accredited nursing programs in California', true),
+  ]),
+  endpoint('GET', 'nessie', '/api/v1/nessie/query', 'Nessie AI Query', AI_PRICE, 'Query the Nessie AI assistant for credential intelligence and regulatory insights.', [
+    textParam('query', 'Query', 'What are the accreditation requirements for nursing schools?', true),
+    selectParam('mode', 'Mode', nessieModeOptions),
+  ]),
 ];
 
 type AuthMode = 'apikey' | 'x402';
