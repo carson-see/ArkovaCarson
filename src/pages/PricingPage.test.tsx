@@ -63,10 +63,31 @@ function renderPage() {
 }
 
 const basePlans = [
-  { id: 'plan-free', name: 'Free', price_cents: 0, records_per_month: 3, stripe_price_id: null },
-  { id: 'plan-ind', name: 'Individual', price_cents: 1900, records_per_month: 10, stripe_price_id: 'price_ind' },
-  { id: 'plan-pro', name: 'Professional', price_cents: 4900, records_per_month: 100, stripe_price_id: 'price_pro' },
-  { id: 'plan-org', name: 'Organization', price_cents: null, records_per_month: null, stripe_price_id: null },
+  { id: 'free', name: 'Free', price_cents: 0, billing_period: 'month', records_per_month: 3, stripe_price_id: null },
+  {
+    id: 'individual_verified_monthly',
+    name: 'Verified Individual',
+    price_cents: 1200,
+    billing_period: 'month',
+    records_per_month: 10,
+    stripe_price_id: 'price_ind',
+  },
+  {
+    id: 'small_business',
+    name: 'Small Business',
+    price_cents: 50000,
+    billing_period: 'month',
+    records_per_month: 250,
+    stripe_price_id: 'price_small',
+  },
+  {
+    id: 'medium_business',
+    name: 'Medium Business',
+    price_cents: 0,
+    billing_period: 'custom',
+    records_per_month: 999999,
+    stripe_price_id: null,
+  },
 ];
 
 function mockBillingDefaults(overrides: Record<string, unknown> = {}) {
@@ -107,10 +128,9 @@ describe('PricingPage', () => {
   it('renders plan cards for each plan', () => {
     renderPage();
     expect(screen.getByText('Free')).toBeInTheDocument();
-    expect(screen.getByText('Individual')).toBeInTheDocument();
-    expect(screen.getByText('Professional')).toBeInTheDocument();
-    // Organization appears in both card title and description/features
-    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Verified Individual')).toBeInTheDocument();
+    expect(screen.getByText('Small Business')).toBeInTheDocument();
+    expect(screen.getByText('Medium Business')).toBeInTheDocument();
   });
 
   it('shows loading spinner when billing is loading', () => {
@@ -129,7 +149,7 @@ describe('PricingPage', () => {
   it('shows "Change Plan" when user has active subscription', () => {
     mockBillingDefaults({
       subscription: { status: 'active', current_period_end: '2026-04-01' },
-      plan: { id: 'plan-ind', name: 'Individual', records_per_month: 10 },
+      plan: { id: 'individual_verified_monthly', name: 'Verified Individual', records_per_month: 10 },
     });
     renderPage();
     expect(screen.getByText(BILLING_LABELS.CHANGE_PLAN)).toBeInTheDocument();
@@ -138,26 +158,22 @@ describe('PricingPage', () => {
   it('shows BillingOverview for active subscribers', () => {
     mockBillingDefaults({
       subscription: { status: 'active', current_period_end: '2026-04-01' },
-      plan: { id: 'plan-ind', name: 'Individual', records_per_month: 10 },
+      plan: { id: 'individual_verified_monthly', name: 'Verified Individual', records_per_month: 10 },
     });
     renderPage();
     // BillingOverview renders plan name
-    expect(screen.getAllByText('Individual').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Verified Individual').length).toBeGreaterThanOrEqual(1);
   });
 
   it('calls startCheckout when selecting a plan', async () => {
     mockStartCheckout.mockResolvedValue(null);
     renderPage();
 
-    const selectButtons = screen.getAllByRole('button').filter(
-      btn => btn.textContent?.includes('Select') || btn.textContent?.includes('Get Started'),
-    );
-    if (selectButtons.length > 0) {
-      fireEvent.click(selectButtons[0]);
-      await waitFor(() => {
-        expect(mockStartCheckout).toHaveBeenCalled();
-      });
-    }
+    const selectButtons = screen.getAllByRole('button', { name: 'Select Plan' });
+    fireEvent.click(selectButtons[1]);
+    await waitFor(() => {
+      expect(mockStartCheckout).toHaveBeenCalledWith('individual_verified_monthly');
+    });
   });
 
   it('navigates to Settings when back button clicked', () => {
@@ -170,22 +186,22 @@ describe('PricingPage', () => {
     expect(mockNavigate).toHaveBeenCalled();
   });
 
-  it('marks Professional plan as recommended', () => {
+  it('marks Verified Individual plan as recommended', () => {
     renderPage();
-    // The Professional plan should have a "recommended" indicator
-    expect(screen.getByText('Professional')).toBeInTheDocument();
+    expect(screen.getByText('Verified Individual')).toBeInTheDocument();
+    expect(screen.getByText('Recommended')).toBeInTheDocument();
   });
 
   it('shows trialing subscription as active', () => {
     mockBillingDefaults({
       subscription: { status: 'trialing', current_period_end: '2026-04-01' },
-      plan: { id: 'plan-pro', name: 'Professional', records_per_month: 100 },
+      plan: { id: 'small_business', name: 'Small Business', records_per_month: 250 },
     });
     renderPage();
     expect(screen.getByText(BILLING_LABELS.CHANGE_PLAN)).toBeInTheDocument();
   });
 
-  it('shows Custom price for Organization plan', () => {
+  it('shows Custom price for custom organization plans', () => {
     renderPage();
     expect(screen.getByText('Custom')).toBeInTheDocument();
   });

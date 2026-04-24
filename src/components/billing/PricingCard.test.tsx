@@ -36,12 +36,12 @@ describe('PricingCard', () => {
 
   it('shows records included', () => {
     render(<PricingCard plan={basePlan} />);
-    expect(screen.getByText('100 records/month')).toBeInTheDocument();
+    expect(screen.getByText('100 anchors/month')).toBeInTheDocument();
   });
 
-  it('shows "Unlimited records" for unlimited plan', () => {
+  it('shows custom volume copy for unlimited plan', () => {
     render(<PricingCard plan={{ ...basePlan, recordsIncluded: 'unlimited' }} />);
-    expect(screen.getByText('Unlimited records')).toBeInTheDocument();
+    expect(screen.getByText('Custom anchor volume')).toBeInTheDocument();
   });
 
   it('shows "Contact us" for null price', () => {
@@ -75,6 +75,7 @@ describe('PricingCard', () => {
   it('shows "Contact Sales" for null price plans', () => {
     render(<PricingCard plan={{ ...basePlan, price: null }} />);
     expect(screen.getByRole('button', { name: 'Contact Sales' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Contact Sales' })).toBeDisabled();
   });
 
   it('disables button when loading', () => {

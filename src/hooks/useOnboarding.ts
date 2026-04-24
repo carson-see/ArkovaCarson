@@ -37,6 +37,13 @@ interface OnboardingActions {
     legalName: string;
     displayName: string;
     domain: string | null;
+    organizationType?: string | null;
+    description?: string | null;
+    websiteUrl?: string | null;
+    linkedinUrl?: string | null;
+    twitterUrl?: string | null;
+    location?: string | null;
+    verifyOrganization?: boolean;
     einTaxId?: string | null;
   }) => Promise<OnboardingResult | null>;
   lookupOrgByEmail: (email: string) => Promise<OrgMatch | null>;
@@ -84,6 +91,13 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
       legalName: string;
       displayName: string;
       domain: string | null;
+      organizationType?: string | null;
+      description?: string | null;
+      websiteUrl?: string | null;
+      linkedinUrl?: string | null;
+      twitterUrl?: string | null;
+      location?: string | null;
+      verifyOrganization?: boolean;
       einTaxId?: string | null;
     }): Promise<OnboardingResult | null> => {
       setLoading(true);
@@ -99,6 +113,13 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
             p_org_legal_name: data.legalName,
             p_org_display_name: data.displayName,
             p_org_domain: data.domain,
+            p_org_type: data.organizationType,
+            p_org_description: data.description,
+            p_org_website_url: data.websiteUrl,
+            p_org_linkedin_url: data.linkedinUrl,
+            p_org_twitter_url: data.twitterUrl,
+            p_org_location: data.location,
+            p_org_ein_tax_id: data.verifyOrganization ? data.einTaxId : null,
           }
         );
 
@@ -110,7 +131,15 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
               legal_name: data.legalName || data.displayName,
               display_name: data.displayName,
               domain: data.domain,
-              ...(data.einTaxId ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' } : {}),
+              org_type: data.organizationType,
+              description: data.description,
+              website_url: data.websiteUrl,
+              linkedin_url: data.linkedinUrl,
+              twitter_url: data.twitterUrl,
+              location: data.location,
+              ...(data.verifyOrganization && data.einTaxId
+                ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' }
+                : {}),
             })
             .select('id')
             .single();
@@ -129,7 +158,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
               .insert({
                 org_id: orgData.id,
                 user_id: currentUser.id,
-                role: 'admin' as const,
+                role: 'owner' as const,
               });
 
             // Update profile with org_id
@@ -162,7 +191,15 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
               legal_name: data.legalName || data.displayName,
               display_name: data.displayName,
               domain: data.domain,
-              ...(data.einTaxId ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' } : {}),
+              org_type: data.organizationType,
+              description: data.description,
+              website_url: data.websiteUrl,
+              linkedin_url: data.linkedinUrl,
+              twitter_url: data.twitterUrl,
+              location: data.location,
+              ...(data.verifyOrganization && data.einTaxId
+                ? { ein_tax_id: data.einTaxId, verification_status: 'PENDING' }
+                : {}),
             })
             .select('id')
             .single();
@@ -177,7 +214,7 @@ export function useOnboarding(): OnboardingState & OnboardingActions {
           if (currentUser && orgData) {
             await supabase
               .from('org_members')
-              .insert({ org_id: orgData.id, user_id: currentUser.id, role: 'admin' as const });
+              .insert({ org_id: orgData.id, user_id: currentUser.id, role: 'owner' as const });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             await (supabase as any)
               .from('profiles')

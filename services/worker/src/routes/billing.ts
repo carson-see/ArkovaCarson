@@ -96,6 +96,7 @@ billingRouter.post('/checkout/session', rateLimiters.checkout, async (req, res) 
       customerEmail: profile.email,
       successUrl: BILLING_SUCCESS_URL,
       cancelUrl: BILLING_CANCEL_URL,
+      metadata: { plan_id: plan.id },
     });
 
     logger.info({ userId, planId, sessionId: session.sessionId }, 'Checkout session created');

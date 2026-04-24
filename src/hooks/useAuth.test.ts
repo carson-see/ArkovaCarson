@@ -152,6 +152,27 @@ describe('useAuth', () => {
     });
   });
 
+  it('signInWithLinkedIn calls signInWithOAuth', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockSignInWithOAuth.mockResolvedValue({ error: null });
+
+    const { useAuth } = await import('./useAuth');
+    const { result } = renderHook(() => useAuth());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.signInWithLinkedIn();
+    });
+
+    expect(mockSignInWithOAuth).toHaveBeenCalledWith({
+      provider: 'linkedin_oidc',
+      options: { redirectTo: expect.stringContaining('/auth/callback') },
+    });
+  });
+
   it('signOut clears session and sets error on failure', async () => {
     const mockUser = { id: 'user-1', email: 'test@test.com' };
     mockGetSession.mockResolvedValue({

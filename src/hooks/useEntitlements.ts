@@ -52,8 +52,7 @@ interface EntitlementData {
 async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
   // BUG-2026-04-19-001 — this-month count moved to the SECURITY DEFINER
   // `get_user_monthly_anchor_count` RPC (migration 0220); details there.
-  // On any failure we degrade to 0: recordsLimit is null (unlimited) in
-  // beta so the count is advisory, and the widget must not strand.
+  // On any failure we degrade to 0 so the usage widget can still render.
   // `as any` until `npm run gen:types` picks up the new RPC.
   const countPromise = supabase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,9 +79,8 @@ async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
 
   if (subResult.error) throw subResult.error;
   if (plansResult.error) throw plansResult.error;
-  // NOTE: intentionally do NOT throw on countResult.error — the count is
-  // advisory in beta (recordsLimit is always null). Throwing here would keep
-  // the widget in its skeleton state, which is BUG-2026-04-19-001.
+  // NOTE: intentionally do NOT throw on countResult.error. A failed count
+  // should not strand the widget in its skeleton state.
   if (countResult.error) {
     console.warn('[useEntitlements] anchor count RPC error, falling back to 0:', countResult.error);
   }
@@ -92,16 +90,19 @@ async function fetchEntitlementData(userId: string): Promise<EntitlementData> {
   const freePlan = plans.find(p => p.id === 'free');
 
   let planName: string;
+  let recordsLimit: number | null;
   if (subData?.plan_id && subData.status === 'active') {
     const activePlan = plans.find(p => p.id === subData.plan_id);
     planName = activePlan?.name ?? freePlan?.name ?? 'Free';
+    recordsLimit = activePlan?.records_per_month ?? freePlan?.records_per_month ?? 3;
   } else {
     planName = freePlan?.name ?? 'Free';
+    recordsLimit = freePlan?.records_per_month ?? 3;
   }
 
   return {
     recordsUsed: countResult.count ?? 0,
-    recordsLimit: null, // null = unlimited in beta
+    recordsLimit,
     planName,
   };
 }
@@ -123,8 +124,8 @@ export function useEntitlements(): EntitlementState & EntitlementActions {
 
   // When no user: return free tier defaults (not unlimited)
   const recordsUsed = data?.recordsUsed ?? 0;
-  const recordsLimit = !user ? 3 : (queryError ? null : (data?.recordsLimit ?? null));
-  const planName = !user ? 'Free' : (queryError ? 'Beta' : (data?.planName ?? 'Free'));
+  const recordsLimit = !user ? 3 : (queryError ? 3 : (data?.recordsLimit ?? 3));
+  const planName = !user ? 'Free' : (queryError ? 'Free' : (data?.planName ?? 'Free'));
   const error = queryError ? (queryError as Error).message : null;
 
   const isUnlimited = recordsLimit === null;

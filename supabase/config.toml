@@ -49,7 +49,7 @@ enable_signup = true
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
-enable_confirmations = false
+enable_confirmations = true
 
 [auth.email.template.confirmation]
 subject = "Confirm your Arkova account"
