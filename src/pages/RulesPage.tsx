@@ -112,7 +112,7 @@ export function RulesPage() {
   }, []);
 
   useEffect(() => {
-    void fetchRules();
+    fetchRules().catch(() => undefined);
   }, [fetchRules]);
 
   async function patchRule(ruleId: string, body: Record<string, unknown>): Promise<boolean> {

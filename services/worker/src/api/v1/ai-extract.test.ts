@@ -75,6 +75,41 @@ function mockManifestTable() {
   };
 }
 
+function mockUsageEventsTable() {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            not: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    }),
+    insert: vi.fn().mockResolvedValue({ error: null }),
+  };
+}
+
+function mockProfileTable() {
+  return {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
+  };
+}
+
+function mockExtractionDatabase(): void {
+  (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+    if (table === 'ai_usage_events') return mockUsageEventsTable();
+    if (table === 'extraction_manifests') return mockManifestTable();
+    return mockProfileTable();
+  });
+}
+
 type AIExtractResponse = Record<string, unknown> & {
   confidence?: number;
   provider?: string;
@@ -120,35 +155,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    // EFF-1: db.from is called for cache lookup (ai_usage_events) then profiles
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 50,
@@ -171,34 +178,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,
@@ -249,34 +229,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,
@@ -308,34 +261,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,
@@ -372,34 +298,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,
@@ -426,34 +325,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,
@@ -481,34 +353,7 @@ describe('AI Extraction Endpoint', () => {
       const handler = getPostHandler();
       const { req, res } = createMockReqRes(validBody, 'user-123');
 
-      (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-        if (table === 'ai_usage_events') {
-          return {
-            select: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  eq: vi.fn().mockReturnValue({
-                    not: vi.fn().mockReturnValue({
-                      order: vi.fn().mockReturnValue({
-                        limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                      }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-            insert: vi.fn().mockResolvedValue({ error: null }),
-          };
-        }
-        if (table === 'extraction_manifests') {
-          return mockManifestTable();
-        }
-        return {
-          select: vi.fn().mockReturnThis(),
-          eq: vi.fn().mockReturnThis(),
-          single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-        };
-      });
+      mockExtractionDatabase();
 
       (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
         monthlyAllocation: 500,
@@ -551,34 +396,7 @@ describe('AI Extraction Endpoint', () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
-    (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
-      if (table === 'ai_usage_events') {
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              eq: vi.fn().mockReturnValue({
-                eq: vi.fn().mockReturnValue({
-                  not: vi.fn().mockReturnValue({
-                    order: vi.fn().mockReturnValue({
-                      limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-                    }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-          insert: vi.fn().mockResolvedValue({ error: null }),
-        };
-      }
-      if (table === 'extraction_manifests') {
-        return mockManifestTable();
-      }
-      return {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        single: vi.fn().mockResolvedValue({ data: { org_id: 'org-456' }, error: null }),
-      };
-    });
+    mockExtractionDatabase();
 
     (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
       monthlyAllocation: 500,

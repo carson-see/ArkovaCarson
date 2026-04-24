@@ -627,10 +627,7 @@ export class GeminiProvider implements IAIProvider {
 
 function parseExtractionJson(text: string): Record<string, unknown> {
   const cleaned = stripJsonComments(text).trim();
-  const unfenced = cleaned
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  const unfenced = stripMarkdownJsonFence(cleaned);
 
   try {
     return ensureJsonObject(JSON.parse(unfenced));
@@ -642,6 +639,20 @@ function parseExtractionJson(text: string): Record<string, unknown> {
     }
     throw initialError;
   }
+}
+
+function stripMarkdownJsonFence(cleaned: string): string {
+  if (!cleaned.startsWith('```')) return cleaned;
+
+  const firstLineBreak = cleaned.indexOf('\n');
+  const withoutOpeningFence = firstLineBreak >= 0
+    ? cleaned.slice(firstLineBreak + 1)
+    : cleaned.slice(3);
+  const trimmed = withoutOpeningFence.trim();
+
+  return trimmed.endsWith('```')
+    ? trimmed.slice(0, -3).trim()
+    : trimmed;
 }
 
 function ensureJsonObject(value: unknown): Record<string, unknown> {
