@@ -3,6 +3,7 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
+import { createV2ScopeRateLimit } from './rateLimit.js';
 
 export const agentToolsRouter = Router();
 
@@ -59,6 +60,7 @@ function mapPublicAnchor(row: Record<string, unknown>, publicId: string): Record
 agentToolsRouter.get(
   '/verify/:fingerprint',
   requireScopeV2('read:records'),
+  createV2ScopeRateLimit('read:records'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const fingerprint = pathParam(req.params.fingerprint);
     if (!fingerprint || !SHA256_HEX_RE.test(fingerprint)) {
@@ -117,6 +119,7 @@ agentToolsRouter.get(
 agentToolsRouter.get(
   '/anchors/:publicId',
   requireScopeV2('read:records'),
+  createV2ScopeRateLimit('read:records'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const publicId = pathParam(req.params.publicId);
     if (!publicId || !PUBLIC_ID_RE.test(publicId)) {
@@ -144,6 +147,7 @@ agentToolsRouter.get(
 agentToolsRouter.get(
   '/orgs',
   requireScopeV2('read:orgs'),
+  createV2ScopeRateLimit('read:orgs'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     if (!req.apiKey?.orgId) {
       next(ProblemError.authenticationRequired());

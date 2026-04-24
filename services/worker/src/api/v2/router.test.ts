@@ -27,6 +27,7 @@ vi.mock('./auth.js', () => ({
 
 vi.mock('./rateLimit.js', () => ({
   v2ApiKeyRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
+  createV2ScopeRateLimit: () => (_req: unknown, _res: unknown, next: () => void) => next(),
 }));
 
 vi.mock('../../utils/db.js', () => ({
