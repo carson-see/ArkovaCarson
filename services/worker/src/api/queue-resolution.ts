@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
+import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 
 export interface PendingResolutionAnchor {
   id: string;
@@ -107,6 +108,7 @@ export async function handleListPendingResolution(
 export async function handleResolveQueue(
   req: Request,
   res: Response,
+  actorUserId?: string,
 ): Promise<void> {
   const parsed = ResolveQueueInput.safeParse(req.body);
   if (!parsed.success) {
@@ -151,8 +153,38 @@ export async function handleResolveQueue(
     }
 
     res.json({ resolution_id: data });
+    const notificationOrgId = actorUserId
+      ? await getSelectedAnchorOrgId(parsed.data.selected_anchor_id)
+      : null;
+    if (notificationOrgId) {
+      void emitOrgAdminNotifications({
+        type: 'queue_run_completed',
+        organizationId: notificationOrgId,
+        payload: {
+          resolutionId: data,
+          externalFileId: parsed.data.external_file_id,
+          selectedAnchorId: parsed.data.selected_anchor_id,
+          actorUserId,
+        },
+      });
+    }
   } catch (err) {
     logger.error({ error: err }, 'handleResolveQueue unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
+}
+
+async function getSelectedAnchorOrgId(anchorId: string): Promise<string | null> {
+  const { data, error } = await db
+    .from('anchors')
+    .select('org_id')
+    .eq('id', anchorId)
+    .maybeSingle();
+
+  if (error) {
+    logger.warn({ error, anchorId }, 'Failed to load selected anchor org for queue notification');
+    return null;
+  }
+
+  return (data?.org_id as string | null) ?? null;
 }

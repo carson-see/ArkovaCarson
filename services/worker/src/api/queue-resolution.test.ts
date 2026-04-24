@@ -6,13 +6,22 @@ import type { Request, Response } from 'express';
 
 // Mock db + logger BEFORE importing the SUT so the SUT captures the mocked modules.
 const rpcMock = vi.fn();
+const fromMock = vi.fn();
+const emitOrgAdminNotificationsMock = vi.fn();
 
 vi.mock('../utils/db.js', () => ({
-  db: { rpc: (...args: unknown[]) => rpcMock(...args) },
+  db: {
+    rpc: (...args: unknown[]) => rpcMock(...args),
+    from: (...args: unknown[]) => fromMock(...args),
+  },
 }));
 
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../notifications/dispatcher.js', () => ({
+  emitOrgAdminNotifications: (...args: unknown[]) => emitOrgAdminNotificationsMock(...args),
 }));
 
 import {
@@ -149,7 +158,11 @@ describe('handleListPendingResolution', () => {
 });
 
 describe('handleResolveQueue', () => {
-  beforeEach(() => rpcMock.mockReset());
+  beforeEach(() => {
+    rpcMock.mockReset();
+    fromMock.mockReset();
+    emitOrgAdminNotificationsMock.mockReset();
+  });
   afterEach(() => vi.restoreAllMocks());
 
   it('rejects invalid body with 400', async () => {
@@ -171,6 +184,36 @@ describe('handleResolveQueue', () => {
       res,
     );
     expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
+  });
+
+  it('notifies admins for the selected anchor organization', async () => {
+    rpcMock.mockResolvedValue({ data: 'res-1', error: null });
+    const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    const eq = vi.fn().mockReturnValue({ maybeSingle });
+    const select = vi.fn().mockReturnValue({ eq });
+    fromMock.mockReturnValue({ select });
+
+    const { res } = mockRes();
+    await handleResolveQueue(
+      mockReq({
+        body: {
+          external_file_id: 'drive-123',
+          selected_anchor_id: '11111111-1111-1111-1111-111111111111',
+        },
+      }),
+      res,
+      'user-1',
+    );
+
+    expect(fromMock).toHaveBeenCalledWith('anchors');
+    expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
+      type: 'queue_run_completed',
+      organizationId: 'org-1',
+      payload: expect.objectContaining({
+        resolutionId: 'res-1',
+        actorUserId: 'user-1',
+      }),
+    });
   });
 
   it('maps RPC 403 for insufficient privileges', async () => {

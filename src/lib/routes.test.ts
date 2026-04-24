@@ -5,7 +5,7 @@
  */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { verifyPath, verifyUrl, getAppBaseUrl, memberDetailPath, issuerRegistryPath, recordDetailPath } from './routes';
+import { verifyPath, verifyUrl, getAppBaseUrl, memberDetailPath, issuerRegistryPath, publicProfilePath, recordDetailPath } from './routes';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -26,6 +26,10 @@ describe('route path helpers', () => {
 
   it('issuerRegistryPath builds correct path', () => {
     expect(issuerRegistryPath('org-789')).toBe('/issuer/org-789');
+  });
+
+  it('publicProfilePath builds correct path', () => {
+    expect(publicProfilePath('prof-123')).toBe('/profile/prof-123');
   });
 });
 

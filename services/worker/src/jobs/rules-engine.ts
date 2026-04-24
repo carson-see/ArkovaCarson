@@ -25,6 +25,7 @@ import {
   type TriggerEvent,
   type TriggerType,
 } from '../rules/evaluator.js';
+import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 
 export interface RulesEnginePassResult {
   events_processed: number;
@@ -225,6 +226,19 @@ export async function runRulesEngine(): Promise<RulesEnginePassResult> {
   const persist = await persistMatches(inserts);
   result.matches_recorded = persist.recorded;
   if (persist.errored) result.errors += 1;
+  if (persist.recorded > 0) {
+    const byNotificationOrg = new Map<string, number>();
+    for (const insert of inserts) {
+      byNotificationOrg.set(insert.org_id, (byNotificationOrg.get(insert.org_id) ?? 0) + 1);
+    }
+    await Promise.all([...byNotificationOrg.entries()].map(([orgId, matchesRecorded]) =>
+      emitOrgAdminNotifications({
+        type: 'rule_fired',
+        organizationId: orgId,
+        payload: { matchesRecorded },
+      }),
+    ));
+  }
 
   logger.info(
     {

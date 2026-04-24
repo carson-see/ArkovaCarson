@@ -27,6 +27,7 @@ vi.mock('../utils/logger.js', () => ({
 import {
   emitNotification,
   emitBulkNotifications,
+  emitOrgAdminNotifications,
   getUnreadCount,
   markRead,
 } from './dispatcher.js';
@@ -78,6 +79,28 @@ describe('emitBulkNotifications', () => {
   it('skips empty array', async () => {
     await emitBulkNotifications([]);
     expect(mockInsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('emitOrgAdminNotifications', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('fans out one notification per org admin', async () => {
+    mockIn.mockResolvedValueOnce({
+      data: [{ user_id: 'u1' }, { user_id: 'u2' }, { user_id: 'u1' }],
+      error: null,
+    });
+
+    await emitOrgAdminNotifications({
+      type: 'rule_fired',
+      organizationId: 'org1',
+      payload: { ruleId: 'r1' },
+    });
+
+    expect(mockInsert).toHaveBeenCalledWith([
+      { user_id: 'u1', organization_id: 'org1', type: 'rule_fired', payload: { ruleId: 'r1' } },
+      { user_id: 'u2', organization_id: 'org1', type: 'rule_fired', payload: { ruleId: 'r1' } },
+    ]);
   });
 });
 

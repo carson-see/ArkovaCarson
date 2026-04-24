@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Building2, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2 } from 'lucide-react';
+import { Bell, Building2, ListChecks, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -40,7 +40,7 @@ import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
-import { WORKER_URL } from '@/lib/workerClient';
+import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
 type Anchor = Database['public']['Tables']['anchors']['Row'];
@@ -73,6 +73,7 @@ export function OrgProfilePage() {
 
   // Org records count
   const [recordsCount, setRecordsCount] = useState<number | null>(null);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
 
   // Settings state
   const [orgDisplayName, setOrgDisplayName] = useState('');
@@ -132,6 +133,21 @@ export function OrgProfilePage() {
     }
     fetchRecordsCount();
   }, [orgId, refreshKey]);
+
+  useEffect(() => {
+    async function fetchUnreadNotifications() {
+      if (!orgId || !userRole) return;
+      try {
+        const res = await workerFetch('/api/notifications/unread-count', { method: 'GET' });
+        if (!res.ok) return;
+        const body = await res.json().catch(() => ({})) as { count?: number };
+        setUnreadNotifications(typeof body.count === 'number' ? body.count : 0);
+      } catch {
+        setUnreadNotifications(0);
+      }
+    }
+    void fetchUnreadNotifications();
+  }, [orgId, userRole]);
 
   // Fetch parent org name for child orgs
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -349,7 +365,7 @@ export function OrgProfilePage() {
               )}
             </div>
             {/* Action buttons (top right) */}
-            <div className="flex gap-2 pb-2">
+            <div className="flex flex-wrap justify-end gap-2 pb-2">
               {userRole && (
                 <Badge variant="outline" className="text-xs h-8 px-3">
                   {userRole === 'owner' && <Crown className="mr-1.5 h-3.5 w-3.5" />}
@@ -358,6 +374,28 @@ export function OrgProfilePage() {
                   {userRole.charAt(0).toUpperCase() + userRole.slice(1)}
                 </Badge>
               )}
+              <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.RULES)}>
+                <ScrollText className="mr-2 h-4 w-4" />
+                Rules
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(ROUTES.ANCHOR_QUEUE)}>
+                <ListChecks className="mr-2 h-4 w-4" />
+                Queue
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => navigate(ROUTES.ANCHOR_QUEUE)}
+                aria-label="Open queue notifications"
+                className="relative"
+              >
+                <Bell className="h-4 w-4" />
+                {unreadNotifications > 0 && (
+                  <span className="absolute -right-1 -top-1 min-w-5 rounded-full bg-primary px-1 text-[10px] font-semibold text-primary-foreground">
+                    {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                  </span>
+                )}
+              </Button>
               <Button variant="outline" size="sm" onClick={() => navigate(issuerRegistryPath(orgId))}>
                 <ExternalLink className="mr-2 h-4 w-4" />
                 View Public Page

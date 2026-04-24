@@ -20,7 +20,8 @@ import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin
 import { handleListPendingResolution, handleResolveQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleTreasuryHealth } from '../api/treasury.js';
-import { handleListRules, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
+import { handleListRules, handleGetRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
+import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../api/notifications.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
 import { getConnectionInfo } from '../utils/db.js';
 import { getRateLimitStoreSize } from '../utils/rateLimit.js';
@@ -191,7 +192,7 @@ adminRouter.post('/queue/resolve', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleResolveQueue(req, res);
+    await handleResolveQueue(req, res, userId);
   } catch (error) {
     logger.error({ error }, 'Queue resolve request failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -247,6 +248,17 @@ adminRouter.get('/rules', async (req, res) => {
   }
 });
 
+adminRouter.get('/rules/:id', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleGetRule(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Rules detail request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 adminRouter.post('/rules', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
@@ -276,6 +288,29 @@ adminRouter.delete('/rules/:id', async (req, res) => {
     await handleDeleteRule(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules delete request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── User notifications: queue/job/version-review badges ───
+adminRouter.get('/notifications/unread-count', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleUnreadNotificationCount(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Notification count request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/notifications/mark-read', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleMarkNotificationsRead(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Notification mark-read request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

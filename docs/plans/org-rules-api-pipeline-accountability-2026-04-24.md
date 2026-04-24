@@ -11,6 +11,40 @@ implementation map next to the code reviewed in the pipeline PR.
 - `SCRUM-1126` - Smart queue rules and version control for automatic document anchoring.
 - `SCRUM-1127` - Make the API usable for API-key users and agents across search, records, fingerprints, documents, and organizations.
 
+## Implementation Update - SCRUM-1125 Through SCRUM-1127
+
+Completed in this PR:
+
+- Public org profiles now return verified status, safe public members,
+  anonymized private members, and approved sub-organizations from
+  `get_public_org_profile`.
+- Public members with `is_public_profile = true` are clickable and render
+  through the new `/profile/:profileId` public route.
+- Private org profiles now expose Rules, Queue, and notification badge entry
+  points alongside existing records, settings, revoke, and member management.
+- Rule writes are now org-admin-only on the worker, not just hidden in the UI.
+- Rules can be listed, opened, edited, enabled/disabled, and deleted. Full
+  trigger/action configs are fetched one scoped rule at a time.
+- Rule firing and queue resolution emit org-admin notifications so private
+  org pages can surface queue/job/version-review activity.
+- API-key clients now have direct v2 search aliases for organizations,
+  records, fingerprints, and documents in addition to `/api/v2/search`.
+
+Still tracked as follow-up work before production can claim the full product
+contract:
+
+- `SCRUM-1129` - Add an org-scoped manual `Run anchoring job` endpoint/button with an admin
+  guard. The existing batch anchor job is platform/global, so exposing it as-is
+  would be unsafe.
+- `SCRUM-1130` - Add a durable 24-hour org queue scheduler with last-run tracking and
+  idempotency keys.
+- `SCRUM-1131` - Replace JSON config editing with first-class form controls for each rule
+  type once connector setup UX is finalized.
+- `SCRUM-1132` - Expand the v2 API from search aliases into read/detail endpoints for any
+  resource agents need to inspect after search.
+- `SCRUM-1133` - Add a full notification center so users can review queue,
+  anchoring job, and version-review notifications instead of only seeing a badge.
+
 ## Pipeline And Bitcoin Anchoring Rules
 
 - One Bitcoin transaction can carry up to 10,000 anchors; batch sizing must use

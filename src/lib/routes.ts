@@ -21,6 +21,7 @@ export const ROUTES = {
   EMBED_VERIFY: '/embed/verify/:publicId',
   SEARCH: '/search',
   ISSUER_REGISTRY: '/issuer/:orgId',
+  PUBLIC_PROFILE: '/profile/:profileId',
   DEVELOPERS: '/developers',
   API_SANDBOX: '/developers/sandbox',
   CLE_API: '/cle',
@@ -73,6 +74,7 @@ export const ROUTES = {
   COMPLIANCE_DASHBOARD: '/organization/compliance',
 
   // Rules Engine (ARK-108)
+  RULES: '/organization/rules',
   RULE_BUILDER: '/organization/rules/new',
 
   // Admin Onboarding Wizard (UX-01 — SCRUM-1027)
@@ -140,6 +142,11 @@ export function recordDetailPath(id: string): string {
 /** Build a member detail URL for a given member ID */
 export function memberDetailPath(memberId: string): string {
   return `/organization/member/${memberId}`;
+}
+
+/** Build a public member profile URL for a public profile ID */
+export function publicProfilePath(profileId: string): string {
+  return `/profile/${profileId}`;
 }
 
 /** Build an org profile URL for a given org ID */

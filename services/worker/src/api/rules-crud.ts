@@ -2,6 +2,7 @@
  * Organization Rules CRUD API (ARK-105/108 — SCRUM-1017/1020)
  *
  * GET  /api/rules               → list caller's org rules (newest first)
+ * GET  /api/rules/:id           → fetch a full rule for review/edit
  * POST /api/rules               → create rule (enabled=false by default per ARK-110)
  * PATCH /api/rules/:id          → update rule (name/desc/enabled + optional config)
  * DELETE /api/rules/:id         → hard-delete rule (no soft-delete column yet)
@@ -101,6 +102,47 @@ async function getCallerOrgId(userId: string): Promise<string | null> {
   return (data?.org_id as string | null) ?? null;
 }
 
+async function isCallerOrgAdmin(userId: string, orgId: string): Promise<boolean> {
+  const { data: membership, error: membershipError } = await db
+    .from('org_members')
+    .select('role')
+    .eq('user_id', userId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+
+  if (membershipError) {
+    logger.warn({ error: membershipError, userId, orgId }, 'org_members admin lookup failed');
+  }
+
+  const role = (membership as { role?: string } | null)?.role;
+  if (role === 'owner' || role === 'admin') return true;
+
+  const { data: profile, error: profileError } = await db
+    .from('profiles')
+    .select('role, is_platform_admin')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (profileError) {
+    logger.warn({ error: profileError, userId }, 'profile admin fallback lookup failed');
+    return false;
+  }
+
+  const profileRow = profile as { role?: string | null; is_platform_admin?: boolean | null } | null;
+  return profileRow?.role === 'ORG_ADMIN' || profileRow?.is_platform_admin === true;
+}
+
+async function requireOrgAdmin(userId: string, orgId: string, res: Response): Promise<boolean> {
+  if (await isCallerOrgAdmin(userId, orgId)) return true;
+  res.status(403).json({
+    error: {
+      code: 'forbidden',
+      message: 'Only organization admins can manage rules',
+    },
+  });
+  return false;
+}
+
 export async function handleListRules(
   userId: string,
   _req: Request,
@@ -139,6 +181,54 @@ export async function handleListRules(
   }
 }
 
+export async function handleGetRule(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
+  const idParsed = UuidSchema.safeParse(req.params.id);
+  if (!idParsed.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
+    return;
+  }
+
+  try {
+    // Full configs are intentionally kept out of the list response. The edit
+    // surface fetches one scoped row at a time so a compromised client cannot
+    // bulk scrape every connector/action config for the org.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('organization_rules')
+      .select(
+        'id, org_id, name, description, enabled, trigger_type, trigger_config, action_type, action_config, created_at, updated_at, last_executed_at',
+      )
+      .eq('id', idParsed.data)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (error) {
+      logger.error({ error, ruleId: idParsed.data }, 'organization_rules detail fetch failed');
+      res.status(500).json({ error: { code: 'detail_failed', message: 'Failed to load rule' } });
+      return;
+    }
+    if (!data) {
+      res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
+      return;
+    }
+
+    res.json({ item: data });
+  } catch (err) {
+    logger.error({ error: err }, 'handleGetRule unexpected error');
+    res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  }
+}
+
 export async function handleCreateRule(
   userId: string,
   req: Request,
@@ -170,6 +260,8 @@ export async function handleCreateRule(
     });
     return;
   }
+
+  if (!(await requireOrgAdmin(userId, orgId, res))) return;
 
   try {
     // Secondary validation: trigger_config must match trigger_type, and
@@ -336,6 +428,8 @@ export async function handleUpdateRule(
     return;
   }
 
+  if (!(await requireOrgAdmin(userId, orgId, res))) return;
+
   try {
     const validation = await validatePatchAgainstCurrent(idParsed.data, orgId, bodyParsed.data);
     if (validation.kind === 'error') {
@@ -421,6 +515,7 @@ export async function handleDeleteRule(
     res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
     return;
   }
+  if (!(await requireOrgAdmin(userId, orgId, res))) return;
   try {
     // Hard delete: `organization_rules` has no soft-delete column yet.
     // A future migration may add `deleted_at`; until then, DELETE removes

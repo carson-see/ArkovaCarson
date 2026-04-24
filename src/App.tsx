@@ -57,6 +57,7 @@ const ApiKeySettingsPage = React.lazy(() => import('@/pages/ApiKeySettingsPage')
 const EmbedVerifyPage = React.lazy(() => import('@/pages/EmbedVerifyPage').then(m => ({ default: m.EmbedVerifyPage })));
 const SearchPage = React.lazy(() => import('@/pages/SearchPage').then(m => ({ default: m.SearchPage })));
 const IssuerRegistryPage = React.lazy(() => import('@/pages/IssuerRegistryPage').then(m => ({ default: m.IssuerRegistryPage })));
+const PublicProfilePage = React.lazy(() => import('@/pages/PublicProfilePage').then(m => ({ default: m.PublicProfilePage })));
 const MyCredentialsPage = React.lazy(() => import('@/pages/MyCredentialsPage').then(m => ({ default: m.MyCredentialsPage })));
 const TreasuryAdminPage = React.lazy(() => import('@/pages/TreasuryAdminPage').then(m => ({ default: m.TreasuryAdminPage })));
 const PlatformOverviewPage = React.lazy(() => import('@/pages/PlatformOverviewPage').then(m => ({ default: m.PlatformOverviewPage })));
@@ -69,6 +70,7 @@ const ReviewQueuePage = React.lazy(() => import('@/pages/ReviewQueuePage').then(
 const AIReportsPage = React.lazy(() => import('@/pages/AIReportsPage').then(m => ({ default: m.AIReportsPage })));
 const ComplianceDashboardPage = React.lazy(() => import('@/pages/ComplianceDashboardPage').then(m => ({ default: m.ComplianceDashboardPage })));
 const RuleBuilderPage = React.lazy(() => import('@/pages/RuleBuilderPage').then(m => ({ default: m.RuleBuilderPage })));
+const RulesPage = React.lazy(() => import('@/pages/RulesPage').then(m => ({ default: m.RulesPage })));
 const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
 const AdminUsersPage = React.lazy(() => import('@/pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
@@ -79,6 +81,7 @@ const AdminOrganizationsPage = React.lazy(() => import('@/pages/AdminOrganizatio
 const PlatformControlsPage = React.lazy(() => import('@/pages/PlatformControlsPage').then(m => ({ default: m.PlatformControlsPage })));
 const OrganizationsListPage = React.lazy(() => import('@/pages/OrganizationsListPage').then(m => ({ default: m.OrganizationsListPage })));
 const OrgProfilePage = React.lazy(() => import('@/pages/OrgProfilePage').then(m => ({ default: m.OrgProfilePage })));
+const AnchorQueuePage = React.lazy(() => import('@/pages/AnchorQueuePage').then(m => ({ default: m.AnchorQueuePage })));
 const PublicAttestationVerifyPage = React.lazy(() => import('@/pages/PublicAttestationVerifyPage').then(m => ({ default: m.PublicAttestationVerifyPage })));
 const StateBarApiPage = React.lazy(() => import('@/pages/StateBarApiPage').then(m => ({ default: m.StateBarApiPage })));
 const ApiSandboxPage = React.lazy(() => import('@/pages/ApiSandboxPage').then(m => ({ default: m.ApiSandboxPage })));
@@ -171,6 +174,7 @@ export function App() {
         <Routes>
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.PUBLIC_PROFILE} element={<RouteErrorBoundary section="PublicProfile"><PublicProfilePage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY} element={<RouteErrorBoundary section="PublicVerify"><PublicVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY_FORM} element={<RouteErrorBoundary section="PublicVerify"><PublicVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ABOUT} element={<AboutPage />} />
@@ -196,6 +200,7 @@ export function App() {
           <Route path={ROUTES.EMBED_VERIFY} element={<RouteErrorBoundary section="EmbedVerify"><EmbedVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.SEARCH} element={<RouteErrorBoundary section="Search"><SearchPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.ISSUER_REGISTRY} element={<RouteErrorBoundary section="IssuerRegistry"><IssuerRegistryPage /></RouteErrorBoundary>} />
+          <Route path={ROUTES.PUBLIC_PROFILE} element={<RouteErrorBoundary section="PublicProfile"><PublicProfilePage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VERIFY_ATTESTATION} element={<RouteErrorBoundary section="AttestationVerify"><PublicAttestationVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.DEVELOPERS} element={<RouteErrorBoundary section="Developers"><DevelopersPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.API_SANDBOX} element={<RouteErrorBoundary section="API Sandbox"><ApiSandboxPage /></RouteErrorBoundary>} />
@@ -240,7 +245,9 @@ export function App() {
 
           {/* Compliance Intelligence */}
           <Route path={ROUTES.COMPLIANCE_DASHBOARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Compliance"><ComplianceDashboardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.RULES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Rules"><RulesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* NCA-08 — Compliance Scorecard (post-audit landing) */}
           <Route path={ROUTES.COMPLIANCE_SCORECARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceScorecard"><ComplianceScorecardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

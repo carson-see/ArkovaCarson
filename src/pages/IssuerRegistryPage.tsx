@@ -10,14 +10,14 @@
 import { useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useParams, Link } from 'react-router-dom';
-import { Building2, ArrowLeft, Loader2, Globe, MapPin, Calendar, ExternalLink, Award, FileText, Scale, Landmark, BookOpen, Briefcase, CheckCircle2 } from 'lucide-react';
+import { Building2, ArrowLeft, Loader2, Globe, MapPin, Calendar, ExternalLink, Award, FileText, Scale, Landmark, BookOpen, Briefcase, CheckCircle2, Users, Network } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
 import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
 import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS } from '@/lib/copy';
-import { ROUTES } from '@/lib/routes';
+import { ROUTES, issuerRegistryPath, publicProfilePath } from '@/lib/routes';
 import { isSearchSubdomain } from '@/App';
 
 /** Map credential types to icons */
@@ -41,6 +41,12 @@ function formatNumber(n: number): string {
 function formatOrgType(type: string | null): string {
   if (!type) return 'Organization';
   return type.charAt(0).toUpperCase() + type.slice(1);
+}
+
+function formatRole(role: string): string {
+  if (role === 'owner') return 'Owner';
+  if (role === 'admin') return 'Admin';
+  return 'Member';
 }
 
 export function IssuerRegistryPage() {
@@ -129,10 +135,10 @@ export function IssuerRegistryPage() {
                 <h1 className="text-2xl sm:text-3xl font-black tracking-tight">
                   {profile.display_name}
                 </h1>
-                {profile.secured_credentials > 0 && (
+                {profile.verification_status === 'VERIFIED' && (
                   <Badge className="bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/20 gap-1 shrink-0">
                     <CheckCircle2 className="h-3 w-3" />
-                    Verified Issuer
+                    Verified
                   </Badge>
                 )}
                 {profile.industry_tag && (
@@ -250,6 +256,98 @@ export function IssuerRegistryPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* ── Members ─────────────────────────────────────────────────── */}
+        {(profile.public_members ?? []).length > 0 && (
+          <section className="mb-6">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Members
+            </h2>
+            <Card className="bg-transparent border-[#3c494e]/30">
+              <CardContent className="p-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {(profile.public_members ?? []).slice(0, 12).map((member, idx) => {
+                    const body = (
+                      <div className="flex items-center gap-3 rounded-lg border border-[#3c494e]/25 p-3 hover:border-[#00d4ff]/25 transition-colors">
+                        {member.avatar_url ? (
+                          <img
+                            src={member.avatar_url}
+                            alt={`${member.display_name} profile`}
+                            className="h-9 w-9 rounded-full object-cover bg-[#192028]"
+                          />
+                        ) : (
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#192028]">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">{member.display_name}</p>
+                          <p className="text-xs text-muted-foreground">{formatRole(member.role)}</p>
+                        </div>
+                        {member.is_public_profile && (
+                          <ExternalLink className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        )}
+                      </div>
+                    );
+
+                    if (member.profile_public_id) {
+                      return (
+                        <Link key={member.profile_public_id} to={publicProfilePath(member.profile_public_id)}>
+                          {body}
+                        </Link>
+                      );
+                    }
+
+                    return <div key={`anonymous-${idx}`}>{body}</div>;
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          </section>
+        )}
+
+        {/* ── Sub Organizations ───────────────────────────────────────── */}
+        {(profile.sub_organizations ?? []).length > 0 && (
+          <section className="mb-6">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+              <Network className="h-4 w-4" />
+              Sub Organizations
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {(profile.sub_organizations ?? []).map((org) => (
+                <Link key={org.org_id} to={issuerRegistryPath(org.org_id)}>
+                  <Card className="bg-transparent border-[#3c494e]/30 hover:border-[#00d4ff]/30 transition-colors h-full">
+                    <CardContent className="p-4 flex items-center gap-3">
+                      {org.logo_url ? (
+                        <img
+                          src={org.logo_url}
+                          alt={`${org.display_name} logo`}
+                          className="h-10 w-10 rounded-md object-contain bg-[#192028] p-1"
+                        />
+                      ) : (
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#192028]">
+                          <Building2 className="h-5 w-5 text-[#00d4ff]" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium truncate">{org.display_name}</p>
+                          {org.verification_status === 'VERIFIED' && (
+                            <CheckCircle2 className="h-3.5 w-3.5 text-[#00d4ff] shrink-0" />
+                          )}
+                        </div>
+                        {org.domain && (
+                          <p className="text-xs text-muted-foreground truncate">{org.domain}</p>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* ── Credential Breakdown ─────────────────────────────────────── */}
         {profile.credential_breakdown.length > 0 && (

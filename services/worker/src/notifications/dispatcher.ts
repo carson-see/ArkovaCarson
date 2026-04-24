@@ -16,6 +16,12 @@ export interface NotificationPayload {
   payload: Json;
 }
 
+export interface OrgAdminNotificationPayload {
+  type: NotificationType;
+  organizationId: string;
+  payload: Json;
+}
+
 function toRow(n: NotificationPayload) {
   return {
     user_id: n.userId,
@@ -50,6 +56,32 @@ export async function emitBulkNotifications(
     }
   } catch (err) {
     logger.error({ error: err }, 'Bulk notification dispatch threw');
+  }
+}
+
+export async function emitOrgAdminNotifications(
+  notification: OrgAdminNotificationPayload,
+): Promise<void> {
+  try {
+    const { data, error } = await db.from('org_members')
+      .select('user_id')
+      .eq('org_id', notification.organizationId)
+      .in('role', ['owner', 'admin']);
+
+    if (error) {
+      logger.error({ error, orgId: notification.organizationId }, 'Failed to load org admins for notification');
+      return;
+    }
+
+    const userIds = [...new Set(((data ?? []) as Array<{ user_id: string }>).map((row) => row.user_id))];
+    await emitBulkNotifications(userIds.map((userId) => ({
+      type: notification.type,
+      userId,
+      organizationId: notification.organizationId,
+      payload: notification.payload,
+    })));
+  } catch (err) {
+    logger.error({ error: err, type: notification.type }, 'Org admin notification dispatch threw');
   }
 }
 

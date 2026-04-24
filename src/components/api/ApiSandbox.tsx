@@ -66,6 +66,73 @@ const ENDPOINTS: EndpointDef[] = [
     ],
   },
   {
+    id: 'v2-search',
+    method: 'GET',
+    path: '/api/v2/search',
+    label: 'Search Everything',
+    price: 'API key',
+    description: 'Search organizations, records, fingerprints, and documents with one API-key endpoint.',
+    params: [
+      { name: 'q', label: 'Search Query', type: 'text', placeholder: 'Acme, contract.pdf, or a SHA-256 fingerprint', required: true },
+      {
+        name: 'type',
+        label: 'Type',
+        type: 'select',
+        options: [
+          { label: 'All', value: 'all' },
+          { label: 'Organizations', value: 'org' },
+          { label: 'Records', value: 'record' },
+          { label: 'Fingerprints', value: 'fingerprint' },
+          { label: 'Documents', value: 'document' },
+        ],
+      },
+    ],
+  },
+  {
+    id: 'v2-organizations',
+    method: 'GET',
+    path: '/api/v2/organizations',
+    label: 'Search Organizations',
+    price: 'API key',
+    description: 'Find organization profiles by name, domain, or description.',
+    params: [
+      { name: 'q', label: 'Organization Query', type: 'text', placeholder: 'Acme University', required: true },
+    ],
+  },
+  {
+    id: 'v2-records',
+    method: 'GET',
+    path: '/api/v2/records',
+    label: 'Search Records',
+    price: 'API key',
+    description: 'Find anchored records by filename, description, or fingerprint.',
+    params: [
+      { name: 'q', label: 'Record Query', type: 'text', placeholder: 'employment contract', required: true },
+    ],
+  },
+  {
+    id: 'v2-fingerprints',
+    method: 'GET',
+    path: '/api/v2/fingerprints',
+    label: 'Search Fingerprints',
+    price: 'API key',
+    description: 'Look up exact SHA-256 fingerprints and get matching public record IDs.',
+    params: [
+      { name: 'q', label: 'Fingerprint', type: 'text', placeholder: '64-character SHA-256 hex', required: true },
+    ],
+  },
+  {
+    id: 'v2-documents',
+    method: 'GET',
+    path: '/api/v2/documents',
+    label: 'Search Documents',
+    price: 'API key',
+    description: 'Find document-like records by filename or description.',
+    params: [
+      { name: 'q', label: 'Document Query', type: 'text', placeholder: 'msa.pdf', required: true },
+    ],
+  },
+  {
     id: 'entity',
     method: 'GET',
     path: '/api/v1/verify/entity',
