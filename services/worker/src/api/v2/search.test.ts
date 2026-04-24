@@ -1,0 +1,164 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockSelect = vi.fn().mockReturnThis();
+const mockOr = vi.fn().mockReturnThis();
+const mockIlike = vi.fn().mockReturnThis();
+const mockEq = vi.fn().mockReturnThis();
+const mockIn = vi.fn().mockReturnThis();
+const mockRange = vi.fn().mockReturnThis();
+const mockOrder = vi.fn().mockResolvedValue({ data: [], error: null });
+
+vi.mock('../../utils/db.js', () => ({
+  db: {
+    from: vi.fn(() => ({
+      select: mockSelect,
+      or: mockOr,
+      ilike: mockIlike,
+      eq: mockEq,
+      in: mockIn,
+      range: mockRange,
+      order: mockOrder,
+    })),
+  },
+}));
+
+vi.mock('../../config.js', () => ({
+  config: { nodeEnv: 'test', apiKeyHmacSecret: 'test-secret' },
+}));
+
+vi.mock('../../utils/logger.js', () => ({
+  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+}));
+
+vi.mock('../../middleware/featureGate.js', () => ({
+  verificationApiGate: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
+vi.mock('../../middleware/apiKeyAuth.js', () => ({
+  apiKeyAuth: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
+
+import express from 'express';
+import request from 'supertest';
+import { searchRouter } from './search.js';
+import { v2ErrorHandler } from './problem.js';
+
+function buildApp() {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.apiKey = {
+      keyId: 'k1',
+      orgId: 'org1',
+      userId: 'u1',
+      scopes: ['read:search'],
+      rateLimitTier: 'paid',
+      keyPrefix: 'ak_test_',
+    };
+    next();
+  });
+  app.use('/search', searchRouter);
+  app.use(v2ErrorHandler);
+  return app;
+}
+
+describe('GET /api/v2/search', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockOrder.mockResolvedValue({ data: [], error: null });
+  });
+
+  it('returns empty results for no matches', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/search?q=nonexistent');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([]);
+    expect(res.body.next_cursor).toBeNull();
+  });
+
+  it('validates missing q parameter', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/search');
+    expect(res.status).toBe(400);
+    expect(res.body.type).toContain('validation-error');
+  });
+
+  it('supports type=org filter', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '1', slug: 'acme', display_name: 'Acme Corp', about: 'A company' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=acme&type=org');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].type).toBe('org');
+    expect(res.body.results[0].public_id).toBe('acme');
+  });
+
+  it('supports type=fingerprint with exact match', async () => {
+    const fp = 'abc123def456';
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '2', public_id: 'pk_2', fingerprint: fp, title: 'Test Doc', status: 'SECURED' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get(`/search?q=${fp}&type=fingerprint`);
+    expect(res.status).toBe(200);
+    expect(res.body.results[0].type).toBe('fingerprint');
+  });
+
+  it('supports cursor-based pagination', async () => {
+    const items = Array.from({ length: 50 }, (_, i) => ({
+      id: `${i}`, public_id: `pk_${i}`, title: `Doc ${i}`, credential_type: 'DEGREE', status: 'SECURED', fingerprint: `fp${i}`,
+    }));
+    mockOrder.mockResolvedValueOnce({ data: items, error: null });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=Doc&type=record&limit=50');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(50);
+    expect(res.body.next_cursor).toBeTruthy();
+  });
+
+  it('returns null cursor when results < limit', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '1', public_id: 'pk_1', title: 'Only One', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=One&type=record&limit=50');
+    expect(res.body.next_cursor).toBeNull();
+  });
+
+  it('rejects scope-less API key', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.apiKey = {
+        keyId: 'k1',
+        orgId: 'org1',
+        userId: 'u1',
+        scopes: [],
+        rateLimitTier: 'free',
+        keyPrefix: 'ak_test_',
+      };
+      next();
+    });
+    app.use('/search', searchRouter);
+    app.use(v2ErrorHandler);
+
+    const res = await request(app).get('/search?q=test');
+    expect(res.status).toBe(403);
+    expect(res.body.type).toContain('invalid-scope');
+  });
+
+  it('validates limit range', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/search?q=test&limit=200');
+    expect(res.status).toBe(400);
+  });
+});

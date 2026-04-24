@@ -46,6 +46,9 @@ export const FORBIDDEN_TERMS = [
   // CamelCase continuations like "PostgRESTError" hit while genuine words
   // (there's nothing English starting with "postgrest") don't false-positive.
   String.raw`(?<![A-Za-z0-9])postgrest`,
+
+  // SCRUM-1092: "Issue Credential" renamed to "Secure Document"
+  String.raw`(?<![-\w])issue credential(?![-\w])`,
 ];
 
 // File patterns to check (UI-facing files)

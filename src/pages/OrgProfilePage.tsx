@@ -450,7 +450,7 @@ export function OrgProfilePage() {
                 <Button size="sm" onClick={() => setIssueDialogOpen(true)}>
                   <Plus className="mr-2 h-4 w-4 shrink-0" />
                   <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
-                  <span className="sm:hidden">Issue</span>
+                  <span className="sm:hidden">Secure</span>
                 </Button>
               </div>
             )}

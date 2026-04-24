@@ -137,6 +137,12 @@ GEMINI_TUNED_RESPONSE_SCHEMA=false
 REPLICATE_API_TOKEN=                # QA only
 AI_BATCH_CONCURRENCY=3
 CF_AI_MODEL=
+
+# SCRUM-1061 — Vertex AI SDK migration (Gemini Golden only, NOT Nessie)
+ENABLE_VERTEX_AI=false              # when true, Gemini Golden uses Vertex AI SDK + SA auth
+GCP_PROJECT_ID=arkova1              # GCP project for Vertex AI
+VERTEX_AI_REGION=us-central1        # Vertex region — US residency pinning
+GOOGLE_APPLICATION_CREDENTIALS=     # path to SA key JSON (Cloud Run uses metadata server)
 ```
 
 ## Together.ai (fallback LLM provider)
