@@ -63,9 +63,16 @@ export const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
 
 /**
  * Trigger A — Size-based: fire immediately when the claimed count is at or
- * above BATCH_SIZE. Enforced implicitly by the claim loop (see
- * `_processBatchAnchorsInner`), since we never claim more than BATCH_SIZE
- * at once. Helper here is purely for documentation + audit pinning.
+ * above BATCH_SIZE.
+ *
+ * CIBA-HARDEN-05: this function is NEVER CALLED from the production path.
+ * The claim loop in `_processBatchAnchorsInner` enforces the invariant
+ * structurally — each claim chunk is capped by `remaining = BATCH_SIZE -
+ * total`, so the accumulated total converges on BATCH_SIZE without needing
+ * a separate guard. The export exists only so the audit test
+ * `batch-anchor.audit.test.ts` can pin the Trigger A decision rule
+ * independently of the loop implementation. Before removing this export,
+ * update the audit test to inspect BATCH_SIZE directly.
  */
 export function triggerA_shouldFireOnSize(claimedCount: number): boolean {
   return claimedCount >= BATCH_SIZE;
@@ -97,12 +104,19 @@ export function triggerC_computeFeeCeiling(input: {
   baseCeiling: number;
   oldestPendingAgeMs: number;
 }): number {
+  // CIBA-HARDEN-05: clamp inputs to non-negative. A negative baseCeiling
+  // would flip the ">=" comparisons in downstream callers and let every
+  // fee rate through; a negative age would land in the base tier even
+  // for a stale backlog. Neither should happen under current callers but
+  // pinning the contract here is cheaper than trusting them.
+  const baseCeiling = Math.max(0, input.baseCeiling);
+  const oldestPendingAgeMs = Math.max(0, input.oldestPendingAgeMs);
   const THIRTY_MIN = 30 * 60 * 1000;
   const ONE_HOUR = 60 * 60 * 1000;
-  let ceiling = input.baseCeiling;
-  if (input.oldestPendingAgeMs > ONE_HOUR) ceiling = input.baseCeiling * 4;
-  else if (input.oldestPendingAgeMs > THIRTY_MIN) ceiling = input.baseCeiling * 2;
-  return Math.min(ceiling, ABSOLUTE_FEE_CAP_SAT_PER_VB);
+  let ceiling = baseCeiling;
+  if (oldestPendingAgeMs > ONE_HOUR) ceiling = baseCeiling * 4;
+  else if (oldestPendingAgeMs > THIRTY_MIN) ceiling = baseCeiling * 2;
+  return Math.max(0, Math.min(ceiling, ABSOLUTE_FEE_CAP_SAT_PER_VB));
 }
 
 export interface BatchAnchorResult {
@@ -199,9 +213,13 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     const pendingCount = count ?? 0;
 
     if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
+      // CIBA-HARDEN-05: the old message said "oldest anchor is fresh" but
+      // this branch also fires when pendingCount is 0 (no pending rows at
+      // all, so the "oldest" concept is meaningless). Neutral log keeps
+      // grep-ability without implying we saw a row.
       logger.debug(
         { pendingCount, oldestAgeMs: oldestPendingAgeMs },
-        'Below batch threshold and oldest anchor is fresh — deferring',
+        `Deferring batch (pending=${pendingCount}, oldestAgeMs=${oldestPendingAgeMs})`,
       );
       return EMPTY;
     }

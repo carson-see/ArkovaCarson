@@ -7,7 +7,14 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    include: ['tests/**/*.test.ts', 'src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: [
+      'tests/**/*.test.ts',
+      'src/**/*.test.ts',
+      'src/**/*.test.tsx',
+      // CIBA-HARDEN-05: pull scripts/ into vitest so check-copy-terms regex
+      // changes get test coverage.
+      'scripts/**/*.test.ts',
+    ],
     exclude: ['tests/rls/**', 'tests/load/**'],
     setupFiles: ['./src/test/setup.ts'],
     coverage: {

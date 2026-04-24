@@ -70,7 +70,17 @@ export function adaptGoogleDrive(
     vendor: 'google_drive',
     external_file_id: parsed.fileId,
     filename: parsed.name ?? null,
-    folder_path: parsed.parents?.length ? `/${parsed.parents.join('/')}` : null,
+    // CIBA-HARDEN-05: Drive change notifications only carry opaque parent
+    // IDs (e.g. "0ByxTN8qADBwFdjZoQkt..."), not human paths. The old code
+    // joined IDs with "/" and produced strings that no `folder_path_
+    // starts_with: "/HR/"` rule could ever match. Resolving IDs to names
+    // requires an authenticated files.get call per parent — that's gated
+    // on INT-10 OAuth-app approval, so until that ships we pass null and
+    // folder filters simply don't fire for Drive events. Chose this over
+    // a schema rename (→ folder_ids) because the rename rippled into 11
+    // files and would have broken existing SharePoint rules that DO use
+    // folder_path.
+    folder_path: null,
     sender_email: null,
     subject: null,
   };

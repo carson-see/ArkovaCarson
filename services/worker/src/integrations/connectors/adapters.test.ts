@@ -63,7 +63,11 @@ describe('INT-12 — Adobe Sign adapter', () => {
 });
 
 describe('INT-10 — Google Drive adapter', () => {
-  it('builds folder_path from parents array', () => {
+  // CIBA-HARDEN-05: Drive webhooks carry only opaque parent IDs. The old
+  // behavior ("/folder-a/folder-b") made admin folder_path rules match
+  // on IDs by accident. Pin the new null behavior until INT-10 resolves
+  // names via files.get (gated on OAuth-app approval).
+  it('leaves folder_path null because Drive parent IDs are opaque', () => {
     const out = adaptGoogleDrive(
       {
         resourceId: 'r1',
@@ -75,7 +79,7 @@ describe('INT-10 — Google Drive adapter', () => {
     );
     expect(out.trigger_type).toBe('WORKSPACE_FILE_MODIFIED');
     expect(out.vendor).toBe('google_drive');
-    expect(out.folder_path).toBe('/folder-a/folder-b');
+    expect(out.folder_path).toBeNull();
     expect(out.external_file_id).toBe('file-1');
   });
 });
