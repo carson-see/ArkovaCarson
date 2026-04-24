@@ -195,4 +195,23 @@ TREASURY_ALERT_EMAIL=                # single recipient address
 # ARK-103 — USD threshold below which the low-balance alert fires.
 # Default 50. Read by both cron dispatcher + /api/treasury/health endpoint.
 TREASURY_LOW_BALANCE_USD=50
+
+# ─── SCRUM-1162 — Middesk KYB (organization verification) ───
+# Per 2026-04-24 decision these routes are NOT behind a feature flag.
+# Missing MIDDESK_API_KEY surfaces as 503 at POST /api/v1/org-kyb/:orgId/start.
+# Missing MIDDESK_WEBHOOK_SECRET surfaces as 503 at POST /webhooks/middesk.
+# Full setup: docs/runbooks/kyb/middesk.md
+
+# Middesk API bearer token (sandbox sk_test_* or prod sk_live_*). Provision
+# in Secret Manager; never commit actual values.
+MIDDESK_API_KEY=
+
+# Middesk webhook signing secret (whsec_*). Used for HMAC-SHA256 verification
+# on POST /webhooks/middesk. Rotate via the Middesk dashboard; see runbook.
+MIDDESK_WEBHOOK_SECRET=
+
+# Sandbox vs production Middesk API. Default true. Only a literal "false"
+# flips to prod so a missing or mis-typed var is always the safer sandbox
+# path. Change via runbook Sandbox → production cutover.
+MIDDESK_SANDBOX=true
 ```
