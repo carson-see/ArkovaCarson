@@ -1,0 +1,64 @@
+-- Migration 0255: Deferred slow-index builds
+--
+-- These indexes were originally in migrations 0233, 0242, 0243 but cannot
+-- be built via Supabase's CLI push because the connection pooler enforces
+-- a hard statement timeout (~2 min) that SET LOCAL cannot override.
+-- Supabase's anchors table has 1.4M+ rows and public_records is larger;
+-- a regular CREATE INDEX on either exceeds the ceiling.
+--
+-- MANUAL APPLICATION REQUIRED. Apply via Supabase Dashboard → SQL Editor
+-- (bypasses pooler timeout) or direct psql. See runbook:
+-- docs/runbooks/supabase/long-running-migrations.md
+--
+-- PERFORMANCE WARNING — until the manual apply happens these queries
+-- fall back to sequential scans:
+--   * `get_pipeline_stats` / `refresh_cache_pipeline_stats` (migration
+--     0242 lines 156-213) — dashboard stats path; acceptable for an
+--     admin dashboard, not for a hot API route.
+--   * `get_public_records_page` with a search filter (0242 lines
+--     264-382) — admin search UX hits public_records without the
+--     gin_trgm index.
+--   * `supersede_anchor` lineage-chain check (0233) — still protected
+--     by FOR UPDATE on the parent row; fork races remain prevented at
+--     the application layer even without the DB-level unique index.
+--   * `finalize_public_record_anchor_batch` is NOT affected — it hits
+--     anchors by primary key and doesn't depend on idx_anchors_pipeline_status.
+--
+-- Indexes to create (run one at a time; CONCURRENTLY cannot be inside a
+-- transaction, so each statement runs standalone):
+--
+--   -- From migration 0233 (ARK-104 supersede lock safeguard):
+--   CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS anchors_unique_active_child_per_parent
+--     ON anchors (parent_anchor_id)
+--     WHERE parent_anchor_id IS NOT NULL
+--       AND deleted_at IS NULL
+--       AND status NOT IN ('REVOKED');
+--   COMMENT ON INDEX anchors_unique_active_child_per_parent IS
+--     'ARK-104 hardening: at most one non-revoked, non-deleted child per parent anchor. Enforces lineage is a chain, not a tree, even if application-level locks fail.';
+--
+--   -- From migration 0242 (pipeline anchoring scale):
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_pipeline_status
+--     ON anchors (status, created_at DESC)
+--     WHERE deleted_at IS NULL AND metadata ? 'pipeline_source';
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_public_records_source_id_trgm
+--     ON public_records USING gin (source_id gin_trgm_ops);
+--
+--   -- From migration 0243 (scale02 anchor disk hygiene):
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchor_proofs_batch_id
+--     ON public.anchor_proofs (batch_id)
+--     WHERE batch_id IS NOT NULL;
+--
+-- ROLLBACK:
+--   DROP INDEX CONCURRENTLY IF EXISTS anchors_unique_active_child_per_parent;
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_anchors_pipeline_status;
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_public_records_source_id_trgm;
+--   DROP INDEX CONCURRENTLY IF EXISTS idx_anchor_proofs_batch_id;
+
+-- No-op marker so the Supabase CLI records this migration number in the
+-- ledger. The real DDL is in the header comment above and runs out-of-
+-- band via Supabase Dashboard SQL Editor.
+DO $$
+BEGIN
+  RAISE NOTICE 'Migration 0255 recorded. Manual index builds required — see file header.';
+END $$;

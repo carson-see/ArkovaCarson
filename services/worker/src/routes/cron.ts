@@ -75,6 +75,7 @@ import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
+import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
 
@@ -579,6 +580,20 @@ cronRouter.post('/monitor-fees', async (_req, res) => {
 });
 
 // ─── Billing Reconciliation & Recovery (RECON-1, RECON-3, RECON-5) ───
+
+cronRouter.post('/grace-expiry-sweep', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'grace-expiry-sweep',
+      GRACE_EXPIRY_SWEEP_CRON,
+      () => runGraceExpirySweep(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Payment grace expiry sweep failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
 
 cronRouter.post('/reconcile-stripe', async (_req, res) => {
   try {
