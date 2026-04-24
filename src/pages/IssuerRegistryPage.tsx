@@ -267,7 +267,7 @@ export function IssuerRegistryPage() {
             <Card className="bg-transparent border-[#3c494e]/30">
               <CardContent className="p-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {(profile.public_members ?? []).slice(0, 12).map((member, idx) => {
+                  {(profile.public_members ?? []).slice(0, 12).map((member) => {
                     const body = (
                       <div className="flex items-center gap-3 rounded-lg border border-[#3c494e]/25 p-3 hover:border-[#00d4ff]/25 transition-colors">
                         {member.avatar_url ? (
@@ -299,7 +299,7 @@ export function IssuerRegistryPage() {
                       );
                     }
 
-                    return <div key={`anonymous-${idx}`}>{body}</div>;
+                    return <div key={member.member_key ?? `anonymous-${member.role}-${member.display_name}`}>{body}</div>;
                   })}
                 </div>
               </CardContent>

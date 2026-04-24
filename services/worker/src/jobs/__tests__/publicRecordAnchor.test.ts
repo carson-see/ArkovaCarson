@@ -3,6 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // ---- Hoisted mocks ----
 const {
@@ -334,5 +336,16 @@ describe('publicRecordAnchor', () => {
   it('uses the shared 10k Bitcoin batch cap', async () => {
     const { PUBLIC_RECORD_BATCH_SIZE } = await import('../publicRecordAnchor.js');
     expect(PUBLIC_RECORD_BATCH_SIZE).toBe(10_000);
+  });
+
+  it('keeps duplicate record links eligible after the shared anchor is finalized', () => {
+    const sql = readFileSync(
+      resolve(process.cwd(), '../../supabase/migrations/0248_finalize_public_record_anchor_duplicates.sql'),
+      'utf8',
+    );
+
+    expect(sql).toContain("a.status IN ('SUBMITTED', 'SECURED')");
+    expect(sql).toContain('a.chain_tx_id = p_tx_id');
+    expect(sql).toContain('UPDATE public_records pr');
   });
 });

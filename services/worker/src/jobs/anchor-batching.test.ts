@@ -11,7 +11,7 @@ describe('anchor batching contract', () => {
   });
 
   it('defaults invalid values to the 10k cap', () => {
-    expect(resolveAnchorBatchSize(undefined)).toBe(10_000);
+    expect(resolveAnchorBatchSize()).toBe(10_000);
     expect(resolveAnchorBatchSize('not-a-number')).toBe(10_000);
   });
 

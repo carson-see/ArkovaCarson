@@ -321,11 +321,12 @@ function QueueInner() {
       }
       const processed = body.processed ?? 0;
       const suffix = processed === 1 ? '' : 's';
-      setRunMessage(
-        processed > 0
-          ? `Run complete. ${processed} anchor${suffix} submitted${body.batchId ? ` in ${body.batchId}` : ''}.`
-          : 'Run complete. No pending anchors were ready to submit.',
-      );
+      let message = 'Run complete. No pending anchors were ready to submit.';
+      if (processed > 0) {
+        const batchPart = body.batchId ? ` in ${body.batchId}` : '';
+        message = `Run complete. ${processed} anchor${suffix} submitted${batchPart}.`;
+      }
+      setRunMessage(message);
       await fetchPending();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Run failed');

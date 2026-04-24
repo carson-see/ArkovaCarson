@@ -16,6 +16,9 @@ import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
+import { mapRpcErrorToStatus } from './rpc-error-status.js';
+
+export { mapRpcErrorToStatus };
 
 export interface PendingResolutionAnchor {
   id: string;
@@ -31,35 +34,6 @@ export const ResolveQueueInput = z.object({
   selected_anchor_id: z.string().uuid(),
   reason: z.string().trim().max(2000).optional(),
 });
-
-export function mapRpcErrorToStatus(message: string): number {
-  const lowered = message.toLowerCase();
-  // Auth-adjacent phrases checked FIRST — several of them contain the
-  // substring "not found" (e.g. "Profile not found" = forbidden, not 404).
-  // Matching on 'not found' first misclassified those as 404 + surfaced
-  // raw DB messages to unauthenticated clients.
-  if (
-    lowered.includes('insufficient_privilege') ||
-    lowered.includes('different organization') ||
-    lowered.includes('only organization administrators') ||
-    lowered.includes('profile not found')
-  ) {
-    return 403;
-  }
-  if (
-    lowered.includes('not awaiting resolution') ||
-    lowered.includes('check_violation') ||
-    lowered.includes('already been superseded') ||
-    lowered.includes('is already') ||
-    lowered.includes('legal hold') ||
-    lowered.includes('external_file_id') // mismatch between selected anchor + requested set
-  ) {
-    return 409;
-  }
-  // Generic "not found" (anchor, resource) only after auth + conflict checks.
-  if (lowered.includes('not found')) return 404;
-  return 500;
-}
 
 /**
  * GET /api/queue/pending

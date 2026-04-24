@@ -160,10 +160,11 @@ export interface CredentialBreakdown {
 }
 
 export interface PublicOrgMember {
+  member_key?: string | null;
   profile_public_id: string | null;
   display_name: string;
   avatar_url: string | null;
-  role: 'owner' | 'admin' | 'member' | string;
+  role: string;
   is_public_profile: boolean;
 }
 
@@ -258,7 +259,7 @@ export interface PublicMemberOrganization {
   domain: string | null;
   logo_url: string | null;
   verification_status: string | null;
-  role: 'owner' | 'admin' | 'member' | string;
+  role: string;
 }
 
 export interface PublicMemberProfile {

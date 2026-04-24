@@ -112,7 +112,10 @@ export function RulesPage() {
   }, []);
 
   useEffect(() => {
-    fetchRules().catch(() => undefined);
+    const timer = window.setTimeout(() => {
+      fetchRules().catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [fetchRules]);
 
   async function patchRule(ruleId: string, body: Record<string, unknown>): Promise<boolean> {
@@ -234,6 +237,153 @@ export function RulesPage() {
     navigate(ROUTES.LOGIN);
   }
 
+  let rulesContent = null;
+  if (loading) {
+    rulesContent = (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading rules...
+      </div>
+    );
+  } else if (rules.length === 0) {
+    rulesContent = (
+      <Card>
+        <CardContent className="py-10 text-center space-y-3">
+          <ScrollText className="mx-auto h-10 w-10 text-muted-foreground" />
+          <p className="font-medium">No rules yet.</p>
+          <Button onClick={() => navigate(ROUTES.RULE_BUILDER)} disabled={!isOrgAdmin}>
+            <Plus className="mr-2 h-4 w-4" />
+            Create the first rule
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  } else {
+    rulesContent = (
+      <div className="space-y-3">
+        {rules.map((rule) => {
+          const busy = actingId === rule.id;
+          const ToggleIcon = rule.enabled ? ToggleLeft : ToggleRight;
+          const toggleLabel = rule.enabled ? 'Disable' : 'Enable';
+          return (
+            <Card key={rule.id}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                  <span>{rule.name}</span>
+                  <Badge variant={rule.enabled ? 'default' : 'secondary'}>
+                    {rule.enabled ? 'Enabled' : 'Disabled'}
+                  </Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {rule.description && (
+                  <p className="text-sm text-muted-foreground">{rule.description}</p>
+                )}
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline">When: {formatRuleType(rule.trigger_type)}</Badge>
+                  <Badge variant="outline">Then: {formatRuleType(rule.action_type)}</Badge>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!isOrgAdmin || busy}
+                    onClick={() => void patchRule(rule.id, { enabled: !rule.enabled })}
+                  >
+                    <ToggleIcon className="mr-2 h-4 w-4" />
+                    {toggleLabel}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void openEditRule(rule.id)}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    {isOrgAdmin ? 'Edit' : 'View'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!isOrgAdmin || busy}
+                    onClick={() => void deleteRule(rule.id)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    );
+  }
+
+  let editContent = null;
+  if (editLoading && !editRule) {
+    editContent = (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading rule...
+      </div>
+    );
+  } else if (editRule) {
+    editContent = (
+      <div className="space-y-4">
+        <div className="grid gap-2">
+          <Label htmlFor="rule-name">Name</Label>
+          <Input
+            id="rule-name"
+            value={editName}
+            onChange={(event) => setEditName(event.target.value)}
+            disabled={editLoading || !isOrgAdmin}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="rule-description">Description</Label>
+          <Textarea
+            id="rule-description"
+            value={editDescription}
+            onChange={(event) => setEditDescription(event.target.value)}
+            disabled={editLoading || !isOrgAdmin}
+            rows={3}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Badge variant="outline">When: {formatRuleType(editRule.trigger_type)}</Badge>
+          <Badge variant="outline">Then: {formatRuleType(editRule.action_type)}</Badge>
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="trigger-config">Trigger Config</Label>
+          <Textarea
+            id="trigger-config"
+            value={editTriggerConfig}
+            onChange={(event) => setEditTriggerConfig(event.target.value)}
+            disabled={editLoading || !isOrgAdmin}
+            rows={8}
+            className="font-mono text-xs"
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="action-config">Action Config</Label>
+          <Textarea
+            id="action-config"
+            value={editActionConfig}
+            onChange={(event) => setEditActionConfig(event.target.value)}
+            disabled={editLoading || !isOrgAdmin}
+            rows={8}
+            className="font-mono text-xs"
+          />
+        </div>
+      </div>
+    );
+  }
+  const editDialogDescription = isOrgAdmin
+    ? 'Update the stored rule definition. Changes are validated before they are saved.'
+    : 'Review the stored rule definition for this organization.';
+
   return (
     <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
       <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-4 md:space-y-6">
@@ -273,149 +423,15 @@ export function RulesPage() {
           </Alert>
         )}
 
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading rules...
-          </div>
-        ) : rules.length === 0 ? (
-          <Card>
-            <CardContent className="py-10 text-center space-y-3">
-              <ScrollText className="mx-auto h-10 w-10 text-muted-foreground" />
-              <p className="font-medium">No rules yet.</p>
-              <Button onClick={() => navigate(ROUTES.RULE_BUILDER)} disabled={!isOrgAdmin}>
-                <Plus className="mr-2 h-4 w-4" />
-                Create the first rule
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-3">
-            {rules.map((rule) => {
-              const busy = actingId === rule.id;
-              return (
-                <Card key={rule.id}>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-base flex flex-wrap items-center gap-2">
-                      <span>{rule.name}</span>
-                      <Badge variant={rule.enabled ? 'default' : 'secondary'}>
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
-                      </Badge>
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {rule.description && (
-                      <p className="text-sm text-muted-foreground">{rule.description}</p>
-                    )}
-                    <div className="flex flex-wrap gap-2 text-xs">
-                      <Badge variant="outline">When: {formatRuleType(rule.trigger_type)}</Badge>
-                      <Badge variant="outline">Then: {formatRuleType(rule.action_type)}</Badge>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!isOrgAdmin || busy}
-                        onClick={() => void patchRule(rule.id, { enabled: !rule.enabled })}
-                      >
-                        {rule.enabled ? (
-                          <ToggleLeft className="mr-2 h-4 w-4" />
-                        ) : (
-                          <ToggleRight className="mr-2 h-4 w-4" />
-                        )}
-                        {rule.enabled ? 'Disable' : 'Enable'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={busy}
-                        onClick={() => void openEditRule(rule.id)}
-                      >
-                        <Pencil className="mr-2 h-4 w-4" />
-                        {isOrgAdmin ? 'Edit' : 'View'}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!isOrgAdmin || busy}
-                        onClick={() => void deleteRule(rule.id)}
-                        className="text-destructive hover:text-destructive"
-                      >
-                        <Trash2 className="mr-2 h-4 w-4" />
-                        Delete
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        )}
+        {rulesContent}
         <Dialog open={editOpen} onOpenChange={setEditOpen}>
           <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{isOrgAdmin ? 'Edit Rule' : 'View Rule'}</DialogTitle>
-              <DialogDescription>
-                {isOrgAdmin
-                  ? 'Update the stored rule definition. Changes are validated before they are saved.'
-                  : 'Review the stored rule definition for this organization.'}
-              </DialogDescription>
+              <DialogDescription>{editDialogDescription}</DialogDescription>
             </DialogHeader>
 
-            {editLoading && !editRule ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading rule...
-              </div>
-            ) : editRule ? (
-              <div className="space-y-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="rule-name">Name</Label>
-                  <Input
-                    id="rule-name"
-                    value={editName}
-                    onChange={(event) => setEditName(event.target.value)}
-                    disabled={editLoading || !isOrgAdmin}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="rule-description">Description</Label>
-                  <Textarea
-                    id="rule-description"
-                    value={editDescription}
-                    onChange={(event) => setEditDescription(event.target.value)}
-                    disabled={editLoading || !isOrgAdmin}
-                    rows={3}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge variant="outline">When: {formatRuleType(editRule.trigger_type)}</Badge>
-                  <Badge variant="outline">Then: {formatRuleType(editRule.action_type)}</Badge>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="trigger-config">Trigger Config</Label>
-                  <Textarea
-                    id="trigger-config"
-                    value={editTriggerConfig}
-                    onChange={(event) => setEditTriggerConfig(event.target.value)}
-                    disabled={editLoading || !isOrgAdmin}
-                    rows={8}
-                    className="font-mono text-xs"
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="action-config">Action Config</Label>
-                  <Textarea
-                    id="action-config"
-                    value={editActionConfig}
-                    onChange={(event) => setEditActionConfig(event.target.value)}
-                    disabled={editLoading || !isOrgAdmin}
-                    rows={8}
-                    className="font-mono text-xs"
-                  />
-                </div>
-              </div>
-            ) : null}
+            {editContent}
 
             {editError && (
               <Alert variant="destructive">

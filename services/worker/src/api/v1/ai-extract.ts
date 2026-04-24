@@ -341,9 +341,10 @@ router.post('/', async (req: Request, res: Response) => {
       enqueueTagGeneration(fields);
     }
 
-    const creditsRemaining = creditBalance
-      ? (degraded ? creditBalance.remaining : creditBalance.remaining - 1)
-      : null;
+    let creditsRemaining: number | null = null;
+    if (creditBalance) {
+      creditsRemaining = degraded ? creditBalance.remaining : creditBalance.remaining - 1;
+    }
 
     res.json({
       fields,
