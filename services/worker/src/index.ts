@@ -35,6 +35,7 @@ import { orgVerificationRouter } from './api/v1/orgVerification.js';
 import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { orgKybRouter } from './api/v1/org-kyb.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
+import { contractsWebhookRouter } from './api/v1/webhooks/contracts.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
@@ -174,6 +175,18 @@ app.use(
     next();
   },
   middeskWebhookRouter,
+);
+
+// ─── Contract e-signature webhooks — raw body required for provider verify ───
+app.use(
+  '/webhooks/contracts',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  contractsWebhookRouter,
 );
 
 // Gzip/brotli compression — 70-90% bandwidth reduction for JSON responses

@@ -14,7 +14,7 @@
 
 ## Now
 
-**Codex batch PR in progress:** SCRUM-859 / SCRUM-860 / SCRUM-861 on stacked branch `codex/release-859-861` (base: `codex/release-1110-1112`). Scope: GME10 Contracts Expert v1 design, Phase 23 contract extraction golden dataset (1,040 entries), Phase 24 contract reasoning golden dataset (600 entries), recommendation URL registry, stats report, and eval tests. No Supabase migrations in this batch; no Supabase push/apply/list/repair commands run.
+**Codex batch PR in progress:** SCRUM-862 / SCRUM-863 / SCRUM-864 on stacked branch `codex/release-862-864` (base: `codex/release-859-861`). Scope: contract e-signature audit parsing, DocuSign/Adobe raw webhook verification, fingerprint-only pre/post-signing anchor endpoints, contract proof ZIP, and Vertex Contracts Expert v1 eval/tuning gate prep. No Supabase migrations in this batch; no Supabase push/apply/list/repair/list-linked commands run. Human gates remain: provider sandbox secrets/webhooks, dedicated UI flow decision, and live Vertex tuning/eval run.
 **End of week:** Friday 2026-04-24 EOW. 56 commits landed on main Mon–Fri across 20+ merged PRs (#466–#493). Four PRs still open at EOW: #494 (SCRUM-1161 freemail blocklist), #495 (SCRUM-727/985 live infra + 1,500 adviser records), #496 (SCRUM-1162 Middesk KYB skeleton), and an unpushed WIP on `claude/2026-04-24-scrum-1168-1169-integration-oauth` (migration 0251 + `integrations/oauth/` dir). All four await human merge per `feedback_never_merge_without_ok`.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.

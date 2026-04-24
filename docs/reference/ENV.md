@@ -156,6 +156,14 @@ VERTEX_AI_REGION=us-central1        # Vertex region — US residency pinning
 GOOGLE_APPLICATION_CREDENTIALS=     # path to SA key JSON (Cloud Run uses metadata server)
 ```
 
+## Contract e-signature webhooks
+```bash
+# SCRUM-862/SCRUM-863 — raw-body provider webhook verification
+DOCUSIGN_CONNECT_HMAC_SECRET=       # X-DocuSign-Signature-1 HMAC secret
+ADOBE_SIGN_CLIENT_ID=               # X-AdobeSign-ClientId verification-of-intent value
+ADOBE_SIGN_WEBHOOK_SECRET=          # optional HMAC if configured outside Adobe's client-id flow
+```
+
 ## Together.ai (fallback LLM provider)
 ```bash
 TOGETHER_API_KEY=

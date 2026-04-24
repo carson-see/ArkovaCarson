@@ -45,6 +45,7 @@ import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
+import { contractsRouter } from '../../ai/contracts/contract-anchor-workflow.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
 import { attestationsRouter } from './attestations.js';
@@ -296,6 +297,11 @@ router.use('/oracle', requireScope('verify'), oracleRouter);
 // ─── Anchor lifecycle + extraction manifest — API-RICH-03/05 ───
 router.use('/anchor', requireScope('verify'), anchorLifecycleRouter);
 router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
+
+// ─── Contract pre/post-signing anchors — SCRUM-863 ───
+// Requires an API key with write:anchors. The route itself also enforces
+// Arkova's no-raw-document boundary and only accepts client-side fingerprints.
+router.use('/contracts', requireScope('write:anchors'), batchRateLimiter, contractsRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // API key required, standard rate limit
