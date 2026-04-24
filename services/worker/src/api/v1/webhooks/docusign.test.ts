@@ -32,7 +32,7 @@ vi.mock('../../../utils/logger.js', () => ({
 
 import { docusignWebhookRouter } from './docusign.js';
 
-const SECRET = 'docusign_fixture_secret';
+const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-1111-1111-111111111111';
 
 function createApp() {
@@ -50,7 +50,7 @@ function createApp() {
 }
 
 function sign(body: string | Buffer): string {
-  return crypto.createHmac('sha256', SECRET).update(body).digest('base64');
+  return crypto.createHmac('sha256', TEST_HMAC_KEY).update(body).digest('base64');
 }
 
 function validBody(): string {
@@ -73,9 +73,15 @@ function integrationLookup(data: unknown, error: unknown = null) {
   };
 }
 
+function nonceInsert(error: { code: string; message?: string } | null = null) {
+  return {
+    insert: vi.fn().mockResolvedValue({ data: null, error }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.DOCUSIGN_CONNECT_HMAC_SECRET = SECRET;
+  process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
 });
 
 describe('POST /webhooks/docusign', () => {
@@ -123,6 +129,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '22222222-2222-2222-2222-222222222222', error: null });
     submitJobMock.mockResolvedValueOnce('job-1');
     const body = validBody();
@@ -165,6 +172,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
     submitJobMock.mockResolvedValueOnce(null);
     const body = validBody();
@@ -176,5 +184,49 @@ describe('POST /webhooks/docusign', () => {
       .send(body);
 
     expect(res.status).toBe(500);
+  });
+
+  it('returns 200 duplicate when the same envelope event is delivered twice', async () => {
+    // Replay protection: the second delivery hits a unique-violation on the
+    // (envelope_id, event_id, generated_at) constraint and is acknowledged
+    // without enqueueing another rule event or fetch job.
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(
+      nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
+    );
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, duplicate: true });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the nonce insert fails for a non-duplicate reason', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(
+      nonceInsert({ code: '08006', message: 'connection failure' }),
+    );
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(500);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
   });
 });

@@ -52,6 +52,7 @@ const EnvelopeDocument = z.object({
 
 const RawConnectPayload = z.object({
   event: z.string().trim().min(1),
+  eventId: z.string().trim().min(1).optional(),
   envelopeId: z.string().trim().min(1).optional(),
   accountId: z.string().trim().min(1).optional(),
   status: z.string().trim().min(1).optional(),
@@ -82,6 +83,7 @@ export type DocusignUserInfoT = z.infer<typeof DocusignUserInfo>;
 
 export interface DocusignCompletedEnvelope {
   event: 'envelope-completed';
+  eventId?: string;
   envelopeId: string;
   accountId: string;
   status: 'completed';
@@ -283,6 +285,7 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
 
   return {
     event: 'envelope-completed',
+    eventId: parsed.eventId,
     envelopeId,
     accountId,
     status: 'completed',

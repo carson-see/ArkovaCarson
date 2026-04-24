@@ -153,6 +153,35 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    // Replay protection: dedupe on (envelope_id, event_id, generated_at).
+    // DocuSign retries on any non-2xx response, so a duplicate must return
+    // 200 to stop the retry loop. Migration 0256 creates the nonce table.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: nonceErr } = await (db as any)
+      .from('docusign_webhook_nonces')
+      .insert({
+        envelope_id: event.envelopeId,
+        event_id: event.eventId ?? event.event,
+        generated_at: event.generatedDateTime ?? new Date().toISOString(),
+      });
+    if (nonceErr) {
+      // Postgres unique_violation — duplicate delivery, ack so retries stop.
+      if ((nonceErr as { code?: string }).code === '23505') {
+        logger.info(
+          { envelopeId: event.envelopeId, eventId: event.eventId },
+          'DocuSign webhook: duplicate delivery — returning 200',
+        );
+        res.status(200).json({ ok: true, duplicate: true });
+        return;
+      }
+      logger.error(
+        { error: nonceErr, envelopeId: event.envelopeId },
+        'DocuSign webhook: nonce insert failed',
+      );
+      res.status(500).json({ error: { code: 'nonce_insert_failed' } });
+      return;
+    }
+
     const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
     const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
     const jobId = await enqueueFetchJob({ integration, event, ruleEventId });

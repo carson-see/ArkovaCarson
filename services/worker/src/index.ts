@@ -34,6 +34,7 @@ import { orgVerificationRouter } from './api/v1/orgVerification.js';
 import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
+import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
 import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
@@ -213,6 +214,7 @@ app.use('/api/v1/org', rateLimiters.api, requireAuthMw, orgVerificationRouter);
 app.use('/api/v1/org/sub-orgs', rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
 app.use('/api/v1/org-kyb', rateLimiters.api, requireAuthMw, orgKybRouter);
 app.use('/api/v1/integrations', rateLimiters.api, driveOAuthRouter);
+app.use('/api/v1/integrations', rateLimiters.api, docusignOAuthRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
