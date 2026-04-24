@@ -1,3 +1,4 @@
+/* eslint-disable arkova/no-unscoped-service-test -- audit_events writes use RLS via auth.uid() in the policy, not query-level user_id filter */
 /**
  * Tests for HIPAA Session Timeout — REG-06 (SCRUM-565)
  */

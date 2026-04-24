@@ -61,12 +61,10 @@ export async function workerFetch(
     return response;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      // eslint-disable-next-line preserve-caught-error -- rethrowing as user-friendly message
       throw new Error('Request timed out. The server may be busy — please try again.');
     }
     // TypeError from fetch() = network error (worker down, CORS, offline)
     if (error instanceof TypeError) {
-      // eslint-disable-next-line preserve-caught-error -- rethrowing as user-friendly message
       throw new Error(WORKER_UNAVAILABLE_MESSAGE);
     }
     throw error;
