@@ -38,6 +38,10 @@
 | [#484](https://github.com/carson-see/ArkovaCarson/pull/484) | [47a6fbe](https://github.com/carson-see/ArkovaCarson/commit/47a6fbe) | Platform v2 sprint — API v2 problem+JSON, secret rotation reminder, api_key_scopes, Vertex client, anchor revoke, cloud-logging-sink coverage, v2 search, ADMIN-VIEW copy rename, `user_notifications` table | SCRUM-1057, 1058, 1059, 1061, 1088, 1092, 1093, 1095 |
 | [#485](https://github.com/carson-see/ArkovaCarson/pull/485) | [ae44be7](https://github.com/carson-see/ArkovaCarson/commit/ae44be7) | Lint-cleanup + `scripts/secrets/` secret-audit CLI (9 tests) | SCRUM-1055 (Sarah's branch; CLI prep) |
 
+### Open cleanup PR (2026-04-24)
+
+- [#487](https://github.com/carson-see/ArkovaCarson/pull/487) — removes 3 kenya `*3.md` Finder duplicates that were tracked before #482's gitignore pattern. Awaiting human merge. 194 untracked Finder duplicates also deleted from disk this session (dist artifacts, stale coverage files, stray docs copies). `find . -name "* [234].*" -not -path "./.claude/worktrees/*"` now returns 0 results outside worktrees.
+
 ### Migration inventory added this wave
 
 - `0236_ark105_rules_executions_comment_fix.sql` (#480) — compensating `COMMENT ON TABLE` removes "24h" wording that contradicted the permanent unique index.
