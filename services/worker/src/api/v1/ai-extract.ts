@@ -25,6 +25,27 @@ import { logger } from '../../utils/logger.js';
 
 const router = Router();
 export const AI_EXTRACTION_LATENCY_BUDGET_MS = 4_500;
+const ISSUER_KEYWORDS = [
+  'university',
+  'college',
+  'institute',
+  'school',
+  'academy',
+  'board',
+  'council',
+  'commission',
+  'department',
+  'ministry',
+  'authority',
+  'registry',
+  'corporation',
+  'corp',
+  'inc',
+  'ltd',
+  'llc',
+  'society',
+] as const;
+const ISO_LIKE_DATE_PATTERN = /\b(?:20|19)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b/;
 
 class ExtractionLatencyError extends Error {
   constructor() {
@@ -83,16 +104,17 @@ function inferIssuerName(strippedText: string, issuerHint?: string): string | un
     .filter((line) => line.length > 2 && line.length <= 160)
     .filter((line) => !/^\[[A-Z_]+_REDACTED\]$/.test(line));
 
-  const issuerLine = lines.find((line) =>
-    /\b(university|college|institute|school|academy|board|council|commission|department|ministry|authority|registry|corporation|corp\.?|inc\.?|ltd\.?|llc|society)\b/i.test(line),
-  );
+  const issuerLine = lines.find((line) => {
+    const normalized = line.toLowerCase();
+    return ISSUER_KEYWORDS.some((keyword) => normalized.includes(keyword));
+  });
 
   return issuerLine ?? lines[0];
 }
 
 function inferIssuedDate(strippedText: string): string | undefined {
-  const dateMatch = strippedText.match(/\b(?:20|19)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])\b/);
-  return dateMatch?.[0]?.replace(/\//g, '-').replace(/\./g, '-');
+  const dateMatch = ISO_LIKE_DATE_PATTERN.exec(strippedText);
+  return dateMatch?.[0]?.replaceAll('/', '-').replaceAll('.', '-');
 }
 
 function inferJurisdiction(strippedText: string): string | undefined {
@@ -319,11 +341,15 @@ router.post('/', async (req: Request, res: Response) => {
       enqueueTagGeneration(fields);
     }
 
+    const creditsRemaining = creditBalance
+      ? (degraded ? creditBalance.remaining : creditBalance.remaining - 1)
+      : null;
+
     res.json({
       fields,
       confidence: calibrated,
       provider: result.provider,
-      creditsRemaining: creditBalance ? (degraded ? creditBalance.remaining : creditBalance.remaining - 1) : null,
+      creditsRemaining,
       manifestHash: manifest.manifestHash,
       confidenceScores: manifest.confidenceScores ?? null,
       subType: fields.subType ?? null,

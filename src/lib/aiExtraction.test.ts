@@ -240,7 +240,7 @@ describe('aiExtraction orchestrator', () => {
         strippedLength: 39,
       });
 
-      global.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit): Promise<Response> => new Promise<Response>((_resolve, reject) => {
+      globalThis.fetch = vi.fn((_url: string | URL | Request, init?: RequestInit): Promise<Response> => new Promise<Response>((_resolve, reject) => {
         const signal = init?.signal;
         signal?.addEventListener('abort', () => {
           reject(new DOMException('The operation was aborted', 'AbortError'));

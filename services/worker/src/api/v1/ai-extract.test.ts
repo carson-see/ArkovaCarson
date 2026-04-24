@@ -69,6 +69,12 @@ const validBody = {
   issuerHint: 'University of Michigan',
 };
 
+function mockManifestTable() {
+  return {
+    insert: vi.fn().mockResolvedValue({ error: null }),
+  };
+}
+
 type AIExtractResponse = Record<string, unknown> & {
   confidence?: number;
   provider?: string;
@@ -135,11 +141,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -189,11 +191,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -271,11 +269,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -334,11 +328,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -402,11 +392,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -460,11 +446,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),
@@ -519,11 +501,7 @@ describe('AI Extraction Endpoint', () => {
           };
         }
         if (table === 'extraction_manifests') {
-          return {
-            insert: vi.fn().mockReturnValue({
-              then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-            }),
-          };
+          return mockManifestTable();
         }
         return {
           select: vi.fn().mockReturnThis(),
@@ -593,11 +571,7 @@ describe('AI Extraction Endpoint', () => {
         };
       }
       if (table === 'extraction_manifests') {
-        return {
-          insert: vi.fn().mockReturnValue({
-            then: (cb: (v: unknown) => void) => { cb({ error: null }); return { catch: vi.fn() }; },
-          }),
-        };
+        return mockManifestTable();
       }
       return {
         select: vi.fn().mockReturnThis(),

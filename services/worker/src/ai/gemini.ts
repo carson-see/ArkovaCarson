@@ -664,31 +664,32 @@ function sanitizeExtractedFields(rawFields: Record<string, unknown>): Record<str
   const sanitized: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(rawFields)) {
-    if (STRING_EXTRACTION_FIELDS.has(key)) {
-      const coerced = coerceString(value, key === 'description' ? 500 : undefined);
-      if (coerced) sanitized[key] = coerced;
-      continue;
-    }
-
-    if (NUMBER_EXTRACTION_FIELDS.has(key)) {
-      const coerced = coerceNumber(value);
-      if (coerced !== undefined) sanitized[key] = coerced;
-      continue;
-    }
-
-    if (STRING_ARRAY_EXTRACTION_FIELDS.has(key)) {
-      const coerced = coerceStringArray(value);
-      if (coerced.length > 0) sanitized[key] = coerced;
-      continue;
-    }
-
-    if (BOOLEAN_EXTRACTION_FIELDS.has(key)) {
-      const coerced = coerceBoolean(value);
-      if (coerced !== undefined) sanitized[key] = coerced;
-    }
+    const coerced = coerceExtractionField(key, value);
+    if (coerced !== undefined) sanitized[key] = coerced;
   }
 
   return sanitized;
+}
+
+function coerceExtractionField(key: string, value: unknown): unknown {
+  if (STRING_EXTRACTION_FIELDS.has(key)) {
+    return coerceString(value, key === 'description' ? 500 : undefined);
+  }
+
+  if (NUMBER_EXTRACTION_FIELDS.has(key)) {
+    return coerceNumber(value);
+  }
+
+  if (STRING_ARRAY_EXTRACTION_FIELDS.has(key)) {
+    const coerced = coerceStringArray(value);
+    return coerced.length > 0 ? coerced : undefined;
+  }
+
+  if (BOOLEAN_EXTRACTION_FIELDS.has(key)) {
+    return coerceBoolean(value);
+  }
+
+  return undefined;
 }
 
 function coerceString(value: unknown, maxLength?: number): string | undefined {
