@@ -1235,6 +1235,20 @@ export const RULE_WIZARD_LABELS = {
   ERR_INVALID_CONFIG_PREFIX: 'Fix the highlighted fields before continuing: ',
 } as const;
 
+export const RULES_PAGE_COPY = {
+  RUN_NOW: 'Run now',
+  RUNNING: 'Queuing…',
+  HISTORY: 'History',
+  HISTORY_TITLE: 'Rule history',
+  HISTORY_DESCRIPTION: 'Recent queued and completed runs for this rule.',
+  HISTORY_EMPTY: 'No runs yet.',
+  HISTORY_LOADING: 'Loading history…',
+  QUEUED_TOAST: 'Queued.',
+  VIEW_HISTORY: 'View history',
+  STATUS: 'Status',
+  TRIGGER_EVENT: 'Trigger event',
+} as const;
+
 // =============================================================================
 // NESSIE INTELLIGENCE (NMT-07)
 // =============================================================================

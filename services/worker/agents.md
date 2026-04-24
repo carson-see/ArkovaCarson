@@ -57,6 +57,7 @@ Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-ad
 
 | Date | Sprint | Change |
 |------|--------|--------|
+| 2026-04-24 | SCRUM-1101/1102 | DocuSign connector continuation: `integrations/oauth/docusign.ts`, `integrations/connectors/docusign.ts`, and `api/v1/webhooks/docusign.ts` add OAuth helpers, DocuSign Connect HMAC verification, sanitized rules-event enqueue, and retryable `docusign.envelope_completed` job payloads. `api/rules-crud.ts` adds `POST /api/rules/:id/run`, org-admin auth, and 5/min/org in-memory rate limiting for manual rule executions. |
 | 2026-03-10 ~12 PM | HARDENING-1 | 27 unit tests for `processAnchor()` + `processPendingAnchors()` (100% coverage on `anchor.ts`). Fixed silent audit event failure (BUG-H1-01). Deleted dead `anchorWithClaim.ts` (BUG-H1-02, BUG-H1-03). |
 | 2026-03-10 ~2 PM | HARDENING-2 | 32 new tests: MockChainClient contract (18), getChainClient factory (5), job claim/completion flow (9). Total: 59 worker tests. 100% coverage on `anchor.ts`, `chain/mock.ts`, `chain/client.ts`. |
 | 2026-03-10 ~4 PM | HARDENING-3 | 55 new tests: webhook delivery (30), Stripe client (7), Stripe handlers (18). Total: 114 worker tests. HMAC signature verification confirmed against `crypto.createHmac`. |

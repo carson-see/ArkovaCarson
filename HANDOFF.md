@@ -193,6 +193,9 @@ Full history: `git log --oneline`.
 
 | Date | Decision | Rationale |
 |---|---|---|
+| 2026-04-24 | DocuSign completed-envelope intake uses raw-body HMAC, `organization_rule_events`, and retryable `job_queue` fetch jobs | Avoids new migrations, keeps raw Connect payloads/documents out of Postgres, and gives failed fetches exponential backoff + dead-letter behavior. |
+| 2026-04-24 | Manual rule "Run now" queues an execution row instead of synchronously running actions | Keeps the endpoint fast, preserves action-dispatch retry semantics, and satisfies org-admin + rate-limit controls. |
+| 2026-04-24 | Clio connector is a conditional go for document-only MVP | Official Clio docs support OAuth, webhooks, documents, and region-specific API hosts; live PoC needs Carson-provisioned Clio sandbox credentials. |
 | 2026-04-23 | `search.arkova.ai` routes to `arkova.ai/o/:slug` via Cloudflare Worker (option c) | Brand-clean URL, single codebase, no auth-session leakage between public + app. |
 | 2026-04-23 | Local-folder watcher deferred (cloud connectors only in v1) | Requires Electron/Tauri desktop surface; 2–3 months of net-new scope. Cloud connectors (Drive + DocuSign) cover ~95% of admin use cases. |
 | 2026-04-23 | Vertex consolidation is Gemini-Golden-only | Nessie runs on Together.ai + Llama 3.1; no strategic reason to migrate it. |
@@ -216,4 +219,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-24 (Platform v2 sprint: 10 stories coded + reviewed + Jira updated + Confluence pages created. PR pending for branch `claude/charming-cori-gCiQU`). CIBA PR #476 still awaiting human merge._
+_Last refreshed: 2026-04-24 (Connectors v2 continuation: DocuSign webhook/OAuth helpers, per-rule Run now queueing, Clio spike doc. No migration files edited or pushed.)_

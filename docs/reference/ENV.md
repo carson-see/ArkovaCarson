@@ -232,6 +232,24 @@ GOOGLE_OAUTH_CLIENT_SECRET=
 # not leak OAuth tokens. Value is the full KMS resource name.
 GCP_KMS_INTEGRATION_TOKEN_KEY=
 
+# ─── SCRUM-1101 — DocuSign connector ───
+# See docs/runbooks/integrations/docusign.md for DocuSign OAuth + Connect setup.
+# OAuth refresh tokens are KMS-encrypted before persistence; cleartext tokens
+# and Connect payload bodies must not be logged or stored.
+
+# DocuSign OAuth integration key/client secret. Register the worker callback
+# URL in DocuSign Admin before enabling customer connections.
+DOCUSIGN_INTEGRATION_KEY=
+DOCUSIGN_CLIENT_SECRET=
+
+# DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1
+# over the raw body before parsing or enqueueing events.
+DOCUSIGN_CONNECT_HMAC_SECRET=
+
+# Sandbox vs production DocuSign account server. Default true. Only a literal
+# "false" flips to production account.docusign.com.
+DOCUSIGN_DEMO=true
+
 # ─── SCRUM-1164 / 1166 — Billing Phase 3a ───
 # See docs/runbooks/billing/phase-3-rollover-grace.md.
 

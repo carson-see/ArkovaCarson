@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, RefreshCw, ScrollText, Trash2, ToggleLeft, ToggleRight, Loader2, Pencil } from 'lucide-react';
+import { History, Play, Plus, RefreshCw, ScrollText, Trash2, ToggleLeft, ToggleRight, Loader2, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppShell } from '@/components/layout';
 import { useAuth } from '@/hooks/useAuth';
@@ -15,6 +15,7 @@ import { useProfile } from '@/hooks/useProfile';
 import { supabase } from '@/lib/supabase';
 import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
+import { RULES_PAGE_COPY as C } from '@/lib/copy';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,6 +49,14 @@ interface OrgRuleDetail extends OrgRule {
   last_executed_at?: string | null;
 }
 
+interface RuleExecution {
+  id: string;
+  status: string;
+  trigger_event_id: string;
+  created_at: string;
+  error: string | null;
+}
+
 function formatRuleType(value: string): string {
   return value
     .toLowerCase()
@@ -63,6 +72,7 @@ export function RulesPage() {
   const [rules, setRules] = useState<OrgRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [actingId, setActingId] = useState<string | null>(null);
+  const [runningRuleId, setRunningRuleId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [orgRole, setOrgRole] = useState<string | null>(null);
   const [editOpen, setEditOpen] = useState(false);
@@ -73,6 +83,11 @@ export function RulesPage() {
   const [editTriggerConfig, setEditTriggerConfig] = useState('{}');
   const [editActionConfig, setEditActionConfig] = useState('{}');
   const [editError, setEditError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyRule, setHistoryRule] = useState<OrgRule | null>(null);
+  const [historyItems, setHistoryItems] = useState<RuleExecution[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
 
   const isOrgAdmin = profile?.role === 'ORG_ADMIN' || orgRole === 'owner' || orgRole === 'admin';
 
@@ -160,6 +175,47 @@ export function RulesPage() {
       setEditError(err instanceof Error ? err.message : 'Rule load failed');
     } finally {
       setEditLoading(false);
+    }
+  }
+
+  async function fetchRuleHistory(rule: OrgRule): Promise<void> {
+    setHistoryOpen(true);
+    setHistoryRule(rule);
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await workerFetch(`/api/rules/${rule.id}/executions?limit=25`, { method: 'GET' });
+      const parsed = await res.json().catch(() => ({})) as {
+        items?: RuleExecution[];
+        error?: { message?: string };
+      };
+      if (!res.ok) throw new Error(parsed.error?.message ?? `Rule history failed (${res.status})`);
+      setHistoryItems(Array.isArray(parsed.items) ? parsed.items : []);
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : 'Rule history failed');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function runRuleNow(rule: OrgRule): Promise<void> {
+    setRunningRuleId(rule.id);
+    try {
+      const res = await workerFetch(`/api/rules/${rule.id}/run`, { method: 'POST' });
+      const parsed = await res.json().catch(() => ({})) as { error?: { message?: string } };
+      if (!res.ok) throw new Error(parsed.error?.message ?? `Rule run failed (${res.status})`);
+      toast.success(C.QUEUED_TOAST, {
+        action: {
+          label: C.VIEW_HISTORY,
+          onClick: () => {
+            void fetchRuleHistory(rule);
+          },
+        },
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Rule run failed');
+    } finally {
+      setRunningRuleId(null);
     }
   }
 
@@ -263,6 +319,7 @@ export function RulesPage() {
       <div className="space-y-3">
         {rules.map((rule) => {
           const busy = actingId === rule.id;
+          const running = runningRuleId === rule.id;
           const ToggleIcon = rule.enabled ? ToggleLeft : ToggleRight;
           const toggleLabel = rule.enabled ? 'Disable' : 'Enable';
           return (
@@ -301,6 +358,24 @@ export function RulesPage() {
                   >
                     <Pencil className="mr-2 h-4 w-4" />
                     {isOrgAdmin ? 'Edit' : 'View'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!isOrgAdmin || busy || running}
+                    onClick={() => void runRuleNow(rule)}
+                  >
+                    {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+                    {running ? C.RUNNING : C.RUN_NOW}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void fetchRuleHistory(rule)}
+                  >
+                    <History className="mr-2 h-4 w-4" />
+                    {C.HISTORY}
                   </Button>
                   <Button
                     variant="outline"
@@ -450,6 +525,51 @@ export function RulesPage() {
                 </Button>
               )}
             </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{C.HISTORY_TITLE}</DialogTitle>
+              <DialogDescription>
+                {historyRule ? `${historyRule.name} - ${C.HISTORY_DESCRIPTION}` : C.HISTORY_DESCRIPTION}
+              </DialogDescription>
+            </DialogHeader>
+
+            {historyLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                {C.HISTORY_LOADING}
+              </div>
+            ) : historyError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{historyError}</AlertDescription>
+              </Alert>
+            ) : historyItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">{C.HISTORY_EMPTY}</p>
+            ) : (
+              <div className="space-y-2">
+                {historyItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-md border p-3 text-sm"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{C.STATUS}: {formatRuleType(item.status)}</Badge>
+                      <span className="text-muted-foreground">
+                        {new Date(item.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="mt-2 break-all text-xs text-muted-foreground">
+                      {C.TRIGGER_EVENT}: {item.trigger_event_id}
+                    </div>
+                    {item.error && (
+                      <div className="mt-2 text-xs text-destructive">{item.error}</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </DialogContent>
         </Dialog>
       </div>

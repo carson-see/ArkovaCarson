@@ -18,6 +18,7 @@
  * flip on explicitly. This is the SEC-02 prompt-injection defense.
  */
 import type { Request, Response } from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -64,7 +65,8 @@ async function emitRuleAudit(
     | 'ORG_RULE_UPDATED'
     | 'ORG_RULE_DELETED'
     | 'ORG_RULE_ENABLED'
-    | 'ORG_RULE_DISABLED',
+    | 'ORG_RULE_DISABLED'
+    | 'ORG_RULE_RUN_QUEUED',
   params: {
     actorId: string;
     orgId: string;
@@ -106,6 +108,29 @@ export const UpdateOrgRuleInput = z
   .refine((d) => Object.keys(d).length > 0, 'At least one field required');
 
 export type UpdateOrgRuleInputT = z.infer<typeof UpdateOrgRuleInput>;
+
+const MANUAL_RUNS_PER_ORG_PER_MINUTE = 5;
+const manualRunWindows = new Map<string, { count: number; resetAt: number }>();
+
+export function resetManualRuleRunRateLimitForTests(): void {
+  manualRunWindows.clear();
+}
+
+function takeManualRunSlot(orgId: string, now = Date.now()): { ok: true } | { ok: false; retryAfterSeconds: number } {
+  const existing = manualRunWindows.get(orgId);
+  if (!existing || existing.resetAt <= now) {
+    manualRunWindows.set(orgId, { count: 1, resetAt: now + 60_000 });
+    return { ok: true };
+  }
+  if (existing.count >= MANUAL_RUNS_PER_ORG_PER_MINUTE) {
+    return {
+      ok: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+    };
+  }
+  existing.count += 1;
+  return { ok: true };
+}
 
 /**
  * Resolves the caller's org from their profile. Worker uses a service_role
@@ -320,6 +345,104 @@ export async function handleListRuleExecutions(
     res.json({ items, count: items.length, limit: limitParsed.data });
   } catch (err) {
     logger.error({ error: err }, 'handleListRuleExecutions unexpected error');
+    res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
+  }
+}
+
+export async function handleRunRuleNow(
+  userId: string,
+  req: Request,
+  res: Response,
+): Promise<void> {
+  const orgId = await getCallerOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: { code: 'forbidden', message: 'No organization on profile' } });
+    return;
+  }
+
+  const idParsed = UuidSchema.safeParse(req.params.id);
+  if (!idParsed.success) {
+    res.status(400).json({ error: { code: 'invalid_request', message: 'Invalid id' } });
+    return;
+  }
+
+  if (!(await requireOrgAdmin(userId, orgId, res))) return;
+
+  try {
+    // Prove ownership before spending the org's manual-run rate-limit slot.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: rule, error: ruleError } = await (db as any)
+      .from('organization_rules')
+      .select('id, org_id, name, enabled, trigger_type, action_type')
+      .eq('id', idParsed.data)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (ruleError) {
+      logger.warn({ error: ruleError, ruleId: idParsed.data }, 'rule run ownership lookup failed');
+      res.status(500).json({ error: { code: 'run_lookup_failed', message: 'Failed to queue rule run' } });
+      return;
+    }
+    if (!rule) {
+      res.status(404).json({ error: { code: 'not_found', message: 'Rule not found' } });
+      return;
+    }
+
+    const rate = takeManualRunSlot(orgId);
+    if (!rate.ok) {
+      res.setHeader('Retry-After', rate.retryAfterSeconds.toString());
+      res.status(429).json({
+        error: {
+          code: 'rate_limited',
+          message: 'Manual rule runs are limited to 5 per minute per organization',
+          retry_after: rate.retryAfterSeconds,
+        },
+      });
+      return;
+    }
+
+    const triggerEventId = `manual:${crypto.randomUUID()}`;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('organization_rule_executions')
+      .insert({
+        rule_id: idParsed.data,
+        org_id: orgId,
+        trigger_event_id: triggerEventId,
+        status: 'PENDING',
+        input_payload: {
+          source: 'manual_run',
+          actor_user_id: userId,
+          queued_at: new Date().toISOString(),
+          rule_name: (rule as { name?: string }).name ?? null,
+          trigger_type: (rule as { trigger_type?: string }).trigger_type ?? null,
+          action_type: (rule as { action_type?: string }).action_type ?? null,
+        },
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      logger.warn({ error, ruleId: idParsed.data }, 'manual rule run queue insert failed');
+      res.status(500).json({ error: { code: 'run_queue_failed', message: 'Failed to queue rule run' } });
+      return;
+    }
+
+    const executionId = (data as { id?: string } | null)?.id ?? null;
+    res.status(202).json({
+      ok: true,
+      queued: true,
+      execution_id: executionId,
+      trigger_event_id: triggerEventId,
+    });
+    void emitRuleAudit('ORG_RULE_RUN_QUEUED', {
+      actorId: userId,
+      orgId,
+      ruleId: idParsed.data,
+      details: { execution_id: executionId, trigger_event_id: triggerEventId },
+    });
+  } catch (err) {
+    logger.error({ error: err, ruleId: idParsed.data }, 'handleRunRuleNow unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
 }
