@@ -12,6 +12,11 @@
 --   verified email before app entry, domain-based org membership, richer org
 --   intake, individual verified tiers, and organization tier entitlements.
 
+-- Required extensions — moddatetime used by updated_at triggers below.
+-- Supabase installs extensions in the `extensions` schema; trigger refs
+-- below are schema-qualified so they don't depend on search_path.
+CREATE EXTENSION IF NOT EXISTS moddatetime SCHEMA extensions;
+
 -- =============================================================================
 -- 1. Profile tier values and protected-field trigger
 -- =============================================================================
@@ -270,7 +275,7 @@ DROP TRIGGER IF EXISTS org_tier_entitlements_updated_at ON org_tier_entitlements
 CREATE TRIGGER org_tier_entitlements_updated_at
   BEFORE UPDATE ON org_tier_entitlements
   FOR EACH ROW
-  EXECUTE FUNCTION moddatetime(updated_at);
+  EXECUTE FUNCTION extensions.moddatetime(updated_at);
 
 ALTER TABLE org_tier_entitlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_tier_entitlements FORCE ROW LEVEL SECURITY;

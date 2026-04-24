@@ -21,9 +21,6 @@
 --     data back in anchors.metadata.
 --   - Reset anchors reloptions manually if necessary.
 
--- ---------------------------------------------------------------------------
--- 1. Make anchor_proofs usable for batch Merkle proof persistence
--- ---------------------------------------------------------------------------
 ALTER TABLE public.anchor_proofs
   ADD COLUMN IF NOT EXISTS batch_id text;
 
@@ -33,17 +30,13 @@ ALTER TABLE public.anchor_proofs
 ALTER TABLE public.anchor_proofs
   ALTER COLUMN block_timestamp DROP NOT NULL;
 
--- NOTE: idx_anchor_proofs_batch_id moved to migration
--- 0253_deferred_slow_indexes.sql — pooler statement timeout blocks the
--- build when anchor_proofs has millions of rows. Apply manually via
--- Supabase Dashboard SQL Editor.
+CREATE INDEX IF NOT EXISTS idx_anchor_proofs_batch_id
+  ON public.anchor_proofs (batch_id)
+  WHERE batch_id IS NOT NULL;
 
 COMMENT ON COLUMN public.anchor_proofs.batch_id IS
   'Internal Merkle batch identifier for batch-anchored records.';
 
--- ---------------------------------------------------------------------------
--- 2. Tune anchors for a high-churn workload
--- ---------------------------------------------------------------------------
 ALTER TABLE public.anchors SET (
   fillfactor = 70,
   autovacuum_vacuum_scale_factor = 0.005,
@@ -57,9 +50,6 @@ ALTER TABLE public.anchors SET (
 COMMENT ON TABLE public.anchors IS
   'Primary anchor records. SCALE-02: fillfactor/autovacuum tuned for high-write batch anchoring workload.';
 
--- ---------------------------------------------------------------------------
--- 3. Stop submit_batch_anchors from rewriting anchors.metadata
--- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.submit_batch_anchors(
   p_anchor_ids uuid[],
   p_tx_id text,
@@ -99,9 +89,6 @@ GRANT EXECUTE ON FUNCTION public.submit_batch_anchors(uuid[], text, bigint, time
 COMMENT ON FUNCTION public.submit_batch_anchors(uuid[], text, bigint, timestamptz, text, text) IS
   'Bulk-updates anchors to SUBMITTED without rewriting anchors.metadata. SCALE-02 stores batch proof data in anchor_proofs instead.';
 
--- ---------------------------------------------------------------------------
--- 4. Override pipeline batch RPCs to use anchor_proofs
--- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.finalize_public_record_anchor_batch(
   p_items jsonb,
   p_tx_id text,
@@ -265,4 +252,4 @@ REVOKE ALL ON FUNCTION public.link_public_records_to_anchors(jsonb) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.link_public_records_to_anchors(jsonb) TO service_role;
 
 COMMENT ON FUNCTION public.link_public_records_to_anchors(jsonb) IS
-  'Links public_records to already-bitcoin-anchored anchors, preferring anchor_proofs over legacy metadata.';
+  'Links public_records to already-bitcoin-anchored anchors, preferring anchor_proofs over legacy metadata.';;

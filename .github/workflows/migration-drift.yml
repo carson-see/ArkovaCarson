@@ -58,7 +58,16 @@ jobs:
           set -eo pipefail
 
           if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (typical for forks/Dependabot)."
+            # For fork/Dependabot PRs the token legitimately isn't available.
+            # For main-branch pushes it's an ops misconfiguration — fail loudly.
+            # The 2026-04-24 migration-drift incident (SCRUM-1182) happened
+            # because this block was silently passing on main for weeks while
+            # SUPABASE_ACCESS_TOKEN wasn't provisioned in Actions secrets.
+            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+              echo "::error title=Migration drift check NOT RUN::SUPABASE_ACCESS_TOKEN is not configured in GitHub Actions secrets. Provision at https://app.supabase.com/account/tokens with 'All projects' scope, add as Actions secret SUPABASE_ACCESS_TOKEN. This check cannot protect against drift until then."
+              exit 1
+            fi
+            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (expected for forks/Dependabot PRs; main-branch pushes fail loudly)."
             exit 0
           fi
 

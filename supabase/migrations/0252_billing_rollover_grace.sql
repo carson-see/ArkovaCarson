@@ -84,7 +84,7 @@ DROP TRIGGER IF EXISTS org_monthly_allocation_updated_at ON org_monthly_allocati
 CREATE TRIGGER org_monthly_allocation_updated_at
   BEFORE UPDATE ON org_monthly_allocation
   FOR EACH ROW
-  EXECUTE FUNCTION moddatetime(updated_at);
+  EXECUTE FUNCTION extensions.moddatetime(updated_at);
 
 ALTER TABLE org_monthly_allocation ENABLE ROW LEVEL SECURITY;
 ALTER TABLE org_monthly_allocation FORCE ROW LEVEL SECURITY;

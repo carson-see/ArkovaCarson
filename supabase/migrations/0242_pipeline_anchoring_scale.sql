@@ -12,12 +12,11 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE INDEX IF NOT EXISTS idx_anchors_pipeline_status
-  ON anchors (status, created_at DESC)
-  WHERE deleted_at IS NULL AND metadata ? 'pipeline_source';
-
-CREATE INDEX IF NOT EXISTS idx_public_records_source_id_trgm
-  ON public_records USING gin (source_id gin_trgm_ops);
+-- NOTE: idx_anchors_pipeline_status and idx_public_records_source_id_trgm
+-- moved to migration 0253_deferred_slow_indexes.sql — they cannot be built
+-- via Supabase's CLI/pooler (hard statement timeout; 1.4M-row anchors +
+-- gin_trgm on public_records). Apply manually via Supabase Dashboard SQL
+-- Editor. Runbook: docs/runbooks/supabase/long-running-migrations.md
 
 CREATE OR REPLACE FUNCTION finalize_public_record_anchor_batch(
   p_items jsonb,
