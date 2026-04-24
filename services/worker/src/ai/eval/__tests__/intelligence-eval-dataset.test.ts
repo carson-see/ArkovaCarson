@@ -1,7 +1,9 @@
 /**
  * NCE-05 Intelligence Eval Dataset Tests
  *
- * Validates the 100-entry evaluation dataset structure, coverage, and quality.
+ * Validates the evaluation dataset structure, coverage, and quality.
+ * Baseline = 100 core entries (5 domains × 20) + KAU-06 jurisdiction
+ * procedures (Kenya + Australia NDB, SCRUM-754).
  */
 
 import { describe, it, expect } from 'vitest';
@@ -12,18 +14,26 @@ import {
   getDatasetStats,
 } from '../intelligence-eval-dataset.js';
 
+const CORE_DOMAINS = ['sec_financial', 'legal_court', 'regulatory', 'patent_ip', 'employment_screening'] as const;
+const CORE_ENTRIES_PER_DOMAIN = 20;
+const CORE_ENTRY_COUNT = CORE_DOMAINS.length * CORE_ENTRIES_PER_DOMAIN;
+
 describe('NCE-05: Intelligence Evaluation Dataset', () => {
-  it('has exactly 100 entries', () => {
-    expect(INTELLIGENCE_EVAL_DATASET_V2.length).toBe(100);
+  it(`has at least ${CORE_ENTRY_COUNT} core entries`, () => {
+    expect(INTELLIGENCE_EVAL_DATASET_V2.length).toBeGreaterThanOrEqual(CORE_ENTRY_COUNT);
   });
 
-  it('has 20 entries per domain', () => {
+  it(`has ${CORE_ENTRIES_PER_DOMAIN} entries per core domain`, () => {
     const stats = getDatasetStats();
-    expect(stats.byDomain['sec_financial']).toBe(20);
-    expect(stats.byDomain['legal_court']).toBe(20);
-    expect(stats.byDomain['regulatory']).toBe(20);
-    expect(stats.byDomain['patent_ip']).toBe(20);
-    expect(stats.byDomain['employment_screening']).toBe(20);
+    for (const domain of CORE_DOMAINS) {
+      expect(stats.byDomain[domain]).toBe(CORE_ENTRIES_PER_DOMAIN);
+    }
+  });
+
+  it('covers KAU-06 jurisdictions (Kenya + Australia NDB procedures)', () => {
+    const stats = getDatasetStats();
+    expect(stats.byDomain['kenya_ndb_procedures']).toBeGreaterThan(0);
+    expect(stats.byDomain['australia_ndb_procedures']).toBeGreaterThan(0);
   });
 
   it('covers all 5 task types', () => {
