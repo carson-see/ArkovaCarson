@@ -19,7 +19,7 @@ describe('license deny-list scan', () => {
       },
     }, 'package-lock.json');
 
-    expect(matches.map((match) => match.name).sort()).toEqual([
+    expect(matches.map((match) => match.name).sort((a, b) => a.localeCompare(b))).toEqual([
       'agpl-lib',
       'gpl-lib',
       'sspl-lib',
