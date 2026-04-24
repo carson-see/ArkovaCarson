@@ -231,4 +231,15 @@ GOOGLE_OAUTH_CLIENT_SECRET=
 # dedicated key is strongly preferred so a chain-signing compromise does
 # not leak OAuth tokens. Value is the full KMS resource name.
 GCP_KMS_INTEGRATION_TOKEN_KEY=
+
+# ─── SCRUM-1164 / 1166 — Billing Phase 3a ───
+# See docs/runbooks/billing/phase-3-rollover-grace.md.
+
+# Monthly anchor allocation rollover job. When false the first-of-month
+# cron no-ops; orgs keep their current period open indefinitely.
+ENABLE_ALLOCATION_ROLLOVER=true
+
+# Grace-expiry sweep (flips orgs from "grace" to "suspended" when the
+# 3-day timer elapses). Keep true unless manually managing dunning.
+ENABLE_GRACE_EXPIRY_SWEEP=true
 ```
