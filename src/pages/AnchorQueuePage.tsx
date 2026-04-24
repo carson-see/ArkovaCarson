@@ -69,6 +69,73 @@ function rowsEqual(a: PendingAnchor[], b: PendingAnchor[]): boolean {
   return true;
 }
 
+/** Builder for the header status string. Pulled out to avoid a nested ternary. */
+function formatQueueStatus(loading: boolean, pendingCount: number, oldestAge: string | null): string {
+  if (loading) return 'Loading…';
+  if (pendingCount === 0) return 'Queue is clear.';
+  const suffix = pendingCount === 1 ? '' : 's';
+  const verbSuffix = pendingCount === 1 ? 's' : '';
+  const agePart = oldestAge ? ` (oldest ${oldestAge})` : '';
+  return `${pendingCount} item${suffix} need${verbSuffix} your review${agePart}.`;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el) return false;
+  return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable;
+}
+
+function handleQueueKey(
+  e: KeyboardEvent,
+  groups: Group[],
+  clampedFocus: number,
+  setFocusIdx: React.Dispatch<React.SetStateAction<number>>,
+  setShowHelp: React.Dispatch<React.SetStateAction<boolean>>,
+  openDialog: (g: Group) => void,
+): void {
+  if (e.key === 'j' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    setFocusIdx((i) => Math.min(i + 1, Math.max(0, groups.length - 1)));
+    return;
+  }
+  if (e.key === 'k' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    setFocusIdx((i) => Math.max(i - 1, 0));
+    return;
+  }
+  if (e.key === 'e') {
+    // Intentionally NOT Enter — a focused button/link swallows Enter, so
+    // letting it also open the dialog double-fires on native click.
+    const g = groups[clampedFocus];
+    if (g) openDialog(g);
+    return;
+  }
+  if (e.key === '?') setShowHelp((v) => !v);
+}
+
+/** Keyboard shortcut handler for QueueInner. Extracted so the parent
+ *  function's cognitive complexity stays under Sonar's 15 cap.
+ */
+function useQueueKeyboardShortcuts(args: {
+  groups: Group[];
+  clampedFocus: number;
+  dialogGroup: Group | null;
+  setFocusIdx: React.Dispatch<React.SetStateAction<number>>;
+  setShowHelp: React.Dispatch<React.SetStateAction<boolean>>;
+  openDialog: (g: Group) => void;
+}): void {
+  const { groups, clampedFocus, dialogGroup, setFocusIdx, setShowHelp, openDialog } = args;
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (dialogGroup) return;
+      if (isEditableTarget(e.target)) return;
+      handleQueueKey(e, groups, clampedFocus, setFocusIdx, setShowHelp, openDialog);
+    }
+    globalThis.addEventListener('keydown', onKey);
+    return () => globalThis.removeEventListener('keydown', onKey);
+  }, [groups, clampedFocus, dialogGroup, setFocusIdx, setShowHelp, openDialog]);
+}
+
 /**
  * Poll `cb` every `intervalMs`. Skips when the tab is hidden and catches up
  * when the tab becomes visible again. Extracted from QueueInner so Sonar's
@@ -145,35 +212,14 @@ function QueueInner() {
   const groups = useMemo(() => groupByExternal(rows), [rows]);
   const clampedFocus = Math.min(Math.max(focusIdx, 0), Math.max(0, groups.length - 1));
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (dialogGroup) return;
-      const target = e.target as HTMLElement | null;
-      const inField =
-        target &&
-        (target.tagName === 'INPUT' ||
-          target.tagName === 'TEXTAREA' ||
-          target.isContentEditable);
-      if (inField) return;
-
-      if (e.key === 'j' || e.key === 'ArrowDown') {
-        e.preventDefault();
-        setFocusIdx((i) => Math.min(i + 1, Math.max(0, groups.length - 1)));
-      } else if (e.key === 'k' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        setFocusIdx((i) => Math.max(i - 1, 0));
-      } else if (e.key === 'e') {
-        // Intentionally NOT Enter — a focused button/link swallows Enter, so
-        // letting it also open the dialog double-fires on native click.
-        const g = groups[clampedFocus];
-        if (g) openDialog(g);
-      } else if (e.key === '?') {
-        setShowHelp((v) => !v);
-      }
-    }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [groups, clampedFocus, dialogGroup]);
+  useQueueKeyboardShortcuts({
+    groups,
+    clampedFocus,
+    dialogGroup,
+    setFocusIdx,
+    setShowHelp,
+    openDialog,
+  });
 
   function openDialog(g: Group): void {
     setDialogGroup(g);
@@ -227,11 +273,7 @@ function QueueInner() {
               className="text-sm text-muted-foreground"
               aria-live="polite"
             >
-              {loading
-                ? 'Loading…'
-                : pendingCount === 0
-                  ? 'Queue is clear.'
-                  : `${pendingCount} item${pendingCount === 1 ? '' : 's'} need${pendingCount === 1 ? 's' : ''} your review${oldestAge ? ` (oldest ${oldestAge})` : ''}.`}
+              {formatQueueStatus(loading, pendingCount, oldestAge)}
             </p>
           </div>
           <Button
