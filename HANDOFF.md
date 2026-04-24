@@ -41,6 +41,11 @@
 - Policy decision resolved 2026-04-21: `handleTreasuryHealth` is now platform-admin-only (matches `handleTreasuryStatus`).
 - SCRUM-1015 (INT-10) + SCRUM-1016 (INT-12) marked **Done (scaffold)** — schemas + adapters shipped; production enablement awaits vendor onboarding (Google Cloud OAuth / Microsoft Partner / DocuSign Connect / Adobe Partner Portal).
 
+### v1.0.0 progress (2026-04-23 session)
+
+- **[SCRUM-1056](https://arkova.atlassian.net/browse/SCRUM-1056) SEC-HARDEN-03 (healthcheck CLI)** — PR [#483](https://github.com/carson-see/ArkovaCarson/pull/483) open. Added 5 missing service checks (github / confluence / vercel / figma / sam-gov), TDD coverage in `tests/infra/healthcheck.test.ts` (24 tests), and `scripts/healthcheck/README.md`. Awaiting review + merge.
+- **Cleanup:** PR [#482](https://github.com/carson-see/ArkovaCarson/pull/482) extends `.gitignore` for `* 3.*` Finder duplicates + removes 3 stale evaluator copies in `services/worker/src/rules/`.
+
 ### Other elevated priorities
 
 - [SCRUM-713](https://arkova.atlassian.net/browse/SCRUM-713) INTL — reopened 2026-04-21; 15 children (SCRUM-969..991).

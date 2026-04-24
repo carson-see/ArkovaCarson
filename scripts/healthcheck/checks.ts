@@ -34,6 +34,20 @@ function rotateAt(vendor: string, path: string): string {
   return `Rotate at ${vendor}${path}. Update Secret Manager.`;
 }
 
+/**
+ * Shared Atlassian Basic-auth probe. Jira + Confluence use the same
+ * JIRA_API_TOKEN + JIRA_EMAIL pair; only the probe URL differs. Having
+ * one helper keeps the "optional, MCP is primary" fallback identical on
+ * both sides so SonarCloud doesn't flag the two checks as duplicate.
+ */
+async function atlassianProbe(url: string): Promise<Result> {
+  if (!has("JIRA_API_TOKEN") || !has("JIRA_EMAIL")) {
+    return { ok: true, detail: "not configured (optional — MCP path is primary)" };
+  }
+  const auth = Buffer.from(`${env("JIRA_EMAIL")}:${env("JIRA_API_TOKEN")}`).toString("base64");
+  return httpOk(url, { headers: { Authorization: `Basic ${auth}` } });
+}
+
 export const checks: Check[] = [
   {
     name: "supabase",
@@ -153,15 +167,53 @@ export const checks: Check[] = [
   },
   {
     name: "jira",
+    run: () => atlassianProbe("https://arkova.atlassian.net/rest/api/3/myself"),
+    remediation: rotateAt("id.atlassian.com", "/manage-profile/security/api-tokens"),
+  },
+  {
+    name: "confluence",
+    // Atlassian unifies Jira + Confluence under the same API token, so we
+    // reuse JIRA_API_TOKEN/JIRA_EMAIL but probe the Confluence space API.
+    // Optional, like jira: MCP is the primary path.
+    run: () => atlassianProbe("https://arkova.atlassian.net/wiki/rest/api/space?limit=1"),
+    remediation: rotateAt("id.atlassian.com", "/manage-profile/security/api-tokens (same token covers Jira + Confluence)"),
+  },
+  {
+    name: "github",
     run: () => {
-      if (!has("JIRA_API_TOKEN") || !has("JIRA_EMAIL")) {
-        return Promise.resolve({ ok: true, detail: "not configured (optional — MCP path is primary)" });
-      }
-      const auth = Buffer.from(`${env("JIRA_EMAIL")}:${env("JIRA_API_TOKEN")}`).toString("base64");
-      return httpOk("https://arkova.atlassian.net/rest/api/3/myself", {
-        headers: { Authorization: `Basic ${auth}` },
+      // Prefer GITHUB_TOKEN; fall back to GH_TOKEN to match the gh CLI's own resolution order.
+      const token = env("GITHUB_TOKEN") ?? env("GH_TOKEN");
+      if (!token) return Promise.resolve({ ok: false, detail: "missing GITHUB_TOKEN or GH_TOKEN" });
+      // /rate_limit works for any valid token regardless of scope (user, app, fine-grained).
+      return httpOk("https://api.github.com/rate_limit", {
+        headers: { Authorization: `Bearer ${token}`, "User-Agent": "arkova-healthcheck" },
       });
     },
-    remediation: rotateAt("id.atlassian.com", "/manage-profile/security/api-tokens"),
+    remediation: rotateAt("github.com", "/settings/tokens (or `gh auth refresh` for the CLI token)"),
+  },
+  {
+    name: "vercel",
+    run: () =>
+      // /v2/user works for any valid token regardless of team scope; teams endpoint can 403 on team-scoped tokens.
+      guardedFetch("https://api.vercel.com/v2/user", ["VERCEL_TOKEN"], bearerHeader("VERCEL_TOKEN")),
+    remediation: rotateAt("vercel.com", "/account/tokens"),
+  },
+  {
+    name: "figma",
+    run: () =>
+      // Figma PATs use the X-Figma-Token header (NOT Bearer). OAuth tokens use Bearer — we only support PATs here.
+      guardedFetch("https://api.figma.com/v1/me", ["FIGMA_TOKEN"], { "X-Figma-Token": env("FIGMA_TOKEN") ?? "" }),
+    remediation: rotateAt("figma.com", "/settings → Personal access tokens"),
+  },
+  {
+    name: "sam-gov",
+    run: () => {
+      // SAM.gov passes the api_key as a query param, not a header. Bound the probe with size=1
+      // because their entity API has aggressive per-day quotas.
+      if (!has("SAM_GOV_API_KEY")) return Promise.resolve({ ok: false, detail: "missing SAM_GOV_API_KEY" });
+      const url = `https://api.sam.gov/entity-information/v4/entities?api_key=${encodeURIComponent(env("SAM_GOV_API_KEY") ?? "")}&samRegistered=Yes&page=0&size=1`;
+      return httpOk(url);
+    },
+    remediation: "Request a new key at https://sam.gov/content/api → My Account → Account Details. Update Secret Manager.",
   },
 ];
