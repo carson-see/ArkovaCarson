@@ -88,8 +88,12 @@ export async function workerPostForUrl(
 
   if (!response.ok) {
     const parsed = await response.json().catch(() => ({}));
+    const errorValue = (parsed as { error?: string | { message?: string } }).error;
+    const errorMessage = typeof errorValue === 'string'
+      ? errorValue
+      : errorValue?.message;
     throw new Error(
-      (parsed as Record<string, string>).error ?? `Request failed (${response.status})`,
+      errorMessage ?? `Request failed (${response.status})`,
     );
   }
 

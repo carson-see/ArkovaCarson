@@ -1,13 +1,12 @@
 /**
  * Plan Selector Component (BUG-1)
  *
- * Allows users to choose their subscription tier during onboarding.
- * During beta, all plans are free (banner shown).
+ * Allows individual users to choose their free or verified tier during onboarding.
  * Updates profile.subscription_tier on selection via set_onboarding_plan RPC.
  */
 
 import { useState } from 'react';
-import { ArrowRight, Check, CheckCircle, Loader2, Sparkles } from 'lucide-react';
+import { ArrowRight, Check, CheckCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -17,72 +16,28 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
-import { PLAN_SELECTOR_LABELS } from '@/lib/copy';
-
-type PlanOption = 'free' | 'starter' | 'professional';
+import {
+  INDIVIDUAL_ONBOARDING_PLANS,
+  type IndividualOnboardingPlanId,
+} from '@/lib/onboardingPlans';
 
 interface PlanSelectorProps {
-  onSelect: (plan: PlanOption) => void;
+  onSelect: (plan: IndividualOnboardingPlanId) => void;
   loading?: boolean;
 }
 
-const PLANS: {
-  id: PlanOption;
-  name: string;
-  desc: string;
-  price: string;
-  features: string[];
-  recommended?: boolean;
-}[] = [
-  {
-    id: 'free',
-    name: PLAN_SELECTOR_LABELS.FREE_NAME,
-    desc: PLAN_SELECTOR_LABELS.FREE_DESC,
-    price: PLAN_SELECTOR_LABELS.FREE_PRICE,
-    features: [
-      PLAN_SELECTOR_LABELS.FREE_RECORDS,
-      PLAN_SELECTOR_LABELS.FREE_VERIFICATION,
-      PLAN_SELECTOR_LABELS.FREE_PROOF,
-    ],
-  },
-  {
-    id: 'starter',
-    name: PLAN_SELECTOR_LABELS.STARTER_NAME,
-    desc: PLAN_SELECTOR_LABELS.STARTER_DESC,
-    price: PLAN_SELECTOR_LABELS.STARTER_PRICE,
-    features: [
-      PLAN_SELECTOR_LABELS.STARTER_RECORDS,
-      PLAN_SELECTOR_LABELS.STARTER_SUPPORT,
-      PLAN_SELECTOR_LABELS.STARTER_DOWNLOADS,
-    ],
-    recommended: true,
-  },
-  {
-    id: 'professional',
-    name: PLAN_SELECTOR_LABELS.PROFESSIONAL_NAME,
-    desc: PLAN_SELECTOR_LABELS.PROFESSIONAL_DESC,
-    price: PLAN_SELECTOR_LABELS.PROFESSIONAL_PRICE,
-    features: [
-      PLAN_SELECTOR_LABELS.PROFESSIONAL_RECORDS,
-      PLAN_SELECTOR_LABELS.PROFESSIONAL_SUPPORT,
-      PLAN_SELECTOR_LABELS.PROFESSIONAL_API,
-      PLAN_SELECTOR_LABELS.PROFESSIONAL_BULK,
-    ],
-  },
-];
-
 export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelectorProps>) {
-  const [selected, setSelected] = useState<PlanOption>('free');
+  const [selected, setSelected] = useState<IndividualOnboardingPlanId>('free');
 
   const handleContinue = () => {
     onSelect(selected);
   };
 
-  const handleCardSelect = (planId: PlanOption) => {
+  const handleCardSelect = (planId: IndividualOnboardingPlanId) => {
     if (!loading) setSelected(planId);
   };
 
-  const handleCardKeyDown = (e: React.KeyboardEvent, planId: PlanOption) => {
+  const handleCardKeyDown = (e: React.KeyboardEvent, planId: IndividualOnboardingPlanId) => {
     if (e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
       handleCardSelect(planId);
@@ -92,22 +47,14 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
   return (
     <div className="space-y-6">
       <div className="text-center space-y-2">
-        <h1 className="text-2xl font-bold">{PLAN_SELECTOR_LABELS.TITLE}</h1>
+        <h1 className="text-2xl font-bold">Choose your individual plan</h1>
         <p className="text-muted-foreground">
-          {PLAN_SELECTOR_LABELS.SUBTITLE}
+          Pick the monthly anchor limit and trust badge that fit how you use Arkova.
         </p>
       </div>
 
-      {/* Beta banner */}
-      <div className="flex items-center justify-center gap-2 rounded-lg bg-primary/5 border border-primary/20 px-4 py-2.5">
-        <Sparkles className="h-4 w-4 text-primary shrink-0" />
-        <p className="text-sm font-medium text-primary">
-          {PLAN_SELECTOR_LABELS.BETA_BANNER}
-        </p>
-      </div>
-
-      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3" role="radiogroup" aria-label={PLAN_SELECTOR_LABELS.TITLE}>
-        {PLANS.map((plan) => (
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-3" role="radiogroup" aria-label="Choose your individual plan">
+        {INDIVIDUAL_ONBOARDING_PLANS.map((plan) => (
           <Card
             key={plan.id}
             role="radio"
@@ -123,7 +70,7 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
             {plan.recommended && (
               <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                 <span className="bg-primary text-primary-foreground text-xs font-medium px-3 py-1 rounded-full">
-                  {PLAN_SELECTOR_LABELS.RECOMMENDED}
+                  Recommended
                 </span>
               </div>
             )}
@@ -134,16 +81,11 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
                   <CheckCircle className="h-5 w-5 text-primary" />
                 )}
               </div>
-              <CardDescription>{plan.desc}</CardDescription>
+              <CardDescription>{plan.description}</CardDescription>
               <p className="text-2xl font-bold mt-2">
-                {plan.price === PLAN_SELECTOR_LABELS.FREE_PRICE ? (
-                  PLAN_SELECTOR_LABELS.FREE_PRICE
-                ) : (
-                  <>
-                    <span className="text-muted-foreground line-through">{plan.price}</span>
-                    <span className="text-primary ml-2">{PLAN_SELECTOR_LABELS.FREE_PRICE}</span>
-                    <span className="text-sm font-normal text-muted-foreground ml-1">{PLAN_SELECTOR_LABELS.BETA_LABEL}</span>
-                  </>
+                {plan.priceLabel}
+                {plan.cadenceLabel && (
+                  <span className="text-sm font-normal text-muted-foreground ml-1">{plan.cadenceLabel}</span>
                 )}
               </p>
             </CardHeader>
@@ -170,11 +112,11 @@ export function PlanSelector({ onSelect, loading = false }: Readonly<PlanSelecto
         {loading ? (
           <>
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {PLAN_SELECTOR_LABELS.SETTING_UP}
+            Setting up...
           </>
         ) : (
           <>
-            {PLAN_SELECTOR_LABELS.CONTINUE}
+            Continue
             <ArrowRight className="ml-2 h-4 w-4" />
           </>
         )}

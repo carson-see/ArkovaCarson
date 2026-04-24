@@ -59,6 +59,9 @@ docs/stories/docx/
 .generated-machines/
 .playwright-mcp/
 
+# HyperFrames video demo projects (scratch output, not repo code)
+arkova-product-demo/
+
 # Design mockups and screenshots (root level)
 /arkova-*.png
 /redesign-*.png

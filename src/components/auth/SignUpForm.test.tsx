@@ -9,10 +9,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
 const mockSignUp = vi.fn();
+const mockSignInWithGoogle = vi.fn();
+const mockSignInWithLinkedIn = vi.fn();
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
     signUp: mockSignUp,
+    signInWithGoogle: mockSignInWithGoogle,
+    signInWithLinkedIn: mockSignInWithLinkedIn,
     loading: false,
     error: null,
     clearError: vi.fn(),
@@ -45,6 +49,19 @@ describe('SignUpForm', () => {
       render(<SignUpForm />);
       expect(screen.getByLabelText(/full name/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/email address/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /google/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /linkedin/i })).toBeInTheDocument();
+    });
+
+    it('starts social signup with Google or LinkedIn', async () => {
+      const SignUpForm = await loadSignUpForm();
+      render(<SignUpForm />);
+
+      fireEvent.click(screen.getByRole('button', { name: /google/i }));
+      fireEvent.click(screen.getByRole('button', { name: /linkedin/i }));
+
+      expect(mockSignInWithGoogle).toHaveBeenCalledOnce();
+      expect(mockSignInWithLinkedIn).toHaveBeenCalledOnce();
     });
 
     it('submits signup form', async () => {

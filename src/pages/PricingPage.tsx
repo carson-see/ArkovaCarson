@@ -24,6 +24,15 @@ import { BILLING_LABELS } from '@/lib/copy';
 import { UsageWidget } from '@/components/billing/UsageWidget';
 import type { BillingInfo } from '@/components/billing/BillingOverview';
 
+const BILLING_PLAN_ORDER = [
+  'free',
+  'individual_verified_monthly',
+  'individual_verified_annual',
+  'small_business',
+  'medium_business',
+  'enterprise',
+];
+
 export function PricingPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
@@ -48,6 +57,9 @@ export function PricingPage() {
     subscription.status !== 'canceled';
 
   const handleSelectPlan = async (planId: string) => {
+    const selectedPlan = plans.find((plan) => plan.id === planId);
+    if (selectedPlan?.billing_period === 'custom') return;
+
     setCheckoutLoading(planId);
     try {
       if (hasExistingSubscription) {
@@ -162,22 +174,27 @@ export function PricingPage() {
       ) : (
         <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3 max-w-5xl">
           {plans
-            .filter(p => p.price_cents !== null || p.name === 'Organization')
+            .filter(p => BILLING_PLAN_ORDER.includes(p.id))
+            .sort((a, b) => BILLING_PLAN_ORDER.indexOf(a.id) - BILLING_PLAN_ORDER.indexOf(b.id))
             .map(dbPlan => (
               <PricingCard
                 key={dbPlan.id}
                 plan={{
                   id: dbPlan.id,
                   name: dbPlan.name,
-                  description: getPlanDescription(dbPlan.name),
-                  price: dbPlan.price_cents !== null ? dbPlan.price_cents / 100 : null,
-                  priceLabel: dbPlan.price_cents !== null
+                  description: getPlanDescription(dbPlan.id),
+                  price: dbPlan.billing_period === 'custom' ? null : dbPlan.price_cents / 100,
+                  priceLabel: dbPlan.billing_period === 'custom'
+                    ? 'Custom'
+                    : dbPlan.price_cents !== null
                     ? `$${(dbPlan.price_cents / 100).toFixed(0)}`
                     : 'Custom',
-                  period: dbPlan.price_cents !== null ? 'month' : 'custom',
-                  features: getPlanFeatures(dbPlan.name),
-                  recordsIncluded: dbPlan.records_per_month ?? (dbPlan.name === 'Organization' ? 'unlimited' as const : 0),
-                  recommended: dbPlan.name === 'Professional',
+                  period: dbPlan.billing_period as 'month' | 'year' | 'custom',
+                  features: getPlanFeatures(dbPlan.id),
+                  recordsIncluded: dbPlan.billing_period === 'custom'
+                    ? 'unlimited' as const
+                    : dbPlan.records_per_month ?? 0,
+                  recommended: dbPlan.id === 'individual_verified_monthly',
                   current: currentPlan?.id === dbPlan.id,
                 }}
                 onSelect={handleSelectPlan}
@@ -190,24 +207,51 @@ export function PricingPage() {
   );
 }
 
-/** Plan descriptions mapped from plan name */
-function getPlanDescription(name: string): string {
+/** Plan descriptions mapped from plan id */
+function getPlanDescription(planId: string): string {
   const descriptions: Record<string, string> = {
-    Free: 'Get started with basic anchoring',
-    Individual: 'For individuals securing important records',
-    Professional: 'For professionals with higher volume needs',
-    Organization: 'Enterprise-grade anchoring for teams',
+    free: 'For occasional personal anchoring',
+    individual_verified_monthly: 'For a trusted personal profile',
+    individual_verified_annual: 'Same verified tier, paid yearly',
+    small_business: 'For verified teams up to 25 self-serve seats',
+    medium_business: 'For 25-250 seats and multiple departments',
+    enterprise: 'For larger organizations and custom structures',
   };
-  return descriptions[name] ?? 'Secure your records';
+  return descriptions[planId] ?? 'Secure your records';
 }
 
-/** Plan features mapped from plan name */
-function getPlanFeatures(name: string): string[] {
+/** Plan features mapped from plan id */
+function getPlanFeatures(planId: string): string[] {
   const features: Record<string, string[]> = {
-    Free: ['3 records per month', 'Basic verification page', 'Email support'],
-    Individual: ['10 records per month', 'Full verification page', 'Proof package downloads', 'Priority support'],
-    Professional: ['100 records per month', 'Full verification page', 'Proof package downloads', 'Priority support', 'API access'],
-    Organization: ['Unlimited records', 'Custom branding', 'Team management', 'Dedicated support', 'API access', 'Bulk upload'],
+    free: ['3 document anchors per month', 'Public verification links', 'No verified checkmark'],
+    individual_verified_monthly: [
+      '10 document anchors per month',
+      'Stripe Identity verification',
+      'Verified checkmark next to your name',
+    ],
+    individual_verified_annual: [
+      '10 document anchors per month',
+      '$10 per month when paid annually',
+      'Verified checkmark next to your name',
+    ],
+    small_business: [
+      '1 admin and 5 included seats',
+      '250 anchors per month',
+      '$100 per additional seat',
+      'Compliance intelligence access',
+    ],
+    medium_business: [
+      '25-250 seats',
+      '3 included sub-organizations',
+      'Sub-organization admins and allocation rules',
+      'Compliance intelligence recommendations',
+    ],
+    enterprise: [
+      'Custom seat and anchor allocation',
+      'Expanded sub-organization limits',
+      'Compliance suite access',
+      'Dedicated onboarding and support',
+    ],
   };
-  return features[name] ?? ['Secure anchoring'];
+  return features[planId] ?? ['Secure anchoring'];
 }

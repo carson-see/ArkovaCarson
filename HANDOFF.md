@@ -14,12 +14,12 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-24-scrum-727-985-987-hardening` — PR pending for SCRUM-727/985/987 hardening pass (security + coverage gaps surfaced during code review). All 6 PRs from the 2026-04-23→24 wave already shipped to main: #479 CIBA-HARDEN-03, #480 CIBA-HARDEN-04/05/06, #481 GEMB2 + SEC-HARDEN runbooks, #483 SEC-HARDEN-03 healthcheck, #484 Platform v2 10-story sprint, #485 lint-cleanup + secret-audit CLI.
+**Branch:** `claude/2026-04-24-scrum-727-985-987-hardening` — PR #493 for SCRUM-727/985/987 hardening pass (security + coverage gaps surfaced during code review). 2026-04-24 wave already on main: #487 kenya dupe cleanup, #488 AI reliability + 10k batching + org rules, #490 onboarding signup, #491 rule simulator/history + KAU-06 NDB, #492 postcss bump.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
 **DB:** Supabase `vzwyaatejekddvltxyye`. Migrations through 0241 on prod (0236 rules_executions comment fix + 0239 api_key_scopes + 0240 user_notifications + 0241 anchor_revoked_by added this wave). Note 0218 `notifications` (org-scoped compliance alerts) and 0240 `user_notifications` (user-scoped platform notifications) coexist as distinct tables.
-**Tests:** 3,997 worker + 1,421 frontend green after the 2026-04-24 SCRUM-727/985/987 hardening pass (12 new tests added).
+**Tests:** 3,997 worker + 1,421 frontend green after the 2026-04-24 SCRUM-727/985/987 hardening pass (14 new tests added).
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)
 
@@ -28,6 +28,8 @@ Three Sarah-Sprint-1 Priority-1 stories were already code-complete on main but J
 - **[SCRUM-987](https://arkova.atlassian.net/browse/SCRUM-987)** MCP-SEC-09 anomaly detection — fixed PII leak: `alert.summary` was shipping raw IPv4 / IPv6 / apiKeyId into Sentry's `message` field. Added `scrubFreeText` + IPv6 regex + sentinel-safe opaque-id scrub. +3 tests (`services/worker/src/mcp-anomaly-detection.test.ts`). CLAUDE.md §1.4.
 - **[SCRUM-985](https://arkova.atlassian.net/browse/SCRUM-985)** MCP-SEC-08 IP allowlist — fixed `ipInCidr` out-of-range prefix (`/33`, `/-1` produced garbage mask via JS's 32-bit shift semantics); added Zod `strict()` schema for KV entries so a malformed/tampered `allow:<apiKeyId>` payload fails closed to challenge instead of silently granting access (CLAUDE.md §1.2 "Validation: Zod. Every write path"). +5 tests.
 - **[SCRUM-727](https://arkova.atlassian.net/browse/SCRUM-727)** NPH-15 EDGAR Form ADV fetcher — moved the 10 req/s `delay()` inside `fetchJson` so every EDGAR call is throttled (was only on submissions, not the ticker feed); upstream non-OK now throws so the cron surfaces EDGAR outages instead of reporting "0 records, success"; if `company_tickers_exchange.json` lacks a `sic` column the fetcher now returns `[]` instead of flooding the pipeline with every public-company CIK. +4 tests covering the new behavior.
+
+Plus test-hygiene fix: `src/ai/eval/__tests__/intelligence-eval-dataset.test.ts` was still asserting `length === 100` after KAU-06 (SCRUM-754) extended the dataset to 110; reworked to assert `>= core count` + per-core-domain exact counts + explicit Kenya/Australia coverage so future jurisdiction extensions don't flake the suite.
 
 **Human remains on the critical path for final DoD (unchanged):**
 - SCRUM-987 — bind `SENTRY_DSN` on edge worker + create Sentry saved-search across the 5 signals.

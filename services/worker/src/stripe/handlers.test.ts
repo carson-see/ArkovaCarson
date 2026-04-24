@@ -26,6 +26,9 @@ const {
   subscriptionsUpdate,
   subscriptionsSelect,
   auditInsert,
+  profilesMaybeSingle,
+  profilesUpdate,
+  profilesUpdateEq,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -90,8 +93,16 @@ const {
   const profilesMaybeSingle = vi.fn().mockResolvedValue({ data: null });
   const profilesSelectEq = vi.fn(() => ({ maybeSingle: profilesMaybeSingle }));
   const profilesSelect = vi.fn(() => ({ eq: profilesSelectEq }));
-  // profiles.update({}).eq('id', userId)
-  const profilesUpdateEq = vi.fn().mockResolvedValue({ error: null });
+  // profiles.update({}).eq('id', userId)          — single-eq chain (tier, is_verified)
+  // profiles.update({}).eq('id', id).eq(sid, sid) — double-eq chain (identity verified)
+  const profilesUpdateSecondEq = vi.fn().mockResolvedValue({ error: null });
+  const profilesUpdateEq = vi.fn().mockImplementation(() => {
+    const thenable = Promise.resolve({ error: null }) as Promise<{ error: unknown }> & {
+      eq: typeof profilesUpdateSecondEq;
+    };
+    thenable.eq = profilesUpdateSecondEq;
+    return thenable;
+  });
   const profilesUpdate = vi.fn(() => ({ eq: profilesUpdateEq }));
 
   // organizations.update({}).eq('id', orgId)
@@ -140,6 +151,9 @@ const {
     subscriptionsUpdate,
     subscriptionsSelect,
     auditInsert,
+    profilesMaybeSingle,
+    profilesUpdate,
+    profilesUpdateEq,
   };
 });
 
@@ -424,6 +438,134 @@ describe('handleCheckoutComplete', () => {
       expect.objectContaining({ userId: 'user-001', subscriptionId: 'sub_test_001' }),
       'Subscription activated',
     );
+  });
+
+  // -----------------------------------------------------------------
+  // Coverage for SCRUM-1156 / ONBOARD-03: plan_id metadata lookup,
+  // PROFILE_TIER_BY_PLAN_ID subscription_tier propagation,
+  // identity verified is_verified/kyc_provider fields.
+  // -----------------------------------------------------------------
+
+  it('resolves plan via metadata.plan_id when present (preferred over price_id)', async () => {
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_plan_id',
+      customer: 'cus_plan_id',
+      subscription: 'sub_plan_id',
+      metadata: { user_id: 'user-001', plan_id: 'small_business' },
+    });
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'small_business' } });
+    await handleCheckoutComplete(event);
+    expect(plansSelect.eq).toHaveBeenCalledWith('id', 'small_business');
+    expect(subscriptionsUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: 'small_business' }),
+      { onConflict: 'user_id' },
+    );
+  });
+
+  it('falls back to price_id lookup when plan_id is missing', async () => {
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_price_id',
+      customer: 'cus_price_id',
+      subscription: 'sub_price_id',
+      metadata: { user_id: 'user-001', price_id: 'price_small' },
+    });
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'small_business' } });
+    await handleCheckoutComplete(event);
+    expect(plansSelect.eq).toHaveBeenCalledWith('stripe_price_id', 'price_small');
+  });
+
+  it('updates profile subscription_tier for a mapped plan id', async () => {
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_tier_map',
+      customer: 'cus_tier_map',
+      subscription: 'sub_tier_map',
+      metadata: { user_id: 'user-001', plan_id: 'individual_verified_annual' },
+    });
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'individual_verified_annual' } });
+    await handleCheckoutComplete(event);
+    expect(profilesUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ subscription_tier: 'verified_individual' }),
+    );
+    expect(profilesUpdateEq).toHaveBeenCalledWith('id', 'user-001');
+  });
+
+  it('does not update profile tier when planId is not in the tier map', async () => {
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_unknown_plan',
+      customer: 'cus_unknown_plan',
+      subscription: 'sub_unknown_plan',
+      metadata: { user_id: 'user-001', plan_id: 'legacy_unmapped' },
+    });
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'legacy_unmapped' } });
+    await handleCheckoutComplete(event);
+    // profilesUpdate is also used for is_verified via org path; ensure
+    // subscription_tier was NOT in any call.
+    const tierCall = profilesUpdate.mock.calls.find((call: unknown[]) => {
+      const arg = call[0] as Record<string, unknown> | undefined;
+      return arg && Object.prototype.hasOwnProperty.call(arg, 'subscription_tier');
+    });
+    expect(tierCall).toBeUndefined();
+  });
+
+  it('throws when profile tier update fails', async () => {
+    const event = makeStripeEvent('checkout.session.completed', {
+      id: 'cs_tier_err',
+      customer: 'cus_tier_err',
+      subscription: 'sub_tier_err',
+      metadata: { user_id: 'user-001', plan_id: 'small_business' },
+    });
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'small_business' } });
+    const tierError = { message: 'tier update failed' };
+    // First .eq() call (subscription_tier update) fails; subsequent calls use default.
+    profilesUpdateEq.mockImplementationOnce(() => Promise.resolve({ error: tierError }));
+    await expect(handleCheckoutComplete(event)).rejects.toEqual(tierError);
+  });
+});
+
+// ================================================================
+// Identity verification webhook (SCRUM-1156 — Stripe Identity CTA)
+// ================================================================
+
+describe('identity.verification_session.verified', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('sets is_verified and kyc_provider on profile when verified', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      {
+        id: 'vs_test_001',
+        metadata: { user_id: 'user-001' },
+      },
+      'evt_identity_001',
+    );
+    await handleStripeWebhook(event);
+    const verifiedCall = profilesUpdate.mock.calls.find((call: unknown[]) => {
+      const arg = call[0] as Record<string, unknown> | undefined;
+      return arg && arg.kyc_provider === 'stripe_identity';
+    });
+    expect(verifiedCall).toBeDefined();
+    expect(verifiedCall?.[0]).toMatchObject({
+      identity_verification_status: 'verified',
+      is_verified: true,
+      kyc_provider: 'stripe_identity',
+    });
+  });
+
+  it('skips identity update when user_id missing from metadata', async () => {
+    const event = makeStripeEvent(
+      'identity.verification_session.verified',
+      { id: 'vs_no_user' },
+      'evt_identity_no_user',
+    );
+    await handleStripeWebhook(event);
+    const verifiedCall = profilesUpdate.mock.calls.find((call: unknown[]) => {
+      const arg = call[0] as Record<string, unknown> | undefined;
+      return arg && arg.kyc_provider === 'stripe_identity';
+    });
+    expect(verifiedCall).toBeUndefined();
   });
 });
 

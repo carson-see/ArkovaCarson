@@ -8,6 +8,8 @@ import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
+type OAuthProvider = Parameters<typeof supabase.auth.signInWithOAuth>[0]['provider'];
+
 interface AuthState {
   user: User | null;
   session: Session | null;
@@ -19,6 +21,7 @@ interface AuthActions {
   signIn: (email: string, password: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
   signUp: (email: string, password: string, fullName?: string) => Promise<{ error: import('@supabase/supabase-js').AuthError | null }>;
   signInWithGoogle: () => Promise<void>;
+  signInWithLinkedIn: () => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
 }
@@ -140,13 +143,13 @@ export function useAuth(): AuthState & AuthActions {
     []
   );
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithProvider = useCallback(async (provider: OAuthProvider) => {
     setLoading(true);
     setError(null);
 
     try {
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
+        provider,
         options: {
           redirectTo: `${location.origin}/auth/callback`,
         },
@@ -165,8 +168,16 @@ export function useAuth(): AuthState & AuthActions {
       setError('Unable to reach the server. Please check your connection and try again.');
       setLoading(false);
     }
-    // Note: Loading stays true as we're redirecting to Google
+    // Note: Loading stays true while the browser redirects to the provider.
   }, []);
+
+  const signInWithGoogle = useCallback(async () => {
+    await signInWithProvider('google');
+  }, [signInWithProvider]);
+
+  const signInWithLinkedIn = useCallback(async () => {
+    await signInWithProvider('linkedin_oidc');
+  }, [signInWithProvider]);
 
   const signOut = useCallback(async () => {
     // Set flag BEFORE any state changes so AuthGuard won't show
@@ -204,6 +215,7 @@ export function useAuth(): AuthState & AuthActions {
     signIn,
     signUp,
     signInWithGoogle,
+    signInWithLinkedIn,
     signOut,
     clearError,
   };

@@ -102,7 +102,9 @@ vi.mock('../utils/logger.js', () => ({
 import {
   handleCreateRule,
   handleGetRule,
+  handleListRuleExecutions,
   handleListRules,
+  handleTestRule,
   handleUpdateRule,
   handleDeleteRule,
   UpdateOrgRuleInput,
@@ -121,12 +123,14 @@ function mockRes(): { res: Response; status: ReturnType<typeof vi.fn>; json: Ret
   return { res: { status, json } as unknown as Response, status, json };
 }
 
-function mockReq(opts: { body?: unknown; params?: Record<string, string> } = {}): Request {
+function mockReq(
+  opts: { body?: unknown; params?: Record<string, string>; query?: Record<string, string> } = {},
+): Request {
   return {
     body: opts.body ?? {},
     params: opts.params ?? {},
     headers: {},
-    query: {},
+    query: opts.query ?? {},
   } as unknown as Request;
 }
 
@@ -267,6 +271,204 @@ describe('handleGetRule', () => {
     await handleGetRule(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
 
     expect(status).toHaveBeenCalledWith(404);
+  });
+});
+
+// -- handleListRuleExecutions ------------------------------------------
+
+describe('handleListRuleExecutions', () => {
+  it('returns recent executions scoped to caller org', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const ruleLookup = tableMock({ select: { data: { id: RULE_ID }, error: null } });
+    const executions = tableMock({
+      select: {
+        data: [
+          {
+            id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+            rule_id: RULE_ID,
+            trigger_event_id: 'evt-1',
+            status: 'COMPLETED',
+            input_payload: { match_reason: 'matched' },
+            completed_at: '2026-04-24T14:00:00Z',
+            created_at: '2026-04-24T13:59:00Z',
+          },
+        ],
+        error: null,
+      },
+    });
+    stub.from.mockImplementation(
+      scriptedFrom(profiles.from(''), ruleLookup.from(''), executions.from('')),
+    );
+
+    const { res, json } = mockRes();
+    await handleListRuleExecutions(
+      USER_ID,
+      mockReq({ params: { id: RULE_ID }, query: { limit: '10' } }),
+      res,
+    );
+
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        count: 1,
+        limit: 10,
+        items: [expect.objectContaining({ trigger_event_id: 'evt-1', status: 'COMPLETED' })],
+      }),
+    );
+    expect(executions.calls).toEqual(
+      expect.arrayContaining([
+        { method: 'eq', args: ['rule_id', RULE_ID] },
+        { method: 'eq', args: ['org_id', ORG_ID] },
+      ]),
+    );
+  });
+
+  it('returns 404 when the rule is outside the caller org scope', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const ruleLookup = tableMock({ select: { data: null, error: null } });
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), ruleLookup.from('')));
+
+    const { res, status } = mockRes();
+    await handleListRuleExecutions(USER_ID, mockReq({ params: { id: RULE_ID } }), res);
+
+    expect(status).toHaveBeenCalledWith(404);
+  });
+
+  it('400s on invalid UUID', async () => {
+    installAuthedCaller();
+
+    const { res, status } = mockRes();
+    await handleListRuleExecutions(USER_ID, mockReq({ params: { id: 'nope' } }), res);
+
+    expect(status).toHaveBeenCalledWith(400);
+  });
+});
+
+// -- handleTestRule ------------------------------------------------------
+
+describe('handleTestRule', () => {
+  it('simulates a disabled draft rule as enabled by default without persisting', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from('')));
+
+    const { res, json } = mockRes();
+    await handleTestRule(
+      USER_ID,
+      mockReq({
+        body: {
+          rule: {
+            ...VALID_CREATE_BODY,
+            enabled: false,
+          },
+          event: {
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+            filename: 'MSA.pdf',
+            sender_email: 'legal@example.com',
+          },
+        },
+      }),
+      res,
+    );
+
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        persisted: false,
+        matched: true,
+        reason: 'matched',
+        evaluated_enabled: true,
+        action_type: 'AUTO_ANCHOR',
+      }),
+    );
+    expect(stub.from).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a clear non-match reason when event fields miss filters', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from('')));
+
+    const { res, json } = mockRes();
+    await handleTestRule(
+      USER_ID,
+      mockReq({
+        body: {
+          rule: {
+            ...VALID_CREATE_BODY,
+            trigger_config: { vendors: ['docusign'], filename_contains: 'contract' },
+          },
+          event: {
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+            filename: 'invoice.pdf',
+          },
+        },
+      }),
+      res,
+    );
+
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+        matched: false,
+        reason: 'filename_filter_rejected',
+      }),
+    );
+  });
+
+  it('rejects cross-org rule tests', async () => {
+    installAuthedCaller();
+
+    const { res, status, json } = mockRes();
+    await handleTestRule(
+      USER_ID,
+      mockReq({
+        body: {
+          rule: VALID_CREATE_BODY,
+          event: {
+            org_id: OTHER_ORG_ID,
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+          },
+        },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'forbidden' }) }),
+    );
+  });
+
+  it('rejects inline secrets before evaluating', async () => {
+    const profiles = tableMock({ select: { data: { org_id: ORG_ID }, error: null } });
+    const membership = adminMembership();
+    stub.from.mockImplementation(scriptedFrom(profiles.from(''), membership.from('')));
+
+    const { res, status, json } = mockRes();
+    await handleTestRule(
+      USER_ID,
+      mockReq({
+        body: {
+          rule: {
+            ...VALID_CREATE_BODY,
+            action_config: { api_key: 'test-fake-value' }, // gitleaks:allow
+          },
+          event: {
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+          },
+        },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'inline_secret' }) }),
+    );
   });
 });
 

@@ -31,7 +31,7 @@ type Profile = Database['public']['Tables']['profiles']['Row'];
  * - /onboarding/org: ORG_ADMIN with incomplete org setup
  * - /review-pending: Requires manual review
  * - /vault: INDIVIDUAL user, ready
- * - /dashboard: ORG_ADMIN, ready
+ * - /dashboard: ORG_ADMIN or ORG_MEMBER, ready
  */
 export type RouteDestination =
   | '/auth'
@@ -129,6 +129,7 @@ function useProfileInternal(): ProfileState & ProfileActions {
     if (profile.role === 'ORG_ADMIN' && !profile.org_id) return '/onboarding/org';
     if (profile.role === 'INDIVIDUAL') return '/vault';
     if (profile.role === 'ORG_ADMIN' && profile.org_id) return '/dashboard';
+    if (profile.role === 'ORG_MEMBER') return '/dashboard';
 
     return '/vault';
   }, [authLoading, loading, user, profile]);

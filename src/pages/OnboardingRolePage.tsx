@@ -34,13 +34,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useOnboarding } from '@/hooks/useOnboarding';
 import { supabase } from '@/lib/supabase';
 import { ONBOARDING_STEPS, ONBOARDING_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
-
-/** Maps UI plan IDs to DB subscription_tier CHECK constraint values */
-const PLAN_TO_TIER: Record<string, string> = {
-  free: 'free',
-  starter: 'starter',
-  professional: 'professional',
-};
+import { getIndividualPlan, type IndividualOnboardingPlanId } from '@/lib/onboardingPlans';
+import { workerPostForUrl } from '@/lib/workerClient';
 
 export function OnboardingRolePage() {
   const { user } = useAuth();
@@ -64,6 +59,7 @@ export function OnboardingRolePage() {
   // BUG-1: Plan selection step for Individual users
   const [showPlanSelector, setShowPlanSelector] = useState(false);
   const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
   // BUG-11: Org membership question for Individual users
   const [showOrgMembership, setShowOrgMembership] = useState(false);
 
@@ -106,34 +102,45 @@ export function OnboardingRolePage() {
     }
   };
 
-  // BUG-1 + SCRUM-527: Handle plan selection for Individual users
-  // Save plan BEFORE setting role to prevent race condition where role
-  // update triggers RouteGuard redirect before plan persists.
-  // Uses set_onboarding_plan RPC (migration 0153) to bypass
-  // protect_privileged_profile_fields trigger and CHECK constraint.
-  const handlePlanSelect = async (plan: string) => {
+  // BUG-1 + SCRUM-527: Handle individual plan selection. Free tier persists
+  // immediately; paid verified tiers are activated by Stripe after checkout.
+  const handlePlanSelect = async (planId: IndividualOnboardingPlanId) => {
     if (!pendingRole) return;
     setPlanLoading(true);
+    setPlanError(null);
 
     try {
-      // 1. Save plan FIRST — this is safe because the RPC only needs auth.uid()
-      //    and doesn't require role to be set. Saving plan before role prevents
-      //    the race where role-set triggers a redirect before plan persists.
-      const tier = PLAN_TO_TIER[plan] ?? 'free';
-      const { error: planError } = await (supabase.rpc as CallableFunction)(
-        'set_onboarding_plan', { p_tier: tier },
-      );
+      const selectedPlan = getIndividualPlan(planId);
 
-      if (planError) throw planError;
+      if (!selectedPlan.checkoutPlanId) {
+        // Free plan can be persisted immediately. Paid tiers are activated by
+        // the Stripe webhook after checkout succeeds.
+        const { error: planError } = await (supabase.rpc as CallableFunction)(
+          'set_onboarding_plan', { p_tier: selectedPlan.profileTier },
+        );
 
-      // 2. Now set role — this may trigger RouteGuard redirect via refreshProfile,
-      //    but the plan is already saved at this point.
+        if (planError) throw planError;
+      }
+
       const roleResult = await setRole(pendingRole);
       if (!roleResult) throw new Error('Failed to set role');
+
+      if (selectedPlan.checkoutPlanId) {
+        const checkoutUrl = await workerPostForUrl('/api/checkout/session', {
+          planId: selectedPlan.checkoutPlanId,
+        });
+        window.location.assign(checkoutUrl);
+        return;
+      }
 
       await refreshProfile();
     } catch (err) {
       console.error('[OnboardingRolePage] Plan selection failed:', err);
+      setPlanError(
+        err instanceof Error
+          ? err.message
+          : 'We could not finish plan setup. Please try again.',
+      );
     } finally {
       setPlanLoading(false);
     }
@@ -206,10 +213,10 @@ export function OnboardingRolePage() {
         <div className="mb-8">
           <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={1} />
         </div>
-        {error && (
+        {(error || planError) && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
+            <AlertDescription>{planError ?? ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
           </Alert>
         )}
         <OrgMembershipQuestion
@@ -228,10 +235,10 @@ export function OnboardingRolePage() {
         <div className="mb-8">
           <OnboardingStepper steps={ONBOARDING_STEPS} currentStep={2} />
         </div>
-        {error && (
+        {(error || planError) && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
+            <AlertDescription>{planError ?? ONBOARDING_LABELS.ERROR_GENERIC}</AlertDescription>
           </Alert>
         )}
         <PlanSelector onSelect={handlePlanSelect} loading={loading || planLoading} />
