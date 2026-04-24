@@ -3,9 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../utils/db.js', () => {
   const _mockAnchorSingle = vi.fn();
   const _mockMembershipSingle = vi.fn();
-  const _mockInsert = vi.fn().mockReturnValue({
-    then: (cb: any) => cb({ error: null }),
-  });
+  const _mockInsert = vi.fn().mockResolvedValue({ error: null });
   const _mockRpc = vi.fn().mockResolvedValue({ error: null });
   return {
     db: {
