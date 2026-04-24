@@ -181,6 +181,24 @@ describe('useProfile', () => {
     expect(result.current.destination).toBe('/dashboard');
   });
 
+  it('routes to /dashboard for ORG_MEMBER users', async () => {
+    setupSession({ id: 'user-1', email: 'test@test.com' });
+    setupProfileFetch({
+      id: 'user-1',
+      role: 'ORG_MEMBER',
+      org_id: 'org-1',
+      requires_manual_review: false,
+    });
+
+    const { result } = await renderWithProvider();
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.destination).toBe('/dashboard');
+  });
+
   it('sets error when profile fetch fails', async () => {
     setupSession({ id: 'user-1', email: 'test@test.com' });
     setupProfileFetch(null, { message: 'Row not found' });

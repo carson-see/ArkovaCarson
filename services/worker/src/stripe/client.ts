@@ -72,12 +72,18 @@ export async function createCheckoutSession(params: {
   mode?: 'payment' | 'subscription';
   metadata?: Record<string, string>;
 }): Promise<{ sessionId: string; url: string }> {
+  const metadata = {
+    user_id: params.userId,
+    price_id: params.priceId,
+    ...params.metadata,
+  };
+
   if (config.useMocks) {
     const result = await mockStripeClient.createCheckoutSession({
       line_items: [{ price: params.priceId, quantity: 1 }],
       success_url: params.successUrl ?? '',
       cancel_url: params.cancelUrl ?? '',
-      metadata: { user_id: params.userId, price_id: params.priceId },
+      metadata,
     });
     return { sessionId: result.id, url: result.url ?? '' };
   }
@@ -88,9 +94,9 @@ export async function createCheckoutSession(params: {
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
     customer_email: params.customerEmail,
-    metadata: { user_id: params.userId, price_id: params.priceId },
+    metadata,
     subscription_data: {
-      metadata: { user_id: params.userId, price_id: params.priceId },
+      metadata,
     },
   });
 

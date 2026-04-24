@@ -72,8 +72,8 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
           )}
           <p className="text-sm text-muted-foreground mt-1">
             {plan.recordsIncluded === 'unlimited'
-              ? 'Unlimited records'
-              : `${plan.recordsIncluded} records/month`}
+              ? 'Custom anchor volume'
+              : `${plan.recordsIncluded} anchors/month`}
           </p>
         </div>
 
@@ -93,7 +93,7 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
           className="w-full"
           variant={plan.current ? 'outline' : (plan.recommended ? 'default' : 'secondary')}
           onClick={() => onSelect?.(plan.id)}
-          disabled={loading || plan.current}
+          disabled={loading || plan.current || plan.price === null}
         >
           {plan.current ? 'Current Plan' : (plan.price === null ? 'Contact Sales' : 'Select Plan')}
         </Button>
@@ -102,57 +102,91 @@ export function PricingCard({ plan, onSelect, loading }: Readonly<PricingCardPro
   );
 }
 
-// Pre-defined plans matching the documentation
+// Pre-defined plans matching the onboarding and billing tiers.
 export const PRICING_PLANS: PricingPlan[] = [
   {
-    id: 'individual',
-    name: 'Individual',
-    description: 'For personal document security',
-    price: 10,
+    id: 'free',
+    name: 'Free',
+    description: 'For occasional personal anchoring',
+    price: 0,
+    period: 'month',
+    recordsIncluded: 3,
+    features: [
+      '3 document anchors per month',
+      'Public verification links',
+      'No verified checkmark',
+    ],
+  },
+  {
+    id: 'individual_verified_monthly',
+    name: 'Verified Individual',
+    description: 'For a trusted personal profile',
+    price: 12,
     period: 'month',
     recordsIncluded: 10,
-    features: [
-      'Secure up to 10 records per month',
-      'Document verification',
-      'Basic support',
-      'Proof downloads',
-    ],
-  },
-  {
-    id: 'professional',
-    name: 'Professional',
-    description: 'For growing businesses',
-    price: 100,
-    period: 'month',
-    recordsIncluded: 100,
     recommended: true,
     features: [
-      'Secure up to 100 records per month',
-      'Document verification',
-      'Priority support',
-      'Proof downloads',
-      'Bulk CSV upload',
-      'API access',
+      '10 document anchors per month',
+      'Stripe Identity verification',
+      'Verified checkmark next to your name',
     ],
   },
   {
-    id: 'organization',
-    name: 'Organization',
-    description: 'For enterprise teams',
+    id: 'individual_verified_annual',
+    name: 'Verified Individual Annual',
+    description: 'Same verified tier, paid yearly',
+    price: 120,
+    period: 'year',
+    recordsIncluded: 10,
+    features: [
+      '10 document anchors per month',
+      '$10 per month when paid annually',
+      'Verified checkmark next to your name',
+    ],
+  },
+  {
+    id: 'small_business',
+    name: 'Small Business',
+    description: 'For verified teams up to 25 self-serve seats',
+    price: 500,
+    period: 'month',
+    recordsIncluded: 250,
+    features: [
+      '1 admin and 5 included seats',
+      '250 anchors per month',
+      '$100 per additional seat',
+      '25 extra anchors per added seat',
+      'Compliance intelligence access',
+    ],
+  },
+  {
+    id: 'medium_business',
+    name: 'Medium Business',
+    description: 'For 25-250 seats and multiple departments',
     price: null,
     priceLabel: 'Custom',
     period: 'custom',
     recordsIncluded: 'unlimited',
     features: [
-      'Unlimited records',
-      'Document verification',
-      'Dedicated support',
-      'Proof downloads',
-      'Bulk CSV upload',
-      'API access',
-      'Team management',
-      'Custom integrations',
-      'SLA guarantee',
+      '25-250 seats',
+      '3 included sub-organizations',
+      'Sub-organization admins and allocations',
+      'Compliance intelligence recommendations',
+    ],
+  },
+  {
+    id: 'enterprise',
+    name: 'Enterprise',
+    description: 'For larger organizations and custom structures',
+    price: null,
+    priceLabel: 'Custom',
+    period: 'custom',
+    recordsIncluded: 'unlimited',
+    features: [
+      'Custom seat and anchor allocation',
+      'Expanded sub-organization limits',
+      'Compliance suite access',
+      'Dedicated onboarding and support',
     ],
   },
 ];

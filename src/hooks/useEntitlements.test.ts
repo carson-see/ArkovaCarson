@@ -2,7 +2,7 @@
 /**
  * useEntitlements Hook Tests
  *
- * Updated for beta mode: all quotas disabled, recordsLimit = null (unlimited).
+ * Verifies plan-backed anchor limits and graceful count fallbacks.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -98,8 +98,7 @@ describe('useEntitlements', () => {
     mockUser.current = { id: 'test-user-id' };
   });
 
-  // Beta: all users get unlimited (recordsLimit = null)
-  it('should return unlimited for all users during beta', async () => {
+  it('should return free tier limits by default', async () => {
     setupMocks({ count: 0 });
 
     const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
@@ -107,9 +106,9 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Free');
-    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
+    expect(result.current.recordsLimit).toBe(3);
     expect(result.current.recordsUsed).toBe(0);
-    expect(result.current.remaining).toBeNull(); // unlimited
+    expect(result.current.remaining).toBe(3);
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
@@ -125,24 +124,26 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Professional');
-    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
+    expect(result.current.recordsLimit).toBe(100);
     expect(result.current.recordsUsed).toBe(42);
+    expect(result.current.remaining).toBe(58);
     expect(result.current.canCreateAnchor).toBe(true);
     expect(result.current.isNearLimit).toBe(false);
   });
 
-  it('should never block creation during beta', async () => {
+  it('should block creation when the free limit is exhausted', async () => {
     setupMocks({ count: 99999 });
 
     const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.canCreateAnchor).toBe(true);
-    expect(result.current.recordsLimit).toBeNull();
+    expect(result.current.canCreateAnchor).toBe(false);
+    expect(result.current.recordsLimit).toBe(3);
+    expect(result.current.remaining).toBe(0);
   });
 
-  it('should not detect near-limit during beta (unlimited)', async () => {
+  it('should detect near-limit paid usage', async () => {
     setupMocks({
       subscription: { plan_id: 'ind', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 10, name: 'Individual' },
@@ -153,12 +154,12 @@ describe('useEntitlements', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.isNearLimit).toBe(false); // unlimited = never near limit
-    expect(result.current.percentUsed).toBeNull();
+    expect(result.current.isNearLimit).toBe(true);
+    expect(result.current.percentUsed).toBe(80);
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
-  it('should treat unlimited plans correctly (999999+)', async () => {
+  it('should treat high-volume custom plans as finite configured limits', async () => {
     setupMocks({
       subscription: { plan_id: 'org', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 999999, name: 'Organization' },
@@ -169,14 +170,14 @@ describe('useEntitlements', () => {
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    expect(result.current.recordsLimit).toBeNull();
-    expect(result.current.remaining).toBeNull();
-    expect(result.current.percentUsed).toBeNull();
+    expect(result.current.recordsLimit).toBe(999999);
+    expect(result.current.remaining).toBe(999499);
+    expect(result.current.percentUsed).toBeLessThan(1);
     expect(result.current.isNearLimit).toBe(false);
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
-  it('canCreateCount should always return true during beta', async () => {
+  it('canCreateCount should respect remaining quota', async () => {
     setupMocks({ count: 1 });
 
     const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
@@ -184,11 +185,11 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.canCreateCount(1)).toBe(true);
-    expect(result.current.canCreateCount(100)).toBe(true);
-    expect(result.current.canCreateCount(999999)).toBe(true);
+    expect(result.current.canCreateCount(2)).toBe(true);
+    expect(result.current.canCreateCount(3)).toBe(false);
   });
 
-  it('canCreateCount should always return true for unlimited', async () => {
+  it('canCreateCount should support large custom allocations', async () => {
     setupMocks({
       subscription: { plan_id: 'org', current_period_start: '2026-03-01T00:00:00Z', status: 'active' },
       plan: { records_per_month: 999999, name: 'Organization' },
@@ -203,7 +204,7 @@ describe('useEntitlements', () => {
     expect(result.current.canCreateCount(100000)).toBe(true);
   });
 
-  it('should fall back to beta unlimited for inactive subscription', async () => {
+  it('should fall back to free tier for inactive subscription', async () => {
     setupMocks({
       subscription: { plan_id: 'pro', current_period_start: '2026-03-01T00:00:00Z', status: 'past_due' },
       count: 0,
@@ -214,7 +215,7 @@ describe('useEntitlements', () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
 
     expect(result.current.planName).toBe('Free');
-    expect(result.current.recordsLimit).toBeNull(); // unlimited in beta
+    expect(result.current.recordsLimit).toBe(3);
   });
 
   it('should handle no user (logged out)', async () => {
@@ -239,16 +240,15 @@ describe('useEntitlements', () => {
     expect(result.current.error).toContain('Network error');
   });
 
-  it('should stay unlimited on fetch error during beta', async () => {
+  it('should fall back to free limits on fetch error', async () => {
     setupMocks({ subError: new Error('DB connection lost') });
 
     const { result } = renderHook(() => useEntitlements(), { wrapper: createQueryWrapper() });
 
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    // Beta: unlimited even on error
-    expect(result.current.recordsLimit).toBeNull();
-    expect(result.current.planName).toBe('Beta');
+    expect(result.current.recordsLimit).toBe(3);
+    expect(result.current.planName).toBe('Free');
     expect(result.current.canCreateAnchor).toBe(true);
   });
 
@@ -299,7 +299,7 @@ describe('useEntitlements', () => {
     warnSpy.mockRestore();
   });
 
-  // H5: Realtime subscription removed — plan changes are rare during beta.
+  // H5: Realtime subscription removed — plan changes are rare.
   // Use refresh() to manually re-fetch when needed (e.g., after checkout).
   describe('H5: no realtime subscription (removed for perf)', () => {
     it('does not subscribe to subscription changes', async () => {

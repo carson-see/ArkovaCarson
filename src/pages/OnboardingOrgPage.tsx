@@ -25,6 +25,13 @@ export function OnboardingOrgPage() {
     legalName: string;
     displayName: string;
     domain: string | null;
+    organizationType: string | null;
+    description: string | null;
+    websiteUrl: string | null;
+    linkedinUrl: string | null;
+    twitterUrl: string | null;
+    location: string | null;
+    verifyOrganization: boolean;
     einTaxId: string | null;
   }) => {
     const result = await createOrg(data);
@@ -36,7 +43,7 @@ export function OnboardingOrgPage() {
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-background p-4">
-      <div className="w-full max-w-lg space-y-8">
+      <div className="w-full max-w-2xl space-y-8">
         {/* Branding */}
         <div className="flex flex-col items-center text-center">
           <div className="flex items-center justify-center h-14 w-14 rounded-xl bg-primary/10 mb-4">

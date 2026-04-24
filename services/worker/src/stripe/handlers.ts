@@ -15,6 +15,16 @@ import { createGracePeriod } from '../billing/reconciliation.js';
 
 type StripeEvent = Stripe.Event;
 
+const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
+  free: 'free',
+  individual_verified_monthly: 'verified_individual',
+  individual_verified_annual: 'verified_individual',
+  org_free: 'org_free',
+  small_business: 'small_business',
+  medium_business: 'medium_business',
+  enterprise: 'enterprise',
+};
+
 // =========================================================================
 // Idempotency — billing_events table
 // =========================================================================
@@ -74,7 +84,7 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     id: string;
     customer: string;
     subscription: string;
-    metadata?: { user_id?: string; price_id?: string };
+    metadata?: { user_id?: string; price_id?: string; plan_id?: string };
   };
 
   logger.info({ sessionId: session.id }, 'Processing checkout completion');
@@ -88,9 +98,22 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   // Look up plan from the subscription's price
   // The price_id is stored in session metadata by createCheckoutSession
   let planId: string | null = null;
+  const metadataPlanId = session.metadata?.plan_id;
   const priceId = session.metadata?.price_id;
 
-  if (priceId) {
+  if (metadataPlanId) {
+    const { data: matchedPlan } = await db
+      .from('plans')
+      .select('id')
+      .eq('id', metadataPlanId)
+      .maybeSingle();
+
+    if (matchedPlan) {
+      planId = matchedPlan.id;
+    }
+  }
+
+  if (!planId && priceId) {
     // Match the exact price_id from the checkout session to the plan
     const { data: matchedPlan } = await db
       .from('plans')
@@ -137,6 +160,19 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   if (subError) {
     logger.error({ subError, userId }, 'Failed to upsert subscription');
     throw subError;
+  }
+
+  const profileTier = planId ? PROFILE_TIER_BY_PLAN_ID[planId] : null;
+  if (profileTier) {
+    const { error: tierError } = await db
+      .from('profiles')
+      .update({ subscription_tier: profileTier })
+      .eq('id', userId);
+
+    if (tierError) {
+      logger.error({ tierError, userId, planId }, 'Failed to update profile subscription tier');
+      throw tierError;
+    }
   }
 
   // Log audit event
@@ -419,6 +455,8 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
     .update({
       identity_verification_status: 'verified',
       identity_verified_at: new Date().toISOString(),
+      is_verified: true,
+      kyc_provider: 'stripe_identity',
     })
     .eq('id', userId)
     .eq('identity_verification_session_id', session.id);
