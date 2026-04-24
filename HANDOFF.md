@@ -14,12 +14,12 @@
 
 ## Now
 
-**Branch:** `claude/2026-04-24-scrum-727-985-987-hardening` — PR #493 for SCRUM-727/985/987 hardening pass (security + coverage gaps surfaced during code review). 2026-04-24 wave already on main: #487 kenya dupe cleanup, #488 AI reliability + 10k batching + org rules, #490 onboarding signup, #491 rule simulator/history + KAU-06 NDB, #492 postcss bump.
+**End of week:** Friday 2026-04-24 EOW. 56 commits landed on main Mon–Fri across 20+ merged PRs (#466–#493). Four PRs still open at EOW: #494 (SCRUM-1161 freemail blocklist), #495 (SCRUM-727/985 live infra + 1,500 adviser records), #496 (SCRUM-1162 Middesk KYB skeleton), and an unpushed WIP on `claude/2026-04-24-scrum-1168-1169-integration-oauth` (migration 0251 + `integrations/oauth/` dir). All four await human merge per `feedback_never_merge_without_ok`.
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
-**DB:** Supabase `vzwyaatejekddvltxyye`. Migrations through 0241 on prod (0236 rules_executions comment fix + 0239 api_key_scopes + 0240 user_notifications + 0241 anchor_revoked_by added this wave). Note 0218 `notifications` (org-scoped compliance alerts) and 0240 `user_notifications` (user-scoped platform notifications) coexist as distinct tables.
-**Tests:** 3,997 worker + 1,421 frontend green after the 2026-04-24 SCRUM-727/985/987 hardening pass (14 new tests added).
+**DB:** Supabase `vzwyaatejekddvltxyye`. Migrations through 0241 on prod; 0250 (org_kyb — SCRUM-1162) and 0251 (org_integrations — SCRUM-1168/1169) staged on feature branches, not yet applied. Note 0218 `notifications` (org-scoped compliance alerts) and 0240 `user_notifications` (user-scoped platform notifications) coexist as distinct tables.
+**Tests:** 3,997 worker + 1,421 frontend green on main as of Friday EOW. +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)
 
