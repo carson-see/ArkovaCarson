@@ -39,12 +39,11 @@ jobs:
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
       - id: sonatype-secrets
-        name: Pull Sonatype creds from GCP Secret Manager
+        name: Pull Sonatype token from GCP Secret Manager
         uses: google-github-actions/get-secretmanager-secrets@v2
         with:
           secrets: |
-            user:arkova1/sonatype_oss_index_user
-            token:arkova1/sonatype_oss_index_token
+            token:arkova1/sonatype
 
       - uses: actions/setup-node@v6
         with:
@@ -67,16 +66,10 @@ jobs:
         id: scan
         working-directory: ${{ matrix.workspace.path }}
         env:
-          SONATYPE_USER: ${{ steps.sonatype-secrets.outputs.user }}
           SONATYPE_TOKEN: ${{ steps.sonatype-secrets.outputs.token }}
         run: |
           jq '{coordinates: .}' purls.json > req.json
-          if [ -n "$SONATYPE_USER" ]; then
-            AUTH_OPTS=(-u "$SONATYPE_USER:$SONATYPE_TOKEN")
-          else
-            AUTH_OPTS=(-H "Authorization: Bearer $SONATYPE_TOKEN")
-          fi
-          curl -sSf "${AUTH_OPTS[@]}" \
+          curl -sSf -H "Authorization: Bearer $SONATYPE_TOKEN" \
             -H "Content-Type: application/json" \
             -X POST https://ossindex.sonatype.org/api/v3/component-report \
             -d @req.json > report.json
