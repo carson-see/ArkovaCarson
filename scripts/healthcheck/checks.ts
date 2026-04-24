@@ -5,9 +5,16 @@ const has = (k: string) => Boolean(env(k));
 
 type Result = { ok: boolean; detail: string };
 
+const HTTP_TIMEOUT_MS = 10_000;
+
 async function httpOk(url: string, init?: RequestInit): Promise<Result> {
-  const res = await fetch(url, init);
-  return { ok: res.ok, detail: `${res.status} ${res.statusText}`.trim() };
+  try {
+    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
+    return { ok: res.ok, detail: `${res.status} ${res.statusText}`.trim() };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, detail: `fetch failed: ${msg}` };
+  }
 }
 
 function missingEnv(...vars: string[]): Result | null {
