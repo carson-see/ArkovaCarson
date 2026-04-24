@@ -44,6 +44,15 @@ Plus test-hygiene fix: `src/ai/eval/__tests__/intelligence-eval-dataset.test.ts`
 
 ## Open, current
 
+### 2026-04-24 — HakiChain readiness documentation pass
+
+- Created branch `codex/hakichain-readiness-docs` for documentation-only work. No app code and no migrations touched.
+- Drafted `docs/compliance/hakichain-readiness-plan.md` to sequence HakiChain pilot work against existing CIBA/API/REG/PUBLIC-ORG backlog.
+- Drafted `docs/compliance/africa-hakichain-readiness-matrix.md` for Kenya, Uganda, Tanzania, Rwanda, Nigeria, Ghana, and cross-border launch gating. Matrix is for counsel/product review, not legal advice.
+- Updated `docs/compliance/kenya/filing-checklist.md` and Kenya README with SCRUM-1176 HakiChain local-support lane.
+- Jira board updated: SCRUM-1175 and SCRUM-1176 routed to Needs Human for Claude/counsel review after the docs PR.
+- Guardrail: leave `supabase/migrations` alone. Local worktree has unrelated dirty migration state and timestamp-prefixed files from other work.
+
 ### 2026-04-24 merge wave — 6 PRs landed
 
 19 Jira stories transitioned To Do / In Progress → Done:

@@ -14,6 +14,7 @@ _Stories: REG-15 (SCRUM-576), REG-16 (SCRUM-577)_
 | `odpc-registration.md` | ODPC registration application packet (REG-15) | Draft — awaiting submission |
 | `dpia.md` | Data Protection Impact Assessment per Section 31 (REG-16) | Draft |
 | `privacy-notice.md` | Kenya-specific privacy notice for DPA Section 29 disclosure | Draft |
+| `filing-checklist.md` | ODPC filing checklist and HakiChain local-support coordination path (SCRUM-1176) | Draft - needs HakiChain contact + human filing approval |
 
 ---
 
@@ -24,6 +25,7 @@ _Stories: REG-15 (SCRUM-576), REG-16 (SCRUM-577)_
 | Kenyan legal counsel engagement | 58 (appointed representative) | **ENGAGED** (2026-04-11) | Legal | Done |
 | ODPC registration (data controller) | 56-57 | **DRAFT — AWAITING COUNSEL REVIEW + PORTAL SUBMISSION** | Legal + Counsel | — |
 | DPIA for sensitive personal data | 31 | **DRAFT v0.1 — AWAITING DPO REVIEW** | Compliance | — |
+| HakiChain local filing support channel | 56-58 / filing process | **DRAFT — CONTACT + CONFIDENTIALITY CHANNEL NEEDED** | Carson + Counsel + HakiChain | SCRUM-1176 |
 | Data subject rights workflow | 26, 31-38 | Pending REG-11 | Engineering | — |
 | Cross-border transfer assessment | 48-49 | Covered in DPIA | Compliance | — |
 | Breach notification procedure (72h to ODPC, reasonable time to subject) | 43 | Pending REG-13 | SRE | — |
@@ -99,3 +101,5 @@ ODPC registration is valid for **24 months** and must be renewed before expiry. 
 ---
 
 _Last updated: 2026-04-11 | Owner: Compliance | Next review: before initial ODPC submission_
+
+_HakiChain coordination update: 2026-04-24 | SCRUM-1176 opened to route local filing support through counsel-approved channels._

@@ -1,9 +1,11 @@
 # Kenya ODPC Filing Checklist
 
-**Confluence mirror:** [Top-10 Sprint Batch 3 — 2026-04-17 §7](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) — "Kenya ODPC Filing Checklist — REG-15 (SCRUM-576)"
+**Confluence mirror:** [Top-10 Sprint Batch 3 - 2026-04-17 §7](https://arkova.atlassian.net/wiki/spaces/A/pages/13795329) - "Kenya ODPC Filing Checklist - REG-15 (SCRUM-576)"
 **Jira:** [SCRUM-576 / REG-15](https://arkova.atlassian.net/browse/SCRUM-576)
-**Last updated:** 2026-04-17
-**Owner:** Kenyan counsel (engaged 2026-04-11) + Carson (platform admin, funds KES 25,000 fee)
+**HakiChain coordination story:** [SCRUM-1176](https://arkova.atlassian.net/browse/SCRUM-1176)
+**HakiChain Confluence page:** https://arkova.atlassian.net/wiki/spaces/A/pages/26312754/SCRUM-1176+-+HAKI-REQ-07+Kenya+filing+coordination+checklist+with+HakiChain+local+support
+**Last updated:** 2026-04-24
+**Owner:** Kenyan counsel (engaged 2026-04-11) + Carson (platform admin, funds filing fee) + HakiChain local-support contact (to be named)
 **Regulator:** [Office of the Data Protection Commissioner (ODPC)](https://www.odpc.go.ke/)
 **Registration portal:** [https://odpc.go.ke/register/](https://odpc.go.ke/register/)
 **Engineering status:** Complete — registration dossier, privacy notice, DPIA v0.1, and DPO designation template all authored in `docs/compliance/kenya/`. Filing is an external-process task.
@@ -22,12 +24,54 @@ The dossier is drafted; what remains is a portal submission + fee payment. This 
 
 Transition SCRUM-576 Blocked → Done once the registration number is received and surfaced in the UI.
 
+## HakiChain local-support lane (SCRUM-1176)
+
+HakiChain confirmed in the 2026-04-22 partner intake that they can help with regulatory process guidance, coordination with local legal/compliance counsel, document preparation, required attestations, and follow-through tracking.
+
+That support is useful, but it is not a substitute for Arkova approval. Treat HakiChain as a local coordination partner, not as an autonomous filer.
+
+| Step | Arkova owner | HakiChain/local owner | Evidence location | Status |
+|------|--------------|-----------------------|-------------------|--------|
+| Name HakiChain filing contact | Carson | HakiChain business/legal lead | Jira SCRUM-1176 comment + vendor/contact tracker | **Needs human** |
+| Confirm confidentiality channel | Carson + counsel | HakiChain contact | Counsel-approved email or secure shared folder | **Needs human** |
+| Share filing checklist + target timeline | Carson | HakiChain contact | Confluence/Jira link only; no sensitive attachments in Jira | Ready |
+| Local procedural review | Kenyan counsel | HakiChain local support | Counsel notes stored with filing evidence | Pending |
+| Representative/DPO path | Carson + counsel | HakiChain local support, if they can introduce providers | `vendor-register.md` + DPO designation record | Pending |
+| Portal submission support | Counsel | HakiChain local support for process questions only | ODPC receipt/certificate evidence folder | Pending human approval |
+| Follow-through tracking | Carson + counsel | HakiChain contact | Jira SCRUM-1176 + REG-15 comments | Pending |
+
+### Contact and confidentiality rules
+
+- Do not send passport copies, IDs, certificates, payment receipts, or regulator correspondence through Jira comments.
+- Use Jira for status and links only.
+- Use counsel-approved secure email or shared folder for sensitive filing artifacts.
+- If HakiChain introduces local counsel or an outsourced DPO, run the contact through vendor review before sharing Arkova non-public data.
+- Carson or an explicitly delegated Arkova operator must approve any ODPC portal submission and fee payment.
+
+### HakiChain handoff package
+
+Send HakiChain only the information needed for local process support:
+
+- Link to this checklist.
+- Current blocker list: DPO, Kenyan representative/local counsel path, fee, portal submission, certificate receipt.
+- Target timeline and desired review date.
+- List of questions for local counsel:
+  - Can counsel's firm serve as appointed representative under Section 58?
+  - Should Arkova file as controller, processor, or both for HakiChain pilot facts?
+  - Is an outsourced DPO required before portal submission, or can counsel interim support it?
+  - Do the SCCs + DPIA satisfy the current ODPC cross-border transfer posture?
+  - Are any local attestations required before submission?
+
+### Board state
+
+Keep SCRUM-1176 in **Needs Human** until the HakiChain filing contact and approval channel are named. Transition to Done only when this checklist has named owners and REG-15/REG-16 have been updated with the agreed coordination path.
+
 ---
 
 ## Pre-submission checks (counsel owns)
 
 - [ ] `docs/compliance/kenya/odpc-registration.md` reviewed against the [ODPC registration regulations 2021](https://www.odpc.go.ke/wp-content/uploads/2022/03/Data-Protection-Registration-of-Data-Controllers-and-Data-Processors-Regulations-2021-1.pdf).
-- [ ] Fee tier confirmed: **Small** tier (KES 25,000 / ~USD 194). Arkova < 50 FTE.
+- [ ] Fee tier confirmed against current ODPC schedule. Earlier draft assumed **Small** tier (KES 25,000 / ~USD 194); ODPC public FAQ/guidance may show updated fee bands, so counsel must confirm before payment.
 - [ ] DPO designated (see §DPO prerequisite).
 - [ ] Entity classification: **Data Controller + Data Processor**. Both Kenya DPA roles apply because we process credentials on behalf of institutions and also hold the anchoring record.
 - [ ] Kenyan representative (Section 58): counsel's firm or an engaged Nairobi representative.
@@ -71,7 +115,7 @@ Counsel logs in at [https://odpc.go.ke/register/](https://odpc.go.ke/register/) 
 | DPO name + contact | `../dpo-designation.md` | Must match DPO designation letter |
 | Supporting documents | §Pre-submission checks | Upload as PDFs |
 
-**Fee:** KES 25,000 (~USD 194). Payment via ODPC portal card or M-Pesa. Receipt goes into `vendor-register.md`.
+**Fee:** counsel must confirm the current ODPC fee schedule before payment. Earlier draft assumed KES 25,000 (~USD 194), but public ODPC FAQ/guidance may show updated fee bands. Payment via ODPC portal card or M-Pesa. Receipt goes into the approved filing evidence location; do not attach payment evidence to Jira.
 
 ---
 
@@ -117,3 +161,12 @@ Per CLAUDE.md MANUAL-FOLLOWUP EMAIL MANDATE, counsel sends `carson@arkova.ai` an
 - [ ] Number surfaced in Kenya tenant privacy UI (code PR merged).
 - [ ] Renewal calendar reminder set.
 - [ ] SCRUM-576 transitioned Blocked → Done.
+
+## Definition of Done for SCRUM-1176
+
+- [ ] HakiChain filing contact named.
+- [ ] Confidential document-exchange channel approved.
+- [ ] Counsel/local-support responsibility split documented.
+- [ ] REG-15 and REG-16 comments updated with coordination path.
+- [ ] Filing artifacts stay out of public Jira comments.
+- [ ] Human approval path for ODPC submission and fee payment confirmed.
