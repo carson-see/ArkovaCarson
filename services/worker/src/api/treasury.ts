@@ -22,6 +22,7 @@ import { createFeeEstimator } from '../chain/fee-estimator.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { isPlatformAdmin } from '../utils/platformAdmin.js';
+import { fetchAnchorStats } from '../utils/anchor-stats.js';
 
 export interface TreasuryStatusResponse {
   wallet: {
@@ -126,36 +127,16 @@ export async function handleTreasuryStatus(
     logger.warn({ error: err }, 'Failed to estimate fees for treasury status');
   }
 
-  // 3. Anchor stats from Supabase (always available)
-  try {
-    const [
-      { count: securedCount },
-      { count: pendingCount },
-      { data: lastSecured },
-      { count: last24hCount },
-    ] = await Promise.all([
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'SECURED').is('deleted_at', null),
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .eq('status', 'PENDING').is('deleted_at', null),
-      db.from('anchors').select('chain_timestamp')
-        .eq('status', 'SECURED').is('deleted_at', null)
-        .order('chain_timestamp', { ascending: false })
-        .limit(1),
-      db.from('anchors').select('*', { count: 'exact', head: true })
-        .is('deleted_at', null)
-        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
-    ]);
-
-    result.recentAnchors = {
-      totalSecured: securedCount ?? 0,
-      totalPending: pendingCount ?? 0,
-      lastSecuredAt: lastSecured?.[0]?.chain_timestamp ?? null,
-      last24hCount: last24hCount ?? 0,
-    };
-  } catch (err) {
-    logger.warn({ error: err }, 'Failed to fetch anchor stats for treasury status');
-  }
+  // 3. Anchor stats from Supabase (shared helper — same query as
+  //    treasury-cache cron, extracted to utils/anchor-stats.ts so SonarCloud
+  //    doesn't flag duplicate-lines density).
+  const stats = await fetchAnchorStats();
+  result.recentAnchors = {
+    totalSecured: stats.total_secured,
+    totalPending: stats.total_pending,
+    lastSecuredAt: stats.last_secured_at,
+    last24hCount: stats.last_24h_count,
+  };
 
   res.json(result);
 }
