@@ -369,9 +369,24 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   // Get existing subscription to check for plan change and cancellation transition
   const { data: existingSub } = await db
     .from('subscriptions')
-    .select('user_id, plan_id, cancel_at_period_end')
+    .select('user_id, plan_id, cancel_at_period_end, org_id')
     .eq('stripe_subscription_id', subscription.id)
     .maybeSingle();
+
+  // SCRUM-1239 (AUDIT-0424-14): refuse to UPDATE when we cannot resolve the
+  // subscription row from `stripe_subscription_id`. Previously the handler
+  // wrote by `stripe_subscription_id` alone with no existence check — a
+  // malformed or attacker-injected `customer.subscription.updated` event
+  // could mutate state for an unknown subscription. The asserted-row
+  // requirement also ensures org_id is known when we later log the audit
+  // event for plan changes / cancellation transitions.
+  if (!existingSub) {
+    logger.warn(
+      { subscriptionId: subscription.id, stripeStatus: subscription.status },
+      'No subscription row found for stripe_subscription_id — refusing to update (SCRUM-1239)',
+    );
+    return;
+  }
 
   // Build update payload
   const updatePayload: Record<string, unknown> = {

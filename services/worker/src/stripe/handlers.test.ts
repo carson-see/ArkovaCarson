@@ -883,6 +883,39 @@ describe('handleSubscriptionUpdated', () => {
       expect.objectContaining({ plan_id: null }),
     );
   });
+
+  // SCRUM-1239 (AUDIT-0424-14): the handler must refuse to UPDATE when no
+  // subscription row exists for the stripe_subscription_id. Previously
+  // updates wrote by stripe_subscription_id alone with no existence check —
+  // a malformed or attacker-injected event could mutate state for an
+  // unknown subscription (and the post-update SELECT would resolve org_id
+  // to null, but the UPDATE had already fired).
+  it('SCRUM-1239: does NOT update when no subscription row exists for stripe_subscription_id', async () => {
+    // Subscription lookup returns no row.
+    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+
+    await handleSubscriptionUpdated(SUBSCRIPTION_UPDATED_EVENT);
+
+    // Critical: NO update fires.
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+    // Should warn about the orphan event so it surfaces in logs.
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_test_001' }),
+      expect.stringMatching(/no subscription row|refusing to update/i),
+    );
+  });
+
+  it('SCRUM-1239: does update when subscription row exists', async () => {
+    // Existing subscription row resolves user_id (and implicitly org_id
+    // upstream of the audit log).
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: { user_id: 'user-001', plan_id: 'plan-ind', cancel_at_period_end: false },
+    });
+
+    await handleSubscriptionUpdated(SUBSCRIPTION_UPDATED_EVENT);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalled();
+  });
 });
 
 // ================================================================
