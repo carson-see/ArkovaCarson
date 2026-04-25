@@ -34,13 +34,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
-import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS } from '@/lib/copy';
+import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
 import { OrgVerifiedBadge, AffiliatedBadge } from '@/components/shared/VerifiedBadge';
 import { DriveConnectorCard } from '@/components/integrations/DriveConnectorCard';
+import { DocusignConnectorCard } from '@/components/integrations/DocusignConnectorCard';
 import { WORKER_URL, workerFetch } from '@/lib/workerClient';
 import type { Database } from '@/types/database.types';
 
@@ -248,16 +249,27 @@ export function OrgProfilePage() {
   useEffect(() => {
     const driveResult = searchParams.get('drive');
     const driveError = searchParams.get('drive_error');
+    const docusignResult = searchParams.get('docusign');
+    const docusignError = searchParams.get('docusign_error');
+
     if (driveResult === 'connected') {
       toast.success('Google Drive connected.');
     } else if (driveError) {
       toast.error('Google Drive connection was not completed.');
     }
 
-    if (driveResult || driveError) {
+    if (docusignResult === 'connected') {
+      toast.success(CONNECTIONS_LABELS.TOAST_CONNECTED);
+    } else if (docusignError) {
+      toast.error(`${CONNECTIONS_LABELS.TOAST_ERROR_PREFIX}${docusignError}`);
+    }
+
+    if (driveResult || driveError || docusignResult || docusignError) {
       const next = new URLSearchParams(searchParams);
       next.delete('drive');
       next.delete('drive_error');
+      next.delete('docusign');
+      next.delete('docusign_error');
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams]);
@@ -741,6 +753,10 @@ export function OrgProfilePage() {
 
               <div className="mt-8">
                 <DriveConnectorCard orgId={orgId} />
+              </div>
+
+              <div className="mt-8">
+                <DocusignConnectorCard orgId={orgId} />
               </div>
             </div>
 
