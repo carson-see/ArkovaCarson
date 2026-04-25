@@ -358,7 +358,7 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(processBatchAnchorsMock).not.toHaveBeenCalled();
   });
 
-  it('runs the caller org queue and notifies admins', async () => {
+  it('runs the batch processor and notifies admins on success', async () => {
     fromMock
       .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'INDIVIDUAL' }))
       .mockReturnValueOnce(selectMaybeSingle({ role: 'admin' }));
@@ -373,12 +373,10 @@ describe('handleRunOrgAnchorQueue', () => {
     await handleRunOrgAnchorQueue('user-1', mockReq(), res);
 
     expect(status).not.toHaveBeenCalled();
-    expect(processBatchAnchorsMock).toHaveBeenCalledWith({
-      orgId: 'org-1',
-      force: true,
-      failIfRunning: true,
-      workerId: 'org-run-org-1-user-1',
-    });
+    // SCRUM-1243: processBatchAnchors() takes no args today — org-scoping is
+    // not yet plumbed through to the claim RPC. The endpoint still authorizes
+    // against the caller's org, but the underlying batch is global.
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith();
     expect(json).toHaveBeenCalledWith({
       ok: true,
       processed: 42,
@@ -398,24 +396,18 @@ describe('handleRunOrgAnchorQueue', () => {
     });
   });
 
-  it('returns run_failed when the batch worker reports a scoped claim failure', async () => {
+  it('returns 500 when the batch worker throws', async () => {
     fromMock
       .mockReturnValueOnce(selectMaybeSingle({ org_id: 'org-1', role: 'ORG_ADMIN' }))
       .mockReturnValueOnce(selectMaybeSingle(null));
-    processBatchAnchorsMock.mockResolvedValue({
-      processed: 0,
-      batchId: null,
-      merkleRoot: null,
-      txId: null,
-      error: 'Failed to claim organization anchors',
-    });
+    processBatchAnchorsMock.mockRejectedValue(new Error('chain submit blew up'));
 
     const { res, status, json } = mockRes();
     await handleRunOrgAnchorQueue('user-1', mockReq(), res);
 
     expect(status).toHaveBeenCalledWith(500);
     expect(json).toHaveBeenCalledWith({
-      error: { code: 'run_failed', message: 'Failed to claim organization anchors' },
+      error: { code: 'internal', message: 'Internal server error' },
     });
     expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
   });
