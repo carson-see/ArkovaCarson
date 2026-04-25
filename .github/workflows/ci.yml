@@ -183,6 +183,25 @@ jobs:
       - name: Lint UI copy terms
         run: npm run lint:copy
 
+      # SCRUM-1250 (R0-4): worker lint runs in BOTH ci.yml (here) and
+      # deploy-worker.yml — same `npm run lint` invocation, same source of
+      # truth (services/worker/package.json + eslint.config.js). Catches
+      # worker lint drift at PR time rather than at deploy time, so the
+      # 2026-04-25 deploy-pipeline-down-for-12-hours scenario stops repeating.
+      - name: Install worker dependencies
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      - name: Lint worker (deploy-gate parity)
+        working-directory: services/worker
+        run: npm run lint
+
+      - name: Verify deploy-gate / CI lint parity (R0-4)
+        # Fails CI if anyone reverts deploy-worker.yml back to inlined
+        # `npx eslint src/ --max-warnings 0` (or any other drift). The
+        # 2026-04-25 outage was caused by exactly this drift.
+        run: npx tsx scripts/ci/check-deploy-lint-parity.ts
+
       - name: TypeScript check (edge workers)
         env:
           NODE_OPTIONS: '--max-old-space-size=8192'

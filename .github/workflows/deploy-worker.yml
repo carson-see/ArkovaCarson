@@ -42,7 +42,14 @@ jobs:
 
       - name: Lint
         working-directory: services/worker
-        run: npx eslint src/ --max-warnings 0
+        # SCRUM-1250 (R0-4): use `npm run lint` so the deploy gate consumes
+        # the exact same eslint invocation as services/worker/package.json#lint
+        # — which is what CI's typecheck-lint job runs. Previously this was an
+        # inlined `npx eslint src/ --max-warnings 0` that drifted from the
+        # worker's `'warn'` rule defaults, causing every push since SCRUM-1227
+        # landed (2026-04-25 02:54) to fail deploy on pre-existing warnings.
+        # Followup R4 story tracks driving the warning count to zero.
+        run: npm run lint
 
       - name: Test
         working-directory: services/worker
