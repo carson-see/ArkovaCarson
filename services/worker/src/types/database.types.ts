@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      adobe_sign_webhook_nonces: {
+        Row: {
+          agreement_id: string
+          id: string
+          payload_hash: string
+          received_at: string
+          webhook_id: string | null
+        }
+        Insert: {
+          agreement_id: string
+          id?: string
+          payload_hash: string
+          received_at?: string
+          webhook_id?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          id?: string
+          payload_hash?: string
+          received_at?: string
+          webhook_id?: string | null
+        }
+        Relationships: []
+      }
       agents: {
         Row: {
           agent_type: Database["public"]["Enums"]["agent_type"]
@@ -1138,6 +1162,27 @@ export type Database = {
           },
         ]
       }
+      checkr_webhook_nonces: {
+        Row: {
+          id: string
+          payload_hash: string
+          received_at: string
+          report_id: string
+        }
+        Insert: {
+          id?: string
+          payload_hash: string
+          received_at?: string
+          report_id: string
+        }
+        Update: {
+          id?: string
+          payload_hash?: string
+          received_at?: string
+          report_id?: string
+        }
+        Relationships: []
+      }
       cloud_logging_queue: {
         Row: {
           audit_id: string
@@ -1296,6 +1341,53 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "compliance_scores_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connector_subscriptions: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          last_renewal_error: string | null
+          last_renewed_at: string | null
+          org_id: string
+          provider: string
+          resource_id: string | null
+          status: string
+          vendor_subscription_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id: string
+          provider: string
+          resource_id?: string | null
+          status?: string
+          vendor_subscription_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id?: string
+          provider?: string
+          resource_id?: string | null
+          status?: string
+          vendor_subscription_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connector_subscriptions_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
@@ -1575,6 +1667,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      docusign_webhook_nonces: {
+        Row: {
+          envelope_id: string
+          event_id: string
+          generated_at: string
+          id: string
+          received_at: string
+        }
+        Insert: {
+          envelope_id: string
+          event_id: string
+          generated_at: string
+          id?: string
+          received_at?: string
+        }
+        Update: {
+          envelope_id?: string
+          event_id?: string
+          generated_at?: string
+          id?: string
+          received_at?: string
+        }
+        Relationships: []
       }
       drive_folder_path_cache: {
         Row: {
@@ -4501,6 +4617,39 @@ export type Database = {
           },
         ]
       }
+      webhook_dlq: {
+        Row: {
+          created_at: string
+          external_id: string | null
+          id: string
+          payload_hash: string | null
+          provider: string
+          reason: string
+          resolved_at: string | null
+          webhook_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          payload_hash?: string | null
+          provider: string
+          reason: string
+          resolved_at?: string | null
+          webhook_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          payload_hash?: string | null
+          provider?: string
+          reason?: string
+          resolved_at?: string | null
+          webhook_id?: string | null
+        }
+        Relationships: []
+      }
       webhook_endpoints: {
         Row: {
           created_at: string
@@ -4774,6 +4923,7 @@ export type Database = {
           folder_path: string
           id: string
           org_id: string
+          payload: Json
           sender_email: string
           subject: string
           trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
@@ -5111,6 +5261,10 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: Json
       }
+      list_pending_resolution_anchors_v2: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
       log_verification_event: {
         Args: {
           p_fingerprint_provided?: boolean
@@ -5151,6 +5305,14 @@ export type Database = {
           p_external_file_id: string
           p_reason?: string
           p_selected_anchor_id: string
+        }
+        Returns: string
+      }
+      resolve_anchor_queue_by_public_id: {
+        Args: {
+          p_external_file_id: string
+          p_reason?: string
+          p_selected_public_id: string
         }
         Returns: string
       }
@@ -5281,6 +5443,7 @@ export type Database = {
         }
         Returns: Json
       }
+      verify_anchors_rls_enabled: { Args: never; Returns: boolean }
     }
     Enums: {
       agent_status: "active" | "suspended" | "revoked"
@@ -5733,3 +5896,4 @@ export const Constants = {
     },
   },
 } as const
+
