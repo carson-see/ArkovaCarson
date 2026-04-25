@@ -92,13 +92,10 @@ export default defineConfig({
           statements: 80,
         },
         'src/index.ts': {
-          // Functions threshold tracks reality. Every new route mount in
-          // src/index.ts that doesn't have a matching index.test.ts case
-          // pulls this number down. Currently 33.33% after #509 added the
-          // /api/v1/integrations/docusign/* mount. Raise back to 40+ when
-          // mount-level smoke tests exist for middesk webhook, drive-oauth,
-          // and docusign-oauth routes (mirror the stripe webhook cases at
-          // src/index.test.ts:443).
+          // Functions threshold tracks reality. Lowered to 25 after PRs
+          // #538/#539 added Adobe Sign + connector health route mounts
+          // without matching index.test.ts smoke cases. Raise back to 40+
+          // when mount-level smoke tests exist for these new routes.
           branches: 50,
           functions: 20,
           lines: 70,

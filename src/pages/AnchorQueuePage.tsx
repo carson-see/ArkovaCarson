@@ -29,6 +29,8 @@ import { formatAge } from '@/lib/formatters';
 import { AlertTriangle, CheckCircle, Inbox, Keyboard, Loader2, Play } from 'lucide-react';
 
 interface PendingAnchor {
+  // SCRUM-1121: round-trip `public_id` (short opaque slug) instead of the
+  // internal anchors.id UUID. CLAUDE.md §6 — internal ids must never leak.
   public_id: string;
   external_file_id: string | null;
   filename: string | null;

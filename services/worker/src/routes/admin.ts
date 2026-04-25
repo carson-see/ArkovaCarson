@@ -19,6 +19,9 @@ import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, hand
 import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
+import { handleConnectorHealth } from '../api/connector-health.js';
+import { handleProofPacketExport } from '../api/proof-packet.js';
+import { handleCollisionContext } from '../api/collision-context.js';
 import { handleTreasuryHealth } from '../api/treasury.js';
 import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { handleInjectDemoEvent } from '../api/demo-event-injector.js';
@@ -358,6 +361,42 @@ adminRouter.get('/compliance-inbox/summary', async (req, res) => {
     await handleComplianceInboxSummary(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Compliance inbox summary request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-1146: Connector setup wizard + health dashboard ───
+adminRouter.get('/connectors/health', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleConnectorHealth(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Connector health request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-1149: Audit proof packet export (per execution) ───
+adminRouter.get('/proof-packet/execution/:executionId', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleProofPacketExport(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Proof packet export failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-1150: Version collision context (read-side for the UI) ───
+adminRouter.get('/queue/collision/:externalFileId', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleCollisionContext(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Collision context request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
