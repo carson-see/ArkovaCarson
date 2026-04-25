@@ -76,7 +76,7 @@ import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
-import { runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
+import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
 
@@ -596,13 +596,11 @@ cronRouter.post('/grace-expiry-sweep', async (_req, res) => {
   }
 });
 
-// SCRUM-1219: Cloud Scheduler hits /jobs/monthly-allocation-rollover monthly.
-// The route was missing — rollover 404'd silently every month-end.
 cronRouter.post('/monthly-allocation-rollover', async (_req, res) => {
   try {
     const result = await withCronMonitoring(
       'monthly-allocation-rollover',
-      '0 0 1 * *',
+      MONTHLY_ALLOCATION_ROLLOVER_CRON,
       () => runAllocationRollover(),
     )();
     res.json(result);

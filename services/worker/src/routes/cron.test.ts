@@ -255,6 +255,7 @@ const mockRunAllocationRollover = vi.fn().mockResolvedValue({
   errors: 0,
 });
 vi.mock('../jobs/monthly-allocation-rollover.js', () => ({
+  MONTHLY_ALLOCATION_ROLLOVER_CRON: '0 0 1 * *',
   runAllocationRollover: (...args: unknown[]) => mockRunAllocationRollover(...args),
 }));
 
@@ -979,7 +980,6 @@ describe('cron routes', () => {
     });
   });
 
-  // SCRUM-1219: route was missing, Cloud Scheduler 404'd every month.
   describe('POST /monthly-allocation-rollover', () => {
     it('returns rollover summary', async () => {
       const app = createApp();

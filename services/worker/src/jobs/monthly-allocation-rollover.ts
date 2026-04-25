@@ -18,6 +18,8 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
+export const MONTHLY_ALLOCATION_ROLLOVER_CRON = '0 0 1 * *' as const;
+
 export interface RolloverRunSummary {
   total_orgs: number;
   rolled: number;
