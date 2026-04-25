@@ -61,8 +61,9 @@ function mockQuery(result: QueryResult, capture?: (method: string, value: unknow
     capture?.('insert', value);
     return chain;
   });
-  chain.upsert = vi.fn((value: unknown) => {
+  chain.upsert = vi.fn((value: unknown, options?: unknown) => {
     capture?.('upsert', value);
+    if (options !== undefined) capture?.('upsertOptions', options);
     return chain;
   });
   chain.single = vi.fn().mockImplementation(terminal);
@@ -330,6 +331,12 @@ describe('Drive OAuth router', () => {
     expect(upsert.subscription_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(upsert.subscription_id).not.toBe('drive-resource-1');
     expect(JSON.stringify(upsert)).not.toContain('access-token-secret');
+    // SCRUM-1241 (AUDIT-0424-17): conflict target must include org_id so an
+    // upsert from one org cannot collide with another org sharing the same
+    // Google account_id. The base UNIQUE constraint declares (org_id,
+    // provider, account_id) — the onConflict must match exactly.
+    const upsertOptions = captured.upsertOptions?.[0] as Record<string, unknown> | undefined;
+    expect(upsertOptions).toEqual({ onConflict: 'org_id,provider,account_id' });
     expect(captured.insert?.[0]).toMatchObject({
       org_id: TEST_ORG_ID,
       provider: 'google_drive',
