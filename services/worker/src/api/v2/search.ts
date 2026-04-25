@@ -21,7 +21,7 @@ const SearchQuerySchema = z.object({
 
 interface SearchResult {
   type: SearchResultType;
-  public_id: string;
+  public_id: string | null;
   score: number;
   snippet: string;
   metadata?: Record<string, unknown>;
