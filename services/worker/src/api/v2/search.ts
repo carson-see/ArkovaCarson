@@ -61,10 +61,23 @@ function visibleAnchorScope(orgId: string | null | undefined): string {
     : 'status.eq.SECURED';
 }
 
-async function searchOrgs(q: string, limit: number, offset: number): Promise<SearchResult[]> {
+async function searchOrgs(
+  q: string,
+  limit: number,
+  offset: number,
+  orgId: string | null | undefined,
+): Promise<SearchResult[]> {
+  // Scope to the caller's own org. Cross-tenant org enumeration was the
+  // original SCRUM-1224 bug — the search API is for an authenticated key to
+  // look up its own org's data, not to enumerate every tenant by name. For
+  // public, unauthenticated org browsing, callers use the public-org
+  // directory endpoint which has its own scoping.
+  if (!orgId) return [];
+
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('organizations')
     .select('public_id, display_name, description, domain, website_url')
+    .eq('id', orgId)
     .or(`display_name.ilike.%${safe}%,description.ilike.%${safe}%,domain.ilike.%${safe}%`)
     .not('public_id', 'is', null)
     .range(offset, offset + limit - 1)
@@ -216,14 +229,14 @@ export function buildSearchHandler(forcedType?: Exclude<SearchType, 'all'>) {
       if (type === 'all') {
         const perType = Math.ceil(limit / 4);
         const [orgs, records, fingerprints, documents] = await Promise.all([
-          searchOrgs(q, perType, offset),
+          searchOrgs(q, perType, offset, orgId),
           searchRecords(q, perType, offset, orgId),
           searchFingerprints(q, perType, offset, orgId),
           searchDocuments(q, perType, offset, orgId),
         ]);
         results = [...orgs, ...records, ...fingerprints, ...documents].slice(0, limit);
       } else if (type === 'org') {
-        results = await searchOrgs(q, limit, offset);
+        results = await searchOrgs(q, limit, offset, orgId);
       } else if (type === 'record') {
         results = await searchRecords(q, limit, offset, orgId);
       } else if (type === 'fingerprint') {

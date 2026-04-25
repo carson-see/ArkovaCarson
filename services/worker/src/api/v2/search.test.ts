@@ -249,6 +249,13 @@ describe('GET /api/v2/search', () => {
     });
 
     const app = express();
+    app.use((req, _res, next) => {
+      req.apiKey = {
+        keyId: 'k1', orgId: 'org1', userId: 'u1',
+        scopes: ['read:search'], rateLimitTier: 'paid', keyPrefix: 'ak_test_',
+      };
+      next();
+    });
     app.use('/organizations', buildSearchHandler('org'));
     app.use(v2ErrorHandler);
 
@@ -256,6 +263,31 @@ describe('GET /api/v2/search', () => {
     expect(res.status).toBe(200);
     expect(res.body.results[0].type).toBe('org');
     expect(mockOr).toHaveBeenCalledWith(expect.stringContaining('display_name.ilike'));
+  });
+
+  it('SCRUM-1224: org search returns empty when caller has no orgId (no cross-tenant enumeration)', async () => {
+    const app = express();
+    // No middleware sets req.apiKey → orgId is null.
+    app.use('/organizations', buildSearchHandler('org'));
+    app.use(v2ErrorHandler);
+
+    const res = await request(app).get('/organizations?q=acme');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toEqual([]);
+    // The DB was never queried — no cross-tenant enumeration possible.
+    expect(mockOr).not.toHaveBeenCalled();
+  });
+
+  it('SCRUM-1224: org search scopes by caller org_id', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ public_id: 'org_self', display_name: 'My Org', description: '', domain: '', website_url: '' }],
+      error: null,
+    });
+    const app = buildApp();
+    const res = await request(app).get('/search?q=my&type=org');
+    expect(res.status).toBe(200);
+    // The caller's org_id must be applied as a hard filter.
+    expect(mockEq).toHaveBeenCalledWith('id', 'org1');
   });
 
   it('scopes document search to public secured records plus the API key org', async () => {
