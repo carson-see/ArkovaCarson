@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
 import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
 import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS } from '@/lib/copy';
-import { ROUTES, issuerRegistryPath, publicProfilePath } from '@/lib/routes';
+import { ROUTES, getAppBaseUrl, issuerRegistryPath, publicProfilePath } from '@/lib/routes';
 import { isSearchSubdomain } from '@/App';
 import { OrganizationSchema } from '@/components/seo/OrganizationSchema';
 import { OrgPageMeta } from '@/components/seo/OrgPageMeta';
@@ -101,13 +101,7 @@ export function IssuerRegistryPage() {
     ? Math.round((profile.secured_credentials / profile.total_credentials) * 100)
     : 0;
 
-  // Canonical URL for the org page — resolves at runtime so the same
-  // component renders correct schema on arkova.ai, search.arkova.ai, and
-  // any preview deploy. SSR variants reuse buildOrganizationSchema directly.
-  const pageUrl =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}${issuerRegistryPath(profile.org_id)}`
-      : issuerRegistryPath(profile.org_id);
+  const pageUrl = `${getAppBaseUrl()}${issuerRegistryPath(profile.org_id)}`;
 
   return (
     <div className="min-h-screen bg-background">

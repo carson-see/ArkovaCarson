@@ -29,8 +29,6 @@ import { formatAge } from '@/lib/formatters';
 import { AlertTriangle, CheckCircle, Inbox, Keyboard, Loader2, Play } from 'lucide-react';
 
 interface PendingAnchor {
-  // ARK-112 (SCRUM-1121): worker emits public_id only; the internal anchors.id
-  // never crosses the wire.
   public_id: string;
   external_file_id: string | null;
   filename: string | null;

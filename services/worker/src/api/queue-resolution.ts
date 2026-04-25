@@ -29,14 +29,13 @@ export interface PendingResolutionAnchor {
   sibling_count: number;
 }
 
-// ARK-112 (SCRUM-1121): the queue API never accepts or returns the internal
-// anchors.id UUID. public_id matches /^ARK-[A-Z0-9]+$/ (see migration 0036)
-// so a strict regex rejects raw UUIDs at the boundary as defense-in-depth.
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9]+$/;
+// Defense-in-depth: reject raw UUIDs at the API boundary so the internal
+// anchors.id can never enter the queue surface even if a stale caller sends it.
+const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
 
 export const ResolveQueueInput = z.object({
   external_file_id: z.string().trim().min(1).max(255),
-  selected_public_id: z.string().trim().min(1).max(64).regex(PUBLIC_ID_RE),
+  selected_public_id: z.string().trim().regex(PUBLIC_ID_RE).max(64),
   reason: z.string().trim().max(2000).optional(),
 });
 

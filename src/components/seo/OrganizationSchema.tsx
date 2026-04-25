@@ -11,18 +11,19 @@
  * Cloudflare Worker proxy) can call the same builder for SSR'd HTML.
  */
 
-interface OrgProfileForSchema {
-  display_name: string;
-  domain: string | null;
-  description: string | null;
-  org_type: string | null;
-  website_url: string | null;
-  linkedin_url: string | null;
-  twitter_url: string | null;
-  logo_url: string | null;
-  location: string | null;
-  founded_date: string | null;
-}
+import type { OrgProfile } from '@/hooks/usePublicSearch';
+
+type OrgProfileForSchema = Pick<
+  OrgProfile,
+  | 'display_name'
+  | 'description'
+  | 'website_url'
+  | 'linkedin_url'
+  | 'twitter_url'
+  | 'logo_url'
+  | 'location'
+  | 'founded_date'
+>;
 
 export interface OrganizationJsonLd {
   '@context': 'https://schema.org';

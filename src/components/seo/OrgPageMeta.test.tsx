@@ -23,13 +23,13 @@ function getNamedMeta(name: string): string | null {
 
 describe('<OrgPageMeta />', () => {
   beforeEach(() => {
-    document.head.querySelectorAll('meta[data-org-page-meta]').forEach((m) => m.remove());
+    document.head.querySelectorAll('meta[property^="og:"], meta[name^="twitter:"]').forEach((m) => m.remove());
     document.title = '';
   });
 
   afterEach(() => {
     cleanup();
-    document.head.querySelectorAll('meta[data-org-page-meta]').forEach((m) => m.remove());
+    document.head.querySelectorAll('meta[property^="og:"], meta[name^="twitter:"]').forEach((m) => m.remove());
   });
 
   it('sets document.title', () => {

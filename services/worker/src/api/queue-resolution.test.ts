@@ -71,7 +71,7 @@ describe('ResolveQueueInput', () => {
   it('accepts minimal valid input with public_id', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_public_id: 'ARK-AB12CD34',
+      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
     });
     expect(result.success).toBe(true);
   });
@@ -95,7 +95,7 @@ describe('ResolveQueueInput', () => {
   it('rejects empty external_file_id', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: '',
-      selected_public_id: 'ARK-AB12CD34',
+      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
     });
     expect(result.success).toBe(false);
   });
@@ -103,7 +103,7 @@ describe('ResolveQueueInput', () => {
   it('caps reason at 2000 chars', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_public_id: 'ARK-AB12CD34',
+      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
       reason: 'x'.repeat(2001),
     });
     expect(result.success).toBe(false);
@@ -137,18 +137,31 @@ describe('handleListPendingResolution', () => {
   beforeEach(() => rpcMock.mockReset());
   afterEach(() => vi.restoreAllMocks());
 
-  it('returns items + count on success and never exposes internal id', async () => {
+  it('returns items + count on success', async () => {
     rpcMock.mockResolvedValue({
       data: [
-        { public_id: 'ARK-AB12CD34', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
+        { public_id: 'ARK-DEMO-CRD-AB12CD34', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
       ],
       error: null,
     });
     const { res, status, json } = mockRes();
     await handleListPendingResolution(mockReq(), res);
     expect(status).not.toHaveBeenCalled();
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ count: 1, items: expect.any(Array) }),
+    );
+  });
+
+  it('never exposes internal anchors.id (IDOR defense)', async () => {
+    rpcMock.mockResolvedValue({
+      data: [
+        { public_id: 'ARK-DEMO-CRD-AB12CD34', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
+      ],
+      error: null,
+    });
+    const { res, json } = mockRes();
+    await handleListPendingResolution(mockReq(), res);
     const payload = json.mock.calls[0][0];
-    expect(payload).toMatchObject({ count: 1 });
     expect(payload.items[0]).toHaveProperty('public_id');
     expect(payload.items[0]).not.toHaveProperty('id');
   });
@@ -209,7 +222,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-AB12CD34',
+          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
         },
       }),
       res,
@@ -229,7 +242,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-AB12CD34',
+          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
         },
       }),
       res,
@@ -237,14 +250,14 @@ describe('handleResolveQueue', () => {
     );
 
     expect(fromMock).toHaveBeenCalledWith('anchors');
-    expect(eq).toHaveBeenCalledWith('public_id', 'ARK-AB12CD34');
+    expect(eq).toHaveBeenCalledWith('public_id', 'ARK-DEMO-CRD-AB12CD34');
     expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
       type: 'queue_run_completed',
       organizationId: 'org-1',
       payload: expect.objectContaining({
         resolutionId: 'res-1',
         actorUserId: 'user-1',
-        selectedPublicId: 'ARK-AB12CD34',
+        selectedPublicId: 'ARK-DEMO-CRD-AB12CD34',
       }),
     });
   });
@@ -259,7 +272,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-AB12CD34',
+          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
         },
       }),
       res,
@@ -280,7 +293,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-AB12CD34',
+          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
         },
       }),
       res,
@@ -301,7 +314,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-AB12CD34',
+          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
         },
       }),
       res,

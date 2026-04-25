@@ -1,40 +1,35 @@
 /**
- * OrgPageMeta — Open Graph + Twitter Card meta tags for public org pages
- * (PUBLIC-ORG-07 / SCRUM-1090).
+ * OrgPageMeta — Open Graph + Twitter Card meta tags for public org pages.
  *
- * Side-effect component: imperatively appends meta tags to <head> via
- * useEffect, removes them on unmount. This pattern matches the rest of
- * the codebase (no react-helmet dependency) — see SearchPage.tsx for the
- * document.title precedent.
+ * Imperatively appends meta tags to <head> via useEffect because React 18
+ * doesn't render <meta> tags inside the component tree into <head> (a fix
+ * landed in React 19; switch to inline rendering once we upgrade).
  *
- * Each tag is tagged with `data-org-page-meta` so unmount cleanup can find
- * its own additions without touching unrelated meta from index.html.
+ * Tracks its own appended nodes via a ref so cleanup-on-unmount and
+ * effect-re-run never touch tags appended by a sibling instance.
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import type { OrgProfile } from '@/hooks/usePublicSearch';
 
-interface OrgProfileForMeta {
-  display_name: string;
-  description: string | null;
-  logo_url: string | null;
-}
+type OrgProfileForMeta = Pick<OrgProfile, 'display_name' | 'description' | 'logo_url'>;
 
 export interface OrgPageMetaProps {
   profile: OrgProfileForMeta;
   pageUrl: string;
 }
 
-const META_MARKER = 'data-org-page-meta';
-
-function setMeta(attr: 'property' | 'name', key: string, value: string): void {
-  const el = document.createElement('meta');
-  el.setAttribute(attr, key);
-  el.setAttribute('content', value);
-  el.setAttribute(META_MARKER, 'true');
-  document.head.appendChild(el);
-}
-
 export function OrgPageMeta({ profile, pageUrl }: OrgPageMetaProps) {
+  const created = useRef<HTMLMetaElement[]>([]);
+
   useEffect(() => {
+    const setMeta = (attr: 'property' | 'name', key: string, value: string): void => {
+      const el = document.createElement('meta');
+      el.setAttribute(attr, key);
+      el.setAttribute('content', value);
+      document.head.appendChild(el);
+      created.current.push(el);
+    };
+
     const title = `${profile.display_name} — Verified Issuer on Arkova`;
     document.title = title;
     const description =
@@ -57,9 +52,8 @@ export function OrgPageMeta({ profile, pageUrl }: OrgPageMetaProps) {
     }
 
     return () => {
-      document.head
-        .querySelectorAll(`meta[${META_MARKER}]`)
-        .forEach((node) => node.remove());
+      for (const node of created.current) node.remove();
+      created.current = [];
     };
   }, [profile.display_name, profile.description, profile.logo_url, pageUrl]);
 
