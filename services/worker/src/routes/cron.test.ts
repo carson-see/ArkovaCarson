@@ -20,6 +20,10 @@ vi.mock('../config.js', () => ({
     cronOidcAudience: 'https://arkova-worker.run.app',
     frontendUrl: 'http://localhost:5173',
     corsAllowedOrigins: '',
+    // SCRUM-1235: smoke-test config-sanity check inspects these
+    stripeSecretKey: 'sk_test_smoke',
+    bitcoinNetwork: 'testnet',
+    enableProdNetworkAnchoring: false,
   },
 }));
 
@@ -1273,47 +1277,245 @@ describe('cron routes', () => {
   });
 
   describe('POST /cron/smoke-test', () => {
-    it('runs smoke tests and returns results', async () => {
-      const mockFrom = vi.fn();
-      // Mock for database check (anchors select)
-      mockFrom.mockReturnValue({
+    /**
+     * SCRUM-1235: smoke test rewrite. The runner uses two SECURITY DEFINER
+     * RPCs instead of `count: 'exact'` scans on a 1.4M-row anchors table:
+     *   - get_anchor_status_counts_fast() — for the anchor-count check
+     *   - verify_anchors_rls_enabled()    — for the rls-active check
+     *
+     * recent-secured uses .is(deleted_at, null) + explicit ORDER BY so the
+     * partial index `idx_anchors_status_created` is selected.
+     */
+
+    function buildAnchorsSelectChain(opts: { recentSecured?: { created_at: string } | null; databaseFail?: boolean } = {}) {
+      const { recentSecured = { created_at: '2026-04-01T00:00:00Z' }, databaseFail = false } = opts;
+      const dbResult = databaseFail
+        ? { data: null, error: { message: 'database down' } }
+        : { data: [{ id: '1' }], error: null };
+      const recentData = recentSecured ? [recentSecured] : [];
+
+      return {
         select: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue({ data: [{ id: '1' }], error: null }),
+          // path: select('id').limit(1) — database connectivity
+          limit: vi.fn().mockResolvedValue(dbResult),
+          // path: select('created_at').eq().gte().is().order().limit() — recent-secured
           eq: vi.fn().mockReturnValue({
             gte: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({ data: [{ created_at: '2026-04-01T00:00:00Z' }], error: null }),
+              is: vi.fn().mockReturnValue({
+                order: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue({ data: recentData, error: null }),
+                }),
+              }),
             }),
           }),
         }),
+      };
+    }
+
+    function setupHappyPathMocks(opts: Parameters<typeof buildAnchorsSelectChain>[0] = {}) {
+      const anchorsChain = buildAnchorsSelectChain(opts);
+      const auditEventsChain = { insert: vi.fn().mockResolvedValue({ error: null }) };
+
+      (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+        if (table === 'audit_events') return auditEventsChain;
+        return anchorsChain;
       });
-      (db.from as ReturnType<typeof vi.fn>).mockImplementation(mockFrom);
+
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+        if (name === 'get_anchor_status_counts_fast') {
+          return Promise.resolve({
+            data: { PENDING: 12, SUBMITTED: 0, BROADCASTING: 3, SECURED: 1_410_000, REVOKED: 5, total: 1_410_020 },
+            error: null,
+          });
+        }
+        if (name === 'verify_anchors_rls_enabled') {
+          return Promise.resolve({ data: true, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: 'unknown rpc' } });
+      });
+
+      return { anchorsChain, auditEventsChain };
+    }
+
+    it('runs smoke tests and returns 5 results', async () => {
+      setupHappyPathMocks();
 
       const app = createApp();
       const res = await request(app).post('/cron/smoke-test');
-      expect(res.status).toBeLessThanOrEqual(503);
+
       expect(res.body.results).toBeDefined();
       expect(Array.isArray(res.body.results)).toBe(true);
-      expect(res.body.total).toBeGreaterThan(0);
+      expect(res.body.total).toBe(5);
       expect(res.body.timestamp).toBeDefined();
+      const names = res.body.results.map((r: { name: string }) => r.name);
+      expect(names).toEqual(['database', 'anchor-count', 'recent-secured', 'config-sanity', 'rls-active']);
     });
 
-    it('returns pass/fail status based on check results', async () => {
-      const mockFrom = vi.fn().mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          limit: vi.fn().mockResolvedValue({ data: [{ id: '1' }], error: null }),
-          eq: vi.fn().mockReturnValue({
-            gte: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({ data: [{ created_at: '2026-04-01T00:00:00Z' }], error: null }),
-            }),
-          }),
-        }),
-        insert: vi.fn().mockResolvedValue({ error: null }),
-      });
-      (db.from as ReturnType<typeof vi.fn>).mockImplementation(mockFrom);
+    it('passes all 5 checks when DB and RPCs are healthy', async () => {
+      setupHappyPathMocks();
 
       const app = createApp();
       const res = await request(app).post('/cron/smoke-test');
-      expect(['pass', 'fail']).toContain(res.body.status);
+
+      expect(res.body.passed).toBe(5);
+      expect(res.body.failed).toBe(0);
+      expect(res.body.status).toBe('pass');
+      expect(res.status).toBe(200);
+    });
+
+    it('anchor-count uses get_anchor_status_counts_fast RPC, not count:exact', async () => {
+      const { anchorsChain } = setupHappyPathMocks();
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      expect(db.rpc).toHaveBeenCalledWith('get_anchor_status_counts_fast');
+      const anchorCount = res.body.results.find((r: { name: string }) => r.name === 'anchor-count');
+      expect(anchorCount.status).toBe('pass');
+      expect(anchorCount.detail).toContain('1410020');
+      const selectCalls = (anchorsChain.select as ReturnType<typeof vi.fn>).mock.calls;
+      const usedExactCount = selectCalls.some(
+        (call) => typeof call[1] === 'object' && call[1] !== null && 'count' in call[1] && call[1].count === 'exact',
+      );
+      expect(usedExactCount).toBe(false);
+    });
+
+    it('anchor-count fails when get_anchor_status_counts_fast RPC errors', async () => {
+      setupHappyPathMocks();
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+        if (name === 'get_anchor_status_counts_fast') {
+          return Promise.resolve({ data: null, error: { message: 'statement timeout' } });
+        }
+        if (name === 'verify_anchors_rls_enabled') {
+          return Promise.resolve({ data: true, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: 'unknown rpc' } });
+      });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const anchorCount = res.body.results.find((r: { name: string }) => r.name === 'anchor-count');
+      expect(anchorCount.status).toBe('fail');
+      expect(anchorCount.error).toBe('statement timeout');
+      expect(res.body.failed).toBeGreaterThanOrEqual(1);
+    });
+
+    it('anchor-count fails when total is 0 (production should never have 0 anchors)', async () => {
+      setupHappyPathMocks();
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+        if (name === 'get_anchor_status_counts_fast') {
+          return Promise.resolve({
+            data: { PENDING: 0, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: 0 },
+            error: null,
+          });
+        }
+        if (name === 'verify_anchors_rls_enabled') {
+          return Promise.resolve({ data: true, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: 'unknown rpc' } });
+      });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const anchorCount = res.body.results.find((r: { name: string }) => r.name === 'anchor-count');
+      expect(anchorCount.status).toBe('fail');
+    });
+
+    it('rls-active uses verify_anchors_rls_enabled RPC and passes when true', async () => {
+      setupHappyPathMocks();
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      expect(db.rpc).toHaveBeenCalledWith('verify_anchors_rls_enabled');
+      const rls = res.body.results.find((r: { name: string }) => r.name === 'rls-active');
+      expect(rls.status).toBe('pass');
+    });
+
+    it('rls-active FAILS CLOSED when RLS is disabled (RPC returns false)', async () => {
+      setupHappyPathMocks();
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+        if (name === 'get_anchor_status_counts_fast') {
+          return Promise.resolve({
+            data: { PENDING: 0, SUBMITTED: 0, BROADCASTING: 0, SECURED: 1, REVOKED: 0, total: 1 },
+            error: null,
+          });
+        }
+        if (name === 'verify_anchors_rls_enabled') {
+          return Promise.resolve({ data: false, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: 'unknown rpc' } });
+      });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const rls = res.body.results.find((r: { name: string }) => r.name === 'rls-active');
+      expect(rls.status).toBe('fail');
+      expect(rls.detail).toMatch(/not enforced|disabled|false/i);
+    });
+
+    it('rls-active fails when RPC errors', async () => {
+      setupHappyPathMocks();
+      (db.rpc as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+        if (name === 'get_anchor_status_counts_fast') {
+          return Promise.resolve({
+            data: { PENDING: 0, SUBMITTED: 0, BROADCASTING: 0, SECURED: 1, REVOKED: 0, total: 1 },
+            error: null,
+          });
+        }
+        if (name === 'verify_anchors_rls_enabled') {
+          return Promise.resolve({ data: null, error: { message: 'function does not exist' } });
+        }
+        return Promise.resolve({ data: null, error: { message: 'unknown rpc' } });
+      });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const rls = res.body.results.find((r: { name: string }) => r.name === 'rls-active');
+      expect(rls.status).toBe('fail');
+    });
+
+    it('recent-secured query uses is(deleted_at, null) + order(created_at desc) for index hit', async () => {
+      const { anchorsChain } = setupHappyPathMocks();
+
+      const app = createApp();
+      await request(app).post('/cron/smoke-test');
+
+      const selectReturn = anchorsChain.select.mock.results.find((r) => r.value && typeof r.value === 'object' && 'eq' in r.value)?.value;
+      expect(selectReturn).toBeDefined();
+      const eqReturn = selectReturn.eq.mock.results[0]?.value;
+      expect(eqReturn).toBeDefined();
+      const gteReturn = eqReturn.gte.mock.results[0]?.value;
+      expect(gteReturn).toBeDefined();
+      expect(gteReturn.is).toHaveBeenCalledWith('deleted_at', null);
+      const isReturn = gteReturn.is.mock.results[0]?.value;
+      expect(isReturn.order).toHaveBeenCalledWith('created_at', { ascending: false });
+    });
+
+    it('recent-secured fails when there are no SECURED anchors in the last 7 days', async () => {
+      setupHappyPathMocks({ recentSecured: null });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const recent = res.body.results.find((r: { name: string }) => r.name === 'recent-secured');
+      expect(recent.status).toBe('fail');
+      expect(res.body.failed).toBeGreaterThanOrEqual(1);
+    });
+
+    it('returns 503 when any check fails', async () => {
+      setupHappyPathMocks({ databaseFail: true });
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      expect(res.status).toBe(503);
+      expect(res.body.status).toBe('fail');
+      expect(res.body.failed).toBeGreaterThanOrEqual(1);
     });
   });
 
