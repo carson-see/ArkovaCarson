@@ -38,6 +38,7 @@ import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
 import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
+import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
@@ -189,6 +190,18 @@ app.use(
     next();
   },
   docusignWebhookRouter,
+);
+
+// ─── Adobe Sign webhook (SCRUM-1148) — raw body required for HMAC ───
+app.use(
+  '/webhooks/adobe-sign',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  adobeSignWebhookRouter,
 );
 
 // Gzip/brotli compression — 70-90% bandwidth reduction for JSON responses

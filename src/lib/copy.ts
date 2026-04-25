@@ -1287,6 +1287,44 @@ export const RULES_PAGE_COPY = {
 } as const;
 
 // =============================================================================
+// RULE SIMULATOR (SCRUM-1141)
+// =============================================================================
+
+export const RULE_SIMULATOR_COPY = {
+  PANEL_TITLE: 'Test this rule',
+  PANEL_SUBTITLE:
+    'Run a sample event through this rule to see what would happen. Nothing is saved or anchored.',
+  SAMPLE_HEADING: 'Sample event',
+  SAMPLE_HINT: "Edit the sample fields below to match the kind of document you're worried about.",
+  FIELD_VENDOR: 'Vendor',
+  FIELD_VENDOR_PLACEHOLDER: 'docusign / google_drive / veremark…',
+  FIELD_FILENAME: 'Filename',
+  FIELD_FILENAME_PLACEHOLDER: 'msa-2026.pdf',
+  FIELD_FOLDER_PATH: 'Folder path',
+  FIELD_FOLDER_PATH_PLACEHOLDER: '/Legal/MSAs/',
+  FIELD_SENDER: 'Sender email',
+  FIELD_SENDER_PLACEHOLDER: 'signer@example.com',
+  FIELD_SUBJECT: 'Email subject',
+  FIELD_SUBJECT_PLACEHOLDER: 'Signed contract attached',
+  FIELD_CONNECTOR: 'Connector type',
+  TEST_BUTTON: 'Test rule',
+  TESTING: 'Testing…',
+  RESET_SAMPLE: 'Reset sample',
+  // Result block
+  RESULT_MATCHED: 'This rule WOULD fire',
+  RESULT_NOT_MATCHED: 'This rule would NOT fire',
+  RESULT_NEEDS_SEMANTIC:
+    'Heads up: this rule also requires a semantic-match check (Gemini embedding) before firing.',
+  RESULT_REASON_LABEL: 'Reason',
+  RESULT_ACTION_PREVIEW: 'Action that would run',
+  RESULT_DRY_RUN_BANNER:
+    'Dry run only — this is separate from Save/Enable. No notifications, anchors, or webhooks were sent.',
+  ERR_NEED_TRIGGER_AND_ACTION:
+    'Pick a trigger and action first — those are required to run a simulation.',
+  ERR_GENERIC: 'Could not run the simulation. Try again or check the rule config.',
+} as const;
+
+// =============================================================================
 // NESSIE INTELLIGENCE (NMT-07)
 // =============================================================================
 
