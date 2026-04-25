@@ -11,7 +11,7 @@
 // Load environment variables FIRST before any other imports
 import 'dotenv/config';
 
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import compression from 'compression';
 import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
@@ -221,8 +221,15 @@ app.use('/api/v1/identity', rateLimiters.api, requireAuthMw, identityRouter);
 app.use('/api/v1/org', rateLimiters.api, requireAuthMw, orgVerificationRouter);
 app.use('/api/v1/org/sub-orgs', rateLimiters.api, requireAuthMw, orgSubOrgsRouter);
 app.use('/api/v1/org-kyb', rateLimiters.api, requireAuthMw, orgKybRouter);
-app.use('/api/v1/integrations', rateLimiters.api, driveOAuthRouter);
-app.use('/api/v1/integrations', rateLimiters.api, docusignOAuthRouter);
+// Drive + DocuSign OAuth: /oauth/callback is hit by the provider with no
+// Authorization header (state param holds the userId), so it must be public.
+// All other routes require a logged-in user.
+const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.endsWith('/oauth/callback')) return next();
+  return requireAuthMw(req, res, next);
+};
+app.use('/api/v1/integrations', rateLimiters.api, integrationsAuthGate, driveOAuthRouter);
+app.use('/api/v1/integrations', rateLimiters.api, integrationsAuthGate, docusignOAuthRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
