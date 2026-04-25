@@ -296,3 +296,28 @@ export const RULE_REJECTION_REASON = {
 
 export type RuleRejectionReason =
   (typeof RULE_REJECTION_REASON)[keyof typeof RULE_REJECTION_REASON];
+
+// =============================================================================
+// Action dispatcher outcomes (SCRUM-1142)
+// =============================================================================
+
+export const RULE_DISPATCH_OUTCOME = {
+  NOTIFICATION_SENT: 'notification_sent',
+  QUEUED_FOR_REVIEW: 'queued_for_review',
+  FLAGGED_COLLISION: 'flagged_collision',
+  WEBHOOK_DELIVERED: 'webhook_delivered',
+} as const;
+
+export type RuleDispatchOutcome =
+  (typeof RULE_DISPATCH_OUTCOME)[keyof typeof RULE_DISPATCH_OUTCOME];
+
+// `routed_to` is the marker the compliance inbox summary (SCRUM-1145) reads
+// to bucket SUCCEEDED executions. Lives inside `output_payload` JSONB on
+// `organization_rule_executions` — there is no top-level column.
+export const RULE_ROUTED_TO = {
+  AUTO_ANCHOR: 'auto_anchor',
+  REVIEW_QUEUE: 'review_queue',
+  COLLISION: 'collision',
+} as const;
+
+export type RuleRoutedTo = (typeof RULE_ROUTED_TO)[keyof typeof RULE_ROUTED_TO];

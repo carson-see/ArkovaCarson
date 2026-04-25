@@ -42,6 +42,7 @@ import {
   type ActionType,
   type TriggerType,
 } from '@/lib/ruleSchemas';
+import { RuleSimulatorPanel } from '@/components/rules/RuleSimulatorPanel';
 
 const TRIGGER_COPY = RULE_TRIGGER_COPY;
 const ACTION_COPY = RULE_ACTION_COPY;
@@ -672,6 +673,22 @@ function StepReview({ state }: StepProps) {
         <Switch checked={false} disabled aria-label="disabled-indicator" />
         <span>{W.REVIEW_DISABLED_BANNER}</span>
       </div>
+
+      {/* Sits above Save so the admin runs a sample event before flipping
+          the rule on. The panel calls /api/rules/test which the worker
+          scopes to the caller's org. */}
+      {state.trigger_type && state.action_type && (
+        <RuleSimulatorPanel
+          rule={{
+            name: state.name,
+            description: state.description,
+            trigger_type: state.trigger_type,
+            trigger_config: state.trigger_config,
+            action_type: state.action_type,
+            action_config: state.action_config,
+          }}
+        />
+      )}
     </div>
   );
 }

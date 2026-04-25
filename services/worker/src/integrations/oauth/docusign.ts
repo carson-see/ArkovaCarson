@@ -10,8 +10,8 @@
  * Secrets come from Secret Manager-backed env vars. Tokens are returned to
  * the caller for KMS encryption; never log response bodies from this module.
  */
-import crypto from 'node:crypto';
 import { z } from 'zod';
+import { verifyHmacSha256Base64 } from './hmac.js';
 
 const DOCUSIGN_DEMO_AUTH_BASE = 'https://account-d.docusign.com';
 const DOCUSIGN_PROD_AUTH_BASE = 'https://account.docusign.com';
@@ -251,23 +251,7 @@ export function verifyDocusignConnectHmac(args: {
   signature: string | undefined;
   secret: string;
 }): boolean {
-  if (!args.signature || !args.secret) return false;
-  const body = Buffer.isBuffer(args.rawBody) ? args.rawBody : Buffer.from(args.rawBody);
-  const expected = crypto.createHmac('sha256', args.secret).update(body).digest('base64');
-  const received = args.signature.trim();
-  const a = Buffer.from(expected, 'base64');
-  let b: Buffer;
-  try {
-    b = Buffer.from(received, 'base64');
-  } catch {
-    return false;
-  }
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+  return verifyHmacSha256Base64(args);
 }
 
 export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignCompletedEnvelope {

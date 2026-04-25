@@ -73,6 +73,7 @@ import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
 import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.js';
 import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
+import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
@@ -317,6 +318,20 @@ cronRouter.post('/rules-engine', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Rules engine pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-1142: Rule Action Dispatcher MVP ───
+// Drains PENDING/RETRYING `organization_rule_executions` rows. Cloud Scheduler
+// is configured `max_instances=1` until the dispatcher gains an atomic claim
+// RPC — see `services/worker/src/jobs/rule-action-dispatcher.ts` header.
+cronRouter.post('/rule-action-dispatcher', async (_req, res) => {
+  try {
+    const result = await runRuleActionDispatcher();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Rule action dispatcher pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

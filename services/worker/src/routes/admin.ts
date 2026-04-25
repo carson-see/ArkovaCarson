@@ -21,6 +21,8 @@ import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueu
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleTreasuryHealth } from '../api/treasury.js';
 import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
+import { handleInjectDemoEvent } from '../api/demo-event-injector.js';
+import { handleComplianceInboxSummary } from '../api/compliance-inbox-summary.js';
 import { handleMarkNotificationsRead, handleUnreadNotificationCount } from '../api/notifications.js';
 import { getQueryStats } from '../utils/queryMonitor.js';
 import { getConnectionInfo } from '../utils/db.js';
@@ -332,6 +334,30 @@ adminRouter.delete('/rules/:id', async (req, res) => {
     await handleDeleteRule(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Rules delete request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-1144: Demo event injector (admin-only, gated by env) ───
+adminRouter.post('/rules/demo-event', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleInjectDemoEvent(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Demo event injection failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-1145: Compliance inbox summary (captured / secured / review / failed) ───
+adminRouter.get('/compliance-inbox/summary', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleComplianceInboxSummary(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Compliance inbox summary request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
