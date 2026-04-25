@@ -18,23 +18,24 @@ type FlagName =
   | 'ENABLE_ATS_WEBHOOK'         // multi-secret iteration = tenant isolation bypass
   | 'ENABLE_GRC_INTEGRATION';    // OAuth tokens stored cleartext
 
-function isEnabled(flag: FlagName): boolean {
-  // Tests always exercise the gated routes — gating them would force a
-  // sweeping test-fixture refactor for a security mitigation that's
-  // a runtime/ops concern. NODE_ENV='test' skips the gate.
-  if (process.env.NODE_ENV === 'test') return true;
-  // Default OFF for the audit-flagged integrations until per-flag fix lands.
-  // Operator must explicitly set ENABLE_*=true to re-enable.
-  return process.env[flag] === 'true';
-}
+// Cloud Run replaces containers on env edits; env vars never mutate at
+// runtime. Resolve the gate value once at module factory time instead of
+// re-reading process.env on every request.
+const TEST_BYPASS = process.env.NODE_ENV === 'test';
 
 export function killSwitch(flag: FlagName) {
+  // Default OFF for the audit-flagged integrations until per-flag fix lands.
+  // Operator must explicitly set ENABLE_*=true to re-enable.
+  const enabled = TEST_BYPASS || process.env[flag] === 'true';
+  // Pre-allocated 503 body — string-key lookup avoided per-request when denied.
+  const denyBody = Object.freeze({
+    error: 'integration_disabled',
+    message: 'This integration is temporarily disabled pending a security fix. See SCRUM Integration Hardening epic.',
+    flag,
+  });
+
   return (_req: Request, res: Response, next: NextFunction) => {
-    if (isEnabled(flag)) return next();
-    res.status(503).json({
-      error: 'integration_disabled',
-      message: 'This integration is temporarily disabled pending a security fix. See SCRUM Integration Hardening epic.',
-      flag,
-    });
+    if (enabled) return next();
+    res.status(503).json(denyBody);
   };
 }
