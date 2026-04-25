@@ -29,8 +29,8 @@ export interface PendingResolutionAnchor {
   sibling_count: number;
 }
 
-// Defense-in-depth: reject raw UUIDs at the API boundary so the internal
-// anchors.id can never enter the queue surface even if a stale caller sends it.
+// Preliminary syntactic check (defense-in-depth on top of the SECURITY DEFINER
+// public_id lookup). Mirrors `publicIdSchema` in services/edge/src/mcp-tool-schemas.ts.
 const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
 
 export const ResolveQueueInput = z.object({
