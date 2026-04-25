@@ -5,7 +5,7 @@
  *   - empty state
  *   - grouped collision list
  *   - open dialog → pick version → POST /api/queue/resolve with correct
- *     external_file_id + selected_anchor_id
+ *     external_file_id + selected_public_id (ARK-112 / SCRUM-1121)
  *   - error path surfaces a friendly message
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -95,7 +95,7 @@ describe('AnchorQueuePage', () => {
         JSON.stringify({
           items: [
             {
-              id: 'a-1',
+              public_id: 'ARK-A1',
               external_file_id: 'file-X',
               filename: 'msa.pdf',
               fingerprint: 'f1',
@@ -103,7 +103,7 @@ describe('AnchorQueuePage', () => {
               sibling_count: 1,
             },
             {
-              id: 'a-2',
+              public_id: 'ARK-A2',
               external_file_id: 'file-X',
               filename: 'msa.pdf',
               fingerprint: 'f2',
@@ -111,7 +111,7 @@ describe('AnchorQueuePage', () => {
               sibling_count: 1,
             },
             {
-              id: 'a-3',
+              public_id: 'ARK-A3',
               external_file_id: 'file-Y',
               filename: 'sla.pdf',
               fingerprint: 'f3',
@@ -131,14 +131,14 @@ describe('AnchorQueuePage', () => {
     expect(screen.getByText(/2 versions/)).toBeInTheDocument();
   });
 
-  it('resolves a collision: dialog → pick → POST /api/queue/resolve', async () => {
+  it('resolves a collision: dialog → pick → POST /api/queue/resolve with public_id', async () => {
     workerFetchMock
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
             items: [
               {
-                id: 'a-1',
+                public_id: 'ARK-A1',
                 external_file_id: 'file-X',
                 filename: 'msa.pdf',
                 fingerprint: 'f1',
@@ -146,7 +146,7 @@ describe('AnchorQueuePage', () => {
                 sibling_count: 1,
               },
               {
-                id: 'a-2',
+                public_id: 'ARK-A2',
                 external_file_id: 'file-X',
                 filename: 'msa.pdf',
                 fingerprint: 'f2',
@@ -187,7 +187,8 @@ describe('AnchorQueuePage', () => {
     expect(resolveCall[0]).toBe('/api/queue/resolve');
     const body = JSON.parse(resolveCall[1].body as string);
     expect(body.external_file_id).toBe('file-X');
-    expect(body.selected_anchor_id).toBe('a-2');
+    expect(body.selected_public_id).toBe('ARK-A2');
+    expect(body).not.toHaveProperty('selected_anchor_id');
   });
 
   it('surfaces server errors on resolve', async () => {
@@ -197,7 +198,7 @@ describe('AnchorQueuePage', () => {
           JSON.stringify({
             items: [
               {
-                id: 'a-1',
+                public_id: 'ARK-A1',
                 external_file_id: 'file-X',
                 filename: 'msa.pdf',
                 fingerprint: 'f1',

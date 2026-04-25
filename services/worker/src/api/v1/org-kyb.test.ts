@@ -185,7 +185,6 @@ describe('GET /api/v1/org-kyb/:orgId/status', () => {
   });
 
   it('returns 404 when org not visible', async () => {
-    const mockFrom = vi.fn().mockReturnThis();
     const mockSelect = vi.fn().mockReturnThis();
     const mockEq = vi.fn().mockReturnThis();
     const mockMaybeSingle = vi.fn().mockResolvedValueOnce({ data: null, error: null });
