@@ -85,43 +85,21 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Look up Arkova org from the vendor reference id.
-  // SCRUM-1217: never use PostgREST `.or()` with payload-derived strings —
-  // even though the envelope is HMAC-verified, the `external_id` field is
-  // attacker-influenced (it's the value we set when registering the business
-  // and gets echoed back). Run two separate `.eq()` lookups instead. This
-  // also means each query has a single, indexable filter.
+  // Never use PostgREST `.or()` with payload-derived strings — even though
+  // the envelope is HMAC-verified, `external_id` is attacker-influenced
+  // (we set it when registering the business and Middesk echoes it back).
+  // Two separate `.eq()` lookups also mean each query has a single,
+  // indexable filter.
   const vendorBusinessId = event.data.object.id;
   const externalId = event.data.object.external_id ?? null;
 
-  let org: { id: string } | null = null;
-  let orgErr: unknown = null;
+  const findOrg = (field: 'id' | 'kyb_reference_id', value: string) =>
+    dbUntyped.from('organizations').select('id').eq(field, value).maybeSingle();
 
-  if (externalId) {
-    const r = await dbUntyped
-      .from('organizations')
-      .select('id')
-      .eq('id', externalId)
-      .maybeSingle();
-    if (r.error) {
-      orgErr = r.error;
-    } else if (r.data) {
-      org = r.data;
-    }
-  }
-
-  if (!org && !orgErr) {
-    const r = await dbUntyped
-      .from('organizations')
-      .select('id')
-      .eq('kyb_reference_id', vendorBusinessId)
-      .maybeSingle();
-    if (r.error) {
-      orgErr = r.error;
-    } else if (r.data) {
-      org = r.data;
-    }
-  }
+  const byId = externalId ? await findOrg('id', externalId) : null;
+  const byRef = byId?.data ? null : await findOrg('kyb_reference_id', vendorBusinessId);
+  const orgErr = byId?.error ?? byRef?.error ?? null;
+  const org = (byId?.data ?? byRef?.data) as { id: string } | null;
 
   if (orgErr) {
     logger.error({ orgErr }, 'Middesk webhook: org lookup failed');
