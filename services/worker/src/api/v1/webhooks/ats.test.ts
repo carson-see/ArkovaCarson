@@ -53,14 +53,20 @@ function integrationLookup(data: unknown, error: unknown = null) {
 }
 
 function attestationLookup(data: unknown = []) {
-  return {
-    select: vi.fn().mockReturnThis(),
-    or: vi.fn().mockResolvedValue({ data, error: null }),
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const chain: any = {};
+  chain.select = vi.fn(() => chain);
+  chain.eq = vi.fn(() => chain); // SCRUM-1240: org_id scoping
+  chain.or = vi.fn().mockResolvedValue({ data, error: null });
+  return chain;
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // SCRUM-1240: clearAllMocks does not clear the .mockReturnValueOnce
+  // queue. mockReset() does. Without this, queued returns from previous
+  // tests leak into subsequent tests and the .from() chain misroutes.
+  dbFromMock.mockReset();
 });
 
 describe('POST /webhooks/ats/:provider/:integrationId', () => {
@@ -157,5 +163,52 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
       .send('{}');
 
     expect(res.status).toBe(400);
+  });
+
+  // SCRUM-1240 (AUDIT-0424-16): the attestations select MUST be scoped by
+  // the integration's org_id. Previously two orgs that both connected
+  // Greenhouse with overlapping candidate names would leak each other's
+  // attestation rows in the response.
+  it('SCRUM-1240: attestations select is scoped by integration.org_id', async () => {
+    const eqCalls: Array<[string, unknown]> = [];
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: INTEGRATION_ID,
+        org_id: 'org-A',
+        webhook_secret: WEBHOOK_SECRET,
+      }),
+    );
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const attestationChain: any = {};
+    attestationChain.select = vi.fn(() => attestationChain);
+    attestationChain.eq = vi.fn((field: string, value: unknown) => {
+      eqCalls.push([field, value]);
+      return attestationChain;
+    });
+    attestationChain.or = vi.fn().mockResolvedValue({ data: [], error: null });
+    dbFromMock.mockReturnValueOnce(attestationChain);
+
+    const body = JSON.stringify({
+      action: 'candidate.hired',
+      payload: {
+        candidate: {
+          first_name: 'Jane', last_name: 'Doe',
+          email_addresses: [{ value: 'jane@example.com' }],
+        },
+        stage: { name: 'Background Check' },
+      },
+    });
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', signPayload(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(eqCalls).toContainEqual(['org_id', 'org-A']);
+    expect(attestationChain.or).toHaveBeenCalled();
   });
 });
