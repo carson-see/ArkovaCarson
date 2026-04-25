@@ -149,6 +149,47 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(401).json({ error: 'invalid_channel_token' });
   }
 
+  // SCRUM-1242 (AUDIT-0424-26): replay protection. Drive doesn't carry an
+  // HMAC, so the only monotonic anti-replay signal is the per-channel
+  // X-Goog-Message-Number. Dedupe on (channel_id, message_number) — Google
+  // guarantees this pair uniquely identifies a delivery for a given channel.
+  // Mirrors docusign_webhook_nonces (0256) and ats_webhook_nonces (0263).
+  const messageNumberRaw = req.headers['x-goog-message-number'];
+  const messageNumberStr = Array.isArray(messageNumberRaw) ? messageNumberRaw[0] : messageNumberRaw;
+  const messageNumber = Number.parseInt(String(messageNumberStr ?? ''), 10);
+  if (Number.isFinite(messageNumber)) {
+    const { error: nonceErr } = await dbAny
+      .from('drive_webhook_nonces')
+      .insert({
+        channel_id: channelId,
+        message_number: messageNumber,
+      });
+    if (nonceErr) {
+      // Postgres unique_violation — duplicate delivery, ack so retries stop.
+      if ((nonceErr as { code?: string }).code === '23505') {
+        logger.info(
+          { channelId, messageNumber, orgId: lookup.org_id },
+          'drive webhook duplicate delivery — returning 200',
+        );
+        return res.status(200).end();
+      }
+      logger.error(
+        { error: nonceErr, channelId, orgId: lookup.org_id },
+        'drive webhook nonce insert failed — proceeding without dedupe',
+      );
+      // Fall through — the upstream handler will still dedupe at the
+      // rule-event layer and Drive's retry will hit the same block. We
+      // prefer at-least-once delivery to dropping the event.
+    }
+  } else {
+    // No message number header — older Drive clients or malformed pushes.
+    // Log and continue; the channel-token check above gives us authentication.
+    logger.warn(
+      { channelId, orgId: lookup.org_id },
+      'drive webhook missing X-Goog-Message-Number — proceeding without nonce dedupe',
+    );
+  }
+
   // STUB: full implementation would call changes.list (with the stored
   // pageToken) here, walk each change to resolve file_id + parent_ids, and
   // enqueue one rule event per change. Until SCRUM-1099 follow-up lands, we

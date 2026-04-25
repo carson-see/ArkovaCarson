@@ -159,6 +159,37 @@ router.post('/:provider/:integrationId', async (req: Request, res: Response) => 
       return;
     }
 
+    // SCRUM-1242 (AUDIT-0424-26): replay protection. A captured webhook
+    // request can be re-delivered verbatim — HMAC verifies but the worker
+    // would re-run the candidate match. Dedupe on (provider, integration_id,
+    // signature) — HMAC is deterministic on body + secret, so the same
+    // signature for the same integration is always a replay. Mirrors
+    // docusign_webhook_nonces (0256) and checkr_webhook_nonces (0261).
+    const { error: nonceErr } = await dbAny
+      .from('ats_webhook_nonces')
+      .insert({
+        provider: atsProvider,
+        integration_id: integration.id,
+        signature: sigHeader,
+      });
+    if (nonceErr) {
+      // Postgres unique_violation — duplicate delivery, ack so retries stop.
+      if ((nonceErr as { code?: string }).code === '23505') {
+        logger.info(
+          { provider: atsProvider, integrationId: integration.id },
+          'ATS webhook duplicate delivery — returning 200',
+        );
+        res.status(200).json({ ok: true, duplicate: true });
+        return;
+      }
+      logger.error(
+        { error: nonceErr, provider: atsProvider, integrationId: integration.id },
+        'ATS webhook nonce insert failed',
+      );
+      res.status(500).json({ error: 'nonce_insert_failed' });
+      return;
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matchedIntegration = integration as any;
 
