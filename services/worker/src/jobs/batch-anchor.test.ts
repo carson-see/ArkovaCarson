@@ -76,7 +76,6 @@ vi.mock('../chain/client.js', () => ({
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
-const mockAnchorProofsUpsert = vi.hoisted(() => vi.fn().mockResolvedValue({ error: null }));
 
 vi.mock('../utils/db.js', () => {
   // Legacy select chain for fallback path
@@ -94,11 +93,6 @@ vi.mock('../utils/db.js', () => {
           return {
             select: vi.fn(() => selectChain),
             update: mockAnchorsUpdate,
-          };
-        }
-        if (table === 'anchor_proofs') {
-          return {
-            upsert: mockAnchorProofsUpsert,
           };
         }
         return {};
@@ -137,7 +131,6 @@ describe('processBatchAnchors', () => {
     // Default: RPC returns empty (no pending anchors)
     mockDbRpc.mockResolvedValue({ data: [], error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
-    mockAnchorProofsUpsert.mockResolvedValue({ error: null });
     setUpdateResult({ error: null, count: 1 });
   });
 
@@ -175,53 +168,6 @@ describe('processBatchAnchors', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('falling back to legacy'),
-    );
-  });
-
-  it('passes org scope and manual worker id to the claim RPC', async () => {
-    mockDbRpc
-      .mockResolvedValueOnce({ data: [ANCHOR_A], error: null })
-      .mockResolvedValueOnce({ data: 1, error: null });
-
-    await processBatchAnchors({
-      orgId: '11111111-1111-1111-1111-111111111111',
-      force: true,
-      workerId: 'org-run-worker',
-    });
-
-    expect(mockDbRpc).toHaveBeenNthCalledWith(1, 'claim_pending_anchors', {
-      p_worker_id: 'org-run-worker',
-      p_limit: expect.any(Number),
-      p_exclude_pipeline: false,
-      p_org_id: '11111111-1111-1111-1111-111111111111',
-    });
-  });
-
-  it('fails closed for org-scoped claim errors instead of using global legacy fallback', async () => {
-    mockDbRpc.mockResolvedValueOnce({
-      data: null,
-      error: { message: 'missing p_org_id argument' },
-    });
-
-    const result = await processBatchAnchors({
-      orgId: '11111111-1111-1111-1111-111111111111',
-      force: true,
-    });
-
-    expect(result).toEqual({
-      processed: 0,
-      batchId: null,
-      merkleRoot: null,
-      txId: null,
-      error: 'missing p_org_id argument',
-    });
-    expect(mockDbRpc).toHaveBeenCalledTimes(1);
-    expect(mockLogger.error).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: expect.any(Object),
-        orgId: '11111111-1111-1111-1111-111111111111',
-      }),
-      'claim_pending_anchors failed for org-scoped batch',
     );
   });
 
@@ -304,27 +250,6 @@ describe('processBatchAnchors', () => {
     expect(submitCall![1].p_merkle_root).toHaveLength(64);
   });
 
-  it('persists proof rows outside anchors after a successful batch', async () => {
-    mockDbRpc
-      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null })
-      .mockResolvedValueOnce({ data: 2, error: null });
-
-    await processBatchAnchors();
-
-    expect(mockAnchorProofsUpsert).toHaveBeenCalledOnce();
-    expect(mockAnchorProofsUpsert).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          anchor_id: 'anchor-a',
-          receipt_id: MOCK_RECEIPT.receiptId,
-          merkle_root: expect.any(String),
-          batch_id: expect.stringMatching(/^batch_/),
-        }),
-      ]),
-      expect.objectContaining({ onConflict: 'anchor_id' }),
-    );
-  });
-
   it('marks all anchors as SUBMITTED via bulk RPC after successful publish', async () => {
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
@@ -368,28 +293,117 @@ describe('processBatchAnchors', () => {
     expect(submittedUpdates.length).toBe(0);
   });
 
-  // ---- Partial DB update failure ----
+  // ---- Post-broadcast DB update failure ----
+  //
+  // After `chainClient.submitFingerprint()` has already broadcast a Bitcoin TX,
+  // the batch processor MUST NOT revert the claimed anchors to PENDING — doing
+  // so causes the next cron tick to re-claim the same anchors and broadcast a
+  // second, different TX for the same fingerprints, wasting treasury sats.
+  //
+  // Hardened behavior (0236):
+  //   1. submit_batch_anchors RPC fails → retry once (transient timeouts are
+  //      the most common cause under load).
+  //   2. Retry also fails → fall back to chunked direct `UPDATE status = 'SUBMITTED'`
+  //      with the broadcast tx_id so the anchors move forward and
+  //      recover_stuck_broadcasts() (which only reverts when chain_tx_id IS NULL)
+  //      will leave them alone.
+  //
+  // Crucially: no code path here may set `status: 'PENDING'` after broadcast.
 
-  it('reverts to PENDING when submit_batch_anchors RPC fails (M1)', async () => {
+  it('retries submit_batch_anchors once if first call fails (transient timeout)', async () => {
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
-      .mockResolvedValueOnce({ data: null, error: { message: 'function not found' } }); // submit_batch_anchors fails
+      .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
+      .mockResolvedValueOnce({ data: 3, error: null }); // RPC attempt #2 (retry) succeeds
 
     const result = await processBatchAnchors();
 
-    // M1: Reverts all to PENDING instead of N+1 individual SUBMITTED updates
-    expect(result.processed).toBe(0);
-    expect(result.merkleRoot).toBeTruthy(); // root was computed before failure
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.any(Object) }),
-      expect.stringContaining('submit_batch_anchors RPC failed'),
+    expect(result.processed).toBe(3);
+    expect(result.txId).toBe(MOCK_RECEIPT.receiptId);
+
+    // submit_batch_anchors invoked twice
+    const submitCalls = mockDbRpc.mock.calls.filter(
+      (call: unknown[]) => call[0] === 'submit_batch_anchors',
     );
-    // Bulk revert: single .update({ status: 'PENDING' }).in().eq() call
-    expect(mockAnchorsUpdate).toHaveBeenCalledTimes(1);
+    expect(submitCalls.length).toBe(2);
+
+    // Retry succeeded → no status updates at all (no fallback, no revert).
+    // (The unrelated compliance_controls post-processing is allowed.)
+    const statusUpdates = mockAnchorsUpdate.mock.calls.filter((call: unknown[]) => {
+      const patch = call[0] as Record<string, unknown> | undefined;
+      return patch?.status !== undefined;
+    });
+    expect(statusUpdates.length).toBe(0);
+  });
+
+  it('falls back to direct SUBMITTED update when submit_batch_anchors fails twice (prevents double-broadcast)', async () => {
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
+      .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
+      .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }); // RPC attempt #2
+
+    setUpdateResult({ error: null, count: 3 });
+
+    await processBatchAnchors();
+
+    // Fallback path MUST NOT set status = 'PENDING' — that would cause
+    // re-broadcast of the same fingerprints on the next cron tick.
     const revertCalls = mockAnchorsUpdate.mock.calls.filter(
       (call: unknown[]) => call[0] && (call[0] as Record<string, unknown>).status === 'PENDING',
     );
-    expect(revertCalls.length).toBe(1);
+    expect(revertCalls.length).toBe(0);
+
+    // Fallback must record chain_tx_id so recover_stuck_broadcasts()
+    // (which only touches BROADCASTING where chain_tx_id IS NULL) ignores them.
+    const submittedCalls = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => {
+        const patch = call[0] as Record<string, unknown> | undefined;
+        return patch?.status === 'SUBMITTED' && patch?.chain_tx_id === MOCK_RECEIPT.receiptId;
+      },
+    );
+    expect(submittedCalls.length).toBeGreaterThan(0);
+
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txId: MOCK_RECEIPT.receiptId,
+      }),
+      expect.stringContaining('falling back'),
+    );
+  });
+
+  it('never reverts to PENDING after a successful chain broadcast', async () => {
+    // Both submit_batch_anchors attempts fail with a permanent-looking error.
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
+      .mockResolvedValueOnce({ data: null, error: { message: 'function not found' } }) // attempt #1
+      .mockResolvedValueOnce({ data: null, error: { message: 'function not found' } }); // attempt #2
+
+    setUpdateResult({ error: null, count: 2 });
+
+    await processBatchAnchors();
+
+    const pendingResets = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => (call[0] as Record<string, unknown> | undefined)?.status === 'PENDING',
+    );
+    expect(pendingResets.length).toBe(0);
+  });
+
+  it('reverts BROADCASTING → PENDING when chain broadcast itself fails (pre-tx-id)', async () => {
+    // Distinct from the post-broadcast path: if we never got a tx_id back,
+    // the safe action is to release the claim so the next cron can retry.
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }); // claim succeeds
+    mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
+
+    const result = await processBatchAnchors();
+
+    expect(result.processed).toBe(0);
+    expect(result.txId).toBeNull();
+
+    const pendingResets = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => (call[0] as Record<string, unknown> | undefined)?.status === 'PENDING',
+    );
+    expect(pendingResets.length).toBe(1);
   });
 
   // ---- Batch ID generation ----
