@@ -1,0 +1,94 @@
+{
+  "_comment": "SCRUM-1251 (R0-5) — declarative export of Atlassian Automation rules that gate the Done transition on project SCRUM. Atlassian doesn't ship rules-as-code; this file is the authoritative spec. To deploy, an admin opens https://arkova.atlassian.net/jira/settings/automation and creates each rule below 1:1. Update this file in the SAME PR that updates the rule in Atlassian — the file is the source of truth, not the UI. The validator on rule R5 is implemented in services/worker/scripts/ci/check-confluence-dod.ts.",
+  "_metadata": {
+    "version": "1.0.0",
+    "story": "SCRUM-1251",
+    "epic": "SCRUM-1246",
+    "scope": "All issue types in project SCRUM",
+    "trigger_event": "Issue transitioned to Done",
+    "deployed_at": null
+  },
+  "rules": [
+    {
+      "id": "R1",
+      "name": "Block same-author Done",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND issuetype != Sub-task",
+      "condition": "issue.reporter.accountId == issue.assignee.accountId AND NOT issue.labels CONTAINS 'solo-allowed'",
+      "action": [
+        "Reject transition",
+        "Add comment: 'R0-5 / SCRUM-1251: Done blocked — reporter and resolver are the same account. Either get a second reviewer or label `solo-allowed` (rare; tooling-only).'",
+        "Notify reporter via Jira mention"
+      ],
+      "rationale": "SCRUM-442 PAY-01 was closed at 0 minutes by the same author who opened it. Customers couldn't buy credits for 3 weeks because nobody else read the diff."
+    },
+    {
+      "id": "R2",
+      "name": "Block Done on PR < 30 minutes old",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND linked PR exists",
+      "condition": "linkedPR.merged_at > now() - 30m",
+      "action": [
+        "Reject transition",
+        "Add comment: 'R0-5 / SCRUM-1251: Done blocked — linked PR was merged less than 30 minutes ago. Wait for the post-merge synthetic test + Cloud Run rollout to complete before closing.'"
+      ],
+      "rationale": "SCRUM-1239 was closed within 23 minutes of PR merge with body explicitly admitting unfixed sibling handlers."
+    },
+    {
+      "id": "R3",
+      "name": "Block Done on Cloud Run SHA mismatch",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND linked PR exists AND NOT issue.labels CONTAINS 'migration-only' AND NOT issue.labels CONTAINS 'docs-only'",
+      "condition": "fetch('https://arkova-worker-270018525501.us-central1.run.app/health').git_sha != linkedPR.merge_commit.sha",
+      "action": [
+        "Reject transition",
+        "Add comment: 'R0-5 / SCRUM-1251: Done blocked — Cloud Run worker /health.git_sha does not match the linked PR merge commit. Wait for deploy-worker.yml to complete, or label `migration-only`/`docs-only` if no worker deploy is expected.'"
+      ],
+      "rationale": "Multiple HANDOFF.md entries claimed 'rev XXXXX deployed healthy' while Cloud Run was on yesterday's image. Hard dependency on R0-1 (build SHA in /health).",
+      "depends_on": "SCRUM-1247"
+    },
+    {
+      "id": "R4",
+      "name": "Block Done unless Confluence DoD ticked",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND NOT issue.labels CONTAINS 'no-confluence-required'",
+      "condition": "confluencePage.body CONTAINS unticked '[ ]' inside 'Definition of Done' section",
+      "action": [
+        "Reject transition",
+        "Add comment with the unticked checkbox count + line numbers (delegated to services/worker/scripts/ci/check-confluence-dod.ts)"
+      ],
+      "rationale": "SCRUM-1235 was previously closed in this session with [ ] checkboxes still unticked in its DoD section."
+    },
+    {
+      "id": "R5",
+      "name": "Block Done on red required check",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND linked PR exists",
+      "condition": "linkedPR.required_checks.any(c => c.conclusion == 'failure')",
+      "action": [
+        "Reject transition",
+        "Add comment with the failed check name(s)"
+      ],
+      "rationale": "Many SCRUM-12XX tickets were closed while CI was red on RLS/E2E/TLA+/Lighthouse, hidden behind continue-on-error: true (R0-2 fix)."
+    },
+    {
+      "id": "R6",
+      "name": "Block Bug-issue Done unless bug-tracker row linked",
+      "trigger": "Issue Transitioned to Done",
+      "scope": "project = SCRUM AND issuetype = Bug",
+      "condition": "NONE of issue.comments CONTAINS 'docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4'",
+      "action": [
+        "Reject transition",
+        "Add comment: 'R0-5 / SCRUM-1251: Done blocked on Bug — paste the master bug-tracker row link in a comment first. Per CLAUDE.md §0.5.'"
+      ],
+      "rationale": "Bugs are landing without rows in the master tracker; CLAUDE.md §0.5 mandates the row exists."
+    }
+  ],
+  "deployment_notes": [
+    "Each rule is created via https://arkova.atlassian.net/jira/settings/automation/projects/SCRUM/rules.",
+    "R3 requires R0-1 (SCRUM-1247) shipped first — without /health.git_sha it cannot evaluate.",
+    "R4 calls the Confluence helper script via Atlassian Automation's 'Send web request' action; helper is at services/worker/scripts/ci/check-confluence-dod.ts and runs on the worker.",
+    "Soft-launch order: R1, R2, R5, R6 first (no external deps). Then R4 once helper is deployed. Finally R3 once R0-1 ships.",
+    "Each rule comment links back to SCRUM-1251 so triggered users can find the rationale."
+  ]
+}
