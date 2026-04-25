@@ -38,7 +38,12 @@ function signatureHeader(req: Request): string | undefined {
   return Array.isArray(header) ? header[0] : header;
 }
 
-async function findIntegration(accountId: string): Promise<DocusignIntegrationRow | null> {
+async function findIntegrations(accountId: string): Promise<DocusignIntegrationRow[]> {
+  // A single DocuSign account can be linked to multiple Arkova orgs (a shared
+  // operator login at multiple client orgs is legitimate). Return ALL matching
+  // integrations so each org processes the event under its own scope. The
+  // previous .maybeSingle() call would either pick one row arbitrarily or
+  // throw on multi-match, both of which leak / drop events across tenants.
   // Cast until database.types.ts is regenerated after migration 0251.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
@@ -46,14 +51,13 @@ async function findIntegration(accountId: string): Promise<DocusignIntegrationRo
     .select('id, org_id, account_id')
     .eq('provider', 'docusign')
     .eq('account_id', accountId)
-    .is('revoked_at', null)
-    .maybeSingle();
+    .is('revoked_at', null);
 
   if (error) {
     logger.error({ error, accountId }, 'DocuSign webhook integration lookup failed');
     throw new Error('integration_lookup_failed');
   }
-  return (data as DocusignIntegrationRow | null) ?? null;
+  return (data as DocusignIntegrationRow[] | null) ?? [];
 }
 
 async function enqueueRuleEvent(args: {
@@ -146,8 +150,8 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    const integration = await findIntegration(event.accountId);
-    if (!integration) {
+    const integrations = await findIntegrations(event.accountId);
+    if (integrations.length === 0) {
       logger.warn({ accountId: event.accountId }, 'DocuSign webhook: unknown connected account');
       res.status(200).json({ ok: true, orphaned: true });
       return;
@@ -165,7 +169,6 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
         generated_at: event.generatedDateTime ?? new Date().toISOString(),
       });
     if (nonceErr) {
-      // Postgres unique_violation — duplicate delivery, ack so retries stop.
       if ((nonceErr as { code?: string }).code === '23505') {
         logger.info(
           { envelopeId: event.envelopeId, eventId: event.eventId },
@@ -183,10 +186,14 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     }
 
     const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
-    const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
-    const jobId = await enqueueFetchJob({ integration, event, ruleEventId });
+    const results: Array<{ org_id: string; rule_event_id: string; job_id: string }> = [];
+    for (const integration of integrations) {
+      const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
+      const jobId = await enqueueFetchJob({ integration, event, ruleEventId });
+      results.push({ org_id: integration.org_id, rule_event_id: ruleEventId, job_id: jobId });
+    }
 
-    res.status(202).json({ ok: true, rule_event_id: ruleEventId, job_id: jobId });
+    res.status(202).json({ ok: true, results });
   } catch (err) {
     logger.error({ error: err, accountId: event.accountId }, 'DocuSign webhook processing failed');
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });

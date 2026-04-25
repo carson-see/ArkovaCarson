@@ -65,12 +65,19 @@ function validBody(): string {
 }
 
 function integrationLookup(data: unknown, error: unknown = null) {
-  return {
-    select: vi.fn().mockReturnThis(),
-    eq: vi.fn().mockReturnThis(),
-    is: vi.fn().mockReturnThis(),
-    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
-  };
+  // SCRUM-1213: lookup now returns *all* matching org_integrations rows.
+  // The chain ends in `.is('revoked_at', null)` (no .maybeSingle()) and
+  // resolves to an array. Accept either an array or a single object/null
+  // for ergonomic test fixtures.
+  const rows = data === null ? [] : Array.isArray(data) ? data : [data];
+  const chain: Record<string, unknown> = {};
+  const terminal = () => Promise.resolve({ data: rows, error });
+  chain.then = (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+    terminal().then(resolve, reject);
+  chain.select = vi.fn(() => chain);
+  chain.eq = vi.fn(() => chain);
+  chain.is = vi.fn(() => chain);
+  return chain;
 }
 
 function nonceInsert(error: { code: string; message?: string } | null = null) {
@@ -141,6 +148,12 @@ describe('POST /webhooks/docusign', () => {
       .send(body);
 
     expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({
+      ok: true,
+      results: [
+        { org_id: ORG_ID, rule_event_id: '22222222-2222-2222-2222-222222222222', job_id: 'job-1' },
+      ],
+    });
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
       p_org_id: ORG_ID,
       p_trigger_type: 'ESIGN_COMPLETED',
@@ -165,6 +178,47 @@ describe('POST /webhooks/docusign', () => {
         envelope_id: 'env-1',
         rule_event_id: '22222222-2222-2222-2222-222222222222',
       }),
+    }));
+  });
+
+  it('SCRUM-1213: fans out to every org integration with the same DocuSign account', async () => {
+    const ORG_A = '11111111-1111-1111-1111-111111111111';
+    const ORG_B = '22222222-2222-2222-2222-222222222222';
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup([
+        { id: 'int-a', org_id: ORG_A, account_id: 'acct-1' },
+        { id: 'int-b', org_id: ORG_B, account_id: 'acct-1' },
+      ]),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'rule-a', error: null });
+    rpcMock.mockResolvedValueOnce({ data: 'rule-b', error: null });
+    submitJobMock.mockResolvedValueOnce('job-a');
+    submitJobMock.mockResolvedValueOnce('job-b');
+
+    const body = validBody();
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body).toMatchObject({
+      ok: true,
+      results: [
+        { org_id: ORG_A, rule_event_id: 'rule-a', job_id: 'job-a' },
+        { org_id: ORG_B, rule_event_id: 'rule-b', job_id: 'job-b' },
+      ],
+    });
+    // Each org sees their own enqueue with their own org_id + integration_id.
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_org_id: ORG_A,
+      p_payload: expect.objectContaining({ integration_id: 'int-a' }),
+    }));
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_org_id: ORG_B,
+      p_payload: expect.objectContaining({ integration_id: 'int-b' }),
     }));
   });
 
