@@ -1,0 +1,162 @@
+name: Revision Drift Alert
+
+# SCRUM-1247 (R0-1): every 10 minutes, fetch the live worker /health.git_sha
+# and compare to HEAD of main. If drift > 1 hour, fire a Sentry event and
+# (when configured) ping Slack via the existing Sentry → Slack integration.
+#
+# Replaces "nobody noticed prod was 12 commits behind for 12 hours" with a
+# guaranteed page within ~70 minutes of any deploy regression.
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub clamps cron precision but ~10-15 min is fine
+    # for the 1-hour drift threshold.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: revision-drift
+  cancel-in-progress: true
+
+jobs:
+  check-drift:
+    name: Check Cloud Run revision drift
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      WORKER_HEALTH_URL: https://arkova-worker-270018525501.us-central1.run.app/health
+      DRIFT_THRESHOLD_SECONDS: '3600' # 1 hour
+      SENTRY_DSN: ${{ secrets.SENTRY_DSN_OPS }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          ref: main
+
+      - name: Resolve HEAD of main
+        id: head
+        run: |
+          HEAD_SHA=$(git rev-parse origin/main)
+          echo "head_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          # Last commit timestamp on main (epoch seconds).
+          HEAD_TS=$(git log -1 --format=%ct "$HEAD_SHA")
+          echo "head_ts=${HEAD_TS}" >> "$GITHUB_OUTPUT"
+          echo "main HEAD: ${HEAD_SHA} (committed $(date -u -d @${HEAD_TS} '+%Y-%m-%dT%H:%M:%SZ'))"
+
+      - name: Fetch /health from prod worker
+        id: live
+        run: |
+          # Retry 3x to ride out a single-instance Cloud Run cold-start
+          for i in 1 2 3; do
+            if RAW=$(curl -fsSL --max-time 15 "${WORKER_HEALTH_URL}"); then
+              break
+            fi
+            echo "Attempt $i failed, retrying in 5s..." >&2
+            sleep 5
+          done
+          if [ -z "${RAW:-}" ]; then
+            echo "::error::Failed to fetch ${WORKER_HEALTH_URL} after 3 attempts"
+            exit 1
+          fi
+          LIVE_SHA=$(echo "${RAW}" | jq -r '.git_sha // "unknown"')
+          echo "live_sha=${LIVE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "Live /health.git_sha: ${LIVE_SHA}"
+
+      - name: Compare and report
+        id: compare
+        env:
+          LIVE_SHA: ${{ steps.live.outputs.live_sha }}
+          HEAD_SHA: ${{ steps.head.outputs.head_sha }}
+          HEAD_TS: ${{ steps.head.outputs.head_ts }}
+        run: |
+          if [ "${LIVE_SHA}" = "${HEAD_SHA}" ]; then
+            echo "✅ In sync. live=${LIVE_SHA}"
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          NOW=$(date +%s)
+          AGE=$((NOW - HEAD_TS))
+
+          if [ "${LIVE_SHA}" = "unknown" ]; then
+            echo "::warning::Live worker reports git_sha=unknown — image was built without --build-arg BUILD_SHA"
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "drift_kind=missing-sha" >> "$GITHUB_OUTPUT"
+            echo "drift_age=${AGE}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${AGE}" -lt "${DRIFT_THRESHOLD_SECONDS}" ]; then
+            # Drift exists but main HEAD is fresh — assume deploy is in flight
+            echo "⏳ Drift detected but main HEAD is only ${AGE}s old (threshold ${DRIFT_THRESHOLD_SECONDS}s); deploy likely in flight."
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "drift_kind=fresh-deploy" >> "$GITHUB_OUTPUT"
+            echo "drift_age=${AGE}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error::Cloud Run worker is ${AGE}s behind main (live=${LIVE_SHA}, main=${HEAD_SHA})"
+          echo "drift=true" >> "$GITHUB_OUTPUT"
+          echo "drift_kind=stale" >> "$GITHUB_OUTPUT"
+          echo "drift_age=${AGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Emit Sentry event on stale drift
+        if: steps.compare.outputs.drift_kind == 'stale' && env.SENTRY_DSN != ''
+        env:
+          DRIFT_AGE: ${{ steps.compare.outputs.drift_age }}
+          LIVE_SHA: ${{ steps.live.outputs.live_sha }}
+          HEAD_SHA: ${{ steps.head.outputs.head_sha }}
+        # Sentry's `envelope` HTTP API accepts events without an SDK install
+        # (faster than `pip install sentry-sdk` on a 10-min cron).
+        run: |
+          # Parse DSN: https://<key>@<host>/<project_id>
+          DSN_KEY=$(echo "$SENTRY_DSN" | sed -E 's|https://([^@]+)@.*|\1|')
+          DSN_HOST=$(echo "$SENTRY_DSN" | sed -E 's|https://[^@]+@([^/]+)/.*|\1|')
+          DSN_PROJECT=$(echo "$SENTRY_DSN" | sed -E 's|.*/([0-9]+)$|\1|')
+
+          EVENT_ID=$(uuidgen | tr -d '-')
+          TIMESTAMP=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          # Wrap as a Sentry envelope so we can use the simple POST-to-/api/<project>/envelope/ endpoint
+          ENVELOPE_HEADER=$(jq -nc --arg eid "$EVENT_ID" --arg ts "$TIMESTAMP" \
+            '{event_id: $eid, sent_at: $ts}')
+          EVENT_PAYLOAD=$(jq -nc \
+            --arg eid "$EVENT_ID" \
+            --arg ts "$TIMESTAMP" \
+            --arg msg "Cloud Run worker behind main HEAD (R0-1 drift)" \
+            --arg live "$LIVE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg age "$DRIFT_AGE" \
+            '{
+              event_id: $eid,
+              timestamp: $ts,
+              level: "error",
+              logger: "ci.revision-drift",
+              platform: "other",
+              message: { formatted: $msg },
+              tags: { live_sha: $live, head_sha: $head, drift_age_seconds: $age, source: "revision-drift.yml" },
+              extra: { workflow: "revision-drift", repo: "carson-see/ArkovaCarson" }
+            }')
+          ITEM_HEADER=$(echo "$EVENT_PAYLOAD" | jq -c '{type: "event", length: (. | tostring | length)}')
+
+          {
+            echo "$ENVELOPE_HEADER"
+            echo "$ITEM_HEADER"
+            echo "$EVENT_PAYLOAD"
+          } > /tmp/sentry-envelope.txt
+
+          curl -sS -X POST \
+            -H "Content-Type: application/x-sentry-envelope" \
+            -H "X-Sentry-Auth: Sentry sentry_version=7, sentry_key=${DSN_KEY}, sentry_client=arkova-revision-drift/1.0" \
+            --data-binary @/tmp/sentry-envelope.txt \
+            "https://${DSN_HOST}/api/${DSN_PROJECT}/envelope/"
+          echo "Sentry event emitted: ${EVENT_ID}"
+
+      - name: Skip notice (Sentry DSN not configured)
+        if: steps.compare.outputs.drift_kind == 'stale' && env.SENTRY_DSN == ''
+        run: echo "::warning::Drift detected but SENTRY_DSN_OPS secret is not set — alert not emitted. See SCRUM-1247."
+
+      - name: Fail job on stale drift
+        if: steps.compare.outputs.drift_kind == 'stale'
+        run: exit 1

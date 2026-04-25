@@ -1202,6 +1202,10 @@ cronRouter.post('/smoke-test', async (_req, res) => {
     const results = await runSmokeTestSuite();
     const passed = results.filter((r) => r.status === 'pass').length;
     const failed = results.filter((r) => r.status === 'fail').length;
+    // SCRUM-1247 (R0-1): include the deployed git SHA so smoke output is
+    // self-attesting — operators can see in the same payload what code
+    // is being smoked.
+    const gitSha = process.env.BUILD_SHA ?? 'unknown';
 
     // Store results in audit_events for history
     try {
@@ -1213,6 +1217,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
           failed,
           total: results.length,
           results,
+          gitSha,
           timestamp: new Date().toISOString(),
         }),
       });
@@ -1226,6 +1231,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
       passed,
       failed,
       total: results.length,
+      gitSha,
       timestamp: new Date().toISOString(),
       results,
     });
@@ -1399,6 +1405,25 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
   } catch (err) {
     results.push({ name: 'rls-active', status: 'fail', durationMs: Date.now() - rlsStart, error: String(err) });
   }
+
+  // Check 6: Build SHA present (SCRUM-1247 / R0-1).
+  //
+  // The deployed image MUST carry a BUILD_SHA env baked at Docker build
+  // (deploy-worker.yml passes --build-arg BUILD_SHA=$github.sha). If env
+  // is missing or "unknown" the image was built without the build-arg —
+  // either the deploy workflow drifted or someone built locally and
+  // pushed manually. Either way operators need to see it.
+  const shaStart = Date.now();
+  const buildSha = process.env.BUILD_SHA;
+  const shaOk = Boolean(buildSha) && buildSha !== 'unknown' && /^[0-9a-f]{40}$/i.test(buildSha ?? '');
+  results.push({
+    name: 'build-sha-present',
+    status: shaOk ? 'pass' : 'fail',
+    durationMs: Date.now() - shaStart,
+    detail: shaOk
+      ? `BUILD_SHA=${buildSha}`
+      : `BUILD_SHA=${buildSha ?? '(unset)'} — image was built without --build-arg BUILD_SHA`,
+  });
 
   return results;
 }

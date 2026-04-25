@@ -76,6 +76,47 @@ describe('buildHealthResponse (P7-TS-06)', () => {
       expect(result.body.network).toBe('signet');
     });
 
+    // SCRUM-1247 (R0-1): git_sha is mandatory on every /health response so
+    // operators can verify what's actually serving prod vs HEAD of main.
+    // The 2026-04-25 forensic found Cloud Run on rev 00394 while HANDOFF.md
+    // claimed rev 00397 — invisible because /health only returned package.json#version.
+    describe('git_sha (R0-1)', () => {
+      it('exposes BUILD_SHA env as git_sha when present', async () => {
+        const prev = process.env.BUILD_SHA;
+        process.env.BUILD_SHA = 'a'.repeat(40);
+        try {
+          const result = await buildHealthResponse(createMockDeps(), false);
+          expect(result.body.git_sha).toBe('a'.repeat(40));
+        } finally {
+          if (prev === undefined) delete process.env.BUILD_SHA;
+          else process.env.BUILD_SHA = prev;
+        }
+      });
+
+      it('returns "unknown" sentinel when BUILD_SHA is not baked into image', async () => {
+        const prev = process.env.BUILD_SHA;
+        delete process.env.BUILD_SHA;
+        try {
+          const result = await buildHealthResponse(createMockDeps(), false);
+          expect(result.body.git_sha).toBe('unknown');
+        } finally {
+          if (prev !== undefined) process.env.BUILD_SHA = prev;
+        }
+      });
+
+      it('exposes git_sha in detailed mode too (consistent across modes)', async () => {
+        const prev = process.env.BUILD_SHA;
+        process.env.BUILD_SHA = 'b'.repeat(40);
+        try {
+          const result = await buildHealthResponse(createMockDeps(), true);
+          expect(result.body.git_sha).toBe('b'.repeat(40));
+        } finally {
+          if (prev === undefined) delete process.env.BUILD_SHA;
+          else process.env.BUILD_SHA = prev;
+        }
+      });
+    });
+
     it('includes subsystem checks in response', async () => {
       const deps = createMockDeps();
       const result = await buildHealthResponse(deps, false);

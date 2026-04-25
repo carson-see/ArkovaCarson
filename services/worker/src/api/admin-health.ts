@@ -28,6 +28,9 @@ export interface SystemHealthResponse {
   status: 'healthy' | 'degraded' | 'down';
   uptime: number;
   version: string;
+  // SCRUM-1247 (R0-1): git SHA of the deployed Cloud Run image, baked at
+  // Docker build via --build-arg BUILD_SHA. "unknown" if env unset.
+  git_sha: string;
   checks: {
     supabase: ServiceCheck;
     bitcoin: { connected: boolean; network: string };
@@ -108,6 +111,7 @@ export async function handleSystemHealth(
       status: allHealthy ? 'healthy' : 'degraded',
       uptime: Math.floor(process.uptime()),
       version: process.env.npm_package_version ?? '0.1.0',
+      git_sha: process.env.BUILD_SHA ?? 'unknown',
       checks: {
         supabase: supabaseCheck,
         bitcoin: {

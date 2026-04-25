@@ -75,8 +75,13 @@ jobs:
 
       - name: Build Docker image
         working-directory: services/worker
+        # SCRUM-1247 (R0-1): pass --build-arg BUILD_SHA so the image's
+        # /health endpoint can report the deployed git SHA. Without this
+        # arg the Dockerfile defaults BUILD_SHA=unknown which is what
+        # the revision-drift workflow expects to alert on.
         run: |
           docker build \
+            --build-arg BUILD_SHA=${{ github.sha }} \
             --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
             --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest" \
             .

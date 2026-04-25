@@ -46,6 +46,11 @@ interface HealthResponse {
   body: {
     status: 'healthy' | 'degraded';
     version: string;
+    // SCRUM-1247 (R0-1): git SHA of the deployed image. Populated from BUILD_SHA
+    // env baked at Docker build via `--build-arg BUILD_SHA=$github.sha`.
+    // Returns "unknown" if env is unset (image built without the build-arg).
+    // Operators compare against `git rev-parse origin/main` to detect deploy drift.
+    git_sha: string;
     uptime: number;
     network: string;
     checks: Record<string, unknown>;
@@ -204,6 +209,7 @@ export async function buildHealthResponse(
     body: {
       status: allHealthy ? 'healthy' : 'degraded',
       version: process.env.npm_package_version ?? '0.1.0',
+      git_sha: process.env.BUILD_SHA ?? 'unknown',
       uptime: Math.floor(process.uptime()),
       network: cfg.bitcoinNetwork,
       checks: detailed ? detailedChecks : compactChecks,
