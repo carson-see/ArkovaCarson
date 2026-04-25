@@ -20,6 +20,11 @@ import { mapRpcErrorToStatus } from './rpc-error-status.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
+/**
+ * SCRUM-1121: row identifier round-tripped to clients is `public_id`, the
+ * short opaque slug. Internal `anchors.id` UUID never leaves the server per
+ * CLAUDE.md §6 ("Only `public_id` + derived fields").
+ */
 export interface PendingResolutionAnchor {
   public_id: string;
   external_file_id: string | null;
@@ -29,15 +34,16 @@ export interface PendingResolutionAnchor {
   sibling_count: number;
 }
 
-// Preliminary syntactic check (defense-in-depth on top of the SECURITY DEFINER
-// public_id lookup). Mirrors `publicIdSchema` in services/edge/src/mcp-tool-schemas.ts.
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-
-export const ResolveQueueInput = z.object({
-  external_file_id: z.string().trim().min(1).max(255),
-  selected_public_id: z.string().trim().regex(PUBLIC_ID_RE).max(64),
-  reason: z.string().trim().max(2000).optional(),
-});
+// `.strict()` rejects unknown keys — important here because a caller still
+// posting the legacy `selected_anchor_id` field would otherwise silently
+// strip it and process the request without our new public_id parameter.
+export const ResolveQueueInput = z
+  .object({
+    external_file_id: z.string().trim().min(1).max(255),
+    selected_public_id: z.string().trim().min(1).max(50),
+    reason: z.string().trim().max(2000).optional(),
+  })
+  .strict();
 
 function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'conflict' | 'internal' {
   if (status === 403) return 'forbidden';
@@ -66,7 +72,7 @@ export async function handleListPendingResolution(
   try {
     const { data, error } = await callRpc<PendingResolutionAnchor[]>(
       db,
-      'list_pending_resolution_anchors',
+      'list_pending_resolution_anchors_v2',
       { p_limit: limit },
     );
 
@@ -109,7 +115,7 @@ export async function handleResolveQueue(
   }
 
   try {
-    const { data, error } = await callRpc<string>(db, 'resolve_anchor_queue', {
+    const { data, error } = await callRpc<string>(db, 'resolve_anchor_queue_by_public_id', {
       p_external_file_id: parsed.data.external_file_id,
       p_selected_public_id: parsed.data.selected_public_id,
       p_reason: parsed.data.reason ?? null,
@@ -133,7 +139,7 @@ export async function handleResolveQueue(
 
     res.json({ resolution_id: data });
     const notificationOrgId = actorUserId
-      ? await getSelectedAnchorOrgIdByPublicId(parsed.data.selected_public_id)
+      ? await getSelectedAnchorOrgId(parsed.data.selected_public_id)
       : null;
     if (notificationOrgId) {
       void emitOrgAdminNotifications({
@@ -261,7 +267,7 @@ export async function handleRunOrgAnchorQueue(
   }
 }
 
-async function getSelectedAnchorOrgIdByPublicId(publicId: string): Promise<string | null> {
+async function getSelectedAnchorOrgId(publicId: string): Promise<string | null> {
   const { data, error } = await db
     .from('anchors')
     .select('org_id')

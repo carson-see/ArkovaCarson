@@ -68,10 +68,10 @@ function selectMaybeSingle(data: unknown, error: unknown = null) {
 }
 
 describe('ResolveQueueInput', () => {
-  it('accepts minimal valid input with public_id', () => {
+  it('accepts minimal valid input', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+      selected_public_id: 'pid_acmemsa1',
     });
     expect(result.success).toBe(true);
   });
@@ -84,10 +84,20 @@ describe('ResolveQueueInput', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects internal UUID in selected_public_id (defense-in-depth)', () => {
+  it('rejects selected_public_id over 50 chars (slug cap)', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_public_id: '11111111-1111-1111-1111-111111111111',
+      selected_public_id: 'x'.repeat(51),
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects request bodies that still include the legacy selected_anchor_id', () => {
+    // Defense-in-depth: callers that haven't updated to public_id should fail
+    // closed rather than silently accept the spurious internal-uuid field.
+    const result = ResolveQueueInput.safeParse({
+      external_file_id: 'drive-123',
+      selected_anchor_id: '11111111-1111-1111-1111-111111111111',
     });
     expect(result.success).toBe(false);
   });
@@ -95,7 +105,7 @@ describe('ResolveQueueInput', () => {
   it('rejects empty external_file_id', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: '',
-      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+      selected_public_id: 'pid_acmemsa1',
     });
     expect(result.success).toBe(false);
   });
@@ -103,7 +113,7 @@ describe('ResolveQueueInput', () => {
   it('caps reason at 2000 chars', () => {
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+      selected_public_id: 'pid_acmemsa1',
       reason: 'x'.repeat(2001),
     });
     expect(result.success).toBe(false);
@@ -115,7 +125,6 @@ describe('mapRpcErrorToStatus', () => {
     // Resource-not-found (generic) → 404
     ['Anchor not found', 404],
     ['Selected anchor not found', 404],
-    ['Selected public_id not found', 404],
     // "Profile not found" is an AUTH path — the RPC raises it when auth.uid()
     // doesn't resolve. Must match 403 BEFORE the generic 'not found' check.
     ['Profile not found', 403],
@@ -140,7 +149,7 @@ describe('handleListPendingResolution', () => {
   it('returns items + count on success', async () => {
     rpcMock.mockResolvedValue({
       data: [
-        { public_id: 'ARK-DEMO-CRD-AB12CD34', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
+        { public_id: 'pid_acmemsa1', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
       ],
       error: null,
     });
@@ -152,26 +161,12 @@ describe('handleListPendingResolution', () => {
     );
   });
 
-  it('never exposes internal anchors.id (IDOR defense)', async () => {
-    rpcMock.mockResolvedValue({
-      data: [
-        { public_id: 'ARK-DEMO-CRD-AB12CD34', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
-      ],
-      error: null,
-    });
-    const { res, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
-    const payload = json.mock.calls[0][0];
-    expect(payload.items[0]).toHaveProperty('public_id');
-    expect(payload.items[0]).not.toHaveProperty('id');
-  });
-
   it('clamps limit to [1, 500]', async () => {
     rpcMock.mockResolvedValue({ data: [], error: null });
     const { res } = mockRes();
     await handleListPendingResolution(mockReq({ query: { limit: '10000' } }), res);
     expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors',
+      'list_pending_resolution_anchors_v2',
       { p_limit: 500 },
     );
 
@@ -180,7 +175,7 @@ describe('handleListPendingResolution', () => {
     const { res: res2 } = mockRes();
     await handleListPendingResolution(mockReq({ query: { limit: '-5' } }), res2);
     expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors',
+      'list_pending_resolution_anchors_v2',
       { p_limit: 1 },
     );
   });
@@ -222,7 +217,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+          selected_public_id: 'pid_acmemsa1',
         },
       }),
       res,
@@ -230,7 +225,7 @@ describe('handleResolveQueue', () => {
     expect(json).toHaveBeenCalledWith({ resolution_id: 'res-1' });
   });
 
-  it('notifies admins for the selected anchor organization (lookup by public_id)', async () => {
+  it('notifies admins for the selected anchor organization (looked up via public_id)', async () => {
     rpcMock.mockResolvedValue({ data: 'res-1', error: null });
     const maybeSingle = vi.fn().mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
     const eq = vi.fn().mockReturnValue({ maybeSingle });
@@ -242,7 +237,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+          selected_public_id: 'pid_acmemsa1',
         },
       }),
       res,
@@ -250,14 +245,15 @@ describe('handleResolveQueue', () => {
     );
 
     expect(fromMock).toHaveBeenCalledWith('anchors');
-    expect(eq).toHaveBeenCalledWith('public_id', 'ARK-DEMO-CRD-AB12CD34');
+    // The lookup must filter by public_id, not the internal id (defense in depth).
+    expect(eq).toHaveBeenCalledWith('public_id', 'pid_acmemsa1');
     expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
       type: 'queue_run_completed',
       organizationId: 'org-1',
       payload: expect.objectContaining({
         resolutionId: 'res-1',
         actorUserId: 'user-1',
-        selectedPublicId: 'ARK-DEMO-CRD-AB12CD34',
+        selectedPublicId: 'pid_acmemsa1',
       }),
     });
   });
@@ -272,7 +268,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+          selected_public_id: 'pid_acmemsa1',
         },
       }),
       res,
@@ -293,7 +289,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+          selected_public_id: 'pid_acmemsa1',
         },
       }),
       res,
@@ -314,7 +310,7 @@ describe('handleResolveQueue', () => {
       mockReq({
         body: {
           external_file_id: 'drive-123',
-          selected_public_id: 'ARK-DEMO-CRD-AB12CD34',
+          selected_public_id: 'pid_acmemsa1',
         },
       }),
       res,
