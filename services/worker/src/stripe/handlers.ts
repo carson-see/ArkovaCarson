@@ -97,27 +97,27 @@ async function callPaymentGraceRpc(
 // =========================================================================
 
 /**
- * Check if event was already processed using billing_events.stripe_event_id UNIQUE constraint.
+ * Claim a Stripe event for processing by inserting into billing_events FIRST,
+ * relying on the `stripe_event_id` UNIQUE constraint as a transactional lock.
+ *
+ * Returns `true` when this caller is the first to claim the event and should
+ * run its side effects, `false` when the event was already claimed (the
+ * UNIQUE violation means a sibling worker — or this same worker on Stripe
+ * retry — already started processing).
+ *
+ * Inserting before side effects prevents Stripe retries from replaying the
+ * side effects: every retry sees the row, hits the UNIQUE violation, and
+ * returns false. The trade-off is at-most-once delivery per event — a crash
+ * between INSERT and the side-effect block leaves an event marked claimed
+ * with no effect. That's preferred over replaying anchor adjustments / DB
+ * writes on every Stripe retry, which was the prior behavior.
  */
-async function isEventProcessed(eventId: string): Promise<boolean> {
-  const { data } = await db
-    .from('billing_events')
-    .select('id')
-    .eq('stripe_event_id', eventId)
-    .maybeSingle();
-
-  return data !== null;
-}
-
-/**
- * Record event as processed in append-only billing_events table.
- */
-async function recordEventProcessed(
+async function claimEvent(
   eventId: string,
   eventType: string,
   userId: string | null,
   payload: Record<string, unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await db.from('billing_events').insert({
     stripe_event_id: eventId,
     event_type: eventType,
@@ -125,15 +125,13 @@ async function recordEventProcessed(
     payload: payload as unknown as import('../types/database.types.js').Json,
   });
 
-  if (error) {
-    // UNIQUE violation means it was already recorded — not an error
-    if (error.code === '23505') {
-      logger.info({ eventId }, 'Event already recorded (duplicate)');
-      return;
-    }
-    logger.error({ error, eventId }, 'Failed to record billing event');
-    throw error;
+  if (!error) return true;
+  if (error.code === '23505') {
+    logger.info({ eventId }, 'Event already processed');
+    return false;
   }
+  logger.error({ error, eventId }, 'Failed to record billing event');
+  throw error;
 }
 
 // =========================================================================
@@ -261,28 +259,51 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   if (adminProfile?.org_id) {
     const orgId = adminProfile.org_id;
 
-    // Mark org as subscription-verified (VERIFIED status enables OrgVerifiedBadge)
-    await db
+    // Read current KYB state first. Paying must NOT clear a prior Middesk
+    // rejection — letting checkout flip REJECTED → VERIFIED would let any org
+    // bypass KYB by subscribing.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = db as any;
+    const { data: orgRow } = await dbAny
       .from('organizations')
-      .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
-      .eq('id', orgId);
+      .select('verification_status')
+      .eq('id', orgId)
+      .maybeSingle();
+    const currentStatus = orgRow?.verification_status as string | null | undefined;
 
-    // Grant Verified Admin permission to the admin profile
-    await db
-      .from('profiles')
-      .update({ is_verified: true })
-      .eq('id', userId);
+    if (currentStatus === 'REJECTED') {
+      logger.warn(
+        { userId, orgId, currentStatus, subscriptionId: session.subscription },
+        'Stripe checkout completed for org with REJECTED KYB status — leaving verification_status unchanged',
+      );
+      await db.from('audit_events').insert({
+        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
+        event_category: 'ORG',
+        actor_id: userId,
+        org_id: orgId,
+        details: `Subscription ${session.subscription} processed but verification_status left REJECTED (Middesk KYB)`,
+      });
+    } else {
+      await db
+        .from('organizations')
+        .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
+        .eq('id', orgId);
 
-    // Audit the org verification grant
-    await db.from('audit_events').insert({
-      event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
-      event_category: 'ORG',
-      actor_id: userId,
-      org_id: orgId,
-      details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
-    });
+      await db
+        .from('profiles')
+        .update({ is_verified: true })
+        .eq('id', userId);
 
-    logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
+      await db.from('audit_events').insert({
+        event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
+        event_category: 'ORG',
+        actor_id: userId,
+        org_id: orgId,
+        details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
+      });
+
+      logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
+    }
   }
 
   logger.info({ userId, subscriptionId: session.subscription, planId }, 'Subscription activated');
@@ -629,15 +650,12 @@ async function handleIdentityCanceled(event: StripeEvent): Promise<void> {
 }
 
 /**
- * Main webhook handler — routes events, checks idempotency, records processing.
+ * Main webhook handler — claims the event in billing_events first, then
+ * routes to the type-specific handler. Claiming before side effects is the
+ * idempotency boundary: Stripe retries hit the UNIQUE constraint and bail
+ * before any state mutations run.
  */
 export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
-  // Check idempotency
-  if (await isEventProcessed(event.id)) {
-    logger.info({ eventId: event.id }, 'Event already processed');
-    return;
-  }
-
   // Extract user_id from event metadata if available
   let userId: string | null = null;
   const obj = event.data.object as unknown as Record<string, unknown>;
@@ -645,6 +663,12 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
   if (metadata?.user_id) {
     userId = metadata.user_id;
   }
+
+  // Claim the event in billing_events BEFORE running side effects. If we lose
+  // the claim race (Stripe retry, sibling worker), bail without re-running
+  // the handler.
+  const claimed = await claimEvent(event.id, event.type, userId, obj);
+  if (!claimed) return;
 
   switch (event.type) {
     case 'checkout.session.completed':
@@ -674,7 +698,4 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
     default:
       logger.info({ eventType: event.type }, 'Unhandled event type');
   }
-
-  // Record as processed in billing_events (idempotency + audit)
-  await recordEventProcessed(event.id, event.type, userId, obj as Record<string, unknown>);
 }

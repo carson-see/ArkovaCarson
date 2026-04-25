@@ -29,6 +29,8 @@ const {
   profilesMaybeSingle,
   profilesUpdate,
   profilesUpdateEq,
+  organizationsUpdate,
+  organizationsMaybeSingle,
   mockCallRpc,
 } = vi.hoisted(() => {
   const mockLogger = {
@@ -111,6 +113,11 @@ const {
   const organizationsUpdateEq = vi.fn().mockResolvedValue({ error: null });
   const organizationsUpdate = vi.fn(() => ({ eq: organizationsUpdateEq }));
 
+  // organizations.select('verification_status').eq('id', orgId).maybeSingle()
+  const organizationsMaybeSingle = vi.fn().mockResolvedValue({ data: null });
+  const organizationsSelectEq = vi.fn(() => ({ maybeSingle: organizationsMaybeSingle }));
+  const organizationsSelect = vi.fn(() => ({ eq: organizationsSelectEq }));
+
   const mockDbFrom = vi.fn((table: string) => {
     switch (table) {
       case 'billing_events':
@@ -135,6 +142,7 @@ const {
         };
       case 'organizations':
         return {
+          select: organizationsSelect,
           update: organizationsUpdate,
         };
       default:
@@ -156,6 +164,8 @@ const {
     profilesMaybeSingle,
     profilesUpdate,
     profilesUpdateEq,
+    organizationsUpdate,
+    organizationsMaybeSingle,
     mockCallRpc,
   };
 });
@@ -315,8 +325,8 @@ describe('handleStripeWebhook', () => {
     );
   });
 
-  it('skips already-processed events (idempotency)', async () => {
-    billingEventsSelect.maybeSingle.mockResolvedValue({ data: { id: 'existing' } });
+  it('skips already-processed events (idempotency via UNIQUE violation)', async () => {
+    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
     await handleStripeWebhook(CHECKOUT_EVENT);
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: 'evt_test_001' }),
@@ -325,14 +335,29 @@ describe('handleStripeWebhook', () => {
     expect(subscriptionsUpsert).not.toHaveBeenCalled();
   });
 
-  it('records event in billing_events after handling', async () => {
+  it('records event in billing_events BEFORE handling (idempotency boundary)', async () => {
+    const callOrder: string[] = [];
+    billingEventsInsert.mockImplementationOnce(() => {
+      callOrder.push('billing_events.insert');
+      return Promise.resolve({ error: null });
+    });
+    subscriptionsUpsert.mockImplementationOnce(() => {
+      callOrder.push('subscriptions.upsert');
+      return Promise.resolve({ error: null });
+    });
+
     await handleStripeWebhook(CHECKOUT_EVENT);
+
     expect(billingEventsInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         stripe_event_id: 'evt_test_001',
         event_type: 'checkout.session.completed',
         user_id: 'user-001',
       }),
+    );
+    // Critical: billing_events MUST be written before any side effect.
+    expect(callOrder.indexOf('billing_events.insert')).toBeLessThan(
+      callOrder.indexOf('subscriptions.upsert'),
     );
   });
 
@@ -344,14 +369,16 @@ describe('handleStripeWebhook', () => {
     );
   });
 
-  it('handles duplicate billing_events insert gracefully (23505)', async () => {
-    billingEventsInsert.mockResolvedValue({ error: { code: '23505', message: 'duplicate' } });
-    // Should not throw
-    await handleStripeWebhook(makeStripeEvent('unknown.event.type', {}));
-    expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ eventId: 'evt_test_001' }),
-      'Event already recorded (duplicate)',
-    );
+  it('SCRUM-1222: Stripe retry of already-processed event runs zero side effects', async () => {
+    // Simulate: first delivery succeeded, billing_events row exists. Stripe
+    // retries the same event_id. Insert hits UNIQUE violation → bail with
+    // zero side effects.
+    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
+    await handleStripeWebhook(CHECKOUT_EVENT);
+    expect(subscriptionsUpsert).not.toHaveBeenCalled();
+    expect(plansSelect.select).not.toHaveBeenCalled();
+    expect(profilesUpdate).not.toHaveBeenCalled();
+    expect(auditInsert).not.toHaveBeenCalled();
   });
 
   it('throws on non-duplicate billing_events insert error', async () => {
@@ -458,6 +485,46 @@ describe('handleCheckoutComplete', () => {
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'user-001', subscriptionId: 'sub_test_001' }),
       'Subscription activated',
+    );
+  });
+
+  it('SCRUM-1218: does NOT flip verification_status to VERIFIED when org KYB is REJECTED', async () => {
+    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-rejected' } });
+    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: 'REJECTED' } });
+
+    await handleCheckoutComplete(CHECKOUT_EVENT);
+
+    // organizations.update is NOT called for the verification flip.
+    expect(organizationsUpdate).not.toHaveBeenCalled();
+    // ORG_VERIFIED_VIA_SUBSCRIPTION audit event is NOT emitted.
+    expect(auditInsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
+    );
+    // CHECKOUT_BLOCKED_BY_KYB_REJECTION audit event IS emitted.
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
+        org_id: 'org-rejected',
+        actor_id: 'user-001',
+      }),
+    );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-rejected', currentStatus: 'REJECTED' }),
+      expect.stringContaining('REJECTED'),
+    );
+  });
+
+  it('SCRUM-1218: still flips to VERIFIED when current status is null/PENDING/etc.', async () => {
+    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-pending' } });
+    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: null } });
+
+    await handleCheckoutComplete(CHECKOUT_EVENT);
+
+    expect(organizationsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ verification_status: 'VERIFIED' }),
+    );
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
     );
   });
 
