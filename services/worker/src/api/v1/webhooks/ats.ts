@@ -113,9 +113,11 @@ function extractCandidateInfo(
   };
 }
 
-// POST /api/v1/webhooks/ats/:provider
-router.post('/:provider', async (req: Request, res: Response) => {
-  const { provider } = req.params;
+// POST /api/v1/webhooks/ats/:provider/:integrationId
+// The integrationId in the URL pins the webhook to a single org, preventing
+// the multi-secret iteration that let org A's secret validate org B's payload.
+router.post('/:provider/:integrationId', async (req: Request, res: Response) => {
+  const { provider, integrationId } = req.params;
 
   if (!SUPPORTED_PROVIDERS.includes(provider as AtsProvider)) {
     res.status(400).json({ error: 'Unsupported ATS provider' });
@@ -123,44 +125,42 @@ router.post('/:provider', async (req: Request, res: Response) => {
   }
 
   const atsProvider = provider as AtsProvider;
-  const rawBody = JSON.stringify(req.body);
 
-  // Resolve provider-specific signature header
-  const signatureHeader = getSignatureHeader(req, atsProvider);
-  if (!signatureHeader) {
+  // Use raw body bytes for HMAC verification. The request must pass through
+  // express.raw() BEFORE express.json() so req.body is a Buffer.
+  const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody;
+  const rawBodyStr = rawBody ? rawBody.toString('utf8') : JSON.stringify(req.body);
+
+  const sigHeader = getSignatureHeader(req, atsProvider);
+  if (!sigHeader) {
     res.status(401).json({ error: 'Missing webhook signature' });
     return;
   }
 
   try {
-    // Find all enabled integrations for this provider
-    const { data: integrations, error: intError } = await dbAny
+    // Look up exactly ONE integration by (integrationId, provider). No iteration.
+    const { data: integration, error: intError } = await dbAny
       .from('ats_integrations')
       .select('id, org_id, webhook_secret, callback_url, field_mapping')
+      .eq('id', integrationId)
       .eq('provider', atsProvider)
-      .eq('enabled', true);
+      .eq('enabled', true)
+      .maybeSingle();
 
-    if (intError || !integrations?.length) {
-      logger.warn({ provider: atsProvider }, 'No active ATS integration found for provider');
+    if (intError || !integration) {
+      logger.warn({ provider: atsProvider, integrationId }, 'No active ATS integration found');
       res.status(404).json({ error: 'No active integration found' });
       return;
     }
 
-    // Try to match signature against each integration's secret
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let matchedIntegration: any = null;
-    for (const integration of integrations) {
-      if (verifySignature(atsProvider, rawBody, signatureHeader, integration.webhook_secret)) {
-        matchedIntegration = integration;
-        break;
-      }
-    }
-
-    if (!matchedIntegration) {
-      logger.warn({ provider: atsProvider }, 'ATS webhook signature verification failed');
+    if (!verifySignature(atsProvider, rawBodyStr, sigHeader, integration.webhook_secret)) {
+      logger.warn({ provider: atsProvider, integrationId }, 'ATS webhook signature verification failed');
       res.status(401).json({ error: 'Invalid webhook signature' });
       return;
     }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const matchedIntegration = integration as any;
 
     // Extract candidate info based on provider format
     const candidateInfo = extractCandidateInfo(atsProvider, req.body);

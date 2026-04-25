@@ -20,10 +20,13 @@ import {
   buildAuthorizationUrl,
   createChangesWatch,
   exchangeCode,
+  stopDriveChannel,
+  revokeOAuthToken,
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
 import {
   createDefaultKmsClient,
+  decryptTokens,
   encryptTokens,
   type KmsClient,
 } from '../../../integrations/oauth/crypto.js';
@@ -294,11 +297,12 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         scope: tokens.scope,
       }, { kms, env: deps.env });
 
+      const channelId = randomUUID();
       let subscription: { resourceId: string; expiration: string } | null = null;
       try {
         subscription = await createChangesWatch({
           accessToken: tokens.access_token,
-          channelId: randomUUID(),
+          channelId,
           address: buildWebhookAddress(req),
           token: payload.orgId,
           deps: driveDeps,
@@ -307,19 +311,25 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         logger.warn({ watchError, orgId: payload.orgId }, 'Drive changes.watch failed; saving OAuth connection without subscription');
       }
 
+      const accountLabelJson = JSON.stringify({
+        email: identity.accountLabel,
+        channel_token: payload.orgId,
+        resource_id: subscription?.resourceId ?? null,
+      });
+
       const { data: integration, error: upsertError } = await db
         .from('org_integrations')
         .upsert({
           org_id: payload.orgId,
           provider: Provider,
           account_id: identity.accountId,
-          account_label: identity.accountLabel,
+          account_label: accountLabelJson,
           encrypted_tokens: toPostgresBytea(encrypted.ciphertext),
           token_kms_key_id: encrypted.keyId,
           scope: tokens.scope ?? null,
           connected_at: (deps.now?.() ?? new Date()).toISOString(),
           revoked_at: null,
-          subscription_id: subscription?.resourceId ?? null,
+          subscription_id: subscription ? channelId : null,
           subscription_expires_at: subscription?.expiration ?? null,
           last_renewal_error: subscription ? null : 'changes.watch registration failed during OAuth callback',
           updated_at: (deps.now?.() ?? new Date()).toISOString(),
@@ -370,6 +380,67 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
       return;
     }
 
+    // Read the integration row BEFORE clearing — need tokens + subscription_id
+    // for remote cleanup at Google.
+    const { data: existing } = await db
+      .from('org_integrations')
+      .select('id, subscription_id, account_label, encrypted_tokens, token_kms_key_id')
+      .eq('org_id', orgId)
+      .eq('provider', Provider)
+      .is('revoked_at', null)
+      .maybeSingle();
+
+    // Best-effort remote cleanup — stop the watch channel and revoke OAuth.
+    // Failures here must NOT block the local disconnect; the user clicked
+    // "Disconnect" and the local row must always be cleaned.
+    const driveDeps: DriveClientDeps = { env: deps.env, fetchImpl: deps.fetchImpl };
+    if (existing) {
+      let accessToken: string | undefined;
+      if (existing.encrypted_tokens && existing.token_kms_key_id) {
+        try {
+          const kms = deps.kms ?? await createDefaultKmsClient();
+          const ct = typeof existing.encrypted_tokens === 'string'
+            ? Buffer.from(existing.encrypted_tokens.replace(/^\\x/, ''), 'hex')
+            : Buffer.from(existing.encrypted_tokens);
+          const tokens = await decryptTokens(ct, { kms, keyName: existing.token_kms_key_id });
+          accessToken = tokens.access_token;
+        } catch (err) {
+          logger.warn({ err, orgId }, 'Drive disconnect: could not decrypt tokens for remote cleanup');
+        }
+      }
+
+      // Stop the watch channel at Google if we have the required identifiers
+      if (accessToken && existing.subscription_id) {
+        let resourceId: string | undefined;
+        try {
+          const label = existing.account_label ? JSON.parse(existing.account_label) : null;
+          resourceId = label?.resource_id;
+        } catch { /* label may not be JSON */ }
+
+        if (resourceId) {
+          try {
+            await stopDriveChannel({
+              accessToken,
+              channelId: existing.subscription_id,
+              resourceId,
+              deps: driveDeps,
+            });
+          } catch (err) {
+            logger.warn({ err, orgId }, 'Drive disconnect: stopChannel failed (best-effort)');
+          }
+        }
+      }
+
+      // Revoke the OAuth token at Google
+      if (accessToken) {
+        try {
+          await revokeOAuthToken({ token: accessToken, deps: driveDeps });
+        } catch (err) {
+          logger.warn({ err, orgId }, 'Drive disconnect: revokeOAuthToken failed (best-effort)');
+        }
+      }
+    }
+
     const now = (deps.now?.() ?? new Date()).toISOString();
     const { data, error } = await db
       .from('org_integrations')
@@ -395,7 +466,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
 
     await recordIntegrationEvent(db, {
       orgId,
-      integrationId: data?.[0]?.id,
+      integrationId: data?.[0]?.id ?? existing?.id,
       eventType: 'oauth_disconnected',
       status: 'success',
     });

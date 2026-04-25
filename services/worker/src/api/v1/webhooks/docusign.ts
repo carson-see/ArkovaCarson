@@ -39,21 +39,31 @@ function signatureHeader(req: Request): string | undefined {
 }
 
 async function findIntegration(accountId: string): Promise<DocusignIntegrationRow | null> {
-  // Cast until database.types.ts is regenerated after migration 0251.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
     .from('org_integrations')
     .select('id, org_id, account_id')
     .eq('provider', 'docusign')
     .eq('account_id', accountId)
-    .is('revoked_at', null)
-    .maybeSingle();
+    .is('revoked_at', null);
 
   if (error) {
     logger.error({ error, accountId }, 'DocuSign webhook integration lookup failed');
     throw new Error('integration_lookup_failed');
   }
-  return (data as DocusignIntegrationRow | null) ?? null;
+
+  const rows = data as DocusignIntegrationRow[] | null;
+  if (!rows || rows.length === 0) return null;
+
+  if (rows.length > 1) {
+    logger.error(
+      { accountId, orgIds: rows.map(r => r.org_id) },
+      'DocuSign webhook: ambiguous lookup — same accountId connected to multiple orgs, rejecting to prevent cross-tenant leak',
+    );
+    throw new Error('ambiguous_integration_lookup');
+  }
+
+  return rows[0];
 }
 
 async function enqueueRuleEvent(args: {
