@@ -18,10 +18,20 @@ interface ScriptResult {
   exitCode: number;
 }
 
-function runScript(env: Record<string, string>): ScriptResult {
+function runScript(env: Record<string, string | undefined>): ScriptResult {
+  // Spread parent env first, then explicit overrides. Setting a value to
+  // undefined here unsets it in the child — important for clearing
+  // CI-injected vars (BASE_REF_SHA at ci.yml:29) so the test's BASE_REF
+  // takes effect rather than CI's PR base SHA which won't exist on a
+  // shallow checkout.
+  const childEnv: NodeJS.ProcessEnv = { ...process.env };
+  for (const [k, v] of Object.entries(env)) {
+    if (v === undefined) delete childEnv[k];
+    else childEnv[k] = v;
+  }
   try {
     const stdout = execSync(`npx tsx ${SCRIPT}`, {
-      env: { ...process.env, ...env },
+      env: childEnv,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -34,9 +44,11 @@ function runScript(env: Record<string, string>): ScriptResult {
 
 describe('check-coverage-monotonic (R0-3)', () => {
   it('passes when current branch matches base ref (no drops)', () => {
-    // BASE_REF defaults to origin/main; on a fresh checkout this matches HEAD.
-    const result = runScript({ BASE_REF: 'HEAD' });
-    expect(result.exitCode).toBe(0);
+    // Clear BASE_REF_SHA explicitly: ci.yml sets it to the PR base commit,
+    // which on a fetch-depth: 1 checkout isn't in the local repo and would
+    // make resolveBaseRefOrFail exit 1 before evaluating BASE_REF=HEAD.
+    const result = runScript({ BASE_REF_SHA: undefined, BASE_REF: 'HEAD' });
+    expect(result.exitCode, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
     expect(result.stdout).toContain('✅ No coverage threshold decreases');
   });
 });
