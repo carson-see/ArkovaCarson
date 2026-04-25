@@ -65,6 +65,31 @@ Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-ad
 - **DON'T** use `(db as any)` when the table is in `database.types.ts`; if you need the cast it means run `gen:types`.
 - **DON'T** touch Cloud Run deployment config — human-only per `feedback_worker_hands_off`.
 
+## Bitcoin paths — honest state (2026-04-25, SCRUM-1245)
+
+After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-only update), production is in a **hybrid** state. Read this before changing any chain code or claiming sovereignty in customer-facing materials.
+
+| Path | Provider | Sovereign? | Notes |
+|---|---|---|---|
+| Broadcast (`sendrawtransaction`) | GetBlock RPC | ✅ yes | Live as of `BITCOIN_UTXO_PROVIDER=getblock` flip 2026-04-25 |
+| UTXO listing (`listunspent`) | GetBlock RPC → fallback to `mempool.space` | ❌ no | GetBlock shared endpoint returns "Method not allowed" — `utxo-provider.ts:459-474` `try { rpc } catch { mempool }` enters the catch branch every call |
+| Fee estimation | `mempool.space` | ❌ no | `estimatesmartfee` IS supported by GetBlock (1013 sat/kvB confirmed), but worker has no `RpcFeeEstimator` and `BITCOIN_FEE_STRATEGY` only accepts `'static' \| 'mempool'` — needs code change + deploy |
+| `getrawtransaction` / `getblockheader` | GetBlock RPC | ✅ likely yes | Used by `check-confirmations.ts` + `chain-maintenance.ts` reorg detection. Untested but standard tx-indexed methods on GetBlock shared endpoints work |
+| Frontend treasury balance polling | Browser → `mempool.space` directly | ❌ no | `useTreasuryBalance.ts:159-164` — independent of worker provider; every admin tab polls public API every 60s |
+
+**Signing path (separate concern):**
+- `BITCOIN_TREASURY_WIF` in Secret Manager → decrypted into worker process memory at startup (current active signer)
+- GCP KMS code path (`gcp-kms-signing-provider.ts`) — only selected when `bitcoinTreasuryWif` is unset
+- `client.ts:279`: `// Signing: WIF takes precedence (current), KMS for future upgrade`
+- `feedback_no_aws.md` — AWS branch in code is dead, never customer-facing
+
+**Open follow-ups** (each will be a story under the recovery epic; do not roll into this story):
+1. `RpcFeeEstimator` class + `'rpc'` value in `BITCOIN_FEE_STRATEGY` enum (`config.ts:43`) so fees can route through GetBlock too
+2. Frontend `useTreasuryBalance.ts` — kill direct browser hits to `mempool.space`; route through worker `/api/treasury/balance`
+3. Full sovereignty: stand up Bitcoin Core + Electrs/Esplora and flip `BITCOIN_UTXO_PROVIDER=rpc`
+4. WIF → KMS migration (or document a deliberate WIF retention decision in CLAUDE.md and stop claiming "GCP KMS (prod)")
+5. Observability: surface a counter / log line every time `GetBlockHybridProvider.listUnspent` enters the mempool fallback so we can see drift if GetBlock ever supports `listunspent` later
+
 ## Recent Changes
 
 | Date | Sprint | Change |
