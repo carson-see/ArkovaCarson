@@ -21,7 +21,7 @@ import {
   createChangesWatch,
   exchangeCode,
   stopDriveChannel,
-  revokeOAuthToken,
+  // revokeOAuthToken intentionally NOT imported — see SCRUM-1237 / AUDIT-0424-12
   type DriveClientDeps,
 } from '../../../integrations/oauth/drive.js';
 import {
@@ -451,14 +451,15 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         }
       }
 
-      // Revoke the OAuth token at Google
-      if (accessToken) {
-        try {
-          await revokeOAuthToken({ token: accessToken, deps: driveDeps });
-        } catch (err) {
-          logger.warn({ err, orgId }, 'Drive disconnect: revokeOAuthToken failed (best-effort)');
-        }
-      }
+      // SCRUM-1237 (AUDIT-0424-12): do NOT call revokeOAuthToken at Google.
+      // Google OAuth refresh tokens are scoped per (Google account, OAuth
+      // client), not per Arkova org. If the same Google identity is linked
+      // to multiple Arkova orgs (one user across two tenants), revoking
+      // here would yank the refresh token globally — every other Arkova
+      // org that has connected the same Google account would lose access
+      // immediately. Per-org disconnect MUST be local: stop our watch
+      // channel above, null the encrypted_tokens row below, and let
+      // Google retain the underlying grant for any sibling integration.
     }
 
     const now = (deps.now?.() ?? new Date()).toISOString();
