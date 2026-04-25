@@ -247,7 +247,7 @@ describe('Drive OAuth router', () => {
     });
   });
 
-  it('disconnects active Drive integrations and calls stopChannel + revokeOAuthToken', async () => {
+  it('SCRUM-1237: disconnects active Drive integration without revoking the OAuth token at Google', async () => {
     const captured: Record<string, unknown[]> = {};
     const capture = (method: string, value: unknown) => {
       captured[method] = [...(captured[method] ?? []), value];
@@ -320,8 +320,13 @@ describe('Drive OAuth router', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.disconnected).toBe(true);
+    // SCRUM-1237: stopChannel still happens (per-org channel) — but we must NOT
+    // revoke the Google OAuth token. Refresh tokens are scoped per (Google
+    // account, OAuth client), not per Arkova org. Calling revoke would
+    // invalidate every other Arkova org that has the same Google account
+    // connected.
     expect(fetchCalls.some(u => u.includes('channels/stop'))).toBe(true);
-    expect(fetchCalls.some(u => u.includes('revoke'))).toBe(true);
+    expect(fetchCalls.some(u => u.includes('oauth2.googleapis.com/revoke'))).toBe(false);
     expect(captured.update?.[0]).toMatchObject({
       encrypted_tokens: null,
       token_kms_key_id: null,
