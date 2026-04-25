@@ -39,6 +39,9 @@ import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
 import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
+import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
+import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
+import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
@@ -222,6 +225,37 @@ app.use(
   },
   atsWebhookRouter,
 );
+
+// ─── Checkr report-completed webhook (SCRUM-1030 / 1151) — raw body required ───
+app.use(
+  '/webhooks/checkr',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  checkrWebhookRouter,
+);
+
+// ─── Veremark webhook (SCRUM-1030 / 1151) — gated, defaults to 503 ───
+app.use(
+  '/webhooks/veremark',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    next();
+  },
+  veremarkWebhookRouter,
+);
+
+// ─── SCRUM-1122: CIBA OpenAPI spec (no auth, no rate limit — public docs) ───
+app.get('/api/openapi-ciba.json', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.json(cibaOpenApiSpec);
+});
+
 
 // Gzip/brotli compression — 70-90% bandwidth reduction for JSON responses
 app.use(compression({ threshold: 1024 }));

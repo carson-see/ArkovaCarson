@@ -92,10 +92,10 @@ export default defineConfig({
           statements: 80,
         },
         'src/index.ts': {
-          // Functions threshold tracks reality. Lowered to 25 after PRs
-          // #538/#539 added Adobe Sign + connector health route mounts
-          // without matching index.test.ts smoke cases. Raise back to 40+
-          // when mount-level smoke tests exist for these new routes.
+          // Functions threshold tracks reality. Lowered to 20 after PRs
+          // #538/#539/#540 added Adobe Sign, Checkr, Veremark, OpenAPI
+          // CIBA, and connector-health mounts. Raise back to 40+ when
+          // mount-level smoke tests exist for these new routes.
           branches: 50,
           functions: 20,
           lines: 70,
