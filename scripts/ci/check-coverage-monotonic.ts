@@ -28,7 +28,34 @@ const METRICS = ['branches', 'functions', 'lines', 'statements'] as const;
 type Metric = (typeof METRICS)[number];
 type Thresholds = Record<string, Partial<Record<Metric, number>>>;
 
-const BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
+// Code-review #3 (PR #562): on push events ci.yml passes the literal string
+// 'HEAD~1' as a fallback. On a single-commit branch or shallow clone where
+// HEAD~1 doesn't exist, `git show HEAD~1:<path>` fails and the script would
+// silently skip ("treating as new file") — defeating the gate. Resolve the
+// ref to a real SHA first, and FAIL CLOSED if resolution fails.
+const RAW_BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
+const BASE_REF = resolveBaseRefOrFail(RAW_BASE_REF);
+
+function resolveBaseRefOrFail(ref: string): string {
+  try {
+    const sha = execSync(`git rev-parse --verify ${ref}^{commit}`, {
+      cwd: import.meta.dirname,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (!/^[0-9a-f]{40}$/i.test(sha)) {
+      throw new Error(`git rev-parse returned non-SHA: ${sha}`);
+    }
+    return sha;
+  } catch (err) {
+    console.error(`::error::Cannot resolve coverage base ref '${ref}' (R0-3 / SCRUM-1249).`);
+    console.error('  This usually means a shallow checkout or a single-commit branch.');
+    console.error('  Fix: use `actions/checkout@v4 with: fetch-depth: 0`, or pass an');
+    console.error('  explicit BASE_REF env that resolves to a known commit.');
+    console.error(`  Underlying error: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+}
 const PR_LABELS = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 const PR_BODY = process.env.PR_BODY ?? '';
 

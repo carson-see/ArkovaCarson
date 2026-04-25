@@ -80,11 +80,13 @@ jobs:
           AGE=$((NOW - HEAD_TS))
 
           if [ "${LIVE_SHA}" = "unknown" ]; then
-            echo "::warning::Live worker reports git_sha=unknown — image was built without --build-arg BUILD_SHA"
+            # Code-review #1 (PR #562): missing-sha is the very condition that
+            # proves BUILD_SHA plumbing is broken — must alert + fail, not exit 0.
+            echo "::error::Live worker reports git_sha=unknown — image was built without --build-arg BUILD_SHA"
             echo "drift=true" >> "$GITHUB_OUTPUT"
             echo "drift_kind=missing-sha" >> "$GITHUB_OUTPUT"
             echo "drift_age=${AGE}" >> "$GITHUB_OUTPUT"
-            exit 0
+            exit 0  # don't exit here — let downstream Sentry-emit + fail-job steps run
           fi
 
           if [ "${AGE}" -lt "${DRIFT_THRESHOLD_SECONDS}" ]; then
@@ -101,9 +103,14 @@ jobs:
           echo "drift_kind=stale" >> "$GITHUB_OUTPUT"
           echo "drift_age=${AGE}" >> "$GITHUB_OUTPUT"
 
-      - name: Emit Sentry event on stale drift
-        if: steps.compare.outputs.drift_kind == 'stale' && env.SENTRY_DSN != ''
+      - name: Emit Sentry event on stale or missing-sha drift
+        # Code-review #1 + #6 (PR #562): also fire on missing-sha (BUILD_SHA
+        # plumbing broken), and add a stable Sentry fingerprint so consecutive
+        # 10-min runs during the same outage dedupe to a single Sentry issue
+        # instead of generating ~6 events per hour.
+        if: (steps.compare.outputs.drift_kind == 'stale' || steps.compare.outputs.drift_kind == 'missing-sha') && env.SENTRY_DSN != ''
         env:
+          DRIFT_KIND: ${{ steps.compare.outputs.drift_kind }}
           DRIFT_AGE: ${{ steps.compare.outputs.drift_age }}
           LIVE_SHA: ${{ steps.live.outputs.live_sha }}
           HEAD_SHA: ${{ steps.head.outputs.head_sha }}
@@ -121,29 +128,38 @@ jobs:
           # Wrap as a Sentry envelope so we can use the simple POST-to-/api/<project>/envelope/ endpoint
           ENVELOPE_HEADER=$(jq -nc --arg eid "$EVENT_ID" --arg ts "$TIMESTAMP" \
             '{event_id: $eid, sent_at: $ts}')
+          # Stable fingerprint per drift kind so consecutive cron runs dedupe
+          # into one Sentry issue (code-review #6 / PR #562). Without this,
+          # ~6 events/hour during a 12-hour outage = 72 distinct issues.
+          MSG="Cloud Run worker drift: ${DRIFT_KIND}"
           EVENT_PAYLOAD=$(jq -nc \
             --arg eid "$EVENT_ID" \
             --arg ts "$TIMESTAMP" \
-            --arg msg "Cloud Run worker behind main HEAD (R0-1 drift)" \
+            --arg msg "$MSG" \
             --arg live "$LIVE_SHA" \
             --arg head "$HEAD_SHA" \
             --arg age "$DRIFT_AGE" \
+            --arg kind "$DRIFT_KIND" \
             '{
               event_id: $eid,
               timestamp: $ts,
               level: "error",
               logger: "ci.revision-drift",
               platform: "other",
+              fingerprint: ["revision-drift", $kind],
               message: { formatted: $msg },
-              tags: { live_sha: $live, head_sha: $head, drift_age_seconds: $age, source: "revision-drift.yml" },
+              tags: { live_sha: $live, head_sha: $head, drift_age_seconds: $age, drift_kind: $kind, source: "revision-drift.yml" },
               extra: { workflow: "revision-drift", repo: "carson-see/ArkovaCarson" }
             }')
-          ITEM_HEADER=$(echo "$EVENT_PAYLOAD" | jq -c '{type: "event", length: (. | tostring | length)}')
+          # length is byte count of the payload as written to the envelope file
+          # (UTF-8 safe; previously used jq tostring|length = code-points).
+          PAYLOAD_BYTES=$(printf '%s' "$EVENT_PAYLOAD" | wc -c | tr -d ' ')
+          ITEM_HEADER=$(jq -nc --arg len "$PAYLOAD_BYTES" '{type: "event", length: ($len | tonumber)}')
 
           {
-            echo "$ENVELOPE_HEADER"
-            echo "$ITEM_HEADER"
-            echo "$EVENT_PAYLOAD"
+            printf '%s\n' "$ENVELOPE_HEADER"
+            printf '%s\n' "$ITEM_HEADER"
+            printf '%s' "$EVENT_PAYLOAD"
           } > /tmp/sentry-envelope.txt
 
           curl -sS -X POST \
@@ -154,9 +170,11 @@ jobs:
           echo "Sentry event emitted: ${EVENT_ID}"
 
       - name: Skip notice (Sentry DSN not configured)
-        if: steps.compare.outputs.drift_kind == 'stale' && env.SENTRY_DSN == ''
+        if: (steps.compare.outputs.drift_kind == 'stale' || steps.compare.outputs.drift_kind == 'missing-sha') && env.SENTRY_DSN == ''
         run: echo "::warning::Drift detected but SENTRY_DSN_OPS secret is not set — alert not emitted. See SCRUM-1247."
 
-      - name: Fail job on stale drift
-        if: steps.compare.outputs.drift_kind == 'stale'
+      - name: Fail job on stale or missing-sha drift
+        # Code-review #1 (PR #562): missing-sha is fail-worthy too — the env
+        # plumbing failure is exactly what an operator must see fast.
+        if: steps.compare.outputs.drift_kind == 'stale' || steps.compare.outputs.drift_kind == 'missing-sha'
         run: exit 1

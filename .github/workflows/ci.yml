@@ -452,14 +452,30 @@ jobs:
         # SCRUM-1248 (R0-2): tla-precheck@0.1.7 has a hard-coded expected
         # SHA256 for the v1.8.0 jar that no longer matches upstream. We
         # download the jar directly from the official tlaplus/tlaplus
-        # release and point tla-precheck at it via TLA2TOOLS_JAR env so
-        # the upstream checksum check is bypassed. Remove this step when
+        # release, verify SHA256 against a pinned value (SEC-004 baseline:
+        # supply-chain integrity for every external download), and point
+        # tla-precheck at it via TLA2TOOLS_JAR env. Remove this step when
         # tla-precheck ships a fix.
+        #
+        # Code-review #2 (PR #562): the SHA256 below was computed via
+        # `curl ... | sha256sum` against the official release on 2026-04-25.
+        # Update the pin if upstream re-cuts the v1.8.0 release (rare for
+        # finalized GitHub releases — they're effectively immutable).
         if: steps.tla-changed.outputs.changed == 'true'
+        env:
+          TLA2TOOLS_SHA256: d5d07d5dab38ddb840c91ec48fa02f28b37a608d5af9a73570018591dbc8ef7f
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
             "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
+          ACTUAL=$(sha256sum "$HOME/.tla/tla2tools.jar" | awk '{print $1}')
+          if [ "$ACTUAL" != "$TLA2TOOLS_SHA256" ]; then
+            echo "::error::tla2tools.jar SHA256 mismatch — supply-chain integrity check failed"
+            echo "  expected: $TLA2TOOLS_SHA256"
+            echo "  actual:   $ACTUAL"
+            exit 1
+          fi
+          echo "✅ tla2tools.jar SHA256 verified ($ACTUAL)"
           echo "TLA2TOOLS_JAR=$HOME/.tla/tla2tools.jar" >> "$GITHUB_ENV"
 
       - name: Run TLA+ PreCheck verification
