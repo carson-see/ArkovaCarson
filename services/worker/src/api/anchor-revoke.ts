@@ -10,10 +10,24 @@ const RevokeSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
-anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res: Response) => {
-  const anchorId = req.params.id;
-  const parsed = RevokeSchema.safeParse(req.body);
+const ParamsSchema = z.object({
+  id: z.string().uuid(),
+});
 
+const NOT_FOUND_RESPONSE = { error: 'not_found', message: 'Anchor not found.' } as const;
+
+anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res: Response) => {
+  const paramsParsed = ParamsSchema.safeParse(req.params);
+  if (!paramsParsed.success) {
+    res.status(400).json({
+      error: 'validation_error',
+      message: 'Invalid anchor id.',
+    });
+    return;
+  }
+  const anchorId = paramsParsed.data.id;
+
+  const parsed = RevokeSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       error: 'validation_error',
@@ -37,11 +51,18 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       .single();
 
     if (fetchError || !anchor) {
-      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      res.status(404).json(NOT_FOUND_RESPONSE);
       return;
     }
 
-    // Verify the caller belongs to the anchor's org
+    // Orphan anchors (no org_id) bypass the membership scope check; treat
+    // as not-found rather than letting the membership query match on
+    // org_id IS NULL.
+    if (!anchor.org_id) {
+      res.status(404).json(NOT_FOUND_RESPONSE);
+      return;
+    }
+
     const { data: membership } = await (db as any).from('org_memberships')
       .select('role')
       .eq('user_id', userId)
@@ -49,7 +70,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       .single();
 
     if (!membership) {
-      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      res.status(404).json(NOT_FOUND_RESPONSE);
       return;
     }
 
@@ -76,9 +97,9 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       event_type: 'anchor.revoked',
       event_category: 'ANCHOR',
       actor_id: userId,
+      org_id: anchor.org_id,
       target_type: 'anchor',
       target_id: anchorId,
-      org_id: anchor.org_id,
       details: JSON.stringify({ reason, revoked_at: new Date().toISOString() }),
     }).then(({ error }) => {
       if (error) logger.error({ error, anchorId }, 'Failed to write revocation audit event');
