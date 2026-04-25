@@ -223,9 +223,8 @@ export type Database = {
       anchor_proofs: {
         Row: {
           anchor_id: string
-          batch_id: string | null
-          block_height: number | null
-          block_timestamp: string | null
+          block_height: number
+          block_timestamp: string
           created_at: string
           id: string
           merkle_root: string | null
@@ -235,9 +234,8 @@ export type Database = {
         }
         Insert: {
           anchor_id: string
-          batch_id?: string | null
-          block_height?: number | null
-          block_timestamp?: string | null
+          block_height: number
+          block_timestamp: string
           created_at?: string
           id?: string
           merkle_root?: string | null
@@ -247,9 +245,8 @@ export type Database = {
         }
         Update: {
           anchor_id?: string
-          batch_id?: string | null
-          block_height?: number | null
-          block_timestamp?: string | null
+          block_height?: number
+          block_timestamp?: string
           created_at?: string
           id?: string
           merkle_root?: string | null
@@ -305,59 +302,6 @@ export type Database = {
             columns: ["recipient_user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      anchoring_jobs: {
-        Row: {
-          anchor_id: string
-          attempts: number
-          claim_expires_at: string | null
-          claimed_at: string | null
-          claimed_by: string | null
-          completed_at: string | null
-          created_at: string
-          id: string
-          last_error: string | null
-          max_attempts: number
-          started_at: string | null
-          status: Database["public"]["Enums"]["job_status"]
-        }
-        Insert: {
-          anchor_id: string
-          attempts?: number
-          claim_expires_at?: string | null
-          claimed_at?: string | null
-          claimed_by?: string | null
-          completed_at?: string | null
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          max_attempts?: number
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["job_status"]
-        }
-        Update: {
-          anchor_id?: string
-          attempts?: number
-          claim_expires_at?: string | null
-          claimed_at?: string | null
-          claimed_by?: string | null
-          completed_at?: string | null
-          created_at?: string
-          id?: string
-          last_error?: string | null
-          max_attempts?: number
-          started_at?: string | null
-          status?: Database["public"]["Enums"]["job_status"]
-        }
-        Relationships: [
-          {
-            foreignKeyName: "anchoring_jobs_anchor_id_fkey"
-            columns: ["anchor_id"]
-            isOneToOne: true
-            referencedRelation: "anchors"
             referencedColumns: ["id"]
           },
         ]
@@ -2977,44 +2921,6 @@ export type Database = {
           },
         ]
       }
-      user_notifications: {
-        Row: {
-          created_at: string
-          id: string
-          organization_id: string | null
-          payload: Json
-          read_at: string | null
-          type: Database["public"]["Enums"]["notification_type"]
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          organization_id?: string | null
-          payload?: Json
-          read_at?: string | null
-          type: Database["public"]["Enums"]["notification_type"]
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          organization_id?: string | null
-          payload?: Json
-          read_at?: string | null
-          type?: Database["public"]["Enums"]["notification_type"]
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "user_notifications_organization_id_fkey"
-            columns: ["organization_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       verification_events: {
         Row: {
           anchor_id: string | null
@@ -3395,7 +3301,6 @@ export type Database = {
         Args: {
           p_exclude_pipeline?: boolean
           p_limit?: number
-          p_org_id?: string
           p_worker_id?: string
         }
         Returns: {
@@ -3867,13 +3772,6 @@ export type Database = {
       grc_platform: "vanta" | "drata" | "anecdotes"
       grc_sync_status: "pending" | "syncing" | "success" | "failed"
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
-      job_status: "pending" | "processing" | "completed" | "failed"
-      notification_type:
-        | "queue_run_completed"
-        | "rule_fired"
-        | "version_available_for_review"
-        | "treasury_alert"
-        | "anchor_revoked"
       org_member_role: "owner" | "admin" | "member" | "compliance_officer"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
       report_status: "pending" | "generating" | "completed" | "failed"
@@ -4088,7 +3986,6 @@ export const Constants = {
       grc_platform: ["vanta", "drata", "anecdotes"],
       grc_sync_status: ["pending", "syncing", "success", "failed"],
       integrity_level: ["HIGH", "MEDIUM", "LOW", "FLAGGED"],
-      job_status: ["pending", "processing", "completed", "failed"],
       org_member_role: ["owner", "admin", "member", "compliance_officer"],
       profile_status: ["ACTIVE", "PENDING_ACTIVATION", "DEACTIVATED"],
       report_status: ["pending", "generating", "completed", "failed"],
