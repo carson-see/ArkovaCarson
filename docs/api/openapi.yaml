@@ -821,13 +821,11 @@ components:
 
     SearchV2Result:
       type: object
-      required: [type, id, public_id, score, snippet]
+      required: [type, public_id, score, snippet]
       properties:
         type:
           type: string
           enum: [org, record, fingerprint, document]
-        id:
-          type: string
         public_id:
           type: string
         score:

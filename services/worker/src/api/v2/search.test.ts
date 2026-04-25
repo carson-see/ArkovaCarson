@@ -6,6 +6,7 @@ const mockIlike = vi.fn().mockReturnThis();
 const mockEq = vi.fn().mockReturnThis();
 const mockIn = vi.fn().mockReturnThis();
 const mockIs = vi.fn().mockReturnThis();
+const mockNot = vi.fn().mockReturnThis();
 const mockRange = vi.fn().mockReturnThis();
 const mockOrder = vi.fn().mockResolvedValue({ data: [], error: null });
 
@@ -18,6 +19,7 @@ vi.mock('../../utils/db.js', () => ({
       eq: mockEq,
       in: mockIn,
       is: mockIs,
+      not: mockNot,
       range: mockRange,
       order: mockOrder,
     })),
@@ -103,8 +105,9 @@ describe('GET /api/v2/search', () => {
     expect(res.status).toBe(200);
     expect(res.body.results).toHaveLength(1);
     expect(res.body.results[0].type).toBe('org');
-    expect(res.body.results[0].id).toBe('1');
     expect(res.body.results[0].public_id).toBe('org_acme');
+    // Constitutional check (CLAUDE.md §6): never expose internal id publicly.
+    expect(res.body.results[0].id).toBeUndefined();
   });
 
   it('supports type=all across orgs, records, fingerprints, and documents', async () => {
