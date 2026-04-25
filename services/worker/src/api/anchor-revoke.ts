@@ -10,11 +10,24 @@ const RevokeSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
-anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
-  const anchorIdParam = req.params.id;
-  const anchorId = Array.isArray(anchorIdParam) ? anchorIdParam[0] : anchorIdParam;
-  const parsed = RevokeSchema.safeParse(req.body);
+const ParamsSchema = z.object({
+  id: z.string().uuid(),
+});
 
+const NOT_FOUND_RESPONSE = { error: 'not_found', message: 'Anchor not found.' } as const;
+
+anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res: Response) => {
+  const paramsParsed = ParamsSchema.safeParse(req.params);
+  if (!paramsParsed.success) {
+    res.status(400).json({
+      error: 'validation_error',
+      message: 'Invalid anchor id.',
+    });
+    return;
+  }
+  const anchorId = paramsParsed.data.id;
+
+  const parsed = RevokeSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
       error: 'validation_error',
@@ -38,13 +51,15 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
       .single();
 
     if (fetchError || !anchor) {
-      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      res.status(404).json(NOT_FOUND_RESPONSE);
       return;
     }
 
-    // Verify the caller belongs to the anchor's org
+    // Orphan anchors (no org_id) bypass the membership scope check; treat
+    // as not-found rather than letting the membership query match on
+    // org_id IS NULL.
     if (!anchor.org_id) {
-      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      res.status(404).json(NOT_FOUND_RESPONSE);
       return;
     }
 
@@ -55,7 +70,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
       .single();
 
     if (!membership) {
-      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      res.status(404).json(NOT_FOUND_RESPONSE);
       return;
     }
 

@@ -65,7 +65,7 @@ describe('POST /api/anchor/:id/revoke', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAnchorSingle.mockResolvedValue({
-      data: { id: 'a1', status: 'SECURED', org_id: 'org1', user_id: 'u1' },
+      data: { id: '11111111-1111-1111-1111-111111111111', status: 'SECURED', org_id: 'org1', user_id: 'u1' },
       error: null,
     });
     mockMembershipSingle.mockResolvedValue({
@@ -77,14 +77,14 @@ describe('POST /api/anchor/:id/revoke', () => {
   it('revokes a SECURED anchor', async () => {
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({ reason: 'Document expired' });
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
     expect(res.body.status).toBe('REVOKED');
     expect(mockRpc).toHaveBeenCalledWith('revoke_anchor', {
-      anchor_id: 'a1',
+      anchor_id: '11111111-1111-1111-1111-111111111111',
       reason: 'Document expired',
     });
   });
@@ -92,7 +92,7 @@ describe('POST /api/anchor/:id/revoke', () => {
   it('rejects missing reason', async () => {
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({});
 
     expect(res.status).toBe(400);
@@ -100,13 +100,13 @@ describe('POST /api/anchor/:id/revoke', () => {
 
   it('rejects non-SECURED anchor', async () => {
     mockAnchorSingle.mockResolvedValueOnce({
-      data: { id: 'a1', status: 'PENDING', org_id: 'org1', user_id: 'u1' },
+      data: { id: '11111111-1111-1111-1111-111111111111', status: 'PENDING', org_id: 'org1', user_id: 'u1' },
       error: null,
     });
 
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(409);
@@ -117,10 +117,37 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/nonexistent/revoke')
+      .post('/api/anchor/22222222-2222-2222-2222-222222222222/revoke')
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(404);
+  });
+
+  it('returns 400 for non-UUID anchor id', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/anchor/not-a-uuid/revoke')
+      .send({ reason: 'Test' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('validation_error');
+    expect(mockAnchorSingle).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for orphan anchor (org_id null)', async () => {
+    mockAnchorSingle.mockResolvedValueOnce({
+      data: { id: '11111111-1111-1111-1111-111111111111', status: 'SECURED', org_id: null, user_id: 'u1' },
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app)
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
+      .send({ reason: 'Test' });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('not_found');
+    expect(mockMembershipSingle).not.toHaveBeenCalled();
   });
 
   it('returns 404 for anchor in another org', async () => {
@@ -128,7 +155,7 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(404);
@@ -140,7 +167,7 @@ describe('POST /api/anchor/:id/revoke', () => {
     app.use('/api/anchor', anchorRevokeRouter);
 
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(401);
@@ -151,7 +178,7 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     const app = buildApp();
     const res = await request(app)
-      .post('/api/anchor/a1/revoke')
+      .post('/api/anchor/11111111-1111-1111-1111-111111111111/revoke')
       .send({ reason: 'Test' });
 
     expect(res.status).toBe(500);
