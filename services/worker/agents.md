@@ -1,9 +1,17 @@
 # agents.md — services/worker
-_Last updated: 2026-04-24_
+_Last updated: 2026-04-25 (R0 anti-false-done wave)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## R0 anti-false-done additions (2026-04-25, SCRUM-1246 wave)
+
+- **`Dockerfile`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `ARG BUILD_SHA=unknown` + `ENV BUILD_SHA` baked at Docker build via `--build-arg BUILD_SHA=$github.sha`. Surfaces in `/health.git_sha`, `/api/admin/system-health.git_sha`, smoke test response, and the new `build-sha-present` smoke check.
+- **`src/utils/buildInfo.ts`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `getBuildSha()` + `isValidBuildSha(sha)` — single source of truth for the BUILD_SHA env read + 40-char hex validation. Used by `routes/health.ts`, `api/admin-health.ts`, `routes/cron.ts`.
+- **`src/jobs/db-health-monitor.ts`** ([SCRUM-1254](https://arkova.atlassian.net/browse/SCRUM-1254)): cron-driven monitor that emits Sentry events on pg_cron failures, dead-tuple bloat, smoke fail-streaks. Wired to `POST /cron/db-health` (Cloud Scheduler every 5 min, pending operator binding via SCRUM-1308). Depends on RPCs `get_recent_cron_failures` + `get_table_bloat_stats` (pending SCRUM-1307).
+- **`scripts/ci/check-confluence-dod.ts`** ([SCRUM-1251](https://arkova.atlassian.net/browse/SCRUM-1251)): helper for Atlassian Automation rule R4 — parses Confluence storage-format body and detects unticked `<ac:task>` markers in the "Definition of Done" section.
+- **`eslint.config.js`** ([SCRUM-1250](https://arkova.atlassian.net/browse/SCRUM-1250)): test-files override block extends the no-unused-vars/_/no-explicit-any/warn rules to `src/**/*.test.ts` + `src/**/*.spec.ts`. Without this 119 errors in test files blocked every deploy. Followup R4 ticket drives all warnings to zero so we can re-add `--max-warnings 0`.
 
 ## CIBA hardening closeout (2026-04-23, PRs #479 / #480)
 
