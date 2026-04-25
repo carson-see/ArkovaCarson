@@ -29,6 +29,8 @@ const {
   profilesMaybeSingle,
   profilesUpdate,
   profilesUpdateEq,
+  organizationsUpdate,
+  organizationsMaybeSingle,
   mockCallRpc,
 } = vi.hoisted(() => {
   const mockLogger = {
@@ -111,6 +113,11 @@ const {
   const organizationsUpdateEq = vi.fn().mockResolvedValue({ error: null });
   const organizationsUpdate = vi.fn(() => ({ eq: organizationsUpdateEq }));
 
+  // organizations.select('verification_status').eq('id', orgId).maybeSingle()
+  const organizationsMaybeSingle = vi.fn().mockResolvedValue({ data: null });
+  const organizationsSelectEq = vi.fn(() => ({ maybeSingle: organizationsMaybeSingle }));
+  const organizationsSelect = vi.fn(() => ({ eq: organizationsSelectEq }));
+
   const mockDbFrom = vi.fn((table: string) => {
     switch (table) {
       case 'billing_events':
@@ -135,6 +142,7 @@ const {
         };
       case 'organizations':
         return {
+          select: organizationsSelect,
           update: organizationsUpdate,
         };
       default:
@@ -156,6 +164,8 @@ const {
     profilesMaybeSingle,
     profilesUpdate,
     profilesUpdateEq,
+    organizationsUpdate,
+    organizationsMaybeSingle,
     mockCallRpc,
   };
 });
@@ -475,6 +485,46 @@ describe('handleCheckoutComplete', () => {
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ userId: 'user-001', subscriptionId: 'sub_test_001' }),
       'Subscription activated',
+    );
+  });
+
+  it('SCRUM-1218: does NOT flip verification_status to VERIFIED when org KYB is REJECTED', async () => {
+    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-rejected' } });
+    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: 'REJECTED' } });
+
+    await handleCheckoutComplete(CHECKOUT_EVENT);
+
+    // organizations.update is NOT called for the verification flip.
+    expect(organizationsUpdate).not.toHaveBeenCalled();
+    // ORG_VERIFIED_VIA_SUBSCRIPTION audit event is NOT emitted.
+    expect(auditInsert).not.toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
+    );
+    // CHECKOUT_BLOCKED_BY_KYB_REJECTION audit event IS emitted.
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
+        org_id: 'org-rejected',
+        actor_id: 'user-001',
+      }),
+    );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 'org-rejected', currentStatus: 'REJECTED' }),
+      expect.stringContaining('REJECTED'),
+    );
+  });
+
+  it('SCRUM-1218: still flips to VERIFIED when current status is null/PENDING/etc.', async () => {
+    profilesMaybeSingle.mockResolvedValueOnce({ data: { org_id: 'org-pending' } });
+    organizationsMaybeSingle.mockResolvedValueOnce({ data: { verification_status: null } });
+
+    await handleCheckoutComplete(CHECKOUT_EVENT);
+
+    expect(organizationsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ verification_status: 'VERIFIED' }),
+    );
+    expect(auditInsert).toHaveBeenCalledWith(
+      expect.objectContaining({ event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION' }),
     );
   });
 
