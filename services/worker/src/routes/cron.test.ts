@@ -248,6 +248,17 @@ vi.mock('../jobs/grace-expiry-sweep.js', () => ({
   runGraceExpirySweep: (...args: unknown[]) => mockRunGraceExpirySweep(...args),
 }));
 
+const mockRunAllocationRollover = vi.fn().mockResolvedValue({
+  total_orgs: 5,
+  rolled: 4,
+  skipped: 1,
+  errors: 0,
+});
+vi.mock('../jobs/monthly-allocation-rollover.js', () => ({
+  MONTHLY_ALLOCATION_ROLLOVER_CRON: '0 0 1 * *',
+  runAllocationRollover: (...args: unknown[]) => mockRunAllocationRollover(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -966,6 +977,47 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/grace-expiry-sweep');
       expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /monthly-allocation-rollover', () => {
+    it('returns rollover summary', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/monthly-allocation-rollover');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ total_orgs: 5, rolled: 4, skipped: 1, errors: 0 });
+      expect(mockRunAllocationRollover).toHaveBeenCalled();
+    });
+
+    it('returns 500 on failure', async () => {
+      mockRunAllocationRollover.mockRejectedValueOnce(new Error('fail'));
+      const app = createApp();
+      const res = await request(app).post('/cron/monthly-allocation-rollover');
+      expect(res.status).toBe(500);
+    });
+
+    // SCRUM-1219 the original bug was a path mismatch — Cloud Scheduler hit
+    // a route that didn't exist. Read the actual scheduler config and assert
+    // the route path matches; a typo on either side fails this test.
+    it('route path matches what cloud-scheduler.sh registers', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const here = path.dirname(new URL(import.meta.url).pathname);
+      const schedulerScript = path.resolve(here, '../../../../scripts/gcp-setup/cloud-scheduler.sh');
+      const contents = fs.readFileSync(schedulerScript, 'utf8');
+      const match = contents.match(/"monthly-allocation-rollover\|[^|]+\|(\/jobs\/[^"]+)"/);
+      expect(match).not.toBeNull();
+      const scheduledPath = match![1];
+      expect(scheduledPath).toBe('/jobs/monthly-allocation-rollover');
+      // The cron router is mounted at /jobs in production (services/worker/src/index.ts)
+      // and at /cron in this test (createApp). The relative path after the
+      // mount prefix must match.
+      const handlerPath = scheduledPath.replace('/jobs', '');
+      expect(handlerPath).toBe('/monthly-allocation-rollover');
+
+      const app = createApp();
+      const res = await request(app).post(`/cron${handlerPath}`);
+      expect(res.status).toBe(200);
     });
   });
 
