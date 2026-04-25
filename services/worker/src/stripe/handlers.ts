@@ -261,28 +261,51 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   if (adminProfile?.org_id) {
     const orgId = adminProfile.org_id;
 
-    // Mark org as subscription-verified (VERIFIED status enables OrgVerifiedBadge)
-    await db
+    // Read current KYB state first. Paying must NOT clear a prior Middesk
+    // rejection — letting checkout flip REJECTED → VERIFIED would let any org
+    // bypass KYB by subscribing.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbAny = db as any;
+    const { data: orgRow } = await dbAny
       .from('organizations')
-      .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
-      .eq('id', orgId);
+      .select('verification_status')
+      .eq('id', orgId)
+      .maybeSingle();
+    const currentStatus = orgRow?.verification_status as string | null | undefined;
 
-    // Grant Verified Admin permission to the admin profile
-    await db
-      .from('profiles')
-      .update({ is_verified: true })
-      .eq('id', userId);
+    if (currentStatus === 'REJECTED') {
+      logger.warn(
+        { userId, orgId, currentStatus, subscriptionId: session.subscription },
+        'Stripe checkout completed for org with REJECTED KYB status — leaving verification_status unchanged',
+      );
+      await db.from('audit_events').insert({
+        event_type: 'CHECKOUT_BLOCKED_BY_KYB_REJECTION',
+        event_category: 'ORG',
+        actor_id: userId,
+        org_id: orgId,
+        details: `Subscription ${session.subscription} processed but verification_status left REJECTED (Middesk KYB)`,
+      });
+    } else {
+      await db
+        .from('organizations')
+        .update({ verification_status: 'VERIFIED', updated_at: new Date().toISOString() })
+        .eq('id', orgId);
 
-    // Audit the org verification grant
-    await db.from('audit_events').insert({
-      event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
-      event_category: 'ORG',
-      actor_id: userId,
-      org_id: orgId,
-      details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
-    });
+      await db
+        .from('profiles')
+        .update({ is_verified: true })
+        .eq('id', userId);
 
-    logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
+      await db.from('audit_events').insert({
+        event_type: 'ORG_VERIFIED_VIA_SUBSCRIPTION',
+        event_category: 'ORG',
+        actor_id: userId,
+        org_id: orgId,
+        details: `Organization verification_status set to VERIFIED on checkout completion (subscription: ${session.subscription})`,
+      });
+
+      logger.info({ userId, orgId }, 'Org verification_status set to VERIFIED on checkout');
+    }
   }
 
   logger.info({ userId, subscriptionId: session.subscription, planId }, 'Subscription activated');
