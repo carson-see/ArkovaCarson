@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
+import arkovaPlugin from '../../eslint-rules/index.cjs';
 
 export default tseslint.config(
   {
@@ -10,6 +11,10 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    plugins: {
+      arkova: arkovaPlugin,
+    },
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.node,
@@ -20,6 +25,8 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/ban-ts-comment': 'warn',
+      // SCRUM-1208 — tenant isolation on multi-tenant Supabase tables.
+      'arkova/missing-org-filter': 'warn',
     },
   },
 );
