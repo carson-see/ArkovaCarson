@@ -46,8 +46,12 @@ COMMENT ON COLUMN organization_rule_events.payload IS
 -- =============================================================================
 -- 2. Replace claim_pending_rule_events to surface payload
 -- =============================================================================
+-- DROP first because Postgres rejects CREATE OR REPLACE when the RETURNS TABLE
+-- shape changes (we're adding a new `payload jsonb` column to the return).
 
-CREATE OR REPLACE FUNCTION claim_pending_rule_events(p_limit INTEGER DEFAULT 200)
+DROP FUNCTION IF EXISTS claim_pending_rule_events(INTEGER);
+
+CREATE FUNCTION claim_pending_rule_events(p_limit INTEGER DEFAULT 200)
 RETURNS TABLE (
   id UUID,
   org_id UUID,
