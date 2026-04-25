@@ -21,6 +21,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 
 export const RULE_EVENTS_BACKPRESSURE_THRESHOLD = 10_000;
 const COUNT_CACHE_MS = 5_000;
@@ -128,6 +129,21 @@ export async function ruleEventBackpressure(
       'rule-event backpressure: TRIPPED',
     );
     void emitBackpressureAudit(pending);
+    // Surface to Sentry once per trip cycle so the saved-search alert paged on
+    // `RULE_EVENT_BACKPRESSURE_TRIPPED` fires PagerDuty. Counts are server-side
+    // only (no per-request data, no PII).
+    try {
+      Sentry.captureMessage('RULE_EVENT_BACKPRESSURE_TRIPPED', {
+        level: 'warning',
+        tags: { signal: 'rule-event-backpressure' },
+        extra: {
+          pending_count: pending,
+          threshold: RULE_EVENTS_BACKPRESSURE_THRESHOLD,
+        },
+      });
+    } catch (err) {
+      logger.warn({ error: err }, 'rule-event backpressure: Sentry capture threw');
+    }
   }
 
   res.setHeader?.('Retry-After', String(RETRY_AFTER_SECONDS));

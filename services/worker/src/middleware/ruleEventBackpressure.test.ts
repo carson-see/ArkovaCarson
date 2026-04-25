@@ -14,9 +14,16 @@ const headMock = vi.fn();
 const auditInsertMock = vi.fn();
 const loggerInfo = vi.fn();
 const loggerWarn = vi.fn();
+const sentryCaptureMessageMock = vi.fn();
 
 vi.mock('../utils/logger.js', () => ({
   logger: { info: loggerInfo, warn: loggerWarn, error: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../utils/sentry.js', () => ({
+  Sentry: {
+    captureMessage: (...args: unknown[]) => sentryCaptureMessageMock(...args),
+  },
 }));
 
 vi.mock('../utils/db.js', () => {
@@ -167,5 +174,25 @@ describe('ruleEventBackpressure (SCRUM-1024)', () => {
     const state = getBackpressureState();
     expect(state.tripped).toBe(false);
     expect(state.lastPendingCount).toBe(200);
+  });
+
+  it('captures a Sentry warning on first trip so the saved-search alert pages on-call', async () => {
+    headMock.mockReturnValue({ count: RULE_EVENTS_BACKPRESSURE_THRESHOLD + 1, error: null });
+    const next = vi.fn() as NextFunction;
+    // 3 trips during the same overload — Sentry should capture exactly once.
+    await ruleEventBackpressure(buildReq(), buildRes().res, next);
+    await ruleEventBackpressure(buildReq(), buildRes().res, next);
+    await ruleEventBackpressure(buildReq(), buildRes().res, next);
+    expect(sentryCaptureMessageMock).toHaveBeenCalledTimes(1);
+    const [message, ctx] = sentryCaptureMessageMock.mock.calls[0] as [
+      string,
+      { level: string; tags: Record<string, string>; extra: Record<string, number> },
+    ];
+    expect(message).toBe('RULE_EVENT_BACKPRESSURE_TRIPPED');
+    expect(ctx.level).toBe('warning');
+    expect(ctx.tags.signal).toBe('rule-event-backpressure');
+    // Counts are server-side only — no PII, no per-request data.
+    expect(typeof ctx.extra.pending_count).toBe('number');
+    expect(ctx.extra.threshold).toBe(RULE_EVENTS_BACKPRESSURE_THRESHOLD);
   });
 });
