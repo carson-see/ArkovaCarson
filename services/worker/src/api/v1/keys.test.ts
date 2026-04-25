@@ -193,18 +193,37 @@ describe('API Key CRUD — AUTH-06 ORG_ADMIN role enforcement', () => {
 
 describe('API Key CRUD — validation schemas', () => {
   it('CreateKeySchema accepts valid input', async () => {
-    const { z } = await import('zod');
-    const CreateKeySchema = z.object({
-      name: z.string().min(1).max(100),
-      scopes: z.array(z.string()).default(['verify']),
-      expires_in_days: z.number().int().positive().optional(),
-    });
+    const { CreateKeySchema } = await import('./keys.js');
 
     const result = CreateKeySchema.safeParse({ name: 'My Production Key' });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.scopes).toEqual(['verify']);
+      expect(result.data.scopes).toEqual(['read:search']);
     }
+  });
+
+  it('CreateKeySchema accepts each API v2 scope', async () => {
+    const { CreateKeySchema } = await import('./keys.js');
+    const { API_V2_SCOPES } = await import('../apiScopes.js');
+
+    for (const scope of API_V2_SCOPES) {
+      const result = CreateKeySchema.safeParse({ name: `Key ${scope}`, scopes: [scope] });
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it('CreateKeySchema rejects unknown scopes', async () => {
+    const { CreateKeySchema } = await import('./keys.js');
+
+    const result = CreateKeySchema.safeParse({ name: 'Bad Key', scopes: ['admin:everything'] });
+    expect(result.success).toBe(false);
+  });
+
+  it('CreateKeySchema rejects empty scope arrays', async () => {
+    const { CreateKeySchema } = await import('./keys.js');
+
+    const result = CreateKeySchema.safeParse({ name: 'Bad Key', scopes: [] });
+    expect(result.success).toBe(false);
   });
 
   it('CreateKeySchema rejects empty name', async () => {
@@ -228,11 +247,7 @@ describe('API Key CRUD — validation schemas', () => {
   });
 
   it('UpdateKeySchema accepts partial updates', async () => {
-    const { z } = await import('zod');
-    const UpdateKeySchema = z.object({
-      name: z.string().min(1).max(100).optional(),
-      is_active: z.boolean().optional(),
-    });
+    const { UpdateKeySchema } = await import('./keys.js');
 
     expect(UpdateKeySchema.safeParse({ name: 'New Name' }).success).toBe(true);
     expect(UpdateKeySchema.safeParse({ is_active: false }).success).toBe(true);

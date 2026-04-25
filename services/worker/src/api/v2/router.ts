@@ -5,6 +5,7 @@ import { config } from '../../config.js';
 import { v2ErrorHandler } from './problem.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { buildSearchHandler, searchRouter } from './search.js';
+import { v2ApiKeyRateLimit } from './rateLimit.js';
 
 export const apiV2Router = Router();
 
@@ -14,6 +15,7 @@ if (!config.apiKeyHmacSecret) {
   throw new Error('API_KEY_HMAC_SECRET is required when v2 API is mounted');
 }
 apiV2Router.use(apiKeyAuth(config.apiKeyHmacSecret));
+apiV2Router.use(v2ApiKeyRateLimit);
 
 apiV2Router.use('/search', searchRouter);
 apiV2Router.get('/organizations', requireScopeV2('read:search'), buildSearchHandler('org'));

@@ -9,6 +9,7 @@ export const searchRouter = Router();
 
 const SearchTypeEnum = z.enum(['all', 'org', 'record', 'fingerprint', 'document']);
 type SearchType = z.infer<typeof SearchTypeEnum>;
+type SearchResultType = Exclude<SearchType, 'all'>;
 
 const SearchQuerySchema = z.object({
   q: z.string().min(1).max(500),
@@ -18,7 +19,7 @@ const SearchQuerySchema = z.object({
 });
 
 interface SearchResult {
-  type: SearchType;
+  type: SearchResultType;
   public_id: string;
   score: number;
   snippet: string;
@@ -62,8 +63,9 @@ function visibleAnchorScope(orgId: string | null | undefined): string {
 async function searchOrgs(q: string, limit: number, offset: number): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('organizations')
-    .select('id, public_id, display_name, description, domain, website_url')
+    .select('public_id, display_name, description, domain, website_url')
     .or(`display_name.ilike.%${safe}%,description.ilike.%${safe}%,domain.ilike.%${safe}%`)
+    .not('public_id', 'is', null)
     .range(offset, offset + limit - 1)
     .order('display_name');
 
@@ -74,7 +76,7 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
 
   return (data ?? []).map(org => ({
     type: 'org' as const,
-    public_id: org.public_id ?? org.id,
+    public_id: org.public_id,
     score: 1.0,
     snippet: org.display_name ?? '',
     metadata: {
@@ -93,10 +95,11 @@ async function searchRecords(
 ): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, filename, description, credential_type, status, fingerprint')
+    .select('public_id, filename, description, credential_type, status, fingerprint')
     .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
+    .not('public_id', 'is', null)
     .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -108,7 +111,7 @@ async function searchRecords(
 
   return (data ?? []).map(rec => ({
     type: 'record' as const,
-    public_id: rec.public_id ?? rec.id,
+    public_id: rec.public_id,
     score: 1.0,
     snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
     metadata: { credential_type: rec.credential_type, status: rec.status },
@@ -122,10 +125,11 @@ async function searchFingerprints(
   orgId?: string | null,
 ): Promise<SearchResult[]> {
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, fingerprint, filename, status')
+    .select('public_id, fingerprint, filename, status')
     .eq('fingerprint', q)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
+    .not('public_id', 'is', null)
     .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -137,7 +141,7 @@ async function searchFingerprints(
 
   return (data ?? []).map(rec => ({
     type: 'fingerprint' as const,
-    public_id: rec.public_id ?? rec.id,
+    public_id: rec.public_id,
     score: 1.0,
     snippet: rec.filename ?? rec.fingerprint ?? '',
     metadata: { status: rec.status },
@@ -152,10 +156,17 @@ async function searchDocuments(
 ): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
-    .select('id, public_id, filename, description, metadata, credential_type, status')
-    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
+    .select('public_id, filename, description, metadata, credential_type, status')
+    .or([
+      `filename.ilike.%${safe}%`,
+      `description.ilike.%${safe}%`,
+      `metadata->>issuer.ilike.%${safe}%`,
+      `metadata->>recipient.ilike.%${safe}%`,
+      `metadata->>title.ilike.%${safe}%`,
+    ].join(','))
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
+    .not('public_id', 'is', null)
     .or(visibleAnchorScope(orgId))
     .range(offset, offset + limit - 1)
     .order('created_at', { ascending: false });
@@ -167,7 +178,7 @@ async function searchDocuments(
 
   return (data ?? []).map(doc => ({
     type: 'document' as const,
-    public_id: doc.public_id ?? doc.id,
+    public_id: doc.public_id,
     score: 1.0,
     snippet: doc.filename ?? doc.description ?? '',
     metadata: { credential_type: doc.credential_type, status: doc.status },

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { hashApiKey, generateApiKey, apiKeyAuth } from './apiKeyAuth.js';
+import { hashApiKey, generateApiKey, apiKeyAuth, requireScope } from './apiKeyAuth.js';
 import type { Request, Response } from 'express';
 
 // Mock DB + logger
@@ -286,5 +286,45 @@ describe('apiKeyAuth middleware', () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({ error: 'internal_error' }),
     );
+  });
+});
+
+describe('requireScope compatibility', () => {
+  it('allows read:records to satisfy legacy verify routes', () => {
+    const req = createMockReq({});
+    req.apiKey = {
+      keyId: 'key-1',
+      orgId: 'org-1',
+      userId: 'user-1',
+      scopes: ['read:records'],
+      rateLimitTier: 'paid',
+      keyPrefix: 'ak_live_',
+    };
+    const res = createMockRes();
+    const next = vi.fn();
+
+    requireScope('verify')(req, res, next);
+
+    expect(next).toHaveBeenCalledWith();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('does not let read:search satisfy record verification routes', () => {
+    const req = createMockReq({});
+    req.apiKey = {
+      keyId: 'key-1',
+      orgId: 'org-1',
+      userId: 'user-1',
+      scopes: ['read:search'],
+      rateLimitTier: 'paid',
+      keyPrefix: 'ak_live_',
+    };
+    const res = createMockRes();
+    const next = vi.fn();
+
+    requireScope('verify')(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 });

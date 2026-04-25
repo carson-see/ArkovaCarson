@@ -36,6 +36,87 @@ security:
   - x402Payment: []
 
 paths:
+  /search:
+    get:
+      operationId: v2UnifiedSearch
+      summary: Search across organizations, records, fingerprints, and documents
+      description: |
+        Verification API v2 unified search endpoint. Uses an opaque cursor for pagination and returns typed results.
+      tags: [Search]
+      servers:
+        - url: https://arkova-worker-270018525501.us-central1.run.app/api/v2
+          description: Production v2
+        - url: http://localhost:3001/api/v2
+          description: Local development v2
+      security:
+        - apiKey: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 500
+          description: Search query.
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, org, record, fingerprint, document]
+            default: all
+          description: Result type filter.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque pagination cursor from `next_cursor`.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchV2Response"
+        "400":
+          description: Validation error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "401":
+          description: API key required.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "403":
+          description: API key does not have `read:search`.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+        "429":
+          description: Rate limit exceeded.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ProblemDetail"
+
   /verify/{publicId}:
     get:
       operationId: verifyDocument
@@ -710,6 +791,51 @@ components:
       description: Base64-encoded x402 payment proof
 
   schemas:
+    ProblemDetail:
+      type: object
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+
+    SearchV2Response:
+      type: object
+      required: [results, next_cursor]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchV2Result"
+        next_cursor:
+          type: string
+          nullable: true
+
+    SearchV2Result:
+      type: object
+      required: [type, public_id, score, snippet]
+      properties:
+        type:
+          type: string
+          enum: [org, record, fingerprint, document]
+        public_id:
+          type: string
+        score:
+          type: number
+        snippet:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
     VerificationResult:
       type: object
       required: [verified]

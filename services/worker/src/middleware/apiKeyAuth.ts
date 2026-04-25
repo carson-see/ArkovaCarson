@@ -14,6 +14,7 @@ import { Request, Response, NextFunction } from 'express';
 import { createHmac, randomBytes } from 'crypto';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { scopeSatisfies } from '../api/apiScopes.js';
 
 
 /** API key metadata attached to req after authentication */
@@ -103,7 +104,7 @@ export function requireScope(scope: string) {
     }
 
     // Check if key has the required scope
-    if (!req.apiKey.scopes || !req.apiKey.scopes.includes(scope)) {
+    if (!req.apiKey.scopes || !scopeSatisfies(req.apiKey.scopes, scope)) {
       res.status(403).json({
         error: 'insufficient_scope',
         message: `This API key does not have the required scope: ${scope}`,

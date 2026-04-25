@@ -16,15 +16,18 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
+import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
 
 const router = Router();
 
 import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/ferpa.js';
 
 /** Zod schema for key creation */
-const CreateKeySchema = z.object({
+const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
+
+export const CreateKeySchema = z.object({
   name: z.string().min(1).max(100),
-  scopes: z.array(z.string()).default(['verify']),
+  scopes: z.array(ApiKeyScopeSchema).min(1).default(DEFAULT_API_KEY_SCOPES),
   expires_in_days: z.number().int().positive().optional(),
   // REG-04: FERPA requester identity verification fields
   ferpa_exception_category: z.enum(FERPA_EXCEPTION_CATEGORIES).optional(),
@@ -33,7 +36,7 @@ const CreateKeySchema = z.object({
 });
 
 /** Zod schema for key update */
-const UpdateKeySchema = z.object({
+export const UpdateKeySchema = z.object({
   name: z.string().min(1).max(100).optional(),
   is_active: z.boolean().optional(),
 });

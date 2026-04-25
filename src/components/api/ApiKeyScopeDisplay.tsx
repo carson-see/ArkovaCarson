@@ -6,13 +6,7 @@
  */
 
 import { Badge } from '@/components/ui/badge';
-import { API_KEY_LABELS } from '@/lib/copy';
-
-const SCOPE_CONFIG: Record<string, { label: string; className: string }> = {
-  verify: { label: API_KEY_LABELS.SCOPE_VERIFY, className: 'bg-blue-50 text-blue-700 border-blue-200' },
-  batch: { label: API_KEY_LABELS.SCOPE_BATCH, className: 'bg-purple-50 text-purple-700 border-purple-200' },
-  usage: { label: API_KEY_LABELS.SCOPE_USAGE, className: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
-};
+import { API_SCOPE_LABELS, API_SCOPE_BADGE_CLASSES, isApiScope } from '@/lib/apiScopes';
 
 interface ApiKeyScopeDisplayProps {
   scopes: string[];
@@ -31,14 +25,16 @@ export function ApiKeyScopeDisplay({ scopes, compact = false }: ApiKeyScopeDispl
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {scopes.map((scope) => {
-        const config = SCOPE_CONFIG[scope];
+        const known = isApiScope(scope);
+        const label = known ? API_SCOPE_LABELS[scope] : scope;
+        const className = known ? API_SCOPE_BADGE_CLASSES[scope] : '';
         return (
           <Badge
             key={scope}
             variant="outline"
-            className={`text-[10px] px-1.5 py-0 ${config?.className ?? ''}`}
+            className={`text-[10px] px-1.5 py-0 ${className}`}
           >
-            {config?.label ?? scope}
+            {label}
           </Badge>
         );
       })}
