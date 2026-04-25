@@ -41,6 +41,9 @@ Audit `gcloud ai endpoints list` before + after every tuning/eval/deploy run. Ta
 ### 8. Never work on `main`
 Feature branches only. Push as many commits as you want — GitHub Actions ignores all feature-branch pushes (every workflow in `.github/workflows/` triggers only on PR or on push to `main`/`develop`). CI runs **once** when the PR opens and on each update. Merges are human-gated per `memory/feedback_never_merge_without_ok.md`. This keeps Actions minutes near zero during iteration.
 
+### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
+`deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION

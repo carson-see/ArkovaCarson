@@ -7,7 +7,7 @@
  *   - Route handlers: success + error (500) paths for representative endpoints
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
@@ -1285,7 +1285,18 @@ describe('cron routes', () => {
      *
      * recent-secured uses .is(deleted_at, null) + explicit ORDER BY so the
      * partial index `idx_anchors_status_created` is selected.
+     *
+     * SCRUM-1247 (R0-1): added build-sha-present check + gitSha in response.
+     * Tests that set process.env.BUILD_SHA must restore the original value.
      */
+    let originalBuildSha: string | undefined;
+    beforeEach(() => {
+      originalBuildSha = process.env.BUILD_SHA;
+    });
+    afterEach(() => {
+      if (originalBuildSha === undefined) delete process.env.BUILD_SHA;
+      else process.env.BUILD_SHA = originalBuildSha;
+    });
 
     function buildAnchorsSelectChain(opts: { recentSecured?: { created_at: string } | null; databaseFail?: boolean } = {}) {
       const { recentSecured = { created_at: '2026-04-01T00:00:00Z' }, databaseFail = false } = opts;
@@ -1337,30 +1348,67 @@ describe('cron routes', () => {
       return { anchorsChain, auditEventsChain };
     }
 
-    it('runs smoke tests and returns 5 results', async () => {
+    // SCRUM-1247 (R0-1): smoke test gained a 6th `build-sha-present` check
+    // that pass when BUILD_SHA env is a valid 40-char hex.
+    it('runs smoke tests and returns 6 results', async () => {
       setupHappyPathMocks();
+      process.env.BUILD_SHA = 'a'.repeat(40);
 
       const app = createApp();
       const res = await request(app).post('/cron/smoke-test');
 
       expect(res.body.results).toBeDefined();
       expect(Array.isArray(res.body.results)).toBe(true);
-      expect(res.body.total).toBe(5);
+      expect(res.body.total).toBe(6);
+      expect(res.body.gitSha).toBe('a'.repeat(40));
       expect(res.body.timestamp).toBeDefined();
       const names = res.body.results.map((r: { name: string }) => r.name);
-      expect(names).toEqual(['database', 'anchor-count', 'recent-secured', 'config-sanity', 'rls-active']);
+      expect(names).toEqual([
+        'database',
+        'anchor-count',
+        'recent-secured',
+        'config-sanity',
+        'rls-active',
+        'build-sha-present',
+      ]);
     });
 
-    it('passes all 5 checks when DB and RPCs are healthy', async () => {
+    it('passes all 6 checks when DB, RPCs, and BUILD_SHA are healthy', async () => {
       setupHappyPathMocks();
+      process.env.BUILD_SHA = 'a'.repeat(40);
 
       const app = createApp();
       const res = await request(app).post('/cron/smoke-test');
 
-      expect(res.body.passed).toBe(5);
+      expect(res.body.passed).toBe(6);
       expect(res.body.failed).toBe(0);
       expect(res.body.status).toBe('pass');
       expect(res.status).toBe(200);
+    });
+
+    it('build-sha-present fails when BUILD_SHA is unset', async () => {
+      setupHappyPathMocks();
+      delete process.env.BUILD_SHA;
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const shaCheck = res.body.results.find((r: { name: string }) => r.name === 'build-sha-present');
+      expect(shaCheck.status).toBe('fail');
+      expect(shaCheck.detail).toContain('image was built without --build-arg BUILD_SHA');
+      expect(res.body.gitSha).toBe('unknown');
+    });
+
+    it('build-sha-present fails when BUILD_SHA is malformed (not 40-char hex)', async () => {
+      setupHappyPathMocks();
+      process.env.BUILD_SHA = 'not-a-real-sha';
+
+      const app = createApp();
+      const res = await request(app).post('/cron/smoke-test');
+
+      const shaCheck = res.body.results.find((r: { name: string }) => r.name === 'build-sha-present');
+      expect(shaCheck.status).toBe('fail');
+      expect(res.body.gitSha).toBe('not-a-real-sha');
     });
 
     it('anchor-count uses get_anchor_status_counts_fast RPC, not count:exact', async () => {

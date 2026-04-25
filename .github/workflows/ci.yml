@@ -116,8 +116,11 @@ jobs:
         run: npm run security:license-denylist
 
       - name: Run Sonatype Lifecycle evaluation
+        # SCRUM-1248 (R0-2): continue-on-error stripped. Step is gated on
+        # all four LIFECYCLE secrets being set; if they're absent the
+        # step is skipped entirely (see "Skip Sonatype Lifecycle notice"
+        # below). When secrets ARE set, real findings should fail the PR.
         if: env.SONATYPE_LIFECYCLE_URL != '' && env.SONATYPE_LIFECYCLE_USERNAME != '' && env.SONATYPE_LIFECYCLE_PASSWORD != '' && env.SONATYPE_LIFECYCLE_APPLICATION_ID != ''
-        continue-on-error: true
         uses: sonatype/actions/evaluate@bf9ae3841ee2e1b4fa0603c696358802e414ea4e # v1
         with:
           iq-server-url: ${{ env.SONATYPE_LIFECYCLE_URL }}
@@ -129,6 +132,38 @@ jobs:
       - name: Skip Sonatype Lifecycle notice
         if: env.SONATYPE_LIFECYCLE_URL == '' || env.SONATYPE_LIFECYCLE_USERNAME == '' || env.SONATYPE_LIFECYCLE_PASSWORD == '' || env.SONATYPE_LIFECYCLE_APPLICATION_ID == ''
         run: echo "::warning::Sonatype Lifecycle scan skipped; configure SONATYPE_LIFECYCLE_* secrets to enable remote findings/comments."
+
+  # SCRUM-1249 (R0-3): coverage thresholds monotonic enforcement.
+  # Fails PR if any per-file coverage threshold in vitest.config.ts or
+  # services/worker/vitest.config.ts has decreased vs origin/main, unless
+  # the PR is labeled `coverage-drop-allowed` AND its body links a
+  # `coverage-restoration` Jira ticket (`Linked Jira: SCRUM-NNNN`).
+  coverage-monotonic:
+    name: Coverage Monotonic Enforcement
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Check coverage thresholds monotonic
+        env:
+          # On PR events, BASE_REF_SHA is the merge target; on push to main, fall back to HEAD~1
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: npx tsx scripts/ci/check-coverage-monotonic.ts
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
@@ -183,6 +218,25 @@ jobs:
       - name: Lint UI copy terms
         run: npm run lint:copy
 
+      # SCRUM-1250 (R0-4): worker lint runs in BOTH ci.yml (here) and
+      # deploy-worker.yml — same `npm run lint` invocation, same source of
+      # truth (services/worker/package.json + eslint.config.js). Catches
+      # worker lint drift at PR time rather than at deploy time, so the
+      # 2026-04-25 deploy-pipeline-down-for-12-hours scenario stops repeating.
+      - name: Install worker dependencies
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      - name: Lint worker (deploy-gate parity)
+        working-directory: services/worker
+        run: npm run lint
+
+      - name: Verify deploy-gate / CI lint parity (R0-4)
+        # Fails CI if anyone reverts deploy-worker.yml back to inlined
+        # `npx eslint src/ --max-warnings 0` (or any other drift). The
+        # 2026-04-25 outage was caused by exactly this drift.
+        run: npx tsx scripts/ci/check-deploy-lint-parity.ts
+
       - name: TypeScript check (edge workers)
         env:
           NODE_OPTIONS: '--max-old-space-size=8192'
@@ -220,6 +274,12 @@ jobs:
         run: npm run gen:types
 
       - name: Check for uncommitted type changes
+        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
+        # sub-story to regenerate src/types/database.types.ts against the
+        # current Supabase CLI version + commit. Last attempt produced a
+        # 2,338-line drift dominated by Supabase CLI version differences
+        # (graphql_public schema added, __InternalSupabase removed) — too
+        # broad to ride along this PR. Sub-story tracked under SCRUM-1248.
         if: steps.supabase-start.outcome == 'success'
         continue-on-error: true
         run: |
@@ -242,6 +302,12 @@ jobs:
     needs: [typecheck-lint, tdd-enforcement]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # SCRUM-1249 (R0-3): scripts/ci/check-coverage-monotonic.test.ts
+          # spawns the script which resolves BASE_REF_SHA (set globally at
+          # ci.yml:29). On the default fetch-depth: 1 the PR base SHA isn't
+          # in the local repo and resolveBaseRefOrFail exits 1.
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -278,15 +344,12 @@ jobs:
         run: npm run test:coverage
 
       - name: Run RLS tests
-        # Non-blocking: tests/rls/p7.test.ts has 8 pre-existing assertion
-        # failures that pre-date this branch — trigger error-message copy
-        # drift (e.g. "Only the system can change…" vs test's older
-        # "Cannot set status to SECURED directly"), a missing get_flag
-        # function (PGRST202), and an 'ACTIVE' status literal that no
-        # longer exists. These were invisible because the Tests job was
-        # being skipped behind a failing tdd-enforcement gate. Mark
-        # non-blocking so main unblocks, then file a follow-up to realign
-        # the assertions with current schema + copy.
+        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
+        # sub-story to realign 8 pre-existing assertion failures in
+        # tests/rls/p7.test.ts (error-message copy drift, missing get_flag
+        # function PGRST202, removed 'ACTIVE' status literal). Sub-story
+        # tracked under SCRUM-1248. DO NOT remove this annotation without
+        # closing the sub-story.
         continue-on-error: true
         run: npm run test:rls
         env:
@@ -391,17 +454,42 @@ jobs:
         # keeps CI non-interactive.
         run: yes | npx tla-precheck setup || true
 
+      - name: Pin TLA2TOOLS_JAR (workaround tla-precheck checksum bug)
+        # SCRUM-1248 (R0-2): tla-precheck@0.1.7 has a hard-coded expected
+        # SHA256 for the v1.8.0 jar that no longer matches upstream. We
+        # download the jar directly from the official tlaplus/tlaplus
+        # release, verify SHA256 against a pinned value (SEC-004 baseline:
+        # supply-chain integrity for every external download), and point
+        # tla-precheck at it via TLA2TOOLS_JAR env. Remove this step when
+        # tla-precheck ships a fix.
+        #
+        # Code-review #2 (PR #562): the SHA256 below was computed via
+        # `curl ... | sha256sum` against the official release on 2026-04-25.
+        # Update the pin if upstream re-cuts the v1.8.0 release (rare for
+        # finalized GitHub releases — they're effectively immutable).
+        if: steps.tla-changed.outputs.changed == 'true'
+        env:
+          TLA2TOOLS_SHA256: d5d07d5dab38ddb840c91ec48fa02f28b37a608d5af9a73570018591dbc8ef7f
+        run: |
+          mkdir -p "$HOME/.tla"
+          curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
+            "https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar"
+          ACTUAL=$(sha256sum "$HOME/.tla/tla2tools.jar" | awk '{print $1}')
+          if [ "$ACTUAL" != "$TLA2TOOLS_SHA256" ]; then
+            echo "::error::tla2tools.jar SHA256 mismatch — supply-chain integrity check failed"
+            echo "  expected: $TLA2TOOLS_SHA256"
+            echo "  actual:   $ACTUAL"
+            exit 1
+          fi
+          echo "✅ tla2tools.jar SHA256 verified ($ACTUAL)"
+          echo "TLA2TOOLS_JAR=$HOME/.tla/tla2tools.jar" >> "$GITHUB_ENV"
+
       - name: Run TLA+ PreCheck verification
+        # SCRUM-1248 (R0-2): continue-on-error stripped. Per CLAUDE.md §1.7
+        # TLA+ verification is mandatory on the bitcoinAnchor machine. The
+        # job is conditional on machine/anchor/chain code actually changing.
         if: steps.tla-changed.outputs.changed == 'true'
         working-directory: machines
-        # Non-blocking: tla-precheck@0.1.7 has a hard-coded expected SHA256
-        # for the TLC v1.8.0 jar that no longer matches the upstream file
-        # ("TLC checksum mismatch"), so `tla-precheck setup` fails to
-        # install the jar in clean CI environments. Verification still runs
-        # locally and when developers pre-install the jar via `tla-precheck
-        # setup`. Remove continue-on-error once tla-precheck ships a fix
-        # (or pin TLA2TOOLS_JAR explicitly in CI).
-        continue-on-error: true
         run: npx tla-precheck check bitcoinAnchor.machine.ts
 
   # Migration safety gate (SCALE-20) — verify migrations are additive-only
@@ -518,11 +606,11 @@ jobs:
         run: supabase db reset
 
       - name: Run E2E tests
-        # Non-blocking: authenticated-page specs (dashboard, anchor-creation)
-        # are hitting 30s per-test timeouts and exhausting the 10-minute
-        # job budget on every run — pre-existing and invisible while the
-        # Tests gate kept E2E from running at all. Marking non-blocking
-        # until the auth/setup regression is root-caused in a follow-up.
+        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
+        # sub-story to root-cause Playwright auth-setup regression
+        # (authenticated-page specs hitting 30s per-test timeouts, blowing
+        # the 10-min job budget). Sub-story tracked under SCRUM-1248. DO
+        # NOT remove this annotation without closing the sub-story.
         continue-on-error: true
         run: npx playwright test --project=chromium
         timeout-minutes: 10
@@ -573,7 +661,10 @@ jobs:
           configPath: '.lighthouserc.json'
           uploadArtifacts: true
           temporaryPublicStorage: true
-        # Non-blocking until baseline is established
+        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
+        # sub-story to establish a 7-day rolling baseline (median LCP/CLS/
+        # INP from main) and a 10% drift threshold. Sub-story tracked under
+        # SCRUM-1248. DO NOT remove without closing the sub-story.
         continue-on-error: true
 
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
