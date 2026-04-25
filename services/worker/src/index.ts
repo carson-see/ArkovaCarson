@@ -22,6 +22,7 @@ import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
 import { rateLimiters } from './utils/rateLimit.js';
 import { apiV1Router } from './api/v1/router.js';
+import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 
 // Extracted routers (ARCH-1)
@@ -211,6 +212,9 @@ app.get('/.well-known/openapi.json', (_req, res) => {
 // Agent-ready v2 OpenAPI 3.1 spec — public for tool importers.
 import { apiV2OpenApiHandler } from './api/v2/openapi.js';
 app.get('/v2/openapi.json', apiV2OpenApiHandler);
+
+// v1 deprecation calendar — applies to every /api/v1 response, including side routers.
+app.use('/api/v1', v1DeprecationHeaders);
 
 // Identity & org verification — internal (frontend-facing), not behind feature gate
 app.use('/api/v1/identity', rateLimiters.api, requireAuthMw, identityRouter);
