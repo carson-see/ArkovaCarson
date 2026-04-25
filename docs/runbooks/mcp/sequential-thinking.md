@@ -11,16 +11,9 @@ claude mcp add google-dev-knowledge --transport stdio -- npx -y @google/develope
 export GOOGLE_DEVELOPER_API_KEY=...   # from GCP Secret Manager: google_developer_api_key
 ```
 
-## When to use Sequential Thinking
+## When to use (repo-specific)
 
-- Designing a state machine before writing TLA+ in `machines/*.machine.ts`
-- Multi-component failure debugging (worker → Supabase → Cloudflare edge)
-- Sprint planning decomposition
-- PR review > 500 LoC
+- **Sequential Thinking**: designing a state machine before writing TLA+ in `machines/*.machine.ts`; debugging across worker → Supabase → Cloudflare edge.
+- **Google Developer Knowledge**: any Vertex AI / Cloud Run / KMS / Secret Manager call — verify current request schema before writing the call. APIs change quarterly.
 
-## When to use Google Developer Knowledge
-
-- Any GCP API call — verify current request schema (Vertex APIs change quarterly)
-- Cloud Run cost estimation
-- IAM role audit (`roles/X` semantics shift between releases)
-- Vertex AI quota planning
+For generic use cases (sprint planning, GCP cost estimation), see the Confluence page.

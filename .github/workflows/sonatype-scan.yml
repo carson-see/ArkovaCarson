@@ -6,9 +6,14 @@ on:
     paths:
       - '**/package.json'
       - '**/package-lock.json'
-      - '.github/workflows/dependency-scan.yml'
+      - '.github/workflows/sonatype-scan.yml'
   schedule:
     - cron: '0 12 * * 1'
+
+# Saves Actions minutes — newer commits cancel stale runs.
+concurrency:
+  group: sonatype-scan-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -27,12 +32,15 @@ jobs:
           - { name: edge, path: services/edge }
           - { name: embed, path: packages/embed }
           # packages/sdk excluded — no lockfile yet
+    env:
+      # OSS Index API caps `coordinates` at 128 entries per request.
+      BATCH_SIZE: 128
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - id: gcp-auth
         name: Authenticate to GCP via Workload Identity Federation
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed  # v2.1.13
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
@@ -58,7 +66,6 @@ jobs:
       - name: Generate dependency manifest
         working-directory: ${{ matrix.workspace.path }}
         run: |
-          # Preserve stderr so peer-dep warnings surface in the Actions log.
           npm ls --all --json --omit=dev > deps.json || true
           jq '[.. | objects | select(.version) | "pkg:npm/\(.name)@\(.version)"] | unique' deps.json > purls.json
           echo "PURL count: $(jq length purls.json)"
@@ -70,21 +77,19 @@ jobs:
         env:
           SONATYPE_TOKEN: ${{ steps.sonatype-secrets.outputs.token }}
         run: |
-          # Sonatype OSS Index caps `coordinates` at 128 entries per request.
-          # Split purls into 128-entry batches, POST each, concatenate the arrays.
-          jq -c '[_nwise(128)]' purls.json > batches.json
-          echo "[]" > report.json
+          jq -c "[_nwise($BATCH_SIZE)]" purls.json > batches.json
           BATCH_COUNT=$(jq length batches.json)
-          echo "Posting $BATCH_COUNT batch(es) to OSS Index"
-          for i in $(seq 0 $((BATCH_COUNT - 1))); do
-            jq ".[$i] | {coordinates: .}" batches.json > req.json
-            curl -sSf -H "Authorization: Bearer $SONATYPE_TOKEN" \
-              -H "Content-Type: application/json" \
-              -X POST https://ossindex.sonatype.org/api/v3/component-report \
-              -d @req.json > batch-report.json
-            jq -s '.[0] + .[1]' report.json batch-report.json > report.json.tmp
-            mv report.json.tmp report.json
-          done
+          echo "Posting $BATCH_COUNT batch(es) to OSS Index in parallel"
+          mkdir -p batch-reports
+          # Parallel POSTs — independent requests, ~6 batches typical, ~6× speedup.
+          seq 0 $((BATCH_COUNT - 1)) | xargs -P 6 -I{} sh -c '
+            jq ".[{}] | {coordinates: .}" batches.json | \
+              curl -sSf -H "Authorization: Bearer '"$SONATYPE_TOKEN"'" \
+                -H "Content-Type: application/json" \
+                -X POST https://ossindex.sonatype.org/api/v3/component-report \
+                -d @- > batch-reports/{}.json
+          '
+          jq -s 'add' batch-reports/*.json > report.json
           HIGH=$(jq '[.[] | .vulnerabilities[]? | select((.cvssScore // 0) >= 7)] | length' report.json)
           MED=$(jq '[.[] | .vulnerabilities[]? | select((.cvssScore // 0) >= 4 and (.cvssScore // 0) < 7)] | length' report.json)
           echo "high=$HIGH" >> "$GITHUB_OUTPUT"
@@ -128,7 +133,8 @@ jobs:
         if: always() && steps.sonatype-secrets.outputs.token != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: sbom-${{ matrix.workspace.name }}
+          # Disambiguate from the CycloneDX SBOM produced by ci.yml's sbom-generation job.
+          name: sonatype-report-${{ matrix.workspace.name }}
           path: |
             ${{ matrix.workspace.path }}/deps.json
             ${{ matrix.workspace.path }}/purls.json

@@ -1,4 +1,4 @@
-# Sonatype MCP + dependency-scan CI — engineering notes
+# Sonatype MCP + sonatype-scan CI — engineering notes
 
 > **Confluence (canonical):** [MCP-EXPAND-02 — Sonatype MCP + CI dependency scan](https://arkova.atlassian.net/wiki/spaces/A/pages/26279938)
 > **Jira:** SCRUM-1068
@@ -8,13 +8,12 @@
 
 ```bash
 claude mcp add sonatype --transport stdio -- npx -y @sonatype/sonatype-mcp
-export SONATYPE_OSS_INDEX_USER=...
-export SONATYPE_OSS_INDEX_TOKEN=...   # from GCP Secret Manager: sonatype_oss_index_token
+export SONATYPE_OSS_INDEX_TOKEN=...   # from GCP Secret Manager: sonatype
 ```
 
 ## CI workflow
 
-[`.github/workflows/dependency-scan.yml`](../../../.github/workflows/dependency-scan.yml) runs on PR open/sync targeting `main` (plus weekly cron). Severity ≥ HIGH blocks merge, MEDIUM/LOW warns. SBOM artifacts retained 90 days.
+[`.github/workflows/sonatype-scan.yml`](../../../.github/workflows/sonatype-scan.yml) runs on PR open/sync targeting `main` (plus weekly cron). Severity ≥ HIGH blocks merge, MEDIUM/LOW warns. Sonatype reports retained 90 days as `sonatype-report-<workspace>` artifacts (distinct from the CycloneDX SBOM produced by `ci.yml`).
 
 **Auth path:** GitHub Actions → GCP Workload Identity Federation (existing repo secrets `GCP_SERVICE_ACCOUNT` + `GCP_WORKLOAD_IDENTITY_PROVIDER`) → `google-github-actions/get-secretmanager-secrets@v2` → pulls the `sonatype` secret from GCP project `arkova1` and uses it as `Authorization: Bearer` against the OSS Index API. **No Sonatype creds in GitHub repo secrets** — aligns with SCRUM-1055 SEC-HARDEN-02.
 
