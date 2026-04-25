@@ -14,6 +14,28 @@
 
 ## Now
 
+### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
+
+**Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
+
+| Path | Provider | Sovereign? |
+|---|---|---|
+| Broadcast (`sendrawtransaction`) | GetBlock RPC | ✅ yes |
+| UTXO listing (`listunspent`) | GetBlock RPC → falls back to `mempool.space` | ❌ no — GetBlock shared endpoint returns "Method not allowed" |
+| Fee estimation | `mempool.space` | ❌ no — `estimatesmartfee` is supported by GetBlock but worker has no `RpcFeeEstimator` |
+| `getrawtransaction` / `getblockheader` | GetBlock RPC | ✅ likely yes |
+| Frontend treasury balance polling | Browser → `mempool.space` directly | ❌ no — `useTreasuryBalance.ts:159-164` |
+
+**Signing**: `BITCOIN_TREASURY_WIF` in Secret Manager is the active signer (`client.ts:279`: *"WIF takes precedence (current)"*). `KMS_PROVIDER=gcp` env is set but only consulted when WIF is unset. The "GCP KMS (prod)" claim in CLAUDE.md was historically inaccurate — this commit corrects it. WIF was rotated 2026-04-18 per `docs/bugs/treasury_wif_mismatch.md` — proves WIF is the live signer, not KMS.
+
+**Ultrareview + false-claims forensic (in progress 2026-04-25)**: 18 read-only ultrareview agents + 8 false-done forensic trails complete. Recovery epic + 5 prioritized Jira releases (R0–R4) being created. R0 is the **anti-false-done infrastructure** (build-SHA in `/health`, deploy-gate alignment, CI gates de-`continue-on-error`, Jira workflow validators, Sentry drift telemetry) — block-everything prerequisite to all other recovery work, because shipping fixes without R0 just adds to the receipt trail.
+
+**Smoke tests STILL not deployed.** SCRUM-1235 PR #547 merged 13:37 UTC but `deploy-worker.yml` `pre-deploy-checks` fails on `eslint --max-warnings 0` against pre-existing warnings. Cloud Run image SHA on revisions `00394` / `00395` / `00396` / `00397` / `00398` is identical (`b8bf567f4...`) — the state from BEFORE SCRUM-1227's deploy gate landed. ~12 commits including SCRUM-1235 never reached prod since 09:04 UTC today. The 9:43 AM smoke run that showed 60s timeouts was correct verification of un-deployed code. Tracked as Release-0 / R1-CRITICAL: deploy unblock.
+
+**Bug-tracker entry pending** for the false-done audit findings (manual sheet, human-only step).
+
+---
+
 ### 2026-04-25 — Compliance Inbox release: 16/16 stories shipped across 4 PRs
 
 Closed [release 10233](https://arkova.atlassian.net/projects/SCRUM/versions/10233/tab/release-report-all-issues) (Compliance Inbox & Custom Rules Execution Loop) end-to-end. 4 PRs covering 16 stories:
