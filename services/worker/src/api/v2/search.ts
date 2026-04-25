@@ -75,17 +75,19 @@ async function searchOrgs(q: string, limit: number, offset: number): Promise<Sea
     return [];
   }
 
-  return (data ?? []).map(org => ({
-    type: 'org' as const,
-    public_id: org.public_id,
-    score: 1.0,
-    snippet: org.display_name ?? '',
-    metadata: {
-      description: org.description,
-      domain: org.domain,
-      website_url: org.website_url,
-    },
-  }));
+  return (data ?? [])
+    .filter((org): org is typeof org & { public_id: string } => org.public_id != null)
+    .map(org => ({
+      type: 'org' as const,
+      public_id: org.public_id,
+      score: 1.0,
+      snippet: org.display_name ?? '',
+      metadata: {
+        description: org.description,
+        domain: org.domain,
+        website_url: org.website_url,
+      },
+    }));
 }
 
 async function searchRecords(
@@ -110,13 +112,15 @@ async function searchRecords(
     return [];
   }
 
-  return (data ?? []).map(rec => ({
-    type: 'record' as const,
-    public_id: rec.public_id,
-    score: 1.0,
-    snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
-    metadata: { credential_type: rec.credential_type, status: rec.status },
-  }));
+  return (data ?? [])
+    .filter((rec): rec is typeof rec & { public_id: string } => rec.public_id != null)
+    .map(rec => ({
+      type: 'record' as const,
+      public_id: rec.public_id,
+      score: 1.0,
+      snippet: rec.filename ?? rec.description ?? rec.credential_type ?? '',
+      metadata: { credential_type: rec.credential_type, status: rec.status },
+    }));
 }
 
 async function searchFingerprints(
@@ -140,13 +144,15 @@ async function searchFingerprints(
     return [];
   }
 
-  return (data ?? []).map(rec => ({
-    type: 'fingerprint' as const,
-    public_id: rec.public_id,
-    score: 1.0,
-    snippet: rec.filename ?? rec.fingerprint ?? '',
-    metadata: { status: rec.status },
-  }));
+  return (data ?? [])
+    .filter((rec): rec is typeof rec & { public_id: string } => rec.public_id != null)
+    .map(rec => ({
+      type: 'fingerprint' as const,
+      public_id: rec.public_id,
+      score: 1.0,
+      snippet: rec.filename ?? rec.fingerprint ?? '',
+      metadata: { status: rec.status },
+    }));
 }
 
 async function searchDocuments(
@@ -177,13 +183,15 @@ async function searchDocuments(
     return [];
   }
 
-  return (data ?? []).map(doc => ({
-    type: 'document' as const,
-    public_id: doc.public_id,
-    score: 1.0,
-    snippet: doc.filename ?? doc.description ?? '',
-    metadata: { credential_type: doc.credential_type, status: doc.status },
-  }));
+  return (data ?? [])
+    .filter((doc): doc is typeof doc & { public_id: string } => doc.public_id != null)
+    .map(doc => ({
+      type: 'document' as const,
+      public_id: doc.public_id,
+      score: 1.0,
+      snippet: doc.filename ?? doc.description ?? '',
+      metadata: { credential_type: doc.credential_type, status: doc.status },
+    }));
 }
 
 export function buildSearchHandler(forcedType?: Exclude<SearchType, 'all'>) {

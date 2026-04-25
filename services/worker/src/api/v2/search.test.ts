@@ -110,6 +110,27 @@ describe('GET /api/v2/search', () => {
     expect(res.body.results[0].id).toBeUndefined();
   });
 
+  it('drops rows with null public_id (defense-in-depth for CLAUDE.md §6)', async () => {
+    // The DB query already adds .not('public_id','is',null) but the row TYPE
+    // is still nullable. The post-map() filter must drop any row that slips
+    // through (e.g. legacy rows pre-public_id backfill) so we never expose an
+    // internal UUID under public_id.
+    mockOrder.mockResolvedValueOnce({
+      data: [
+        { id: 'leaky-1', public_id: null, display_name: 'Legacy Org', description: null, domain: null, website_url: null },
+        { id: 'good-1', public_id: 'org_keep', display_name: 'Keep Me', description: null, domain: null, website_url: null },
+      ],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=acme&type=org');
+    expect(res.status).toBe(200);
+    expect(res.body.results).toHaveLength(1);
+    expect(res.body.results[0].public_id).toBe('org_keep');
+    expect(JSON.stringify(res.body)).not.toContain('leaky-1');
+  });
+
   it('supports type=all across orgs, records, fingerprints, and documents', async () => {
     mockOrder
       .mockResolvedValueOnce({
