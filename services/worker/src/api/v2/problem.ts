@@ -73,6 +73,33 @@ export class ProblemError extends Error {
     );
   }
 
+  static invalidApiKey(): ProblemError {
+    return new ProblemError(
+      ProblemTypes.INVALID_API_KEY,
+      'Invalid API Key',
+      401,
+      'The provided API key is invalid or does not exist.',
+    );
+  }
+
+  static apiKeyRevoked(): ProblemError {
+    return new ProblemError(
+      ProblemTypes.API_KEY_REVOKED,
+      'API Key Revoked',
+      401,
+      'This API key has been revoked.',
+    );
+  }
+
+  static apiKeyExpired(): ProblemError {
+    return new ProblemError(
+      ProblemTypes.API_KEY_EXPIRED,
+      'API Key Expired',
+      401,
+      'This API key has expired.',
+    );
+  }
+
   static validationError(detail: string): ProblemError {
     return new ProblemError(
       ProblemTypes.VALIDATION_ERROR,
@@ -106,6 +133,15 @@ export class ProblemError extends Error {
       'Internal Server Error',
       500,
       detail,
+    );
+  }
+
+  static serviceUnavailable(detail?: string): ProblemError {
+    return new ProblemError(
+      ProblemTypes.SERVICE_UNAVAILABLE,
+      'Service Unavailable',
+      503,
+      detail ?? 'The service is temporarily unavailable.',
     );
   }
 }

@@ -24,6 +24,10 @@ import {
   handleAnchorDocument,
   handleVerifyDocument,
   handleVerifyBatch,
+  handleAgentSearch,
+  handleAgentVerify,
+  handleAgentListOrgs,
+  handleAgentGetAnchor,
   supabaseFetch,
   type SupabaseConfig,
   type ToolResult,
@@ -248,6 +252,54 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
   );
 
   tool(
+    'search',
+    TOOL_DESC.search,
+    {
+      q: freeTextQuerySchema.describe('Natural language query or exact SHA-256 fingerprint'),
+      type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional().describe('Optional result filter (default: all)'),
+      max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
+    },
+    withTelemetry(
+      'search',
+      async ({ q, type, max_results }) => handleAgentSearch({ q, type, max_results }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'verify',
+    TOOL_DESC.verify,
+    { fingerprint: contentHashSchema.describe('SHA-256 fingerprint of the document to verify') },
+    withTelemetry(
+      'verify',
+      async ({ fingerprint }) => handleAgentVerify({ fingerprint }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'list_orgs',
+    TOOL_DESC.list_orgs,
+    {},
+    withTelemetry(
+      'list_orgs',
+      async () => handleAgentListOrgs(config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'get_anchor',
+    TOOL_DESC.get_anchor,
+    { public_id: publicIdSchema.describe('Arkova public identifier (e.g., ARK-DOC-ABCDEF)') },
+    withTelemetry(
+      'get_anchor',
+      async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
     'nessie_query',
     TOOL_DESC['nessie_query'],
     {
@@ -421,6 +473,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           'only their cryptographic fingerprints are submitted.',
           '',
           'Available tools:',
+          '  search               — Agent-friendly v2 search across orgs, records, fingerprints, and documents',
+          '  verify               — Verify a document fingerprint by SHA-256 hash',
+          '  list_orgs            — List organizations available to the authenticated caller',
+          '  get_anchor           — Fetch redacted public anchor metadata by Arkova public ID',
           '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
           '  search_credentials   — Semantic search across the anchored records corpus',
           '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',

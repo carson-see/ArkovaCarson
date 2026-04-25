@@ -38,4 +38,13 @@ export type {
   CreateWebhookInput,
   UpdateWebhookInput,
   PaginatedWebhooks,
+  RetryConfig,
+  ProblemDetail,
+  SearchType,
+  SearchOptions,
+  SearchResult,
+  SearchResponse,
+  FingerprintVerification,
+  AnchorDetails,
+  OrganizationSummary,
 } from './types';

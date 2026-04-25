@@ -17,6 +17,10 @@ import {
   handleVerifyCredential,
   handleSearchCredentials,
   handleVerifyBatch,
+  handleAgentSearch,
+  handleAgentVerify,
+  handleAgentListOrgs,
+  handleAgentGetAnchor,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
 
@@ -40,8 +44,8 @@ afterEach(() => {
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
 describe('TOOL_DEFINITIONS', () => {
-  it('exports 6 tool definitions (5 original + INT-02 verify_batch)', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(6);
+  it('exports legacy tools plus v2 agent aliases', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(10);
   });
 
   it('all tools have name, description, and inputSchema', () => {
@@ -49,13 +53,14 @@ describe('TOOL_DEFINITIONS', () => {
       expect(tool.name).toBeTruthy();
       expect(tool.description).toBeTruthy();
       expect(tool.inputSchema.type).toBe('object');
-      expect(tool.inputSchema.required.length).toBeGreaterThan(0);
+      expect(Array.isArray(tool.inputSchema.required)).toBe(true);
     }
   });
 
-  it('exposes verify_batch (INT-02)', () => {
+  it('exposes verify_batch and v2 agent aliases', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('verify_batch');
+    expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
   });
 });
 
@@ -125,6 +130,79 @@ describe('handleSearchCredentials', () => {
     expect(parsed.total).toBe(1);
     expect(parsed.results[0].rank).toBe(1);
     expect(parsed.results[0].status).toBe('ACTIVE');
+  });
+});
+
+// ── Agent v2 aliases (SCRUM-1107) ─────────────────────────────────────
+
+describe('agent v2 MCP aliases', () => {
+  it('search(q,type=org) calls the public org search RPC', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{ id: 'org-1', display_name: 'Acme Corp', domain: 'acme.com' }]),
+    });
+
+    const result = await handleAgentSearch({ q: 'acme', type: 'org', max_results: 5 }, CONFIG);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results[0]).toMatchObject({ type: 'org', id: 'org-1' });
+    expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
+  });
+
+  it('verify(fingerprint) delegates to document verification', async () => {
+    const validHash = 'c'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        id: 'rec-1',
+        source: 'mcp',
+        content_hash: validHash,
+        metadata: {},
+        anchor_id: null,
+      }]),
+    });
+
+    const result = await handleAgentVerify({ fingerprint: validHash }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe('PENDING');
+  });
+
+  it('get_anchor(public_id) delegates to public anchor lookup', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        org_name: 'Test Org',
+        credential_type: 'LICENSE',
+        created_at: '2026-01-01',
+      }),
+    });
+
+    const result = await handleAgentGetAnchor({ public_id: 'ARK-LIC-ABC' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+  });
+
+  it('list_orgs scopes the query by authenticated user id', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        role: 'ORG_ADMIN',
+        organizations: {
+          id: 'org-1',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+        },
+      }]),
+    });
+
+    const result = await handleAgentListOrgs(CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.organizations[0]).toMatchObject({ id: 'org-1', role: 'ORG_ADMIN' });
+    expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
   });
 });
 
