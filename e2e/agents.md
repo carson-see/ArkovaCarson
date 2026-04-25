@@ -67,3 +67,4 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 | 2026-03-11 12:00 AM EST | Phase E complete. Created performance.spec.ts (5 tests). Stress/load tests in `tests/load/` (4 files, 25 tests). |
 | 2026-03-10 11:30 PM EST | Security: moved hard-coded seed passwords + service key to env vars (SonarQube S2068). Added `dotenv` + `.env.test` + `.env.test.example`. |
 | 2026-03-12 | MVP audit: 14 launch gap stories identified (see `docs/stories/11_mvp_launch_gaps.md`). E2E targets for new flows: MVP-03 legal pages (routing), MVP-05 error boundary + 404 page, MVP-02 toast notifications, MVP-06 file-based verification, MVP-07 mobile responsive layout. |
+| 2026-04-24 | SCRUM-1091 (PUBLIC-ORG-08): Added `public-org-page.spec.ts` — anonymous-visitor flow at `/issuer/:orgId` covering desktop (1280px), mobile (375px), JSON-LD + OG/Twitter meta presence. |

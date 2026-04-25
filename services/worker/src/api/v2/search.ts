@@ -21,7 +21,10 @@ const SearchQuerySchema = z.object({
 
 interface SearchResult {
   type: SearchResultType;
-  public_id: string;
+  // Nullable: source rows may have NULL public_id (rows still anchoring or
+  // pre-public-id schema). Downstream filter at the result-shape layer drops
+  // any null entries before they reach the API response.
+  public_id: string | null;
   score: number;
   snippet: string;
   metadata?: Record<string, unknown>;

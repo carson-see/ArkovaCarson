@@ -633,7 +633,7 @@ describe('identity.verification_session.verified', () => {
     const verifiedCall = profilesUpdate.mock.calls.find((call: unknown[]) => {
       const arg = call[0] as Record<string, unknown> | undefined;
       return arg && arg.kyc_provider === 'stripe_identity';
-    });
+    }) as [Record<string, unknown>] | undefined;
     expect(verifiedCall).toBeDefined();
     expect(verifiedCall?.[0]).toMatchObject({
       identity_verification_status: 'verified',

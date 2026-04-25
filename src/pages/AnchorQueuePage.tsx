@@ -29,7 +29,7 @@ import { formatAge } from '@/lib/formatters';
 import { AlertTriangle, CheckCircle, Inbox, Keyboard, Loader2, Play } from 'lucide-react';
 
 interface PendingAnchor {
-  id: string;
+  public_id: string;
   external_file_id: string | null;
   filename: string | null;
   fingerprint: string;
@@ -59,7 +59,7 @@ const POLL_INTERVAL_MS = 30_000;
 function groupByExternal(rows: PendingAnchor[]): Group[] {
   const byKey = new Map<string, PendingAnchor[]>();
   for (const r of rows) {
-    const key = r.external_file_id ?? `__noid:${r.id}`;
+    const key = r.external_file_id ?? `__noid:${r.public_id}`;
     const arr = byKey.get(key) ?? [];
     arr.push(r);
     byKey.set(key, arr);
@@ -76,7 +76,7 @@ function groupByExternal(rows: PendingAnchor[]): Group[] {
 function rowsEqual(a: PendingAnchor[], b: PendingAnchor[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
-    if (a[i].id !== b[i].id || a[i].fingerprint !== b[i].fingerprint) return false;
+    if (a[i].public_id !== b[i].public_id || a[i].fingerprint !== b[i].fingerprint) return false;
   }
   return true;
 }
@@ -197,7 +197,7 @@ function QueueInner() {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<PendingAnchor[]>([]);
   const [dialogGroup, setDialogGroup] = useState<Group | null>(null);
-  const [selectedAnchorId, setSelectedAnchorId] = useState<string | null>(null);
+  const [selectedPublicId, setSelectedPublicId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [running, setRunning] = useState(false);
@@ -272,12 +272,12 @@ function QueueInner() {
 
   function openDialog(g: Group): void {
     setDialogGroup(g);
-    setSelectedAnchorId(g.rows[0]?.id ?? null);
+    setSelectedPublicId(g.rows[0]?.public_id ?? null);
     setReason('');
   }
 
   async function resolve(): Promise<void> {
-    if (!dialogGroup || !selectedAnchorId) return;
+    if (!dialogGroup || !selectedPublicId) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -285,7 +285,7 @@ function QueueInner() {
         method: 'POST',
         body: JSON.stringify({
           external_file_id: dialogGroup.external_file_id,
-          selected_anchor_id: selectedAnchorId,
+          selected_public_id: selectedPublicId,
           reason: reason.trim() || undefined,
         }),
       });
@@ -471,9 +471,9 @@ function QueueInner() {
             <div className="space-y-4">
               <ul className="space-y-2">
                 {dialogGroup.rows.map((r) => {
-                  const checked = selectedAnchorId === r.id;
+                  const checked = selectedPublicId === r.public_id;
                   return (
-                    <li key={r.id}>
+                    <li key={r.public_id}>
                       <label
                         className={`flex items-start gap-3 rounded-md border p-3 cursor-pointer ${
                           checked ? 'border-primary bg-primary/5' : 'border-border'
@@ -482,13 +482,13 @@ function QueueInner() {
                         <input
                           type="radio"
                           name="winner"
-                          value={r.id}
+                          value={r.public_id}
                           checked={checked}
-                          onChange={() => setSelectedAnchorId(r.id)}
+                          onChange={() => setSelectedPublicId(r.public_id)}
                           className="mt-1"
                         />
                         <div className="text-sm space-y-1 break-all">
-                          <div className="font-medium">{r.filename ?? r.id}</div>
+                          <div className="font-medium">{r.filename ?? r.public_id}</div>
                           <div className="text-xs text-muted-foreground">
                             fingerprint: {r.fingerprint}
                           </div>
@@ -519,7 +519,7 @@ function QueueInner() {
             </Button>
             <Button
               onClick={resolve}
-              disabled={!selectedAnchorId || submitting}
+              disabled={!selectedPublicId || submitting}
               data-testid="queue-resolve-submit"
             >
               {submitting ? 'Resolving…' : (

@@ -21,7 +21,7 @@ import { mapRpcErrorToStatus } from './rpc-error-status.js';
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
 
 export interface PendingResolutionAnchor {
-  id: string;
+  public_id: string;
   external_file_id: string | null;
   filename: string | null;
   fingerprint: string;
@@ -29,9 +29,13 @@ export interface PendingResolutionAnchor {
   sibling_count: number;
 }
 
+// Preliminary syntactic check (defense-in-depth on top of the SECURITY DEFINER
+// public_id lookup). Mirrors `publicIdSchema` in services/edge/src/mcp-tool-schemas.ts.
+const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
+
 export const ResolveQueueInput = z.object({
   external_file_id: z.string().trim().min(1).max(255),
-  selected_anchor_id: z.string().uuid(),
+  selected_public_id: z.string().trim().regex(PUBLIC_ID_RE).max(64),
   reason: z.string().trim().max(2000).optional(),
 });
 
@@ -107,7 +111,7 @@ export async function handleResolveQueue(
   try {
     const { data, error } = await callRpc<string>(db, 'resolve_anchor_queue', {
       p_external_file_id: parsed.data.external_file_id,
-      p_selected_anchor_id: parsed.data.selected_anchor_id,
+      p_selected_public_id: parsed.data.selected_public_id,
       p_reason: parsed.data.reason ?? null,
     });
 
@@ -129,7 +133,7 @@ export async function handleResolveQueue(
 
     res.json({ resolution_id: data });
     const notificationOrgId = actorUserId
-      ? await getSelectedAnchorOrgId(parsed.data.selected_anchor_id)
+      ? await getSelectedAnchorOrgIdByPublicId(parsed.data.selected_public_id)
       : null;
     if (notificationOrgId) {
       void emitOrgAdminNotifications({
@@ -138,7 +142,7 @@ export async function handleResolveQueue(
         payload: {
           resolutionId: data,
           externalFileId: parsed.data.external_file_id,
-          selectedAnchorId: parsed.data.selected_anchor_id,
+          selectedPublicId: parsed.data.selected_public_id,
           actorUserId,
         },
       });
@@ -257,15 +261,15 @@ export async function handleRunOrgAnchorQueue(
   }
 }
 
-async function getSelectedAnchorOrgId(anchorId: string): Promise<string | null> {
+async function getSelectedAnchorOrgIdByPublicId(publicId: string): Promise<string | null> {
   const { data, error } = await db
     .from('anchors')
     .select('org_id')
-    .eq('id', anchorId)
+    .eq('public_id', publicId)
     .maybeSingle();
 
   if (error) {
-    logger.warn({ error, anchorId }, 'Failed to load selected anchor org for queue notification');
+    logger.warn({ error, publicId }, 'Failed to load selected anchor org for queue notification');
     return null;
   }
 

@@ -17,8 +17,10 @@ import { Button } from '@/components/ui/button';
 import { CredentialCard } from '@/components/search/CredentialCard';
 import { useIssuerRegistry, useOrgProfile } from '@/hooks/usePublicSearch';
 import { CREDENTIAL_TYPE_LABELS, INDUSTRY_TAG_LABELS } from '@/lib/copy';
-import { ROUTES, issuerRegistryPath, publicProfilePath } from '@/lib/routes';
+import { ROUTES, getAppBaseUrl, issuerRegistryPath, publicProfilePath } from '@/lib/routes';
 import { isSearchSubdomain } from '@/App';
+import { OrganizationSchema } from '@/components/seo/OrganizationSchema';
+import { OrgPageMeta } from '@/components/seo/OrgPageMeta';
 
 /** Map credential types to icons */
 function credentialIcon(type: string | null) {
@@ -99,8 +101,12 @@ export function IssuerRegistryPage() {
     ? Math.round((profile.secured_credentials / profile.total_credentials) * 100)
     : 0;
 
+  const pageUrl = `${getAppBaseUrl()}${issuerRegistryPath(profile.org_id)}`;
+
   return (
     <div className="min-h-screen bg-background">
+      <OrganizationSchema profile={profile} pageUrl={pageUrl} />
+      <OrgPageMeta profile={profile} pageUrl={pageUrl} />
       <div className="container max-w-4xl mx-auto px-4 py-8">
         {/* Back nav */}
         <Link

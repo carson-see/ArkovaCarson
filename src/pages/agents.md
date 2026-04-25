@@ -32,3 +32,15 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 - `@/hooks/useAuth`, `@/hooks/useProfile` — auth and profile state
 - `@/components/layout/AppShell` — page shell with sidebar
 - `@/lib/routes` — named route constants
+
+## SEO surface for /issuer/:orgId (SCRUM-1090, 2026-04-24)
+
+The public org page renders two side-effect components for AI search engines and social unfurls:
+- `<OrganizationSchema>` from `src/components/seo/OrganizationSchema.tsx` — schema.org Organization JSON-LD
+- `<OrgPageMeta>` from `src/components/seo/OrgPageMeta.tsx` — Open Graph + Twitter Card meta tags
+
+Both take `pageUrl` as a prop. Use `getAppBaseUrl()` from `@/lib/routes` to build it; do not hand-roll `window.location.origin` checks (kept SSR-safe + preview-deploy-safe).
+
+## Anchor queue API surface (SCRUM-1121, 2026-04-24)
+
+`src/pages/AnchorQueuePage.tsx` posts `selected_public_id` (not the internal anchors.id) to `/api/queue/resolve`. The pending list is keyed by `public_id` end-to-end. Never re-introduce `anchors.id` here — see CLAUDE.md §6 ("Exposing user_id / org_id / anchors.id publicly").
