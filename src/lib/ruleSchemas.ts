@@ -75,6 +75,29 @@ function checkRequiredFields(
     .map((key) => `${label}: ${key} — required`);
 }
 
+function validateWorkspaceFileModifiedConfig(config: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+
+  if (config.type === 'drive_folder' && !isNonEmpty(config.folder_id)) {
+    errors.push('Trigger: folder_id — required');
+  }
+
+  if (Array.isArray(config.drive_folders)) {
+    config.drive_folders.forEach((folder, index) => {
+      if (!folder || typeof folder !== 'object') {
+        errors.push(`Trigger: drive_folders[${index}] — invalid folder binding`);
+        return;
+      }
+      const folderId = (folder as { folder_id?: unknown }).folder_id;
+      if (!isNonEmpty(folderId)) {
+        errors.push(`Trigger: drive_folders[${index}].folder_id — required`);
+      }
+    });
+  }
+
+  return errors;
+}
+
 /**
  * Validate wizard state before POST. Returns a list of human-readable error
  * messages (empty = valid). Worker re-validates authoritatively on POST.
@@ -95,6 +118,9 @@ export function validateWizardConfigs(input: {
         input.trigger_config,
       ),
     );
+    if (input.trigger_type === 'WORKSPACE_FILE_MODIFIED') {
+      errors.push(...validateWorkspaceFileModifiedConfig(input.trigger_config));
+    }
   }
 
   if (input.action_type) {

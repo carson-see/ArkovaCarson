@@ -6,10 +6,13 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  DRIVE_DEFAULT_SCOPES,
   buildAuthorizationUrl,
   exchangeCode,
   refreshAccessToken,
   createChangesWatch,
+  stopDriveChannel,
+  revokeOAuthToken,
   getFileMetadata,
   getSharedDriveName,
   DriveConfigError,
@@ -46,6 +49,11 @@ describe('buildAuthorizationUrl', () => {
     expect(url).toContain('access_type=offline');
     expect(url).toContain('scope=');
     expect(url).toContain('prompt=consent');
+    expect(new URL(url).searchParams.get('scope')).toBe(DRIVE_DEFAULT_SCOPES.join(' '));
+    expect(DRIVE_DEFAULT_SCOPES).toEqual([
+      'https://www.googleapis.com/auth/drive.file',
+      'https://www.googleapis.com/auth/drive.activity.readonly',
+    ]);
   });
 });
 
@@ -154,6 +162,58 @@ describe('createChangesWatch', () => {
       deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
     }).catch((e) => e);
     expect(err).toBeInstanceOf(DriveApiError);
+  });
+});
+
+describe('stopDriveChannel', () => {
+  it('POSTs channel id + resource id to Drive channels.stop', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response('{}', { status: 200 });
+    };
+    await stopDriveChannel({
+      accessToken: 'at',
+      channelId: 'channel-1',
+      resourceId: 'resource-1',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(calls[0].url).toContain('/drive/v3/channels/stop');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({
+      id: 'channel-1',
+      resourceId: 'resource-1',
+    });
+  });
+
+  it('throws DriveApiError on non-2xx', async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ error: { message: 'gone' } }), { status: 410 });
+    await expect(
+      stopDriveChannel({
+        accessToken: 'at',
+        channelId: 'channel-1',
+        resourceId: 'resource-1',
+        deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+      }),
+    ).rejects.toBeInstanceOf(DriveApiError);
+  });
+});
+
+describe('revokeOAuthToken', () => {
+  it('revokes a token without logging or returning it', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response('{}', { status: 200 });
+    };
+    await revokeOAuthToken({
+      token: 'refresh-token',
+      deps: { fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+    expect(calls[0].url).toBe('https://oauth2.googleapis.com/revoke');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.body).toBe('token=refresh-token');
   });
 });
 

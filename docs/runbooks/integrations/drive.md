@@ -18,9 +18,10 @@ Phase 2b).
 |---|---|---|
 | OAuth consent flow | ✓ | `drive.file` default scope (skips verification queue) |
 | Push notifications on change | ✓ | `changes.watch` channel, 7-day lifetime |
+| Webhook ingress | ⚠ stub | `POST /api/v1/webhooks/drive` validates X-Goog-Channel-ID + X-Goog-Channel-Token; calls `enqueue_rule_event` with empty `parent_ids`. Resolving file_id + parent_ids per change via `changes.list` is SCRUM-1099 follow-up. Folder-bound rules do **not** fire today; non-folder-bound WORKSPACE_FILE_MODIFIED rules do. |
 | Folder-path resolution | ✓ | `drive-folder-resolver` (SCRUM-1169) |
 | Shared drives | ✓ | Resolver labels root with `drives.get(name)` |
-| Admin disconnect | ✓ (follow-up PR) | Currently schema-only |
+| Admin disconnect | ✓ | Revokes the access_token (per-grant) so other orgs sharing the same end-user keep their refresh_tokens. |
 
 ## OAuth app registration
 

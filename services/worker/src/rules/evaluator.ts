@@ -19,6 +19,9 @@
  * evaluator here ignores it and the runner layers it on when present.
  */
 
+import { GOOGLE_DRIVE_VENDOR } from '../constants/connectors.js';
+import { RULE_REJECTION_REASON } from './schemas.js';
+
 export type TriggerType =
   | 'ESIGN_COMPLETED'
   | 'WORKSPACE_FILE_MODIFIED'
@@ -51,8 +54,10 @@ export interface TriggerEvent {
   vendor?: string;
   filename?: string;
   folder_path?: string;
+  external_file_id?: string;
   sender_email?: string;
   subject?: string;
+  payload?: Record<string, unknown>;
 }
 
 export interface EvaluationResult {
@@ -77,6 +82,16 @@ function containsCI(haystack: string | undefined, needle: unknown): boolean {
 function startsWithCI(haystack: string | undefined, needle: unknown): boolean {
   if (!haystack || typeof needle !== 'string' || !needle) return false;
   return haystack.toLowerCase().startsWith(needle.toLowerCase());
+}
+
+interface DriveFolderBinding {
+  folder_id: string;
+  folder_path?: string;
+}
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
 }
 
 function readSemanticMatch(
@@ -129,6 +144,53 @@ function filenameRejected(
   return Boolean(cfg.filename_contains && !containsCI(eventFilename, cfg.filename_contains));
 }
 
+function readDriveFolderBindings(cfg: Record<string, unknown>): DriveFolderBinding[] {
+  const bindings: DriveFolderBinding[] = [];
+  if (
+    cfg.type === 'drive_folder' &&
+    typeof cfg.folder_id === 'string' &&
+    cfg.folder_id.length > 0
+  ) {
+    bindings.push({
+      folder_id: cfg.folder_id,
+      folder_path: typeof cfg.folder_path === 'string' ? cfg.folder_path : undefined,
+    });
+  }
+
+  const configured = cfg.drive_folders;
+  if (Array.isArray(configured)) {
+    for (const entry of configured) {
+      if (!entry || typeof entry !== 'object') continue;
+      const folderId = (entry as { folder_id?: unknown }).folder_id;
+      if (typeof folderId !== 'string' || folderId.length === 0) continue;
+      const folderPath = (entry as { folder_path?: unknown }).folder_path;
+      bindings.push({
+        folder_id: folderId,
+        folder_path: typeof folderPath === 'string' ? folderPath : undefined,
+      });
+    }
+  }
+  return bindings;
+}
+
+function driveFolderRejected(cfg: Record<string, unknown>, event: TriggerEvent): boolean {
+  const bindings = readDriveFolderBindings(cfg);
+  if (bindings.length === 0) return false;
+  if (event.vendor !== GOOGLE_DRIVE_VENDOR) return true;
+
+  const parentIds = readStringArray(event.payload?.parent_ids);
+  const fileId =
+    typeof event.payload?.file_id === 'string'
+      ? event.payload.file_id
+      : event.external_file_id;
+
+  return !bindings.some((binding) => {
+    if (parentIds.includes(binding.folder_id)) return true;
+    if (fileId === binding.folder_id) return true;
+    return Boolean(binding.folder_path && startsWithCI(event.folder_path, binding.folder_path));
+  });
+}
+
 function senderEmailRejected(
   cfg: Record<string, unknown>,
   eventSender: string | undefined,
@@ -140,9 +202,9 @@ function senderEmailRejected(
 }
 
 function evaluateEsignCompleted(cfg: Record<string, unknown>, event: TriggerEvent): string | null {
-  if (vendorRejected(cfg, event.vendor)) return 'vendor_filter_rejected';
-  if (filenameRejected(cfg, event.filename)) return 'filename_filter_rejected';
-  if (senderEmailRejected(cfg, event.sender_email)) return 'sender_email_filter_rejected';
+  if (vendorRejected(cfg, event.vendor)) return RULE_REJECTION_REASON.VENDOR_FILTER_REJECTED;
+  if (filenameRejected(cfg, event.filename)) return RULE_REJECTION_REASON.FILENAME_FILTER_REJECTED;
+  if (senderEmailRejected(cfg, event.sender_email)) return RULE_REJECTION_REASON.SENDER_EMAIL_FILTER_REJECTED;
   return null;
 }
 
@@ -150,11 +212,12 @@ function evaluateWorkspaceFileModified(
   cfg: Record<string, unknown>,
   event: TriggerEvent,
 ): string | null {
-  if (vendorRejected(cfg, event.vendor)) return 'vendor_filter_rejected';
+  if (vendorRejected(cfg, event.vendor)) return RULE_REJECTION_REASON.VENDOR_FILTER_REJECTED;
+  if (driveFolderRejected(cfg, event)) return RULE_REJECTION_REASON.DRIVE_FOLDER_FILTER_REJECTED;
   if (cfg.folder_path_starts_with && !startsWithCI(event.folder_path, cfg.folder_path_starts_with)) {
-    return 'folder_path_filter_rejected';
+    return RULE_REJECTION_REASON.FOLDER_PATH_FILTER_REJECTED;
   }
-  if (filenameRejected(cfg, event.filename)) return 'filename_filter_rejected';
+  if (filenameRejected(cfg, event.filename)) return RULE_REJECTION_REASON.FILENAME_FILTER_REJECTED;
   return null;
 }
 
@@ -163,15 +226,15 @@ function evaluateConnectorDocumentReceived(
   event: TriggerEvent,
 ): string | null {
   if (cfg.connector_type && event.vendor && cfg.connector_type !== event.vendor) {
-    return 'connector_type_mismatch';
+    return RULE_REJECTION_REASON.CONNECTOR_TYPE_MISMATCH;
   }
   return null;
 }
 
 function evaluateEmailIntake(cfg: Record<string, unknown>, event: TriggerEvent): string | null {
-  if (senderEmailRejected(cfg, event.sender_email)) return 'sender_email_filter_rejected';
+  if (senderEmailRejected(cfg, event.sender_email)) return RULE_REJECTION_REASON.SENDER_EMAIL_FILTER_REJECTED;
   if (cfg.subject_contains && !containsCI(event.subject, cfg.subject_contains)) {
-    return 'subject_filter_rejected';
+    return RULE_REJECTION_REASON.SUBJECT_FILTER_REJECTED;
   }
   return null;
 }
@@ -203,9 +266,9 @@ function checkTriggerFilters(rule: RuleRow, event: TriggerEvent): string | null 
 }
 
 export function evaluateRule(rule: RuleRow, event: TriggerEvent): EvaluationResult {
-  if (!rule.enabled) return skip('rule_disabled');
-  if (rule.org_id !== event.org_id) return skip('org_mismatch');
-  if (rule.trigger_type !== event.trigger_type) return skip('trigger_type_mismatch');
+  if (!rule.enabled) return skip(RULE_REJECTION_REASON.RULE_DISABLED);
+  if (rule.org_id !== event.org_id) return skip(RULE_REJECTION_REASON.ORG_MISMATCH);
+  if (rule.trigger_type !== event.trigger_type) return skip(RULE_REJECTION_REASON.TRIGGER_TYPE_MISMATCH);
 
   const rejection = checkTriggerFilters(rule, event);
   if (rejection) return skip(rejection);

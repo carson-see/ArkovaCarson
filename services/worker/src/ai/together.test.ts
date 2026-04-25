@@ -12,6 +12,12 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const traceMock = vi.hoisted(() => ({
+  traceAiProviderCall: vi.fn(async (_options: unknown, fn: () => Promise<unknown>) => fn()),
+}));
+
+vi.mock('./observability.js', () => traceMock);
+
 import { TogetherProvider } from './together.js';
 
 // Mock fetch globally
@@ -91,6 +97,16 @@ describe('TogetherProvider', () => {
       expect(result.fields.credentialType).toBe('DEGREE');
       expect(result.provider).toBe('together');
       expect(result.tokensUsed).toBeDefined();
+      expect(traceMock.traceAiProviderCall).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'together',
+          operation: 'chat_completion',
+          model: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
+          inputCharacterCount: expect.any(Number),
+        }),
+        expect.any(Function),
+        expect.any(Function),
+      );
 
       // Verify fetch was called with Together AI endpoint
       expect(mockFetch).toHaveBeenCalledWith(

@@ -135,6 +135,81 @@ describe('evaluateRule — WORKSPACE_FILE_MODIFIED', () => {
     );
     expect(r.matched).toBe(false);
   });
+
+  it('matches a Drive folder-bound rule by parent folder id', () => {
+    const r = evaluateRule(
+      rule({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        trigger_config: {
+          vendors: ['google_drive'],
+          drive_folders: [{ type: 'drive_folder', folder_id: 'folder-a' }],
+        },
+      }),
+      event({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        vendor: 'google_drive',
+        external_file_id: 'file-1',
+        payload: { parent_ids: ['folder-a', 'folder-b'], file_id: 'file-1' },
+      }),
+    );
+    expect(r.matched).toBe(true);
+  });
+
+  it('supports multiple Drive folders per rule', () => {
+    const r = evaluateRule(
+      rule({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        trigger_config: {
+          drive_folders: [
+            { type: 'drive_folder', folder_id: 'folder-a' },
+            { type: 'drive_folder', folder_id: 'folder-b' },
+          ],
+        },
+      }),
+      event({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        vendor: 'google_drive',
+        payload: { parent_ids: ['folder-b'] },
+      }),
+    );
+    expect(r.matched).toBe(true);
+  });
+
+  it('rejects a Drive folder-bound rule when parent folders do not match', () => {
+    const r = evaluateRule(
+      rule({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        trigger_config: {
+          drive_folders: [{ type: 'drive_folder', folder_id: 'folder-a' }],
+        },
+      }),
+      event({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        vendor: 'google_drive',
+        payload: { parent_ids: ['folder-c'] },
+      }),
+    );
+    expect(r.matched).toBe(false);
+    expect(r.reason).toBe('drive_folder_filter_rejected');
+  });
+
+  it('rejects non-Drive vendors when a Drive folder binding is configured', () => {
+    const r = evaluateRule(
+      rule({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        trigger_config: {
+          drive_folders: [{ type: 'drive_folder', folder_id: 'folder-a' }],
+        },
+      }),
+      event({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        vendor: 'sharepoint',
+        payload: { parent_ids: ['folder-a'] },
+      }),
+    );
+    expect(r.matched).toBe(false);
+    expect(r.reason).toBe('drive_folder_filter_rejected');
+  });
 });
 
 describe('evaluateRule — vendor allowlist fail-closed (CR review)', () => {

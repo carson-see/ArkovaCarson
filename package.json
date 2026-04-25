@@ -23,7 +23,8 @@
     "test:load": "vitest run tests/load",
     "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'",
     "healthcheck": "tsx scripts/healthcheck/index.ts",
-    "audit:secrets": "tsx scripts/secrets/audit-env.ts"
+    "audit:secrets": "tsx scripts/secrets/audit-env.ts",
+    "security:license-denylist": "tsx scripts/security/license-denylist.ts package-lock.json services/worker/package-lock.json"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.1.0",

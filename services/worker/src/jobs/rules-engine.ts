@@ -47,10 +47,18 @@ interface EventRow {
   org_id: string;
   trigger_type: TriggerType;
   vendor?: string | null;
+  external_file_id?: string | null;
   filename?: string | null;
   folder_path?: string | null;
   sender_email?: string | null;
   subject?: string | null;
+  /**
+   * Sanitized provider-specific metadata persisted on organization_rule_events
+   * (e.g. Drive parent_ids, file_id). Migration 0256 makes claim_pending_rule_events
+   * return this column; older worker builds against the pre-0256 RPC will see
+   * undefined here, which the evaluator treats as an empty payload.
+   */
+  payload?: Record<string, unknown> | null;
 }
 
 /**
@@ -169,10 +177,12 @@ function toTriggerEvent(ev: EventRow): TriggerEvent {
     trigger_type: ev.trigger_type,
     org_id: ev.org_id,
     vendor: ev.vendor ?? undefined,
+    external_file_id: ev.external_file_id ?? undefined,
     filename: ev.filename ?? undefined,
     folder_path: ev.folder_path ?? undefined,
     sender_email: ev.sender_email ?? undefined,
     subject: ev.subject ?? undefined,
+    payload: ev.payload ?? undefined,
   };
 }
 

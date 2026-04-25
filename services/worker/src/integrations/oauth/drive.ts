@@ -1,16 +1,17 @@
 /**
- * Google Drive OAuth + push notifications (SCRUM-1168 + SCRUM-1169)
+ * Google Drive OAuth + push notifications (SCRUM-1099)
  *
  * Minimal, dependency-free client for the two Drive APIs Arkova needs:
  *
  *   1. OAuth token exchange (authorization_code + refresh flows)
  *   2. files.watch / changes.watch push notifications (7-day channel)
- *   3. files.get(parents, name) for the folder-path resolver (SCRUM-1169)
+ *   3. channels.stop + token revoke for disconnect cleanup
+ *   4. files.get(parents, name) for the folder-path resolver
  *
  * Every function takes a fetch impl so tests stub without touching the
- * real network. Scope defaults to `drive.file` — the least-privilege scope
- * that avoids Google's OAuth app verification queue. Admins who need
- * folder-wide watch upgrade to `drive.readonly` via the runbook.
+ * real network. Scopes are intentionally limited to Drive file access plus
+ * Drive Activity read-only visibility; refresh tokens are stored by the
+ * connector service in Secret Manager, not Postgres.
  *
  * Constitution refs:
  *   - 1.4: no hardcoded secrets; client ID + secret from env.
@@ -19,12 +20,12 @@
 import { z } from 'zod';
 
 const DRIVE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const DRIVE_OAUTH_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
 
 export const DRIVE_DEFAULT_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
-  'openid',
-  'email',
+  'https://www.googleapis.com/auth/drive.activity.readonly',
 ];
 
 const OAuthTokenResponse = z.object({
@@ -206,6 +207,49 @@ export async function createChangesWatch(args: {
     ? new Date(Number(json.expiration)).toISOString()
     : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   return { resourceId: json.resourceId, expiration: expirationIso };
+}
+
+/** Stop an active Drive push-notification channel during renewal/disconnect. */
+export async function stopDriveChannel(args: {
+  accessToken: string;
+  channelId: string;
+  resourceId: string;
+  deps?: DriveClientDeps;
+}): Promise<void> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const res = await fetchImpl(`${DRIVE_API_BASE}/channels/stop`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${args.accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      id: args.channelId,
+      resourceId: args.resourceId,
+    }),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => null);
+    throw new DriveApiError('Drive channels.stop failed', res.status, json);
+  }
+}
+
+/** Revoke an OAuth access or refresh token when an admin disconnects Drive. */
+export async function revokeOAuthToken(args: {
+  token: string;
+  deps?: DriveClientDeps;
+}): Promise<void> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const body = new URLSearchParams({ token: args.token });
+  const res = await fetchImpl(DRIVE_OAUTH_REVOKE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  if (!res.ok) {
+    const json = await res.json().catch(() => null);
+    throw new DriveApiError('Drive token revoke failed', res.status, json);
+  }
 }
 
 /** Fetch a Drive file's metadata (name + parents). Used by the folder resolver. */

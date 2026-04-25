@@ -1,5 +1,5 @@
 # agents.md — src/
-_Last updated: 2026-03-24_
+_Last updated: 2026-04-24_
 
 ## What This Folder Contains
 
@@ -12,6 +12,7 @@ React 18 frontend application — TypeScript + Tailwind CSS + shadcn/ui + Vite b
 - **State management:** Supabase-centric (no Redux/Zustand). Custom hooks (`useAnchors`, `useBilling`, etc.) query Supabase directly.
 - **Auth:** `useAuth()` + `useProfile()` React Context providers
 - **UI copy:** Centralized in `src/lib/copy.ts` — CI enforced via `npm run lint:copy`
+- **Rule wizard validation:** `src/lib/ruleSchemas.ts` mirrors only required client-side checks; worker Zod schemas stay authoritative.
 - **Design system:** "Precision Engine" — see `docs/reference/BRAND.md`
 - **Routing:** react-router-dom v6, named routes in `src/lib/routes.ts`
 

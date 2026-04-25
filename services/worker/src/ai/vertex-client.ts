@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger.js';
 import { getGcpAccessToken } from '../utils/gcp-auth.js';
+import { traceAiProviderCall } from './observability.js';
 
 const VERTEX_REGION = process.env.VERTEX_AI_REGION ?? 'us-central1';
 const VERTEX_PROJECT = process.env.GCP_PROJECT_ID ?? 'arkova1';
@@ -53,33 +54,44 @@ export async function vertexGenerate(req: VertexGenerateRequest): Promise<Vertex
     body.systemInstruction = { role: 'system', parts: [{ text: req.systemPrompt }] };
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+  return await traceAiProviderCall<VertexGenerateResponse>(
+    {
+      provider: 'vertex',
+      operation: 'generate',
+      model: req.model,
+      inputCharacterCount: req.userPrompt.length,
     },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
-  });
+    async () => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => 'unknown');
-    logger.error({ status: response.status, model: req.model }, `Vertex AI generate failed: ${errText}`);
-    throw new Error(`Vertex AI generate failed: ${response.status}`);
-  }
+      if (!response.ok) {
+        const errText = await response.text().catch(() => 'unknown');
+        logger.error({ status: response.status, model: req.model }, `Vertex AI generate failed: ${errText}`);
+        throw new Error(`Vertex AI generate failed: ${response.status}`);
+      }
 
-  const data = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
-    usageMetadata?: { totalTokenCount?: number };
-  };
+      const data = (await response.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
+        usageMetadata?: { totalTokenCount?: number };
+      };
 
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  return {
-    text,
-    tokensUsed: data.usageMetadata?.totalTokenCount,
-    finishReason: data.candidates?.[0]?.finishReason,
-  };
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      return {
+        text,
+        tokensUsed: data.usageMetadata?.totalTokenCount,
+        finishReason: data.candidates?.[0]?.finishReason,
+      };
+    },
+    (response) => ({ tokensUsed: response.tokensUsed }),
+  );
 }
 
 export async function vertexEmbed(req: VertexEmbeddingRequest): Promise<VertexEmbeddingResponse> {
@@ -97,28 +109,38 @@ export async function vertexEmbed(req: VertexEmbeddingRequest): Promise<VertexEm
     body.parameters = { outputDimensionality: req.outputDimensionality };
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
+  return await traceAiProviderCall<VertexEmbeddingResponse>(
+    {
+      provider: 'vertex',
+      operation: 'embed',
+      model: req.model,
+      inputCharacterCount: req.text.length,
     },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(15_000),
-  });
+    async () => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      });
 
-  if (!response.ok) {
-    const errText = await response.text().catch(() => 'unknown');
-    logger.error({ status: response.status, model: req.model }, `Vertex AI embed failed: ${errText}`);
-    throw new Error(`Vertex AI embed failed: ${response.status}`);
-  }
+      if (!response.ok) {
+        const errText = await response.text().catch(() => 'unknown');
+        logger.error({ status: response.status, model: req.model }, `Vertex AI embed failed: ${errText}`);
+        throw new Error(`Vertex AI embed failed: ${response.status}`);
+      }
 
-  const data = (await response.json()) as {
-    predictions?: Array<{ embeddings?: { values?: number[] } }>;
-  };
+      const data = (await response.json()) as {
+        predictions?: Array<{ embeddings?: { values?: number[] } }>;
+      };
 
-  const values = data.predictions?.[0]?.embeddings?.values ?? [];
-  return { values, dimensions: values.length };
+      const values = data.predictions?.[0]?.embeddings?.values ?? [];
+      return { values, dimensions: values.length };
+    },
+  );
 }
 
 export function isVertexEnabled(): boolean {

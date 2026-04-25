@@ -38,6 +38,7 @@ import { runEnsembleExtraction } from './ensembleConfidence.js';
 import type { EnsembleResult } from './ensembleConfidence.js';
 import { stripJsonComments } from './strip-json-comments.js';
 import { getExtractionResponseSchema } from './structured-output.js';
+import { traceAiProviderCall } from './observability.js';
 
 // GAP-5: Model versions centralized in gemini-config.ts (GME-01).
 // Before upgrading: run eval suite, compare F1, document delta, update pin.
@@ -180,9 +181,18 @@ export class GeminiProvider implements IAIProvider {
             },
           });
 
-          const response = await model.generateContent(
-            { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-            { signal: controller.signal },
+          const response = await traceAiProviderCall(
+            {
+              provider: 'gemini',
+              operation: 'generate',
+              model: this.modelName,
+              inputCharacterCount: prompt.length,
+            },
+            () => model.generateContent(
+              { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+              { signal: controller.signal },
+            ),
+            (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
           );
           text = response.response.text();
           const usage = response.response.usageMetadata;
@@ -314,9 +324,18 @@ export class GeminiProvider implements IAIProvider {
         },
       });
 
-      const response = await model.generateContent(
-        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-        { signal: AbortSignal.timeout(15_000) },
+      const response = await traceAiProviderCall(
+        {
+          provider: 'gemini',
+          operation: 'tags',
+          model: GEMINI_LITE_MODEL,
+          inputCharacterCount: prompt.length,
+        },
+        () => model.generateContent(
+          { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+          { signal: AbortSignal.timeout(15_000) },
+        ),
+        (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
 
       const text = response.response.text();
@@ -353,9 +372,18 @@ export class GeminiProvider implements IAIProvider {
         },
       });
 
-      const response = await model.generateContent(
-        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
-        { signal: AbortSignal.timeout(30_000) },
+      const response = await traceAiProviderCall(
+        {
+          provider: 'gemini',
+          operation: 'template',
+          model: this.modelName,
+          inputCharacterCount: prompt.length,
+        },
+        () => model.generateContent(
+          { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+          { signal: AbortSignal.timeout(30_000) },
+        ),
+        (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
       );
 
       const text = response.response.text();
@@ -384,27 +412,37 @@ export class GeminiProvider implements IAIProvider {
       if (taskType) {
         body.taskType = taskType;
       }
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
+      return await traceAiProviderCall<{ values: number[] }>(
         {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey!,
-          },
-          body: JSON.stringify(body),
+          provider: 'gemini',
+          operation: 'embed',
+          model,
+          inputCharacterCount: text.length,
+        },
+        async () => {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:embedContent`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey!,
+              },
+              body: JSON.stringify(body),
+            },
+          );
+
+          if (!response.ok) {
+            const errorBody = await response.text();
+            // Log full error server-side for debugging, but never surface to client
+            logger.error({ status: response.status, errorBody, model }, 'Gemini embedding API error');
+            throw new Error(`Embedding generation failed (status ${response.status})`);
+          }
+
+          const data = (await response.json()) as { embedding: { values: number[] } };
+          return data.embedding;
         },
       );
-
-      if (!response.ok) {
-        const errorBody = await response.text();
-        // Log full error server-side for debugging, but never surface to client
-        logger.error({ status: response.status, errorBody, model }, 'Gemini embedding API error');
-        throw new Error(`Embedding generation failed (status ${response.status})`);
-      }
-
-      const data = (await response.json()) as { embedding: { values: number[] } };
-      return data.embedding;
     });
 
     return {
@@ -527,36 +565,47 @@ export class GeminiProvider implements IAIProvider {
       generationConfig.responseSchema = getExtractionResponseSchema();
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
+    return await traceAiProviderCall<{ text: string; tokensUsed?: number }>(
+      {
+        provider: 'vertex',
+        operation: 'generate',
+        model: resourcePath,
+        inputCharacterCount: systemPrompt.length + userPrompt.length,
       },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
-        systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
-        generationConfig,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+      async () => {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+            systemInstruction: { role: 'system', parts: [{ text: systemPrompt }] },
+            generationConfig,
+          }),
+          signal: AbortSignal.timeout(30_000),
+        });
 
-    if (!response.ok) {
-      const errBody = await response.text();
-      logger.error(
-        { status: response.status, errBody, tunedModel: this.tunedModelPath },
-        'Vertex AI tuned model error',
-      );
-      throw new Error(`Vertex AI tuned model error (${response.status})`);
-    }
+        if (!response.ok) {
+          const errBody = await response.text();
+          logger.error(
+            { status: response.status, errBody, tunedModel: this.tunedModelPath },
+            'Vertex AI tuned model error',
+          );
+          throw new Error(`Vertex AI tuned model error (${response.status})`);
+        }
 
-    const data = (await response.json()) as {
-      candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
-      usageMetadata?: { totalTokenCount: number };
-    };
+        const data = (await response.json()) as {
+          candidates?: Array<{ content: { parts: Array<{ text: string }> } }>;
+          usageMetadata?: { totalTokenCount: number };
+        };
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-    return { text, tokensUsed: data.usageMetadata?.totalTokenCount };
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+        return { text, tokensUsed: data.usageMetadata?.totalTokenCount };
+      },
+      (result) => ({ tokensUsed: result.tokensUsed }),
+    );
   }
 
   private checkCircuit(): void {

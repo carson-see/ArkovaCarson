@@ -53,6 +53,31 @@ describe('validateWizardConfigs', () => {
     expect(issues.some((i) => i.toLowerCase().includes('connector_type'))).toBe(true);
   });
 
+  it('accepts workspace rules with Google Drive folder bindings', () => {
+    expect(
+      validateWizardConfigs({
+        trigger_type: 'WORKSPACE_FILE_MODIFIED',
+        trigger_config: {
+          drive_folders: [{ type: 'drive_folder', folder_id: 'folder-a' }],
+        },
+        action_type: 'AUTO_ANCHOR',
+        action_config: {},
+      }),
+    ).toEqual([]);
+  });
+
+  it('rejects Drive folder bindings missing folder_id', () => {
+    const issues = validateWizardConfigs({
+      trigger_type: 'WORKSPACE_FILE_MODIFIED',
+      trigger_config: {
+        drive_folders: [{ type: 'drive_folder', folder_name: 'Legal' }],
+      },
+      action_type: 'AUTO_ANCHOR',
+      action_config: {},
+    });
+    expect(issues.some((i) => i.includes('drive_folders[0].folder_id'))).toBe(true);
+  });
+
   it('rejects FORWARD_TO_URL without hmac_secret_handle (CIBA-HARDEN-04 guardrail)', () => {
     const issues = validateWizardConfigs({
       trigger_type: 'ESIGN_COMPLETED',

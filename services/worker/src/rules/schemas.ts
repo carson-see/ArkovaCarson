@@ -36,6 +36,7 @@ const SecretHandle = z.string().regex(/^sm:[a-z0-9_-]{1,64}$/i);
 // IANA timezone (cron reminders). We validate length/shape but defer hard
 // check to runtime (workers use `Intl.DateTimeFormat` availability).
 const TimezoneString = z.string().min(1).max(64);
+const DriveFolderId = z.string().trim().min(1).max(500);
 
 // Standard 5-field cron expression. Very loose regex — runtime parser in the
 // worker (cron-parser) does the real validation.
@@ -75,7 +76,33 @@ export const TriggerConfigWorkspaceFileModified = z.object({
     .optional(),
   folder_path_starts_with: z.string().max(500).optional(),
   filename_contains: z.string().max(200).optional(),
+  // SCRUM-1100: Drive-specific binding. `type/folder_id/watch_channel_id`
+  // keeps compatibility with the single-folder AC shape, while
+  // `drive_folders[]` supports multiple folder bindings per rule.
+  type: z.literal('drive_folder').optional(),
+  folder_id: DriveFolderId.optional(),
+  watch_channel_id: z.string().trim().min(1).max(500).optional(),
+  drive_folders: z
+    .array(
+      z.object({
+        type: z.literal('drive_folder'),
+        folder_id: DriveFolderId,
+        folder_name: z.string().trim().max(500).optional(),
+        folder_path: z.string().trim().max(2000).optional(),
+        watch_channel_id: z.string().trim().min(1).max(500).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
   semantic_match: TriggerConfigEsignCompleted.shape.semantic_match,
+}).superRefine((cfg, ctx) => {
+  if (cfg.type === 'drive_folder' && !cfg.folder_id) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['folder_id'],
+      message: 'folder_id is required when type is drive_folder',
+    });
+  }
 });
 
 export const TriggerConfigConnectorDocumentReceived = z.object({
@@ -240,3 +267,32 @@ export function assertNoInlineSecrets(config: Record<string, unknown>): void {
     );
   }
 }
+
+// =============================================================================
+// Rule rejection reason codes
+// =============================================================================
+//
+// Stable string codes returned by the evaluator when a rule does NOT match.
+// Promoted to a frozen object so:
+//   - the rules-engine worker can write them to organization_rule_executions
+//     for audit replay without each call site spelling them out,
+//   - downstream tooling (admin UI / Confluence audit pages) can dereference
+//     them rather than relying on free-text matches,
+//   - typos surface at type-check time instead of silently never matching.
+//
+// Add new codes here, never inline at the call site.
+export const RULE_REJECTION_REASON = {
+  RULE_DISABLED: 'rule_disabled',
+  ORG_MISMATCH: 'org_mismatch',
+  TRIGGER_TYPE_MISMATCH: 'trigger_type_mismatch',
+  VENDOR_FILTER_REJECTED: 'vendor_filter_rejected',
+  FILENAME_FILTER_REJECTED: 'filename_filter_rejected',
+  SENDER_EMAIL_FILTER_REJECTED: 'sender_email_filter_rejected',
+  FOLDER_PATH_FILTER_REJECTED: 'folder_path_filter_rejected',
+  DRIVE_FOLDER_FILTER_REJECTED: 'drive_folder_filter_rejected',
+  CONNECTOR_TYPE_MISMATCH: 'connector_type_mismatch',
+  SUBJECT_FILTER_REJECTED: 'subject_filter_rejected',
+} as const;
+
+export type RuleRejectionReason =
+  (typeof RULE_REJECTION_REASON)[keyof typeof RULE_REJECTION_REASON];
