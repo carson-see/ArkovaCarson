@@ -181,8 +181,10 @@ app.use(
 );
 
 // ─── DocuSign Connect webhook (SCRUM-1101) — raw body required for HMAC ───
+import { killSwitch } from './middleware/integrationKillSwitch.js';
 app.use(
   '/webhooks/docusign',
+  killSwitch('ENABLE_DOCUSIGN_WEBHOOK'),
   rateLimiters.stripeWebhook,
   express.raw({ type: 'application/json' }),
   (req, _res, next) => {
@@ -241,8 +243,8 @@ const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) =
   if (req.path.endsWith('/oauth/callback')) return next();
   return requireAuthMw(req, res, next);
 };
-app.use('/api/v1/integrations', rateLimiters.api, integrationsAuthGate, driveOAuthRouter);
-app.use('/api/v1/integrations', rateLimiters.api, integrationsAuthGate, docusignOAuthRouter);
+app.use('/api/v1/integrations', killSwitch('ENABLE_DRIVE_OAUTH'), rateLimiters.api, integrationsAuthGate, driveOAuthRouter);
+app.use('/api/v1/integrations', killSwitch('ENABLE_DOCUSIGN_OAUTH'), rateLimiters.api, integrationsAuthGate, docusignOAuthRouter);
 
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
