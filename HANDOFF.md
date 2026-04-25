@@ -36,18 +36,26 @@
 
 ---
 
-### 2026-04-25 EOD2 — R0 anti-false-done wave shipped (2 PRs, 8 stories, 8 sub-stories filed)
+### 2026-04-25 EOD3 — R0 anti-false-done wave merged (8 stories, 9 sub-stories pending)
 
-Both R0 PRs are open and awaiting human merge per `feedback_never_merge_without_ok`:
+Both R0 PRs merged to main:
 
-- **PR1 — [#562](https://github.com/carson-see/ArkovaCarson/pull/562)** — R0-1..R0-4 (build SHA in /health, strip continue-on-error from 3 of 6 jobs, coverage monotonic, deploy-gate alignment to `npm run lint`). Code-side artifact links: branch `claude/scrum-1247-1250-r0-anti-false-done`, commits `823f52c4`/`9fec835e`/`556246ef`/`f1934541`/`38566e72`. **Verification expected post-merge:** worker `/health` will report a 40-char `git_sha`; `revision-drift.yml` will run on cron and observe in-sync.
-- **PR2 — [#563](https://github.com/carson-see/ArkovaCarson/pull/563)** — R0-5..R0-8 (Jira workflow validators spec + Confluence DoD helper, HANDOFF.md verification-artifact lint, feedback_*.md to CI lint, Sentry drift telemetry + count:'exact' baseline). Branch `claude/scrum-1251-1254-r0-anti-false-done-pt2`.
+- **PR [#562](https://github.com/carson-see/ArkovaCarson/pull/562)** merged at commit `adc654d2` — R0-1..R0-4 (build SHA in /health, strip continue-on-error from 3 of 6 jobs, coverage monotonic, deploy-gate alignment to `npm run lint`).
+- **PR [#563](https://github.com/carson-see/ArkovaCarson/pull/563)** merged at commit `e918259f` — R0-5..R0-8 (Jira workflow validators spec + Confluence DoD helper, HANDOFF.md verification-artifact lint, feedback_*.md to CI lint, Sentry drift telemetry + count:'exact' baseline).
 
-8 follow-up sub-stories filed: SCRUM-1301..1308. Each blocks Done on its parent R0 story. Highlights: SCRUM-1305 (Atlassian Automation UI deployment of the 6 rules) is the operator step that activates the workflow validators. SCRUM-1307 + SCRUM-1308 (RPCs + Sentry alert config + Cloud Scheduler binding) activate the db-health monitor.
+9 follow-up sub-stories filed (SCRUM-1301..1309), each blocks Done on its parent R0 story:
+- SCRUM-1301/1302/1303 — RLS test realignment / Playwright auth-setup / Lighthouse baseline (R0-2 deferred strips)
+- SCRUM-1304 — SonarQube Coverage-on-New-Code ≥80 (R0-3 secondary AC)
+- SCRUM-1305 — Atlassian Automation UI deployment of the 6 rules (R0-5 operator step)
+- SCRUM-1306 — 6 remaining feedback rules (R0-7)
+- SCRUM-1307/1308 — db-health RPCs + Sentry UI + Cloud Scheduler binding (R0-8 operator steps)
+- SCRUM-1309 — regenerate src/types/database.types.ts against current Supabase CLI
 
-Per Sarah-handoff guidance: NOT closing R0 stories Done. All 8 R0 + the parent epic are now In Progress; Done waits on (a) PR merged > 30 min, (b) Cloud Run SHA matches per R0-1, (c) Confluence DoD ticked. CLAUDE.md §3 gate 7 (workflow validators) added.
+Per Sarah-handoff guidance + CLAUDE.md §3 gate 7: NOT closing R0 stories Done yet. All 8 R0 + the parent epic remain **In Progress** until (a) Cloud Run image SHA matches the merge commit per R0-1, (b) Confluence DoD ticked on each per-story page (8 audit pages live as children of [SCRUM-1246 hub](https://arkova.atlassian.net/wiki/spaces/A/pages/27558990)), (c) operator sub-stories close.
 
-CLAUDE.md changes in this wave:
+**Pending operator step (CRITICAL):** Cloud Run worker still on the pre-R0 image. Next worker code change to main triggers `deploy-worker.yml`, which now bakes `--build-arg BUILD_SHA=$github.sha`. Until that fires + completes, `/health.git_sha` returns `unknown` and `revision-drift.yml` will alert (correctly) on `missing-sha`.
+
+CLAUDE.md final shape after R0:
 - §0.1 — HANDOFF.md edit lint requirement (R0-6) + memory feedback rules CI-enforced (R0-7)
 - §3 — task-execution gates expanded 6 → 7 (rule 7 = workflow validators)
 - §9 — Deploy gate ≡ CI lint job (R0-4)
@@ -303,4 +311,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-25 by carson — claims verified against gcloud/MCP/CI output (Compliance Inbox release closed 16/16 across 4 PRs; migrations 0258-0261 applied; Cloud Scheduler bindings created)._
+_Last refreshed: 2026-04-25 by carson — claims verified against gcloud/MCP/CI output (R0 wave merged via PRs #562 + #563 at commits adc654d2 + e918259f; 9 follow-up sub-stories filed SCRUM-1301..1309)._
