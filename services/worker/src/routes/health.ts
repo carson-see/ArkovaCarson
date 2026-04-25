@@ -12,6 +12,8 @@
  * exports pure functions for testability.
  */
 
+import { getBuildSha } from '../utils/buildInfo.js';
+
 /**
  * Dependency injection interface for health checks.
  * Allows full mocking in tests without touching real Supabase/chain.
@@ -209,7 +211,7 @@ export async function buildHealthResponse(
     body: {
       status: allHealthy ? 'healthy' : 'degraded',
       version: process.env.npm_package_version ?? '0.1.0',
-      git_sha: process.env.BUILD_SHA ?? 'unknown',
+      git_sha: getBuildSha(),
       uptime: Math.floor(process.uptime()),
       network: cfg.bitcoinNetwork,
       checks: detailed ? detailedChecks : compactChecks,

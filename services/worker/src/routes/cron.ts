@@ -81,6 +81,7 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
+import { getBuildSha, isValidBuildSha } from '../utils/buildInfo.js';
 
 export const cronRouter = Router();
 
@@ -1205,7 +1206,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
     // SCRUM-1247 (R0-1): include the deployed git SHA so smoke output is
     // self-attesting — operators can see in the same payload what code
     // is being smoked.
-    const gitSha = process.env.BUILD_SHA ?? 'unknown';
+    const gitSha = getBuildSha();
 
     // Store results in audit_events for history
     try {
@@ -1415,7 +1416,7 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
   // pushed manually. Either way operators need to see it.
   const shaStart = Date.now();
   const buildSha = process.env.BUILD_SHA;
-  const shaOk = Boolean(buildSha) && buildSha !== 'unknown' && /^[0-9a-f]{40}$/i.test(buildSha ?? '');
+  const shaOk = isValidBuildSha(buildSha);
   results.push({
     name: 'build-sha-present',
     status: shaOk ? 'pass' : 'fail',

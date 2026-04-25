@@ -17,6 +17,7 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { getRateLimitStoreSize } from '../utils/rateLimit.js';
 import { getIdempotencyStoreSize } from '../middleware/idempotency.js';
 import { getCircuitBreakerSize } from '../webhooks/delivery.js';
+import { getBuildSha } from '../utils/buildInfo.js';
 
 interface ServiceCheck {
   status: 'ok' | 'error';
@@ -111,7 +112,7 @@ export async function handleSystemHealth(
       status: allHealthy ? 'healthy' : 'degraded',
       uptime: Math.floor(process.uptime()),
       version: process.env.npm_package_version ?? '0.1.0',
-      git_sha: process.env.BUILD_SHA ?? 'unknown',
+      git_sha: getBuildSha(),
       checks: {
         supabase: supabaseCheck,
         bitcoin: {
