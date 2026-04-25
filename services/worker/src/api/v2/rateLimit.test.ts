@@ -133,3 +133,34 @@ describe('scope-aware v2 rate limits', () => {
     expect(reset.header['x-ratelimit-remaining']).toBe('1');
   });
 });
+
+describe('SCRUM-1225: MemoryV2RateLimitStore evicts expired entries', () => {
+  it('purges expired entries on the next sweep cycle', async () => {
+    const store = new MemoryV2RateLimitStore();
+    let now = 1_000;
+    // Burst 100 unique keys in one window.
+    for (let i = 0; i < 100; i++) {
+      await store.increment(`key-${i}`, 60_000, () => now);
+    }
+    expect(store.size()).toBe(100);
+
+    // Advance past the window AND past the sweep interval (60s).
+    now += 70_000;
+    // First call after the sweep interval triggers the sweep — all 100 keys
+    // are expired and get evicted, then the new key is created.
+    await store.increment('post-window', 60_000, () => now);
+    expect(store.size()).toBe(1);
+  });
+
+  it('does not evict entries that are still within their window', async () => {
+    const store = new MemoryV2RateLimitStore();
+    let now = 1_000;
+    await store.increment('alive-1', 60_000, () => now);
+    await store.increment('alive-2', 60_000, () => now);
+
+    // Advance time past sweep interval but NOT past the window.
+    now += 30_000;
+    await store.increment('alive-3', 60_000, () => now);
+    expect(store.size()).toBe(3);
+  });
+});

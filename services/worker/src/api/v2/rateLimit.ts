@@ -61,13 +61,21 @@ export function getV2ScopeRateLimitConfig(env: Record<string, string | undefined
   }, {} as Record<ApiV2Scope, number>);
 }
 
+// Per-process worker has no Redis available in dev / fallback mode. Bound the
+// in-memory bucket map so a long-running worker can't OOM from accumulating
+// one entry per (api_key, scope) tuple ever seen.
+const SWEEP_INTERVAL_MS = 60_000;
+const HARD_CAP_ENTRIES = 50_000;
+
 export class MemoryV2RateLimitStore implements V2RateLimitStore {
   private readonly entries = new Map<string, RateLimitEntry>();
+  private nextSweepAt = 0;
 
   async increment(key: string, windowMs: number, now: () => number): Promise<RateLimitEntry> {
     const current = now();
-    let entry = this.entries.get(key);
+    this.maybeSweep(current);
 
+    let entry = this.entries.get(key);
     if (!entry || entry.resetAt <= current) {
       entry = { count: 0, resetAt: current + windowMs };
       this.entries.set(key, entry);
@@ -79,6 +87,39 @@ export class MemoryV2RateLimitStore implements V2RateLimitStore {
 
   reset(): void {
     this.entries.clear();
+    this.nextSweepAt = 0;
+  }
+
+  /**
+   * Drop entries whose window has expired. Runs at most once per
+   * SWEEP_INTERVAL_MS so the steady-state cost is O(1) per request. If the
+   * map is somehow already at the hard cap (e.g. burst of unique keys within
+   * a single window), force a sweep + drop oldest-resetAt entries down to
+   * 90% of the cap to avoid unbounded growth.
+   */
+  private maybeSweep(current: number): void {
+    if (current < this.nextSweepAt && this.entries.size < HARD_CAP_ENTRIES) return;
+    this.nextSweepAt = current + SWEEP_INTERVAL_MS;
+
+    for (const [k, v] of this.entries) {
+      if (v.resetAt <= current) this.entries.delete(k);
+    }
+
+    if (this.entries.size <= HARD_CAP_ENTRIES) return;
+
+    // Last-resort eviction: sort by resetAt ascending, drop the oldest.
+    const target = Math.floor(HARD_CAP_ENTRIES * 0.9);
+    const sorted = [...this.entries.entries()].sort(
+      ([, a], [, b]) => a.resetAt - b.resetAt,
+    );
+    for (let i = 0; i < sorted.length && this.entries.size > target; i++) {
+      this.entries.delete(sorted[i][0]);
+    }
+  }
+
+  /** Test-only accessor for asserting eviction behavior. */
+  size(): number {
+    return this.entries.size;
   }
 }
 
