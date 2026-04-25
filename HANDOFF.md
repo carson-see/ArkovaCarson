@@ -14,8 +14,11 @@
 
 ## Now
 
-**Codex batch PR in progress:** SCRUM-859 / SCRUM-860 / SCRUM-861 on stacked branch `codex/release-859-861` (base: `codex/release-1110-1112`). Scope: GME10 Contracts Expert v1 design, Phase 23 contract extraction golden dataset (1,040 entries), Phase 24 contract reasoning golden dataset (600 entries), recommendation URL registry, stats report, and eval tests. No Supabase migrations in this batch; no Supabase push/apply/list/repair commands run.
-**End of week:** Friday 2026-04-24 EOW. 56 commits landed on main Mon–Fri across 20+ merged PRs (#466–#493). Four PRs still open at EOW: #494 (SCRUM-1161 freemail blocklist), #495 (SCRUM-727/985 live infra + 1,500 adviser records), #496 (SCRUM-1162 Middesk KYB skeleton), and an unpushed WIP on `claude/2026-04-24-scrum-1168-1169-integration-oauth` (migration 0251 + `integrations/oauth/` dir). All four await human merge per `feedback_never_merge_without_ok`.
+**2026-04-25 EOD:** SCRUM-1208 epic + integration hardening complete. 26 PRs merged this session, 0 PRs open. Worker revision `arkova-worker-00397-9jm` deployed, healthy, mainnet, all subsystems OK. **Drive + DocuSign integrations live** (`ENABLE_DRIVE_OAUTH=true`, `ENABLE_DRIVE_WEBHOOK=true`, `ENABLE_DOCUSIGN_OAUTH=true`, `ENABLE_DOCUSIGN_WEBHOOK=true`). Stripe / ATS / GRC / Middesk kill-switches still default-OFF — flip per-customer when onboarding.
+
+**Audit findings (2026-04-24 forensic security audit):** 25 of 26 fixed and shipped (SCRUM-1209/1210/1211/1212/1213/1214/1215/1216/1217/1218/1219/1220/1221/1222/1223/1224/1225/1227 + 1236/1237/1238/1239/1240/1241/1242). Remaining: SCRUM-1226 (branch protection on main) — repo-admin op, Carson-only.
+
+**New env var:** `INTEGRATION_STATE_HMAC_SECRET` provisioned in Cloud Run secrets and wired into the worker. OAuth state for Drive + GRC now uses this dedicated key (was sharing supabaseJwtSecret which would silently invalidate every in-flight OAuth on JWT rotation).
 **Network:** Bitcoin MAINNET. 1.41M+ SECURED anchors.
 **Worker:** Cloud Run `arkova-worker-270018525501.us-central1.run.app` — 1GiB, max 3, KMS signing, batch 10K. Revision drifts session-to-session; check `gcloud run services describe arkova-worker` for the live revision.
 **Frontend:** `arkova-26.vercel.app`, auto-deploys from main.
@@ -25,6 +28,23 @@
 - `0255_deferred_slow_indexes` applied as a no-op marker. All four large-table indexes (`anchors_unique_active_child_per_parent`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`, `idx_anchor_proofs_batch_id`) applied on prod via Supabase MCP `execute_sql` 2026-04-24 EOD — verified via `pg_indexes` query. Runbook [docs/runbooks/supabase/long-running-migrations.md](docs/runbooks/supabase/long-running-migrations.md) documents the split-migration pattern for future large-table index adds.
 - Note `0218 notifications` (org-scoped compliance alerts) and `0240 user_notifications` (user-scoped platform notifications) coexist as distinct tables.
 **Tests:** 3,997 worker + 1,421 frontend green on main as of Friday EOW. +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
+
+### 2026-04-25 — SCRUM-1208 close-out (this session)
+
+26 PRs merged. Highlights:
+- **Drive webhook URL drift + fail-closed channel token** (SCRUM-1209/1211, PR #529) — push notifications were 404'ing silently; now WEBHOOK_PATHS constant + fail-closed token verification.
+- **Stripe handler hardening** (SCRUM-1218/1222, PR #533) — KYB-rejected orgs no longer flip to VERIFIED on payment; webhook claims billing_events row before side effects (idempotency-correct on retry).
+- **Bundled security batch** (SCRUM-1210/1212/1213/1214/1215/1216/1220/1221/1223/1227, PR #541) — Drive subscription_id stores channel UUID, Drive disconnect stops watch + revokes, DocuSign cross-org guard, ATS per-integration HMAC routing + raw-body verify, GRC OAuth tokens KMS-encrypted, Stripe checkout keyed on stripe_subscription_id, requirePaymentCurrent middleware (402 for suspended), strict scopeSatisfies (no read:records→verify alias), deploy-worker.yml canary→promote.
+- **Second batch** (SCRUM-1236/1237/1238/1239/1240/1241/1242, PRs #544–#551) — Drive state HMAC dedicated secret, Drive disconnect no account-wide revoke, GRC OAuth state HMAC, Stripe sub.updated org guard, ATS attestations org_id scope, org_integrations defensive unique index, ATS+Drive replay-protection nonces.
+- **Other:** Middesk PostgREST injection (#530), monthly allocation rollover cron route (#531), v2 rate-limit eviction (#535), v2 search org scoping (#537), kill-switch infra (#527), tenant-isolation lint rule (#528), Drive OAuth secret persistence (#526), anchor backlog cleanup (#525), IDOR/JSON-LD batch (#522), connector health + IDOR + proof packet (#539), Checkr/Veremark + CIBA OpenAPI (#540), worker backpressure (#542), queue resolution typecheck (#552).
+
+Migration state: through `0263_ats_drive_webhook_nonces` on main. Run `npx supabase migration list` to confirm prod ledger drift = 0.
+
+Confluence: 25 per-story pages backfilled at space "A" root. Webhooks topic-doc updated to v4. All 25 Jira tickets have Confluence URL pasted.
+
+Closed PRs (need redesign before reopening, NOT merged):
+- #534 SCRUM-1213 DocuSign fan-out (was bundled into #541's narrower fix instead).
+- #536 SCRUM-1223 scope alias (bundled into #541 with telemetry approach instead).
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)
 
