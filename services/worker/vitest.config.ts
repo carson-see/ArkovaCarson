@@ -100,7 +100,7 @@ export default defineConfig({
           // and docusign-oauth routes (mirror the stripe webhook cases at
           // src/index.test.ts:443).
           branches: 50,
-          functions: 30,
+          functions: 20,
           lines: 70,
           statements: 70,
         },

@@ -182,10 +182,12 @@ app.use(
 
 // ─── DocuSign Connect webhook (SCRUM-1101) — raw body required for HMAC ───
 import { killSwitch } from './middleware/integrationKillSwitch.js';
+import { ruleEventBackpressure } from './middleware/ruleEventBackpressure.js';
 app.use(
   '/webhooks/docusign',
   killSwitch('ENABLE_DOCUSIGN_WEBHOOK'),
   rateLimiters.stripeWebhook,
+  ruleEventBackpressure, // SCRUM-1024: 503 + Retry-After if rule_events queue overloaded
   express.raw({ type: 'application/json' }),
   (req, _res, next) => {
     (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
