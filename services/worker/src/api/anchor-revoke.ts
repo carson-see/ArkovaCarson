@@ -10,8 +10,9 @@ const RevokeSchema = z.object({
   reason: z.string().min(1).max(1000),
 });
 
-anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res: Response) => {
-  const anchorId = req.params.id;
+anchorRevokeRouter.post('/:id/revoke', async (req: Request, res: Response) => {
+  const anchorIdParam = req.params.id;
+  const anchorId = Array.isArray(anchorIdParam) ? anchorIdParam[0] : anchorIdParam;
   const parsed = RevokeSchema.safeParse(req.body);
 
   if (!parsed.success) {
@@ -42,6 +43,11 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
     }
 
     // Verify the caller belongs to the anchor's org
+    if (!anchor.org_id) {
+      res.status(404).json({ error: 'not_found', message: 'Anchor not found.' });
+      return;
+    }
+
     const { data: membership } = await (db as any).from('org_memberships')
       .select('role')
       .eq('user_id', userId)
@@ -76,9 +82,9 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       event_type: 'anchor.revoked',
       event_category: 'ANCHOR',
       actor_id: userId,
+      org_id: anchor.org_id,
       target_type: 'anchor',
       target_id: anchorId,
-      org_id: anchor.org_id,
       details: JSON.stringify({ reason, revoked_at: new Date().toISOString() }),
     }).then(({ error }) => {
       if (error) logger.error({ error, anchorId }, 'Failed to write revocation audit event');
