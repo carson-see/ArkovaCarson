@@ -277,17 +277,22 @@ router.use('/ai', aiExtractionGate(), requireAuth, aiRateLimiter, aiTemplateRout
 router.use('/audit-export', requireAuth, auditExportRouter);
 
 // ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
-router.use('/grc', grcFeatureGate(), requireAuth, grcRouter);
+import { killSwitch } from '../../middleware/integrationKillSwitch.js';
+router.use('/grc', killSwitch('ENABLE_GRC_INTEGRATION'), grcFeatureGate(), requireAuth, grcRouter);
 
 // ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
-router.use('/webhooks/ats', atsWebhookRouter);
+router.use('/webhooks/ats', killSwitch('ENABLE_ATS_WEBHOOK'), atsWebhookRouter);
 
 // ─── Google Drive push notifications — channel-token verified (SCRUM-1099) ───
 // Drive POSTs are headers-only; auth is via X-Goog-Channel-ID lookup +
 // X-Goog-Channel-Token constant-time compare. No HMAC because Drive does
 // not sign payloads. Path comes from the canonical WEBHOOK_PATHS entry so
 // drive-oauth's `changes.watch` registration cannot drift.
-router.use(relativeTo(WEBHOOK_PATHS.GOOGLE_DRIVE, API_V1_PREFIX), driveWebhookRouter);
+router.use(
+  relativeTo(WEBHOOK_PATHS.GOOGLE_DRIVE, API_V1_PREFIX),
+  killSwitch('ENABLE_DRIVE_WEBHOOK'),
+  driveWebhookRouter,
+);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───
 // INT-09: CRUD routes are mutating/sensitive — apply batch tier rate limit
