@@ -57,7 +57,15 @@ All 4 verified via `information_schema.tables` + `pg_proc` queries.
 - `0255_deferred_slow_indexes` applied as a no-op marker. All four large-table indexes (`anchors_unique_active_child_per_parent`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`, `idx_anchor_proofs_batch_id`) applied on prod via Supabase MCP `execute_sql` 2026-04-24 EOD — verified via `pg_indexes` query. Runbook [docs/runbooks/supabase/long-running-migrations.md](docs/runbooks/supabase/long-running-migrations.md) documents the split-migration pattern for future large-table index adds.
 - Note `0218 notifications` (org-scoped compliance alerts) and `0240 user_notifications` (user-scoped platform notifications) coexist as distinct tables.
 **Tests:** 4,274 worker tests green on branch `claude/charming-cori-qPHwU` (PR #541). +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
-**Security audit (SCRUM-1208):** PR [#541](https://github.com/carson-see/ArkovaCarson/pull/541) covers 10 stories from the forensic audit epic. All transitioned to Done in Jira. Awaiting human merge.
+**Security audit (SCRUM-1208):** 25 of 26 audit findings shipped across PRs #529, #530, #531, #533, #535, #537, #541, #544, #545, #546, #548, #549, #550, #551. Remaining: SCRUM-1226 branch protection (Carson-only repo-admin op). All Jira tickets in Done. 25 per-story Confluence pages backfilled at space "A" root.
+
+**Drive + DocuSign live in prod (2026-04-25 EOD):** revision `arkova-worker-00397-9jm`. Kill-switches flipped:
+- `ENABLE_DRIVE_OAUTH=true`, `ENABLE_DRIVE_WEBHOOK=true`
+- `ENABLE_DOCUSIGN_OAUTH=true`, `ENABLE_DOCUSIGN_WEBHOOK=true`
+
+Stripe / ATS / GRC / Middesk kill-switches remain default-OFF — flip per-customer when onboarding.
+
+**New required env var:** `INTEGRATION_STATE_HMAC_SECRET` (Cloud Run secret `integration-state-hmac-secret`). OAuth state for Drive + GRC now uses this dedicated key instead of `supabaseJwtSecret`. Worker fails closed if unset.
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)
 
