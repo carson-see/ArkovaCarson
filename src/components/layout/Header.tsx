@@ -21,6 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { NAV_LABELS, BILLING_LABELS, MY_CREDENTIALS_LABELS, DOCUMENTS_PAGE_LABELS } from '@/lib/copy';
+import { NotificationBell } from './NotificationBell';
 
 /** Map pathname to a display title for the header */
 const PAGE_TITLES: Record<string, string> = {
@@ -89,6 +90,11 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
         <h1 className="text-lg font-semibold text-foreground">{pageTitle}</h1>
       </div>
 
+      <div className="flex items-center gap-1">
+        {/* Notification center (SCRUM-1094) — only renders for signed-in users;
+            the hook short-circuits when there's no auth session. */}
+        {user && <NotificationBell />}
+
       {/* User menu */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -156,6 +162,7 @@ export function Header({ user, profile, profileLoading, onSignOut }: Readonly<He
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
     </header>
   );
 }
