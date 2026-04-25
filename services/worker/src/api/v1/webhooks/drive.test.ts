@@ -46,8 +46,16 @@ function lookupChain(row: { org_id: string; integration_id: string; channel_toke
   };
 }
 
+// SCRUM-1242: drive_webhook_nonces insert mock.
+function nonceInsert(error: { code?: string } | null = null) {
+  return {
+    insert: vi.fn().mockResolvedValue({ error }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  dbFromMock.mockReset(); // SCRUM-1242: clearAllMocks doesn't clear mockReturnValueOnce queue.
   rpcMock.mockResolvedValue({ data: 'rule-1', error: null });
 });
 
@@ -137,14 +145,65 @@ describe('POST /webhooks/drive (SCRUM-1211 fail-closed channel-token)', () => {
       integration_id: 'int-1',
       channel_token: 'expected-token',
     }));
+    dbFromMock.mockReturnValueOnce(nonceInsert(null)); // SCRUM-1242
     const res = await request(createApp())
       .post('/webhooks/drive')
       .set('X-Goog-Channel-ID', 'chan-1')
       .set('X-Goog-Resource-State', 'change')
-      .set('X-Goog-Channel-Token', 'expected-token');
+      .set('X-Goog-Channel-Token', 'expected-token')
+      .set('X-Goog-Message-Number', '42');
     expect(res.status).toBe(200);
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
       p_org_id: 'org-1',
     }));
+  });
+
+  // SCRUM-1242 (AUDIT-0424-26): Drive replay protection. Drive doesn't carry
+  // an HMAC, so we dedupe on (channel_id, message_number) — Google's
+  // monotonic per-channel counter is the canonical replay-detection signal.
+  it('SCRUM-1242: 200s without enqueue when nonce already present (replay)', async () => {
+    dbFromMock.mockReturnValueOnce(lookupChain({
+      org_id: 'org-1',
+      integration_id: 'int-1',
+      channel_token: 'expected-token',
+    }));
+    // Postgres unique_violation — already saw (chan-1, 42).
+    dbFromMock.mockReturnValueOnce(nonceInsert({ code: '23505' }));
+
+    const res = await request(createApp())
+      .post('/webhooks/drive')
+      .set('X-Goog-Channel-ID', 'chan-1')
+      .set('X-Goog-Resource-State', 'change')
+      .set('X-Goog-Channel-Token', 'expected-token')
+      .set('X-Goog-Message-Number', '42');
+
+    expect(res.status).toBe(200);
+    // Critical: no rule-event enqueue on replay.
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  it('SCRUM-1242: writes nonce row keyed on (channel_id, message_number)', async () => {
+    dbFromMock.mockReturnValueOnce(lookupChain({
+      org_id: 'org-1',
+      integration_id: 'int-1',
+      channel_token: 'expected-token',
+    }));
+    const nonceMock = nonceInsert(null);
+    dbFromMock.mockReturnValueOnce(nonceMock);
+
+    const res = await request(createApp())
+      .post('/webhooks/drive')
+      .set('X-Goog-Channel-ID', 'chan-99')
+      .set('X-Goog-Resource-State', 'change')
+      .set('X-Goog-Channel-Token', 'expected-token')
+      .set('X-Goog-Message-Number', '7');
+
+    expect(res.status).toBe(200);
+    expect(nonceMock.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel_id: 'chan-99',
+        message_number: 7,
+      }),
+    );
   });
 });

@@ -61,6 +61,13 @@ function attestationLookup(data: unknown = []) {
   return chain;
 }
 
+// SCRUM-1242: per-vendor nonce table for replay protection.
+function nonceInsert(error: { code?: string } | null = null) {
+  return {
+    insert: vi.fn().mockResolvedValue({ error }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // SCRUM-1240: clearAllMocks does not clear the .mockReturnValueOnce
@@ -88,6 +95,7 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
         field_mapping: null,
       }),
     );
+    dbFromMock.mockReturnValueOnce(nonceInsert(null)); // SCRUM-1242
     dbFromMock.mockReturnValueOnce(attestationLookup([]));
 
     const res = await request(createApp())
@@ -143,6 +151,7 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
         webhook_secret: WEBHOOK_SECRET,
       }),
     );
+    dbFromMock.mockReturnValueOnce(nonceInsert(null)); // SCRUM-1242
     dbFromMock.mockReturnValueOnce(attestationLookup([]));
 
     const correctSig = signPayload(body);
@@ -179,6 +188,7 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
         webhook_secret: WEBHOOK_SECRET,
       }),
     );
+    dbFromMock.mockReturnValueOnce(nonceInsert(null)); // SCRUM-1242
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const attestationChain: any = {};
@@ -210,5 +220,75 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
     expect(res.status).toBe(202);
     expect(eqCalls).toContainEqual(['org_id', 'org-A']);
     expect(attestationChain.or).toHaveBeenCalled();
+  });
+
+  // SCRUM-1242 (AUDIT-0424-26): replay protection. A captured webhook must
+  // not be re-processed. We dedupe on (provider, integration_id, signature)
+  // — the same signature for the same integration is always a replay (HMAC
+  // is deterministic on body + secret).
+  it('SCRUM-1242: returns 200 + duplicate=true on replay (nonce already inserted)', async () => {
+    const body = JSON.stringify({
+      action: 'candidate.hired',
+      payload: {
+        candidate: { first_name: 'Jane', last_name: 'Doe', email_addresses: [{ value: 'j@x' }] },
+        stage: { name: 'BG Check' },
+      },
+    });
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: INTEGRATION_ID,
+        org_id: 'org-1',
+        webhook_secret: WEBHOOK_SECRET,
+      }),
+    );
+    // Postgres unique_violation — the nonce was previously inserted.
+    dbFromMock.mockReturnValueOnce(nonceInsert({ code: '23505' }));
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', signPayload(body))
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
+  });
+
+  it('SCRUM-1242: writes nonce row keyed on (provider, integration_id, signature)', async () => {
+    const body = JSON.stringify({
+      action: 'candidate.hired',
+      payload: {
+        candidate: { first_name: 'A', last_name: 'B', email_addresses: [{ value: 'a@b' }] },
+        stage: { name: 'X' },
+      },
+    });
+    const sig = signPayload(body);
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: INTEGRATION_ID,
+        org_id: 'org-1',
+        webhook_secret: WEBHOOK_SECRET,
+      }),
+    );
+    const nonceMock = nonceInsert(null);
+    dbFromMock.mockReturnValueOnce(nonceMock);
+    dbFromMock.mockReturnValueOnce(attestationLookup([]));
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/greenhouse/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Greenhouse-Signature', sig)
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(nonceMock.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'greenhouse',
+        integration_id: INTEGRATION_ID,
+        signature: sig,
+      }),
+    );
   });
 });
