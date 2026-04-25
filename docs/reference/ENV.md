@@ -73,6 +73,7 @@ ANCHOR_CONFIDENCE_THRESHOLD=0.4
 ENABLE_VERIFICATION_API=false
 API_KEY_HMAC_SECRET=
 CORS_ALLOWED_ORIGINS=*
+INTEGRATION_STATE_HMAC_SECRET=      # SCRUM-1236: dedicated HMAC secret for OAuth `state` signing (Drive, GRC). Worker fails closed if unset (no fallback to SUPABASE_JWT_SECRET).
 ```
 
 ## Cron auth
