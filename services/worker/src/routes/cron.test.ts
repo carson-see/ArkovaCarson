@@ -248,6 +248,16 @@ vi.mock('../jobs/grace-expiry-sweep.js', () => ({
   runGraceExpirySweep: (...args: unknown[]) => mockRunGraceExpirySweep(...args),
 }));
 
+const mockRunAllocationRollover = vi.fn().mockResolvedValue({
+  total_orgs: 5,
+  rolled: 4,
+  skipped: 1,
+  errors: 0,
+});
+vi.mock('../jobs/monthly-allocation-rollover.js', () => ({
+  runAllocationRollover: (...args: unknown[]) => mockRunAllocationRollover(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -965,6 +975,24 @@ describe('cron routes', () => {
       mockRunGraceExpirySweep.mockRejectedValueOnce(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/grace-expiry-sweep');
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // SCRUM-1219: route was missing, Cloud Scheduler 404'd every month.
+  describe('POST /monthly-allocation-rollover', () => {
+    it('returns rollover summary', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/monthly-allocation-rollover');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ total_orgs: 5, rolled: 4, skipped: 1, errors: 0 });
+      expect(mockRunAllocationRollover).toHaveBeenCalled();
+    });
+
+    it('returns 500 on failure', async () => {
+      mockRunAllocationRollover.mockRejectedValueOnce(new Error('fail'));
+      const app = createApp();
+      const res = await request(app).post('/cron/monthly-allocation-rollover');
       expect(res.status).toBe(500);
     });
   });
