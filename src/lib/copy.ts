@@ -958,6 +958,29 @@ export const SETTINGS_PAGE_LABELS = {
 } as const;
 
 // =============================================================================
+// CONNECTIONS — third-party document source integrations (SCRUM-1101)
+// =============================================================================
+
+export const CONNECTIONS_LABELS = {
+  CARD_TITLE: 'Connections',
+  CARD_DESCRIPTION: 'Connect a document source so rules trigger on real events',
+  DOCUSIGN_NAME: 'DocuSign',
+  DOCUSIGN_DESC: 'Trigger rules when an envelope is signed and completed',
+  CONNECT_BUTTON: 'Connect',
+  CONNECTING: 'Connecting…',
+  DISCONNECT_BUTTON: 'Disconnect',
+  DISCONNECTING: 'Disconnecting…',
+  STATUS_CONNECTED: 'Connected',
+  STATUS_NOT_CONNECTED: 'Not connected',
+  CONNECT_FAILED: 'Could not start the connection. Please try again.',
+  DISCONNECT_FAILED: 'Could not disconnect. Please try again.',
+  TOAST_CONNECTED: 'DocuSign connected. Completed envelopes will now trigger rules.',
+  TOAST_DISCONNECTED: 'DocuSign disconnected.',
+  TOAST_ERROR_PREFIX: 'DocuSign connection failed: ',
+  ACCOUNT_LABEL_PREFIX: 'Account: ',
+} as const;
+
+// =============================================================================
 // ACCOUNT DELETION (PII-02 — GDPR Art. 17)
 // =============================================================================
 
