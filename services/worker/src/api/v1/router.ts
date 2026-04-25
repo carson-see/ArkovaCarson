@@ -285,8 +285,8 @@ router.use('/webhooks/ats', atsWebhookRouter);
 // ─── Google Drive push notifications — channel-token verified (SCRUM-1099) ───
 // Drive POSTs are headers-only; auth is via X-Goog-Channel-ID lookup +
 // X-Goog-Channel-Token constant-time compare. No HMAC because Drive does
-// not sign payloads. Path is derived from the canonical WEBHOOK_PATHS entry
-// so drive-oauth's `changes.watch` registration cannot drift (SCRUM-1209).
+// not sign payloads. Path comes from the canonical WEBHOOK_PATHS entry so
+// drive-oauth's `changes.watch` registration cannot drift.
 router.use(relativeTo(WEBHOOK_PATHS.GOOGLE_DRIVE, API_V1_PREFIX), driveWebhookRouter);
 
 // ─── Webhook management — test + delivery logs (WEBHOOK-3, WEBHOOK-4) ───

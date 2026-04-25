@@ -116,8 +116,8 @@ function buildRedirectUri(req: Request): string {
 }
 
 function buildWebhookAddress(req: Request): string {
-  // SCRUM-1209: must match the public path the v1 router mounts the Drive
-  // webhook handler at. Mismatches produce silent 404s on every Drive push.
+  // Must match the path the v1 router mounts the Drive webhook handler at;
+  // drift here produces silent 404s on every Drive push.
   return `${getRequestBaseUrl(req)}${WEBHOOK_PATHS.GOOGLE_DRIVE}`;
 }
 
