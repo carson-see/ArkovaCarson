@@ -39,7 +39,6 @@
 -- =============================================================================
 
 TRUNCATE TABLE audit_events    RESTART IDENTITY CASCADE;
-TRUNCATE TABLE anchoring_jobs  RESTART IDENTITY CASCADE;
 TRUNCATE TABLE anchor_proofs   RESTART IDENTITY CASCADE;
 TRUNCATE TABLE anchors         RESTART IDENTITY CASCADE;
 TRUNCATE TABLE memberships     RESTART IDENTITY CASCADE;

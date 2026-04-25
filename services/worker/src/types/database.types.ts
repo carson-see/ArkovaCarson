@@ -5150,7 +5150,7 @@ export type Database = {
         Args: {
           p_external_file_id: string
           p_reason?: string
-          p_selected_public_id: string
+          p_selected_anchor_id: string
         }
         Returns: string
       }
