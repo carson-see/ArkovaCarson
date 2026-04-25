@@ -70,7 +70,7 @@ const {
     maybeSingle: plansSelectMaybeSingle,
   };
 
-  // subscriptions.upsert({}, { onConflict: 'user_id' })
+  // subscriptions.upsert({}, { onConflict: 'stripe_subscription_id' })
   const subscriptionsUpsert = vi.fn();
 
   // subscriptions.update({}).eq('stripe_subscription_id', id)
@@ -409,7 +409,7 @@ describe('handleCheckoutComplete', () => {
         stripe_customer_id: 'cus_test_001',
         status: 'active',
       }),
-      { onConflict: 'user_id' },
+      { onConflict: 'stripe_subscription_id' },
     );
   });
 
@@ -546,7 +546,7 @@ describe('handleCheckoutComplete', () => {
     expect(plansSelect.eq).toHaveBeenCalledWith('id', 'small_business');
     expect(subscriptionsUpsert).toHaveBeenCalledWith(
       expect.objectContaining({ plan_id: 'small_business' }),
-      { onConflict: 'user_id' },
+      { onConflict: 'stripe_subscription_id' },
     );
   });
 

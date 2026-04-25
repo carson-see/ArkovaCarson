@@ -42,6 +42,7 @@ import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
+import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
@@ -50,6 +51,7 @@ import { setupGracefulShutdown, trackOperation } from './routes/lifecycle.js';
 import { startHeapMonitor, logHeapStatus } from './utils/heapMonitor.js';
 import { flagRegistry } from './middleware/flagRegistry.js';
 import { correlationIdMiddleware } from './utils/correlationId.js';
+import { requirePaymentCurrent } from './middleware/requirePaymentCurrent.js';
 import { initUpstashRateLimiting } from './utils/upstashRateLimit.js';
 import { createUpstashIdempotencyStore } from './middleware/upstashIdempotency.js';
 import { setIdempotencyStore } from './middleware/idempotency.js';
@@ -211,6 +213,19 @@ app.use(
   adobeSignWebhookRouter,
 );
 
+// ─── ATS webhook (SCRUM-1214/1215) — raw body for HMAC, per-integration URL ───
+app.use(
+  '/api/v1/webhooks/ats',
+  rateLimiters.stripeWebhook,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    req.body = JSON.parse((req.body as Buffer).toString('utf8'));
+    next();
+  },
+  atsWebhookRouter,
+);
+
 // ─── Checkr report-completed webhook (SCRUM-1030 / 1151) — raw body required ───
 app.use(
   '/webhooks/checkr',
@@ -282,10 +297,14 @@ const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) =
 app.use('/api/v1/integrations', killSwitch('ENABLE_DRIVE_OAUTH'), rateLimiters.api, integrationsAuthGate, driveOAuthRouter);
 app.use('/api/v1/integrations', killSwitch('ENABLE_DOCUSIGN_OAUTH'), rateLimiters.api, integrationsAuthGate, docusignOAuthRouter);
 
+// Payment-state enforcement: suspended/cancelled orgs get 402 (SCRUM-1221).
+app.use('/api/v1', requirePaymentCurrent());
+
 // Verification API v1 — gated behind ENABLE_VERIFICATION_API flag
 app.use('/api/v1', apiV1Router);
 
 // Verification API v2 — RFC 7807 error model, scoped API keys
+app.use('/api/v2', requirePaymentCurrent());
 import { apiV2Router } from './api/v2/router.js';
 app.use('/api/v2', apiV2Router);
 

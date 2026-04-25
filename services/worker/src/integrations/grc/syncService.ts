@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { GrcConnection, GrcEvidencePayload, GrcPlatform } from './types.js';
 import { createGrcAdapter, loadGrcCredentials, type GrcPlatformCredentials } from './adapters.js';
 import { getComplianceControlIds } from '../../utils/complianceMapping.js';
+import { createDefaultKmsClient, decryptTokens } from '../oauth/crypto.js';
 
 // Note: grc_connections and grc_sync_logs not yet in database.types.ts (migration 0139)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,12 +105,18 @@ export async function syncAnchorToGrc(
     let result: SyncResult;
 
     try {
-      if (!conn.access_token_encrypted) {
-        throw new Error('No access token stored for connection');
+      if (!conn.access_token_encrypted || !conn.token_kms_key_id) {
+        throw new Error('No encrypted access token stored for connection');
       }
 
+      const kms = await createDefaultKmsClient();
+      const ct = typeof conn.access_token_encrypted === 'string'
+        ? Buffer.from(conn.access_token_encrypted.replace(/^\\x/, ''), 'hex')
+        : Buffer.from(conn.access_token_encrypted);
+      const tokens = await decryptTokens(ct, { kms, keyName: conn.token_kms_key_id });
+
       const adapter = createGrcAdapter(conn.platform, platformCreds);
-      const pushResult = await adapter.pushEvidence(conn.access_token_encrypted, evidence);
+      const pushResult = await adapter.pushEvidence(tokens.access_token, evidence);
       const duration = Date.now() - start;
 
       result = {

@@ -12,8 +12,9 @@ export interface GrcConnection {
   id: string;
   org_id: string;
   platform: GrcPlatform;
-  access_token_encrypted: string | null;
+  access_token_encrypted: string | Buffer | null;
   refresh_token_encrypted: string | null;
+  token_kms_key_id: string | null;
   token_expires_at: string | null;
   external_org_id: string | null;
   external_workspace_id: string | null;

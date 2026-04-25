@@ -65,11 +65,13 @@ function validBody(): string {
 }
 
 function integrationLookup(data: unknown, error: unknown = null) {
+  const rows = data === null ? [] : Array.isArray(data) ? data : [data];
   return {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     is: vi.fn().mockReturnThis(),
-    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
+    then: (resolve: (v: unknown) => void, reject: (e: unknown) => void) =>
+      Promise.resolve({ data: error ? null : rows, error }).then(resolve, reject),
   };
 }
 
@@ -206,6 +208,26 @@ describe('POST /webhooks/docusign', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, duplicate: true });
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when DocuSign accountId is connected to multiple orgs (cross-tenant guard)', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup([
+        { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' },
+        { id: 'int-2', org_id: '33333333-3333-3333-3333-333333333333', account_id: 'acct-1' },
+      ]),
+    );
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(500);
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });

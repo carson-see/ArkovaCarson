@@ -315,12 +315,18 @@ function setupDbMocks(overrides: {
     }
 
     if (table === 'ats_integrations') {
+      // Handler chains: .select().eq(id).eq(provider).eq(enabled).maybeSingle()
+      const singleResult = atsIntegrations && atsIntegrations.length > 0 ? atsIntegrations[0] : null;
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockResolvedValue({
-              data: atsIntegrations,
-              error: atsIntegrations ? null : { message: 'not found' },
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({
+                  data: singleResult,
+                  error: singleResult ? null : { message: 'not found' },
+                }),
+              }),
             }),
           }),
         }),
@@ -389,6 +395,7 @@ function setupDbMocks(overrides: {
 // ─── Build Test App ─────────────────────────────────────────────────────────
 
 import { apiV1Router } from '../api/v1/router.js';
+import { atsWebhookRouter } from '../api/v1/webhooks/ats.js';
 
 /**
  * Build a minimal Express app that mirrors index.ts routing for the
@@ -396,6 +403,19 @@ import { apiV1Router } from '../api/v1/router.js';
  */
 function buildTestApp() {
   const app = express();
+
+  // ATS webhook: raw body before JSON parser, mirroring index.ts mount order
+  app.use(
+    '/api/v1/webhooks/ats',
+    express.raw({ type: 'application/json' }),
+    (req, _res, next) => {
+      (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+      req.body = JSON.parse((req.body as Buffer).toString('utf8'));
+      next();
+    },
+    atsWebhookRouter,
+  );
+
   app.use(express.json());
 
   // Health endpoint (mirrors index.ts)
@@ -709,10 +729,10 @@ describe('API E2E — Verification API', () => {
   });
 
   // ════════════════════════════════════════════════════════════════════════
-  // POST /api/v1/webhooks/ats/:provider
+  // POST /api/v1/webhooks/ats/:provider/:integrationId
   // ════════════════════════════════════════════════════════════════════════
 
-  describe('POST /api/v1/webhooks/ats/:provider', () => {
+  describe('POST /api/v1/webhooks/ats/:provider/:integrationId', () => {
     const ATS_WEBHOOK_SECRET = 'ats-webhook-secret-for-testing';
     const GREENHOUSE_PAYLOAD = {
       action: 'candidate.hired',
@@ -747,7 +767,7 @@ describe('API E2E — Verification API', () => {
       });
 
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/greenhouse')
+        .post('/api/v1/webhooks/ats/greenhouse/int-001')
         .set('X-Greenhouse-Signature', signature)
         .send(GREENHOUSE_PAYLOAD);
 
@@ -771,7 +791,7 @@ describe('API E2E — Verification API', () => {
       });
 
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/greenhouse')
+        .post('/api/v1/webhooks/ats/greenhouse/int-001')
         .set('X-Greenhouse-Signature', 'invalid-signature')
         .send(GREENHOUSE_PAYLOAD);
 
@@ -781,7 +801,7 @@ describe('API E2E — Verification API', () => {
 
     it('rejects webhook with missing signature header', async () => {
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/greenhouse')
+        .post('/api/v1/webhooks/ats/greenhouse/int-001')
         .send(GREENHOUSE_PAYLOAD);
 
       expect(res.status).toBe(401);
@@ -790,7 +810,7 @@ describe('API E2E — Verification API', () => {
 
     it('rejects unsupported ATS provider', async () => {
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/workday')
+        .post('/api/v1/webhooks/ats/workday/int-001')
         .set('X-Webhook-Signature', 'some-signature')
         .send({});
 
@@ -805,7 +825,7 @@ describe('API E2E — Verification API', () => {
       setupDbMocks({ atsIntegrations: [] });
 
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/greenhouse')
+        .post('/api/v1/webhooks/ats/greenhouse/int-001')
         .set('X-Greenhouse-Signature', signature)
         .send(GREENHOUSE_PAYLOAD);
 
@@ -837,7 +857,7 @@ describe('API E2E — Verification API', () => {
       });
 
       const res = await request(app)
-        .post('/api/v1/webhooks/ats/lever')
+        .post('/api/v1/webhooks/ats/lever/int-002')
         .set('X-Lever-Signature', leverSignature)
         .send(leverPayload);
 

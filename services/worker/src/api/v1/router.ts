@@ -53,7 +53,7 @@ import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
 import { webhooksRouter } from './webhooks.js';
-import { atsWebhookRouter } from './webhooks/ats.js';
+// atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
 import { auditExportRouter } from './audit-export.js';
@@ -280,8 +280,9 @@ router.use('/audit-export', requireAuth, auditExportRouter);
 import { killSwitch } from '../../middleware/integrationKillSwitch.js';
 router.use('/grc', killSwitch('ENABLE_GRC_INTEGRATION'), grcFeatureGate(), requireAuth, grcRouter);
 
-// ─── ATS inbound webhooks — HMAC-signed, no API key auth (ATT-04) ───
-router.use('/webhooks/ats', killSwitch('ENABLE_ATS_WEBHOOK'), atsWebhookRouter);
+// ATS webhooks mounted in index.ts for raw-body HMAC (SCRUM-1214/1215).
+// Path: /api/v1/webhooks/ats/:provider/:integrationId. Kill-switch is applied
+// at the index.ts mount.
 
 // ─── Google Drive push notifications — channel-token verified (SCRUM-1099) ───
 // Drive POSTs are headers-only; auth is via X-Goog-Channel-ID lookup +

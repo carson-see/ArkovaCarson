@@ -28,12 +28,5 @@ export function isApiV2Scope(scope: string): scope is ApiV2Scope {
 }
 
 export function scopeSatisfies(granted: string[], required: string): boolean {
-  if (granted.includes(required)) return true;
-
-  const equivalents: Record<string, readonly string[]> = {
-    verify: ['read:records'],
-    'verify:batch': ['read:records'],
-  };
-
-  return equivalents[required]?.some(scope => granted.includes(scope)) ?? false;
+  return granted.includes(required);
 }
