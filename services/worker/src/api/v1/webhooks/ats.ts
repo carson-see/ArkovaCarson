@@ -181,9 +181,16 @@ router.post('/:provider/:integrationId', async (req: Request, res: Response) => 
         return escaped;
       };
       const filters = searchTerms.map((term) => `subject_identifier.ilike.%${escapeIlike(term)}%`);
+      // SCRUM-1240 (AUDIT-0424-16): scope attestations to the integration's
+      // org. Previously the .or() ilike search ran without any org_id
+      // constraint — two orgs that both connected the same ATS provider with
+      // overlapping candidate names leaked each other's attestation rows
+      // into the response. The integration row was already resolved upstream
+      // (its `org_id` is the only authoritative org for this delivery).
       const { data, error } = await dbAny
         .from('attestations')
         .select('public_id, attestation_type, status, subject_identifier, attester_name, expires_at, chain_tx_id')
+        .eq('org_id', matchedIntegration.org_id)
         .or(filters.join(','));
 
       if (!error && data) {
