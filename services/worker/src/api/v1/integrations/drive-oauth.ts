@@ -73,20 +73,37 @@ function hmac(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-function getStateSecret(deps: DriveOAuthDeps): string {
-  return deps.stateSecret ?? config.supabaseJwtSecret ?? config.supabaseServiceKey;
+/**
+ * Resolve the dedicated HMAC secret for OAuth state signing.
+ *
+ * SCRUM-1236 (AUDIT-0424-11): Previously this fell back to
+ * `config.supabaseJwtSecret` and `config.supabaseServiceKey` — both
+ * general-purpose secrets used for unrelated paths. Coupling state validity
+ * to those rotations meant rotating the Supabase JWT silently invalidated
+ * every in-flight OAuth flow, and reusing a verification secret as a
+ * signing secret violates least-privilege. We now require a dedicated
+ * `INTEGRATION_STATE_HMAC_SECRET` env var (or an explicit `stateSecret`
+ * override for tests). Fail-closed if neither is provided.
+ */
+function resolveStateSecret(deps: DriveOAuthDeps): string {
+  if (deps.stateSecret) return deps.stateSecret;
+  const envSecret = (deps.env ?? process.env).INTEGRATION_STATE_HMAC_SECRET;
+  if (envSecret && envSecret.length > 0) return envSecret;
+  throw new Error(
+    'INTEGRATION_STATE_HMAC_SECRET is required for Drive OAuth state signing — fail-closed (SCRUM-1236)',
+  );
 }
 
-function signState(payload: StatePayload, deps: DriveOAuthDeps): string {
+function signState(payload: StatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmac(encoded, getStateSecret(deps))}`;
+  return `${encoded}.${hmac(encoded, secret)}`;
 }
 
-function verifyState(state: string, deps: DriveOAuthDeps): StatePayload | null {
+function verifyState(state: string, secret: string, deps: DriveOAuthDeps): StatePayload | null {
   const [encoded, signature] = state.split('.');
   if (!encoded || !signature) return null;
 
-  const expected = hmac(encoded, getStateSecret(deps));
+  const expected = hmac(encoded, secret);
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -209,6 +226,9 @@ async function recordIntegrationEvent(db: DbClient, args: {
 export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
   const router = Router();
   const db = deps.db ?? defaultDb;
+  // SCRUM-1236: resolve at construction time so a misconfigured deploy fails
+  // fast (server boot) rather than at the first OAuth attempt.
+  const stateSecret = resolveStateSecret(deps);
 
   router.post('/google_drive/oauth/start', async (req: Request, res: Response) => {
     const userId = getUserId(req);
@@ -238,7 +258,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
-      }, deps);
+      }, stateSecret);
       const authorizationUrl = buildAuthorizationUrl({
         redirectUri,
         state,
@@ -256,7 +276,7 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, deps);
+    const payload = verifyState(state, stateSecret, deps);
     const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
 
     if (!payload) {
@@ -477,4 +497,15 @@ export function createDriveOAuthRouter(deps: DriveOAuthDeps = {}): Router {
   return router;
 }
 
-export const driveOAuthRouter = createDriveOAuthRouter();
+// Lazy router export — `createDriveOAuthRouter()` validates
+// `INTEGRATION_STATE_HMAC_SECRET` at construction time and throws when
+// missing (SCRUM-1236). Eager construction at module-import time would
+// crash unrelated tests that import the module without setting the env
+// var. We expose a wrapper Router that defers real construction until the
+// first request mounts on it.
+let cachedRouter: Router | null = null;
+export const driveOAuthRouter: Router = Router();
+driveOAuthRouter.use((req, res, next) => {
+  if (!cachedRouter) cachedRouter = createDriveOAuthRouter();
+  return cachedRouter(req, res, next);
+});
