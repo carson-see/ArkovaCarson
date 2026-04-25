@@ -208,7 +208,9 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     }
   }
 
-  // Upsert subscription (UNIQUE on user_id handles existing records)
+  // Upsert subscription keyed by stripe_subscription_id. Using user_id as the
+  // conflict key clobbered prior subscriptions when a user had multiple
+  // Stripe subscriptions across different orgs (SCRUM-1220).
   const { error: subError } = await db
     .from('subscriptions')
     .upsert(
@@ -219,7 +221,7 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
         stripe_customer_id: session.customer,
         status: 'active',
       },
-      { onConflict: 'user_id' },
+      { onConflict: 'stripe_subscription_id' },
     );
 
   if (subError) {

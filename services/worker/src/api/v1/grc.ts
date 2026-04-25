@@ -20,6 +20,12 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { createGrcAdapter, loadGrcCredentials } from '../../integrations/grc/adapters.js';
 import type { GrcConnection } from '../../integrations/grc/types.js';
+import {
+  createDefaultKmsClient,
+  encryptTokens,
+  decryptTokens,
+  getIntegrationTokenKeyName,
+} from '../../integrations/oauth/crypto.js';
 
 const router = Router();
 
@@ -113,13 +119,24 @@ router.post('/callback', async (req: Request, res: Response) => {
     const tokens = await adapter.exchangeAuthCode(code, redirect_uri);
     const testResult = await adapter.testConnection(tokens.access_token);
 
+    const kms = await createDefaultKmsClient();
+    const keyName = getIntegrationTokenKeyName();
+    const encrypted = await encryptTokens(
+      {
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+      },
+      { kms, keyName },
+    );
+
     const { data: connection, error: upsertError } = await grcDb
       .from('grc_connections')
       .upsert({
         org_id,
         platform,
-        access_token_encrypted: tokens.access_token,
-        refresh_token_encrypted: tokens.refresh_token ?? null,
+        access_token_encrypted: `\\x${encrypted.ciphertext.toString('hex')}`,
+        refresh_token_encrypted: null,
+        token_kms_key_id: encrypted.keyId,
         token_expires_at: tokens.expires_in
           ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
           : null,
@@ -210,21 +227,40 @@ router.post('/test/:id', async (req: Request, res: Response) => {
   try {
     const adapter = createGrcAdapter(conn.platform, creds);
 
-    let accessToken = conn.access_token_encrypted;
-    if (conn.token_expires_at && new Date(conn.token_expires_at) < new Date() && conn.refresh_token_encrypted) {
-      const refreshed = await adapter.refreshAccessToken(conn.refresh_token_encrypted);
+    const kms = await createDefaultKmsClient();
+    const decrypted = conn.access_token_encrypted && conn.token_kms_key_id
+      ? await decryptTokens(
+          typeof conn.access_token_encrypted === 'string'
+            ? Buffer.from(conn.access_token_encrypted.replace(/^\\x/, ''), 'hex')
+            : Buffer.from(conn.access_token_encrypted),
+          { kms, keyName: conn.token_kms_key_id },
+        )
+      : null;
+
+    if (!decrypted) {
+      res.json({ valid: false, error: 'No encrypted tokens found' });
+      return;
+    }
+
+    let accessToken = decrypted.access_token;
+    if (conn.token_expires_at && new Date(conn.token_expires_at) < new Date() && decrypted.refresh_token) {
+      const refreshed = await adapter.refreshAccessToken(decrypted.refresh_token);
       accessToken = refreshed.access_token;
 
+      const newEncrypted = await encryptTokens(
+        { access_token: refreshed.access_token, refresh_token: refreshed.refresh_token ?? decrypted.refresh_token },
+        { kms, keyName: getIntegrationTokenKeyName() },
+      );
       await grcDb.from('grc_connections').update({
-        access_token_encrypted: refreshed.access_token,
-        refresh_token_encrypted: refreshed.refresh_token ?? conn.refresh_token_encrypted,
+        access_token_encrypted: `\\x${newEncrypted.ciphertext.toString('hex')}`,
+        token_kms_key_id: newEncrypted.keyId,
         token_expires_at: refreshed.expires_in
           ? new Date(Date.now() + refreshed.expires_in * 1000).toISOString()
           : conn.token_expires_at,
       }).eq('id', connectionId);
     }
 
-    const testResult = await adapter.testConnection(accessToken!);
+    const testResult = await adapter.testConnection(accessToken);
     res.json(testResult);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
