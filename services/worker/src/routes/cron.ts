@@ -1292,25 +1292,38 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
     });
   }
 
-  // Check 2: Anchor count sanity (production should have >0)
+  // Check 2: Anchor count sanity (production should have >0).
+  //
+  // SCRUM-1235: previously used `count: 'exact'` against the 1.4M-row anchors
+  // table, which timed out at PostgREST's 60s ceiling on every run. Now uses
+  // get_anchor_status_counts_fast() (migration 0182) which derives the total
+  // from pg_class.reltuples — instant, regardless of table size.
   const anchorStart = Date.now();
   try {
-    const { count, error } = await db.from('anchors').select('*', { count: 'exact', head: true });
+    const { data, error } = await (db as unknown as {
+      rpc: (name: string) => Promise<{ data: { total?: number } | null; error: { message: string } | null }>;
+    }).rpc('get_anchor_status_counts_fast');
     if (error) {
       results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: error.message });
     } else {
+      const total = Number(data?.total ?? 0);
       results.push({
         name: 'anchor-count',
-        status: (count ?? 0) > 0 ? 'pass' : 'fail',
+        status: total > 0 ? 'pass' : 'fail',
         durationMs: Date.now() - anchorStart,
-        detail: `${count ?? 0} total anchors`,
+        detail: `${total} total anchors`,
       });
     }
   } catch (err) {
     results.push({ name: 'anchor-count', status: 'fail', durationMs: Date.now() - anchorStart, error: String(err) });
   }
 
-  // Check 3: Recent SECURED anchor (should have one within last 7 days)
+  // Check 3: Recent SECURED anchor (should have one within last 7 days).
+  //
+  // SCRUM-1235: added `.is('deleted_at', null)` and an explicit ORDER BY so
+  // the partial index `idx_anchors_status_created` (migration 0174,
+  // `WHERE deleted_at IS NULL ORDER BY created_at DESC`) is selected and the
+  // LIMIT 1 short-circuits.
   const securedStart = Date.now();
   try {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -1319,6 +1332,8 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
       .select('created_at')
       .eq('status', 'SECURED')
       .gte('created_at', sevenDaysAgo)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
       .limit(1);
     if (error) {
       results.push({ name: 'recent-secured', status: 'fail', durationMs: Date.now() - securedStart, error: error.message });
@@ -1350,17 +1365,37 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
     detail: configIssues.length === 0 ? 'All critical config present' : configIssues.join('; '),
   });
 
-  // Check 5: RLS active on anchors table
+  // Check 5: RLS is enforced on the anchors table.
+  //
+  // SCRUM-1235: previously a copy-paste of the anchor-count query. That had
+  // two problems: (1) `count: 'exact'` timed out on 1.4M rows, and (2) it ran
+  // as service_role which BYPASSES RLS — so even when "green" it was testing
+  // nothing. Now calls verify_anchors_rls_enabled() (SECURITY DEFINER, reads
+  // pg_class.relrowsecurity AND relforcerowsecurity). Fails closed if either
+  // flag is off — CLAUDE.md §1.4 requires both.
   const rlsStart = Date.now();
   try {
-    // Service role query should work, anonymous should not be able to bypass RLS
-    const { count, error } = await db.from('anchors').select('*', { count: 'exact', head: true });
-    results.push({
-      name: 'rls-active',
-      status: error ? 'fail' : 'pass',
-      durationMs: Date.now() - rlsStart,
-      detail: error ? error.message : `Service role query OK (${count} rows)`,
-    });
+    const { data, error } = await (db as unknown as {
+      rpc: (name: string) => Promise<{ data: boolean | null; error: { message: string } | null }>;
+    }).rpc('verify_anchors_rls_enabled');
+    if (error) {
+      results.push({
+        name: 'rls-active',
+        status: 'fail',
+        durationMs: Date.now() - rlsStart,
+        error: error.message,
+      });
+    } else {
+      const enforced = data === true;
+      results.push({
+        name: 'rls-active',
+        status: enforced ? 'pass' : 'fail',
+        durationMs: Date.now() - rlsStart,
+        detail: enforced
+          ? 'RLS enabled and forced on anchors'
+          : 'RLS not enforced on anchors (relrowsecurity or relforcerowsecurity is false)',
+      });
+    }
   } catch (err) {
     results.push({ name: 'rls-active', status: 'fail', durationMs: Date.now() - rlsStart, error: String(err) });
   }
