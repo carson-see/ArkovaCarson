@@ -97,27 +97,27 @@ async function callPaymentGraceRpc(
 // =========================================================================
 
 /**
- * Check if event was already processed using billing_events.stripe_event_id UNIQUE constraint.
+ * Claim a Stripe event for processing by inserting into billing_events FIRST,
+ * relying on the `stripe_event_id` UNIQUE constraint as a transactional lock.
+ *
+ * Returns `true` when this caller is the first to claim the event and should
+ * run its side effects, `false` when the event was already claimed (the
+ * UNIQUE violation means a sibling worker — or this same worker on Stripe
+ * retry — already started processing).
+ *
+ * Inserting before side effects prevents Stripe retries from replaying the
+ * side effects: every retry sees the row, hits the UNIQUE violation, and
+ * returns false. The trade-off is at-most-once delivery per event — a crash
+ * between INSERT and the side-effect block leaves an event marked claimed
+ * with no effect. That's preferred over replaying anchor adjustments / DB
+ * writes on every Stripe retry, which was the prior behavior.
  */
-async function isEventProcessed(eventId: string): Promise<boolean> {
-  const { data } = await db
-    .from('billing_events')
-    .select('id')
-    .eq('stripe_event_id', eventId)
-    .maybeSingle();
-
-  return data !== null;
-}
-
-/**
- * Record event as processed in append-only billing_events table.
- */
-async function recordEventProcessed(
+async function claimEvent(
   eventId: string,
   eventType: string,
   userId: string | null,
   payload: Record<string, unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const { error } = await db.from('billing_events').insert({
     stripe_event_id: eventId,
     event_type: eventType,
@@ -125,15 +125,13 @@ async function recordEventProcessed(
     payload: payload as unknown as import('../types/database.types.js').Json,
   });
 
-  if (error) {
-    // UNIQUE violation means it was already recorded — not an error
-    if (error.code === '23505') {
-      logger.info({ eventId }, 'Event already recorded (duplicate)');
-      return;
-    }
-    logger.error({ error, eventId }, 'Failed to record billing event');
-    throw error;
+  if (!error) return true;
+  if (error.code === '23505') {
+    logger.info({ eventId }, 'Event already processed');
+    return false;
   }
+  logger.error({ error, eventId }, 'Failed to record billing event');
+  throw error;
 }
 
 // =========================================================================
@@ -629,15 +627,12 @@ async function handleIdentityCanceled(event: StripeEvent): Promise<void> {
 }
 
 /**
- * Main webhook handler — routes events, checks idempotency, records processing.
+ * Main webhook handler — claims the event in billing_events first, then
+ * routes to the type-specific handler. Claiming before side effects is the
+ * idempotency boundary: Stripe retries hit the UNIQUE constraint and bail
+ * before any state mutations run.
  */
 export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
-  // Check idempotency
-  if (await isEventProcessed(event.id)) {
-    logger.info({ eventId: event.id }, 'Event already processed');
-    return;
-  }
-
   // Extract user_id from event metadata if available
   let userId: string | null = null;
   const obj = event.data.object as unknown as Record<string, unknown>;
@@ -645,6 +640,12 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
   if (metadata?.user_id) {
     userId = metadata.user_id;
   }
+
+  // Claim the event in billing_events BEFORE running side effects. If we lose
+  // the claim race (Stripe retry, sibling worker), bail without re-running
+  // the handler.
+  const claimed = await claimEvent(event.id, event.type, userId, obj);
+  if (!claimed) return;
 
   switch (event.type) {
     case 'checkout.session.completed':
@@ -674,7 +675,4 @@ export async function handleStripeWebhook(event: StripeEvent): Promise<void> {
     default:
       logger.info({ eventType: event.type }, 'Unhandled event type');
   }
-
-  // Record as processed in billing_events (idempotency + audit)
-  await recordEventProcessed(event.id, event.type, userId, obj as Record<string, unknown>);
 }

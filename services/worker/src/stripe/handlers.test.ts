@@ -315,8 +315,8 @@ describe('handleStripeWebhook', () => {
     );
   });
 
-  it('skips already-processed events (idempotency)', async () => {
-    billingEventsSelect.maybeSingle.mockResolvedValue({ data: { id: 'existing' } });
+  it('skips already-processed events (idempotency via UNIQUE violation)', async () => {
+    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
     await handleStripeWebhook(CHECKOUT_EVENT);
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({ eventId: 'evt_test_001' }),
@@ -325,14 +325,29 @@ describe('handleStripeWebhook', () => {
     expect(subscriptionsUpsert).not.toHaveBeenCalled();
   });
 
-  it('records event in billing_events after handling', async () => {
+  it('records event in billing_events BEFORE handling (idempotency boundary)', async () => {
+    const callOrder: string[] = [];
+    billingEventsInsert.mockImplementationOnce(() => {
+      callOrder.push('billing_events.insert');
+      return Promise.resolve({ error: null });
+    });
+    subscriptionsUpsert.mockImplementationOnce(() => {
+      callOrder.push('subscriptions.upsert');
+      return Promise.resolve({ error: null });
+    });
+
     await handleStripeWebhook(CHECKOUT_EVENT);
+
     expect(billingEventsInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         stripe_event_id: 'evt_test_001',
         event_type: 'checkout.session.completed',
         user_id: 'user-001',
       }),
+    );
+    // Critical: billing_events MUST be written before any side effect.
+    expect(callOrder.indexOf('billing_events.insert')).toBeLessThan(
+      callOrder.indexOf('subscriptions.upsert'),
     );
   });
 
@@ -344,14 +359,16 @@ describe('handleStripeWebhook', () => {
     );
   });
 
-  it('handles duplicate billing_events insert gracefully (23505)', async () => {
-    billingEventsInsert.mockResolvedValue({ error: { code: '23505', message: 'duplicate' } });
-    // Should not throw
-    await handleStripeWebhook(makeStripeEvent('unknown.event.type', {}));
-    expect(mockLogger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ eventId: 'evt_test_001' }),
-      'Event already recorded (duplicate)',
-    );
+  it('SCRUM-1222: Stripe retry of already-processed event runs zero side effects', async () => {
+    // Simulate: first delivery succeeded, billing_events row exists. Stripe
+    // retries the same event_id. Insert hits UNIQUE violation → bail with
+    // zero side effects.
+    billingEventsInsert.mockResolvedValueOnce({ error: { code: '23505', message: 'duplicate' } });
+    await handleStripeWebhook(CHECKOUT_EVENT);
+    expect(subscriptionsUpsert).not.toHaveBeenCalled();
+    expect(plansSelect.select).not.toHaveBeenCalled();
+    expect(profilesUpdate).not.toHaveBeenCalled();
+    expect(auditInsert).not.toHaveBeenCalled();
   });
 
   it('throws on non-duplicate billing_events insert error', async () => {
