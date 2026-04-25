@@ -120,7 +120,7 @@ describe('POST /webhooks/middesk', () => {
 
   it('returns 200 orphaned when org not found', async () => {
     // First call: nonce insert succeeds.
-    // Second call: organizations lookup returns null.
+    // Second & third calls: organizations lookups (by id, then kyb_reference_id) return null.
     let call = 0;
     mockDb.from.mockImplementation(() => {
       call++;
@@ -129,7 +129,7 @@ describe('POST /webhooks/middesk', () => {
       }
       return {
         select: vi.fn().mockReturnThis(),
-        or: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
         maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null }),
       };
     });
@@ -144,6 +144,62 @@ describe('POST /webhooks/middesk', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.orphaned).toBe(true);
+  });
+
+  it('SCRUM-1217: PostgREST filter syntax in external_id cannot inject into the org lookup', async () => {
+    // Hostile external_id value attempts to inject a second clause via
+    // PostgREST `.or()` syntax. With the new `.eq()` lookup this just
+    // becomes a literal value that the DB compares character-for-character
+    // (and never matches anything), so the call falls through to the
+    // kyb_reference_id lookup with the trusted vendor id.
+    const HOSTILE = ').or(verification_status.eq.VERIFIED';
+    const hostileEvent = {
+      ...VALID_EVENT,
+      id: 'evt_hostile',
+      data: {
+        object: {
+          id: 'biz_attack',
+          external_id: HOSTILE,
+          status: 'pending',
+        },
+      },
+    };
+
+    const eqCalls: Array<{ field: string; value: unknown }> = [];
+    let call = 0;
+    mockDb.from.mockImplementation(() => {
+      call++;
+      if (call === 1) {
+        return { insert: vi.fn().mockResolvedValueOnce({ error: null }) };
+      }
+      return {
+        select: vi.fn().mockReturnThis(),
+        eq: vi.fn((field: string, value: unknown) => {
+          eqCalls.push({ field, value });
+          return {
+            maybeSingle: vi.fn().mockResolvedValueOnce({ data: null, error: null }),
+          };
+        }),
+      };
+    });
+
+    const app = createApp();
+    const body = JSON.stringify(hostileEvent);
+    const res = await request(app)
+      .post('/webhooks/middesk')
+      .set('Content-Type', 'application/json')
+      .set('x-middesk-signature', signBody(body))
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orphaned).toBe(true);
+    // Exactly two lookups, each with a fixed column name (no payload-derived
+    // column names) and the payload value as a literal value, never a filter.
+    expect(eqCalls).toHaveLength(2);
+    expect(eqCalls[0]).toEqual({ field: 'id', value: HOSTILE });
+    expect(eqCalls[1]).toEqual({ field: 'kyb_reference_id', value: 'biz_attack' });
+    // Field names are hardcoded column names — none derived from the payload.
+    expect(eqCalls.every((c) => c.field === 'id' || c.field === 'kyb_reference_id')).toBe(true);
   });
 
   it('inserts event + flips verification_status on verified event', async () => {
@@ -162,10 +218,10 @@ describe('POST /webhooks/middesk', () => {
         return { insert: vi.fn().mockResolvedValueOnce({ error: null }) };
       }
       if (call === 2) {
-        // organizations lookup
+        // organizations lookup by id (external_id present → first lookup hits this branch)
         return {
           select: vi.fn().mockReturnThis(),
-          or: vi.fn().mockReturnThis(),
+          eq: vi.fn().mockReturnThis(),
           maybeSingle: vi.fn().mockResolvedValueOnce({
             data: { id: orgId },
             error: null,

@@ -85,19 +85,21 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  // Look up Arkova org from the vendor reference id.
+  // Never use PostgREST `.or()` with payload-derived strings — even though
+  // the envelope is HMAC-verified, `external_id` is attacker-influenced
+  // (we set it when registering the business and Middesk echoes it back).
+  // Two separate `.eq()` lookups also mean each query has a single,
+  // indexable filter.
   const vendorBusinessId = event.data.object.id;
   const externalId = event.data.object.external_id ?? null;
 
-  const { data: org, error: orgErr } = await dbUntyped
-    .from('organizations')
-    .select('id')
-    .or(
-      externalId
-        ? `id.eq.${externalId},kyb_reference_id.eq.${vendorBusinessId}`
-        : `kyb_reference_id.eq.${vendorBusinessId}`,
-    )
-    .maybeSingle();
+  const findOrg = (field: 'id' | 'kyb_reference_id', value: string) =>
+    dbUntyped.from('organizations').select('id').eq(field, value).maybeSingle();
+
+  const byId = externalId ? await findOrg('id', externalId) : null;
+  const byRef = byId?.data ? null : await findOrg('kyb_reference_id', vendorBusinessId);
+  const orgErr = byId?.error ?? byRef?.error ?? null;
+  const org = (byId?.data ?? byRef?.data) as { id: string } | null;
 
   if (orgErr) {
     logger.error({ orgErr }, 'Middesk webhook: org lookup failed');
