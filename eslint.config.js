@@ -19,6 +19,7 @@ export default tseslint.config(
       'react-hooks': reactHooks,
       'react-refresh': reactRefresh,
       'import': fixupPluginRules(importPlugin),
+      arkova: arkovaPlugin,
     },
     languageOptions: {
       ecmaVersion: 2020,
@@ -34,6 +35,8 @@ export default tseslint.config(
       'react-refresh/only-export-components': 'off',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'import/no-cycle': ['error', { maxDepth: 4 }],
+      // SCRUM-1208 — tenant isolation on multi-tenant Supabase tables.
+      'arkova/missing-org-filter': 'warn',
       // eslint-plugin-react-hooks v7 ships React Compiler rules in its
       // recommended preset. The codebase pre-dates the compiler and has
       // violations that need per-file refactoring. Downgrade to warn so
@@ -58,3 +61,7 @@ export default tseslint.config(
     },
   },
 );
+// Note: the worker has its own eslint.config.js (services/worker/eslint.config.js)
+// that separately enables arkova/missing-org-filter — ESLint v9 flat config
+// uses the nearest config upward from each file, so a worker block here
+// would never fire.
