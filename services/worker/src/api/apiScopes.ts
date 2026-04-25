@@ -28,12 +28,10 @@ export function isApiV2Scope(scope: string): scope is ApiV2Scope {
 }
 
 export function scopeSatisfies(granted: string[], required: string): boolean {
-  if (granted.includes(required)) return true;
-
-  const equivalents: Record<string, readonly string[]> = {
-    verify: ['read:records'],
-    'verify:batch': ['read:records'],
-  };
-
-  return equivalents[required]?.some(scope => granted.includes(scope)) ?? false;
+  // Strict-only: each grant must be explicit. The previous alias map let a
+  // `read:records` (passive lookup) key satisfy `verify` / `verify:batch`
+  // (active verification, billable) — keys provisioned for read-only access
+  // could call billable verify endpoints. Customers who relied on the alias
+  // need a re-issued key with the correct scope.
+  return granted.includes(required);
 }

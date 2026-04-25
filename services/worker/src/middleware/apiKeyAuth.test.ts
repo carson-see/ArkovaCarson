@@ -290,7 +290,7 @@ describe('apiKeyAuth middleware', () => {
 });
 
 describe('requireScope compatibility', () => {
-  it('allows read:records to satisfy legacy verify routes', () => {
+  it('SCRUM-1223: rejects read:records calling legacy verify routes', () => {
     const req = createMockReq({});
     req.apiKey = {
       keyId: 'key-1',
@@ -305,8 +305,8 @@ describe('requireScope compatibility', () => {
 
     requireScope('verify')(req, res, next);
 
-    expect(next).toHaveBeenCalledWith();
-    expect(res.status).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(403);
   });
 
   it('does not let read:search satisfy record verification routes', () => {
