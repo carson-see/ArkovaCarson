@@ -24,7 +24,8 @@
 - Ledger drift = 0 both directions via `npx supabase migration list`.
 - `0255_deferred_slow_indexes` applied as a no-op marker. All four large-table indexes (`anchors_unique_active_child_per_parent`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`, `idx_anchor_proofs_batch_id`) applied on prod via Supabase MCP `execute_sql` 2026-04-24 EOD — verified via `pg_indexes` query. Runbook [docs/runbooks/supabase/long-running-migrations.md](docs/runbooks/supabase/long-running-migrations.md) documents the split-migration pattern for future large-table index adds.
 - Note `0218 notifications` (org-scoped compliance alerts) and `0240 user_notifications` (user-scoped platform notifications) coexist as distinct tables.
-**Tests:** 3,997 worker + 1,421 frontend green on main as of Friday EOW. +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
+**Tests:** 4,274 worker tests green on branch `claude/charming-cori-qPHwU` (PR #541). +50 tests on PR #496 (Middesk KYB client/route/webhook) awaiting CI.
+**Security audit (SCRUM-1208):** PR [#541](https://github.com/carson-see/ArkovaCarson/pull/541) covers 10 stories from the forensic audit epic. All transitioned to Done in Jira. Awaiting human merge.
 
 ### 2026-04-24 — SCRUM-727 / 985 / 987 hardening pass (engineering-tractable blockers closed)
 
@@ -134,27 +135,25 @@ Confluence per-epic audit pages live at `/spaces/A`, watched (appear in user's A
 ## What just shipped (latest commits on this branch)
 
 ```
-14c5bef fix(security): HMAC secret validation, PII removal, org ownership check
-04cb8cb refactor: simplify sprint code — reuse gcp-auth, fix ilike injection, remove doc comments
-cb33243 feat: Platform v2 sprint — 10 backlog stories (SCRUM-1056 through SCRUM-1095)
+771ef64 fix: security hardening batch — scope isolation, tenant guards, KMS encryption, payment enforcement
 ```
 
-### Platform v2 sprint (2026-04-24) — 10 stories coded + reviewed
+### SCRUM-1208 security audit batch (2026-04-25) — 10 stories coded, PR #541
 
-| Story | Title | Scope |
+| Story | Title | Fix |
 |---|---|---|
-| SCRUM-1056 | API v2 RFC 7807 error model | `problem.ts`, `v2ErrorHandler` |
-| SCRUM-1057 | Secret rotation reminder | 90-day cadence, Slack alerts |
-| SCRUM-1058 | API key scopes | Migration 0236, `scopeGuard.ts` |
-| SCRUM-1059 | VITE_* env audit | `src/lib/env.ts`, `vite-env.d.ts` |
-| SCRUM-1061 | Vertex AI SDK client | `vertex-client.ts`, reuses `gcp-auth.ts` |
-| SCRUM-1063 | Cloud Logging sink tests | 5 tests for existing sink |
-| SCRUM-1088 | v2 search endpoint | cursor pagination, sanitized ilike |
-| SCRUM-1092 | Copy lint enforcement | "Issue Credential" → "Secure Document" |
-| SCRUM-1093 | Notifications table + dispatcher | Migration 0237, `dispatcher.ts` |
-| SCRUM-1095 | Anchor revocation API | Migration 0238, org ownership check |
+| SCRUM-1223 | Scope alias bypass | Removed `equivalents` map — `read:records` no longer satisfies `verify` |
+| SCRUM-1210 | Drive subscription_id wrong value | Store `channelId` (UUID) not `resourceId` |
+| SCRUM-1212 | Drive disconnect doesn't revoke | Added `stopDriveChannel` + `revokeOAuthToken` calls |
+| SCRUM-1213 | DocuSign cross-org lookup | Reject ambiguous `accountId → org` mappings |
+| SCRUM-1214 | ATS tenant isolation bypass | Per-integration URL routing eliminates multi-secret iteration |
+| SCRUM-1215 | ATS HMAC over re-stringified body | `express.raw()` mount, HMAC on raw bytes |
+| SCRUM-1216 | GRC OAuth tokens stored cleartext | KMS `encryptTokens`/`decryptTokens` on storage/read |
+| SCRUM-1220 | Stripe subscription clobber | Upsert keyed on `stripe_subscription_id` not `user_id` |
+| SCRUM-1221 | payment_state=suspended unenforced | New `requirePaymentCurrent` middleware on `/api/v1` + `/api/v2` |
+| SCRUM-1227 | deploy-worker no quality gates | Pre-deploy checks + canary→promote deployment |
 
-54 tests across 8 new test files, all passing. Security review completed: HMAC hardening, PII stripping, ilike injection fix, org ownership verification.
+20 new tests across 3 new test files + updates to 5 existing test files. 4274 tests pass, 0 regressions.
 
 Full history: `git log --oneline`.
 
