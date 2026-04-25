@@ -86,18 +86,42 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
   }
 
   // Look up Arkova org from the vendor reference id.
+  // SCRUM-1217: never use PostgREST `.or()` with payload-derived strings —
+  // even though the envelope is HMAC-verified, the `external_id` field is
+  // attacker-influenced (it's the value we set when registering the business
+  // and gets echoed back). Run two separate `.eq()` lookups instead. This
+  // also means each query has a single, indexable filter.
   const vendorBusinessId = event.data.object.id;
   const externalId = event.data.object.external_id ?? null;
 
-  const { data: org, error: orgErr } = await dbUntyped
-    .from('organizations')
-    .select('id')
-    .or(
-      externalId
-        ? `id.eq.${externalId},kyb_reference_id.eq.${vendorBusinessId}`
-        : `kyb_reference_id.eq.${vendorBusinessId}`,
-    )
-    .maybeSingle();
+  let org: { id: string } | null = null;
+  let orgErr: unknown = null;
+
+  if (externalId) {
+    const r = await dbUntyped
+      .from('organizations')
+      .select('id')
+      .eq('id', externalId)
+      .maybeSingle();
+    if (r.error) {
+      orgErr = r.error;
+    } else if (r.data) {
+      org = r.data;
+    }
+  }
+
+  if (!org && !orgErr) {
+    const r = await dbUntyped
+      .from('organizations')
+      .select('id')
+      .eq('kyb_reference_id', vendorBusinessId)
+      .maybeSingle();
+    if (r.error) {
+      orgErr = r.error;
+    } else if (r.data) {
+      org = r.data;
+    }
+  }
 
   if (orgErr) {
     logger.error({ orgErr }, 'Middesk webhook: org lookup failed');
