@@ -105,9 +105,11 @@ export class MemoryV2RateLimitStore implements V2RateLimitStore {
       if (v.resetAt <= current) this.entries.delete(k);
     }
 
-    if (this.entries.size <= HARD_CAP_ENTRIES) return;
+    if (this.entries.size < HARD_CAP_ENTRIES) return;
 
     // Last-resort eviction: sort by resetAt ascending, drop the oldest.
+    // Fires when size is at or above the cap — keeps semantics consistent
+    // with the outer "trigger at cap" guard.
     const target = Math.floor(HARD_CAP_ENTRIES * 0.9);
     const sorted = [...this.entries.entries()].sort(
       ([, a], [, b]) => a.resetAt - b.resetAt,
