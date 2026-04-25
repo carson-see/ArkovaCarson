@@ -57,6 +57,10 @@ Feature branches only. Push as many commits as you want — GitHub Actions ignor
 
 Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-2026-04-21 CLAUDE.md iterations — historical only.
 
+**HANDOFF.md edit lint (R0-6 / SCRUM-1252):** edits asserting prod state (`rev arkova-worker-NNNNN`, `applied on prod`, `verified via`, `deployed healthy`, `live in prod`, `N of M findings shipped`) MUST link a verification artifact (gcloud output, MCP query, log line, or GH Actions run URL) in the same PR description or commit body. The `handoff-claims` CI job enforces this. Override label: `handoff-narrative-only` for prose-only retrospectives. Footer must include `_Last refreshed: YYYY-MM-DD by <author> — claims verified against gcloud/MCP/CI output._`.
+
+**Memory feedback rules CI-enforced (R0-7 / SCRUM-1253):** `memory/feedback_*.md` rules are no longer advisory — each one with a parsable detector ships as a CI script under `scripts/ci/feedback-rules/`. The `feedback-rules` CI job runs the orchestrator on every PR. See `memory/README.md` for the index and override labels.
+
 ---
 
 ## 1. THE CONSTITUTION
@@ -149,7 +153,7 @@ Anonymous: 100 req/min/IP. API key: 1,000 req/min. Batch: 10 req/min. `Retry-Aft
 
 ## 3. TASK EXECUTION GATES
 
-Every task — before declaring done — must pass all six gates:
+Every task — before declaring done — must pass all seven gates:
 
 1. **Tests** — Written first, seen failing, then made passing. `typecheck` + `lint` + `test` + `lint:copy` green. Coverage thresholds met.
 2. **Jira** — Ticket status transitioned, DoR + DoD checked, Confluence URL pasted in ticket, acceptance criteria ticked off.
@@ -157,8 +161,9 @@ Every task — before declaring done — must pass all six gates:
 4. **Bug log** — Any bugs found or fixed logged in the master tracker.
 5. **agents.md** — Updated in every modified folder.
 6. **HANDOFF.md + CLAUDE.md** — HANDOFF.md updated with the new state. CLAUDE.md only touched if a RULE changes — do not add rolling narrative here.
+7. **Workflow validators (R0-5 / SCRUM-1251)** — Atlassian Automation rules in `docs/jira-workflow/automation-rules.json` MUST approve the Done transition. Reporter ≠ resolver, PR merged > 30 min, Cloud Run SHA matches, all DoD `[ ]` ticked, no red required checks, Bug-issue rows linked. If a rule blocks, fix the underlying gap — do NOT seek a workaround.
 
-A task is NOT complete until all 6 gates pass. Announce gate status at the end of every task.
+A task is NOT complete until all 7 gates pass. Announce gate status at the end of every task.
 
 ---
 

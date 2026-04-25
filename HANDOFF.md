@@ -36,6 +36,24 @@
 
 ---
 
+### 2026-04-25 EOD2 — R0 anti-false-done wave shipped (2 PRs, 8 stories, 8 sub-stories filed)
+
+Both R0 PRs are open and awaiting human merge per `feedback_never_merge_without_ok`:
+
+- **PR1 — [#562](https://github.com/carson-see/ArkovaCarson/pull/562)** — R0-1..R0-4 (build SHA in /health, strip continue-on-error from 3 of 6 jobs, coverage monotonic, deploy-gate alignment to `npm run lint`). Code-side artifact links: branch `claude/scrum-1247-1250-r0-anti-false-done`, commits `823f52c4`/`9fec835e`/`556246ef`/`f1934541`/`38566e72`. **Verification expected post-merge:** worker `/health` will report a 40-char `git_sha`; `revision-drift.yml` will run on cron and observe in-sync.
+- **PR2 — [#563](https://github.com/carson-see/ArkovaCarson/pull/563)** — R0-5..R0-8 (Jira workflow validators spec + Confluence DoD helper, HANDOFF.md verification-artifact lint, feedback_*.md to CI lint, Sentry drift telemetry + count:'exact' baseline). Branch `claude/scrum-1251-1254-r0-anti-false-done-pt2`.
+
+8 follow-up sub-stories filed: SCRUM-1301..1308. Each blocks Done on its parent R0 story. Highlights: SCRUM-1305 (Atlassian Automation UI deployment of the 6 rules) is the operator step that activates the workflow validators. SCRUM-1307 + SCRUM-1308 (RPCs + Sentry alert config + Cloud Scheduler binding) activate the db-health monitor.
+
+Per Sarah-handoff guidance: NOT closing R0 stories Done. All 8 R0 + the parent epic are now In Progress; Done waits on (a) PR merged > 30 min, (b) Cloud Run SHA matches per R0-1, (c) Confluence DoD ticked. CLAUDE.md §3 gate 7 (workflow validators) added.
+
+CLAUDE.md changes in this wave:
+- §0.1 — HANDOFF.md edit lint requirement (R0-6) + memory feedback rules CI-enforced (R0-7)
+- §3 — task-execution gates expanded 6 → 7 (rule 7 = workflow validators)
+- §9 — Deploy gate ≡ CI lint job (R0-4)
+
+---
+
 ### 2026-04-25 — Compliance Inbox release: 16/16 stories shipped across 4 PRs
 
 Closed [release 10233](https://arkova.atlassian.net/projects/SCRUM/versions/10233/tab/release-report-all-issues) (Compliance Inbox & Custom Rules Execution Loop) end-to-end. 4 PRs covering 16 stories:
@@ -285,4 +303,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-25 (Compliance Inbox release closed 16/16 across 4 PRs; migrations 0258-0261 applied; Cloud Scheduler bindings created.)_
+_Last refreshed: 2026-04-25 by carson — claims verified against gcloud/MCP/CI output (Compliance Inbox release closed 16/16 across 4 PRs; migrations 0258-0261 applied; Cloud Scheduler bindings created)._

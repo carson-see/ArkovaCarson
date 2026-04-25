@@ -1196,6 +1196,35 @@ cronRouter.post('/report-metered-usage', async (_req, res) => {
   }
 });
 
+// ─── DB Health Monitor (SCRUM-1254 / R0-8) ───
+//
+// Cloud Scheduler hits this every 5 minutes. Emits Sentry events on
+// pg_cron failures, dead-tuple bloat, and smoke fail-streaks. See
+// services/worker/src/jobs/db-health-monitor.ts for the alert thresholds.
+//
+// Code-review issue #O (PR #563): wrapped in `withCronMonitoring` so
+// Sentry Crons receives in-progress / ok / error check-ins. Without this,
+// a stalled monitor would itself be undetected — the very class of
+// failure R0-8 was meant to surface.
+
+cronRouter.post('/db-health', async (_req, res) => {
+  const monitor = withCronMonitoring('db-health-monitor', '*/5 * * * *', async () => {
+    const { runDbHealthMonitor } = await import('../jobs/db-health-monitor.js');
+    return runDbHealthMonitor();
+  });
+  try {
+    const snapshot = await monitor();
+    res.json({
+      ok: snapshot.alerts.length === 0,
+      alertCount: snapshot.alerts.length,
+      snapshot,
+    });
+  } catch (error) {
+    logger.error({ error }, 'db-health-monitor failed');
+    res.status(500).json({ error: 'db-health-monitor failed' });
+  }
+});
+
 // ─── Production Smoke Test (P7-TS-06) ───
 
 cronRouter.post('/smoke-test', async (_req, res) => {

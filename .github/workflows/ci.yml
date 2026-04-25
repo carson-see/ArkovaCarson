@@ -4,18 +4,23 @@ on:
   push:
     branches: [main, staging, develop]
     # Skip docs-only changes — saves Actions minutes on public repo transition.
+    # NOTE: HANDOFF.md / CLAUDE.md are intentionally NOT in the ignore list.
+    # The handoff-claims job (R0-6 / SCRUM-1252) lints HANDOFF.md edits and
+    # CLAUDE.md changes carry rule contracts that need CI verification.
     paths-ignore:
-      - '**.md'
       - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
+      - 'README.md'
+      - 'memory/**.md'
   pull_request:
     branches: [main, staging, develop]
     paths-ignore:
-      - '**.md'
       - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
+      - 'README.md'
+      - 'memory/**.md'
 
 # Cancel stale CI runs when a new commit is pushed to the same PR / branch.
 # Saves ~30-50% of Actions minutes on active-dev branches where multiple
@@ -164,6 +169,112 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: npx tsx scripts/ci/check-coverage-monotonic.ts
+
+  # SCRUM-1254 (R0-8): count: 'exact' baseline drift check.
+  # Stops new count: 'exact' calls from sneaking into worker code.
+  count-exact-baseline:
+    name: count:'exact' Baseline
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Compare count:'exact' baseline
+        env:
+          # Code-review issue #N (PR #563): no `'HEAD~1'` literal fallback —
+          # ciContext.ts now resolves BASE_REF via git rev-parse and exits 1
+          # (fail-closed) if the ref doesn't exist. On push events where
+          # pull_request.base.sha is empty, the ciContext default
+          # `origin/main` is used (always present given fetch-depth: 0).
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-count-exact-baseline.ts
+
+  # SCRUM-1253 (R0-7): feedback_*.md memory rules to CI lint.
+  # Orchestrator runs every script in scripts/ci/feedback-rules/. Each rule
+  # has its own override label; see memory/README.md for the index.
+  feedback-rules:
+    name: Memory Feedback Rules
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      - name: Run feedback rules orchestrator
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: npx tsx scripts/ci/check-feedback-rules.ts
+
+  # SCRUM-1252 (R0-6): HANDOFF.md verification-artifact lint.
+  # Fails PR if HANDOFF.md claims prod state (revision numbers, "deployed
+  # healthy", "applied on prod", "verified via", etc.) without a linked
+  # verification artifact (gcloud output, MCP query, log line, or GH Actions
+  # run URL) in the PR description or a commit body. Override label:
+  # `handoff-narrative-only` (for prose-style retrospectives only).
+  handoff-claims:
+    name: HANDOFF.md Verification Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      # Code-review issue #B (PR #563): the previous version passed
+      # `commits_url` (an API URL string) as PR_COMMITS_MSGS, so commit-body
+      # artifact links never reached the lint. Resolve the actual commit
+      # messages here via `git log` (cheap; checkout above is fetch-depth: 0).
+      - name: Aggregate commit messages
+        id: commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
+          else
+            MSGS=$(git log --format=%B -1)
+          fi
+          {
+            echo 'msgs<<EOF'
+            echo "$MSGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+      - name: Check HANDOFF.md claims
+        env:
+          # No `'HEAD~1'` fallback (code-review issue #N).
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
+        run: npx tsx scripts/ci/check-handoff-claims.ts
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
