@@ -92,6 +92,7 @@
       "wagmi": "3.6.4"
     },
     "axios": "^1.15.0",
-    "underscore": "^1.13.8"
+    "underscore": "^1.13.8",
+    "typescript": "6.0.3"
   }
 }
