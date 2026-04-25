@@ -16,6 +16,7 @@
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { createGrcAdapter, loadGrcCredentials } from '../../integrations/grc/adapters.js';
@@ -28,6 +29,68 @@ import {
 } from '../../integrations/oauth/crypto.js';
 
 const router = Router();
+
+// =====================================================================
+// SCRUM-1238 (AUDIT-0424-13): GRC OAuth state must be HMAC-signed and
+// verified on callback. Previously /connect issued `crypto.randomUUID()`
+// and /callback never validated it — letting an attacker forge a state
+// and trick the server into trusting the body's `org_id`.
+// =====================================================================
+
+const GRC_STATE_TTL_MS = 10 * 60 * 1000;
+
+interface GrcStatePayload {
+  orgId: string;
+  userId: string;
+  platform: 'vanta' | 'drata' | 'anecdotes';
+  nonce: string;
+  iat: number;
+}
+
+function getGrcStateSecret(): string {
+  const secret = process.env.INTEGRATION_STATE_HMAC_SECRET;
+  if (!secret || secret.length === 0) {
+    throw new Error(
+      'INTEGRATION_STATE_HMAC_SECRET is required for GRC OAuth state signing — fail-closed (SCRUM-1238)',
+    );
+  }
+  return secret;
+}
+
+function base64Url(input: string): string {
+  return Buffer.from(input, 'utf8').toString('base64url');
+}
+
+function hmac(input: string, secret: string): string {
+  return createHmac('sha256', secret).update(input).digest('base64url');
+}
+
+function signGrcState(payload: GrcStatePayload): string {
+  const encoded = base64Url(JSON.stringify(payload));
+  return `${encoded}.${hmac(encoded, getGrcStateSecret())}`;
+}
+
+function verifyGrcState(state: string, expectedUserId: string): GrcStatePayload | null {
+  const [encoded, signature] = state.split('.');
+  if (!encoded || !signature) return null;
+
+  const expected = hmac(encoded, getGrcStateSecret());
+  const sigBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+  if (sigBuffer.length !== expectedBuffer.length || !timingSafeEqual(sigBuffer, expectedBuffer)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as GrcStatePayload;
+    if (!parsed.orgId || !parsed.userId || !parsed.iat) return null;
+    if (Date.now() - parsed.iat > GRC_STATE_TTL_MS) return null;
+    if (parsed.userId !== expectedUserId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 const VALID_PLATFORMS = ['vanta', 'drata', 'anecdotes'] as const;
 
@@ -48,6 +111,8 @@ const CallbackSchema = z.object({
   code: z.string().min(1),
   redirect_uri: z.string().url(),
   org_id: z.string().uuid(),
+  // SCRUM-1238: callback MUST present the signed state from /connect.
+  state: z.string().min(1),
 });
 
 // ─── Helper: get user's org (admin/owner only) ──────────
@@ -67,6 +132,12 @@ async function getUserAdminOrgId(userId: string): Promise<string | null> {
 // ─── POST /connect — Get OAuth2 authorization URL ───────
 
 router.post('/connect', async (req: Request, res: Response) => {
+  const userId = req.authUserId;
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
   const parsed = ConnectSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
@@ -74,11 +145,28 @@ router.post('/connect', async (req: Request, res: Response) => {
   }
 
   const { platform, redirect_uri } = parsed.data;
+
+  // SCRUM-1238: bind state to caller's org. If they're not an admin, no state.
+  const orgId = await getUserAdminOrgId(userId);
+  if (!orgId) {
+    res.status(403).json({ error: 'Must be org admin to connect GRC platforms' });
+    return;
+  }
+
   const creds = loadGrcCredentials();
 
   try {
     const adapter = createGrcAdapter(platform, creds);
-    const state = crypto.randomUUID();
+    // SCRUM-1238: HMAC-sign the state. Bound to user + org + platform with
+    // a 10-minute freshness window. The matching verification on /callback
+    // refuses unsigned, expired, mismatched, or attacker-forged states.
+    const state = signGrcState({
+      orgId,
+      userId,
+      platform,
+      nonce: randomUUID(),
+      iat: Date.now(),
+    });
     const authUrl = adapter.getAuthUrl(redirect_uri, state);
 
     res.json({ auth_url: authUrl, state });
@@ -104,7 +192,21 @@ router.post('/callback', async (req: Request, res: Response) => {
     return;
   }
 
-  const { platform, code, redirect_uri, org_id } = parsed.data;
+  const { platform, code, redirect_uri, org_id, state } = parsed.data;
+
+  // SCRUM-1238: verify the signed state from /connect. Refuses
+  // unsigned/forged/expired/wrong-user states. The user-bound state plus
+  // the admin-role check below makes this OAuth flow safe to trust the
+  // body's `org_id`.
+  const verifiedState = verifyGrcState(state, userId);
+  if (!verifiedState) {
+    res.status(400).json({ error: 'Invalid or expired state' });
+    return;
+  }
+  if (verifiedState.orgId !== org_id || verifiedState.platform !== platform) {
+    res.status(400).json({ error: 'State does not match request (orgId/platform mismatch)' });
+    return;
+  }
 
   const userOrgId = await getUserAdminOrgId(userId);
   if (userOrgId !== org_id) {
