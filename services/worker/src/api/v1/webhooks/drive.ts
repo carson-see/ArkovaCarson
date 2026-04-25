@@ -123,29 +123,30 @@ router.post('/', async (req: Request, res: Response) => {
     return res.status(200).end();
   }
 
-  // Constant-time channel-token verification when one is configured. If the
-  // integration has no stored token, log loudly but still accept (matches
-  // Drive's behaviour when the token field is omitted from changes.watch).
-  if (lookup.channel_token) {
-    if (!channelToken) {
-      logger.warn(
-        { channelId, orgId: lookup.org_id },
-        'drive webhook missing channel token despite stored token — rejecting',
-      );
-      return res.status(401).json({ error: 'missing_channel_token' });
-    }
-    if (!constantTimeEqual(channelToken, lookup.channel_token)) {
-      logger.warn(
-        { channelId, orgId: lookup.org_id },
-        'drive webhook channel-token mismatch — rejecting',
-      );
-      return res.status(401).json({ error: 'invalid_channel_token' });
-    }
-  } else {
+  // Constant-time channel-token verification — fail-closed. Without this
+  // check anyone who can guess a channel id can deliver fake events. The
+  // OAuth flow always sets a token at changes.watch creation, so a missing
+  // stored token means the row is misconfigured and we must reject.
+  if (!lookup.channel_token) {
+    logger.error(
+      { channelId, orgId: lookup.org_id },
+      'drive webhook integration has no stored channel token — fail closed',
+    );
+    return res.status(401).json({ error: 'integration_missing_channel_token' });
+  }
+  if (!channelToken) {
     logger.warn(
       { channelId, orgId: lookup.org_id },
-      'drive webhook accepted without channel-token verification (no token stored)',
+      'drive webhook missing channel token header — rejecting',
     );
+    return res.status(401).json({ error: 'missing_channel_token' });
+  }
+  if (!constantTimeEqual(channelToken, lookup.channel_token)) {
+    logger.warn(
+      { channelId, orgId: lookup.org_id },
+      'drive webhook channel-token mismatch — rejecting',
+    );
+    return res.status(401).json({ error: 'invalid_channel_token' });
   }
 
   // STUB: full implementation would call changes.list (with the stored

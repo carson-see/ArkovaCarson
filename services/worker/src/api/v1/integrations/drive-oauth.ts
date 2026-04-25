@@ -27,6 +27,7 @@ import {
   encryptTokens,
   type KmsClient,
 } from '../../../integrations/oauth/crypto.js';
+import { WEBHOOK_PATHS } from '../../../constants/webhook-paths.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,7 +116,9 @@ function buildRedirectUri(req: Request): string {
 }
 
 function buildWebhookAddress(req: Request): string {
-  return `${getRequestBaseUrl(req)}/webhooks/integrations/google_drive`;
+  // Must match the path the v1 router mounts the Drive webhook handler at;
+  // drift here produces silent 404s on every Drive push.
+  return `${getRequestBaseUrl(req)}${WEBHOOK_PATHS.GOOGLE_DRIVE}`;
 }
 
 function sanitizeReturnTo(returnTo: string | undefined, orgId: string, deps: DriveOAuthDeps): string {
