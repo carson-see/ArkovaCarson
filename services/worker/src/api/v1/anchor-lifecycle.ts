@@ -32,7 +32,6 @@ export type AnchorStatus =
   | 'SUBMITTED'
   | 'CONFIRMED'
   | 'SECURED'
-  | 'ACTIVE'
   | 'REVOKED'
   | 'EXPIRED'
   | 'SUPERSEDED';
