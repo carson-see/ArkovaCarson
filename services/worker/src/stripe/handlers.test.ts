@@ -222,15 +222,7 @@ const SUBSCRIPTION_UPDATED_EVENT = makeStripeEvent('customer.subscription.update
   customer: 'cus_test_001',
   status: 'active',
   cancel_at_period_end: false,
-  items: {
-    data: [
-      {
-        price: { id: 'price_test' },
-        current_period_start: 1710000000,
-        current_period_end: 1712678400,
-      },
-    ],
-  },
+  items: makeSubItems('price_test'),
 });
 
 const SUBSCRIPTION_DELETED_EVENT = makeStripeEvent('customer.subscription.deleted', {
@@ -305,6 +297,19 @@ async function expectLookupErrorThrows(
   subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null, error: err });
   await expect(handler(event)).rejects.toEqual(err);
   expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+}
+
+// SCRUM-1267 (R2-4): every customer.subscription.updated test fixture moved
+// period fields onto items.data[0]. Build the items shape once so each test
+// expresses only the per-test variance (price ID, period start/end).
+function makeSubItems(
+  priceId: string,
+  start = 1710000000,
+  end = 1712678400,
+): { data: Array<{ price: { id: string }; current_period_start: number; current_period_end: number }> } {
+  return {
+    data: [{ price: { id: priceId }, current_period_start: start, current_period_end: end }],
+  };
 }
 
 // ================================================================
@@ -726,15 +731,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_test_001',
       status: 'past_due',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_test' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -748,15 +745,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_002',
       status: 'unpaid',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_test' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -770,15 +759,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_003',
       status: 'incomplete_expired',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_test' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -792,15 +773,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_004',
       status: 'some_future_status',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_test' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -831,15 +804,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_test_001',
       status: 'active',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_pro' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_pro'),
     });
 
     // Plan lookup resolves new plan
@@ -872,15 +837,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_test_001',
       status: 'active',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_ind' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_ind'),
     });
 
     // Same plan
@@ -903,15 +860,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_test_001',
       status: 'active',
       cancel_at_period_end: true,
-      items: {
-        data: [
-          {
-            price: { id: 'price_test' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_test'),
     });
 
     subscriptionsSelect.maybeSingle.mockResolvedValue({
@@ -956,15 +905,7 @@ describe('handleSubscriptionUpdated', () => {
       customer: 'cus_test_001',
       status: 'active',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_unknown' },
-            current_period_start: 1710000000,
-            current_period_end: 1712678400,
-          },
-        ],
-      },
+      items: makeSubItems('price_unknown'),
     });
 
     plansSelectMaybeSingle.mockResolvedValue({ data: null });
@@ -1299,15 +1240,7 @@ describe('handleSubscriptionUpdated — R2-4 items.data[0] period fields', () =>
       customer: 'cus_r2_4',
       status: 'active',
       cancel_at_period_end: false,
-      items: {
-        data: [
-          {
-            price: { id: 'price_r2_4' },
-            current_period_start: 1735689600,
-            current_period_end: 1738368000,
-          },
-        ],
-      },
+      items: makeSubItems('price_r2_4', 1735689600, 1738368000),
     });
 
     await handleSubscriptionUpdated(event);
