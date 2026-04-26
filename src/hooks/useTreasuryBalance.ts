@@ -154,10 +154,15 @@ export function useTreasuryBalance() {
         // Worker unavailable — will try mempool.space below
       }
 
-      // 2. Supplementary data from mempool.space: receipts, price, fees (display-only)
-      //    Also try mempool for balance if worker didn't resolve it
+      // SCRUM-1260 (R1-6): when the worker is unavailable, do NOT fall back
+      // to direct mempool.space balance polling. Forensic 1 / SCRUM-1245
+      // documented this as a privacy/sovereignty leak (every poll exposes
+      // our treasury address polling pattern to a third party). Instead,
+      // keep the last cached balance + show a "stale" badge via setError.
+      // Receipts / price / fees are still fetched from mempool.space because
+      // (a) the address is already public via on-chain receipts and (b)
+      // these are display-only enrichment with no security-state impact.
       const mempoolFetches = [
-        ...(balanceResolved ? [] : [fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}`)]),
         fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}/txs`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/prices`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/fees/recommended`),
@@ -166,32 +171,10 @@ export function useTreasuryBalance() {
 
       if (!isMountedRef.current) return;
 
-      // Parse results — indices shift based on whether balance fetch was included
       const val = (i: number) => settled[i]?.status === 'fulfilled' ? (settled[i] as PromiseFulfilledResult<Response>).value : null;
-      let idx = 0;
-      if (!balanceResolved) {
-        const addressRes = val(idx);
-        idx++;
-        if (addressRes?.ok) {
-          const data = await addressRes.json() as {
-            chain_stats: { funded_txo_sum: number; spent_txo_sum: number };
-            mempool_stats: { funded_txo_sum: number; spent_txo_sum: number };
-          };
-          const confirmed = data.chain_stats.funded_txo_sum - data.chain_stats.spent_txo_sum;
-          const unconfirmed = data.mempool_stats.funded_txo_sum - data.mempool_stats.spent_txo_sum;
-          const total = confirmed + unconfirmed;
-          if (isMountedRef.current) {
-            const bal: TreasuryBalance = { confirmed, unconfirmed, total, btcPrice: null, totalUsd: null };
-            setBalance(bal);
-            lastBalanceRef.current = bal;
-            balanceResolved = true;
-          }
-        }
-      }
-
-      const txRes = val(idx); idx++;
-      const priceRes = val(idx); idx++;
-      const feeRes = val(idx);
+      const txRes = val(0);
+      const priceRes = val(1);
+      const feeRes = val(2);
 
       // Parse receipts
       if (txRes?.ok) {

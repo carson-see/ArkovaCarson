@@ -151,6 +151,11 @@ export function PipelineAdminPage() {
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // SCRUM-1260 (R1-6): explicit error state replaces the silent zero-fallback.
+  // The previous catch-block set every count to 0 with no flag, so a 60s
+  // worker timeout looked identical to "the system is empty." `statsError`
+  // surfaces a banner + retry button instead of rendering 0/0/0.
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -253,25 +258,18 @@ export function PipelineAdminPage() {
         byCredentialType,
         recentErrors: 0,
       });
+      // SCRUM-1260 (R1-6): clear error state on successful refresh so the
+      // banner disappears once the worker recovers.
+      setStatsError(null);
     } catch (err) {
       console.error('PipelineAdminPage: failed to fetch stats', err);
-      // Stats fetch failed — set empty state so UI doesn't hang on skeleton
-      setStats({
-        totalRecords: 0,
-        anchoredRecords: 0,
-        pendingRecords: 0,
-        embeddedRecords: 0,
-        anchorLinkedRecords: 0,
-        pendingRecordLinks: 0,
-        pendingAnchorRecords: 0,
-        broadcastingRecords: 0,
-        submittedRecords: 0,
-        securedRecords: 0,
-        cacheUpdatedAt: null,
-        bySource: {},
-        byCredentialType: {},
-        recentErrors: 0,
-      });
+      // SCRUM-1260 (R1-6): surface the error instead of silently zeroing.
+      // If we have a previous successful `stats`, leave it on screen (stale-OK)
+      // and overlay the error banner. If we have nothing yet, leave `stats`
+      // null so the page renders the error banner without the misleading
+      // "zeros everywhere" tile grid.
+      const message = err instanceof Error ? err.message : 'Pipeline stats fetch failed';
+      setStatsError(message);
     } finally {
       setLoading(false);
     }
@@ -282,13 +280,29 @@ export function PipelineAdminPage() {
     if (isAdmin) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
       fetchStats();
-      // Auto-refresh every 30 seconds
-      const interval = setInterval(fetchStats, 30_000);
-      return () => clearInterval(interval);
+      // SCRUM-1260 (R1-6): document.hidden gate prevents the 30s tick from
+      // firing while the tab is backgrounded. Without it, we kept hammering
+      // the worker /api/admin/pipeline-stats route from every backgrounded
+      // tab — multiplied across long-lived browser sessions, that's a real
+      // load source. The tick still fires immediately when the tab regains
+      // focus via the visibilitychange listener below.
+      const tick = () => {
+        if (document.hidden) return;
+        fetchStats();
+      };
+      const interval = setInterval(tick, 30_000);
+      const onVisibility = () => {
+        if (!document.hidden) fetchStats();
+      };
+      document.addEventListener('visibilitychange', onVisibility);
+      return () => {
+        clearInterval(interval);
+        document.removeEventListener('visibilitychange', onVisibility);
+      };
     } else {
-       
       setLoading(false);
     }
+    return undefined;
   }, [isAdmin, fetchStats]);
 
   const handleRefresh = useCallback(() => {
@@ -391,6 +405,11 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
+  // SCRUM-1260 (R1-6): records fetch surfaces errors via state rather than
+  // swallowing them. Previously the catch was empty `{}`, so an RPC failure
+  // left the records table blank with no message and no retry path.
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+
   const fetchRecords = useCallback(async (page: number, currentFilters: RecordFilters) => {
     setRecordsLoading(true);
     try {
@@ -409,8 +428,11 @@ export function PipelineAdminPage() {
       const result = rpcResult as { data: PublicRecord[]; total: number };
       setRecords(result.data ?? []);
       setRecordsTotal(result.total ?? 0);
-    } catch {
-      // Records fetch failed silently
+      setRecordsError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Records fetch failed';
+      console.error('PipelineAdminPage: failed to fetch records', err);
+      setRecordsError(message);
     } finally {
       setRecordsLoading(false);
     }
@@ -567,6 +589,37 @@ export function PipelineAdminPage() {
             Refresh
           </Button>
         </div>
+
+        {/* SCRUM-1260 (R1-6): explicit error banner replaces silent 0/0/0
+            display when the pipeline-stats fetch fails. Stale `stats` from
+            the previous successful fetch (if any) stay visible behind the
+            banner — better signal than zeroing them out. */}
+        {statsError && (
+          <div
+            role="alert"
+            className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"
+            data-testid="pipeline-stats-error"
+          >
+            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+            <div className="flex-1">
+              <div className="font-medium">Pipeline stats temporarily unavailable</div>
+              <div className="mt-0.5 text-xs text-amber-200/80">
+                {statsError}
+                {stats ? ' — showing last successful values.' : ''}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="h-7 border-amber-400/40 text-amber-100 hover:bg-amber-400/10"
+            >
+              <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              Retry
+            </Button>
+          </div>
+        )}
 
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -924,6 +977,32 @@ export function PipelineAdminPage() {
               </Select>
             </div>
 
+            {/* SCRUM-1260 (R1-6): records error banner — distinct from
+                "no results found." Without this, an RPC failure left the
+                table blank, indistinguishable from an empty filter result. */}
+            {recordsError && (
+              <div
+                role="alert"
+                className="mb-3 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"
+                data-testid="pipeline-records-error"
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                <div className="flex-1">
+                  <div className="font-medium">Records fetch failed</div>
+                  <div className="mt-0.5 text-xs text-amber-200/80">{recordsError}</div>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fetchRecords(recordsPage, filters)}
+                  className="h-7 border-amber-400/40 text-amber-100 hover:bg-amber-400/10"
+                >
+                  <RefreshCw className="mr-1 h-3 w-3" />
+                  Retry
+                </Button>
+              </div>
+            )}
+
             {/* Records Table */}
             {recordsLoading ? (
               <div className="space-y-2">
@@ -931,12 +1010,12 @@ export function PipelineAdminPage() {
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : records.length === 0 ? (
+            ) : records.length === 0 && !recordsError ? (
               <div className="text-center py-12">
                 <Database className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
                 <p className="text-sm text-muted-foreground">{PIPELINE_LABELS.RECORDS_NO_RESULTS}</p>
               </div>
-            ) : (
+            ) : records.length === 0 ? null : (
               <>
                 <div className="overflow-x-auto rounded-md border border-border/50">
                   <Table>
