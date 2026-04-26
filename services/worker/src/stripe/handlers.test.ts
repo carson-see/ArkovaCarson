@@ -278,6 +278,35 @@ function setupDefaults() {
   mockCallRpc.mockResolvedValue({ data: { ok: true }, error: null });
 }
 
+// SCRUM-1266 (R2-3) + PR #567 review-fix: shared assertions for the orphan-row
+// guard pattern repeated across the 3 sibling Stripe handlers. Sonar flagged
+// 33% duplication on the test file because each handler had near-identical
+// missing-row + lookup-error pairs; centralised here.
+async function expectOrphanRowGuardSkipsUpdate(
+  handler: (e: StripeEvent) => Promise<void>,
+  event: StripeEvent,
+  context: Record<string, unknown>,
+) {
+  subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+  await handler(event);
+  expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  expect(auditInsert).not.toHaveBeenCalled();
+  expect(mockLogger.warn).toHaveBeenCalledWith(
+    expect.objectContaining(context),
+    expect.stringContaining('SCRUM-1266'),
+  );
+}
+
+async function expectLookupErrorThrows(
+  handler: (e: StripeEvent) => Promise<void>,
+  event: StripeEvent,
+  err: Record<string, string>,
+) {
+  subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null, error: err });
+  await expect(handler(event)).rejects.toEqual(err);
+  expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+}
+
 // ================================================================
 // handleStripeWebhook — routing + idempotency
 // ================================================================
@@ -1040,34 +1069,20 @@ describe('handleSubscriptionDeleted', () => {
     );
   });
 
-  // SCRUM-1266 (R2-3): orphan-row guard
+  // SCRUM-1266 (R2-3) + PR #567 review-fix: orphan-row guard + lookup-error throw
   it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
-
-    await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
-
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
-    expect(auditInsert).not.toHaveBeenCalled();
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ subscriptionId: 'sub_test_001' }),
-      expect.stringContaining('SCRUM-1266'),
+    await expectOrphanRowGuardSkipsUpdate(
+      handleSubscriptionDeleted,
+      SUBSCRIPTION_DELETED_EVENT,
+      { subscriptionId: 'sub_test_001' },
     );
   });
 
-  // PR #567 review-fix: throw on lookup error — billing_events claim is
-  // already in place; silent ack would let Stripe retries hit the UNIQUE
-  // constraint and the event would be permanently lost.
   it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({
-      data: null,
-      error: { message: 'connection lost', code: '08001' },
-    });
-
-    await expect(handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT)).rejects.toEqual({
+    await expectLookupErrorThrows(handleSubscriptionDeleted, SUBSCRIPTION_DELETED_EVENT, {
       message: 'connection lost',
       code: '08001',
     });
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
   });
 });
 
@@ -1162,33 +1177,20 @@ describe('handlePaymentFailed', () => {
     await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
   });
 
-  // SCRUM-1266 (R2-3): orphan-row guard
+  // SCRUM-1266 (R2-3) + PR #567 review-fix
   it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
-
-    await handlePaymentFailed(PAYMENT_FAILED_EVENT);
-
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
-    expect(auditInsert).not.toHaveBeenCalled();
+    await expectOrphanRowGuardSkipsUpdate(handlePaymentFailed, PAYMENT_FAILED_EVENT, {
+      subscriptionId: 'sub_test_001',
+      invoiceId: 'inv_test_001',
+    });
     expect(mockCallRpc).not.toHaveBeenCalled();
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ subscriptionId: 'sub_test_001', invoiceId: 'inv_test_001' }),
-      expect.stringContaining('SCRUM-1266'),
-    );
   });
 
-  // PR #567 review-fix: throw on lookup error
   it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({
-      data: null,
-      error: { message: 'rls denied', code: 'PGRST301' },
-    });
-
-    await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({
+    await expectLookupErrorThrows(handlePaymentFailed, PAYMENT_FAILED_EVENT, {
       message: 'rls denied',
       code: 'PGRST301',
     });
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
   });
 });
 
@@ -1264,33 +1266,20 @@ describe('handlePaymentSucceeded', () => {
     await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
   });
 
-  // SCRUM-1266 (R2-3): orphan-row guard
+  // SCRUM-1266 (R2-3) + PR #567 review-fix
   it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
-
-    await handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT);
-
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
-    expect(auditInsert).not.toHaveBeenCalled();
+    await expectOrphanRowGuardSkipsUpdate(handlePaymentSucceeded, PAYMENT_SUCCEEDED_EVENT, {
+      subscriptionId: 'sub_test_001',
+      invoiceId: 'inv_test_002',
+    });
     expect(mockCallRpc).not.toHaveBeenCalled();
-    expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ subscriptionId: 'sub_test_001', invoiceId: 'inv_test_002' }),
-      expect.stringContaining('SCRUM-1266'),
-    );
   });
 
-  // PR #567 review-fix: throw on lookup error
   it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
-    subscriptionsSelect.maybeSingle.mockResolvedValue({
-      data: null,
-      error: { message: 'connection refused', code: 'ECONNREFUSED' },
-    });
-
-    await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).rejects.toEqual({
+    await expectLookupErrorThrows(handlePaymentSucceeded, PAYMENT_SUCCEEDED_EVENT, {
       message: 'connection refused',
       code: 'ECONNREFUSED',
     });
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
   });
 });
 
