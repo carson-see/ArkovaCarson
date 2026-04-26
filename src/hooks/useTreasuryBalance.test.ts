@@ -121,3 +121,51 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     );
   });
 });
+
+describe('useTreasuryBalance R1 /simplify hardening (SCRUM-1260 carry-over)', () => {
+  it('issues worker + mempool fetches concurrently (parallelization)', async () => {
+    // Hold the worker promise open and capture when each leg started.
+    const startTimes: { worker?: number; mempool?: number } = {};
+    workerFetchMock.mockImplementation(() => {
+      startTimes.worker = Date.now();
+      // Keep worker open to prove mempool didn't await it.
+      return new Promise(() => undefined);
+    });
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/address/')) startTimes.mempool = Date.now();
+      return Promise.resolve({ ok: true, json: async () => [] });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(workerFetchMock).toHaveBeenCalled(), { timeout: 2000 });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled(), { timeout: 2000 });
+
+    expect(startTimes.worker).toBeDefined();
+    expect(startTimes.mempool).toBeDefined();
+    // Both should fire within the same JS event-loop tick — i.e. <50ms apart.
+    expect(Math.abs((startTimes.mempool ?? 0) - (startTimes.worker ?? 0))).toBeLessThan(50);
+  });
+
+  it('does NOT call setBalance again when the worker returns identical data on a re-poll', async () => {
+    // Configure worker to always return the same balance.
+    const stableBalance = { wallet: { balanceSats: 12345 }, fees: { currentRateSatPerVbyte: 5 } };
+    workerFetchMock.mockResolvedValue({ ok: true, json: async () => stableBalance });
+
+    const { result, rerender } = renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(result.current.balance).not.toBeNull(), { timeout: 2000 });
+
+    const firstReference = result.current.balance;
+    expect(firstReference?.confirmed).toBe(12345);
+
+    // Trigger a manual refresh — equality guard should keep the same React state object.
+    await act(async () => {
+      await result.current.refresh();
+    });
+    rerender();
+
+    // If equality guard works, React's setBalance was not invoked again with a new
+    // reference, so the consumer-visible reference is stable across the second poll.
+    expect(result.current.balance).toBe(firstReference);
+  });
+});

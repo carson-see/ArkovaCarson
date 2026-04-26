@@ -14,7 +14,7 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { Sentry } from '../utils/sentry.js';
+import { emitRpcFallback } from '../utils/sentry.js';
 
 // ─── HttpError ──────────────────────────────────────────────────────────
 
@@ -477,19 +477,17 @@ export class GetBlockHybridProvider implements UtxoProvider {
       // 100% (i.e. the RPC is functionally unused). Sentry breadcrumb +
       // structured warn log (logger.warn is picked up by GCP Cloud Logging
       // sink and the Arize tracing exporter when enabled).
-      const reason = err instanceof Error ? err.message : 'unknown';
-      Sentry.addBreadcrumb({
-        category: 'chain.rpc-fallback',
-        message: 'getblock.listunspent → mempool.space',
-        level: 'warning',
-        data: { method: 'listunspent', reason },
-      });
-      logger.warn({
-        chain_rpc_fallback: true,
-        method: 'listunspent',
+      // /simplify pass: pair extracted to emitRpcFallback() so future RPC
+      // fallback sites (getrawtransaction / getblockheader / fee estimation)
+      // emit the same locked shape.
+      emitRpcFallback({
         provider: 'getblock',
-        reason,
-      }, 'GetBlockHybridProvider.listUnspent: RPC fallback to mempool.space');
+        method: 'listunspent',
+        error: err,
+        fallbackTo: 'mempool.space',
+        logger,
+        origin: 'GetBlockHybridProvider.listUnspent',
+      });
     }
     return this.mempool.listUnspent(address);
   }

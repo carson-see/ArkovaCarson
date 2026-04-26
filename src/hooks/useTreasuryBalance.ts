@@ -17,6 +17,7 @@ import { supabase } from '@/lib/supabase';
 import { TREASURY_ADDRESS, MEMPOOL_BASE_URL } from '@/lib/platform';
 import { workerFetch } from '@/lib/workerClient';
 import { TREASURY_LABELS } from '@/lib/copy';
+import { useVisibilityPolling } from './useVisibilityPolling';
 
 const MEMPOOL_API = `${MEMPOOL_BASE_URL}/api`;
 const POLL_INTERVAL_MS = 60_000;
@@ -57,6 +58,56 @@ export interface MempoolFeeRates {
   minimum: number;
 }
 
+// SCRUM-1260 (R1-6) /simplify pass: equality guards. Without these, every poll
+// (even when fetched values were identical) re-rendered every consumer of
+// useTreasuryBalance — TreasuryAdminPage, BalanceCard, ReceiptTable. These
+// helpers compare the new payload against the prior one and short-circuit the
+// setState when nothing meaningful changed.
+
+function balanceEqual(a: TreasuryBalance | null, b: TreasuryBalance | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.confirmed === b.confirmed &&
+    a.unconfirmed === b.unconfirmed &&
+    a.total === b.total &&
+    a.btcPrice === b.btcPrice &&
+    a.totalUsd === b.totalUsd
+  );
+}
+
+function feeRatesEqual(a: MempoolFeeRates | null, b: MempoolFeeRates | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.fastest === b.fastest &&
+    a.halfHour === b.halfHour &&
+    a.hour === b.hour &&
+    a.economy === b.economy &&
+    a.minimum === b.minimum
+  );
+}
+
+function receiptsEqual(a: MempoolReceipt[], b: MempoolReceipt[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ra = a[i];
+    const rb = b[i];
+    if (
+      ra.txid !== rb.txid ||
+      ra.confirmed !== rb.confirmed ||
+      ra.blockHeight !== rb.blockHeight ||
+      ra.blockTime !== rb.blockTime ||
+      ra.value !== rb.value ||
+      ra.opReturn !== rb.opReturn
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function useTreasuryBalance() {
   const [balance, setBalance] = useState<TreasuryBalance | null>(null);
   const [receipts, setReceipts] = useState<MempoolReceipt[]>([]);
@@ -64,13 +115,35 @@ export function useTreasuryBalance() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(true);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBalanceRef = useRef<TreasuryBalance | null>(null);
+  const lastFeeRatesRef = useRef<MempoolFeeRates | null>(null);
+  const lastReceiptsRef = useRef<MempoolReceipt[]>([]);
   const lastCacheTimestampRef = useRef<string | null>(null);
   // SCRUM-1260 (R1-6): one in-flight controller. Each new fetch cycle aborts
   // the prior one so a 60s tab-backgrounded fetch doesn't pile up behind the
   // 30s poll. Also abort on unmount.
   const abortRef = useRef<AbortController | null>(null);
+
+  const setBalanceIfChanged = useCallback((next: TreasuryBalance) => {
+    if (!balanceEqual(lastBalanceRef.current, next)) {
+      setBalance(next);
+    }
+    lastBalanceRef.current = next;
+  }, []);
+
+  const setFeeRatesIfChanged = useCallback((next: MempoolFeeRates) => {
+    if (!feeRatesEqual(lastFeeRatesRef.current, next)) {
+      setFeeRates(next);
+    }
+    lastFeeRatesRef.current = next;
+  }, []);
+
+  const setReceiptsIfChanged = useCallback((next: MempoolReceipt[]) => {
+    if (!receiptsEqual(lastReceiptsRef.current, next)) {
+      setReceipts(next);
+    }
+    lastReceiptsRef.current = next;
+  }, []);
 
   const fetchFromCache = useCallback(async (): Promise<boolean> => {
     try {
@@ -102,11 +175,10 @@ export function useTreasuryBalance() {
       const totalUsd = btcPrice ? totalBtc * btcPrice : null;
 
       const bal: TreasuryBalance = { confirmed, unconfirmed, total, btcPrice, totalUsd };
-      setBalance(bal);
-      lastBalanceRef.current = bal;
+      setBalanceIfChanged(bal);
 
       if (row.fee_fastest != null) {
-        setFeeRates({
+        setFeeRatesIfChanged({
           fastest: row.fee_fastest,
           halfHour: row.fee_half_hour ?? row.fee_fastest,
           hour: row.fee_hour ?? row.fee_fastest,
@@ -120,7 +192,7 @@ export function useTreasuryBalance() {
     } catch {
       return false;
     }
-  }, []);
+  }, [setBalanceIfChanged, setFeeRatesIfChanged]);
 
   const fetchAll = useCallback(async () => {
     // Cancel any prior in-flight cycle. SCRUM-1260 (R1-6): without this,
@@ -141,69 +213,84 @@ export function useTreasuryBalance() {
         return;
       }
 
+      // SCRUM-1260 (R1-6) /simplify: parallelize worker + mempool fetches.
+      // They are independent (worker provides authoritative balance + coarse
+      // fees; mempool.space provides receipts, BTC/USD price, and granular
+      // fee rates). The previous sequential code paid 8s + 8s = 16s worst
+      // case before surfacing an error; running them concurrently caps the
+      // worst case at ~8s (max single-leg timeout).
+      //
       // SCRUM-1260 (R1-6): combined timeout + cycle-cancel signal. Mempool
       // calls bail out at min(8s, cycle-aborted).
       const fetchWithTimeout = (url: string) =>
         fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) });
 
-      // 1. Balance: try worker API first (uses paid Bitcoin node), mempool.space as fallback.
+      // 1. Balance: try worker API first (uses paid Bitcoin node).
       // Worker timeout cut from 60s default → 8s so users see error within ~8s instead of ~75s.
       // workerFetch uses `options.signal ?? internal-timeout-controller`, so passing only the
       // cycle signal would bypass its timeout. Combine cycle-cancel AND timeout signals.
-      let balanceResolved = false;
-      try {
-        const workerSignal = AbortSignal.any([signal, AbortSignal.timeout(WORKER_TIMEOUT_MS)]);
-        const response = await workerFetch('/api/treasury/status', { method: 'GET', signal: workerSignal }, WORKER_TIMEOUT_MS);
-        if (signal.aborted) return;
-        if (response.ok && isMountedRef.current) {
-          const data = await response.json() as {
-            wallet?: { balanceSats: number; utxoCount?: number };
-            fees?: { currentRateSatPerVbyte: number };
-          };
-          if (data.wallet) {
-            const bal: TreasuryBalance = {
-              confirmed: data.wallet.balanceSats,
-              unconfirmed: 0,
-              total: data.wallet.balanceSats,
-              btcPrice: null,
-              totalUsd: null,
-            };
-            setBalance(bal);
-            lastBalanceRef.current = bal;
-            balanceResolved = true;
-          }
-          if (data.fees) {
-            const rate = data.fees.currentRateSatPerVbyte;
-            setFeeRates({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
-          }
-        }
-      } catch {
-        // Worker unavailable — will try mempool.space below
-      }
+      const workerSignal = AbortSignal.any([signal, AbortSignal.timeout(WORKER_TIMEOUT_MS)]);
+      const workerPromise = workerFetch(
+        '/api/treasury/status',
+        { method: 'GET', signal: workerSignal },
+        WORKER_TIMEOUT_MS,
+      );
 
-      // SCRUM-1260 (R1-6): when the worker is unavailable, do NOT fall back
-      // to direct mempool.space balance polling. Forensic 1 / SCRUM-1245
-      // documented this as a privacy/sovereignty leak (every poll exposes
-      // our treasury address polling pattern to a third party). Instead,
-      // keep the last cached balance + show a "stale" badge via setError.
-      // Receipts / price / fees are still fetched from mempool.space because
+      // 2. Receipts / price / fees are still fetched from mempool.space because
       // (a) the address is already public via on-chain receipts and (b)
       // these are display-only enrichment with no security-state impact.
-      const mempoolFetches = [
+      // SCRUM-1260 (R1-6): when the worker is unavailable, do NOT fall back
+      // to direct mempool.space balance polling. Forensic 1 / SCRUM-1245
+      // documented this as a privacy/sovereignty leak.
+      const mempoolPromise = Promise.allSettled([
         fetchWithTimeout(`${MEMPOOL_API}/address/${TREASURY_ADDRESS}/txs`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/prices`),
         fetchWithTimeout(`${MEMPOOL_API}/v1/fees/recommended`),
-      ];
-      const settled = await Promise.allSettled(mempoolFetches);
+      ]);
 
-      if (!isMountedRef.current) return;
+      const [workerSettled, mempoolSettled] = await Promise.all([
+        workerPromise.then(
+          (r) => ({ ok: true as const, response: r }),
+          (err: unknown) => ({ ok: false as const, error: err }),
+        ),
+        mempoolPromise,
+      ]);
 
-      const val = (i: number) => settled[i]?.status === 'fulfilled' ? (settled[i] as PromiseFulfilledResult<Response>).value : null;
+      if (signal.aborted || !isMountedRef.current) return;
+
+      // ─── Worker leg: authoritative balance + coarse fees ─────────────
+      let balanceResolved = false;
+      if (workerSettled.ok && workerSettled.response.ok) {
+        const data = (await workerSettled.response.json()) as {
+          wallet?: { balanceSats: number; utxoCount?: number };
+          fees?: { currentRateSatPerVbyte: number };
+        };
+        if (!isMountedRef.current) return;
+        if (data.wallet) {
+          const bal: TreasuryBalance = {
+            confirmed: data.wallet.balanceSats,
+            unconfirmed: 0,
+            total: data.wallet.balanceSats,
+            btcPrice: null,
+            totalUsd: null,
+          };
+          setBalanceIfChanged(bal);
+          balanceResolved = true;
+        }
+        if (data.fees) {
+          const rate = data.fees.currentRateSatPerVbyte;
+          setFeeRatesIfChanged({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
+        }
+      }
+
+      // ─── Mempool leg: receipts + price enrichment + granular fees ────
+      const val = (i: number) => mempoolSettled[i]?.status === 'fulfilled'
+        ? (mempoolSettled[i] as PromiseFulfilledResult<Response>).value
+        : null;
       const txRes = val(0);
       const priceRes = val(1);
       const feeRes = val(2);
 
-      // Parse receipts
       if (txRes?.ok) {
         const txData = await txRes.json() as Array<{
           txid: string;
@@ -230,27 +317,29 @@ export function useTreasuryBalance() {
         });
 
         if (isMountedRef.current) {
-          setReceipts(parsed);
+          setReceiptsIfChanged(parsed);
         }
       }
 
-      // Enrich balance with BTC price if available
       if (priceRes?.ok && lastBalanceRef.current) {
-        const priceData = await priceRes.json() as { USD: number };
-        const btcPrice = priceData.USD;
-        const totalBtc = lastBalanceRef.current.total / 1e8;
-        const enriched = { ...lastBalanceRef.current, btcPrice, totalUsd: totalBtc * btcPrice };
-        setBalance(enriched);
-        lastBalanceRef.current = enriched;
+        const priceData = await priceRes.json() as { USD?: number };
+        const btcPrice = priceData?.USD;
+        // Only enrich when the price is a real number — without this guard,
+        // mempool.space serving an empty body produces NaN totalUsd values
+        // that break the equality guard (NaN !== NaN) and re-render every poll.
+        if (typeof btcPrice === 'number' && Number.isFinite(btcPrice)) {
+          const totalBtc = lastBalanceRef.current.total / 1e8;
+          const enriched = { ...lastBalanceRef.current, btcPrice, totalUsd: totalBtc * btcPrice };
+          setBalanceIfChanged(enriched);
+        }
       }
 
-      // Parse fee rates from mempool (more granular than worker)
       if (feeRes?.ok) {
         const fees = await feeRes.json() as {
           fastestFee: number; halfHourFee: number; hourFee: number; economyFee: number; minimumFee: number;
         };
         if (isMountedRef.current) {
-          setFeeRates({
+          setFeeRatesIfChanged({
             fastest: fees.fastestFee, halfHour: fees.halfHourFee,
             hour: fees.hourFee, economy: fees.economyFee, minimum: fees.minimumFee,
           });
@@ -260,7 +349,7 @@ export function useTreasuryBalance() {
       // Final error state
       if (!balanceResolved && isMountedRef.current) {
         if (lastBalanceRef.current) {
-          setBalance(lastBalanceRef.current);
+          setBalanceIfChanged(lastBalanceRef.current);
           setError(TREASURY_LABELS.BALANCE_STALE);
         } else {
           setError(TREASURY_LABELS.BALANCE_UNAVAILABLE);
@@ -277,43 +366,24 @@ export function useTreasuryBalance() {
         setLoading(false);
       }
     }
-  }, [fetchFromCache]);
+  }, [fetchFromCache, setBalanceIfChanged, setFeeRatesIfChanged, setReceiptsIfChanged]);
 
+  // SCRUM-1260 (R1-6): poll only when tab is visible. Backgrounded admin
+  // tabs were hammering the worker on a 60s clock with stacking requests.
+  // Centralised in useVisibilityPolling — see the hook for the contract.
+  useVisibilityPolling(fetchAll, POLL_INTERVAL_MS);
+
+  // Mount/unmount lifecycle: track mounted-state for in-flight setState guards
+  // and abort any pending fetch cycle on unmount so a 60s backgrounded fetch
+  // doesn't write to a torn-down React tree.
   useEffect(() => {
     isMountedRef.current = true;
-    void fetchAll();
-
-    // SCRUM-1260 (R1-6): poll only when tab is visible. Backgrounded admin
-    // tabs were hammering the worker on a 60s clock with stacking requests.
-    pollRef.current = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      void fetchAll();
-    }, POLL_INTERVAL_MS);
-
-    // Refresh immediately when the tab returns to foreground so an admin
-    // doesn't stare at stale data for up to 60s.
-    const onVisibilityChange = () => {
-      if (typeof document !== 'undefined' && !document.hidden) {
-        void fetchAll();
-      }
-    };
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
-    }
-
     return () => {
       isMountedRef.current = false;
       abortRef.current?.abort();
       abortRef.current = null;
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
     };
-  }, [fetchAll]);
+  }, []);
 
   return { balance, receipts, feeRates, loading, error, refresh: fetchAll };
 }

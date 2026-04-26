@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, ChevronDown, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useVisibilityPolling } from '@/hooks/useVisibilityPolling';
 import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
@@ -36,8 +37,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ROUTES } from '@/lib/routes';
-import { PIPELINE_LABELS, formatCredentialType } from '@/lib/copy';
+import { PIPELINE_LABELS, DATA_ERROR_LABELS, formatCredentialType } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
 
 import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform';
 
@@ -276,34 +278,21 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (isAdmin) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
-      fetchStats();
-      // SCRUM-1260 (R1-6): document.hidden gate prevents the 30s tick from
-      // firing while the tab is backgrounded. Without it, we kept hammering
-      // the worker /api/admin/pipeline-stats route from every backgrounded
-      // tab — multiplied across long-lived browser sessions, that's a real
-      // load source. The tick still fires immediately when the tab regains
-      // focus via the visibilitychange listener below.
-      const tick = () => {
-        if (document.hidden) return;
-        fetchStats();
-      };
-      const interval = setInterval(tick, 30_000);
-      const onVisibility = () => {
-        if (!document.hidden) fetchStats();
-      };
-      document.addEventListener('visibilitychange', onVisibility);
-      return () => {
-        clearInterval(interval);
-        document.removeEventListener('visibilitychange', onVisibility);
-      };
-    } else {
-      setLoading(false);
-    }
-    return undefined;
+  // SCRUM-1260 (R1-6): visibility-aware polling so backgrounded admin tabs
+  // don't hammer the worker /api/admin/pipeline-stats route on a 30s clock.
+  // Centralised in useVisibilityPolling — see the hook for the contract.
+  // We pass a no-op when !isAdmin so the hook's mount-time fire is harmless;
+  // the `loading=false` for non-admins is set in a separate effect below.
+  const pollFetchStats = useCallback(async () => {
+    if (!isAdmin) return;
+    await fetchStats();
   }, [isAdmin, fetchStats]);
+  useVisibilityPolling(pollFetchStats, 30_000);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- post-auth flip; unguarded setState is harmless once
+    if (!isAdmin) setLoading(false);
+  }, [isAdmin]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -595,30 +584,14 @@ export function PipelineAdminPage() {
             the previous successful fetch (if any) stay visible behind the
             banner — better signal than zeroing them out. */}
         {statsError && (
-          <div
-            role="alert"
-            className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"
+          <DataErrorBanner
             data-testid="pipeline-stats-error"
-          >
-            <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-            <div className="flex-1">
-              <div className="font-medium">Pipeline stats temporarily unavailable</div>
-              <div className="mt-0.5 text-xs text-amber-200/80">
-                {statsError}
-                {stats ? ' — showing last successful values.' : ''}
-              </div>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="h-7 border-amber-400/40 text-amber-100 hover:bg-amber-400/10"
-            >
-              <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
-              Retry
-            </Button>
-          </div>
+            title={DATA_ERROR_LABELS.STATS_UNAVAILABLE_TITLE}
+            message={statsError}
+            trailingMessage={stats ? DATA_ERROR_LABELS.STATS_UNAVAILABLE_TRAILER : undefined}
+            onRetry={handleRefresh}
+            retrying={refreshing}
+          />
         )}
 
         {/* Stats Grid */}
@@ -981,26 +954,13 @@ export function PipelineAdminPage() {
                 "no results found." Without this, an RPC failure left the
                 table blank, indistinguishable from an empty filter result. */}
             {recordsError && (
-              <div
-                role="alert"
-                className="mb-3 flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100"
+              <DataErrorBanner
                 data-testid="pipeline-records-error"
-              >
-                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
-                <div className="flex-1">
-                  <div className="font-medium">Records fetch failed</div>
-                  <div className="mt-0.5 text-xs text-amber-200/80">{recordsError}</div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fetchRecords(recordsPage, filters)}
-                  className="h-7 border-amber-400/40 text-amber-100 hover:bg-amber-400/10"
-                >
-                  <RefreshCw className="mr-1 h-3 w-3" />
-                  Retry
-                </Button>
-              </div>
+                title={DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE}
+                message={recordsError}
+                onRetry={() => fetchRecords(recordsPage, filters)}
+                spacing="mb-3"
+              />
             )}
 
             {/* Records Table */}

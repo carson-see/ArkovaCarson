@@ -25,10 +25,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
-import { TREASURY_LABELS } from '@/lib/copy';
+import { TREASURY_LABELS, DATA_ERROR_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
 import { supabase } from '@/lib/supabase';
 import { BalanceCard, AnchorStats as AnchorStatsPanel, ReceiptTable, NetworkInfo } from '@/components/admin/treasury';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
 
 export function TreasuryAdminPage() {
   const navigate = useNavigate();
@@ -171,13 +172,11 @@ function X402PaymentStats() {
   if (loading) return <Skeleton className="h-20 w-full" />;
   if (error) {
     return (
-      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-        <div className="flex items-center justify-between">
-          <span className="font-medium text-amber-900">x402 stats unavailable</span>
-          <Badge variant="outline" className="text-xs">error</Badge>
-        </div>
-        <p className="text-xs text-amber-900/80">{error}</p>
-      </div>
+      <DataErrorBanner
+        data-testid="x402-stats-error"
+        title={DATA_ERROR_LABELS.X402_UNAVAILABLE_TITLE}
+        message={error}
+      />
     );
   }
   if (!stats || stats.total === 0) {
