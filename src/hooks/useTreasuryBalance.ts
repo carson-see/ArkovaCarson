@@ -20,7 +20,14 @@ import { TREASURY_LABELS } from '@/lib/copy';
 
 const MEMPOOL_API = `${MEMPOOL_BASE_URL}/api`;
 const POLL_INTERVAL_MS = 60_000;
-const FETCH_TIMEOUT_MS = 15_000;
+// SCRUM-1260 (R1-6): tighter mempool timeout. The 15s previous + 60s worker
+// default summed to 75s "skeleton" before users saw an error — exactly the
+// outage UX the forensic flagged. Mempool calls are the public/enrichment
+// path, so 8s is plenty.
+const FETCH_TIMEOUT_MS = 8_000;
+// Worker timeout for treasury fetch — overrides workerFetch default 60s.
+// On timeout we keep the last cached balance (if any) and flag stale.
+const WORKER_TIMEOUT_MS = 8_000;
 
 export interface TreasuryBalance {
   confirmed: number;
@@ -60,6 +67,10 @@ export function useTreasuryBalance() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastBalanceRef = useRef<TreasuryBalance | null>(null);
   const lastCacheTimestampRef = useRef<string | null>(null);
+  // SCRUM-1260 (R1-6): one in-flight controller. Each new fetch cycle aborts
+  // the prior one so a 60s tab-backgrounded fetch doesn't pile up behind the
+  // 30s poll. Also abort on unmount.
+  const abortRef = useRef<AbortController | null>(null);
 
   const fetchFromCache = useCallback(async (): Promise<boolean> => {
     try {
@@ -112,22 +123,38 @@ export function useTreasuryBalance() {
   }, []);
 
   const fetchAll = useCallback(async () => {
+    // Cancel any prior in-flight cycle. SCRUM-1260 (R1-6): without this,
+    // a slow worker fetch + 60s polling cycle could stack 4+ requests for
+    // the same data on a backgrounded tab.
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const { signal } = controller;
+
     try {
       // 0. Try server-side cache first (fastest, no rate limits).
       //    Cache provides balance + feeRates; receipts still require mempool.space.
       const cacheHit = await fetchFromCache();
+      if (signal.aborted) return;
       if (cacheHit) {
         if (isMountedRef.current) setLoading(false);
         return;
       }
 
+      // SCRUM-1260 (R1-6): combined timeout + cycle-cancel signal. Mempool
+      // calls bail out at min(8s, cycle-aborted).
       const fetchWithTimeout = (url: string) =>
-        fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+        fetch(url, { signal: AbortSignal.any([signal, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) });
 
-      // 1. Balance: try worker API first (uses paid Bitcoin node), mempool.space as fallback
+      // 1. Balance: try worker API first (uses paid Bitcoin node), mempool.space as fallback.
+      // Worker timeout cut from 60s default → 8s so users see error within ~8s instead of ~75s.
+      // workerFetch uses `options.signal ?? internal-timeout-controller`, so passing only the
+      // cycle signal would bypass its timeout. Combine cycle-cancel AND timeout signals.
       let balanceResolved = false;
       try {
-        const response = await workerFetch('/api/treasury/status', { method: 'GET' });
+        const workerSignal = AbortSignal.any([signal, AbortSignal.timeout(WORKER_TIMEOUT_MS)]);
+        const response = await workerFetch('/api/treasury/status', { method: 'GET', signal: workerSignal }, WORKER_TIMEOUT_MS);
+        if (signal.aborted) return;
         if (response.ok && isMountedRef.current) {
           const data = await response.json() as {
             wallet?: { balanceSats: number; utxoCount?: number };
@@ -254,19 +281,36 @@ export function useTreasuryBalance() {
 
   useEffect(() => {
     isMountedRef.current = true;
-    async function run() { await fetchAll(); }
-    void run();
+    void fetchAll();
 
+    // SCRUM-1260 (R1-6): poll only when tab is visible. Backgrounded admin
+    // tabs were hammering the worker on a 60s clock with stacking requests.
     pollRef.current = setInterval(() => {
-      async function poll() { await fetchAll(); }
-      void poll();
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void fetchAll();
     }, POLL_INTERVAL_MS);
+
+    // Refresh immediately when the tab returns to foreground so an admin
+    // doesn't stare at stale data for up to 60s.
+    const onVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        void fetchAll();
+      }
+    };
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVisibilityChange);
+    }
 
     return () => {
       isMountedRef.current = false;
+      abortRef.current?.abort();
+      abortRef.current = null;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
+      }
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVisibilityChange);
       }
     };
   }, [fetchAll]);

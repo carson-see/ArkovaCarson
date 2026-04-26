@@ -80,10 +80,10 @@ After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-
 | Path | Provider | Sovereign? | Notes |
 |---|---|---|---|
 | Broadcast (`sendrawtransaction`) | GetBlock RPC | ✅ yes | Live as of `BITCOIN_UTXO_PROVIDER=getblock` flip 2026-04-25 |
-| UTXO listing (`listunspent`) | GetBlock RPC → fallback to `mempool.space` | ❌ no | GetBlock shared endpoint returns "Method not allowed" — `utxo-provider.ts:459-474` `try { rpc } catch { mempool }` enters the catch branch every call |
+| UTXO listing (`listunspent`) | GetBlock RPC → fallback to `mempool.space` | ❌ no | GetBlock shared endpoint returns "Method not allowed" — `utxo-provider.ts:459-474` `try { rpc } catch { mempool }` enters the catch branch every call. **Observability:** R1-8 / SCRUM-1262 added Sentry breadcrumb (category `chain.rpc-fallback`) + structured warn log (`chain_rpc_fallback: true`) on every fallback. R0-8 dashboard surfaces fallback rate; alert fires when stays at 100% (RPC functionally unused). |
 | Fee estimation | `mempool.space` | ❌ no | `estimatesmartfee` IS supported by GetBlock (1013 sat/kvB confirmed), but worker has no `RpcFeeEstimator` and `BITCOIN_FEE_STRATEGY` only accepts `'static' \| 'mempool'` — needs code change + deploy |
-| `getrawtransaction` / `getblockheader` | GetBlock RPC | ✅ likely yes | Used by `check-confirmations.ts` + `chain-maintenance.ts` reorg detection. Untested but standard tx-indexed methods on GetBlock shared endpoints work |
-| Frontend treasury balance polling | Browser → `mempool.space` directly | ❌ no | `useTreasuryBalance.ts:159-164` — independent of worker provider; every admin tab polls public API every 60s |
+| `getrawtransaction` / `getblockheader` | GetBlock RPC (verification pending) | ⚠️ likely yes — needs operator curl matrix | Used by `check-confirmations.ts:144` + `chain-maintenance.ts:140` reorg detection. Untested against prod GetBlock token; standard tx-indexed methods on GetBlock shared endpoints generally work. R1-8 / SCRUM-1262 deferred the curl matrix to operator (requires prod token access — see runbook in story description). If either fails, file R3 follow-up for second-source verification. |
+| Frontend treasury balance polling | Browser → cached worker `treasury_cache` table → worker `/api/treasury/status` (8s timeout) → stale badge | ❌ no, but no longer leaks | R1-6 / SCRUM-1260: `useTreasuryBalance.ts` no longer falls through to direct mempool `address` polling on worker timeout — keeps last cached balance + flags stale instead. Mempool calls remain for receipts/price/fees enrichment (already-public address). |
 
 **Signing path (separate concern):**
 - `BITCOIN_TREASURY_WIF` in Secret Manager → decrypted into worker process memory at startup (current active signer)
@@ -93,10 +93,11 @@ After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-
 
 **Open follow-ups** (each will be a story under the recovery epic; do not roll into this story):
 1. `RpcFeeEstimator` class + `'rpc'` value in `BITCOIN_FEE_STRATEGY` enum (`config.ts:43`) so fees can route through GetBlock too
-2. Frontend `useTreasuryBalance.ts` — kill direct browser hits to `mempool.space`; route through worker `/api/treasury/balance`
+2. ~~Frontend `useTreasuryBalance.ts` — kill direct browser hits to `mempool.space`~~ — partially done in R1-6 (balance no longer leaks); receipts/price/fees enrichment kept (R3 will move fully behind worker)
 3. Full sovereignty: stand up Bitcoin Core + Electrs/Esplora and flip `BITCOIN_UTXO_PROVIDER=rpc`
 4. WIF → KMS migration (or document a deliberate WIF retention decision in CLAUDE.md and stop claiming "GCP KMS (prod)")
-5. Observability: surface a counter / log line every time `GetBlockHybridProvider.listUnspent` enters the mempool fallback so we can see drift if GetBlock ever supports `listunspent` later
+5. ~~Observability counter for `listUnspent` fallback~~ — done in R1-8 / SCRUM-1262
+6. **Operator action (R1-8):** run the curl matrix against prod GetBlock token for `getrawtransaction`, `getblockheader`, `getblockchaininfo`, `getblockcount`. Record results in [Forensic 1/8 Confluence page](https://arkova.atlassian.net/wiki/spaces/A/pages/27362208) and update the table above. If either reorg/confirmation method fails, file R3 follow-up for second-source verification.
 
 ## Recent Changes
 

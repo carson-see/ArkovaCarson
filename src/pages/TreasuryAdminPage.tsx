@@ -135,27 +135,51 @@ export function TreasuryAdminPage() {
 function X402PaymentStats() {
   const [stats, setStats] = useState<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null>(null);
   const [loading, setLoading] = useState(true);
+  // SCRUM-1260 (R1-6): kill silent 0/0/0. Previously the catch + error
+  // branches both fell back to `{ total: 0, revenue: 0, recent: [] }`,
+  // making "RPC failed" indistinguishable from "no payments yet."
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     // Single RPC replaces 3 separate x402_payments queries
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbAny = supabase as any;
-    dbAny.rpc('get_treasury_stats').then(({ data, error }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null; error: unknown }) => {
-      if (!error && data) {
-        setStats({
-          total: data.total_payments ?? 0,
-          revenue: data.total_revenue_usd ?? 0,
-          recent: data.recent_payments ?? [],
-        });
-      } else {
-        setStats({ total: 0, revenue: 0, recent: [] });
+    dbAny.rpc('get_treasury_stats').then(({ data, error: rpcErr }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null; error: { message?: string } | null }) => {
+      if (cancelled) return;
+      if (rpcErr) {
+        setError(rpcErr.message ?? 'RPC failed');
+        return;
       }
-    }).catch(() => {
-      setStats({ total: 0, revenue: 0, recent: [] });
-    }).finally(() => setLoading(false));
+      if (!data) {
+        setError('No data returned');
+        return;
+      }
+      setStats({
+        total: data.total_payments ?? 0,
+        revenue: data.total_revenue_usd ?? 0,
+        recent: data.recent_payments ?? [],
+      });
+    }).catch((err: unknown) => {
+      if (cancelled) return;
+      setError(err instanceof Error ? err.message : 'Failed to load x402 stats');
+    }).finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) return <Skeleton className="h-20 w-full" />;
+  if (error) {
+    return (
+      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="font-medium text-amber-900">x402 stats unavailable</span>
+          <Badge variant="outline" className="text-xs">error</Badge>
+        </div>
+        <p className="text-xs text-amber-900/80">{error}</p>
+      </div>
+    );
+  }
   if (!stats || stats.total === 0) {
     return (
       <div className="space-y-3">
