@@ -177,6 +177,87 @@ describe('config singleton', () => {
 });
 
 /**
+ * Shared test helpers — Sonar-flagged 62%+ duplication on the SCRUM-1257 +
+ * SCRUM-1258 blocks (each test repeated the same save/assign/reset/restore
+ * boilerplate 14-18 lines). Centralised here so each test focuses on the
+ * env-override that's actually under test. /simplify carry-over (PR #565).
+ */
+
+// gitleaks:allow — test fixtures, satisfy min-length validators only
+const PROD_BASE_ENV = {
+  CRON_SECRET: 'test-cron-secret-1234',
+  API_KEY_HMAC_SECRET: 'test-hmac-secret',
+  FRONTEND_URL: 'https://app.arkova.ai',
+} as const;
+
+const PROD_MAINNET_ENV = {
+  ...PROD_BASE_ENV,
+  NODE_ENV: 'production',
+  BITCOIN_NETWORK: 'mainnet',
+  ENABLE_PROD_NETWORK_ANCHORING: 'true',
+} as const;
+
+// R1-4 vars that leak forward via Object.assign(saved) restore. Each test
+// helper explicitly clears these at the top to guarantee hermetic isolation.
+const LEAKY_ENV_KEYS = [
+  'ENABLE_DRIVE_OAUTH',
+  'GOOGLE_OAUTH_CLIENT_ID',
+  'GOOGLE_OAUTH_CLIENT_SECRET',
+  'INTEGRATION_STATE_HMAC_SECRET',
+  'DOCUSIGN_INTEGRATION_KEY',
+  'DOCUSIGN_CLIENT_SECRET',
+  'DOCUSIGN_CONNECT_HMAC_SECRET',
+  'ADOBE_SIGN_CLIENT_SECRET',
+  'CHECKR_WEBHOOK_SECRET',
+  'VEREMARK_WEBHOOK_SECRET',
+  'ENABLE_VEREMARK_WEBHOOK',
+  'MIDDESK_API_KEY',
+  'MIDDESK_WEBHOOK_SECRET',
+  'BUILD_SHA',
+  'BITCOIN_TREASURY_WIF',
+  'GCP_KMS_KEY_RESOURCE_NAME',
+  'KMS_PROVIDER',
+];
+
+async function withEnv<T>(
+  overrides: Record<string, string | undefined>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const saved = { ...process.env };
+  for (const k of LEAKY_ENV_KEYS) delete process.env[k];
+  Object.assign(process.env, testEnv);
+  for (const [k, v] of Object.entries(overrides)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  vi.resetModules();
+  try {
+    return await fn();
+  } finally {
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  }
+}
+
+async function expectConfigToReject(overrides: Record<string, string | undefined>): Promise<void> {
+  await withEnv(overrides, async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+  });
+}
+
+async function withConfig<T>(
+  overrides: Record<string, string | undefined>,
+  assertions: (mod: typeof import('./config.js')) => Promise<T> | T,
+): Promise<T> {
+  return withEnv(overrides, async () => {
+    const mod = await import('./config.js');
+    return assertions(mod);
+  });
+}
+
+/**
  * SCRUM-1257 (R1-3) — kmsProvider default 'aws' → 'gcp' + fail-loud production guard.
  *
  * Why: forensic 2/8 found that an accidental `--remove-env-vars=KMS_PROVIDER` on
@@ -187,159 +268,91 @@ describe('config singleton', () => {
  */
 describe('SCRUM-1257 kmsProvider default + fail-loud guard', () => {
   it('defaults kmsProvider to "gcp" when KMS_PROVIDER unset', async () => {
-    const saved = { ...process.env };
-
-    delete process.env.KMS_PROVIDER;
-    Object.assign(process.env, testEnv);
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.kmsProvider).toBe('gcp');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig({ KMS_PROVIDER: undefined }, (mod) => {
+      expect(mod.config.kmsProvider).toBe('gcp');
+    });
   });
 
   it('rejects production mainnet anchoring when KMS_PROVIDER is unset', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'mainnet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    process.env.BITCOIN_TREASURY_WIF = 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ';
-    delete process.env.KMS_PROVIDER;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      ...PROD_MAINNET_ENV,
+      KMS_PROVIDER: undefined,
+      BITCOIN_TREASURY_WIF: 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ',
+    });
   });
 
   it('rejects production mainnet anchoring when neither WIF nor GCP KMS key is set', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'mainnet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
-    process.env.KMS_PROVIDER = 'gcp';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    delete process.env.BITCOIN_TREASURY_WIF;
-    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      ...PROD_MAINNET_ENV,
+      KMS_PROVIDER: 'gcp',
+      BITCOIN_TREASURY_WIF: undefined,
+      GCP_KMS_KEY_RESOURCE_NAME: undefined,
+    });
   });
 
   it('accepts production mainnet anchoring with KMS_PROVIDER=gcp + WIF', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'mainnet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
-    process.env.KMS_PROVIDER = 'gcp';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    process.env.BITCOIN_TREASURY_WIF = 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ';
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.kmsProvider).toBe('gcp');
-    expect(mod.config.bitcoinNetwork).toBe('mainnet');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig(
+      {
+        ...PROD_MAINNET_ENV,
+        KMS_PROVIDER: 'gcp',
+        BITCOIN_TREASURY_WIF: 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ',
+      },
+      (mod) => {
+        expect(mod.config.kmsProvider).toBe('gcp');
+        expect(mod.config.bitcoinNetwork).toBe('mainnet');
+      },
+    );
   });
 
   it('accepts production mainnet anchoring with KMS_PROVIDER=gcp + GCP_KMS_KEY_RESOURCE_NAME', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'mainnet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
-    process.env.KMS_PROVIDER = 'gcp';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    process.env.GCP_KMS_KEY_RESOURCE_NAME =
-      'projects/arkova1/locations/us-central1/keyRings/anchoring/cryptoKeys/treasury';
-    delete process.env.BITCOIN_TREASURY_WIF;
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.kmsProvider).toBe('gcp');
-    expect(mod.config.gcpKmsKeyResourceName).toContain('keyRings/anchoring');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig(
+      {
+        ...PROD_MAINNET_ENV,
+        KMS_PROVIDER: 'gcp',
+        GCP_KMS_KEY_RESOURCE_NAME:
+          'projects/arkova1/locations/us-central1/keyRings/anchoring/cryptoKeys/treasury',
+        BITCOIN_TREASURY_WIF: undefined,
+      },
+      (mod) => {
+        expect(mod.config.kmsProvider).toBe('gcp');
+        expect(mod.config.gcpKmsKeyResourceName).toContain('keyRings/anchoring');
+      },
+    );
   });
 
   it('does not require KMS config when ENABLE_PROD_NETWORK_ANCHORING is false', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'mainnet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'false';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    delete process.env.KMS_PROVIDER;
-    delete process.env.BITCOIN_TREASURY_WIF;
-    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.enableProdNetworkAnchoring).toBe(false);
-    expect(mod.config.kmsProvider).toBe('gcp');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig(
+      {
+        ...PROD_BASE_ENV,
+        NODE_ENV: 'production',
+        BITCOIN_NETWORK: 'mainnet',
+        ENABLE_PROD_NETWORK_ANCHORING: 'false',
+        KMS_PROVIDER: undefined,
+        BITCOIN_TREASURY_WIF: undefined,
+        GCP_KMS_KEY_RESOURCE_NAME: undefined,
+      },
+      (mod) => {
+        expect(mod.config.enableProdNetworkAnchoring).toBe(false);
+        expect(mod.config.kmsProvider).toBe('gcp');
+      },
+    );
   });
 
   it('does not require KMS config when bitcoinNetwork is signet (test environment)', async () => {
-    const saved = { ...process.env };
-
-    Object.assign(process.env, testEnv);
-    process.env.NODE_ENV = 'production';
-    process.env.BITCOIN_NETWORK = 'signet';
-    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    process.env.CRON_SECRET = 'test-cron-secret-1234';
-    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
-    process.env.FRONTEND_URL = 'https://app.arkova.ai';
-    delete process.env.KMS_PROVIDER;
-    delete process.env.BITCOIN_TREASURY_WIF;
-    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.bitcoinNetwork).toBe('signet');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig(
+      {
+        ...PROD_BASE_ENV,
+        NODE_ENV: 'production',
+        BITCOIN_NETWORK: 'signet',
+        ENABLE_PROD_NETWORK_ANCHORING: 'true',
+        KMS_PROVIDER: undefined,
+        BITCOIN_TREASURY_WIF: undefined,
+        GCP_KMS_KEY_RESOURCE_NAME: undefined,
+      },
+      (mod) => {
+        expect(mod.config.bitcoinNetwork).toBe('signet');
+      },
+    );
   });
 });
 
@@ -351,177 +364,80 @@ describe('SCRUM-1257 kmsProvider default + fail-loud guard', () => {
  * these guards catch the misconfiguration at boot.
  */
 describe('SCRUM-1258 vendor connector cross-field guards', () => {
-  // Helper: minimum env that satisfies the unrelated production guards
-  // (cron, hmac, frontend, kms — already covered by other tests).
-  const prodBase = {
+  // Production env that satisfies the unrelated guards (cron, hmac, frontend,
+  // kms — covered by other tests). signet avoids the R1-3 mainnet-anchoring path.
+  const PROD_SIGNET = {
+    ...PROD_BASE_ENV,
     NODE_ENV: 'production',
-    BITCOIN_NETWORK: 'signet', // avoid the R1-3 mainnet-anchoring path
+    BITCOIN_NETWORK: 'signet',
     ENABLE_PROD_NETWORK_ANCHORING: 'false',
-    // gitleaks:allow — test fixture, satisfies min-length validator only
-    CRON_SECRET: 'test-cron-secret-1234',
-    API_KEY_HMAC_SECRET: 'test-hmac-secret',
-    FRONTEND_URL: 'https://app.arkova.ai',
   } as const;
 
-  // R1-4 vars that leak forward via Object.assign(saved) restore. Each test
-  // explicitly clears these at the top to guarantee hermetic isolation.
-  const leakyKeys = [
-    'ENABLE_DRIVE_OAUTH',
-    'GOOGLE_OAUTH_CLIENT_ID',
-    'GOOGLE_OAUTH_CLIENT_SECRET',
-    'INTEGRATION_STATE_HMAC_SECRET',
-    'DOCUSIGN_INTEGRATION_KEY',
-    'DOCUSIGN_CLIENT_SECRET',
-    'DOCUSIGN_CONNECT_HMAC_SECRET',
-    'ADOBE_SIGN_CLIENT_SECRET',
-    'CHECKR_WEBHOOK_SECRET',
-    'VEREMARK_WEBHOOK_SECRET',
-    'ENABLE_VEREMARK_WEBHOOK',
-    'MIDDESK_API_KEY',
-    'MIDDESK_WEBHOOK_SECRET',
-    'BUILD_SHA',
-    'BITCOIN_TREASURY_WIF',
-    'GCP_KMS_KEY_RESOURCE_NAME',
-  ];
-  const clearLeaks = () => {
-    for (const k of leakyKeys) delete process.env[k];
-  };
-
   it('rejects production with ENABLE_DRIVE_OAUTH=true and missing GOOGLE_OAUTH_CLIENT_ID', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv, prodBase);
-    process.env.ENABLE_DRIVE_OAUTH = 'true';
-    process.env.INTEGRATION_STATE_HMAC_SECRET = 'test-hmac';
-    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
-    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DRIVE_OAUTH: 'true',
+      INTEGRATION_STATE_HMAC_SECRET: 'test-hmac',
+      GOOGLE_OAUTH_CLIENT_ID: undefined,
+      GOOGLE_OAUTH_CLIENT_SECRET: undefined,
+    });
   });
 
   it('rejects production with ENABLE_DRIVE_OAUTH=true and missing INTEGRATION_STATE_HMAC_SECRET', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv, prodBase);
-    process.env.ENABLE_DRIVE_OAUTH = 'true';
-    process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-client-id';
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-client-secret';
-    delete process.env.INTEGRATION_STATE_HMAC_SECRET;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DRIVE_OAUTH: 'true',
+      GOOGLE_OAUTH_CLIENT_ID: 'fake-client-id',
+      GOOGLE_OAUTH_CLIENT_SECRET: 'fake-client-secret',
+      INTEGRATION_STATE_HMAC_SECRET: undefined,
+    });
   });
 
   it('rejects when DOCUSIGN_INTEGRATION_KEY is set but DOCUSIGN_CLIENT_SECRET is missing', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv);
-    process.env.DOCUSIGN_INTEGRATION_KEY = 'fake-integration-key';
-    delete process.env.DOCUSIGN_CLIENT_SECRET;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
+      DOCUSIGN_CLIENT_SECRET: undefined,
+    });
   });
 
   it('rejects when ENABLE_VEREMARK_WEBHOOK=true but VEREMARK_WEBHOOK_SECRET is missing', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv);
-    process.env.ENABLE_VEREMARK_WEBHOOK = 'true';
-    delete process.env.VEREMARK_WEBHOOK_SECRET;
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({
+      ENABLE_VEREMARK_WEBHOOK: 'true',
+      VEREMARK_WEBHOOK_SECRET: undefined,
+    });
   });
 
   it('accepts production when Drive OAuth is fully configured', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv, prodBase);
-    process.env.ENABLE_DRIVE_OAUTH = 'true';
-    process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-client-id';
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-client-secret';
-    process.env.INTEGRATION_STATE_HMAC_SECRET = 'fake-hmac';
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.enableDriveOauth).toBe(true);
-    expect(mod.config.googleOauthClientId).toBe('fake-client-id');
-    expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig(
+      {
+        ...PROD_SIGNET,
+        ENABLE_DRIVE_OAUTH: 'true',
+        GOOGLE_OAUTH_CLIENT_ID: 'fake-client-id',
+        GOOGLE_OAUTH_CLIENT_SECRET: 'fake-client-secret',
+        INTEGRATION_STATE_HMAC_SECRET: 'fake-hmac',
+      },
+      (mod) => {
+        expect(mod.config.enableDriveOauth).toBe(true);
+        expect(mod.config.googleOauthClientId).toBe('fake-client-id');
+        expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
+      },
+    );
   });
 
   it('rejects invalid BUILD_SHA (must be 40-char hex or "unknown")', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv);
-    process.env.BUILD_SHA = 'not-a-sha';
-
-    vi.resetModules();
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
-    consoleError.mockRestore();
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await expectConfigToReject({ BUILD_SHA: 'not-a-sha' });
   });
 
   it('accepts BUILD_SHA="unknown" (Cloud Run pre-R0 image marker)', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv);
-    process.env.BUILD_SHA = 'unknown';
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.buildSha).toBe('unknown');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    await withConfig({ BUILD_SHA: 'unknown' }, (mod) => {
+      expect(mod.config.buildSha).toBe('unknown');
+    });
   });
 
   it('accepts BUILD_SHA as 40-char hex (post-R0 deploy)', async () => {
-    const saved = { ...process.env };
-    clearLeaks();
-
-    Object.assign(process.env, testEnv);
-    process.env.BUILD_SHA = 'adc654d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8';
-
-    vi.resetModules();
-    const mod = await import('./config.js');
-    expect(mod.config.buildSha).toBe('adc654d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8');
-
-    Object.assign(process.env, saved);
-    vi.resetModules();
+    const sha = 'adc654d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8';
+    await withConfig({ BUILD_SHA: sha }, (mod) => {
+      expect(mod.config.buildSha).toBe(sha);
+    });
   });
 });
