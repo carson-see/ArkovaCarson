@@ -187,6 +187,28 @@ gh pr create --title "fix(advisor): SCRUM-1187/1188/1189 + SCRUM-948 dashboard w
 
 ---
 
+### 2026-04-26 — Audit-ready evidence package (Sarah session 5)
+
+PR [#573](https://github.com/carson-see/ArkovaCarson/pull/573) on branch `claude/2026-04-26-haki-evidence-package`. Pushed + open + linked to Jira. Awaiting review.
+
+**1 story shipped (AC1–AC4 + AC6; AC5 deferred):**
+
+| Jira | Title | Coverage |
+|---|---|---|
+| [SCRUM-1173](https://arkova.atlassian.net/browse/SCRUM-1173) | HAKI-REQ-04 audit-ready evidence trail | AC1 bundle ✅ · AC2 public projection ✅ · AC3 API-key richness ✅ · AC4 dual timestamps + retroactive caveat ✅ · AC5 PDF deferred · AC6 graceful degradation ✅ |
+
+`GET /api/v1/anchor/{publicId}/evidence` — single response that bundles verification, hash, both `document_issued_date` and `anchored_at`, lifecycle events, proof URL, explorer link, and a `notes[]` field with retroactive-anchoring caveat + retry guidance when chain data is unavailable. Public-safe by default; cross-org API key gets 404 (no existence-leak); API-key callers in the anchor's org get `actor_public_id` on lifecycle entries.
+
+`buildProofUrl(publicId)` added to `services/worker/src/lib/urls.ts` (replaces a local `appBaseUrl` helper). Migration 0268 restores `idx_audit_events_target` (idempotent against PR #570's 0267 — same index name, safe to merge in either order).
+
+**Tests:** 13/13 new in `anchor-evidence.test.ts` (AC1 happy path, AC2 public projection, AC3 actor_public_id enrichment, AC4 retroactive caveat, AC6 chain unavailable + retry guidance, lifecycle status mapping, handler 400/404/cross-org). 57/57 across touched worker areas. Typecheck clean.
+
+**/simplify pass applied (2 fixes):** index restore migration 0268, `appBaseUrl` → `lib/urls.buildProofUrl`.
+
+**/security-review pass:** zero findings ≥7 confidence — SQL parameterized only, cross-org 404 avoids existence-leak, no UUIDs in response (verified by tests), URLs interpolate DB-stored `public_id` not request input.
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
