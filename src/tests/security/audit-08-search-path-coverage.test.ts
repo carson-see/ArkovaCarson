@@ -40,27 +40,24 @@ function readAllMigrations(): string {
     .readdirSync(dir)
     .filter((f) => f.endsWith('.sql'))
     .map((f) => fs.readFileSync(path.join(dir, f), 'utf8'))
-    .join('\n--- migration boundary ---\n');
+    .join('\n');
 }
 
+const SEARCH_PATH_RE = /SET\s+search_path\s*=\s*public/i;
+
 function hasInlineSearchPath(allSql: string, fnName: string): boolean {
-  // Find every CREATE OR REPLACE FUNCTION <name>( ... and inspect the header
-  // up to the AS $$ marker for `SET search_path = public`.
   const pattern = new RegExp(
     `CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?AS\\s*\\$`,
     'gi',
   );
   let m: RegExpExecArray | null;
   while ((m = pattern.exec(allSql)) !== null) {
-    if (/SET\s+search_path\s*=\s*public/i.test(m[0])) {
-      return true;
-    }
+    if (SEARCH_PATH_RE.test(m[0])) return true;
   }
   return false;
 }
 
 function hasAlterSearchPath(allSql: string, fnName: string): boolean {
-  // Match ALTER FUNCTION <name>(...) ... SET search_path = public
   const pattern = new RegExp(
     `ALTER\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?SET\\s+search_path\\s*=\\s*public`,
     'i',
