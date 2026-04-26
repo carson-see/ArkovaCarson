@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { validateWebhookPayload } from './payload-schemas.js';
 
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY_MS = 1000;
@@ -419,6 +420,26 @@ export async function dispatchWebhookEvent(
   eventId: string,
   data: Record<string, unknown>
 ): Promise<void> {
+  // SCRUM-1268 (R2-5): validate the data block against the canonical schema
+  // for known event types. Banned fields (anchor_id, fingerprint, user_id,
+  // org_id) trigger a structured warn log + Sentry breadcrumb (via logger),
+  // and the dispatch is aborted so the leaked payload is never signed or
+  // delivered. Unknown event types pass through (allowlist semantics — see
+  // payload-schemas.ts).
+  const validation = validateWebhookPayload(eventType, data);
+  if (!validation.ok) {
+    logger.error(
+      {
+        eventType,
+        eventId,
+        orgId,
+        issues: validation.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
+      },
+      'Outbound webhook payload failed schema validation — refusing to dispatch (CLAUDE.md §6 + §1.6)',
+    );
+    throw validation.error;
+  }
+
   // Check if webhooks are enabled
   const { data: flag, error: flagError } = await db.rpc('get_flag', {
     p_flag_key: 'ENABLE_OUTBOUND_WEBHOOKS',

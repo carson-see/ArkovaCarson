@@ -22,12 +22,105 @@ import { isSemanticSearchEnabled } from '../middleware/aiFeatureGate.js';
 import { generateAndStoreEmbedding } from '../ai/embeddings.js';
 import { createAIProvider } from '../ai/factory.js';
 import { sendEmail, buildAnchorSecuredEmail } from '../email/index.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
 
 /** Concurrency for parallel mempool.space API calls */
 const MEMPOOL_CONCURRENCY = 10;
+
+/**
+ * Concurrency cap for the SCRUM-1264 (R2-1) bulk-confirm webhook fan-out.
+ * Conservative default — a 10K-anchor merkle batch sends 10K dispatches but
+ * never more than this many in flight at once, so a customer with one slow
+ * endpoint can't be DDoS'd by our own fan-out. Override via env if needed.
+ */
+const BULK_WEBHOOK_FAN_OUT_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.BULK_WEBHOOK_FAN_OUT_CONCURRENCY ?? '20', 10) || 20,
+);
+
+/**
+ * Fan out per-anchor `anchor.secured` webhooks after the bulk SECURED update.
+ * SCRUM-1264 (R2-1) — restores the customer-facing webhook contract that
+ * commit a5da008d (2026-03-27) silently dropped. Per-org grouping keeps the
+ * fan-out symmetric to the single-anchor path: one event per anchor per
+ * subscribed endpoint, capped at BULK_WEBHOOK_FAN_OUT_CONCURRENCY in flight.
+ *
+ * Failures land in `webhook_dead_letter_queue` via the existing dispatch
+ * machinery — this function never throws. Errors are logged with txId
+ * + counts so operators can correlate against the merkle batch.
+ */
+export async function fanOutBulkSecuredWebhooks(
+  txId: string,
+  blockHeight: number,
+  blockTimestamp: string,
+): Promise<void> {
+  // SCRUM-1268 (R2-5): only public-allowed columns are pulled from the DB —
+  // anchor.id (UUID) and anchor.fingerprint stay server-side, never enter
+  // the webhook payload.
+  const { data: securedAnchors, error: queryErr } = await db
+    .from('anchors')
+    .select('id, public_id, org_id')
+    .eq('chain_tx_id', txId)
+    .eq('status', 'SECURED');
+
+  if (queryErr || !securedAnchors || securedAnchors.length === 0) {
+    if (queryErr) {
+      logger.warn(
+        { txId, error: queryErr },
+        'Bulk webhook fan-out: failed to query SECURED anchors for tx — skipping dispatch (DLQ unaffected)',
+      );
+    }
+    return;
+  }
+
+  const eligible = securedAnchors.filter(
+    (a): a is { id: string; public_id: string; org_id: string } =>
+      typeof a.org_id === 'string' && typeof a.public_id === 'string' && a.public_id.length > 0,
+  );
+
+  if (eligible.length === 0) {
+    logger.debug(
+      { txId, anchorsTotal: securedAnchors.length },
+      'Bulk webhook fan-out: no anchors with both org_id + public_id; nothing to dispatch',
+    );
+    return;
+  }
+
+  const tasks = eligible.map((anchor) => async () => {
+    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.id, {
+      public_id: anchor.public_id,
+      status: 'SECURED',
+      chain_tx_id: txId,
+      chain_block_height: blockHeight,
+      chain_timestamp: blockTimestamp,
+      secured_at: blockTimestamp,
+    });
+  });
+
+  const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
+
+  if (result.rejected.length > 0) {
+    logger.warn(
+      {
+        txId,
+        anchorsDispatched: result.fulfilled.length,
+        anchorsFailed: result.rejected.length,
+        firstError: result.rejected[0]?.reason instanceof Error
+          ? result.rejected[0].reason.message
+          : String(result.rejected[0]?.reason ?? 'unknown'),
+      },
+      'Bulk webhook fan-out: some dispatches failed (DLQ holds the durable retries)',
+    );
+  } else {
+    logger.info(
+      { txId, anchorsDispatched: result.fulfilled.length },
+      'Bulk webhook fan-out: anchor.secured delivered for all anchors in tx',
+    );
+  }
+}
 
 /** In-process mutex — prevents concurrent confirmation check runs */
 let confirmationCheckRunning = false;
@@ -265,16 +358,17 @@ async function _checkAnchorConfirmation(anchor: {
     details: `Confirmed at block ${blockHeight} (tx: ${anchor.chain_tx_id})`,
   });
 
-  // Dispatch webhook — non-fatal
-  if (anchor.org_id) {
+  // Dispatch webhook — non-fatal.
+  // SCRUM-1268 (R2-5): payload contains only public-allowed fields.
+  // `anchor_id` (UUID) and raw `fingerprint` are banned by CLAUDE.md §6 + §1.6.
+  if (anchor.org_id && anchor.public_id) {
     try {
       await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.id, {
-        anchor_id: anchor.id,
         public_id: anchor.public_id,
-        fingerprint: anchor.fingerprint,
         status: 'SECURED',
         chain_tx_id: anchor.chain_tx_id,
         chain_block_height: blockHeight,
+        chain_timestamp: blockTimestamp,
         secured_at: blockTimestamp,
       });
     } catch (webhookError) {
@@ -454,6 +548,16 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
             { txId, confirmed: groupConfirmed, blockHeight, confirmations },
             'Bulk confirmed anchor group (shared tx)',
           );
+
+          // SCRUM-1264 (R2-1): Fan out per-anchor `anchor.secured` webhooks.
+          // The pre-2026-03-27 single-anchor path emitted one webhook per
+          // SECURED anchor (jobs/anchor.ts:283 still does this for SUBMITTED).
+          // Commit a5da008d "perf: bulk SECURED updates" replaced the per-anchor
+          // promote with a single bulk UPDATE and skipped the webhook fan-out
+          // entirely — silently breaking ~10K customer webhooks per merkle TX
+          // for 6 weeks. We restore the contract here, with a concurrency cap
+          // to avoid hammering customer endpoints.
+          await fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp);
         }
 
         return groupConfirmed;
