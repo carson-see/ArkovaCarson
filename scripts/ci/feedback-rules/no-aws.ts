@@ -16,8 +16,7 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
-import { REPO, hasLabel, scanAll, baseRef, LABELS } from '../lib/ciContext.js';
+import { REPO, hasLabel, changedFiles, LABELS } from '../lib/ciContext.js';
 
 const ALLOWED_PATHS = [
   'services/worker/src/chain/signing-provider.ts',
@@ -37,28 +36,7 @@ function isAllowed(file: string): boolean {
 }
 
 function getCandidateFiles(): string[] {
-  if (scanAll) {
-    try {
-      return execFileSync('git', ['ls-files', 'src/**/*.ts', 'src/**/*.tsx', 'services/**/*.ts'], {
-        cwd: REPO,
-        encoding: 'utf8',
-      })
-        .split('\n')
-        .filter(Boolean);
-    } catch {
-      return [];
-    }
-  }
-  try {
-    return execFileSync('git', ['diff', '--name-only', '--diff-filter=AMR', `${baseRef}...HEAD`], {
-      cwd: REPO,
-      encoding: 'utf8',
-    })
-      .split('\n')
-      .filter((f) => /\.(ts|tsx)$/.test(f));
-  } catch {
-    return [];
-  }
+  return changedFiles().filter((f) => /\.(tsx?)$/.test(f));
 }
 
 interface Violation {
