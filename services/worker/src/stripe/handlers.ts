@@ -27,6 +27,48 @@ const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
 
 type StripeReference = string | { id?: string | null } | null | undefined;
 
+/**
+ * SCRUM-1266 (R2-3) + PR #567 review-fix: shared orphan-row guard for the
+ * Stripe handlers that perform `update().eq('stripe_subscription_id', x)`.
+ *
+ * Distinguishes "row missing" from "lookup failed":
+ *   - lookup error → throw (so Stripe retries; the billing_events claim is
+ *     already in place when this runs, so a silent ack would lose the event).
+ *   - row missing  → log + return null so the caller can early-return
+ *     without performing the no-op UPDATE.
+ *
+ * Each call site provides its own select column list (some need `user_id`,
+ * some only need `id` for existence) and an event name for log clarity.
+ */
+async function lookupSubscriptionOrThrow<T>(
+  stripeSubscriptionId: string,
+  selectCols: string,
+  context: Record<string, unknown>,
+  eventName: string,
+): Promise<T | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
+  const { data, error } = await (db
+    .from('subscriptions')
+    .select(selectCols)
+    .eq('stripe_subscription_id', stripeSubscriptionId)
+    .maybeSingle() as any);
+  if (error) {
+    logger.error(
+      { ...context, error },
+      `Subscription lookup failed on ${eventName} — throwing so Stripe retries the event`,
+    );
+    throw error;
+  }
+  if (!data) {
+    logger.warn(
+      context,
+      `No subscription row found for stripe_subscription_id on ${eventName} — refusing to update (SCRUM-1266)`,
+    );
+    return null;
+  }
+  return data as T;
+}
+
 interface PaymentGraceTarget {
   userId: string | null;
   orgId: string | null;
@@ -482,38 +524,14 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
 
   logger.info({ subscriptionId: subscription.id }, 'Processing subscription deletion');
 
-  // SCRUM-1266 (R2-3): orphan-row guard. SCRUM-1239 (PR #548) patched
-  // handleSubscriptionUpdated only and explicitly deferred the three sibling
-  // handlers. Without this check, an attacker-injected event class (or a
-  // real Stripe event for a subscription not yet in our DB) hits a silent
-  // no-op UPDATE — visible in logs as success but with zero state change.
-  //
-  // PR #567 review-fix: distinguish "row missing" from "DB error" so a
-  // transient failure can't false-positive as missing-row → silent ack.
-  // The event has already been claimed in `billing_events` by the time we
-  // get here; if we ack-without-update on a DB error, Stripe retries hit
-  // the UNIQUE constraint and the event is permanently lost.
-  const { data: existingSub, error: lookupError } = await db
-    .from('subscriptions')
-    .select('user_id')
-    .eq('stripe_subscription_id', subscription.id)
-    .maybeSingle();
-
-  if (lookupError) {
-    logger.error(
-      { subscriptionId: subscription.id, error: lookupError },
-      'Subscription lookup failed during deletion — throwing so Stripe retries the event',
-    );
-    throw lookupError;
-  }
-
-  if (!existingSub) {
-    logger.warn(
-      { subscriptionId: subscription.id },
-      'No subscription row found for stripe_subscription_id — refusing to cancel (SCRUM-1266)',
-    );
-    return;
-  }
+  // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+  const existingSub = await lookupSubscriptionOrThrow<{ user_id: string | null }>(
+    subscription.id,
+    'user_id',
+    { subscriptionId: subscription.id },
+    'subscription_deleted',
+  );
+  if (!existingSub) return;
 
   const { error } = await db
     .from('subscriptions')
@@ -554,34 +572,14 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
   logger.warn({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment failed');
 
   if (stripeSubscriptionId) {
-    // SCRUM-1266 (R2-3): orphan-row guard — see handleSubscriptionUpdated
-    // (SCRUM-1239) for the original pattern. Mirror here so an event for a
-    // subscription not yet in our DB is observable in logs rather than
-    // silent in storage.
-    //
-    // PR #567 review-fix: throw on lookup error rather than treating it as
-    // "row missing." The event is already claimed in `billing_events` —
-    // a silent ack on DB error means Stripe retries hit UNIQUE and the
-    // subscription state is never recovered.
-    const { data: existingSub, error: lookupError } = await db
-      .from('subscriptions')
-      .select('id')
-      .eq('stripe_subscription_id', stripeSubscriptionId)
-      .maybeSingle();
-    if (lookupError) {
-      logger.error(
-        { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId, error: lookupError },
-        'Subscription lookup failed on payment_failed — throwing so Stripe retries the event',
-      );
-      throw lookupError;
-    }
-    if (!existingSub) {
-      logger.warn(
-        { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
-        'No subscription row found for stripe_subscription_id on payment_failed — refusing to update (SCRUM-1266)',
-      );
-      return;
-    }
+    // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+    const existingSub = await lookupSubscriptionOrThrow<{ id: string }>(
+      stripeSubscriptionId,
+      'id',
+      { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+      'payment_failed',
+    );
+    if (!existingSub) return;
 
     const { error } = await db
       .from('subscriptions')
@@ -632,33 +630,14 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
 
   if (!stripeSubscriptionId) return;
 
-  // SCRUM-1266 (R2-3): orphan-row guard — mirrors SCRUM-1239 fix on
-  // handleSubscriptionUpdated. A payment_succeeded event for a subscription
-  // we don't have in DB (e.g., webhook arrived before checkout completion
-  // race, or attacker-injected) must not silently no-op-write.
-  //
-  // PR #567 review-fix: throw on lookup error so a transient DB failure
-  // doesn't false-positive as "row missing" and cause Stripe to drop the
-  // event after the billing_events claim has already landed.
-  const { data: existingSub, error: lookupError } = await db
-    .from('subscriptions')
-    .select('id')
-    .eq('stripe_subscription_id', stripeSubscriptionId)
-    .maybeSingle();
-  if (lookupError) {
-    logger.error(
-      { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId, error: lookupError },
-      'Subscription lookup failed on payment_succeeded — throwing so Stripe retries the event',
-    );
-    throw lookupError;
-  }
-  if (!existingSub) {
-    logger.warn(
-      { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
-      'No subscription row found for stripe_subscription_id on payment_succeeded — refusing to update (SCRUM-1266)',
-    );
-    return;
-  }
+  // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+  const existingSub = await lookupSubscriptionOrThrow<{ id: string }>(
+    stripeSubscriptionId,
+    'id',
+    { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+    'payment_succeeded',
+  );
+  if (!existingSub) return;
 
   const { error } = await db
     .from('subscriptions')
