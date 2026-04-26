@@ -1253,23 +1253,35 @@ describe('handleSubscriptionUpdated — R2-4 items.data[0] period fields', () =>
     );
   });
 
-  it('throws when items.data[0] is missing (avoids silent RangeError on stale top-level read)', async () => {
+  // PR #567 Codex P2 fix: under claim-first idempotency, throwing would lose
+  // the event permanently. Instead we apply the status/cancel update without
+  // period fields and surface the gap in logs/Sentry for operator action.
+  it('PR #567 Codex P2 fix: applies status/cancel update without period fields when items[0] is missing', async () => {
     const event = makeStripeEvent('customer.subscription.updated', {
       id: 'sub_no_items',
       customer: 'cus_no_items',
-      status: 'active',
-      cancel_at_period_end: false,
-      // no items field — pre-R2-4 the top-level current_period_* read returned undefined
-      // and crashed with RangeError. Post-R2-4 we throw a clear error instead.
+      status: 'past_due',
+      cancel_at_period_end: true,
+      // no items field — pre-PR #567 we threw RangeError or an explicit Error,
+      // both of which were silently swallowed by the claim-first idempotency layer.
     });
 
-    await expect(handleSubscriptionUpdated(event)).rejects.toThrow(
-      /missing items\[0\]\.current_period_start\/_end/,
+    await handleSubscriptionUpdated(event);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'past_due', cancel_at_period_end: true }),
     );
-    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+    // Period fields must NOT be present — we don't overwrite valid existing values with bogus ones
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_no_items', itemsCount: 0 }),
+      expect.stringContaining('missing items[0].current_period_start/_end'),
+    );
   });
 
-  it('throws when items.data[0].current_period_start is missing', async () => {
+  it('PR #567 Codex P2 fix: applies partial update when items[0] has price but no period fields', async () => {
     const event = makeStripeEvent('customer.subscription.updated', {
       id: 'sub_partial',
       customer: 'cus_partial',
@@ -1278,8 +1290,15 @@ describe('handleSubscriptionUpdated — R2-4 items.data[0] period fields', () =>
       items: { data: [{ price: { id: 'price_partial' } }] },
     });
 
-    await expect(handleSubscriptionUpdated(event)).rejects.toThrow(
-      /missing items\[0\]\.current_period_start\/_end/,
+    await handleSubscriptionUpdated(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(updateArg.status).toBe('active');
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_partial' }),
+      expect.stringContaining('missing items[0].current_period_start/_end'),
     );
   });
 });

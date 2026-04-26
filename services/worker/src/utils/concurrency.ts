@@ -22,8 +22,12 @@ export async function runWithConcurrency<T>(
   tasks: Array<() => Promise<T>>,
   concurrency: number,
 ): Promise<RunWithConcurrencyResult<T>> {
-  if (concurrency < 1) {
-    throw new Error(`runWithConcurrency: concurrency must be >= 1 (got ${concurrency})`);
+  // PR #567 CodeRabbit minor fix: defend against NaN / non-integer caller mistakes.
+  // `concurrency < 1` evaluates false for NaN (any comparison with NaN is false),
+  // which would otherwise yield `Math.min(NaN, n) = NaN` → zero workers → silent
+  // task drop with no fulfilled, no rejected, no error.
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new Error(`runWithConcurrency: concurrency must be a positive integer (got ${String(concurrency)})`);
   }
 
   const fulfilled: T[] = [];

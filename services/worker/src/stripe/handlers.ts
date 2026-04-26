@@ -441,29 +441,36 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     return;
   }
 
-  // SCRUM-1267 (R2-4): pull period fields from the first subscription item.
-  // Don't silently default to "now" if items.data[0] is missing — the previous
-  // top-level read produced RangeError on the new API version, which at least
-  // surfaced the bug. A silent default would mask it. Throw instead so the
-  // claim_event idempotency layer can observe and retry.
+  // SCRUM-1267 (R2-4) + PR #567 Codex P2 fix: pull period fields from the
+  // first subscription item per the 2026-03-25.dahlia API. If they're absent
+  // (malformed/legacy payload), DO NOT throw — billing_events has already
+  // claimed this event via UNIQUE-key idempotency, so a Stripe retry would
+  // hit the constraint and the event would be permanently lost. Instead,
+  // log a warn and apply the status/cancel update WITHOUT touching the
+  // period fields — leaves pre-existing valid period values intact and
+  // the gap is observable in logs/Sentry for operator action.
   const firstItem = subscription.items?.data?.[0];
-  if (!firstItem || firstItem.current_period_start == null || firstItem.current_period_end == null) {
-    logger.error(
-      { subscriptionId: subscription.id },
-      'Stripe subscription has no items[0].current_period_* fields — cannot update period (SCRUM-1267)',
-    );
-    throw new Error(`Stripe subscription ${subscription.id} missing items[0].current_period_start/_end`);
-  }
-  const currentPeriodStart = firstItem.current_period_start;
-  const currentPeriodEnd = firstItem.current_period_end;
+  const periodFieldsValid =
+    firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
 
-  // Build update payload
+  // Build update payload — period fields only when valid
   const updatePayload: Record<string, unknown> = {
     status: mappedStatus,
-    current_period_start: new Date(currentPeriodStart * 1000).toISOString(),
-    current_period_end: new Date(currentPeriodEnd * 1000).toISOString(),
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
+  if (periodFieldsValid) {
+    updatePayload.current_period_start = new Date(firstItem.current_period_start! * 1000).toISOString();
+    updatePayload.current_period_end = new Date(firstItem.current_period_end! * 1000).toISOString();
+  } else {
+    logger.warn(
+      {
+        subscriptionId: subscription.id,
+        hasItems: subscription.items != null,
+        itemsCount: subscription.items?.data?.length ?? 0,
+      },
+      'Stripe subscription missing items[0].current_period_start/_end — applying status/cancel update without period fields (SCRUM-1267, claim-first idempotency means we cannot throw-to-retry)',
+    );
+  }
 
   // Always update plan_id when we resolved a price (even if null — clears stale value)
   if (currentPriceId) {

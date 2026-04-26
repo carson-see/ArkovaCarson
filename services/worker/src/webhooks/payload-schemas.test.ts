@@ -83,6 +83,24 @@ describe('AnchorSecuredPayloadSchema (SCRUM-1268)', () => {
     const result = AnchorSecuredPayloadSchema.safeParse({ ...valid, status: 'SUBMITTED' });
     expect(result.success).toBe(false);
   });
+
+  // PR #567 CodeRabbit P1 fix: SECURED ⇒ on-chain invariant. The base fields
+  // allow null chain_tx_id / chain_block_height for `anchor.submitted` (no tx
+  // yet), but SECURED is the post-confirmation state and must have both.
+  it('PR #567 fix: rejects null chain_tx_id on SECURED status (on-chain invariant)', () => {
+    const result = AnchorSecuredPayloadSchema.safeParse({ ...valid, chain_tx_id: null });
+    expect(result.success).toBe(false);
+  });
+
+  it('PR #567 fix: rejects null chain_block_height on SECURED status', () => {
+    const result = AnchorSecuredPayloadSchema.safeParse({ ...valid, chain_block_height: null });
+    expect(result.success).toBe(false);
+  });
+
+  it('PR #567 fix: rejects empty chain_tx_id on SECURED status', () => {
+    const result = AnchorSecuredPayloadSchema.safeParse({ ...valid, chain_tx_id: '' });
+    expect(result.success).toBe(false);
+  });
 });
 
 describe('AnchorSubmittedPayloadSchema', () => {
@@ -192,5 +210,25 @@ describe('validateWebhookPayload helper', () => {
       stripe_subscription_id: 'sub_test',
     });
     expect(result.ok).toBe(true);
+  });
+
+  // PR #567 CodeRabbit minor fix
+  it('PR #567 fix: flags unknown event types via `bypassed: true` so callers can debug-log the gap', () => {
+    const result = validateWebhookPayload('anchor.SUBMITTED', { public_id: 'x' });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBe(true);
+  });
+
+  it('PR #567 fix: known event types return ok WITHOUT a bypassed flag (still validated)', () => {
+    const result = validateWebhookPayload('anchor.secured', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      chain_timestamp: '2026-04-26T00:00:00Z',
+      secured_at: '2026-04-26T00:00:01Z',
+      status: 'SECURED',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
   });
 });

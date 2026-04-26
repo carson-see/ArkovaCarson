@@ -189,14 +189,24 @@ describe('fanOutBulkSecuredWebhooks (SCRUM-1264 R2-1)', () => {
     );
   });
 
-  it('logs and returns when the SECURED query errors (no DLQ writes)', async () => {
+  // PR #567 Codex P1 fix: previously a single queryErr silently dropped the
+  // entire merkle-batch's customer webhooks. Now we retry 3 times with
+  // backoff and only give up after all attempts fail — at which point we
+  // log at `error` level so operators can replay via a one-off script.
+  it('PR #567 Codex P1 fix: retries 3x then logs at error level when SECURED query persistently fails', async () => {
     anchorsSelectChain.error = { code: 'PGRST301', message: 'rls denied' };
 
     await fanOutBulkSecuredWebhooks(TX, BLOCK_HEIGHT, BLOCK_TIMESTAMP);
 
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
-    expect(mockLogger.warn).toHaveBeenCalled();
-  });
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txId: TX,
+        error: expect.objectContaining({ code: 'PGRST301' }),
+      }),
+      expect.stringContaining('SECURED anchors query failed after 3 retries'),
+    );
+  }, 10_000);
 
   it('returns silently when no anchors found for the tx', async () => {
     anchorsSelectChain.data = [];

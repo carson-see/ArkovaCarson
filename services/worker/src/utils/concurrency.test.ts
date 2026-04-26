@@ -50,7 +50,16 @@ describe('runWithConcurrency', () => {
   });
 
   it('throws synchronously on invalid concurrency', async () => {
-    await expect(runWithConcurrency([async () => 1], 0)).rejects.toThrow(/concurrency must be >= 1/);
-    await expect(runWithConcurrency([async () => 1], -1)).rejects.toThrow(/concurrency must be >= 1/);
+    await expect(runWithConcurrency([async () => 1], 0)).rejects.toThrow(/concurrency must be a positive integer/);
+    await expect(runWithConcurrency([async () => 1], -1)).rejects.toThrow(/concurrency must be a positive integer/);
+  });
+
+  // PR #567 CodeRabbit minor fix: NaN / Infinity / non-integer values would
+  // otherwise fall through to Math.min(NaN, n) = NaN → zero workers → silent
+  // task drop. Lock the throw path so a future caller mistake fails loud.
+  it('PR #567 fix: throws on NaN / Infinity / non-integer concurrency', async () => {
+    await expect(runWithConcurrency([async () => 1], NaN)).rejects.toThrow(/concurrency must be a positive integer/);
+    await expect(runWithConcurrency([async () => 1], 2.5)).rejects.toThrow(/concurrency must be a positive integer/);
+    await expect(runWithConcurrency([async () => 1], Infinity)).rejects.toThrow(/concurrency must be a positive integer/);
   });
 });

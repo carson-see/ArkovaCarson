@@ -439,6 +439,15 @@ export async function dispatchWebhookEvent(
     );
     throw validation.error;
   }
+  // PR #567 CodeRabbit minor fix: surface schema bypass for unknown event
+  // types so a typo (`anchor.SUBMITTED`) or a forgotten new event type isn't
+  // a silent CLAUDE.md §6 / §1.6 leak.
+  if (validation.bypassed) {
+    logger.debug(
+      { eventType, eventId, orgId },
+      'Outbound webhook payload bypassed schema validation (event type not in allowlist)',
+    );
+  }
 
   // Check if webhooks are enabled
   const { data: flag, error: flagError } = await db.rpc('get_flag', {

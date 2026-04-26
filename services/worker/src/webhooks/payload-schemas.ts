@@ -62,9 +62,18 @@ export const AnchorSubmittedPayloadSchema = z
   })
   .strict();
 
+// PR #567 CodeRabbit P1 fix: SECURED ⇒ on-chain invariant. The base fields
+// allow null `chain_tx_id` / `chain_block_height` because `anchor.submitted`
+// emits before the tx is mined. SECURED is the post-confirmation state and
+// MUST have both fields populated — override the nullable bases with strict
+// non-null versions so a future regression that ships
+// `{ status: 'SECURED', chain_tx_id: null, chain_block_height: null }` fails
+// schema validation.
 export const AnchorSecuredPayloadSchema = z
   .object({
     ...ANCHOR_BASE_FIELDS,
+    chain_tx_id: z.string().min(1),
+    chain_block_height: z.number().int().nonnegative(),
     status: z.literal('SECURED'),
     chain_timestamp: isoTimestamp,
     secured_at: isoTimestamp,
@@ -131,13 +140,18 @@ export class WebhookPayloadValidationError extends Error {
  * Unknown event types pass through without validation — the schemas in this
  * file are an allowlist, and other event types (`payment.*`, `org.*`) ride
  * the general dispatch path until their own schemas are added.
+ *
+ * PR #567 CodeRabbit minor fix: surfaces the unknown event type via the
+ * `bypassed` flag so `dispatchWebhookEvent` can emit a debug log. Without
+ * this, a typo like `anchor.SUBMITTED` (caps) would silently skip
+ * validation and ship banned fields with no signal.
  */
 export function validateWebhookPayload(
   eventType: string,
   data: unknown,
-): { ok: true } | { ok: false; error: WebhookPayloadValidationError } {
+): { ok: true; bypassed?: boolean } | { ok: false; error: WebhookPayloadValidationError } {
   const schema = PAYLOAD_SCHEMAS_BY_EVENT_TYPE[eventType as WebhookEventType];
-  if (!schema) return { ok: true };
+  if (!schema) return { ok: true, bypassed: true };
   const result = schema.safeParse(data);
   if (result.success) return { ok: true };
   return { ok: false, error: new WebhookPayloadValidationError(eventType, result.error.issues) };
