@@ -513,19 +513,38 @@ router.post('/deliveries/:id/replay', async (req, res) => {
       return;
     }
 
-    void db.from('audit_events').insert({
-      event_type: 'WEBHOOK_DELIVERY_REPLAYED',
-      event_category: 'ADMIN',
-      actor_id: req.apiKey.userId,
-      target_type: 'webhook_delivery',
-      target_id: result.new_delivery_id ?? null,
-      org_id: req.apiKey.orgId,
-      details: JSON.stringify({
-        replayed_from: req.params.id,
-        ok: result.ok,
-        status_code: result.status_code ?? null,
+    // Fire-and-forget audit insert. Wrap in Promise.resolve so .catch surfaces
+    // a rejection (Supabase builders return PromiseLike, not Promise) — losing
+    // the audit event silently would defeat the gate.
+    void Promise.resolve(
+      db.from('audit_events').insert({
+        event_type: 'WEBHOOK_DELIVERY_REPLAYED',
+        event_category: 'ADMIN',
+        actor_id: req.apiKey.userId,
+        target_type: 'webhook_delivery',
+        target_id: result.new_delivery_id ?? null,
+        org_id: req.apiKey.orgId,
+        details: JSON.stringify({
+          replayed_from: req.params.id,
+          ok: result.ok,
+          status_code: result.status_code ?? null,
+        }),
       }),
-    });
+    )
+      .then((r) => {
+        if (r?.error) {
+          logger.error(
+            { error: r.error, deliveryId: req.params.id },
+            'Failed to record WEBHOOK_DELIVERY_REPLAYED audit event',
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        logger.error(
+          { error: err, deliveryId: req.params.id },
+          'Audit event insert rejected for WEBHOOK_DELIVERY_REPLAYED',
+        );
+      });
 
     res.json({
       replayed: true,

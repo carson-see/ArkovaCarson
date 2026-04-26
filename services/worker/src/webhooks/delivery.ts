@@ -660,7 +660,9 @@ export async function replayDelivery(
   const payloadString = JSON.stringify(payload);
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
-  const idempotencyKey = `replay-${deliveryId}-${timestamp}`;
+  // Idempotency key includes ms + random suffix so back-to-back replays in the
+  // same second don't collide on the unique-key constraint.
+  const idempotencyKey = `replay-${deliveryId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
 
   const { data: newLog, error: insertErr } = await dbAny
     .from('webhook_delivery_logs')

@@ -92,17 +92,17 @@ function stageDb(opts: {
     }),
   };
 
-  let firstSelectDone = false;
-  mockDbFrom.mockImplementation((table: string) => {
-    if (table !== 'webhook_delivery_logs') {
-      return { select: vi.fn(), insert: vi.fn(), update: vi.fn(), eq: vi.fn() };
-    }
-    if (!firstSelectDone) {
-      firstSelectDone = true;
-      return selectChain;
-    }
-    return insertChain;
-  });
+  // First call to db.from('webhook_delivery_logs') is the SELECT, second is the
+  // INSERT (the UPDATE on the new row goes through `insertChain` too since it
+  // exposes both `insert` and `update`). mockImplementationOnce keeps the
+  // sequencing explicit instead of relying on a stateful flag.
+  mockDbFrom
+    .mockImplementationOnce((table: string) =>
+      table === 'webhook_delivery_logs' ? selectChain : { select: vi.fn(), insert: vi.fn(), update: vi.fn() },
+    )
+    .mockImplementation((table: string) =>
+      table === 'webhook_delivery_logs' ? insertChain : { select: vi.fn(), insert: vi.fn(), update: vi.fn() },
+    );
 
   return { selectChain, insertChain };
 }
