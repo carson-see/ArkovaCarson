@@ -342,4 +342,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron.unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 apply_migration 0265 success:true + pg_get_functiondef on pg_proc catalog confirms deployed body; R1-3 SCAN_ALL=1 no-aws lint returned "✅"; R1-7 apply_migration 0266 success:true; list_migrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f)._
+_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f)._
