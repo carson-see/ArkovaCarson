@@ -14,6 +14,37 @@
 
 ## Now
 
+### 2026-04-26 — R1 wave in progress (SCRUM-1246 production recovery)
+
+Branch `claude/scrum-1246-r1-recovery` (off `origin/main` at `1c922fd9`). 4 of 9 R1 stories complete; PR #1 imminent.
+
+**R1-1 ([SCRUM-1255](https://arkova.atlassian.net/browse/SCRUM-1255)) — death-spiral broken at 2026-04-26 ~00:00 UTC.**
+- `SELECT cron.unschedule(3);` returned `t` via Supabase MCP `execute_sql`. `cron.job` row gone.
+- Pre-state: `anchors.n_dead_tup = 7,794,935 / n_live = 2,944,464` → dead_ratio 2.65; pg_cron jobid 3 had been failing 100% at 120s wraparound since 2026-04-18 18:49 UTC.
+- Verification: `SELECT jobid, jobname FROM cron.job` now returns only `jobid 2 vacuum-anchors` — confirmed via MCP query result `[{"jobid":2,"jobname":"vacuum-anchors","active":true}]`.
+- An autovacuum on `anchors` (pid 3163244, started ~22:45 UTC 04-25, completed; pid 3166957, started ~23:34 UTC) is now the snapshot-holder — no longer pg_cron. Vacuum is online but heavy I/O; expected wall-clock 2-4 more hours given 7.8M dead tuples + 9.85GB heap.
+
+**R1-2 ([SCRUM-1256](https://arkova.atlassian.net/browse/SCRUM-1256)) — migration 0265 applied to prod; cron re-enable DEFERRED to post-autovacuum.**
+- Migration `0265_refresh_cache_pipeline_stats_fast.sql` applied via `apply_migration` (success:true). Function body verified via `pg_get_functiondef`.
+- Discovered PostgreSQL gotcha during deployment: `SET LOCAL statement_timeout` *inside* a plpgsql BEGIN/EXCEPTION block updates the GUC (verified via `current_setting()` returning `1500ms`) but does NOT affect inner SELECT timeouts. PostgreSQL only sets the timer at top-level command entry. Same latent bug exists in `get_anchor_status_counts_fast` (the model copied) — never exposed because it doesn't filter on JSONB.
+- Migration 0265 docs the bug + the operator workaround (the cron command must include `SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();` so the OUTER session has the tight timeout).
+- jobid 4 (intermediate re-enable on broken function v1) was unscheduled. NO cron job for `refresh-pipeline-dashboard-cache` is currently active. Cache row last updated 2026-04-19 18:51 UTC (stale, but stale > thrashing).
+- **Operator step (NOT auto):** wait for autovacuum to drop `n_dead_tup / n_live_tup < 0.05`, then `SELECT cron.schedule('refresh-pipeline-dashboard-cache', '* * * * *', $$SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();$$);` and verify 5 consecutive cron success rows.
+
+**R1-3 ([SCRUM-1257](https://arkova.atlassian.net/browse/SCRUM-1257)) — config.ts kmsProvider default flipped 'aws' → 'gcp' + fail-loud guard. Code-only.**
+- `services/worker/src/config.ts:55` default flipped (R0-7 `no-aws` lint clean — verified `SCAN_ALL=1 npx tsx scripts/ci/feedback-rules/no-aws.ts` returns "✅ feedback_no_aws: no AWS imports detected.").
+- New `superRefine` guards: production+mainnet+enableProdNetworkAnchoring requires (a) `KMS_PROVIDER` explicitly set and (b) `BITCOIN_TREASURY_WIF` OR `GCP_KMS_KEY_RESOURCE_NAME`. Without either, anchors silently mock. Forensic 2/8 root cause.
+- 7 new TDD tests in `config.test.ts` — 23/23 pass (all 16 pre-existing + 7 new). Worker typecheck clean.
+
+**R1-7 ([SCRUM-1261](https://arkova.atlassian.net/browse/SCRUM-1261)) — migration 0266 locks beta no-quota policy.**
+- Pre-state verified via prod query: `check_anchor_quota()` already returned NULL on prod (manual revert outside the repo ledger; ledger ended at 0093 with quota enforcement). `bulk_create_anchors` calls `check_anchor_quota()` and respects NULL — quota guards correctly bypassed.
+- Migration `0266_restore_beta_no_quota.sql` applied via `apply_migration` (success:true). Idempotent on prod (no behavior change); meaningful for `db reset` to match prod.
+- `memory/feedback_no_credit_limits_beta.md` updated with full migration trail (0049 → 0084 → 0093 → 0266) + R0-7 CI lint reference.
+
+Remaining R1: R1-4 (env-var inventory), R1-5 (`count: 'exact'` migration), R1-6 (frontend error states), R1-8 (GetBlock RPC verify), R1-9 (SCRUM-1235 honest close, post-deploy).
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
@@ -311,4 +342,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-25 by carson — claims verified against gcloud/MCP/CI output (R0 wave merged via PRs #562 + #563 at commits adc654d2 + e918259f; 9 follow-up sub-stories filed SCRUM-1301..1309)._
+_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f)._

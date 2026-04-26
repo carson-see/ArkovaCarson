@@ -17,6 +17,7 @@ import { config } from './config.js';
 import { initSentry, Sentry } from './utils/sentry.js';
 import { logger } from './utils/logger.js';
 import { db, isDbHealthy, recordDbSuccess, recordDbFailure, getDbCircuitState, getConnectionInfo } from './utils/db.js';
+import { callRpc } from './utils/rpc.js';
 import { initChainClient } from './chain/client.js';
 import { handleStripeWebhook } from './stripe/handlers.js';
 import { verifyWebhookSignature } from './stripe/client.js';
@@ -125,8 +126,19 @@ app.get('/health', async (req, res) => {
         .order('updated_at', { ascending: false })
         .limit(1) as unknown as Promise<{ data: Array<{ completed_at: string }> | null; error: { message: string } | null }>,
     getPendingAnchorCount: async () => {
-      const result = await db.from('anchors').select('id', { count: 'exact', head: true }).eq('status', 'PENDING');
-      return { count: result.count ?? null, error: result.error ? { message: result.error.message } : null };
+      // SCRUM-1259 (R1-5): swapped exact-count on bloated anchors table
+      // for get_anchor_status_counts_fast RPC. /health?detailed=true must
+      // never include a >5s DB query (Cloud Run probe budget). The RPC has
+      // a 1s per-status budget with sentinels so this stays sub-second.
+      try {
+        const { data, error } = await callRpc<{ PENDING: number }>(db, 'get_anchor_status_counts_fast');
+        if (error || !data) {
+          return { count: null, error: error ? { message: error.message } : null };
+        }
+        return { count: data.PENDING ?? null, error: null };
+      } catch (err) {
+        return { count: null, error: { message: err instanceof Error ? err.message : String(err) } };
+      }
     },
     getCurrentFeeRate: async () => {
       // Best-effort fee rate — returns null if not available

@@ -56,16 +56,14 @@ async function fetchAnchorStatsData(): Promise<AnchorStats> {
       statusCounts[status] = Number(statusData[status] ?? statusData[cacheKey]) || 0;
     }
   } else {
-    // Fallback: direct count queries
-    const statuses = ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED'];
-    const countResults = await Promise.all(
-      statuses.map(s =>
-        dbAny.from('anchors').select('id', { count: 'exact', head: true }).eq('status', s)
-      )
+    // SCRUM-1260 (R1-6): the previous fallback fanned out 5 exact-count queries
+    // against the bloated 1.4M-row `anchors` table — each was a 60s PostgREST
+    // timeout candidate. Drop the fallback and surface the error so React
+    // Query's `error` slot lights up; the consuming hook converts that to
+    // a banner instead of rendering 0/0/0 indistinguishable from "empty system."
+    throw new Error(
+      `get_anchor_status_counts RPC unavailable${statusResult.error ? `: ${(statusResult.error as { message?: string }).message ?? 'unknown error'}` : ''}`,
     );
-    for (let i = 0; i < statuses.length; i++) {
-      statusCounts[statuses[i]] = countResults[i].count ?? 0;
-    }
   }
 
   const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
