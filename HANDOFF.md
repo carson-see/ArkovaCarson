@@ -95,6 +95,27 @@ PR [#571](https://github.com/carson-see/ArkovaCarson/pull/571) on branch `claude
 
 ---
 
+### 2026-04-26 — API-RICH-02/03 + audit_events index restore + CIBA-HARDEN verifications (Sarah session 2)
+
+PR [#570](https://github.com/carson-see/ArkovaCarson/pull/570) on branch `claude/2026-04-26-api-rich-batch`. Pushed + open + linked to Jira. Awaiting review.
+
+**4 stories addressed:**
+
+| Jira | Title | Action |
+|---|---|---|
+| [SCRUM-895](https://arkova.atlassian.net/browse/SCRUM-895) | API-RICH-02 — confidence_scores + sub_type + description | shipped (commit `c1b5580`); single nested Supabase select for latest extraction_manifest, no N+1 |
+| [SCRUM-896](https://arkova.atlassian.net/browse/SCRUM-896) | API-RICH-03 — `/anchor/{publicId}/lifecycle` chain of custody | shipped (commit `31cb174`); rewrote broken endpoint that previously queried `audit_events.target_id` with publicId (UUID column mismatch — never matched) and leaked `actor_id` to anonymous callers |
+| [SCRUM-1114](https://arkova.atlassian.net/browse/SCRUM-1114) | CIBA-HARDEN-01 | verify-only — re-confirmed already shipped via Carson's commit `49ee873` + migrations 0233/0234. Recommend → Done |
+| [SCRUM-1115](https://arkova.atlassian.net/browse/SCRUM-1115) | CIBA-HARDEN-02 | verify-only — deferred portion is satisfied by current `rules-engine.ts` release/complete handlers + 0247 RPCs. Recommend → Done |
+
+**Bonus index fix surfaced by /simplify:** migration `0267_restore_audit_events_target_index.sql` recreates the partial compound index on `audit_events(target_type, target_id) WHERE target_id IS NOT NULL` that migration 0214 had dropped. Without it, the new `/anchor/{publicId}/lifecycle` endpoint table-scans `audit_events` under load and breaks the SCRUM-895 p95 latency budget.
+
+**Tests:** 78/78 across touched areas (verify + batch + oracle + ai-extract + anchor-lifecycle); typecheck clean. The 9 pre-existing test failures noted in the PR (Windows `zip` missing; `@opentelemetry/exporter-trace-otlp-grpc` not installed locally; E2E env) all pass in CI.
+
+**Frontend stories deliberately not attempted** in this session (SCRUM-1097/1094/1096 ADMIN-VIEW): require browser verification with seeded data which can't be reliably simulated in this shell. Flagged for next session.
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
