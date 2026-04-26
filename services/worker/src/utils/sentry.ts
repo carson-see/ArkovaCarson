@@ -8,8 +8,10 @@
  */
 
 import * as Sentry from '@sentry/node';
-import { nodeProfilingIntegration } from '@sentry/profiling-node';
+import { createRequire } from 'node:module';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
+
+const require = createRequire(import.meta.url);
 
 // ---------------------------------------------------------------------------
 // PII patterns to scrub (Constitution 1.4 + 1.6)
@@ -168,6 +170,23 @@ export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrum
 // Sentry initialization
 // ---------------------------------------------------------------------------
 
+function getProfilingIntegrations(environment: string): unknown[] {
+  if (environment === 'test') return [];
+
+  try {
+    const { nodeProfilingIntegration } = require('@sentry/profiling-node') as {
+      nodeProfilingIntegration: () => unknown;
+    };
+    return [nodeProfilingIntegration()];
+  } catch (err) {
+    console.warn(
+      '[Sentry] Profiling integration unavailable — continuing without CPU profiling',
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
 export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) {
     // AUDIT-22: console.log intentional here — logger imports config, which
@@ -176,15 +195,19 @@ export function initSentry(dsn: string | undefined, environment: string): void {
     return;
   }
 
+  const profilingIntegrations = getProfilingIntegrations(environment);
+
   Sentry.init({
     dsn,
     environment,
     release: process.env.npm_package_version ?? '0.1.0',
-    integrations: [nodeProfilingIntegration()],
+    integrations: profilingIntegrations as Parameters<typeof Sentry.init>[0]['integrations'],
 
     // Performance sampling
     tracesSampleRate: environment === 'production' ? 0.1 : 1.0,
-    profilesSampleRate: environment === 'production' ? 0.1 : 1.0,
+    profilesSampleRate: profilingIntegrations.length > 0
+      ? (environment === 'production' ? 0.1 : 1.0)
+      : 0,
 
     // PII scrubbing — mandatory (Constitution 1.4 + 1.6)
     beforeSend(event) {
@@ -244,64 +267,6 @@ export function withCronMonitoring<T>(
       throw error;
     }
   };
-}
-
-// ---------------------------------------------------------------------------
-// RPC fallback observability (SCRUM-1262 R1-8 + /simplify carry-over)
-// ---------------------------------------------------------------------------
-//
-// Pairs a Sentry breadcrumb + structured warn log for RPC-fallback events
-// (e.g. GetBlock listunspent → mempool.space). Centralised here so that
-// future fallback sites (`getrawtransaction`, `getblockheader`, fee
-// estimation) all emit the same shape and Cloud Logging / Arize / db-health
-// dashboards can rely on a fixed field set.
-//
-// Field shape locked:
-//   - `chain_rpc_fallback: true`     — boolean filter for log views
-//   - `method: string`               — RPC method name that fell back
-//   - `provider: string`             — original provider (e.g. 'getblock')
-//   - `reason: string`               — short error message from the RPC call
-//
-// Caller MUST pass a logger.warn-compatible logger so this util stays
-// dependency-free (avoids circular imports from `utils/logger.ts` consumers
-// that also import sentry — e.g. the AUDIT-22 bootstrap path).
-
-export interface RpcFallbackLogger {
-  warn: (obj: Record<string, unknown>, msg: string) => void;
-}
-
-export interface EmitRpcFallbackArgs {
-  /** Provider that fell back, e.g. `'getblock'`. Used as the breadcrumb tag. */
-  provider: string;
-  /** RPC method that fell back, e.g. `'listunspent'`, `'getrawtransaction'`. */
-  method: string;
-  /** Error from the failing RPC call. Surfaced as `reason` in both events. */
-  error: unknown;
-  /** Where the call falls back to, e.g. `'mempool.space'`. */
-  fallbackTo: string;
-  /** logger.warn-compatible target — pass `logger` from `utils/logger.js`. */
-  logger: RpcFallbackLogger;
-  /** Origin file/method, e.g. `'GetBlockHybridProvider.listUnspent'`. */
-  origin: string;
-}
-
-export function emitRpcFallback(args: EmitRpcFallbackArgs): void {
-  const reason = args.error instanceof Error ? args.error.message : 'unknown';
-  Sentry.addBreadcrumb({
-    category: 'chain.rpc-fallback',
-    message: `${args.provider}.${args.method} → ${args.fallbackTo}`,
-    level: 'warning',
-    data: { method: args.method, reason },
-  });
-  args.logger.warn(
-    {
-      chain_rpc_fallback: true,
-      method: args.method,
-      provider: args.provider,
-      reason,
-    },
-    `${args.origin}: RPC fallback to ${args.fallbackTo}`,
-  );
 }
 
 export { Sentry };
