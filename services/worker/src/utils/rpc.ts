@@ -73,7 +73,32 @@ export async function callRpc<T = unknown>(
   fnName: string,
   args?: Record<string, unknown>,
 ): Promise<{ data: T | null; error: { message: string; code?: string } | null }> {
+  // Defensive guard: real Supabase clients always have rpc(), but partial
+  // test mocks frequently omit it. Without this, `(undefined)(fnName, args)`
+  // throws synchronously inside the async function, which surfaces as an
+  // unhandled rejection in vitest 4 (visible via ##[error] annotations) and
+  // exits the run with code 1 even when the caller's Promise.allSettled
+  // would have caught the rejection. Returning a normal error object lets
+  // callers branch the same way they would on a real RPC error.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const result = await (client.rpc as any)(fnName, args);
-  return result as { data: T | null; error: { message: string; code?: string } | null };
+  const rpc = (client as any)?.rpc;
+  if (typeof rpc !== 'function') {
+    return {
+      data: null,
+      error: { message: `client.rpc is not a function (called for ${fnName})`, code: 'RPC_UNAVAILABLE' },
+    };
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (rpc as any).call(client, fnName, args);
+    return result as { data: T | null; error: { message: string; code?: string } | null };
+  } catch (err) {
+    return {
+      data: null,
+      error: {
+        message: err instanceof Error ? err.message : String(err),
+        code: 'RPC_THREW',
+      },
+    };
+  }
 }
