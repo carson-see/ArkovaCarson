@@ -1,9 +1,17 @@
 # agents.md — services/worker
-_Last updated: 2026-04-25 (R0 anti-false-done wave)_
+_Last updated: 2026-04-26 (R2 batch 1 — SCRUM-1264/1265/1266/1267/1268)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## R2 batch 1 — P1 customer-facing recovery (2026-04-26, SCRUM-1246 wave)
+
+- **`webhooks/payload-schemas.ts`** ([SCRUM-1268](https://arkova.atlassian.net/browse/SCRUM-1268)): canonical Zod schemas for `anchor.submitted` / `anchor.secured` / `anchor.revoked` / `anchor.batch_secured`. `.strict()` rejects `anchor_id` (UUID), raw `fingerprint`, `user_id`, internal `org_id` per CLAUDE.md §6 + §1.6. `dispatchWebhookEvent` validates against the schema for known event types and refuses to sign on validation failure.
+- **`utils/concurrency.ts`** ([SCRUM-1264](https://arkova.atlassian.net/browse/SCRUM-1264)): `runWithConcurrency<T>(tasks, n)` queue-with-cap. Avoids new `p-limit` dep. Used by the bulk-confirm webhook fan-out so 10K-anchor merkle batches don't blast 10K simultaneous fetches at customer endpoints.
+- **`jobs/check-confirmations.ts`** ([SCRUM-1264](https://arkova.atlassian.net/browse/SCRUM-1264)): new `fanOutBulkSecuredWebhooks` runs after the bulk SECURED `UPDATE WHERE chain_tx_id = $1`. Restores the per-anchor `anchor.secured` webhook fan-out that commit a5da008d (2026-03-27) silently dropped — ~10K customer webhooks per merkle root went undelivered for 6 weeks. Concurrency cap: `BULK_WEBHOOK_FAN_OUT_CONCURRENCY` env (default 20).
+- **`stripe/client.ts`** ([SCRUM-1265](https://arkova.atlassian.net/browse/SCRUM-1265)): `createCheckoutSession` now pipes `params.mode` through. The previous hardcoded `mode: 'subscription'` silently overrode `mode: 'payment'` for credit-pack one-time purchases via /api/v1/credits since 2026-04-05. `subscription_data` is now set ONLY for recurring sessions.
+- **`stripe/handlers.ts`** ([SCRUM-1266](https://arkova.atlassian.net/browse/SCRUM-1266) + [SCRUM-1267](https://arkova.atlassian.net/browse/SCRUM-1267)): R2-3 — orphan-row guards in `handleSubscriptionDeleted` / `handlePaymentFailed` / `handlePaymentSucceeded` (mirrors SCRUM-1239 fix on `handleSubscriptionUpdated`). R2-4 — `current_period_start/_end` now read from `subscription.items.data[0]` per Stripe API 2026-03-25.dahlia, throwing explicitly when items[0] is absent rather than the silent `RangeError: Invalid time value`.
 
 ## R0 anti-false-done additions (2026-04-25, SCRUM-1246 wave)
 

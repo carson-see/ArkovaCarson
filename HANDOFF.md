@@ -136,6 +136,27 @@ PR [#570](https://github.com/carson-see/ArkovaCarson/pull/570) on branch `claude
 
 ---
 
+### 2026-04-26 EOD2 — R2 batch 1 in progress (SCRUM-1246 P1 customer-facing recovery)
+
+Branch `claude/scrum-1246-r2-batch1` (off `origin/main` at `1c922fd9`). 5 R2 stories shipped (code + tests, no prod-state changes yet — all behind R0-1 deploy gate). PR pending after CI.
+
+**R2-1 ([SCRUM-1264](https://arkova.atlassian.net/browse/SCRUM-1264)) — bulk-confirm webhook fan-out restored.** Commit a5da008d (2026-03-27 11:11 UTC) "perf: bulk SECURED updates in confirm job, 10x throughput" replaced the per-anchor confirmation path with a single bulk `UPDATE ... WHERE chain_tx_id = $1` and silently dropped `dispatchWebhookEvent` — ~10K customer webhooks per merkle root went undelivered for 6 weeks. New `fanOutBulkSecuredWebhooks` queries the affected anchors after the bulk update and dispatches one `anchor.secured` per anchor with `BULK_WEBHOOK_FAN_OUT_CONCURRENCY` (default 20) cap. Tests cover org_id-null skip, public_id-null skip, payload shape, DLQ on dispatch failure, and query-error path. No prod migration; no schema change. Verification of the orphan `_checkAnchorConfirmation` function: confirmed unused via `grep -n _checkAnchorConfirmation` (declaration site only).
+
+**R2-2 ([SCRUM-1265](https://arkova.atlassian.net/browse/SCRUM-1265)) — Stripe credit-pack purchase fixed.** `services/worker/src/stripe/client.ts:91-101` previously hardcoded `mode: 'subscription'`, silently overriding `mode: 'payment'` for one-time credit-pack purchases via `/api/v1/credits`. Customers have been unable to buy credits since 2026-04-05 (3 weeks). Now: `mode: params.mode ?? 'subscription'`; `subscription_data` set only for recurring mode. 4 new tests assert the pipe-through. Refunds/customer comms tracked separately in the Jira ticket — engineering-side fix is shipped here.
+
+**R2-3 ([SCRUM-1266](https://arkova.atlassian.net/browse/SCRUM-1266)) — orphan-row guards on the 3 sibling Stripe handlers.** SCRUM-1239 (PR #548) patched `handleSubscriptionUpdated` only and the PR body explicitly deferred the siblings. Without the guard, an attacker-injected event class (or a real Stripe event for a subscription not yet in our DB — webhook-arrives-before-checkout race) hit a silent no-op `UPDATE ... WHERE stripe_subscription_id`. All 3 siblings (`handleSubscriptionDeleted`, `handlePaymentFailed`, `handlePaymentSucceeded`) now SELECT first via maybeSingle, return early with structured warn log if missing. 3 new tests, one per handler.
+
+**R2-4 ([SCRUM-1267](https://arkova.atlassian.net/browse/SCRUM-1267)) — Stripe `current_period_start/_end` migrated to `subscription.items.data[0]`.** API version `2026-03-25.dahlia` (which `client.ts:23` pins) moved the period fields off the top-level Subscription onto each subscription item. The previous top-level read returned `undefined` → `new Date(undefined * 1000).toISOString()` → `RangeError: Invalid time value` on the FIRST real prod `customer.subscription.updated` event. Latent bug — would have fired on next prod event. Now reads from `subscription.items.data[0]`, throws explicitly (not RangeError) when items[0] is absent so the claim_event idempotency layer can observe + retry. 3 new tests; existing 5 fixtures migrated.
+
+**R2-5 ([SCRUM-1268](https://arkova.atlassian.net/browse/SCRUM-1268)) — outbound webhook payload PII scrub.** `services/worker/src/jobs/anchor.ts:73-81` shipped outbound payloads containing `anchor_id` (internal UUID — CLAUDE.md §6) and raw `fingerprint` (CLAUDE.md §1.6). New `services/worker/src/webhooks/payload-schemas.ts` Zod schemas with `.strict()` reject all banned fields. `dispatchWebhookEvent` validates against the schema for known event types and refuses to sign on validation failure. Both dispatch sites (`anchor.ts` SUBMITTED, `check-confirmations.ts` SECURED including R2-1's bulk fan-out) now emit only public-allowed fields. 23 unit tests cover the schemas + helper.
+
+Operator follow-ups (per CLAUDE.md §3 gate 7 + Sarah-handoff):
+- Cloud Run image SHA still on pre-R0 rev (per HANDOFF entry of 2026-04-25 EOD3). Next worker push to main triggers `deploy-worker.yml` with `--build-arg BUILD_SHA=$github.sha`. R2 batch 1 PR will be that push when merged.
+- Stripe sandbox E2E test (R2-2 AC) deferred to a sub-story — local sandbox creds not configured in this session.
+- Refund + customer-comms plan for the 3 weeks of broken credit-pack purchases (R2-2 AC) is a finance/CS step, not engineering.
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
@@ -434,3 +455,11 @@ Full history: `git log --oneline`.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
 _Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f; **edge bug-bounty F-1..F-4** — `wrangler kv namespace create MCP_RATE_LIMIT_KV` returned id `a8a7843630e84c5aa22cf20ea8a8c5e8`, `wrangler deploy` returned "Current Version ID: 16257677-a610-49e2-9ef9-f6b3d5b69d24", `wrangler versions view 16257677-…` lists `env.MCP_RATE_LIMIT_KV` + `env.MCP_ORIGIN_ALLOWLIST_KV` + `env.ENABLE_X402_FACILITATOR ("false")` in active bindings + `MCP_SIGNING_KEY`/`ALLOWED_ORIGINS` in Secrets, `curl -i https://edge.arkova.ai/mcp` returns `access-control-allow-origin: https://arkova-26.vercel.app` (was `arkova-carson`), `curl -i https://edge.arkova.ai/x402/verify` returns 404 with `arkova-edge: no matching route` body proving kill-switch on)._
+
+---
+
+_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f)._
+
+---
+
+_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R0 wave merged via PRs #562 + #563 at commits adc654d2 + e918259f; 9 follow-up sub-stories filed SCRUM-1301..1309; R2 batch 1 verifications: grep confirms orphan helper unused; period-field migration verified by grep on handlers.ts)._
