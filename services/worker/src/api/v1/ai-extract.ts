@@ -354,6 +354,9 @@ router.post('/', async (req: Request, res: Response) => {
       manifestHash: manifest.manifestHash,
       confidenceScores: manifest.confidenceScores ?? null,
       subType: fields.subType ?? null,
+      // API-RICH-02 (SCRUM-895): surface description top-level so HakiChain-style
+      // integrators don't have to dig into `fields`.
+      description: (fields.description as string | undefined) ?? null,
       fraudSignals: fields.fraudSignals ?? null,
       degraded,
       fallbackReason: fallbackReason ?? null,

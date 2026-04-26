@@ -62,6 +62,8 @@ describe('Oracle endpoint', () => {
         revocation_block_height: null,
         file_mime: null,
         file_size: null,
+        confidence_scores: null,
+        sub_type: null,
       });
 
       expect(result.verified).toBe(true);
@@ -98,6 +100,8 @@ describe('Oracle endpoint', () => {
         revocation_block_height: null,
         file_mime: null,
         file_size: null,
+        confidence_scores: null,
+        sub_type: null,
       });
 
       expect(result.verified).toBe(false);
@@ -130,6 +134,8 @@ describe('Oracle endpoint', () => {
         revocation_block_height: null,
         file_mime: null,
         file_size: null,
+        confidence_scores: null,
+        sub_type: null,
       });
 
       expect(result.verified).toBe(false);

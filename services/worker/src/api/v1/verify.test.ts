@@ -48,6 +48,9 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     revocation_block_height: null,
     file_mime: null,
     file_size: null,
+    // API-RICH-02 (SCRUM-895)
+    confidence_scores: null,
+    sub_type: null,
     ...overrides,
   };
 }
@@ -400,6 +403,48 @@ describe('buildVerificationResult', () => {
       const serialized = JSON.stringify(result);
       // UUID v4 pattern: 8-4-4-4-12 hex chars
       expect(serialized).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    });
+  });
+
+  // API-RICH-02 (SCRUM-895): per-field confidence_scores + sub_type surfaced
+  // on the verify response. confidence_scores comes from the latest extraction
+  // manifest; sub_type comes from anchors.sub_type (GRE-01 column).
+  describe('API-RICH-02 (SCRUM-895): confidence_scores + sub_type', () => {
+    it('surfaces confidence_scores when present on the latest manifest', () => {
+      const result = buildVerificationResult(createAnchor({
+        confidence_scores: { overall: 0.92, grounding: 0.88, fields: { issuerName: 0.95, issuedDate: 0.9 } },
+      }));
+      expect(result.confidence_scores).toEqual({
+        overall: 0.92,
+        grounding: 0.88,
+        fields: { issuerName: 0.95, issuedDate: 0.9 },
+      });
+    });
+
+    it('omits confidence_scores when no manifest exists', () => {
+      const result = buildVerificationResult(createAnchor({ confidence_scores: null }));
+      expect(result).not.toHaveProperty('confidence_scores');
+    });
+
+    it('surfaces sub_type when anchors.sub_type is set (GRE-01)', () => {
+      const result = buildVerificationResult(createAnchor({
+        credential_type: 'TRANSCRIPT',
+        sub_type: 'official_undergraduate',
+      }));
+      expect(result.sub_type).toBe('official_undergraduate');
+    });
+
+    it('omits sub_type when null', () => {
+      const result = buildVerificationResult(createAnchor({ sub_type: null }));
+      expect(result).not.toHaveProperty('sub_type');
+    });
+
+    it('does not include fraudSignals (gated behind ENABLE_FRAUD_SIGNALS, default off)', () => {
+      const result = buildVerificationResult(createAnchor({
+        confidence_scores: { overall: 0.7, grounding: 0.6, fields: {} },
+      }));
+      expect(result).not.toHaveProperty('fraudSignals');
+      expect(result).not.toHaveProperty('fraud_signals');
     });
   });
 });

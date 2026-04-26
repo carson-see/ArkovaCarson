@@ -60,6 +60,11 @@ export interface VerificationResult {
   file_mime?: string | null;
   /** Source document size in bytes — client-side metadata only. */
   file_size?: number | null;
+  // API-RICH-02 (SCRUM-895): per-field AI confidence + GRE-01 sub-type.
+  /** Per-field confidence + overall + grounding from the latest extraction manifest. */
+  confidence_scores?: Record<string, unknown> | null;
+  /** GRE-01 fine-grained credential sub-type (e.g., 'official_undergraduate'). */
+  sub_type?: string | null;
   error?: string;
 }
 
@@ -124,6 +129,10 @@ export interface AnchorByPublicId {
   file_mime: string | null;
   /** API-RICH-01: Source document size in bytes */
   file_size: number | null;
+  /** API-RICH-02 (SCRUM-895): Per-field AI confidence from latest extraction_manifests row. */
+  confidence_scores: Record<string, unknown> | null;
+  /** API-RICH-02 (SCRUM-895): Fine-grained sub-type from anchors.sub_type (GRE-01). */
+  sub_type: string | null;
 }
 
 /**
@@ -206,6 +215,8 @@ export function buildVerificationResult(anchor: AnchorByPublicId): VerificationR
     'revocation_block_height',
     'file_mime',
     'file_size',
+    'confidence_scores',
+    'sub_type',
   ] as const;
   for (const key of API_RICH_KEYS) {
     const v = anchor[key];
@@ -238,6 +249,8 @@ export const EMPTY_API_RICH_FIELDS = {
   revocation_block_height: null,
   file_mime: null,
   file_size: null,
+  confidence_scores: null,
+  sub_type: null,
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
@@ -272,16 +285,30 @@ const defaultLookup: PublicIdLookup = {
       .from('anchors')
       .select(
         'public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, ' +
-          'credential_type, issued_at, expires_at, description, directory_info_opt_out, ' +
+          'credential_type, sub_type, issued_at, expires_at, description, directory_info_opt_out, ' +
           'compliance_controls, chain_confirmations, version_number, ' +
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
-          'organization:org_id(display_name), parent:parent_anchor_id(public_id)',
+          'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
+          // API-RICH-02 (SCRUM-895): nested fetch of latest extraction manifest. Supabase
+          // returns all matching rows for a 1:N relationship; we sort + pick the newest in JS
+          // so this still costs one round-trip (per AC: "no N+1 regression").
+          'extraction_manifests(confidence_scores, extraction_timestamp)',
       )
       .eq('public_id', publicId)
       .is('deleted_at', null)
       .single();
 
     if (error || !data) return null;
+
+    const manifests = (data.extraction_manifests ?? []) as Array<{
+      confidence_scores: Record<string, unknown> | null;
+      extraction_timestamp: string;
+    }>;
+    const latestManifest = manifests.length === 0
+      ? null
+      : manifests
+          .slice()
+          .sort((a, b) => (a.extraction_timestamp < b.extraction_timestamp ? 1 : -1))[0];
 
     return {
       public_id: data.public_id ?? '',
@@ -308,6 +335,8 @@ const defaultLookup: PublicIdLookup = {
       revocation_block_height: data.revocation_block_height ?? null,
       file_mime: data.file_mime ?? null,
       file_size: data.file_size ?? null,
+      confidence_scores: latestManifest?.confidence_scores ?? null,
+      sub_type: data.sub_type ?? null,
     } as AnchorByPublicId;
   },
 };
