@@ -342,3 +342,186 @@ describe('SCRUM-1257 kmsProvider default + fail-loud guard', () => {
     vi.resetModules();
   });
 });
+
+/**
+ * SCRUM-1258 (R1-4) — vendor connector cross-field guards.
+ *
+ * Why: a typo in any of these vendor-secret pairs would silently disable a
+ * connector. Route-level "503 vendor_gated" handles the request-time safety;
+ * these guards catch the misconfiguration at boot.
+ */
+describe('SCRUM-1258 vendor connector cross-field guards', () => {
+  // Helper: minimum env that satisfies the unrelated production guards
+  // (cron, hmac, frontend, kms — already covered by other tests).
+  const prodBase = {
+    NODE_ENV: 'production',
+    BITCOIN_NETWORK: 'signet', // avoid the R1-3 mainnet-anchoring path
+    ENABLE_PROD_NETWORK_ANCHORING: 'false',
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    CRON_SECRET: 'test-cron-secret-1234',
+    API_KEY_HMAC_SECRET: 'test-hmac-secret',
+    FRONTEND_URL: 'https://app.arkova.ai',
+  } as const;
+
+  // R1-4 vars that leak forward via Object.assign(saved) restore. Each test
+  // explicitly clears these at the top to guarantee hermetic isolation.
+  const leakyKeys = [
+    'ENABLE_DRIVE_OAUTH',
+    'GOOGLE_OAUTH_CLIENT_ID',
+    'GOOGLE_OAUTH_CLIENT_SECRET',
+    'INTEGRATION_STATE_HMAC_SECRET',
+    'DOCUSIGN_INTEGRATION_KEY',
+    'DOCUSIGN_CLIENT_SECRET',
+    'DOCUSIGN_CONNECT_HMAC_SECRET',
+    'ADOBE_SIGN_CLIENT_SECRET',
+    'CHECKR_WEBHOOK_SECRET',
+    'VEREMARK_WEBHOOK_SECRET',
+    'ENABLE_VEREMARK_WEBHOOK',
+    'MIDDESK_API_KEY',
+    'MIDDESK_WEBHOOK_SECRET',
+    'BUILD_SHA',
+    'BITCOIN_TREASURY_WIF',
+    'GCP_KMS_KEY_RESOURCE_NAME',
+  ];
+  const clearLeaks = () => {
+    for (const k of leakyKeys) delete process.env[k];
+  };
+
+  it('rejects production with ENABLE_DRIVE_OAUTH=true and missing GOOGLE_OAUTH_CLIENT_ID', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv, prodBase);
+    process.env.ENABLE_DRIVE_OAUTH = 'true';
+    process.env.INTEGRATION_STATE_HMAC_SECRET = 'test-hmac';
+    delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+    delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects production with ENABLE_DRIVE_OAUTH=true and missing INTEGRATION_STATE_HMAC_SECRET', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv, prodBase);
+    process.env.ENABLE_DRIVE_OAUTH = 'true';
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-client-secret';
+    delete process.env.INTEGRATION_STATE_HMAC_SECRET;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects when DOCUSIGN_INTEGRATION_KEY is set but DOCUSIGN_CLIENT_SECRET is missing', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv);
+    process.env.DOCUSIGN_INTEGRATION_KEY = 'fake-integration-key';
+    delete process.env.DOCUSIGN_CLIENT_SECRET;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects when ENABLE_VEREMARK_WEBHOOK=true but VEREMARK_WEBHOOK_SECRET is missing', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv);
+    process.env.ENABLE_VEREMARK_WEBHOOK = 'true';
+    delete process.env.VEREMARK_WEBHOOK_SECRET;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts production when Drive OAuth is fully configured', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv, prodBase);
+    process.env.ENABLE_DRIVE_OAUTH = 'true';
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'fake-client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'fake-client-secret';
+    process.env.INTEGRATION_STATE_HMAC_SECRET = 'fake-hmac';
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.enableDriveOauth).toBe(true);
+    expect(mod.config.googleOauthClientId).toBe('fake-client-id');
+    expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects invalid BUILD_SHA (must be 40-char hex or "unknown")', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv);
+    process.env.BUILD_SHA = 'not-a-sha';
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts BUILD_SHA="unknown" (Cloud Run pre-R0 image marker)', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv);
+    process.env.BUILD_SHA = 'unknown';
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.buildSha).toBe('unknown');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts BUILD_SHA as 40-char hex (post-R0 deploy)', async () => {
+    const saved = { ...process.env };
+    clearLeaks();
+
+    Object.assign(process.env, testEnv);
+    process.env.BUILD_SHA = 'adc654d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8';
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.buildSha).toBe('adc654d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+});

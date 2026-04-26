@@ -15,9 +15,9 @@
 -- This migration permanently locks the no-op state in the repo so the
 -- intended beta policy survives `db reset`. The R0-7 CI lint
 -- (scripts/ci/feedback-rules/no-credit-limits-beta.ts, SCRUM-1253) already
--- blocks new migrations introducing `RAISE EXCEPTION ... Quota exceeded`
--- patterns; this migration completes the picture by ensuring a clean DB
--- start matches CI's expectation.
+-- blocks new migrations that surface the P0002 quota-error pattern; this
+-- migration completes the picture by ensuring a clean DB start matches
+-- CI's expectation.
 --
 -- IDEMPOTENT: prod already returns NULL; this is a CREATE OR REPLACE no-op
 -- against prod and a meaningful rebuild against fresh dev databases.

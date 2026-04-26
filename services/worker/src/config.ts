@@ -144,6 +144,49 @@ const ConfigSchema = z.object({
   edgarUserAgent: z.string().optional(),
   /** Output path for training data JSONL exports */
   trainingDataOutputPath: z.string().optional(),
+
+  // SCRUM-1258 (R1-4) — critical absorption pass. Adds the highest-impact
+  // previously-undocumented vendor-secret + ENABLE_FLAG pairs to the schema so
+  // a typo in a Cloud Run binding fails at boot instead of silently disabling
+  // a connector. Full 145-var absorption + ad-hoc-read CI lint deferred to
+  // R1-4-followup sub-stories.
+  /** Cloud Run service name (auto-injected). Useful as `isCloudRun` derived flag. */
+  kService: z.string().optional(),
+  /** Build SHA baked at Docker build via --build-arg (R0-1 SCRUM-1247). 40-char git SHA. */
+  buildSha: z.string().regex(/^[0-9a-f]{40}$/i).or(z.literal('unknown')).optional(),
+  /** OAuth state HMAC for Drive + GRC OAuth flows (SCRUM-1236). Worker fails closed if unset when ENABLE_DRIVE_OAUTH=true. */
+  integrationStateHmacSecret: z.string().min(1).optional(),
+  /**
+   * Drive OAuth flow — when false, /api/v1/integrations/google_drive routes 503.
+   * Default false (fail closed). Cloud Run prod env sets this to true explicitly
+   * (HANDOFF.md "Drive + DocuSign live in prod").
+   */
+  enableDriveOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
+  googleOauthClientId: z.string().optional(),
+  /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
+  googleOauthClientSecret: z.string().optional(),
+  /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
+  docusignIntegrationKey: z.string().optional(),
+  /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
+  docusignClientSecret: z.string().optional(),
+  /** DocuSign Connect raw-body HMAC secret. Worker rejects POST /webhooks/docusign without it. */
+  docusignConnectHmacSecret: z.string().optional(),
+  /** Adobe Sign OAuth client secret. Routes 503 when unset. */
+  adobeSignClientSecret: z.string().optional(),
+  /** Checkr Connect webhook HMAC. Routes 503 when unset. */
+  checkrWebhookSecret: z.string().optional(),
+  /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
+  veremarkWebhookSecret: z.string().optional(),
+  enableVeremarkWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Middesk KYB API key. Routes 503 when unset. */
+  middeskApiKey: z.string().optional(),
+  /** Middesk webhook HMAC. Routes 503 when unset. */
+  middeskWebhookSecret: z.string().optional(),
+  /** Middesk sandbox flag — only literal "false" flips to prod (safer default). */
+  middeskSandbox: z.preprocess((v) => v !== 'false', z.boolean()).default(true),
+  /** Slack ops webhook (separate channel from treasury alerts). */
+  slackOpsWebhookUrl: z.string().url().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -211,6 +254,73 @@ const ConfigSchema = z.object({
       });
     }
   }
+
+  // SCRUM-1258 (R1-4) — vendor connector cross-field guards. A typo in any of
+  // these pairs would silently disable a connector. The route-level "503 when
+  // unset" path covers customer-facing safety; this catches misconfiguration
+  // at boot so the operator sees it immediately.
+
+  // Drive OAuth: if the flow is enabled in production, both client id and
+  // client secret must be present. Otherwise the OAuth callback throws when
+  // exchanging the code.
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.enableDriveOauth
+    && (!cfg.googleOauthClientId || !cfg.googleOauthClientSecret)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DRIVE_OAUTH=true in production requires both GOOGLE_OAUTH_CLIENT_ID '
+        + 'and GOOGLE_OAUTH_CLIENT_SECRET. Set ENABLE_DRIVE_OAUTH=false to disable '
+        + 'the route or provision both secrets.',
+      path: ['googleOauthClientId'],
+    });
+  }
+
+  // Drive + GRC OAuth flows sign their `state` parameter with a dedicated
+  // HMAC secret (SCRUM-1236). Without it the state is unsigned and an attacker
+  // can forge the OAuth callback. Worker fails closed when the flow is on
+  // and the secret is missing.
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.enableDriveOauth
+    && !cfg.integrationStateHmacSecret
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DRIVE_OAUTH=true in production requires INTEGRATION_STATE_HMAC_SECRET '
+        + '(SCRUM-1236). Without it, OAuth `state` is unsigned and forgeable.',
+      path: ['integrationStateHmacSecret'],
+    });
+  }
+
+  // DocuSign: integration key + client secret travel together. Either both are
+  // set or both are unset (vendor-gated route returns 503). A half-set pair is
+  // a deployment bug.
+  if (
+    Boolean(cfg.docusignIntegrationKey) !== Boolean(cfg.docusignClientSecret)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET must be set together. '
+        + 'A half-configured pair would surface as 401s on the OAuth flow.',
+      path: ['docusignIntegrationKey'],
+    });
+  }
+
+  // Veremark: when the webhook is enabled, the HMAC secret must be set.
+  if (cfg.enableVeremarkWebhook && !cfg.veremarkWebhookSecret) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_VEREMARK_WEBHOOK=true requires VEREMARK_WEBHOOK_SECRET. '
+        + 'Without it the webhook accepts unsigned payloads.',
+      path: ['veremarkWebhookSecret'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -269,6 +379,24 @@ function loadConfig(): Config {
     trainingDataOutputPath: process.env.TRAINING_DATA_OUTPUT_PATH,
     resendApiKey: process.env.RESEND_API_KEY,
     emailFrom: process.env.EMAIL_FROM,
+    // SCRUM-1258 (R1-4) — critical absorption
+    kService: process.env.K_SERVICE,
+    buildSha: process.env.BUILD_SHA,
+    integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
+    enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
+    googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
+    googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
+    docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
+    docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
+    adobeSignClientSecret: process.env.ADOBE_SIGN_CLIENT_SECRET,
+    checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
+    veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,
+    enableVeremarkWebhook: process.env.ENABLE_VEREMARK_WEBHOOK,
+    middeskApiKey: process.env.MIDDESK_API_KEY,
+    middeskWebhookSecret: process.env.MIDDESK_WEBHOOK_SECRET,
+    middeskSandbox: process.env.MIDDESK_SANDBOX,
+    slackOpsWebhookUrl: process.env.SLACK_OPS_WEBHOOK_URL,
   });
 
   if (!result.success) {
