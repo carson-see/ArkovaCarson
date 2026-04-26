@@ -46,6 +46,7 @@ import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
+import { anchorEvidenceRouter } from './anchor-evidence.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
 import { attestationsRouter } from './attestations.js';
 import { entityVerifyRouter } from './entity-verify.js';
@@ -313,16 +314,19 @@ router.use('/agents', requireAuth, agentsRouter);
 // API key required — tracks agent identity for audit trail
 router.use('/oracle', requireScope('verify'), oracleRouter);
 
-// ─── Anchor lifecycle + extraction manifest — API-RICH-03/05 ───
-// Lifecycle is public per SCRUM-896 (anonymous gets a public-safe projection;
-// API key with org scope adds actor_public_id). Same anon-allow shape as /verify.
-router.use('/anchor', (req: Request, res: Response, next: NextFunction) => {
+// ─── Anchor lifecycle + evidence + extraction manifest — API-RICH-03/05, SCRUM-1173 ───
+// Lifecycle (SCRUM-896) and evidence package (SCRUM-1173 / HAKI-REQ-04) are
+// both public per SCRUM-896 — anonymous gets a public-safe projection; API
+// key with org scope adds actor_public_id. Same anon-allow shape as /verify.
+const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
   if (!req.apiKey && req.method === 'GET') {
     next();
     return;
   }
   requireScope('verify')(req, res, next);
-}, anchorLifecycleRouter);
+};
+router.use('/anchor', anchorAnonAllow, anchorLifecycleRouter);
+router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
 router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
