@@ -236,6 +236,12 @@ describe('scrubPiiFromBreadcrumb', () => {
   });
 });
 
+// These tests require sentry.ts to lazy-load the profiling integration
+// (only inside initSentry, skipped under NODE_ENV=test). When the profiler
+// was loaded eagerly at module init, the missing native binary in
+// @sentry-internal/node-cpu-profiler on Node 25 darwin-arm64 threw before
+// vi.mock could attach, and the breadcrumb / structured-log spies below
+// observed nothing.
 describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
