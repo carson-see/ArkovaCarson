@@ -13,6 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, ChevronDown, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
+import { useVisibilityPolling } from '@/hooks/useVisibilityPolling';
 import { workerFetch } from '@/lib/workerClient';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
@@ -36,8 +37,9 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ROUTES } from '@/lib/routes';
-import { PIPELINE_LABELS, formatCredentialType } from '@/lib/copy';
+import { PIPELINE_LABELS, DATA_ERROR_LABELS, formatCredentialType } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
+import { DataErrorBanner } from '@/components/DataErrorBanner';
 
 import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform';
 
@@ -151,6 +153,11 @@ export function PipelineAdminPage() {
   const [stats, setStats] = useState<PipelineStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // SCRUM-1260 (R1-6): explicit error state replaces the silent zero-fallback.
+  // The previous catch-block set every count to 0 with no flag, so a 60s
+  // worker timeout looked identical to "the system is empty." `statsError`
+  // surfaces a banner + retry button instead of rendering 0/0/0.
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -253,43 +260,39 @@ export function PipelineAdminPage() {
         byCredentialType,
         recentErrors: 0,
       });
+      // SCRUM-1260 (R1-6): clear error state on successful refresh so the
+      // banner disappears once the worker recovers.
+      setStatsError(null);
     } catch (err) {
       console.error('PipelineAdminPage: failed to fetch stats', err);
-      // Stats fetch failed — set empty state so UI doesn't hang on skeleton
-      setStats({
-        totalRecords: 0,
-        anchoredRecords: 0,
-        pendingRecords: 0,
-        embeddedRecords: 0,
-        anchorLinkedRecords: 0,
-        pendingRecordLinks: 0,
-        pendingAnchorRecords: 0,
-        broadcastingRecords: 0,
-        submittedRecords: 0,
-        securedRecords: 0,
-        cacheUpdatedAt: null,
-        bySource: {},
-        byCredentialType: {},
-        recentErrors: 0,
-      });
+      // SCRUM-1260 (R1-6): surface the error instead of silently zeroing.
+      // If we have a previous successful `stats`, leave it on screen (stale-OK)
+      // and overlay the error banner. If we have nothing yet, leave `stats`
+      // null so the page renders the error banner without the misleading
+      // "zeros everywhere" tile grid.
+      const message = err instanceof Error ? err.message : 'Pipeline stats fetch failed';
+      setStatsError(message);
     } finally {
       setLoading(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (isAdmin) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
-      fetchStats();
-      // Auto-refresh every 30 seconds
-      const interval = setInterval(fetchStats, 30_000);
-      return () => clearInterval(interval);
-    } else {
-       
-      setLoading(false);
-    }
+  // SCRUM-1260 (R1-6): visibility-aware polling so backgrounded admin tabs
+  // don't hammer the worker /api/admin/pipeline-stats route on a 30s clock.
+  // Centralised in useVisibilityPolling — see the hook for the contract.
+  // We pass a no-op when !isAdmin so the hook's mount-time fire is harmless;
+  // the `loading=false` for non-admins is set in a separate effect below.
+  const pollFetchStats = useCallback(async () => {
+    if (!isAdmin) return;
+    await fetchStats();
   }, [isAdmin, fetchStats]);
+  useVisibilityPolling(pollFetchStats, 30_000);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- post-auth flip; unguarded setState is harmless once
+    if (!isAdmin) setLoading(false);
+  }, [isAdmin]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -391,6 +394,11 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
+  // SCRUM-1260 (R1-6): records fetch surfaces errors via state rather than
+  // swallowing them. Previously the catch was empty `{}`, so an RPC failure
+  // left the records table blank with no message and no retry path.
+  const [recordsError, setRecordsError] = useState<string | null>(null);
+
   const fetchRecords = useCallback(async (page: number, currentFilters: RecordFilters) => {
     setRecordsLoading(true);
     try {
@@ -409,8 +417,11 @@ export function PipelineAdminPage() {
       const result = rpcResult as { data: PublicRecord[]; total: number };
       setRecords(result.data ?? []);
       setRecordsTotal(result.total ?? 0);
-    } catch {
-      // Records fetch failed silently
+      setRecordsError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Records fetch failed';
+      console.error('PipelineAdminPage: failed to fetch records', err);
+      setRecordsError(message);
     } finally {
       setRecordsLoading(false);
     }
@@ -567,6 +578,21 @@ export function PipelineAdminPage() {
             Refresh
           </Button>
         </div>
+
+        {/* SCRUM-1260 (R1-6): explicit error banner replaces silent 0/0/0
+            display when the pipeline-stats fetch fails. Stale `stats` from
+            the previous successful fetch (if any) stay visible behind the
+            banner — better signal than zeroing them out. */}
+        {statsError && (
+          <DataErrorBanner
+            data-testid="pipeline-stats-error"
+            title={DATA_ERROR_LABELS.STATS_UNAVAILABLE_TITLE}
+            message={statsError}
+            trailingMessage={stats ? DATA_ERROR_LABELS.STATS_UNAVAILABLE_TRAILER : undefined}
+            onRetry={handleRefresh}
+            retrying={refreshing}
+          />
+        )}
 
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -924,6 +950,19 @@ export function PipelineAdminPage() {
               </Select>
             </div>
 
+            {/* SCRUM-1260 (R1-6): records error banner — distinct from
+                "no results found." Without this, an RPC failure left the
+                table blank, indistinguishable from an empty filter result. */}
+            {recordsError && (
+              <DataErrorBanner
+                data-testid="pipeline-records-error"
+                title={DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE}
+                message={recordsError}
+                onRetry={() => fetchRecords(recordsPage, filters)}
+                spacing="mb-3"
+              />
+            )}
+
             {/* Records Table */}
             {recordsLoading ? (
               <div className="space-y-2">
@@ -931,12 +970,12 @@ export function PipelineAdminPage() {
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
-            ) : records.length === 0 ? (
+            ) : records.length === 0 && !recordsError ? (
               <div className="text-center py-12">
                 <Database className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
                 <p className="text-sm text-muted-foreground">{PIPELINE_LABELS.RECORDS_NO_RESULTS}</p>
               </div>
-            ) : (
+            ) : records.length === 0 ? null : (
               <>
                 <div className="overflow-x-auto rounded-md border border-border/50">
                   <Table>
