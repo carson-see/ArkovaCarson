@@ -307,6 +307,54 @@ describe('createCheckoutSession', () => {
 
       await expect(createCheckoutSession(CHECKOUT_PARAMS)).rejects.toThrow('Stripe API error');
     });
+
+    // SCRUM-1265 (R2-2): the previous code hardcoded mode: 'subscription',
+    // silently overriding the caller's mode: 'payment' for credit-pack
+    // one-time purchases. Tests below lock the pipe-through.
+    it('uses mode: payment when params.mode is payment (one-time credit-pack purchase)', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_pay', url: 'https://pay' });
+
+      await createCheckoutSession({ ...CHECKOUT_PARAMS, mode: 'payment' });
+
+      expect(mockStripeCheckoutCreate).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'payment' }),
+      );
+    });
+
+    it('OMITS subscription_data when mode is payment (Stripe rejects the combo)', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_pay', url: 'https://pay' });
+
+      await createCheckoutSession({ ...CHECKOUT_PARAMS, mode: 'payment' });
+
+      const args = mockStripeCheckoutCreate.mock.calls[0][0] as Record<string, unknown>;
+      expect(args).not.toHaveProperty('subscription_data');
+    });
+
+    it('still includes subscription_data when mode defaults to subscription', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_sub', url: 'https://sub' });
+
+      await createCheckoutSession(CHECKOUT_PARAMS);
+
+      expect(mockStripeCheckoutCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'subscription',
+          subscription_data: { metadata: { user_id: 'user-uuid-001', price_id: 'price_test_123' } },
+        }),
+      );
+    });
+
+    it('still includes subscription_data when mode is explicitly subscription', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_sub', url: 'https://sub' });
+
+      await createCheckoutSession({ ...CHECKOUT_PARAMS, mode: 'subscription' });
+
+      expect(mockStripeCheckoutCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mode: 'subscription',
+          subscription_data: expect.any(Object),
+        }),
+      );
+    });
   });
 });
 

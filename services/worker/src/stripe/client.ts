@@ -88,17 +88,24 @@ export async function createCheckoutSession(params: {
     return { sessionId: result.id, url: result.url ?? '' };
   }
 
-  const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
+  // SCRUM-1265 (R2-2): pipe `mode` through. The previous hardcoded
+  // `mode: 'subscription'` silently overrode the caller's `params.mode`,
+  // breaking credit-pack one-time purchases (`/api/v1/credits` calls with
+  // `mode: 'payment'`) since 2026-04-05. Set `subscription_data` only for
+  // recurring sessions; Stripe rejects it on `mode: 'payment'`.
+  const mode = params.mode ?? 'subscription';
+  const sessionParams: Stripe.Checkout.SessionCreateParams = {
+    mode,
     line_items: [{ price: params.priceId, quantity: 1 }],
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
     customer_email: params.customerEmail,
     metadata,
-    subscription_data: {
-      metadata,
-    },
-  });
+  };
+  if (mode === 'subscription') {
+    sessionParams.subscription_data = { metadata };
+  }
+  const session = await stripe.checkout.sessions.create(sessionParams);
 
   if (!session.url) {
     throw new Error('Stripe did not return a checkout URL');

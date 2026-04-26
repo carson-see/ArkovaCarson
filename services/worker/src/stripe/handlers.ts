@@ -321,14 +321,25 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
  * @see MVP-11
  */
 export async function handleSubscriptionUpdated(event: StripeEvent): Promise<void> {
+  // SCRUM-1267 (R2-4): As of Stripe API version 2026-03-25.dahlia (which
+  // services/worker/src/stripe/client.ts pins), `current_period_start` /
+  // `_end` moved from the top-level Subscription onto each subscription item.
+  // The previous typing read from the top-level fields → undefined →
+  // `new Date(undefined * 1000).toISOString()` → RangeError on the FIRST
+  // real prod customer.subscription.updated event. We type both shapes to
+  // make the new field path explicit.
   const subscription = event.data.object as unknown as {
     id: string;
     customer: string;
     status: string;
-    current_period_start: number;
-    current_period_end: number;
     cancel_at_period_end: boolean;
-    items?: { data: Array<{ price: { id: string } }> };
+    items?: {
+      data: Array<{
+        price: { id: string };
+        current_period_start?: number;
+        current_period_end?: number;
+      }>;
+    };
     metadata?: { user_id?: string };
   };
 
@@ -388,11 +399,27 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     return;
   }
 
+  // SCRUM-1267 (R2-4): pull period fields from the first subscription item.
+  // Don't silently default to "now" if items.data[0] is missing — the previous
+  // top-level read produced RangeError on the new API version, which at least
+  // surfaced the bug. A silent default would mask it. Throw instead so the
+  // claim_event idempotency layer can observe and retry.
+  const firstItem = subscription.items?.data?.[0];
+  if (!firstItem || firstItem.current_period_start == null || firstItem.current_period_end == null) {
+    logger.error(
+      { subscriptionId: subscription.id },
+      'Stripe subscription has no items[0].current_period_* fields — cannot update period (SCRUM-1267)',
+    );
+    throw new Error(`Stripe subscription ${subscription.id} missing items[0].current_period_start/_end`);
+  }
+  const currentPeriodStart = firstItem.current_period_start;
+  const currentPeriodEnd = firstItem.current_period_end;
+
   // Build update payload
   const updatePayload: Record<string, unknown> = {
     status: mappedStatus,
-    current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-    current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+    current_period_start: new Date(currentPeriodStart * 1000).toISOString(),
+    current_period_end: new Date(currentPeriodEnd * 1000).toISOString(),
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
 
@@ -462,6 +489,19 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
     .eq('stripe_subscription_id', subscription.id)
     .maybeSingle();
 
+  // SCRUM-1266 (R2-3): orphan-row guard. SCRUM-1239 (PR #548) patched
+  // handleSubscriptionUpdated only and explicitly deferred the three sibling
+  // handlers. Without this check, an attacker-injected event class (or a
+  // real Stripe event for a subscription not yet in our DB) hits a silent
+  // no-op UPDATE — visible in logs as success but with zero state change.
+  if (!existingSub) {
+    logger.warn(
+      { subscriptionId: subscription.id },
+      'No subscription row found for stripe_subscription_id — refusing to cancel (SCRUM-1266)',
+    );
+    return;
+  }
+
   const { error } = await db
     .from('subscriptions')
     .update({ status: 'canceled' })
@@ -473,7 +513,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
   }
 
   // Log audit event if we found the user
-  if (existingSub?.user_id) {
+  if (existingSub.user_id) {
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_canceled',
       event_category: 'ADMIN',
@@ -501,6 +541,23 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
   logger.warn({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment failed');
 
   if (stripeSubscriptionId) {
+    // SCRUM-1266 (R2-3): orphan-row guard — see handleSubscriptionUpdated
+    // (SCRUM-1239) for the original pattern. Mirror here so an event for a
+    // subscription not yet in our DB is observable in logs rather than
+    // silent in storage.
+    const { data: existingSub } = await db
+      .from('subscriptions')
+      .select('id')
+      .eq('stripe_subscription_id', stripeSubscriptionId)
+      .maybeSingle();
+    if (!existingSub) {
+      logger.warn(
+        { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+        'No subscription row found for stripe_subscription_id on payment_failed — refusing to update (SCRUM-1266)',
+      );
+      return;
+    }
+
     const { error } = await db
       .from('subscriptions')
       .update({ status: 'past_due' })
@@ -549,6 +606,23 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   logger.info({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment succeeded');
 
   if (!stripeSubscriptionId) return;
+
+  // SCRUM-1266 (R2-3): orphan-row guard — mirrors SCRUM-1239 fix on
+  // handleSubscriptionUpdated. A payment_succeeded event for a subscription
+  // we don't have in DB (e.g., webhook arrived before checkout completion
+  // race, or attacker-injected) must not silently no-op-write.
+  const { data: existingSub } = await db
+    .from('subscriptions')
+    .select('id')
+    .eq('stripe_subscription_id', stripeSubscriptionId)
+    .maybeSingle();
+  if (!existingSub) {
+    logger.warn(
+      { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+      'No subscription row found for stripe_subscription_id on payment_succeeded — refusing to update (SCRUM-1266)',
+    );
+    return;
+  }
 
   const { error } = await db
     .from('subscriptions')
