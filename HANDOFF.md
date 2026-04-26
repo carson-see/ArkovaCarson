@@ -14,6 +14,26 @@
 
 ## Now
 
+### 2026-04-26 — Confluence-drift CI guard (Sarah session 3)
+
+PR [#571](https://github.com/carson-see/ArkovaCarson/pull/571) on branch `claude/2026-04-26-confluence-drift-guard`. Pushed + open + linked to Jira. Awaiting review.
+
+**1 story shipped:**
+
+| Jira | Title | Posture |
+|---|---|---|
+| [SCRUM-1207](https://arkova.atlassian.net/browse/SCRUM-1207) | AUDIT-26 — automated Confluence-drift CI guard | warn-only; flip `FAIL_ON_MISSING_CONFLUENCE=true` after SCRUM-1199 long-tail backfill |
+
+`confluence-coverage` job in `.github/workflows/ci.yml` parses PR title/body/commits for SCRUM-NNNN refs (handles slash-chain `SCRUM-1187/1188/1189` form) and queries Confluence space A via CQL. Per-ref missing-page warnings let auditors catch the "every story has a doc" mandate at PR time instead of post-hoc audit. Override label: `confluence-drift-skip` for chore/deps PRs.
+
+**Reuse pulled out:** `atlassianBasicAuthHeader(email, token)` lifted into `lib/ciContext.ts` (collapses one duplicate in `healthcheck/checks.ts`). `prTitle` env-var helper added there too.
+
+**Tests:** 12/12 vitest green (pure parser + missing-page detector). Typecheck clean. /simplify pass applied 5 fixes (Promise.all parallelization, 4xx vs 5xx distinction, pathToFileURL for cross-platform isMain, label promoted to LABELS const, basic-auth helper extracted). /security-review pass: zero findings ≥7 confidence.
+
+**Stories deliberately not attempted** in this session (need browser/preview verification, schema-heavy, or external blockers): SCRUM-1097/1094/1096 (ADMIN-VIEW frontends), SCRUM-1170 (parent/sub-org credit allocation, large schema work), SCRUM-1199 (557-page Confluence backfill — tedious volume), SCRUM-880 (SAM.gov, blocked on SCRUM-892 operator-only Cloud Run env step).
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:
