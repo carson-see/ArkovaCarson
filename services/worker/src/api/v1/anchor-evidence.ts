@@ -18,7 +18,7 @@ import { Router, Request, Response } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
-import { buildVerifyUrl } from '../../lib/urls.js';
+import { buildProofUrl, buildVerifyUrl } from '../../lib/urls.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -256,18 +256,12 @@ export function buildEvidencePackage(
     lifecycle: events.map((e) => buildLifecycleEntry(e, actorMap, options.includeActorPublicId)),
     links: {
       record_uri: buildVerifyUrl(anchor.public_id),
-      proof_url: `${appBaseUrl()}/api/v1/verify/${anchor.public_id}/proof`,
+      proof_url: buildProofUrl(anchor.public_id),
       explorer_url: explorerUrl,
     },
     chain_data_available: chainAvailable,
     notes,
   };
-}
-
-function appBaseUrl(): string {
-  // buildVerifyUrl already trims trailing slashes; replicate here for proof_url.
-  const front = config.frontendUrl ?? 'https://app.arkova.ai';
-  return front.replace(/\/+$/, '');
 }
 
 const defaultLookup: EvidenceLookup = {

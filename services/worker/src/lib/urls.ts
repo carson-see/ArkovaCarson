@@ -30,6 +30,12 @@ export function buildVerifyUrl(publicId: string): string {
   return `${BASE}/verify/${publicId}`;
 }
 
+/** Server-side proof endpoint URL — used in evidence packages so partner
+ *  receivers get a stable, share-safe link to the merkle proof. */
+export function buildProofUrl(publicId: string): string {
+  return `${BASE}/api/v1/verify/${publicId}/proof`;
+}
+
 /** Public verification page for an attestation (separate route from anchor verify). */
 export function buildAttestationVerifyUrl(publicId: string): string {
   return `${BASE}/verify/attestation/${publicId}`;
