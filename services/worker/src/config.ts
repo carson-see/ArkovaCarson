@@ -51,8 +51,16 @@ const ConfigSchema = z.object({
   forceDynamicFeeEstimation: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
   // Bitcoin mainnet KMS signing (Constitution 1.1)
-  /** KMS provider selection: 'aws' or 'gcp' (default: 'aws') */
-  kmsProvider: z.enum(['aws', 'gcp']).default('aws'),
+  /**
+   * KMS provider selection.
+   *
+   * Default 'gcp' (SCRUM-1257 / R1-3). The historical 'aws' default was a hold-over from
+   * pre-mainnet planning — Arkova has never shipped on AWS (memory/feedback_no_aws.md).
+   * Leaving the AWS branch in the enum because services/worker/src/chain/signing-provider.ts
+   * still has a documented dead branch; the R0-7 no-aws CI lint exempts that file.
+   * Removing the AWS branch entirely is a separate R4 dead-code story.
+   */
+  kmsProvider: z.enum(['aws', 'gcp']).default('gcp'),
   /** AWS KMS key ID for mainnet transaction signing */
   bitcoinKmsKeyId: z.string().optional(),
   /** AWS region for KMS key */
@@ -166,6 +174,42 @@ const ConfigSchema = z.object({
       message: 'Production requires FRONTEND_URL — verify/invite URLs would fall back to http://localhost:5173',
       path: ['frontendUrl'],
     });
+  }
+
+  // SCRUM-1257 (R1-3): Production mainnet anchoring must explicitly configure a KMS
+  // provider AND a signer. Forensic 2/8 found that an accidental
+  // `--remove-env-vars=KMS_PROVIDER` on Cloud Run would let the Zod default ('aws')
+  // pick the AWS code path, KMS init would fail, and chain/client.ts:299-301 would
+  // silently fall through to MockChainClient — anchors "succeed" with mock chain_tx_id.
+  // No alarm fires. This guard makes that misconfiguration fail at boot.
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.bitcoinNetwork === 'mainnet'
+    && cfg.enableProdNetworkAnchoring
+  ) {
+    if (!process.env.KMS_PROVIDER) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Production mainnet anchoring requires KMS_PROVIDER explicitly set (gcp). '
+          + 'Implicit default would silently fall through to MockChainClient.',
+        path: ['kmsProvider'],
+      });
+    }
+
+    // At least one signer must be configured: BITCOIN_TREASURY_WIF (active per
+    // chain/client.ts:279 "WIF takes precedence") OR GCP_KMS_KEY_RESOURCE_NAME
+    // (selected when WIF is unset). Without either, anchors silently mock.
+    if (!cfg.bitcoinTreasuryWif && !cfg.gcpKmsKeyResourceName) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'Production mainnet anchoring requires either BITCOIN_TREASURY_WIF or '
+          + 'GCP_KMS_KEY_RESOURCE_NAME. Without a signer, transactions cannot be signed '
+          + 'and the worker silently falls through to MockChainClient.',
+        path: ['bitcoinTreasuryWif'],
+      });
+    }
   }
 });
 

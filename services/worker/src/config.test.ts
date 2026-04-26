@@ -175,3 +175,170 @@ describe('config singleton', () => {
     expect(config.bitcoinRpcUrl).toBeUndefined();
   });
 });
+
+/**
+ * SCRUM-1257 (R1-3) — kmsProvider default 'aws' → 'gcp' + fail-loud production guard.
+ *
+ * Why: forensic 2/8 found that an accidental `--remove-env-vars=KMS_PROVIDER` on
+ * Cloud Run would (a) select the AWS branch via the silent default, (b) fail KMS
+ * init because no AWS account exists, (c) fall through to MockChainClient — anchors
+ * would silently "succeed" in mock mode. We do not have AWS in production
+ * (memory/feedback_no_aws.md). This guard makes that misconfiguration fail at boot.
+ */
+describe('SCRUM-1257 kmsProvider default + fail-loud guard', () => {
+  it('defaults kmsProvider to "gcp" when KMS_PROVIDER unset', async () => {
+    const saved = { ...process.env };
+
+    delete process.env.KMS_PROVIDER;
+    Object.assign(process.env, testEnv);
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.kmsProvider).toBe('gcp');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects production mainnet anchoring when KMS_PROVIDER is unset', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'mainnet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    process.env.BITCOIN_TREASURY_WIF = 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ';
+    delete process.env.KMS_PROVIDER;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('rejects production mainnet anchoring when neither WIF nor GCP KMS key is set', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'mainnet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
+    process.env.KMS_PROVIDER = 'gcp';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    delete process.env.BITCOIN_TREASURY_WIF;
+    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
+
+    vi.resetModules();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await expect(import('./config.js')).rejects.toThrow('Invalid worker configuration');
+    consoleError.mockRestore();
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts production mainnet anchoring with KMS_PROVIDER=gcp + WIF', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'mainnet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
+    process.env.KMS_PROVIDER = 'gcp';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    process.env.BITCOIN_TREASURY_WIF = 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ';
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.kmsProvider).toBe('gcp');
+    expect(mod.config.bitcoinNetwork).toBe('mainnet');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('accepts production mainnet anchoring with KMS_PROVIDER=gcp + GCP_KMS_KEY_RESOURCE_NAME', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'mainnet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
+    process.env.KMS_PROVIDER = 'gcp';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    process.env.GCP_KMS_KEY_RESOURCE_NAME =
+      'projects/arkova1/locations/us-central1/keyRings/anchoring/cryptoKeys/treasury';
+    delete process.env.BITCOIN_TREASURY_WIF;
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.kmsProvider).toBe('gcp');
+    expect(mod.config.gcpKmsKeyResourceName).toContain('keyRings/anchoring');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('does not require KMS config when ENABLE_PROD_NETWORK_ANCHORING is false', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'mainnet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'false';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    delete process.env.KMS_PROVIDER;
+    delete process.env.BITCOIN_TREASURY_WIF;
+    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.enableProdNetworkAnchoring).toBe(false);
+    expect(mod.config.kmsProvider).toBe('gcp');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+
+  it('does not require KMS config when bitcoinNetwork is signet (test environment)', async () => {
+    const saved = { ...process.env };
+
+    Object.assign(process.env, testEnv);
+    process.env.NODE_ENV = 'production';
+    process.env.BITCOIN_NETWORK = 'signet';
+    process.env.ENABLE_PROD_NETWORK_ANCHORING = 'true';
+    // gitleaks:allow — test fixture, satisfies min-length validator only
+    process.env.CRON_SECRET = 'test-cron-secret-1234';
+    process.env.API_KEY_HMAC_SECRET = 'test-hmac-secret';
+    process.env.FRONTEND_URL = 'https://app.arkova.ai';
+    delete process.env.KMS_PROVIDER;
+    delete process.env.BITCOIN_TREASURY_WIF;
+    delete process.env.GCP_KMS_KEY_RESOURCE_NAME;
+
+    vi.resetModules();
+    const mod = await import('./config.js');
+    expect(mod.config.bitcoinNetwork).toBe('signet');
+
+    Object.assign(process.env, saved);
+    vi.resetModules();
+  });
+});
