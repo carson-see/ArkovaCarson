@@ -1,29 +1,36 @@
 /**
- * Compliance Score Card (NCE-12)
+ * Compliance Score Card — dashboard widget.
  *
- * Summary card for the org dashboard showing compliance score,
- * grade, progress, and expiring documents warning.
- *
- * Jira: SCRUM-603
+ * SCRUM-948: rewired to read from `compliance_audits` (NCA-03) so the
+ * widget reflects audit runs done via the "Audit My Organization"
+ * button. The legacy `useComplianceScore` path read from the empty
+ * `compliance_scores` table and left the widget stuck on the empty
+ * state after a Grade A audit completed.
  */
 
 import { Link } from 'react-router-dom';
-import { Shield, ArrowRight, AlertTriangle } from 'lucide-react';
+import { Shield, ArrowRight, Clock } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { ComplianceScoreGauge } from './ComplianceScoreGauge';
 import { GradeBadge } from './GradeBadge';
-import { useComplianceScore } from '@/hooks/useComplianceScore';
+import { useLatestComplianceAudit } from '@/hooks/useLatestComplianceAudit';
 
-interface ComplianceScoreCardProps {
-  jurisdiction?: string;
-  industry?: string;
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000) return 'just now';
+  const mins = Math.floor(ms / 60_000);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
 }
 
-export function ComplianceScoreCard({ jurisdiction = 'US-CA', industry = 'accounting' }: ComplianceScoreCardProps) {
-  const { scoreData, loading } = useComplianceScore(jurisdiction, industry);
+export function ComplianceScoreCard() {
+  const { audit, loading } = useLatestComplianceAudit();
 
   if (loading) {
     return (
@@ -42,7 +49,7 @@ export function ComplianceScoreCard({ jurisdiction = 'US-CA', industry = 'accoun
     );
   }
 
-  if (!scoreData) {
+  if (!audit) {
     return (
       <Card>
         <CardHeader>
@@ -53,11 +60,11 @@ export function ComplianceScoreCard({ jurisdiction = 'US-CA', industry = 'accoun
         </CardHeader>
         <CardContent className="text-center space-y-3">
           <p className="text-sm text-muted-foreground">
-            No compliance data yet. Upload documents to get started.
+            No compliance audit yet. Run an audit to see your score.
           </p>
-          <Link to={ROUTES.COMPLIANCE_DASHBOARD}>
+          <Link to={ROUTES.COMPLIANCE_SCORECARD}>
             <Button size="sm" variant="outline" className="gap-1">
-              Set Up <ArrowRight className="h-3 w-3" />
+              Run Audit <ArrowRight className="h-3 w-3" />
             </Button>
           </Link>
         </CardContent>
@@ -71,37 +78,22 @@ export function ComplianceScoreCard({ jurisdiction = 'US-CA', industry = 'accoun
         <CardTitle className="text-base flex items-center gap-2">
           <Shield className="h-4 w-4 text-[#00d4ff]" />
           Compliance Score
-          <GradeBadge grade={scoreData.grade} className="ml-auto" />
+          <GradeBadge grade={audit.overall_grade} className="ml-auto" />
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex justify-center">
-          <ComplianceScoreGauge score={scoreData.score} grade={scoreData.grade} size="sm" />
+          <ComplianceScoreGauge score={audit.overall_score} grade={audit.overall_grade} size="sm" />
         </div>
 
-        {/* Progress bar */}
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>{scoreData.total_present} of {scoreData.total_required} documents</span>
-            <span>{scoreData.jurisdiction}</span>
-          </div>
-          <div className="w-full bg-muted rounded-full h-1.5">
-            <div
-              className="bg-[#00d4ff] h-1.5 rounded-full transition-all"
-              style={{ width: `${scoreData.total_required > 0 ? (scoreData.total_present / scoreData.total_required) * 100 : 0}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Expiring warning */}
-        {scoreData.expiring_documents.length > 0 && (
-          <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-            <AlertTriangle className="h-3 w-3" />
-            {scoreData.expiring_documents.length} document{scoreData.expiring_documents.length > 1 ? 's' : ''} expiring soon
+        {audit.completed_at && (
+          <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            Last audited {formatRelative(audit.completed_at)}
           </div>
         )}
 
-        <Link to={ROUTES.COMPLIANCE_DASHBOARD} className="block">
+        <Link to={ROUTES.COMPLIANCE_SCORECARD} className="block">
           <Button size="sm" variant="ghost" className="w-full gap-1 text-xs">
             View Details <ArrowRight className="h-3 w-3" />
           </Button>
