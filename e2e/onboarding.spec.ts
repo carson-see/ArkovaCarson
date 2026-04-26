@@ -8,6 +8,11 @@
 
 import { test, expect } from './fixtures';
 
+// Onboarding specs test role selection and org creation forms that are
+// only shown to users who have NOT completed onboarding. Use a blank
+// session so the app renders the onboarding pages instead of redirecting.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Onboarding', () => {
   test.describe('Role Selection', () => {
     test('shows role selection options', async ({ page }) => {

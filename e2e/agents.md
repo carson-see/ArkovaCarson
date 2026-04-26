@@ -7,12 +7,19 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 
 ## File Inventory
 
+### Auth Setup (`e2e/auth.setup.ts`)
+
+Playwright setup project that runs **once** before all test projects. Logs in each distinct seed user via the UI login form and saves the authenticated browser state (cookies + localStorage) to `.auth/*.json`. All test projects depend on this setup and reuse the saved state via `storageState` — no per-test login overhead.
+
+Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.ts`, `onboarding.spec.ts`, `identity.spec.ts`) override with `test.use({ storageState: { cookies: [], origins: [] } })`.
+
 ### Fixtures (`e2e/fixtures/`)
 
 | File | Purpose |
 |------|---------|
-| `auth.ts` | Extended Playwright `test` object with `individualPage`, `orgAdminPage`, `orgBAdminPage` fixtures + `loginAs` helper |
+| `auth.ts` | Extended Playwright `test` object with `individualPage`, `orgAdminPage`, `orgBAdminPage` fixtures. Uses pre-saved `storageState` (no per-test login). `orgBAdminPage` opens a separate browser context with sarah's state. |
 | `supabase.ts` | Supabase service client (env-var backed), `SEED_USERS` constants, `createTestAnchor()` / `deleteTestAnchor()` helpers |
+| `seed-anchors.ts` | Seed SECURED anchors fixture — creates reusable anchors in various states for E2E tests |
 | `index.ts` | Barrel export — all specs import from here |
 
 ### Existing Specs
@@ -69,3 +76,4 @@ Playwright E2E test specs and shared fixtures for the Arkova application.
 | 2026-03-10 11:30 PM EST | Security: moved hard-coded seed passwords + service key to env vars (SonarQube S2068). Added `dotenv` + `.env.test` + `.env.test.example`. |
 | 2026-03-12 | MVP audit: 14 launch gap stories identified (see `docs/stories/11_mvp_launch_gaps.md`). E2E targets for new flows: MVP-03 legal pages (routing), MVP-05 error boundary + 404 page, MVP-02 toast notifications, MVP-06 file-based verification, MVP-07 mobile responsive layout. |
 | 2026-04-24 | SCRUM-1091 (PUBLIC-ORG-08): Added `public-org-page.spec.ts` — anonymous-visitor flow at `/issuer/:orgId` covering desktop (1280px), mobile (375px), JSON-LD + OG/Twitter meta presence. |
+| 2026-04-26 | SCRUM-1302: Replaced per-test UI login with Playwright `storageState` setup project. Auth setup runs once, all specs reuse saved session. Specs needing unauthenticated state override with empty storageState. Removed `continue-on-error: true` from CI E2E step. Increased `webServer.timeout` to 120s. |

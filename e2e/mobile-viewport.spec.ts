@@ -17,6 +17,9 @@ test.describe('Mobile Viewport (375px)', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
   test.describe('Authentication', () => {
+    // Login form test needs unauthenticated state
+    test.use({ storageState: { cookies: [], origins: [] } });
+
     test('login form is fully visible and usable at 375px', async ({ page }) => {
       await page.goto('/auth');
 

@@ -23,7 +23,12 @@ dotenv.config(); // fallback to .env for any vars not in .env.test
  * Optional environment variables:
  *   E2E_SUPABASE_URL         — Supabase API URL (defaults to local)
  *
- * @updated 2026-03-10 11:30 PM EST
+ * Auth strategy: A `setup` project logs in seed users once and saves
+ * storageState to `.auth/*.json`. All browser projects depend on setup
+ * and reuse the saved state — no per-test login overhead. See
+ * `e2e/auth.setup.ts` and `e2e/fixtures/auth.ts`.
+ *
+ * @updated 2026-04-26 — SCRUM-1302: storageState auth to fix timeout regression
  */
 export default defineConfig({
   testDir: './e2e',
@@ -40,37 +45,73 @@ export default defineConfig({
   },
   projects: process.env.CI
     ? [
+        // Setup project: logs in seed users and saves storageState
+        {
+          name: 'setup',
+          testMatch: /auth\.setup\.ts/,
+        },
         {
           name: 'chromium',
-          use: { ...devices['Desktop Chrome'] },
+          use: {
+            ...devices['Desktop Chrome'],
+            // Default to individual (carson) storageState; tests needing
+            // a different user override via the auth fixtures.
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
       ]
     : [
+        // Setup project: logs in seed users and saves storageState
+        {
+          name: 'setup',
+          testMatch: /auth\.setup\.ts/,
+        },
         {
           name: 'chromium',
-          use: { ...devices['Desktop Chrome'] },
+          use: {
+            ...devices['Desktop Chrome'],
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
         {
           name: 'firefox',
-          use: { ...devices['Desktop Firefox'] },
+          use: {
+            ...devices['Desktop Firefox'],
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
         {
           name: 'webkit',
-          use: { ...devices['Desktop Safari'] },
+          use: {
+            ...devices['Desktop Safari'],
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
         {
           name: 'mobile-chrome',
-          use: { ...devices['Pixel 5'] },
+          use: {
+            ...devices['Pixel 5'],
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
         {
           name: 'mobile-safari',
-          use: { ...devices['iPhone 13'] },
+          use: {
+            ...devices['iPhone 13'],
+            storageState: '.auth/individual.json',
+          },
+          dependencies: ['setup'],
         },
       ],
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:5173',
     reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    timeout: 120_000,
   },
 });

@@ -204,9 +204,9 @@ describe('P7-S6: Anchor Status Protection', () => {
       .update({ status: 'SECURED' })
       .eq('id', testAnchorId);
 
-    // Trigger should block this
+    // Trigger should block this (0180 unified error message)
     expect(error).not.toBeNull();
-    expect(error!.message).toContain('Cannot set status to SECURED directly');
+    expect(error!.message).toContain('Only the system can change anchor status');
   });
 
   it('user cannot modify chain data', async () => {
@@ -626,8 +626,8 @@ describe('P7-S7: Public Verification', () => {
     expect(result.verified).toBe(true);
     expect(result.public_id).toBe(testPublicId);
     expect(result.filename).toBe('public_test.pdf');
-    // Migration 0039 maps SECURED → ACTIVE in the public API
-    expect(result.status).toBe('ACTIVE');
+    // Migration 0174 returns raw status (SECURED → ACTIVE mapping removed)
+    expect(result.status).toBe('SECURED');
 
     // Phase 1.5 frozen schema fields
     expect(result.issuer_name).toBeDefined();
@@ -671,14 +671,13 @@ describe('P7-S7: Public Verification', () => {
     // PENDING anchors now get a public_id on INSERT, but the RPC should NOT expose them
     expect(pending!.public_id).not.toBeNull();
 
-    // Migration 0121 intentionally exposes PENDING anchors with verified=false
+    // Migration 0174 restricts get_public_anchor to SECURED/REVOKED only
     const anonClient = createAnonClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: result } = await (anonClient.rpc as any)('get_public_anchor', {
       p_public_id: pending!.public_id,
     });
-    expect(result.verified).toBe(false);
-    expect(result.status).toBe('PENDING');
+    expect(result.error).toBe('Anchor not found or not verified');
 
     // Cleanup
     await serviceClient.from('anchors').delete().eq('id', pending!.id);

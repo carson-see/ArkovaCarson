@@ -8,6 +8,11 @@
 
 import { test, expect, SEED_USERS } from './fixtures';
 
+// Auth spec tests the login/signup forms themselves — they must start
+// unauthenticated. Override the project-level storageState so the
+// browser context has no saved session.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Authentication', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');

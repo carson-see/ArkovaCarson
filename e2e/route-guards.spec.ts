@@ -8,6 +8,10 @@
 
 import { test, expect, SEED_USERS } from './fixtures';
 
+// Route guard specs test unauthenticated redirect behavior and
+// mid-onboarding flows — must start with no saved session.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Route Guards', () => {
   test.describe('Unauthenticated Access', () => {
     test('redirects /vault to /auth when not logged in', async ({ page }) => {
