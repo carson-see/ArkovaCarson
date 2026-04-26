@@ -282,9 +282,14 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     // `anchor_id` (UUID) and raw `fingerprint` are banned by CLAUDE.md §6 + §1.6.
     // `public_id` is required for SUBMITTED webhooks; if absent, skip the dispatch
     // rather than emit a partial payload that would fail schema validation anyway.
+    // PR #567 review-fix: pass `public_id` (NOT `anchor.id`) as the eventId
+    // argument so the outer envelope's `event_id` field is the public-safe
+    // slug rather than the internal UUID. CLAUDE.md §6 hard-bans exposing
+    // `anchors.id` publicly — the data-block schema only catches the inner
+    // payload, not the envelope.
     if (anchor.org_id && anchor.public_id) {
       try {
-        await dispatchWebhookEvent(anchor.org_id, 'anchor.submitted', anchorId, {
+        await dispatchWebhookEvent(anchor.org_id, 'anchor.submitted', anchor.public_id, {
           public_id: anchor.public_id,
           status: 'SUBMITTED',
           chain_tx_id: receipt.receiptId,

@@ -90,7 +90,10 @@ export async function fanOutBulkSecuredWebhooks(
   }
 
   const tasks = eligible.map((anchor) => async () => {
-    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.id, {
+    // PR #567 review-fix: pass `public_id` (NOT `anchor.id`) as the eventId
+    // arg so the outer envelope's `event_id` is the public slug rather than
+    // the internal UUID. CLAUDE.md §6 — `anchors.id` must never leak.
+    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
       public_id: anchor.public_id,
       status: 'SECURED',
       chain_tx_id: txId,
@@ -361,9 +364,11 @@ async function _checkAnchorConfirmation(anchor: {
   // Dispatch webhook — non-fatal.
   // SCRUM-1268 (R2-5): payload contains only public-allowed fields.
   // `anchor_id` (UUID) and raw `fingerprint` are banned by CLAUDE.md §6 + §1.6.
+  // PR #567 review-fix: eventId is `public_id` (not the internal UUID) so
+  // the outer envelope's `event_id` field is public-safe.
   if (anchor.org_id && anchor.public_id) {
     try {
-      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.id, {
+      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
         public_id: anchor.public_id,
         status: 'SECURED',
         chain_tx_id: anchor.chain_tx_id,

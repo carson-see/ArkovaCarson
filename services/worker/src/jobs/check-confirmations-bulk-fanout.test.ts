@@ -109,9 +109,19 @@ describe('fanOutBulkSecuredWebhooks (SCRUM-1264 R2-1)', () => {
     expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
       'org-B',
       'anchor.secured',
-      'a2',
+      'pub2', // PR #567 review-fix: eventId is `public_id`, not internal UUID
       expect.any(Object),
     );
+  });
+
+  it('PR #567 review-fix: passes public_id (NOT internal UUID) as the eventId arg — CLAUDE.md §6', async () => {
+    anchorsSelectChain.data = [{ id: 'internal-uuid-aaa', public_id: 'pub1', org_id: 'org-A' }];
+
+    await fanOutBulkSecuredWebhooks(TX, BLOCK_HEIGHT, BLOCK_TIMESTAMP);
+
+    const [, , eventId] = mockDispatchWebhookEvent.mock.calls[0];
+    expect(eventId).toBe('pub1');
+    expect(eventId).not.toBe('internal-uuid-aaa');
   });
 
   it('skips anchors without public_id (cannot satisfy R2-5 payload schema)', async () => {

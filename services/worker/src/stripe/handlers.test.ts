@@ -1053,6 +1053,22 @@ describe('handleSubscriptionDeleted', () => {
       expect.stringContaining('SCRUM-1266'),
     );
   });
+
+  // PR #567 review-fix: throw on lookup error — billing_events claim is
+  // already in place; silent ack would let Stripe retries hit the UNIQUE
+  // constraint and the event would be permanently lost.
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'connection lost', code: '08001' },
+    });
+
+    await expect(handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT)).rejects.toEqual({
+      message: 'connection lost',
+      code: '08001',
+    });
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  });
 });
 
 // ================================================================
@@ -1160,6 +1176,20 @@ describe('handlePaymentFailed', () => {
       expect.stringContaining('SCRUM-1266'),
     );
   });
+
+  // PR #567 review-fix: throw on lookup error
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'rls denied', code: 'PGRST301' },
+    });
+
+    await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({
+      message: 'rls denied',
+      code: 'PGRST301',
+    });
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  });
 });
 
 // ================================================================
@@ -1247,6 +1277,20 @@ describe('handlePaymentSucceeded', () => {
       expect.objectContaining({ subscriptionId: 'sub_test_001', invoiceId: 'inv_test_002' }),
       expect.stringContaining('SCRUM-1266'),
     );
+  });
+
+  // PR #567 review-fix: throw on lookup error
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'connection refused', code: 'ECONNREFUSED' },
+    });
+
+    await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).rejects.toEqual({
+      message: 'connection refused',
+      code: 'ECONNREFUSED',
+    });
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
   });
 });
 
