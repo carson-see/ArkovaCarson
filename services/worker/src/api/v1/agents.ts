@@ -22,6 +22,23 @@ import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
 
+/**
+ * SCRUM-1271-A — strip internal-actor UUIDs from outbound responses.
+ *
+ * `registered_by` is a `auth.users(id)` FK; `org_id` is `organizations(id)`.
+ * Both are CLAUDE.md §6 banned in customer-facing payloads. The agent row's
+ * own `id` is retained because v1 is frozen per §1.8 and the rename to
+ * `public_id` is being staged in v2 under SCRUM-1271-B. Adding the column
+ * itself is also tracked there so the migration ships once.
+ */
+function toPublicAgent<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
+  if (!row) return {};
+  const sanitized = { ...row };
+  delete (sanitized as Record<string, unknown>).org_id;
+  delete (sanitized as Record<string, unknown>).registered_by;
+  return sanitized;
+}
+
 /** Helper: get caller's org_id or return 403 */
 async function getCallerOrgId(userId: string, res: Response): Promise<string | null> {
   const { data: profile } = await db.from('profiles').select('org_id, role').eq('id', userId).single();
@@ -121,7 +138,7 @@ router.post('/', async (req: Request, res: Response) => {
     });
 
     logger.info({ agentId: agent.id, name: parsed.data.name, type: parsed.data.agent_type }, 'Agent registered');
-    res.status(201).json(agent);
+    res.status(201).json(toPublicAgent(agent));
   } catch (err) {
     logger.error({ error: err }, 'Agent registration failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -153,7 +170,7 @@ router.get('/', async (req: Request, res: Response) => {
       return;
     }
 
-    res.json({ agents: agents ?? [] });
+    res.json({ agents: (agents ?? []).map(toPublicAgent) });
   } catch (err) {
     logger.error({ error: err }, 'Agent list failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -182,7 +199,7 @@ router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response)
       .eq('agent_id', agentId)
       .eq('is_active', true);
 
-    res.json({ ...agent, api_keys: keys ?? [] });
+    res.json({ ...toPublicAgent(agent), api_keys: keys ?? [] });
   } catch (err) {
     logger.error({ error: err }, 'Agent lookup failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -237,7 +254,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
       details: JSON.stringify(parsed.data),
     });
 
-    res.json(agent);
+    res.json(toPublicAgent(agent));
   } catch (err) {
     logger.error({ error: err }, 'Agent update failed');
     res.status(500).json({ error: 'Internal server error' });
