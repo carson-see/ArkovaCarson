@@ -14,6 +14,31 @@
 
 ## Now
 
+### 2026-04-27 — R2 customer-recovery batch 3: SCRUM-1270 + 1272 vocab + 1271-A privacy fix
+
+Branch `claude/admiring-lamport-a7408b-batch`. Engineering-only, no prod-state changes. Stacked on `origin/main` at `ce9fcc7c`.
+
+**SCRUM-1270 (R2-7)** — `audit_events` is no longer browser-writable. Migration `0276_audit_events_append_only.sql` drops the `audit_events_insert` policy from migration 0190 (the forgery vector flagged in Forensic 7) and adds explicit `audit_events_no_update` / `audit_events_no_delete` policies on `authenticated, anon` plus a defense-in-depth `REVOKE INSERT, UPDATE, DELETE`. New worker route `POST /api/audit/event` (mounted at `services/worker/src/index.ts:339` after `requireAuthMw`) is the only browser-facing write path; `actor_id` is pinned to the JWT subject, the body is Zod `.strict()` validated, and the row inserts as service_role. Browser helpers — `src/lib/auditLog.ts` and `src/hooks/useIdleTimeout.ts:90` — now call the worker. Pre-2026-04-27 rows are preserved untouched and called out as potentially browser-originated in the table comment, so SOC-2 evidence trails carry the correct caveat.
+
+**SCRUM-1272 (R2-9) partial** — Authoritative scope vocabulary extended. `services/worker/src/api/apiScopes.ts` now exports `COMPLIANCE_API_SCOPES` (11 entries: `compliance:read|write`, `oracle:read|write`, `anchor:read|write`, `attestations:read|write`, `webhooks:manage`, `agents:manage`, `keys:read`). `scopeSatisfies()` keeps legacy `verify` callers working as a superset of the read scopes so handlers can pivot without breaking issued keys. **Not done in this PR**: `requireScope()` mount on FERPA / HIPAA / emergency-access routes — those routes use `requireAuth` (JWT) not `apiKeyAuth`, so the existing scope-guard middleware falls through for them. Needs a JWT-claims path (separate story; not yet filed). The v1 routes that DO accept API keys already enforce scopes (`/oracle`, `/anchor` GET/POST, `/attestations/batch-verify`, etc.) so the immediate gap is the JWT-only routes.
+
+**SCRUM-1271 (R2-8)** — Researched + broken into 6 sub-tickets and shipped only the privacy hot fix from sub-A. Verification of the original 7-endpoint list against current source is in the Jira parent comment. `agents.ts` now uses `toPublicAgent()` to strip `org_id` and `registered_by` (user UUID) from POST register, GET list, GET detail, PATCH update responses — CLAUDE.md §6 violation removed. The agent's `id` is retained for v1 back-compat per §1.8; the rename to `public_id` belongs in v2 under SCRUM-1444. Filed sub-tickets:
+
+- [SCRUM-1444](https://arkova.atlassian.net/browse/SCRUM-1444) — attestations.ts → /api/v2/attestations
+- [SCRUM-1445](https://arkova.atlassian.net/browse/SCRUM-1445) — webhooks.ts → /api/v2/webhooks (+ migration to add `public_id` to `webhook_endpoints` / `webhook_delivery_logs`)
+- [SCRUM-1441](https://arkova.atlassian.net/browse/SCRUM-1441) — keys.ts → /api/v2/keys (use `key_prefix` as the public id)
+- [SCRUM-1442](https://arkova.atlassian.net/browse/SCRUM-1442) — `response-schemas.ts` + CI lint (foundational; unblocks B/C/D)
+- [SCRUM-1443](https://arkova.atlassian.net/browse/SCRUM-1443) — anchor-lifecycle.ts close-out (already clean — verify-and-close)
+
+**Tests:** 83/83 across touched suites (`audit-event` 8 new, `apiScopes` 5 new + 9 pre-existing, `agents-sanitizer` 4 new, `agents` 16 pre-existing, `apiKeyAuth` 18 pre-existing, `anchor-evidence` 13, `anchor-lifecycle` 10). Worker `tsc --noEmit` matches the pre-existing baseline (the pre-existing `node:crypto` / `URL` / `process` dev-env errors are unchanged). `lint:copy` clean. `feedback_no_aws` clean.
+
+**Deferred this session** (skipped per scope/time): SCRUM-1284 (R3-11 RLS audit redo), SCRUM-1060 (SEC-HARDEN-07 MFA enforcement), SCRUM-1170 (HAKI-REQ-01 parent/sub-org credits), SCRUM-1072 (SOC2-01 auditor selection), SCRUM-1050 (GEMB2-01 benchmark — needs Vertex API access), SCRUM-1226 (branch protection — Carson-only repo-admin op).
+
+**Verification artifacts:**
+- Migration 0276 awaits prod apply (operator step per `feedback_worker_hands_off`).
+- Worker route mounted at `services/worker/src/index.ts:339`; smoke test must wait for next deploy run.
+- Branch + PR will be linked once pushed.
+
 ### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
 
 Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.

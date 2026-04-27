@@ -334,6 +334,12 @@ app.use('/api/v2', apiV2Router);
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
 app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
 
+// SCRUM-1270 (R2-7) — append-only audit_events writer. Browser callers must use
+// this instead of inserting directly; migration 0276 dropped the authenticated
+// INSERT policy so direct writes now fail.
+import { auditEventRouter } from './api/audit-event.js';
+app.use('/api/audit', rateLimiters.api, requireAuthMw, auditEventRouter);
+
 // ─── 404 catch-all — JSON response for unmatched routes (BUG-14) ───
 // Must be after all route mounts, before error handlers.
 // Without this, Express returns plain text "Cannot GET /path" which breaks API clients.
