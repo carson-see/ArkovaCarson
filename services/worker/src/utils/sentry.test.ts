@@ -6,6 +6,22 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// vi.mock is hoisted above the import below so sentry.ts (which does
+// `import * as Sentry from '@sentry/node'`) sees the mocked addBreadcrumb.
+// vi.spyOn on the re-exported ESM namespace fails with "Cannot redefine
+// property: addBreadcrumb" because ESM exports are read-only — this is
+// the standard workaround. The other Sentry methods fall through to the
+// real module via importActual so the PII scrubber tests below behave
+// normally (they don't depend on addBreadcrumb at all).
+vi.mock('@sentry/node', async () => {
+  const actual = await vi.importActual<typeof import('@sentry/node')>('@sentry/node');
+  return {
+    ...actual,
+    addBreadcrumb: vi.fn(),
+  };
+});
+
 import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
@@ -242,7 +258,8 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
   });
 
   it('emits a Sentry breadcrumb in the chain.rpc-fallback category with method + reason', () => {
-    const breadcrumbSpy = vi.spyOn(Sentry, 'addBreadcrumb').mockImplementation(() => undefined);
+    const breadcrumbSpy = vi.mocked(Sentry.addBreadcrumb);
+    breadcrumbSpy.mockClear();
     const logger = { warn: vi.fn() };
 
     emitRpcFallback({
@@ -264,7 +281,7 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
   });
 
   it('emits a structured warn log with the locked field shape', () => {
-    vi.spyOn(Sentry, 'addBreadcrumb').mockImplementation(() => undefined);
+    vi.mocked(Sentry.addBreadcrumb).mockClear();
     const logger = { warn: vi.fn() };
 
     emitRpcFallback({
@@ -289,7 +306,7 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
   });
 
   it('uses "unknown" reason when error is not an Error instance', () => {
-    vi.spyOn(Sentry, 'addBreadcrumb').mockImplementation(() => undefined);
+    vi.mocked(Sentry.addBreadcrumb).mockClear();
     const logger = { warn: vi.fn() };
 
     emitRpcFallback({

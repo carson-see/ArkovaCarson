@@ -26,6 +26,14 @@ vi.mock('../utils/db.js', () => ({
         }),
       }),
     }),
+    // fetchAnchorStats() calls callRpc(db, 'get_anchor_status_counts_fast').
+    // Without this mock, db.rpc is undefined → TypeError surfaces as an
+    // unhandled rejection that fails the whole test run even though the
+    // assertions pass.
+    rpc: vi.fn().mockResolvedValue({
+      data: { total_secured: 5, total_pending: 3 },
+      error: null,
+    }),
   },
 }));
 
