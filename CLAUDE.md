@@ -29,8 +29,8 @@ Every task updates its ticket (DoR checked, DoD checked, status transitioned, Co
 ### 4. Confluence is the source of truth for documentation
 Every Jira story + epic (To Do / In Progress / Blocked / Done / Closed) MUST have a Confluence page. Markdown files in `docs/` are NOT documentation — they are either historical context or internal engineering notes. Auditors read Confluence. User has repeated this 500+ times; see `memory/feedback_confluence_is_the_doc.md`.
 
-### 5. Bug log is canonical
-Every bug found or fixed must land in the master tracker: https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4/edit?gid=0#gid=0
+### 5. Bug log is canonical (Confluence from 2026-04-26)
+Every bug found or fixed must land in the master tracker: [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270). Google Sheet (https://docs.google.com/spreadsheets/d/1mOReOXL7cmBNDD77TKVKF3LsdQ3mEcmDbgs5q_pTEk4) is historical archive only — new bugs land in Confluence.
 
 ### 6. UAT every UI change
 Dev server up at 1280px and 375px. Screenshots in the PR. Regressions logged in bug tracker.
@@ -187,13 +187,23 @@ Migration state (reality, not aspiration): see HANDOFF.md.
 
 ---
 
-## 5. STORY STATUS
+## 5. STORY STATUS + PRIORITIZATION
 
 Source of truth: [Jira SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM). Do NOT maintain a per-story status table in this file — it will drift (and did, for months, until the 2026-04-21 audit).
+
+**Product Owner roadmap (priority order across releases → epics → stories):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) — read this before picking up new work. If a Jira label disagrees with the roadmap, the roadmap wins and the Jira label is fixed.
 
 For confluence audit pages, see [Confluence space A](https://arkova.atlassian.net/wiki/spaces/A) — every epic has an audit page titled `SCRUM-N — <summary> — AUDIT`.
 
 Current epic health snapshot lives in HANDOFF.md and is updated at the end of every sprint.
+
+### 5.1 Jira ticket structure conventions (post-2026-04-26)
+
+- **Jira description** = short pointer (≤200 chars) plus Confluence link. The MCP edit endpoint caps `fields` payload size — descriptions over ~200 chars round-trip-fail.
+- **Confluence page** = the structured spec (Goal / Outcomes / Scope / Child Stories / DoD / References). Title format: `SCRUM-NNN — <summary>` for stories or `SCRUM-NNN — <TAG: Title> — AUDIT` for epics. Parent under space `A` homepage `163950`.
+- **Every Story has subtasks** with brief descriptions. Each subtask must close before the parent Story can transition to Done. Enforced by Atlassian Automation rule `019dcaa3-0834-7d67-9dbb-094c3dd7b34f`. Subtask issuetype is **id 10002** (named `Subtask`) in this project — verified 2026-04-26 via `getJiraProjectIssueTypesMetadata`. Avoid summary prefix `[DoD]` on subtasks: a Jira→Confluence sync hook tries to create a page-per-subtask using summary as title, and `[DoD] X` collides — the subtask creates fine, but the response shape gets noisy. Prefer `[Verify]` or `[Close-out]`.
+- **Every Story has a parent epic.** Stories without parent get blocked back to Needs Human (rule `019dca9d-8cd5-73c1-b911-77a481538d2f`).
+- **Reporter ≠ resolver** on Done transitions (rule `019dca84-9ae3-7efc-a994-90ce64580fff`).
 
 ---
 
