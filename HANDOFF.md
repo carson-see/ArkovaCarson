@@ -14,6 +14,36 @@
 
 ## Now
 
+### 2026-04-26 EOD — PO format + prioritization pass (alongside R1 in flight)
+
+**New artifacts (Confluence-canonical):**
+- [PRODUCT OWNER ROADMAP](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) — releases → epics → stories priority order. Read this before picking up new work. Beats any Jira label drift.
+- [BUG TRACKER — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270) — replaces the Google Sheet (which becomes a historical archive). New bugs land in Confluence. CLAUDE.md §0 rule 5 updated to match.
+
+**Audit findings (this session):**
+- 341 open Jira tickets across 4 statuses, 4 issue types, 4 priority buckets.
+- 42 malformed (description not in `## User Story` / `## Epic Goal` form) — 2 epics (SCRUM-1208, SCRUM-1246), 4 bugs, 4 stories, 32 tasks.
+- 274 open tickets without a Confluence page (CLAUDE.md §0 rule 4 violation, tracked under SCRUM-1199 backfill).
+- Discovered MCP `editJiraIssue` payload cap (~200 chars) — pivoted convention: Jira description = short pointer; Confluence holds full structured spec.
+
+**Format-pass results:**
+- ✅ SCRUM-1208 + SCRUM-1246 epics reformatted (Confluence pages 27361609 + 27558990 hold the spec; Jira descriptions are short pointers).
+- ✅ All 40 remaining malformed tickets reformatted (Agent A): each got a Confluence page (created or stub-replaced with full structured spec), Jira description trimmed to ≤200 chars with link, "Confluence:" comment added. Tickets: SCRUM-1130-1133, 1136-1139, 1183-1207, 1229-1234, 1244.
+- ✅ 7 duplicate epics SCRUM-1033..1039 closed Done with Duplicate links to canonical SCRUM-1041..1047 (Agent B).
+- ✅ 111 subtasks created across 36 top-priority Stories (Agent C; SCRUM-1324..1434). Subtask issuetype is **id 10002** (named `Subtask`) — corrected in CLAUDE.md §5.1. Two harmless duplicate `[DoD]` subtasks on SCRUM-775 (SCRUM-1348) and SCRUM-780 (SCRUM-1349) from a Confluence-sync 400-retry race; not blocking, left in place.
+
+**Carryover follow-ups (separate sessions):**
+- Backfill Confluence pages for the remaining ~234 open tickets without a page (CLAUDE.md §0 rule 4). Tracked under SCRUM-1199.
+- Add subtasks to the remaining ~115 open Stories not in the top-36 batch.
+- Clean up older Confluence stub duplicates for SCRUM-1231 / 1233 / 1234 (canonical pages now live; older stubs left stale).
+- Update `docs/jira-workflow/automation-rules.json` rule R6 body to point at Confluence Bug Tracker (28115270) instead of the Google Sheet — until then both URLs are accepted.
+
+**PO call-outs surfaced:**
+1. Top-of-stack right now: finish R1 (5 stories), ship R2 (10 stories — revenue-bleeding Stripe + webhook bugs), close SCRUM-1208 by landing SCRUM-1226 + SCRUM-1284.
+2. ✅ Duplicate epic series SCRUM-1033..1039 closed (was: duplicate SCRUM-1040..1049). Done in this session.
+3. Long-lead start: SCRUM-1072 SOC2-01 auditor selection — start now, blocks Q2 fieldwork.
+4. P3 NVI cluster (NVI/NTF/NDD/NSS/NCX/KAU = 6 epics + ~30 stories) stays Blocked until SCRUM-883 FCRA counsel closes. Do not unblock.
+
 ### 2026-04-26 — R1 wave in progress (SCRUM-1246 production recovery)
 
 Branch `claude/scrum-1246-r1-recovery` (off `origin/main` at `1c922fd9`). 4 of 9 R1 stories complete; PR #1 imminent.
