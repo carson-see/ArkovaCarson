@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-04-27 — Batch B follow-up: SCRUM-1260 e2e + closing trail (5 stories)
+
+Branch `claude/elated-engelbart-eeee33-r2-batch` (continuation, atop PR #600).
+
+**SCRUM-1260 (R1-6)** — engineering for the "kill silent 0/0/0" mandate is in main (greppable via `SCRUM-1260` markers in `src/pages/PipelineAdminPage.tsx`, `src/hooks/useTreasuryBalance.ts`, `src/hooks/useAnchorStats.ts`). The remaining open AC ("Playwright spec asserts each error state is reachable + visible") closed by `e2e/pipeline-admin-errors.spec.ts`: mocks `/api/admin/pipeline-stats` and `/api/treasury/*` to 5xx + hang, asserts the explicit error banner shows + the treasury 8s timeout fires + the page does NOT fall back to direct mempool.space calls (Forensic 1 leak class).
+
+**SCRUM-1226** — `gh api branches/main/protection` work. Already Jira-Done with `resolution: Done`. Closing trail trail-up only.
+
+**SCRUM-1208** — Integration Hardening epic. Two remaining child stories: SCRUM-1226 (Done) + SCRUM-1284 (PR [#598](https://github.com/carson-see/ArkovaCarson/pull/598) open with Tests + Lighthouse failing). Epic close pending #598 merge.
+
+**SCRUM-1284 (R3-11)** — RLS audit redo. PR #598 open (`ccea320a`); migrations `0274_revoke_anon_authenticated_matviews.sql` + `0275_payment_ledger_security_invoker.sql` already in main per ledger. Required-check failures (Tests + Lighthouse) need a separate fix to unblock close-out.
+
+**SCRUM-1072 (SOC2-01)** — Vendor selection spike. Created Confluence comparison stub seeded with the 3 vendors (Drata / Vanta / Tugboat Logic) + ref-call template. Customer reference calls + signed contract remain procurement work.
+
 ### 2026-04-27 — R2 batch 3: SCRUM-1270 + 1272 + 1271 + 1258 + 1263 (5 stories one PR)
 
 Branch `claude/elated-engelbart-eeee33-r2-batch`. Engineering, no prod-state changes.
