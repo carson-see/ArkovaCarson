@@ -18,7 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { recordDetailPath } from '@/lib/routes';
+import { ROUTES, recordDetailPath } from '@/lib/routes';
 
 export type NotificationType =
   | 'queue_run_completed'
@@ -176,11 +176,12 @@ export function notificationDeepLink(n: Notification): string | null {
     case 'version_available_for_review':
       return targetId ? recordDetailPath(targetId) : null;
     case 'rule_fired':
-      return targetId ? `/admin/rules/${targetId}` : null;
+      // No per-rule detail page exists; deep-link to the list.
+      return ROUTES.RULES;
     case 'queue_run_completed':
-      return '/admin/queues';
+      return ROUTES.ANCHOR_QUEUE;
     case 'treasury_alert':
-      return '/admin/treasury';
+      return ROUTES.ADMIN_TREASURY;
     default:
       return null;
   }

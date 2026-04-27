@@ -109,6 +109,9 @@ describe('<NotificationBell />', () => {
   it('clicking an unread row marks it read AND navigates to its deep link', async () => {
     mockNotifications = [
       { ...baseRow, id: 'n1', type: 'anchor_revoked', payload: { title: 'Record revoked', target_id: 'anchor-42' } },
+      { ...baseRow, id: 'n2', type: 'rule_fired', payload: { title: 'Rule fired' } },
+      { ...baseRow, id: 'n3', type: 'queue_run_completed', payload: { title: 'Queue run' } },
+      { ...baseRow, id: 'n4', type: 'treasury_alert', payload: { title: 'Treasury' } },
     ];
     mockUnread = 1;
     const { getByRole, findByLabelText } = render(<NotificationBell />);
