@@ -61,6 +61,7 @@ import {
 import { isMcpEnabled, mcpDisabledResponse } from './mcp-kill-switch';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 import { signEnvelope } from './mcp-hmac';
+import { verifySupabaseJwt } from './supabase-jwt';
 
 // Module-scope detector so heuristics span requests inside one CF
 // isolate. Request-scoped detectors could not observe cross-session
@@ -720,11 +721,14 @@ async function validateApiKey(
   return null;
 }
 
-async function validateBearer(
+export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
   try {
+    const claims = await verifySupabaseJwt(token, env);
+    if (!claims) return null;
+
     const response = await authFetch(`${env.SUPABASE_URL}/auth/v1/user`, {
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
@@ -733,6 +737,7 @@ async function validateBearer(
     });
     if (response.ok) {
       const user = await response.json() as { id: string };
+      if (user.id !== claims.sub) return null;
       return { userId: user.id, tier: 'authenticated', apiKeyId: null };
     }
   } catch {

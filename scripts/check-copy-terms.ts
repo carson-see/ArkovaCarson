@@ -151,7 +151,28 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
 }
 
 function stripIgnoredAttributeValues(line: string): string {
-  return line.replace(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
+  return line.replaceAll(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
+}
+
+function hasInlineJsxText(line: string): boolean {
+  let searchFrom = 0;
+
+  while (searchFrom < line.length) {
+    const closeTagStart = line.indexOf('>', searchFrom);
+    if (closeTagStart === -1) return false;
+
+    const nextOpenTag = line.indexOf('<', closeTagStart + 1);
+    if (nextOpenTag === -1) return false;
+
+    const text = line.slice(closeTagStart + 1, nextOpenTag).trimStart();
+    if (text.length > 0 && text[0] !== '{') {
+      return true;
+    }
+
+    searchFrom = nextOpenTag + 1;
+  }
+
+  return false;
 }
 
 /**
@@ -161,12 +182,12 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
   const results: Violation[] = [];
   const searchableLine = stripIgnoredAttributeValues(line);
   for (const term of FORBIDDEN_TERMS) {
-    const regex = new RegExp(term, 'gi');
-    const match = searchableLine.match(regex);
+    const regex = new RegExp(term, 'i');
+    const match = regex.exec(searchableLine);
     if (!match) continue;
 
     const hasString = searchableLine.includes('"') || searchableLine.includes("'") || searchableLine.includes('`');
-    const hasJsxText = />\s*[^<{][^<]*</.test(searchableLine);
+    const hasJsxText = hasInlineJsxText(searchableLine);
 
     if (hasString || hasJsxText) {
       results.push({

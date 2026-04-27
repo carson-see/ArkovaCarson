@@ -245,6 +245,23 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     : null;
   const heroTitle = getHeroTitle(data.status, securedAt, formatDate);
   const heroSubtitle = getHeroSubtitle(data.status);
+  let statusBadgeVariant: 'default' | 'secondary' | 'outline' = 'default';
+  let statusBadgeClassName = 'bg-green-600 hover:bg-green-700';
+  let statusBadgeLabel = statusLabel;
+
+  if (isAwaitingConfirmation || isExpired) {
+    statusBadgeVariant = 'outline';
+    statusBadgeClassName = 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20';
+  } else if (isRevoked) {
+    statusBadgeVariant = 'secondary';
+    statusBadgeClassName = '';
+  }
+
+  if (isSubmitted) {
+    statusBadgeLabel = ANCHORING_STATUS_LABELS.SUBMITTED_BADGE;
+  } else if (isPending) {
+    statusBadgeLabel = ANCHORING_STATUS_LABELS.PENDING_BADGE;
+  }
 
   return (
     <Card className="max-w-2xl mx-auto overflow-hidden">
@@ -278,15 +295,10 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             )}
           </div>
           <Badge
-            variant={isAwaitingConfirmation ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
-            className={`mb-2 text-sm px-4 py-1 ${
-              isAwaitingConfirmation ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
-              : isExpired ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
-              : isRevoked ? ''
-              : 'bg-green-600 hover:bg-green-700'
-            }`}
+            variant={statusBadgeVariant}
+            className={`mb-2 text-sm px-4 py-1 ${statusBadgeClassName}`}
           >
-            {isSubmitted ? ANCHORING_STATUS_LABELS.SUBMITTED_BADGE : isPending ? ANCHORING_STATUS_LABELS.PENDING_BADGE : statusLabel}
+            {statusBadgeLabel}
           </Badge>
           <h2 className="text-xl font-semibold">
             {heroTitle}

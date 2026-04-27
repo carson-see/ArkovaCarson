@@ -35,6 +35,9 @@ export interface Env {
   CF_AI_MODEL: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
+  // SCRUM-926 / MCP-SEC-07: HS256 secret used to verify Supabase user JWTs
+  // locally before the MCP server trusts `/auth/v1/user`.
+  SUPABASE_JWT_SECRET?: string;
 
   // Authentication (AUDIT-03)
   CRON_SECRET: string;

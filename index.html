@@ -104,6 +104,7 @@
     {
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
+      "@id": "https://arkova.ai/#software",
       "name": "Arkova",
       "url": "https://app.arkova.ai",
       "applicationCategory": "BusinessApplication",
@@ -126,6 +127,60 @@
         "Webhook notifications",
         "MCP server for AI agent access"
       ]
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "@id": "https://arkova.ai/#product",
+      "name": "Arkova Compliance Audit Automation",
+      "description": "Arkova automates compliance evidence collection, jurisdiction-aware audit checks, and tamper-evident document verification for GRC teams.",
+      "brand": { "@id": "https://arkova.ai/#org" },
+      "category": "Compliance audit software",
+      "url": "https://arkova.ai",
+      "isRelatedTo": { "@id": "https://arkova.ai/#software" },
+      "offers": {
+        "@type": "AggregateOffer",
+        "lowPrice": "0",
+        "highPrice": "99",
+        "priceCurrency": "USD",
+        "offerCount": "3",
+        "url": "https://app.arkova.ai"
+      }
+    }
+    </script>
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Service",
+      "@id": "https://arkova.ai/#audit-automation-service",
+      "name": "Arkova Compliance Audit Automation Service",
+      "serviceType": "Compliance audit automation",
+      "description": "Jurisdiction-aware compliance audit automation with verified evidence, scorecards, and proof-ready reporting for regulated teams.",
+      "provider": { "@id": "https://arkova.ai/#org" },
+      "areaServed": "Global",
+      "url": "https://arkova.ai",
+      "hasOfferCatalog": {
+        "@type": "OfferCatalog",
+        "name": "Arkova audit automation plans",
+        "itemListElement": [
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Self-serve compliance audit automation"
+            }
+          },
+          {
+            "@type": "Offer",
+            "itemOffered": {
+              "@type": "Service",
+              "name": "Enterprise evidence verification workflows"
+            }
+          }
+        ]
+      }
     }
     </script>
   </head>

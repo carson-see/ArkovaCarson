@@ -81,7 +81,7 @@ export function formatCredentialType(raw: string | null | undefined): string {
   if (!raw) return '—';
   const upper = raw.replace(/-/g, '_').toUpperCase();
   if (upper in CREDENTIAL_TYPE_LABELS) return CREDENTIAL_TYPE_LABELS[upper as keyof typeof CREDENTIAL_TYPE_LABELS];
-  return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  return raw.replaceAll('_', ' ').replaceAll(/\b\w/g, c => c.toUpperCase());
 }
 
 /** Map raw subtype values such as "professional_certification" to display copy. */
@@ -90,9 +90,9 @@ export function formatCredentialSubType(raw: string | null | undefined): string 
   const trimmed = raw.trim();
   if (!trimmed) return null;
   return trimmed
-    .replace(/[-_]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\b\w/g, c => c.toUpperCase());
+    .replaceAll(/[-_]+/g, ' ')
+    .replaceAll(/\s+/g, ' ')
+    .replaceAll(/\b\w/g, c => c.toUpperCase());
 }
 
 export const CREDENTIAL_TYPE_DESCRIPTIONS = {
