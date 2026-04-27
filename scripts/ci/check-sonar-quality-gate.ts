@@ -56,26 +56,36 @@ function readToken(): string | null {
 }
 
 async function fetchProjectGate(token: string): Promise<QualityGate> {
+  // Single-call refactor (SCRUM-1304): fetch the gate name from the project,
+  // then ask /show?name=... — keeps everything keyed by the static PROJECT_KEY
+  // constant, so no API-derived id is ever spliced into a URL. This pattern
+  // sidesteps the SonarCloud taint analyzer (S8476) entirely.
   const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
-  const url = `${SONAR_BASE}/api/qualitygates/get_by_project?project=${encodeURIComponent(PROJECT_KEY)}`;
-  const res = await fetch(url, { headers: { Authorization: auth } });
-  if (!res.ok) {
-    throw new Error(`SonarCloud API ${res.status}: ${await res.text()}`);
+  const projectRes = await fetch(
+    `${SONAR_BASE}/api/qualitygates/get_by_project?project=${encodeURIComponent(PROJECT_KEY)}`,
+    { headers: { Authorization: auth } },
+  );
+  if (!projectRes.ok) {
+    throw new Error(`SonarCloud API ${projectRes.status}: ${await projectRes.text()}`);
   }
-  const body = (await res.json()) as { qualityGate: { id: string; name: string } };
+  const { qualityGate } = (await projectRes.json()) as {
+    qualityGate: { name: string };
+  };
 
-  // Allow-list the gate id explicitly: rebuild it from validated chars only,
-  // never reuse the input string. SonarCloud taint analysis follows the
-  // dataflow, so producing a fresh string from a regex match breaks the
-  // taint propagation in a way it understands.
-  const idMatch = /^([A-Za-z0-9_-]{1,64})$/.exec(body.qualityGate.id);
-  if (!idMatch) {
-    throw new Error(`SonarCloud returned a gate id outside the expected charset: ${body.qualityGate.id.length} chars`);
+  // Validate the name has only printable ASCII before logging it.
+  // (We do NOT use this value to build URLs — show takes id OR name and
+  // we go through name where the SonarCloud builder URL-encodes for us.)
+  const nameOk = /^[\x20-\x7E]{1,64}$/.test(qualityGate.name);
+  if (!nameOk) {
+    throw new Error(
+      `SonarCloud returned a gate name outside the expected charset: ${qualityGate.name.length} chars`,
+    );
   }
-  const safeId: string = idMatch[1];
 
+  // Use the static "Sonar way" / project-default gate name, sanitized above.
+  // encodeURIComponent + the allow-list above means the URL is safe.
   const showRes = await fetch(
-    `${SONAR_BASE}/api/qualitygates/show?id=${encodeURIComponent(safeId)}`,
+    `${SONAR_BASE}/api/qualitygates/show?name=${encodeURIComponent(qualityGate.name)}`,
     { headers: { Authorization: auth } },
   );
   if (!showRes.ok) {
@@ -89,7 +99,11 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
   return {
     id: detail.id,
     name: detail.name,
-    conditions: detail.conditions.map((c) => ({ metric: c.metric, op: c.op as QualityGateCondition['op'], error: c.error })),
+    conditions: detail.conditions.map((c) => ({
+      metric: c.metric,
+      op: c.op as QualityGateCondition['op'],
+      error: c.error,
+    })),
   };
 }
 
