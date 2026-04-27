@@ -51,15 +51,15 @@ export async function submitToIndexNow(urls: string[]): Promise<void> {
       });
 
       if (res.ok || res.status === 202) {
-        logger.info('IndexNow submitted', { endpoint, urlCount: urls.length });
+        logger.info({ endpoint, urlCount: urls.length }, 'IndexNow submitted');
       } else {
-        logger.warn('IndexNow rejected', { endpoint, status: res.status });
+        logger.warn({ endpoint, status: res.status }, 'IndexNow rejected');
       }
     } catch (err) {
-      logger.debug('IndexNow ping failed (non-critical)', {
+      logger.debug({
         endpoint,
         error: err instanceof Error ? err.message : String(err),
-      });
+      }, 'IndexNow ping failed (non-critical)');
     }
   }
 }

@@ -141,9 +141,9 @@ router.get('/', async (req: Request, res: Response) => {
       note: 'Key material is never exposed. Contact security@arkova.ai for key ceremony records.',
     });
   } catch (err) {
-    logger.error('Key inventory request failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Key inventory request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

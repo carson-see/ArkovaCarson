@@ -219,7 +219,7 @@ router.post('/sign', async (req: Request, res: Response) => {
       .single();
 
     if (insertErr || !sigRecord) {
-      logger.error('Failed to create signature record', { error: insertErr });
+      logger.error({ error: insertErr }, 'Failed to create signature record');
       res.status(500).json({ error: 'Failed to create signature' });
       return;
     }
@@ -295,7 +295,7 @@ router.post('/sign', async (req: Request, res: Response) => {
       .eq('id', sigRecord.id);
 
     if (updateErr) {
-      logger.error('Failed to update signature with engine result', { error: updateErr });
+      logger.error({ error: updateErr }, 'Failed to update signature with engine result');
     }
 
     // Emit audit event
@@ -332,9 +332,9 @@ router.post('/sign', async (req: Request, res: Response) => {
 
     res.status(201).json(response);
   } catch (err) {
-    logger.error('Sign endpoint error', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Sign endpoint error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -384,9 +384,9 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
 
     res.json(response);
   } catch (err) {
-    logger.error('Get signature error', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Get signature error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -510,9 +510,9 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
       verified_at: new Date().toISOString(),
     });
   } catch (err) {
-    logger.error('Verify signature error', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Verify signature error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -570,7 +570,7 @@ router.get('/signatures', async (req: Request, res: Response) => {
     const { data: signatures, error } = await query;
 
     if (error) {
-      logger.error('List signatures error', { error });
+      logger.error({ error }, 'List signatures error');
       res.status(500).json({ error: 'Failed to list signatures' });
       return;
     }
@@ -585,9 +585,9 @@ router.get('/signatures', async (req: Request, res: Response) => {
       count: signatures?.length || 0,
     });
   } catch (err) {
-    logger.error('List signatures error', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'List signatures error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -655,7 +655,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
       .eq('id', sig.id);
 
     if (updateErr) {
-      logger.error('Revoke signature error', { error: updateErr });
+      logger.error({ error: updateErr }, 'Revoke signature error');
       res.status(500).json({ error: 'Failed to revoke signature' });
       return;
     }
@@ -677,9 +677,9 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
       reason,
     });
   } catch (err) {
-    logger.error('Revoke signature error', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Revoke signature error');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

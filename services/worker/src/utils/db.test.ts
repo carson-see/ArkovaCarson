@@ -102,9 +102,9 @@ describe('db', () => {
       const { getDb } = await import('./db.js');
       getDb(); // trigger initialization
       // Check that no warn call mentions port 6543 issue
-      const warnCalls = vi.mocked(loggerMod.logger.warn).mock.calls;
+      const warnCalls = vi.mocked(loggerMod.logger.warn).mock.calls as unknown as unknown[][];
       const portWarn = warnCalls.find(
-        (call) => typeof call[1] === 'string' && call[1].includes('does not use port 6543')
+        (call) => typeof call[1] === 'string' && (call[1] as string).includes('does not use port 6543')
       );
       expect(portWarn).toBeUndefined();
     });

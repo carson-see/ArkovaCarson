@@ -95,15 +95,15 @@ export class DefaultQtspProvider implements QtspProvider {
         return response;
       } catch (err) {
         this.recordFailure(this.primary.url, err);
-        logger.warn('Primary TSA failed, attempting failover', {
+        logger.warn({
           tsa: this.primary.name,
           error: err instanceof Error ? err.message : String(err),
-        });
+        }, 'Primary TSA failed, attempting failover');
       }
     } else {
-      logger.info('Primary TSA circuit open, using secondary', {
+      logger.info({
         tsa: this.primary.name,
-      });
+      }, 'Primary TSA circuit open, using secondary');
     }
 
     // Failover to secondary
@@ -111,9 +111,9 @@ export class DefaultQtspProvider implements QtspProvider {
       try {
         const response = await this.client.timestamp(this.secondary, request);
         this.recordSuccess(this.secondary.url);
-        logger.info('Failover to secondary TSA succeeded', {
+        logger.info({
           tsa: this.secondary.name,
-        });
+        }, 'Failover to secondary TSA succeeded');
         return response;
       } catch (err) {
         this.recordFailure(this.secondary.url, err);
@@ -161,9 +161,9 @@ export class DefaultQtspProvider implements QtspProvider {
       }
     }, this.healthIntervalMs);
 
-    logger.info('TSA health checks started', {
+    logger.info({
       intervalMs: this.healthIntervalMs,
-    });
+    }, 'TSA health checks started');
   }
 
   stopHealthChecks(): void {
@@ -184,7 +184,7 @@ export class DefaultQtspProvider implements QtspProvider {
       if (elapsed >= this.resetMs) {
         // Half-open: allow one attempt
         state.circuitOpen = false;
-        logger.info('Circuit breaker half-open', { url });
+        logger.info({ url }, 'Circuit breaker half-open');
         return false;
       }
     }
@@ -211,11 +211,11 @@ export class DefaultQtspProvider implements QtspProvider {
     if (state.failureCount >= this.failureThreshold) {
       state.circuitOpen = true;
       state.circuitOpenedAt = new Date();
-      logger.warn('Circuit breaker opened', {
+      logger.warn({
         url,
         failureCount: state.failureCount,
         threshold: this.failureThreshold,
-      });
+      }, 'Circuit breaker opened');
     }
   }
 
@@ -232,11 +232,11 @@ export class DefaultQtspProvider implements QtspProvider {
       });
 
       this.recordSuccess(config.url);
-      logger.info('TSA health check passed, circuit closed', {
+      logger.info({
         tsa: config.name,
-      });
+      }, 'TSA health check passed, circuit closed');
     } catch {
-      logger.debug('TSA health check failed', { tsa: config.name });
+      logger.debug({ tsa: config.name }, 'TSA health check failed');
     }
   }
 }

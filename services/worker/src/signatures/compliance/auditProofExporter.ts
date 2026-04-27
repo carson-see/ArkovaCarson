@@ -111,7 +111,7 @@ export async function generateAuditProof(
     .single();
 
   if (error || !sig) {
-    logger.warn('Audit proof: signature not found', { signaturePublicId });
+    logger.warn({ signaturePublicId }, 'Audit proof: signature not found');
     return null;
   }
 

@@ -118,7 +118,7 @@ export class X509CertificateManager implements CertificateManager {
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error('Certificate chain validation failed', { error: message });
+      logger.error({ error: message }, 'Certificate chain validation failed');
       return {
         valid: false,
         chain,

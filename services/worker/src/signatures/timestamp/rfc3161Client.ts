@@ -23,11 +23,11 @@ export interface Rfc3161Client {
 
 export class HttpRfc3161Client implements Rfc3161Client {
   async timestamp(config: TsaConfig, request: TsaRequest): Promise<TsaResponse> {
-    logger.info('RFC 3161 timestamp request', {
+    logger.info({
       tsa: config.name,
       url: config.url,
       hashAlgorithm: request.hashAlgorithm,
-    });
+    }, 'RFC 3161 timestamp request');
 
     // Build DER-encoded TimeStampReq
     const tsReqDer = buildTimeStampReq(request);
@@ -54,10 +54,10 @@ export class HttpRfc3161Client implements Rfc3161Client {
 
     const contentType = response.headers.get('content-type');
     if (contentType && !contentType.includes('timestamp-reply')) {
-      logger.warn('TSA returned unexpected content type', {
+      logger.warn({
         tsa: config.name,
         contentType,
-      });
+      }, 'TSA returned unexpected content type');
     }
 
     const responseData = Buffer.from(await response.arrayBuffer());
@@ -65,12 +65,12 @@ export class HttpRfc3161Client implements Rfc3161Client {
     // Parse TimeStampResp
     const tsResponse = parseTimeStampResp(responseData, config);
 
-    logger.info('RFC 3161 timestamp received', {
+    logger.info({
       tsa: config.name,
       status: tsResponse.status,
       serial: tsResponse.tstSerial,
       genTime: tsResponse.genTime.toISOString(),
-    });
+    }, 'RFC 3161 timestamp received');
 
     return tsResponse;
   }

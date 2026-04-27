@@ -63,11 +63,11 @@ export class AwsKmsHsmBridge implements HsmBridge {
       throw new Error('AWS KMS returned empty signature');
     }
 
-    logger.info('HSM sign completed', {
+    logger.info({
       provider: 'aws_kms',
       algorithm: request.algorithm,
       keyId: request.keyId.substring(0, 12) + '...',
-    });
+    }, 'HSM sign completed');
 
     return {
       signature: Buffer.from(response.Signature),
@@ -117,11 +117,11 @@ export class GcpKmsHsmBridge implements HsmBridge {
       throw new Error('GCP KMS returned empty signature');
     }
 
-    logger.info('HSM sign completed', {
+    logger.info({
       provider: 'gcp_kms',
       algorithm: request.algorithm,
       keyId: request.keyId.substring(0, 20) + '...',
-    });
+    }, 'HSM sign completed');
 
     return {
       signature: Buffer.from(response.signature),

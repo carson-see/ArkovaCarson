@@ -35,8 +35,8 @@ vi.mock('../utils/db.js', () => {
     const chain: Record<string, unknown> = {};
     chain.eq = vi.fn(() => chain);
     // PromiseLike — `await chain` resolves to the configurable anchorsSelectChain.
-    (chain as unknown as PromiseLike<unknown>).then = (onfulfilled: (v: unknown) => unknown) =>
-      Promise.resolve(anchorsSelectChain).then(onfulfilled);
+    (chain as unknown as PromiseLike<unknown>).then = ((onfulfilled?: (v: unknown) => unknown) =>
+      Promise.resolve(anchorsSelectChain).then(onfulfilled)) as PromiseLike<unknown>['then'];
     return chain;
   };
 

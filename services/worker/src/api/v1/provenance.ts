@@ -194,9 +194,9 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
       event_count: events.length,
     });
   } catch (err) {
-    logger.error('Provenance timeline failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Provenance timeline failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -82,14 +82,14 @@ export class DefaultTimestampValidator implements TimestampValidator {
     // 6. Determine verification status
     const status: TimestampVerificationStatus = errors.length === 0 ? 'VALID' : 'INVALID';
 
-    logger.info('Timestamp token verified', {
+    logger.info({
       tokenId: token.id,
       status,
       genTime: genTime.toISOString(),
       tsaName: token.tsaName,
       qualified: token.qtspQualified,
       errors: errors.length,
-    });
+    }, 'Timestamp token verified');
 
     return buildResult(token, status, errors);
   }

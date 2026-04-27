@@ -123,7 +123,7 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
       org_id: membership.org_id,
       details: JSON.stringify({ role: membership.role }),
     }).then(() => {/* fire and forget */}, (err: unknown) => {
-      logger.warn('Failed to log key inventory audit event', { error: err instanceof Error ? err.message : String(err) });
+      logger.warn({ error: err instanceof Error ? err.message : String(err) }, 'Failed to log key inventory audit event');
     });
 
     res.json({
@@ -132,9 +132,9 @@ router.get('/signatures/key-inventory', async (req: Request, res: Response) => {
       keys: inventory,
     });
   } catch (err) {
-    logger.error('Key inventory retrieval failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Key inventory retrieval failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
