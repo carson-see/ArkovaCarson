@@ -87,9 +87,8 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('organizations').upsert({
       id: sandboxOrgId,
-      slug: 'rls-1086-private-test',
+      legal_name: 'RLS 1086 Private Sandbox',
       display_name: 'RLS 1086 Private Sandbox',
-      is_public: true,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').upsert({
@@ -134,9 +133,8 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('organizations').upsert({
       id: sandboxOrgId,
-      slug: 'rls-1086-public-test',
+      legal_name: 'RLS 1086 Public Sandbox',
       display_name: 'RLS 1086 Public Sandbox',
-      is_public: true,
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').upsert({
