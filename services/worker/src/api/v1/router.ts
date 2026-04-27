@@ -29,7 +29,13 @@ import { aiUsageRouter } from './ai-usage.js';
 import { aiEmbedRouter } from './ai-embed.js';
 import { aiSearchRouter } from './ai-search.js';
 import { aiVerifySearchRouter } from './ai-verify-search.js';
-import { aiExtractionGate, aiSemanticSearchGate, aiFraudGate, aiReportsGate } from '../../middleware/aiFeatureGate.js';
+import {
+  aiExtractionGate,
+  aiSemanticSearchGate,
+  aiFraudGate,
+  aiReportsGate,
+  visualFraudDetectionGate,
+} from '../../middleware/aiFeatureGate.js';
 import { aiFeedbackRouter } from './ai-feedback.js';
 import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiFraudVisualRouter } from './ai-fraud-visual.js';
@@ -264,8 +270,19 @@ router.use('/ai/integrity', aiFraudGate(), requireAuth, aiRateLimiter, aiIntegri
 // AI review queue — behind ENABLE_AI_FRAUD flag + JWT auth (P8-S9)
 router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRouter);
 
-// AI visual fraud detection — behind ENABLE_AI_FRAUD flag + JWT auth (Phase 5)
-router.use('/ai/fraud/visual', aiFraudGate(), requireAuth, aiRateLimiter, aiFraudVisualRouter);
+// AI visual fraud detection — gated by BOTH ENABLE_AI_FRAUD and the more
+// restrictive ENABLE_VISUAL_FRAUD_DETECTION flag. The visual path ships
+// document image bytes off-device (CLAUDE.md §1.6 carve-out); the second
+// gate blocks tenants that haven't opted into the carve-out per the
+// Confluence policy page even when the broader AI-fraud flag is on.
+router.use(
+  '/ai/fraud/visual',
+  aiFraudGate(),
+  visualFraudDetectionGate(),
+  requireAuth,
+  aiRateLimiter,
+  aiFraudVisualRouter,
+);
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);

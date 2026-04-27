@@ -4,11 +4,16 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
+const { mockEmitRpcFallback } = vi.hoisted(() => ({ mockEmitRpcFallback: vi.fn() }));
+vi.mock('../utils/sentry.js', () => ({
+  emitRpcFallback: mockEmitRpcFallback,
+}));
+
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 import {
-  RpcUtxoProvider, MempoolUtxoProvider, createUtxoProvider,
+  RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
   HttpError, retryWithBackoff, isRetryableError, isDuplicateTxError,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
@@ -340,6 +345,56 @@ describe('RpcUtxoProvider retry integration', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ result: null, error: { message: 'Wallet not loaded', code: -18 } }) });
     await expect(provider.getBlockchainInfo()).rejects.toThrow('Wallet not loaded');
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Pins the contract that GetBlockHybridProvider.listUnspent emits a Sentry
+// breadcrumb + structured warn log on every mempool.space fallback — the
+// R0-8 dashboard alerts if the fallback rate stays at 100% (RPC unused).
+describe('GetBlockHybridProvider listUnspent fallback observability', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    mockEmitRpcFallback.mockReset();
+  });
+
+  it('falls back to mempool.space and emits emitRpcFallback when RPC throws', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+    });
+    // RPC call: GetBlock returns "Method not allowed"
+    mockFetch.mockResolvedValueOnce(rpcErr('Method not allowed', -32601));
+    // Mempool fallback: returns one UTXO
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([{ txid: 'aa', vout: 0, status: { confirmed: true }, value: 100000 }]),
+    });
+    // Mempool tx-hex fetch (raw tx body for the UTXO)
+    mockFetch.mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('0200deadbeef') });
+
+    const utxos = await provider.listUnspent('bc1qtest');
+
+    expect(utxos).toHaveLength(1);
+    expect(mockEmitRpcFallback).toHaveBeenCalledTimes(1);
+    expect(mockEmitRpcFallback).toHaveBeenCalledWith(expect.objectContaining({
+      provider: 'getblock',
+      method: 'listunspent',
+      fallbackTo: 'mempool.space',
+      origin: 'GetBlockHybridProvider.listUnspent',
+    }));
+  });
+
+  it('does NOT emit fallback when RPC succeeds', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/fake-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+    });
+    mockFetch.mockResolvedValueOnce(rpcOk([{ txid: 'aa', vout: 0, amount: 0.001 }]));
+
+    const utxos = await provider.listUnspent('bc1qtest');
+
+    expect(utxos).toHaveLength(1);
+    expect(mockEmitRpcFallback).not.toHaveBeenCalled();
   });
 });
 

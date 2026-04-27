@@ -161,6 +161,13 @@ export function usageTracking() {
 
     // Enforce quota for free tier
     if (rateLimitTier === 'free' && currentUsage >= FREE_TIER_MONTHLY_QUOTA) {
+      // CLAUDE.md §1.10: every 429 must include Retry-After. Cap at one hour
+      // so the header doesn't disclose the exact monthly billing-window
+      // boundary to anonymous callers; the body still surfaces reset_date
+      // for legitimate authenticated clients to plan against.
+      const secondsUntilReset = Math.ceil((new Date(resetDate).getTime() - Date.now()) / 1000);
+      const retryAfter = Math.max(1, Math.min(secondsUntilReset, 60 * 60));
+      res.setHeader('Retry-After', String(retryAfter));
       res.status(429).json({
         error: 'quota_exceeded',
         message: 'Monthly API quota exceeded',

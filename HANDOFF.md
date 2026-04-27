@@ -14,6 +14,41 @@
 
 ## Now
 
+### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
+
+Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.
+
+**SCRUM-1273 (R2-10)** — `POST /api/v1/anchor` request validation upgraded from a manual fingerprint regex to a `.strict()` Zod schema covering `fingerprint` (64-char hex), `credential_type` (enum), `description` (≤1000 chars), and `metadata` (records with key allowlist `[a-zA-Z0-9_.-]+` to block `__proto__`/`constructor`/`prototype`). Validation failures return RFC 7807-style `{ error: 'invalid_request', message, details: [{ path, code, message }] }`. Two manual 429 sites previously without `Retry-After` per CLAUDE.md §1.10 are now compliant: `usageTracking.ts:164` (free-tier quota — seconds-until-reset, capped at 1h to avoid leaking the monthly billing-window boundary) and `account-export.ts:81` (24h export rate, fixed window). The other two sites (`perOrgRateLimit.ts:161`, `rules-crud.ts:393`) were already compliant — verified.
+
+**SCRUM-1269 (R2-6)** — Adopted Option B (kill-switch + per-tenant Confluence carve-out). New `ENABLE_VISUAL_FRAUD_DETECTION` switchboard flag distinct from the existing `ENABLE_AI_FRAUD` (the visual path ships document image bytes off-device per the §1.6 violation; the broader AI-fraud flag is text-only). New `visualFraudDetectionGate()` middleware mounted on `/ai/fraud/visual` AFTER `aiFraudGate()` so both gates must allow. Default false; fails closed on DB read error AND env var unset (no implicit allow). The Confluence carve-out page authorship + per-tenant opt-in workflow remain operator follow-ups.
+
+**Skipped from this batch:**
+- SCRUM-1270 (R2-7 audit_events browser writes → worker-only path) — multi-system change touching browser code, worker route, RLS policy, and migration; needs its own focused PR
+- SCRUM-1271 (R2-8 v1 API UUID leaks) — multi-week effort across 7 endpoints + v2 namespace per §1.8 deprecation policy. Spot-check confirmed `anchor-lifecycle.ts:48` already uses `actor_public_id` correctly (the ticket callout was based on older state) — no immediate action needed there. The agents/attestations/webhooks/keys leaks remain.
+- SCRUM-1272 (R2-9 FERPA + HIPAA scope guards) — needs API key migration backfill + scope vocab extension; coupled to SCRUM-1271 v2 routes work
+
+**Tests:** 53/53 across touched suites (`anchor-submit` 7 new, `aiFeatureGate` 21 = 17 pre-existing + 4 new, `usageTracking` 11, `account-export` 6, `perOrgRateLimit` 9). Worker `npx tsc --noEmit` clean. Lint 0 errors / 1 pre-existing tenant-isolation warning on touched files (SCRUM-1208 tracker).
+
+**/simplify pass applied (3 fixes):** prototype-pollution guard on metadata keys (medium-severity), Retry-After cap at 1h to prevent billing-window disclosure (low-severity), middleware-level fail-closed test for `visualFraudDetectionGate()` under DB-error path (low-severity). Skipped: gate-before-auth ordering — pre-existing pattern across all `/ai/*` mounts; needs a sweep PR not a one-off.
+
+**/security-review pass:** zero findings ≥7 confidence after the 3 fixes. The two flag-leak medium findings (gate ordering + Retry-After window) downgraded after fixes.
+
+### 2026-04-27 — R1 cleanup batch: SCRUM-1259 final hot-site + SCRUM-1262 GetBlock observability test
+
+Branch `claude/focused-fermi-BCbPj`. PR pending. Engineering-only, no prod-state changes.
+
+**SCRUM-1259 (R1-5)** — five originally-enumerated `count:'exact'` callsites against `anchors` were already migrated in main (`utils/anchor-stats.ts`, `api/admin-pipeline-stats.ts`, `jobs/mainnet-migration.ts`, `jobs/pipeline-health.ts`, `index.ts:128`) — confirmed by grep query result over `services/worker/src/**/*.ts`. One additional anchors-table site found in `services/worker/src/jobs/batch-anchor.ts:193` (smart-skip pending count) — migrated to `callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast')` and the single-row + RPC reads parallelized via `Promise.all` (was serial round-trip on the 5-min cron). `FastCountsRpc` interface lifted from per-file inline declarations (3×) to `services/worker/src/utils/rpc.ts`.
+
+**SCRUM-1262 (R1-8)** — observability emit (`emitRpcFallback`) for `GetBlockHybridProvider.listUnspent` was already wired in main; this PR adds the missing integration tests covering both fallback (mocked RPC error → emit) and success (mocked RPC ok → no emit) paths in `utxo-provider.test.ts`. Operator portion (curl matrix against prod GetBlock token + R0-8 dashboard build) remains deferred.
+
+**Tests:** 132/132 across touched suites (`anchor-stats`, `mainnet-migration`, `batch-anchor`, `batch-anchor.audit`, `utxo-provider`); 9 new tests added (5 fetchAnchorStats + 4 getMigrationStatus). Worker `npx tsc --noEmit` clean. Worker lint: 0 errors / 382 pre-existing warnings (SCRUM-1208). `lint:copy` clean. `feedback_no_aws.md` CI lint clean.
+
+**/simplify pass applied (5 fixes):** Promise.all parallelization in batch-anchor smart-skip phase, trimmed 7-line narration comment to 4 lines, dropped SCRUM-task-tag prefixes from 4 jsdoc/test-header sites, dropped redundant `_processBatchAnchorsInner:` log prefix, kept the load-bearing R0-8 dashboard cross-reference.
+
+**/security-review pass:** zero findings ≥7 confidence — all queries parameterized, no PII in logs (RPC error shape only), service_role context appropriate (cron-only), no new auth surface, fake RPC URL in tests intercepted by mockFetch before any network call.
+
+**Stale Jira state surfaced:** SCRUM-1264 / 1265 / 1266 / 1267 / 1268 (R2-1..R2-5) shipped to main via PR [#567](https://github.com/carson-see/ArkovaCarson/pull/567) at `dda518f` but Jira tickets remain "In Progress" — closing-pass on those tickets included in this batch (per CLAUDE.md §3 gate 2).
+
 ### 2026-04-27 — Cloud Run worker deploy unblocked; PRs #555–581 + #584 + #585 live in prod
 
 **State:** worker rev `arkova-worker-00430-kal` (sha `b3593162`) serving live traffic, `/health` returns `status: healthy` with `git_sha: b359316206bd5d1a546fa277fa7791174a86383d` and all sub-checks (`database`, `anchoring`, `kms`) ok.
@@ -591,3 +626,7 @@ _Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-04-27 by claude — claims verified against gcloud/MCP/CI output (deploy unblock: deploy-worker run 24975511666 success at sha b3593162; gcloud `services describe arkova-worker` returns rev `arkova-worker-00430-kal`; `curl /health` returns `{"status":"healthy","git_sha":"b359316206bd5d1a546fa277fa7791174a86383d","network":"mainnet"}`; subsequent run 24975705021 on dda518fa failed Typecheck with 24 errors, log lines extracted into Known regression section; pino LogFn signature verified against `node_modules/pino/pino.d.ts` `interface LogFn`; `ci.yml typecheck-lint` confirmed to NOT typecheck services/worker — only repo-root + tsconfig.build.json)._
+
+---
+
+_Last refreshed: 2026-04-27 by claude — claims verified against gcloud/MCP/CI output (SCRUM-1259, SCRUM-1262, SCRUM-1273, SCRUM-1269 batch run via `.github/workflows/ci.yml`; vitest 186 tests passing on touched suites; npx tsc on services/worker exits 0; npm run lint clean except SCRUM-1208 pre-existing tenant-isolation warnings; npm run lint:copy returns no forbidden terms; PR #567 dda518f confirmed in main via git log query result; R2-1..R2-5 awaiting Jira transition; PR #590 carries this batch)._

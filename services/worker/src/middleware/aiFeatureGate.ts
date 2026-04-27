@@ -4,7 +4,12 @@
  * Gates AI endpoints behind switchboard flags:
  *   - ENABLE_AI_EXTRACTION: Controls /api/v1/ai/extract
  *   - ENABLE_SEMANTIC_SEARCH: Controls semantic search endpoints
- *   - ENABLE_AI_FRAUD: Controls AI fraud detection
+ *   - ENABLE_AI_FRAUD: Controls AI fraud detection (text-based)
+ *   - ENABLE_AI_REPORTS: Controls AI report generation
+ *   - ENABLE_VISUAL_FRAUD_DETECTION: Controls /api/v1/ai/fraud/visual.
+ *     Distinct from ENABLE_AI_FRAUD because the visual path ships document
+ *     image bytes off-device (CLAUDE.md §1.6 carve-out — must be opted-in
+ *     per tenant via Confluence-documented decision before flipping on).
  *
  * All flags default to false (fail-closed). Uses TTL-based cache (60s)
  * to avoid per-request DB queries. Same pattern as featureGate.ts (P4.5-TS-12).
@@ -26,6 +31,7 @@ const aiFlags: Record<string, FlagCache | null> = {
   ENABLE_SEMANTIC_SEARCH: null,
   ENABLE_AI_FRAUD: null,
   ENABLE_AI_REPORTS: null,
+  ENABLE_VISUAL_FRAUD_DETECTION: null,
 };
 
 type AIFlagKey = keyof typeof aiFlags;
@@ -95,12 +101,17 @@ export const isAIExtractionEnabled = () => readAIFlag('ENABLE_AI_EXTRACTION');
 export const isSemanticSearchEnabled = () => readAIFlag('ENABLE_SEMANTIC_SEARCH');
 export const isAIFraudEnabled = () => readAIFlag('ENABLE_AI_FRAUD');
 export const isAIReportsEnabled = () => readAIFlag('ENABLE_AI_REPORTS');
+export const isVisualFraudDetectionEnabled = () => readAIFlag('ENABLE_VISUAL_FRAUD_DETECTION');
 
 // Public gate middlewares
 export const aiExtractionGate = createAIGate('ENABLE_AI_EXTRACTION', 'AI extraction');
 export const aiSemanticSearchGate = createAIGate('ENABLE_SEMANTIC_SEARCH', 'Semantic search');
 export const aiFraudGate = createAIGate('ENABLE_AI_FRAUD', 'AI fraud detection');
 export const aiReportsGate = createAIGate('ENABLE_AI_REPORTS', 'AI reports');
+export const visualFraudDetectionGate = createAIGate(
+  'ENABLE_VISUAL_FRAUD_DETECTION',
+  'Visual fraud detection',
+);
 
 /** Reset all AI flag caches — for testing only */
 export function _resetAIFlagCache(): void {

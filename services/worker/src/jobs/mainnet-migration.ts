@@ -11,16 +11,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { callRpc } from '../utils/rpc.js';
-
-interface FastCountsRpc {
-  PENDING: number;
-  SUBMITTED: number;
-  BROADCASTING: number;
-  SECURED: number;
-  REVOKED: number;
-  total: number;
-}
+import { callRpc, type FastCountsRpc } from '../utils/rpc.js';
 
 const MIGRATION_BATCH_SIZE = 5000;
 
