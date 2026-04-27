@@ -78,6 +78,11 @@ export async function handleAccountExport(
 
     if (allowed === false) {
       logger.info({ userId }, 'Data export rejected: 24h rate limit');
+      // CLAUDE.md §1.10: every 429 must include Retry-After. The export RPC
+      // enforces a 24-hour window; the precise per-user reset isn't returned,
+      // so we surface the worst-case window — the client retries no sooner
+      // than 24h, matching the policy that produced this response.
+      res.setHeader('Retry-After', String(24 * 60 * 60));
       res.status(429).json({
         error: 'You have already exported your data in the last 24 hours. Please wait and try again later.',
       });

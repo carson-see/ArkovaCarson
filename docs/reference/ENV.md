@@ -381,6 +381,21 @@ EVAL_VERBOSE=false                  # extra logging in eval scripts (test-only)
 CF_AI_BINDING=                      # Cloudflare AI binding name (peripheral, edge worker)
 ```
 
+### AI feature gates (DB switchboard_flags with env fallback)
+Worker `aiFeatureGate.ts` reads each flag from `switchboard_flags` table on
+60s TTL; env var below is the failover when the DB read errors. All gates
+fail closed (default false) per CLAUDE.md §0 rule 2.
+
+```bash
+ENABLE_AI_EXTRACTION=false          # /api/v1/ai/extract — server-side OCR/structuring (CLAUDE.md §1.6 — gated)
+ENABLE_SEMANTIC_SEARCH=false        # /api/v1/ai/search semantic embeddings
+ENABLE_AI_FRAUD=false               # /api/v1/ai/integrity, /ai/review (text-based fraud signals)
+ENABLE_AI_REPORTS=false             # /api/v1/ai/reports
+ENABLE_VISUAL_FRAUD_DETECTION=false # /api/v1/ai/fraud/visual — SCRUM-1269 §1.6 carve-out gate;
+                                    # ships document image bytes off-device. Requires per-tenant
+                                    # Confluence opt-in BEFORE flipping on. AND-gated with ENABLE_AI_FRAUD.
+```
+
 ### Ops alerts
 ```bash
 SLACK_OPS_WEBHOOK_URL=              # ops/alerts Slack webhook (separate from treasury alerts)

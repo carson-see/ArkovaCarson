@@ -14,6 +14,25 @@
 
 ## Now
 
+### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
+
+Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.
+
+**SCRUM-1273 (R2-10)** — `POST /api/v1/anchor` request validation upgraded from a manual fingerprint regex to a `.strict()` Zod schema covering `fingerprint` (64-char hex), `credential_type` (enum), `description` (≤1000 chars), and `metadata` (records with key allowlist `[a-zA-Z0-9_.-]+` to block `__proto__`/`constructor`/`prototype`). Validation failures return RFC 7807-style `{ error: 'invalid_request', message, details: [{ path, code, message }] }`. Two manual 429 sites previously without `Retry-After` per CLAUDE.md §1.10 are now compliant: `usageTracking.ts:164` (free-tier quota — seconds-until-reset, capped at 1h to avoid leaking the monthly billing-window boundary) and `account-export.ts:81` (24h export rate, fixed window). The other two sites (`perOrgRateLimit.ts:161`, `rules-crud.ts:393`) were already compliant — verified.
+
+**SCRUM-1269 (R2-6)** — Adopted Option B (kill-switch + per-tenant Confluence carve-out). New `ENABLE_VISUAL_FRAUD_DETECTION` switchboard flag distinct from the existing `ENABLE_AI_FRAUD` (the visual path ships document image bytes off-device per the §1.6 violation; the broader AI-fraud flag is text-only). New `visualFraudDetectionGate()` middleware mounted on `/ai/fraud/visual` AFTER `aiFraudGate()` so both gates must allow. Default false; fails closed on DB read error AND env var unset (no implicit allow). The Confluence carve-out page authorship + per-tenant opt-in workflow remain operator follow-ups.
+
+**Skipped from this batch:**
+- SCRUM-1270 (R2-7 audit_events browser writes → worker-only path) — multi-system change touching browser code, worker route, RLS policy, and migration; needs its own focused PR
+- SCRUM-1271 (R2-8 v1 API UUID leaks) — multi-week effort across 7 endpoints + v2 namespace per §1.8 deprecation policy. Spot-check confirmed `anchor-lifecycle.ts:48` already uses `actor_public_id` correctly (the ticket callout was based on older state) — no immediate action needed there. The agents/attestations/webhooks/keys leaks remain.
+- SCRUM-1272 (R2-9 FERPA + HIPAA scope guards) — needs API key migration backfill + scope vocab extension; coupled to SCRUM-1271 v2 routes work
+
+**Tests:** 53/53 across touched suites (`anchor-submit` 7 new, `aiFeatureGate` 21 = 17 pre-existing + 4 new, `usageTracking` 11, `account-export` 6, `perOrgRateLimit` 9). Worker `npx tsc --noEmit` clean. Lint 0 errors / 1 pre-existing tenant-isolation warning on touched files (SCRUM-1208 tracker).
+
+**/simplify pass applied (3 fixes):** prototype-pollution guard on metadata keys (medium-severity), Retry-After cap at 1h to prevent billing-window disclosure (low-severity), middleware-level fail-closed test for `visualFraudDetectionGate()` under DB-error path (low-severity). Skipped: gate-before-auth ordering — pre-existing pattern across all `/ai/*` mounts; needs a sweep PR not a one-off.
+
+**/security-review pass:** zero findings ≥7 confidence after the 3 fixes. The two flag-leak medium findings (gate ordering + Retry-After window) downgraded after fixes.
+
 ### 2026-04-27 — R1 cleanup batch: SCRUM-1259 final hot-site + SCRUM-1262 GetBlock observability test
 
 Branch `claude/focused-fermi-BCbPj`. PR pending. Engineering-only, no prod-state changes.

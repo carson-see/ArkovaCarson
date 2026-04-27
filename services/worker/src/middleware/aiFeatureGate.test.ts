@@ -11,9 +11,11 @@ import {
   isAIExtractionEnabled,
   isSemanticSearchEnabled,
   isAIFraudEnabled,
+  isVisualFraudDetectionEnabled,
   aiExtractionGate,
   aiSemanticSearchGate,
   aiFraudGate,
+  visualFraudDetectionGate,
   _resetAIFlagCache,
 } from './aiFeatureGate.js';
 import type { Request, Response, NextFunction } from 'express';
@@ -208,6 +210,39 @@ describe('aiFeatureGate middleware', () => {
       const { req, res, next } = createMockReqRes();
       await aiFraudGate()(req, res, next);
       expect(res.status).toHaveBeenCalledWith(503);
+    });
+  });
+
+  describe('visualFraudDetectionGate middleware (CLAUDE.md §1.6 carve-out)', () => {
+    it('calls next() when ENABLE_VISUAL_FRAUD_DETECTION enabled', async () => {
+      mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', true);
+      const { req, res, next } = createMockReqRes();
+      await visualFraudDetectionGate()(req, res, next);
+      expect(next).toHaveBeenCalled();
+    });
+
+    it('returns 503 when disabled (the documents-never-leave-device default)', async () => {
+      mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', false);
+      const { req, res, next } = createMockReqRes();
+      await visualFraudDetectionGate()(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(next).not.toHaveBeenCalled();
+    });
+
+    it('fails closed when DB read errors AND env var unset (no implicit allow)', async () => {
+      // Force the env fallback path via DB error, with env var absent.
+      delete process.env.ENABLE_VISUAL_FRAUD_DETECTION;
+      mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', null, new Error('connection lost'));
+      expect(await isVisualFraudDetectionEnabled()).toBe(false);
+    });
+
+    it('middleware itself returns 503 (not next) under DB-error fail-closed path', async () => {
+      delete process.env.ENABLE_VISUAL_FRAUD_DETECTION;
+      mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', null, new Error('db down'));
+      const { req, res, next } = createMockReqRes();
+      await visualFraudDetectionGate()(req, res, next);
+      expect(res.status).toHaveBeenCalledWith(503);
+      expect(next).not.toHaveBeenCalled();
     });
   });
 });

@@ -10,18 +10,30 @@
 
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
+import { z } from 'zod';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 
 const router = Router();
 
-interface AnchorSubmitRequest {
-  fingerprint: string;
-  credential_type?: string;
-  description?: string;
-  metadata?: Record<string, unknown>;
-}
+const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'OTHER'] as const;
+
+// Frozen request shape per CLAUDE.md §1.8 — additive nullable fields only.
+// Fingerprint must be 64-char hex (SHA-256). Description capped to keep
+// inserts predictable and PostgREST payload size bounded. Metadata keys
+// are restricted to safe identifier characters so prototype-pollution-
+// adjacent keys (`__proto__`, `constructor`, `prototype`) cannot ride
+// through downstream code that may spread metadata into a fresh object.
+const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
+const AnchorSubmitSchema = z.object({
+  fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
+  credential_type: z.enum(CREDENTIAL_TYPES).optional(),
+  description: z.string().max(1000).optional(),
+  metadata: z.record(z.string().regex(SAFE_METADATA_KEY, 'metadata keys must match [a-zA-Z0-9_.-]+'), z.unknown()).optional(),
+}).strict();
+
+type AnchorSubmitRequest = z.infer<typeof AnchorSubmitSchema>;
 
 interface AnchorReceipt {
   public_id: string;
@@ -44,15 +56,19 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const body = req.body as AnchorSubmitRequest;
-
-  // Validate fingerprint — must be 64-char hex SHA-256
-  if (!body.fingerprint || !/^[a-fA-F0-9]{64}$/.test(body.fingerprint)) {
+  // Zod validation per CLAUDE.md §1.2 ("Validation: Zod. Every write path.")
+  // Returns RFC 7807-style problem+JSON on validation failure so client
+  // integrations can surface field-level errors to their users.
+  const parsed = AnchorSubmitSchema.safeParse(req.body);
+  if (!parsed.success) {
     res.status(400).json({
-      error: 'Invalid fingerprint. Must be a 64-character hex SHA-256 hash.',
+      error: 'invalid_request',
+      message: 'Request body failed validation',
+      details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), code: i.code, message: i.message })),
     });
     return;
   }
+  const body: AnchorSubmitRequest = parsed.data;
 
   const fingerprint = body.fingerprint.toLowerCase();
 
@@ -85,10 +101,8 @@ router.post('/', async (req: Request, res: Response) => {
     // Get org_id from API key
     const orgId = req.apiKey.orgId ?? null;
 
-    // Insert anchor record
-    // credential_type must match the enum — default to 'OTHER' for SDK submissions
-    const credType = (body.credential_type ?? 'OTHER') as 'DEGREE' | 'LICENSE' | 'CERTIFICATE' | 'TRANSCRIPT' | 'PROFESSIONAL' | 'OTHER';
-    const validTypes = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'OTHER'];
+    // credential_type already validated by Zod enum; defaults to 'OTHER'.
+    const credentialType = body.credential_type ?? 'OTHER';
     const { data: anchor, error: insertError } = await db
       .from('anchors')
       .insert({
@@ -98,7 +112,7 @@ router.post('/', async (req: Request, res: Response) => {
         org_id: orgId,
         user_id: req.apiKey.userId,
         filename: `api-${fingerprint.slice(0, 12)}`,
-        credential_type: validTypes.includes(credType) ? credType : 'OTHER',
+        credential_type: credentialType,
         description: body.description ?? null,
       })
       .select('public_id, fingerprint, status, created_at')
