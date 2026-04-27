@@ -141,7 +141,7 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
       org_id: event.org_id,
       details: JSON.stringify({ severity: event.severity, ...event.data }),
     }).then(() => {}, (err: unknown) => {
-      logger.error('Failed to log compliance event', { error: err, event_type: event.event_type });
+      logger.error({ error: err, event_type: event.event_type }, 'Failed to log compliance event');
     });
 
     // Dispatch to webhook endpoints (reuse existing infrastructure)
@@ -165,17 +165,17 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
         }
       }
     } catch (err) {
-      logger.error('Failed to dispatch compliance webhook', {
+      logger.error({
         error: err instanceof Error ? err.message : String(err),
         event_type: event.event_type,
-      });
+      }, 'Failed to dispatch compliance webhook');
     }
   }
 
-  logger.info('Compliance events fired', {
+  logger.info({
     count: events.length,
     types: [...new Set(events.map(e => e.event_type))],
-  });
+  }, 'Compliance events fired');
 }
 
 /**

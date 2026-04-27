@@ -86,7 +86,7 @@ export class DefaultTrustStore implements TrustStore {
       addedAt: new Date(),
     });
 
-    logger.debug('Trust anchor added', { fingerprint: fp, subjectCn, qualified });
+    logger.debug({ fingerprint: fp, subjectCn, qualified }, 'Trust anchor added');
   }
 
   removeTrustAnchor(fp: string): void {
@@ -118,13 +118,13 @@ export class DefaultTrustStore implements TrustStore {
       //
       // In the meantime, trust anchors are added manually via addTrustAnchor().
       this.lastEutlRefresh = new Date();
-      logger.info('EUTL refresh completed', {
+      logger.info({
         anchorCount: this.anchors.size,
         qualifiedCount: Array.from(this.anchors.values()).filter(a => a.qualified).length,
-      });
+      }, 'EUTL refresh completed');
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error('EUTL refresh failed', { error: message });
+      logger.error({ error: message }, 'EUTL refresh failed');
     }
   }
 }

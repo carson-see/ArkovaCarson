@@ -91,12 +91,12 @@ export class DefaultAdesEngine implements AdesEngine {
   ): Promise<AdesSignResult> {
     const reqs = LEVEL_REQUIREMENTS[request.level];
 
-    logger.info('AdES sign started', {
+    logger.info({
       format: request.format,
       level: request.level,
       orgId,
       certId: certificate.id,
-    });
+    }, 'AdES sign started');
 
     // 1. Validate certificate chain
     const chainValidation = await this.certManager.validateChain(
@@ -192,14 +192,14 @@ export class DefaultAdesEngine implements AdesEngine {
           tsa: tsaResponse.tsaCertFingerprint,
         };
 
-        logger.info('Timestamp token acquired', {
+        logger.info({
           serial: tsaResponse.tstSerial,
           genTime: tsaResponse.genTime.toISOString(),
-        });
+        }, 'Timestamp token acquired');
       } catch (err) {
-        logger.error('Timestamp acquisition failed', {
+        logger.error({
           error: err instanceof Error ? err.message : String(err),
-        });
+        }, 'Timestamp acquisition failed');
         // For B-T and above, timestamp is required — fail the signature
         throw new Error(
           `Timestamp required for level ${request.level} but TSA failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -224,17 +224,17 @@ export class DefaultAdesEngine implements AdesEngine {
           ltvDataEmbedded = true;
           status = 'LTV_EMBEDDED';
         } else {
-          logger.warn('LTV data incomplete', {
+          logger.warn({
             errors: ltvValidation.errors,
             ocspCoverage: ltvValidation.ocspCoverage,
             crlCoverage: ltvValidation.crlCoverage,
-          });
+          }, 'LTV data incomplete');
           // LTV incomplete is not fatal — signature is still valid at B-T level
         }
       } catch (err) {
-        logger.warn('LTV data aggregation failed', {
+        logger.warn({
           error: err instanceof Error ? err.message : String(err),
-        });
+        }, 'LTV data aggregation failed');
       }
     }
 
@@ -260,9 +260,9 @@ export class DefaultAdesEngine implements AdesEngine {
 
         logger.info('Archive timestamp acquired for B-LTA');
       } catch (err) {
-        logger.warn('Archive timestamp failed — signature valid at B-LT level', {
+        logger.warn({
           error: err instanceof Error ? err.message : String(err),
-        });
+        }, 'Archive timestamp failed — signature valid at B-LT level');
       }
     }
 

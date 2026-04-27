@@ -201,9 +201,9 @@ router.post('/', async (req: Request, res: Response) => {
       verified_at: new Date().toISOString(),
     });
   } catch (err) {
-    logger.error('Audit batch verify failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Audit batch verify failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

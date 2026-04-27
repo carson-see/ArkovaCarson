@@ -49,10 +49,13 @@ async function captureRpcCalls(): Promise<Array<{ name: string; args: Record<str
 
   await runDbHealthMonitor();
 
-  return rpcMock.mock.calls.map(([name, args]: [string, Record<string, unknown>]) => ({
-    name,
-    args: args ?? {},
-  }));
+  return rpcMock.mock.calls.map((call) => {
+    const [name, args] = call as [string, Record<string, unknown>];
+    return {
+      name,
+      args: args ?? {},
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

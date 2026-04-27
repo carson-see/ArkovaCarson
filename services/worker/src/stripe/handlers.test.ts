@@ -275,8 +275,8 @@ function setupDefaults() {
 // 33% duplication on the test file because each handler had near-identical
 // missing-row + lookup-error pairs; centralised here.
 async function expectOrphanRowGuardSkipsUpdate(
-  handler: (e: StripeEvent) => Promise<void>,
-  event: StripeEvent,
+  handler: (e: Stripe.Event) => Promise<void>,
+  event: Stripe.Event,
   context: Record<string, unknown>,
 ) {
   subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
@@ -290,8 +290,8 @@ async function expectOrphanRowGuardSkipsUpdate(
 }
 
 async function expectLookupErrorThrows(
-  handler: (e: StripeEvent) => Promise<void>,
-  event: StripeEvent,
+  handler: (e: Stripe.Event) => Promise<void>,
+  event: Stripe.Event,
   err: Record<string, string>,
 ) {
   subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null, error: err });

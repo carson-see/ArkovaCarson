@@ -55,11 +55,11 @@ export class HttpOcspClient implements OcspClient {
     const cacheKey = this.cacheKey(certPem, ocspUrl);
     const cached = this.cache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < this.cacheTtlMs) {
-      logger.debug('OCSP cache hit', { url: ocspUrl });
+      logger.debug({ url: ocspUrl }, 'OCSP cache hit');
       return cached.response;
     }
 
-    logger.info('OCSP check', { url: ocspUrl });
+    logger.info({ url: ocspUrl }, 'OCSP check');
 
     try {
       // Build OCSP request
@@ -104,16 +104,16 @@ export class HttpOcspClient implements OcspClient {
         cachedAt: Date.now(),
       });
 
-      logger.info('OCSP response received', {
+      logger.info({
         url: ocspUrl,
         status: ocspResult.status,
         serial: serialNumber,
-      });
+      }, 'OCSP response received');
 
       return ocspResult;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error('OCSP check failed', { url: ocspUrl, error: message });
+      logger.error({ url: ocspUrl, error: message }, 'OCSP check failed');
 
       // Return unknown status on failure (conservative approach)
       return {

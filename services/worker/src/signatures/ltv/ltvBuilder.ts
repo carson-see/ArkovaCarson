@@ -39,7 +39,7 @@ export class DefaultLtvBuilder implements LtvBuilder {
     const crls: CrlEntry[] = [];
     const additionalCerts: string[] = [];
 
-    logger.info('Building LTV data', { chainLength: allCerts.length });
+    logger.info({ chainLength: allCerts.length }, 'Building LTV data');
 
     // For each certificate (except self-signed root), fetch OCSP and CRL
     for (let i = 0; i < allCerts.length; i++) {
@@ -57,10 +57,10 @@ export class DefaultLtvBuilder implements LtvBuilder {
           );
           ocspResponses.push(ocsp);
         } catch (err) {
-          logger.warn('OCSP fetch failed for LTV', {
+          logger.warn({
             cert: certInfo.subjectCn,
             error: err instanceof Error ? err.message : String(err),
-          });
+          }, 'OCSP fetch failed for LTV');
         }
       }
 
@@ -79,11 +79,11 @@ export class DefaultLtvBuilder implements LtvBuilder {
       }
     }
 
-    logger.info('LTV data built', {
+    logger.info({
       ocspResponses: ocspResponses.length,
       crls: crls.length,
       additionalCerts: additionalCerts.length,
-    });
+    }, 'LTV data built');
 
     return {
       ocspResponses,

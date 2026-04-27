@@ -45,11 +45,11 @@ export class HttpCrlManager implements CrlManager {
     // Check cache
     const cached = this.cache.get(url);
     if (cached && Date.now() - cached.cachedAt < this.cacheTtlMs) {
-      logger.debug('CRL cache hit', { url });
+      logger.debug({ url }, 'CRL cache hit');
       return cached.entry;
     }
 
-    logger.info('Fetching CRL', { url, issuerCn });
+    logger.info({ url, issuerCn }, 'Fetching CRL');
 
     try {
       const response = await fetch(url, {
@@ -79,16 +79,16 @@ export class HttpCrlManager implements CrlManager {
       // Cache
       this.cache.set(url, { entry, cachedAt: Date.now() });
 
-      logger.info('CRL fetched', {
+      logger.info({
         url,
         issuerCn,
         sizeBytes: raw.length,
-      });
+      }, 'CRL fetched');
 
       return entry;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      logger.error('CRL fetch failed', { url, issuerCn, error: message });
+      logger.error({ url, issuerCn, error: message }, 'CRL fetch failed');
       throw new Error(`CRL fetch failed for ${url}: ${message}`);
     }
   }
@@ -103,7 +103,7 @@ export class HttpCrlManager implements CrlManager {
       } catch (err) {
         // Log but continue — some CRL URLs may be unreachable
         const message = err instanceof Error ? err.message : String(err);
-        logger.warn('CRL fetch skipped', { url, error: message });
+        logger.warn({ url, error: message }, 'CRL fetch skipped');
       }
     }
 

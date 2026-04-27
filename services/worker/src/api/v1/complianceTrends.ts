@@ -177,9 +177,9 @@ router.get('/', async (req: Request, res: Response) => {
       generated_at: new Date().toISOString(),
     });
   } catch (err) {
-    logger.error('Compliance trends failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Compliance trends failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

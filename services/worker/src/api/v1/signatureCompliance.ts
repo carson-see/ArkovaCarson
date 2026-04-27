@@ -38,9 +38,9 @@ router.get('/signatures/:id/audit-proof', async (req: Request<{ id: string }>, r
 
     res.json(proof);
   } catch (err) {
-    logger.error('Audit proof generation failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Audit proof generation failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -95,9 +95,9 @@ router.get('/signatures/export', async (req: Request, res: Response) => {
     res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
     res.send(result.data);
   } catch (err) {
-    logger.error('Bulk export failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'Bulk export failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -147,9 +147,9 @@ router.get('/signatures/soc2-evidence', async (req: Request, res: Response) => {
 
     res.json(bundle);
   } catch (err) {
-    logger.error('SOC 2 evidence generation failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'SOC 2 evidence generation failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -182,9 +182,9 @@ router.get('/signatures/gdpr-article30', async (req: Request, res: Response) => 
     const report = await generateGdprArticle30Export(membership.org_id);
     res.json(report);
   } catch (err) {
-    logger.error('GDPR Article 30 export failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'GDPR Article 30 export failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -233,9 +233,9 @@ router.get('/signatures/eidas-report', async (req: Request, res: Response) => {
 
     res.json(report);
   } catch (err) {
-    logger.error('eIDAS compliance report failed', {
+    logger.error({
       error: err instanceof Error ? err.message : String(err),
-    });
+    }, 'eIDAS compliance report failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

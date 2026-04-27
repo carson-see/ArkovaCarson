@@ -88,11 +88,11 @@ function initEngine(): AdesEngine {
   const ltvBuilder = createLtvBuilder(certManager, ocspClient, crlManager);
   const ltvValidator = createLtvValidator();
 
-  logger.info('AdES engine initialized', {
+  logger.info({
     kmsProvider: useMocks ? 'mock' : kmsProvider,
     qtspConfigured: !!qtspProvider,
     useMocks,
-  });
+  }, 'AdES engine initialized');
 
   return createAdesEngine({
     hsm,
