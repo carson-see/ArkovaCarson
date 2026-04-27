@@ -1,4 +1,17 @@
-/// <reference types="@cloudflare/workers-types" />
+// PR #583 follow-up: Define ExecutionContext locally instead of pulling
+// @cloudflare/workers-types via /// <reference />. The directive leaks
+// workers-types into the root TS project — src/tests/edge/
+// mcp-security.test.ts imports from this file, so the directive
+// transitively redefines Response / Request globally and breaks 50+
+// src/components/* call-sites with TS18046 ('body' / 'data' / 'result'
+// is of type 'unknown'). services/edge has its own tsconfig that lists
+// @cloudflare/workers-types in compilerOptions.types, so the worker
+// build still compiles with the full ExecutionContext shape.
+interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
 /**
  * Arkova Remote MCP Server (P8-S19)
  *
