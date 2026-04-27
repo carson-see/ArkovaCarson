@@ -771,8 +771,11 @@ jobs:
         # SCRUM-1302: auth timeout regression fixed — storageState setup
         # project logs in seed users once, all specs reuse saved state.
         # continue-on-error removed; E2E failures are now blocking.
+        # Workers=1 in playwright.config.ts (CI stability around shared
+        # Supabase seed); the suite is ~14-16 min serial — bump timeout
+        # to 25 min so a cold runner + retries don't blow the budget.
         run: npx playwright test --project=chromium
-        timeout-minutes: 10
+        timeout-minutes: 25
         env:
           VITE_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           VITE_SUPABASE_ANON_KEY: ${{ steps.supabase-e2e-keys.outputs.anon_key }}
