@@ -58,6 +58,7 @@ docs/stories/docx/
 # Generated artifacts
 .generated-machines/
 .playwright-mcp/
+.auth/
 
 # HyperFrames video demo projects (scratch output, not repo code)
 arkova-product-demo/

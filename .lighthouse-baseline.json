@@ -1,0 +1,16 @@
+{
+  "_comment": "SCRUM-1303: Lighthouse performance baseline. Update by running `npx lhci collect` on main and recording medians. Thresholds in .lighthouserc.json are set ~10% below these baselines.",
+  "_updated": "2026-04-26",
+  "baselines": {
+    "performance": 0.90,
+    "accessibility": 0.95,
+    "best-practices": 0.85,
+    "first-contentful-paint-ms": 1800,
+    "largest-contentful-paint-ms": 2200,
+    "interactive-ms": 2800,
+    "cumulative-layout-shift": 0.08,
+    "total-blocking-time-ms": 280,
+    "max-potential-fid-ms": 200
+  },
+  "drift_threshold_pct": 10
+}

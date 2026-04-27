@@ -32,11 +32,11 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 | `feedback_pr_target_repo.md` | CI lint (`pr-target-repo.ts`) | ✅ live (R0-7) |
 | `feedback_no_worktree_isolation.md` | CI lint (`no-worktree-isolation.ts`) | ✅ live (R0-7) |
 | `feedback_never_merge_without_ok.md` | Atlassian Automation R5 | ✅ live (R0-5) |
-| `feedback_jira_user_story_format.md` | Atlassian Automation issue-create rule | ⏳ pending (R0-7 followup) |
+| `feedback_jira_user_story_format.md` | Atlassian Automation issue-create rule (CI stub: `feedback_jira_user_story_format.ts`) | ✅ live (SCRUM-1306) |
 | `feedback_confluence_every_story.md` | Atlassian Automation R4 | ✅ live (R0-5) |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
-| `feedback_local_matches_prod.md` | CI lint (needs Supabase MCP) | ⏳ pending (R0-7 followup) |
-| `feedback_dont_recommend_do.md` | Documentation only (NLP advisory) | 📖 docs only |
+| `feedback_local_matches_prod.md` | CI lint stub (`feedback_local_matches_prod.ts`, needs Supabase MCP) | ⏳ stub (SCRUM-1306) |
+| `feedback_dont_recommend_do.md` | CI lint advisory (`feedback_dont_recommend_do.ts`) | ✅ live (SCRUM-1306) |
 
 ## Override pattern
 

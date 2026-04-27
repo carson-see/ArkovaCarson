@@ -18,11 +18,7 @@ const ORG_PAGE_PATH = `/issuer/${ARKOVA_ORG_ID}`;
 const ORG_PAGE_URL_RE = /\/issuer\//;
 
 test.describe('Public org page — anonymous visitor', () => {
-  test.beforeEach(async ({ page }) => {
-    // Hard-clear cookies so we genuinely test the unauthenticated path —
-    // the auth fixture sets cookies project-wide.
-    await page.context().clearCookies();
-  });
+  test.use({ storageState: { cookies: [], origins: [] } });
 
   test.describe('Desktop (1280px)', () => {
     test.use({ viewport: { width: 1280, height: 800 } });

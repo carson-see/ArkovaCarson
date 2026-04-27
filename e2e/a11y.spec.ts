@@ -3,21 +3,28 @@
  *
  * Uses @axe-core/playwright to test key pages for WCAG 2.1 AA compliance.
  * Run with: npx playwright test e2e/a11y.spec.ts
+ *
+ * @updated 2026-04-26 — SCRUM-1302: split unauthenticated a11y tests
  */
 
 import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 
 test.describe('Accessibility (WCAG 2.1 AA)', () => {
-  test('login page has no critical a11y violations', async ({ page }) => {
-    await page.goto('/login');
-    await page.waitForLoadState('domcontentloaded');
+  test.describe('Unauthenticated pages', () => {
+    // Login page test needs unauthenticated state
+    test.use({ storageState: { cookies: [], origins: [] } });
 
-    const results = await new AxeBuilder({ page })
-      .withTags(['wcag2a', 'wcag2aa'])
-      .analyze();
+    test('login page has no critical a11y violations', async ({ page }) => {
+      await page.goto('/login');
+      await page.waitForLoadState('domcontentloaded');
 
-    expect(results.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
+      const results = await new AxeBuilder({ page })
+        .withTags(['wcag2a', 'wcag2aa'])
+        .analyze();
+
+      expect(results.violations.filter(v => v.impact === 'critical' || v.impact === 'serious')).toEqual([]);
+    });
   });
 
   test('public verification page has no critical a11y violations', async ({ page }) => {

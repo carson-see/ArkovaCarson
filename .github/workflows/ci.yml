@@ -507,13 +507,9 @@ jobs:
         run: npm run test:coverage
 
       - name: Run RLS tests
-        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
-        # sub-story to realign 8 pre-existing assertion failures in
-        # tests/rls/p7.test.ts (error-message copy drift, missing get_flag
-        # function PGRST202, removed 'ACTIVE' status literal). Sub-story
-        # tracked under SCRUM-1248. DO NOT remove this annotation without
-        # closing the sub-story.
-        continue-on-error: true
+        # SCRUM-1301: 8 assertion failures resolved — migration 0265 restores
+        # get_flag + chain/legal_hold protections; test assertions updated for
+        # 0174 (SECURED not ACTIVE) and 0180 (unified error message).
         run: npm run test:rls
         env:
           SUPABASE_URL: ${{ steps.supabase-keys.outputs.url }}
@@ -768,13 +764,13 @@ jobs:
       - name: Seed database
         run: supabase db reset
 
+      - name: Create auth state directory
+        run: mkdir -p .auth
+
       - name: Run E2E tests
-        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
-        # sub-story to root-cause Playwright auth-setup regression
-        # (authenticated-page specs hitting 30s per-test timeouts, blowing
-        # the 10-min job budget). Sub-story tracked under SCRUM-1248. DO
-        # NOT remove this annotation without closing the sub-story.
-        continue-on-error: true
+        # SCRUM-1302: auth timeout regression fixed — storageState setup
+        # project logs in seed users once, all specs reuse saved state.
+        # continue-on-error removed; E2E failures are now blocking.
         run: npx playwright test --project=chromium
         timeout-minutes: 10
         env:
@@ -817,18 +813,14 @@ jobs:
           VITE_SUPABASE_ANON_KEY: placeholder
 
       - name: Run Lighthouse CI
-        # 512cc908 = v12.6.2. Previous pin 1b0e7c33 no longer resolves —
-        # upstream force-retagged v12 2026-04-XX which broke CI until now.
+        # SCRUM-1303: baseline established in .lighthouse-baseline.json.
+        # Thresholds in .lighthouserc.json are set ~10% below baseline.
+        # Update baselines by running `npx lhci collect` on main.
         uses: treosh/lighthouse-ci-action@3e7e23fb74242897f95c0ba9cabad3d0227b9b18 # v12.6.2
         with:
           configPath: '.lighthouserc.json'
           uploadArtifacts: true
           temporaryPublicStorage: true
-        # SCRUM-1248 (R0-2): continue-on-error remains pending follow-up
-        # sub-story to establish a 7-day rolling baseline (median LCP/CLS/
-        # INP from main) and a 10% drift threshold. Sub-story tracked under
-        # SCRUM-1248. DO NOT remove without closing the sub-story.
-        continue-on-error: true
 
   # Lockfile integrity check (CISO Action-9) — prevent supply-chain attacks via tampered lockfiles
   lockfile-integrity:

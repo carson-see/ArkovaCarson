@@ -9,6 +9,10 @@
 
 import { test, expect } from './fixtures';
 
+// Identity specs test onboarding role selection and privileged field
+// protection — most tests need unauthenticated or fresh-user context.
+test.use({ storageState: { cookies: [], origins: [] } });
+
 test.describe('Identity Security', () => {
   test.describe('Role Immutability', () => {
     test('role selection page shows immutability warning', async ({ page }) => {

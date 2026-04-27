@@ -74,6 +74,7 @@ import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.
 import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
+import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
@@ -1209,7 +1210,6 @@ cronRouter.post('/report-metered-usage', async (_req, res) => {
 
 cronRouter.post('/db-health', async (_req, res) => {
   const monitor = withCronMonitoring('db-health-monitor', '*/5 * * * *', async () => {
-    const { runDbHealthMonitor } = await import('../jobs/db-health-monitor.js');
     return runDbHealthMonitor();
   });
   try {
