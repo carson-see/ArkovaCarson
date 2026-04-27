@@ -47,12 +47,14 @@ describe('PII-01: audit_events PII protection', () => {
     const auditLogPath = path.join(process.cwd(), 'src/lib/auditLog.ts');
     const content = fs.readFileSync(auditLogPath, 'utf8');
 
-    // Should NOT contain actor_email in the insert
+    // Should NOT contain actor_email anywhere (data-minimization invariant)
     expect(content).not.toMatch(/actor_email\s*:/);
-    // Should contain the GDPR comment
+    // GDPR rationale must remain in the docstring so the invariant is auditable
     expect(content).toContain('GDPR Art. 5(1)(c)');
-    // Should only use actor_id
-    expect(content).toContain('actor_id: user?.id');
+    // SCRUM-1270 (R2-7): client no longer inserts directly. actor_id is pinned
+    // server-side from the JWT subject — assert the route + delivery shape.
+    expect(content).toContain('/api/audit/event');
+    expect(content).toContain('Bearer ${session.access_token}');
   });
 });
 

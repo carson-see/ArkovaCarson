@@ -1,38 +1,46 @@
-/* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
 /**
  * Audit Log Tests
  *
- * @see P1-TS-06
+ * SCRUM-1270 (R2-7): browser writes to `audit_events` are no longer permitted
+ * directly (migration 0277 dropped the authenticated INSERT policy). Tests
+ * pin the new fetch-based path through `POST /api/audit/event`.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const mockInsert = vi.hoisted(() => vi.fn());
-const mockGetUser = vi.hoisted(() => vi.fn());
+const mockGetSession = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
     auth: {
-      getUser: mockGetUser,
+      getSession: mockGetSession,
     },
-    from: vi.fn(() => ({
-      insert: mockInsert,
-    })),
   },
+}));
+
+vi.mock('@/lib/workerClient', () => ({
+  WORKER_URL: 'https://worker.test',
 }));
 
 import { logAuditEvent } from './auditLog';
 
 describe('logAuditEvent', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
   });
 
-  it('inserts audit event with user info', async () => {
-    mockGetUser.mockResolvedValue({
-      data: { user: { id: 'user-1', email: 'test@test.com' } },
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('POSTs the event to /api/audit/event with the bearer token', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'jwt-token-123' } },
     });
-    mockInsert.mockResolvedValue({ error: null });
 
     await logAuditEvent({
       eventType: 'ANCHOR_CREATED',
@@ -43,10 +51,18 @@ describe('logAuditEvent', () => {
       details: 'Created anchor',
     });
 
-    expect(mockInsert).toHaveBeenCalledWith({
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://worker.test/api/audit/event');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toMatchObject({
+      'Content-Type': 'application/json',
+      Authorization: 'Bearer jwt-token-123',
+    });
+    expect(init.keepalive).toBe(true);
+    expect(JSON.parse(init.body)).toEqual({
       event_type: 'ANCHOR_CREATED',
       event_category: 'ANCHOR',
-      actor_id: 'user-1',
       target_type: 'anchor',
       target_id: 'anchor-1',
       org_id: 'org-1',
@@ -54,49 +70,37 @@ describe('logAuditEvent', () => {
     });
   });
 
-  it('handles null user gracefully', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: null } });
-    mockInsert.mockResolvedValue({ error: null });
-
-    await logAuditEvent({
-      eventType: 'PAGE_VIEW',
-      eventCategory: 'AUTH',
-    });
-
-    expect(mockInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        actor_id: null,
-      }),
-    );
+  it('skips the request entirely when there is no session (logged-out user)', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: null } });
+    await logAuditEvent({ eventType: 'PAGE_VIEW', eventCategory: 'AUTH' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('never throws even when insert fails', async () => {
-    mockGetUser.mockRejectedValue(new Error('Auth service down'));
-
+  it('never throws when getSession rejects (auth service down)', async () => {
+    mockGetSession.mockRejectedValue(new Error('Auth service down'));
     await expect(
-      logAuditEvent({
-        eventType: 'ANCHOR_CREATED',
-        eventCategory: 'ANCHOR',
-      }),
+      logAuditEvent({ eventType: 'ANCHOR_CREATED', eventCategory: 'ANCHOR' }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('never throws when fetch rejects (worker unreachable)', async () => {
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 't' } } });
+    fetchMock.mockRejectedValue(new Error('network error'));
+    await expect(
+      logAuditEvent({ eventType: 'LOGIN', eventCategory: 'AUTH' }),
     ).resolves.toBeUndefined();
   });
 
   it('fills optional fields with null when not provided', async () => {
-    mockGetUser.mockResolvedValue({ data: { user: { id: 'u1', email: 'e@e.com' } } });
-    mockInsert.mockResolvedValue({ error: null });
-
-    await logAuditEvent({
-      eventType: 'LOGIN',
-      eventCategory: 'AUTH',
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 't' } } });
+    await logAuditEvent({ eventType: 'LOGIN', eventCategory: 'AUTH' });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      target_type: null,
+      target_id: null,
+      org_id: null,
+      details: null,
     });
-
-    expect(mockInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        target_type: null,
-        target_id: null,
-        org_id: null,
-        details: null,
-      }),
-    );
   });
 });
