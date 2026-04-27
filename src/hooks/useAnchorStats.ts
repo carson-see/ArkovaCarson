@@ -68,12 +68,9 @@ export async function fetchAnchorStatsData(): Promise<AnchorStats> {
 
   const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
 
-  // Process TX stats. `get_anchor_tx_stats` is restricted to service_role per
-  // migration 0269 (SEC-RECON-7). Non-platform-admin users predictably see 403
-  // (`42501 permission denied for function`) — that's expected, not a fault.
-  // The previous fallback ran a `count: 'exact'` against the bloated anchors
-  // table (R1-1 vacuum still finishing), reliably timing out at 30s. Drop the
-  // fallback: a missing tx-stats panel is better than a 30s page hang.
+  // get_anchor_tx_stats is service_role-only; non-admins predictably see 42501.
+  // No count:'exact' fallback — that path repeatedly timed out at 30s on the
+  // bloated anchors table. A missing tx-stats panel is better than a page hang.
   const txRaw = txStatsResult.data;
   const txData = parseRpcData(txRaw);
   const txRpcHasData = txRaw != null && !txStatsResult.error && txData.distinct_tx_count != null;

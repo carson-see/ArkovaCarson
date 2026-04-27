@@ -1,16 +1,6 @@
-/**
- * useAnchorStats — focused regression tests.
- *
- * Pins behavior of `fetchAnchorStatsData()` against the 2026-04-27 UAT
- * findings:
- *   1. Status counts come from `get_anchor_status_counts` (works for
- *      authenticated users) and bubble up cleanly when present.
- *   2. `get_anchor_tx_stats` is service_role-only per migration 0269. When
- *      it returns 42501 (permission denied) the hook MUST return zero/null
- *      tx-stat fields and MUST NOT issue any `count: 'exact'` fallback
- *      against the bloated anchors table (those queries timed out at 30s
- *      and made /admin/treasury hang).
- */
+// Pins: when get_anchor_tx_stats returns 42501 (permission denied), the hook
+// returns zero/null tx fields and DOES NOT fall back to count:'exact' against
+// the bloated anchors table (that path timed out the dashboard at 30s).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const rpcMock = vi.fn();

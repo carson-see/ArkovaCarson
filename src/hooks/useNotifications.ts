@@ -18,6 +18,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { recordDetailPath } from '@/lib/routes';
 
 export type NotificationType =
   | 'queue_run_completed'
@@ -31,7 +32,6 @@ export interface NotificationPayload {
   body?: string;
   /** Resource the notification points at (anchor id, rule id, etc.) for deep-link resolution. */
   target_id?: string;
-  [key: string]: unknown;
 }
 
 export interface Notification {
@@ -77,7 +77,16 @@ export function useNotifications(): UseNotificationsReturn {
         setError(fetchErr.message);
         return;
       }
-      setNotifications((data ?? []) as Notification[]);
+      const next = (data ?? []) as Notification[];
+      // Skip the setState (and downstream re-renders) when the poll returned
+      // the same rows in the same read state. Cheap O(n) on a max-100 list.
+      setNotifications((prev) => {
+        if (prev.length !== next.length) return next;
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i].id !== next[i].id || prev[i].read_at !== next[i].read_at) return next;
+        }
+        return prev;
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load notifications');
@@ -164,11 +173,10 @@ export function notificationDeepLink(n: Notification): string | null {
   const targetId = n.payload?.target_id;
   switch (n.type) {
     case 'anchor_revoked':
-      return targetId ? `/records/${targetId}` : null;
+    case 'version_available_for_review':
+      return targetId ? recordDetailPath(targetId) : null;
     case 'rule_fired':
       return targetId ? `/admin/rules/${targetId}` : null;
-    case 'version_available_for_review':
-      return targetId ? `/records/${targetId}` : null;
     case 'queue_run_completed':
       return '/admin/queues';
     case 'treasury_alert':

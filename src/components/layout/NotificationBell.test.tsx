@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/react';
+import type { Notification } from '@/hooks/useNotifications';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', () => ({
@@ -21,7 +22,7 @@ const markReadMock = vi.fn();
 const markAllReadMock = vi.fn();
 const refreshMock = vi.fn();
 
-let mockNotifications: unknown[] = [];
+let mockNotifications: Notification[] = [];
 let mockUnread = 0;
 let mockLoading = false;
 
@@ -55,10 +56,11 @@ beforeEach(() => {
   mockLoading = false;
 });
 
-const baseRow = {
+const baseRow: Notification = {
   id: 'n1',
   user_id: 'u1',
   organization_id: null,
+  type: 'rule_fired',
   payload: {},
   read_at: null,
   created_at: new Date(Date.now() - 30_000).toISOString(),

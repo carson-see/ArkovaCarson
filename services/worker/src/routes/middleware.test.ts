@@ -1,27 +1,14 @@
-/**
- * Tests for routes/middleware.ts CORS handling.
- *
- * Regression: rules enable/disable/edit fail in browser because the global
- * CORS middleware (mounted in index.ts:89) historically advertised only
- * `POST, GET, DELETE, OPTIONS`, which makes Chrome reject PATCH preflight.
- * The /api/v1/* router fixed this in router.ts:116 but /api/rules/* uses
- * the global middleware.
- */
 import { describe, it, expect, vi } from 'vitest';
 import type { Request, Response } from 'express';
 
-// `routes/middleware.ts` imports `../config.js`, which validates the full
-// worker env at import time. Stub it so the test can run without a populated
-// .env (matches the lightweight pattern used by sibling route tests that
-// inject deps directly).
+// Stub config: importing middleware.ts otherwise pulls config validation,
+// which fails without a populated .env in test runs.
 vi.mock('../config.js', () => ({
   config: {
     frontendUrl: 'https://arkova-26.vercel.app',
     corsAllowedOrigins: 'https://arkova-26.vercel.app,https://app.arkova.ai',
   },
 }));
-// Auth + logger imports also pull config indirectly; stub the surface this
-// test actually exercises (none — we only call setCorsHeaders).
 vi.mock('../auth.js', () => ({ verifyAuthToken: vi.fn() }));
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
