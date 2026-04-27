@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-04-27 — Batch C: SCRUM-1307 + 1306 + closing comments (5 stories)
+
+Branch `claude/elated-engelbart-eeee33-r2-batch` (continuation, atop PR #600).
+
+**SCRUM-1307 (R0-8-FU1)** — `supabase/migrations/0278_db_health_monitor_rpcs.sql` adds `get_recent_cron_failures(int)` (returns `(jobid, jobname, return_message, start_time, end_time)` from `cron.job_run_details`) + `get_table_bloat_stats(text[])` (returns `(schemaname, relname, n_live_tup, n_dead_tup, last_autovacuum)` from `pg_stat_user_tables`). Both `SECURITY DEFINER` with `SET search_path = public`, `REVOKE ALL FROM PUBLIC`, `GRANT EXECUTE TO service_role`. The worker `db-health-monitor.ts` already calls these RPC names — closes the gap from SCRUM-1254 (R0-8) where the monitor warned and emitted no alerts. Apply via Supabase MCP after PR merge.
+
+**SCRUM-1306 (R0-7-FU1)** — `feedback_local_matches_prod` flipped from stub to live. `scripts/ci/feedback-rules/feedback_local_matches_prod.ts` parses `CREATE TABLE` from every migration (stripping line + block comments first to avoid SECDEF body false-positives) and compares against the snapshot at `scripts/ci/snapshots/prod-tables.json` (90 prod tables, refreshed via Supabase MCP `list_tables` 2026-04-27). First run on this branch flags 6 tables in migrations but not in prod (`activation_tokens`, `ats_webhook_nonces`, `drive_webhook_nonces`, `merkle_batches`, `training_metrics`, `webhook_idempotency`) + 1 in prod but not in migrations (`stats_cache` — created out-of-band per migration ledger). `memory/README.md` status row flipped from ⏳ stub to ✅ live.
+
+**SCRUM-1303 (R0-2-FU3)** — Lighthouse 7-day rolling baseline + 10% drift gate: deferred from this batch — script-only ship without a baseline file would no-op until 7 runs accumulate. Stub left for a follow-up PR that lands the helper + a seeded baseline together.
+
+**SCRUM-1304 (R0-3-FU1)** — SonarQube "Coverage on New Code ≥ 80%" gate: deferred — needs SonarCloud project setup + repo secret rotation, both human-only ops steps.
+
+**SCRUM-1301 (R0-2-FU1)** — RLS test fix: deferred — `tests/rls/p7.test.ts` needs a local Supabase up to surface the 8 failures; running outside an isolated DB risks polluting prod. Track for a focused PR.
+
 ### 2026-04-27 — Batch B follow-up: SCRUM-1260 e2e + closing trail (5 stories)
 
 Branch `claude/elated-engelbart-eeee33-r2-batch` (continuation, atop PR #600).

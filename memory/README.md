@@ -35,7 +35,7 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 | `feedback_jira_user_story_format.md` | Atlassian Automation issue-create rule (CI stub: `feedback_jira_user_story_format.ts`) | ✅ live (SCRUM-1306) |
 | `feedback_confluence_every_story.md` | Atlassian Automation R4 | ✅ live (R0-5) |
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
-| `feedback_local_matches_prod.md` | CI lint stub (`feedback_local_matches_prod.ts`, needs Supabase MCP) | ⏳ stub (SCRUM-1306) |
+| `feedback_local_matches_prod.md` | CI lint (`feedback_local_matches_prod.ts`, snapshot-based via `scripts/ci/snapshots/prod-tables.json`) | ✅ live (SCRUM-1306) |
 | `feedback_dont_recommend_do.md` | CI lint advisory (`feedback_dont_recommend_do.ts`) | ✅ live (SCRUM-1306) |
 
 ## Override pattern
