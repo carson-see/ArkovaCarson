@@ -71,6 +71,27 @@ describe('GEO-12: Security Headers (vercel.json)', () => {
     expect(value).not.toContain('*.railway.app');
   });
 
+  // 2026-04-26 — bug-bounty F3. The previous wildcard `https://*.arkova.ai`
+  // turned every (current OR future) arkova.ai subdomain into a connect-src
+  // exfil destination. With the F1 finding showing how easily a stale
+  // subdomain reference can drift live, the wildcard had to go. CSP now
+  // lists the four production subdomains explicitly. Add a new entry only
+  // after confirming the subdomain is owned by Arkova and serves XHR
+  // traffic the SPA actually needs.
+  it('CSP connect-src does not use the *.arkova.ai wildcard (bug-bounty F3, 2026-04-26)', () => {
+    const value = getHeaderValue('Content-Security-Policy');
+    expect(value).toBeDefined();
+    expect(value).not.toContain('https://*.arkova.ai');
+  });
+
+  it('CSP connect-src lists the production arkova.ai subdomains explicitly', () => {
+    const value = getHeaderValue('Content-Security-Policy');
+    expect(value).toBeDefined();
+    expect(value).toContain('https://app.arkova.ai');
+    expect(value).toContain('https://edge.arkova.ai');
+    expect(value).toContain('https://arkova.ai');
+  });
+
   it('X-DNS-Prefetch-Control is on', () => {
     expect(getHeaderValue('X-DNS-Prefetch-Control')).toBe('on');
   });

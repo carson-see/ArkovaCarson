@@ -72,10 +72,27 @@ interface RateLimitOptions {
   maxRequests: number; // Max requests per window
   keyGenerator?: (req: Request) => string; // Custom key generator
   skipFailedRequests?: boolean; // Don't count failed requests
+  /**
+   * Bucket scope namespace. Defaults to '' (no scope), meaning every
+   * limiter instance shares one bucket per `keyGenerator(req)` value
+   * within its mount point. Set this to e.g. 'verify' or 'batch' when
+   * you want a limiter to be scoped separately from other limiters
+   * sharing the same key (e.g. same IP). DO NOT include `req.path` in
+   * the bucket scope — that re-introduces the F5 bug below.
+   */
+  scope?: string;
 }
 
 /**
  * Create a rate limiter middleware
+ *
+ * 2026-04-26 — bug-bounty F5. Previous implementation keyed buckets on
+ * `${req.path}:${keyGenerator(req)}`, which meant `/verify/ABC` and
+ * `/verify/XYZ` got separate buckets — defeating Constitution 1.10's
+ * "100 req/min per IP" intent for the public verify endpoint, where the
+ * publicId is in the path. Buckets are now keyed purely on the limiter's
+ * `scope` + the keyGenerator output. The default keyGenerator is
+ * `req.ip`, so anon traffic correctly aggregates per-IP across paths.
  */
 export function rateLimit(options: RateLimitOptions) {
   const {
@@ -83,10 +100,11 @@ export function rateLimit(options: RateLimitOptions) {
     maxRequests,
     keyGenerator = (req) => req.ip || 'unknown',
     skipFailedRequests = false,
+    scope = '',
   } = options;
 
   return (req: Request, res: Response, next: NextFunction): void => {
-    const key = `${req.path}:${keyGenerator(req)}`;
+    const key = scope ? `${scope}:${keyGenerator(req)}` : keyGenerator(req);
     const now = Date.now();
 
     let entry = rateLimitStore.get(key);

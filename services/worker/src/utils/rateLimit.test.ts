@@ -196,7 +196,15 @@ describe('rateLimit', () => {
       expect(res2.status).toHaveBeenCalledWith(429);
     });
 
-    it('separates limits by path', () => {
+    // 2026-04-26 — bug-bounty F5 regression. The previous behavior keyed
+    // buckets on `${req.path}:${keyGenerator(req)}`, which meant
+    // `/verify/ABC` and `/verify/XYZ` got separate buckets. That defeated
+    // Constitution 1.10's "100 req/min per IP" intent for endpoints with
+    // a path parameter (the public verify endpoint). Buckets now key on
+    // `keyGenerator(req)` (default: req.ip) only — paths share a bucket
+    // per IP. Use the `scope` option to opt back into separate buckets
+    // when you genuinely want per-feature isolation (e.g. batch).
+    it('shares one bucket per IP across paths (Constitution 1.10)', () => {
       const limiter = rateLimit({ windowMs: 60000, maxRequests: 1 });
       const ip = '10.3.0.1';
 
@@ -205,10 +213,32 @@ describe('rateLimit', () => {
       limiter(req1, res1, next1);
       expect(next1).toHaveBeenCalled();
 
-      // /path-b also passes (different path key)
+      // /path-b is now blocked — same IP, max 1 req/window across all paths
       const { req: req2, res: res2, next: next2 } = createMockReqResWithKey(ip, '/unique-path-b');
       limiter(req2, res2, next2);
-      expect(next2).toHaveBeenCalled();
+      expect(next2).not.toHaveBeenCalled();
+      expect(res2.status).toHaveBeenCalledWith(429);
+    });
+
+    it('keeps separate buckets when limiters use different `scope` values', () => {
+      const verifyLimiter = rateLimit({ windowMs: 60000, maxRequests: 1, scope: 'verify' });
+      const batchLimiter = rateLimit({ windowMs: 60000, maxRequests: 1, scope: 'batch' });
+      const ip = '10.4.0.1';
+
+      const { req: rA, res: resA, next: nextA } = createMockReqResWithKey(ip, '/verify/x');
+      verifyLimiter(rA, resA, nextA);
+      expect(nextA).toHaveBeenCalled();
+
+      // Same IP but different scope -> separate bucket, allowed
+      const { req: rB, res: resB, next: nextB } = createMockReqResWithKey(ip, '/verify/batch');
+      batchLimiter(rB, resB, nextB);
+      expect(nextB).toHaveBeenCalled();
+
+      // Reuse the verify bucket -> rate limited
+      const { req: rC, res: resC, next: nextC } = createMockReqResWithKey(ip, '/verify/y');
+      verifyLimiter(rC, resC, nextC);
+      expect(nextC).not.toHaveBeenCalled();
+      expect(resC.status).toHaveBeenCalledWith(429);
     });
   });
 

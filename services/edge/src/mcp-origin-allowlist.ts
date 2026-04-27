@@ -169,6 +169,7 @@ export function allowlistDecisionToResponse(
         headers: {
           'Content-Type': 'application/json',
           'Access-Control-Allow-Origin': corsOrigin,
+          Vary: 'Origin',
           // Turnstile widget key is surfaced via headers so downstream
           // agents can render a challenge without hardcoding site keys.
           'CF-MCP-Challenge': 'turnstile',
@@ -187,6 +188,7 @@ export function allowlistDecisionToResponse(
       headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': corsOrigin,
+        Vary: 'Origin',
       },
     },
   );

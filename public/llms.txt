@@ -13,17 +13,24 @@ Arkova builds infrastructure for verifiable credentials. Organizations use Arkov
 
 ## Endpoints
 
-Base URL: `https://app.arkova.ai/api/v1`
+Public verification (no authentication required):
 
-- `GET /verify/:publicId` — Returns verification status: verified, status, issuer_name, credential_type, issued_date, expiry_date, anchor_timestamp, record_uri
-- `POST /verify-anchor` — Accepts `{ "fingerprint": "<SHA-256 hex>" }`, returns matching record
-- `GET /verify/search?q=<query>&max_results=<n>` — Semantic search across verified credentials
+- `GET https://app.arkova.ai/api/v1/verify/{publicId}` — Returns verification status: verified, status, issuer_name, credential_type, issued_date, expiry_date, anchor_timestamp, record_uri
+- `POST https://app.arkova.ai/api/verify-anchor` — Accepts `{ "fingerprint": "<SHA-256 hex>" }`, returns matching record (note: no `/v1` prefix on this endpoint)
+
+API-key required (`X-API-Key` header, obtain at https://app.arkova.ai/settings/api-keys):
+
+- `GET https://app.arkova.ai/api/v1/verify/search?q=<query>&max_results=<n>` — Semantic search across verified credentials
+- `POST https://app.arkova.ai/api/v1/verify/batch` — Batch verification by publicId
+- `POST https://app.arkova.ai/api/v1/verify/entity` — Entity verification
+
+OpenAPI spec: https://app.arkova.ai/api/docs (interactive)
 
 ## Authentication
 
-- **API Key:** `X-API-Key` header. Obtain at https://app.arkova.ai/settings/api-keys
-- **OAuth 2.0:** Bearer token for enterprise integrations
-- **Public:** No auth required for read-only verification
+- **API Key:** `X-API-Key` header on every request. Obtain at https://app.arkova.ai/settings/api-keys
+- **OAuth 2.0:** Bearer token for enterprise integrations (Supabase JWT)
+- **Public:** No auth required only on `GET /api/v1/verify/{publicId}` and `POST /api/verify-anchor`. Every other endpoint requires an API key or JWT.
 
 ## Rate Limits
 
