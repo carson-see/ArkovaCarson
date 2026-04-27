@@ -201,9 +201,14 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     if (countsRes.error) {
       logger.warn({ error: countsRes.error }, 'get_anchor_status_counts_fast failed');
     }
-    // On RPC failure we report 0; smart-skip then defers the batch — same
-    // conservative behavior as the prior nullable-count path.
-    const pendingCount = countsRes.data?.PENDING ?? 0;
+    // On RPC failure we still know there is ≥ 1 PENDING anchor (oldestRes
+    // returned a row at L193-197), so fall back to 1 instead of 0. A 0
+    // fallback collides with triggerB_shouldFireOnAge's first guard
+    // (`if (input.pendingCount === 0) return false;`) and would defer the
+    // batch on every cron tick during exactly the RPC-degraded scenario
+    // this hardening is for — silently breaking the
+    // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
+    const pendingCount = countsRes.data?.PENDING ?? 1;
 
     if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
