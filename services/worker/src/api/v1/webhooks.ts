@@ -25,7 +25,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { isPrivateUrlResolved, signPayload } from '../../webhooks/delivery.js';
+import { isPrivateUrlResolved, replayDelivery, signPayload } from '../../webhooks/delivery.js';
 import {
   CreateWebhookSchema,
   UpdateWebhookSchema,
@@ -482,6 +482,79 @@ router.get('/deliveries', async (req, res) => {
   } catch (err) {
     logger.error({ error: err }, 'Delivery logs query failed');
     errorResponse(res, 500, 'internal_error', 'Failed to fetch delivery logs');
+  }
+});
+
+// ─── SCRUM-1172 / HAKI-REQ-03 AC3: POST /api/v1/webhooks/deliveries/:id/replay ──
+// Re-fires a previously-attempted delivery using the original payload, signed
+// with a fresh timestamp. Inserts a new `webhook_delivery_logs` row tagged with
+// idempotency_key=`replay-{id}-{ts}` so the original is preserved for audit.
+// Cross-org access returns 404 (matches existing /deliveries scoping).
+router.post('/deliveries/:id/replay', async (req, res) => {
+  if (!requireApiKey(req, res)) return;
+
+  try {
+    const result = await replayDelivery(req.params.id, req.apiKey.orgId);
+
+    if (result.error === 'not_found' || result.error === 'cross_org') {
+      errorResponse(res, 404, 'not_found', 'Delivery not found or does not belong to your organization');
+      return;
+    }
+    if (result.error === 'endpoint_inactive') {
+      errorResponse(res, 409, 'endpoint_inactive', 'Cannot replay to a disabled webhook endpoint');
+      return;
+    }
+    if (result.error === 'ssrf_blocked') {
+      errorResponse(res, 403, 'ssrf_blocked', 'Endpoint URL targets a private network');
+      return;
+    }
+    if (result.error === 'delivery_failed' && !result.new_delivery_id) {
+      errorResponse(res, 500, 'internal_error', 'Failed to record replay');
+      return;
+    }
+
+    // Fire-and-forget audit insert. Wrap in Promise.resolve so .catch surfaces
+    // a rejection (Supabase builders return PromiseLike, not Promise) — losing
+    // the audit event silently would defeat the gate.
+    void Promise.resolve(
+      db.from('audit_events').insert({
+        event_type: 'WEBHOOK_DELIVERY_REPLAYED',
+        event_category: 'ADMIN',
+        actor_id: req.apiKey.userId,
+        target_type: 'webhook_delivery',
+        target_id: result.new_delivery_id ?? null,
+        org_id: req.apiKey.orgId,
+        details: JSON.stringify({
+          replayed_from: req.params.id,
+          ok: result.ok,
+          status_code: result.status_code ?? null,
+        }),
+      }),
+    )
+      .then((r) => {
+        if (r?.error) {
+          logger.error(
+            { error: r.error, deliveryId: req.params.id },
+            'Failed to record WEBHOOK_DELIVERY_REPLAYED audit event',
+          );
+        }
+      })
+      .catch((err: unknown) => {
+        logger.error(
+          { error: err, deliveryId: req.params.id },
+          'Audit event insert rejected for WEBHOOK_DELIVERY_REPLAYED',
+        );
+      });
+
+    res.json({
+      replayed: true,
+      ok: result.ok,
+      delivery_id: result.new_delivery_id,
+      status_code: result.status_code ?? null,
+    });
+  } catch (err) {
+    logger.error({ error: err, deliveryId: req.params.id }, 'webhook replay failed');
+    errorResponse(res, 500, 'internal_error', 'Failed to replay delivery');
   }
 });
 

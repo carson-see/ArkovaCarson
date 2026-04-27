@@ -209,6 +209,28 @@ PR [#573](https://github.com/carson-see/ArkovaCarson/pull/573) on branch `claude
 
 ---
 
+### 2026-04-26 — Webhook replay endpoint (Sarah session 4)
+
+PR [#572](https://github.com/carson-see/ArkovaCarson/pull/572) on branch `claude/2026-04-26-haki-webhook-replay`. Pushed + open + linked to Jira. Awaiting review.
+
+**1 story scoped + shipped (AC3 only):**
+
+| Jira | Title | Scope |
+|---|---|---|
+| [SCRUM-1172](https://arkova.atlassian.net/browse/SCRUM-1172) | HAKI-REQ-03 anchor lifecycle webhooks + replay | **AC3 only** (replay endpoint). AC1/2/4/5/6 deferred — existing infra covers most |
+
+`replayDelivery(deliveryId, orgId, options?)` in `services/worker/src/webhooks/delivery.ts` loads the original delivery + endpoint via a single Supabase nested select, enforces org scope (cross-org → 404, no existence-leak), checks endpoint active + URL not private (SSRF), reconstructs the payload, signs with a fresh timestamp, POSTs, inserts a NEW `webhook_delivery_logs` row keyed `replay-{id}-{ms}-{4hex}`. Original row preserved for audit. `X-Arkova-Replay-Of: <originalId>` header lets partner receivers dedupe.
+
+POST `/api/v1/webhooks/deliveries/:id/replay` route exposes it. Cross-org 404, inactive 409, SSRF 403, success returns new `delivery_id` + `status_code`. Emits `WEBHOOK_DELIVERY_REPLAYED` audit event.
+
+**Tests:** 8/8 new in `replay.test.ts` (not_found / cross_org / endpoint_inactive / ssrf_blocked / success / 5xx / network error / insert failure). 75/75 across touched worker areas. Typecheck clean.
+
+**/simplify pass applied (3 fixes):** ms+random idempotency key (was seconds — collision risk), audit insert wrapped in `Promise.resolve(...).then(...).catch(...)` (silent drops now log), test mock switched from stateful flag to `mockImplementationOnce`.
+
+**/security-review pass:** zero findings ≥7 confidence. All Supabase queries parameterized; cross-org returns 404 to avoid leak; HMAC secret never logged or returned; SSRF guard fail-closes on DNS errors.
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:

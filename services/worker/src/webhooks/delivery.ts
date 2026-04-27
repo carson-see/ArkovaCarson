@@ -592,6 +592,140 @@ export async function resolveDlqEntry(entryId: string, orgId: string): Promise<b
 }
 
 /**
+ * SCRUM-1172 (HAKI-REQ-03 AC3) — replay a previously-attempted webhook delivery.
+ *
+ * Reconstructs the payload from `webhook_delivery_logs.payload`, re-signs with
+ * a current timestamp, and POSTs to the same endpoint URL. Always inserts a
+ * NEW `webhook_delivery_logs` row with a `replay-` idempotency key so the
+ * original is preserved for audit and the existing-row idempotency check in
+ * `deliverToEndpoint` can't short-circuit the replay.
+ *
+ * Org scope is enforced via the embedded `webhook_endpoints(org_id)` join —
+ * cross-org replay is treated identically to "not found" so the endpoint
+ * doesn't leak the existence of other orgs' delivery logs.
+ */
+export type ReplayError =
+  | 'not_found'
+  | 'cross_org'
+  | 'endpoint_inactive'
+  | 'ssrf_blocked'
+  | 'delivery_failed';
+
+export interface ReplayResult {
+  ok: boolean;
+  status_code?: number;
+  new_delivery_id?: string;
+  error?: ReplayError;
+}
+
+export interface ReplayOptions {
+  /**
+   * URL guard — defaults to `isPrivateUrlResolved`. Tests inject a stub so
+   * unit tests don't need real DNS resolution to deny `hooks.example.com`.
+   */
+  urlGuard?: (url: string) => Promise<boolean>;
+}
+
+export async function replayDelivery(
+  deliveryId: string,
+  orgId: string,
+  options: ReplayOptions = {},
+): Promise<ReplayResult> {
+  const urlGuard = options.urlGuard ?? isPrivateUrlResolved;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+
+  const { data: row } = await dbAny
+    .from('webhook_delivery_logs')
+    .select(
+      'id, endpoint_id, event_type, event_id, payload, ' +
+        'webhook_endpoints!inner(id, url, secret_hash, is_active, org_id)',
+    )
+    .eq('id', deliveryId)
+    .single();
+
+  if (!row) return { ok: false, error: 'not_found' };
+
+  const endpoint = row.webhook_endpoints as WebhookEndpoint;
+  // 404 instead of 403 — never leak cross-org delivery existence to other orgs.
+  if (!endpoint || endpoint.org_id !== orgId) return { ok: false, error: 'cross_org' };
+  if (!endpoint.is_active) return { ok: false, error: 'endpoint_inactive' };
+
+  if (await urlGuard(endpoint.url)) {
+    logger.warn({ endpointId: endpoint.id, deliveryId }, 'Replay blocked — endpoint URL is private');
+    return { ok: false, error: 'ssrf_blocked' };
+  }
+
+  const payload = row.payload as WebhookPayload;
+  const payloadString = JSON.stringify(payload);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
+  // Idempotency key includes ms + random suffix so back-to-back replays in the
+  // same second don't collide on the unique-key constraint.
+  const idempotencyKey = `replay-${deliveryId}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+
+  const { data: newLog, error: insertErr } = await dbAny
+    .from('webhook_delivery_logs')
+    .insert({
+      endpoint_id: endpoint.id,
+      event_type: row.event_type,
+      event_id: row.event_id,
+      payload: row.payload,
+      attempt_number: 0,
+      status: 'pending',
+      idempotency_key: idempotencyKey,
+    })
+    .select()
+    .single();
+
+  if (insertErr || !newLog) {
+    logger.error({ error: insertErr, deliveryId }, 'Failed to create replay delivery log');
+    return { ok: false, error: 'delivery_failed' };
+  }
+
+  try {
+    const response = await fetch(endpoint.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Arkova-Signature': signature,
+        'X-Arkova-Timestamp': timestamp,
+        'X-Arkova-Event': row.event_type,
+        // Explicit replay marker — receivers can dedupe against the original
+        // event_id without treating the resend as a fresh event.
+        'X-Arkova-Replay-Of': deliveryId,
+      },
+      body: payloadString,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10000),
+    });
+
+    const responseBody = await response.text().catch(() => '');
+    const isSuccess = response.ok;
+
+    await dbAny
+      .from('webhook_delivery_logs')
+      .update({
+        status: isSuccess ? 'success' : 'failed',
+        response_status: response.status,
+        response_body: responseBody.slice(0, 1000),
+        delivered_at: isSuccess ? new Date().toISOString() : null,
+        error_message: isSuccess ? null : `HTTP ${response.status}`,
+      })
+      .eq('id', newLog.id);
+
+    return { ok: isSuccess, status_code: response.status, new_delivery_id: newLog.id };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'unknown';
+    await dbAny
+      .from('webhook_delivery_logs')
+      .update({ status: 'failed', error_message: msg.slice(0, 500) })
+      .eq('id', newLog.id);
+    return { ok: false, error: 'delivery_failed', new_delivery_id: newLog.id };
+  }
+}
+
+/**
  * Process pending retries
  */
 export async function processWebhookRetries(): Promise<number> {
