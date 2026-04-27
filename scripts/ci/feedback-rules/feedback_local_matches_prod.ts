@@ -84,8 +84,8 @@ export function run(): { ok: boolean; message: string } {
     };
   }
 
-  const onlyLocal = [...local].filter((t) => !prod.has(t)).sort();
-  const onlyProd = [...prod].filter((t) => !local.has(t)).sort();
+  const onlyLocal = [...local].filter((t) => !prod.has(t)).sort((a, b) => a.localeCompare(b));
+  const onlyProd = [...prod].filter((t) => !local.has(t)).sort((a, b) => a.localeCompare(b));
 
   if (onlyLocal.length === 0 && onlyProd.length === 0) {
     return { ok: true, message: `✅ feedback_local_matches_prod: clean (${local.size} tables in both).` };
