@@ -9,31 +9,37 @@
  * reflects what's there. Mark-read actions optimistically update the
  * local state for snappy UX, then re-poll on the next interval.
  *
- * Notification types (from migration 0240's enum):
- *   queue_run_completed, rule_fired, version_available_for_review,
- *   treasury_alert, anchor_revoked
+ * Schema (per migration 0240):
+ *   id uuid, user_id uuid, organization_id uuid?, type notification_type,
+ *   payload jsonb, read_at timestamptz?, created_at timestamptz
+ *
+ * Display fields (title, body, target_id) live inside `payload` so the
+ * dispatcher can shape each notification kind without schema migrations.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 
-export type NotificationKind =
+export type NotificationType =
   | 'queue_run_completed'
   | 'rule_fired'
   | 'version_available_for_review'
   | 'treasury_alert'
   | 'anchor_revoked';
 
+export interface NotificationPayload {
+  title?: string;
+  body?: string;
+  /** Resource the notification points at (anchor id, rule id, etc.) for deep-link resolution. */
+  target_id?: string;
+  [key: string]: unknown;
+}
+
 export interface Notification {
   id: string;
   user_id: string;
   organization_id: string | null;
-  kind: NotificationKind;
-  title: string;
-  body: string | null;
-  /** Resource the notification points at (anchor id, rule id, etc.) for deep-link resolution. */
-  target_id: string | null;
-  /** Free-form extras the dispatcher emits. Always non-PII per CLAUDE.md §1.4. */
-  metadata: Record<string, unknown> | null;
+  type: NotificationType;
+  payload: NotificationPayload;
   read_at: string | null;
   created_at: string;
 }
@@ -64,7 +70,7 @@ export function useNotifications(): UseNotificationsReturn {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error: fetchErr } = await (supabase as any)
         .from('user_notifications')
-        .select('id, user_id, organization_id, kind, title, body, target_id, metadata, read_at, created_at')
+        .select('id, user_id, organization_id, type, payload, read_at, created_at')
         .order('created_at', { ascending: false })
         .limit(MAX_PANEL_ITEMS);
       if (fetchErr) {
@@ -155,13 +161,14 @@ export function useNotifications(): UseNotificationsReturn {
  * Centralized here so the panel doesn't need to know about route conventions.
  */
 export function notificationDeepLink(n: Notification): string | null {
-  switch (n.kind) {
+  const targetId = n.payload?.target_id;
+  switch (n.type) {
     case 'anchor_revoked':
-      return n.target_id ? `/records/${n.target_id}` : null;
+      return targetId ? `/records/${targetId}` : null;
     case 'rule_fired':
-      return n.target_id ? `/admin/rules/${n.target_id}` : null;
+      return targetId ? `/admin/rules/${targetId}` : null;
     case 'version_available_for_review':
-      return n.target_id ? `/records/${n.target_id}` : null;
+      return targetId ? `/records/${targetId}` : null;
     case 'queue_run_completed':
       return '/admin/queues';
     case 'treasury_alert':

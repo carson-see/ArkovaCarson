@@ -28,7 +28,7 @@ export interface AnchorStats {
   lastTxTime: string | null;
 }
 
-async function fetchAnchorStatsData(): Promise<AnchorStats> {
+export async function fetchAnchorStatsData(): Promise<AnchorStats> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = supabase as any;
 
@@ -68,14 +68,19 @@ async function fetchAnchorStatsData(): Promise<AnchorStats> {
 
   const totalAnchors = Object.values(statusCounts).reduce((sum, c) => sum + c, 0);
 
-  // Process TX stats
+  // Process TX stats. `get_anchor_tx_stats` is restricted to service_role per
+  // migration 0269 (SEC-RECON-7). Non-platform-admin users predictably see 403
+  // (`42501 permission denied for function`) — that's expected, not a fault.
+  // The previous fallback ran a `count: 'exact'` against the bloated anchors
+  // table (R1-1 vacuum still finishing), reliably timing out at 30s. Drop the
+  // fallback: a missing tx-stats panel is better than a 30s page hang.
   const txRaw = txStatsResult.data;
   const txData = parseRpcData(txRaw);
   const txRpcHasData = txRaw != null && !txStatsResult.error && txData.distinct_tx_count != null;
-  let distinctTxIds: number;
-  let avgAnchorsPerTx: number;
-  let lastAnchorTime: string | null;
-  let lastTxTime: string | null;
+  let distinctTxIds = 0;
+  let avgAnchorsPerTx = 0;
+  let lastAnchorTime: string | null = null;
+  let lastTxTime: string | null = null;
 
   if (txRpcHasData) {
     distinctTxIds = Number(txData.distinct_tx_count) || 0;
@@ -83,33 +88,6 @@ async function fetchAnchorStatsData(): Promise<AnchorStats> {
     avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTx / distinctTxIds) : 0;
     lastAnchorTime = (txData.last_anchor_time as string) ?? null;
     lastTxTime = (txData.last_tx_time as string) ?? null;
-  } else {
-    // Fallback
-    try {
-      const { data: txCountData } = await dbAny.rpc('get_distinct_tx_count');
-      distinctTxIds = txCountData ?? 0;
-    } catch {
-      const { count: txCount } = await dbAny
-        .from('anchors')
-        .select('chain_tx_id', { count: 'exact', head: true })
-        .not('chain_tx_id', 'is', null);
-      distinctTxIds = txCount ?? 0;
-    }
-    const { count: anchorsWithTxCount } = await dbAny
-      .from('anchors')
-      .select('id', { count: 'exact', head: true })
-      .not('chain_tx_id', 'is', null);
-    const anchorsWithTxFallback = anchorsWithTxCount ?? (statusCounts['SECURED'] ?? 0);
-    avgAnchorsPerTx = distinctTxIds > 0 ? Math.round(anchorsWithTxFallback / distinctTxIds) : 0;
-
-    const { data: lastRow } = await dbAny
-      .from('anchors')
-      .select('created_at')
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single();
-    lastAnchorTime = lastRow?.created_at ?? null;
-    lastTxTime = lastAnchorTime;
   }
 
   return {
