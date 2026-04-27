@@ -40,39 +40,47 @@ export async function checkPipelineHealth(): Promise<PipelineHealthResult> {
   const checkedAt = new Date().toISOString();
   const stuckGroups: StuckAnchorGroup[] = [];
 
+  // SCRUM-1259 (R1-5): the previous exact-count on the bloated `anchors`
+  // table 60s-timed-out per status (3 statuses × 60s = the cron ran past
+  // its budget every tick). Replaced with a LIMIT-bounded id-only fetch
+  // (cap CAP_ROWS) — turns "count" into "≤ CAP exact, else ≥ CAP". For
+  // a stuck-anchor monitor this is the right tradeoff: we care that ANY
+  // are stuck and roughly how many; precision past the cap doesn't change
+  // the page severity.
+  const STUCK_CAP = 500;
+
   for (const [status, thresholdMinutes] of Object.entries(THRESHOLDS)) {
     const cutoff = new Date(Date.now() - thresholdMinutes * 60 * 1000).toISOString();
-
     const anchorStatus = status as 'PENDING' | 'SUBMITTED' | 'BROADCASTING';
-    const { count, error } = await db
+
+    // Fetch up to CAP rows ordered by updated_at ASC — the oldest fall in
+    // first, so [0] is the oldest stuck anchor and length is the bounded
+    // count. Hits idx_anchors_pending_claim / idx_anchors_broadcasting_status
+    // / idx_anchors_submitted_status (all (status, updated_at)-shaped) for
+    // efficient index scan even under bloat.
+    const { data, error } = await db
       .from('anchors')
-      .select('id', { count: 'exact', head: true })
+      .select('updated_at')
       .eq('status', anchorStatus)
       .lt('updated_at', cutoff)
-      .is('deleted_at', null);
+      .is('deleted_at', null)
+      .order('updated_at', { ascending: true })
+      .limit(STUCK_CAP);
 
     if (error) {
       logger.error({ error, status }, 'Pipeline health: failed to check stuck anchors');
       continue;
     }
 
-    if (count && count > 0) {
-      // Get the oldest stuck anchor for reporting
-      const { data: oldest } = await db
-        .from('anchors')
-        .select('updated_at')
-        .eq('status', anchorStatus)
-        .lt('updated_at', cutoff)
-        .is('deleted_at', null)
-        .order('updated_at', { ascending: true })
-        .limit(1)
-        .single();
-
+    if (data && data.length > 0) {
       stuckGroups.push({
         status,
-        count,
+        // When we hit the cap, the true count is ≥ STUCK_CAP — caller
+        // can render "500+" or similar. The alert email below shows the
+        // capped number with a "(at least)" suffix when capped.
+        count: data.length,
         thresholdMinutes,
-        oldestUpdatedAt: oldest?.updated_at ?? null,
+        oldestUpdatedAt: (data[0] as { updated_at: string }).updated_at ?? null,
       });
     }
   }

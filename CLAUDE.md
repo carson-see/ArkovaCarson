@@ -41,6 +41,9 @@ Audit `gcloud ai endpoints list` before + after every tuning/eval/deploy run. Ta
 ### 8. Never work on `main`
 Feature branches only. Push as many commits as you want — GitHub Actions ignores all feature-branch pushes (every workflow in `.github/workflows/` triggers only on PR or on push to `main`/`develop`). CI runs **once** when the PR opens and on each update. Merges are human-gated per `memory/feedback_never_merge_without_ok.md`. This keeps Actions minutes near zero during iteration.
 
+### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
+`deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
+
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
@@ -53,6 +56,10 @@ Feature branches only. Push as many commits as you want — GitHub Actions ignor
 ```
 
 Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-2026-04-21 CLAUDE.md iterations — historical only.
+
+**HANDOFF.md edit lint (R0-6 / SCRUM-1252):** edits asserting prod state (`rev arkova-worker-NNNNN`, `applied on prod`, `verified via`, `deployed healthy`, `live in prod`, `N of M findings shipped`) MUST link a verification artifact (gcloud output, MCP query, log line, or GH Actions run URL) in the same PR description or commit body. The `handoff-claims` CI job enforces this. Override label: `handoff-narrative-only` for prose-only retrospectives. Footer must include `_Last refreshed: YYYY-MM-DD by <author> — claims verified against gcloud/MCP/CI output._`.
+
+**Memory feedback rules CI-enforced (R0-7 / SCRUM-1253):** `memory/feedback_*.md` rules are no longer advisory — each one with a parsable detector ships as a CI script under `scripts/ci/feedback-rules/`. The `feedback-rules` CI job runs the orchestrator on every PR. See `memory/README.md` for the index and override labels.
 
 ---
 
@@ -68,7 +75,7 @@ Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-202
 | Routing | react-router-dom v6. Named routes in `src/lib/routes.ts`. |
 | Worker | Node + Express in `services/worker/`. Webhooks, cron, anchoring. |
 | Payments | Stripe (SDK + webhooks). Worker-only, never browser. |
-| Chain | bitcoinjs-lib + GCP KMS (prod). Code-level AWS KMS provider is a non-deployed abstraction — do NOT claim AWS in customer-facing materials (`memory/feedback_no_aws.md`). MockChainClient for tests. |
+| Chain | bitcoinjs-lib. **Signing**: WIF in Secret Manager is the active signer (`client.ts:279` "WIF takes precedence (current)"); GCP KMS code path exists and is selected only when WIF is unset. **Broadcast**: GetBlock RPC (sovereign as of 2026-04-25). **UTXO listing + fee estimation + frontend balance reads**: still via public `mempool.space` — see HANDOFF.md "Bitcoin paths" for the honest path-by-path table. AWS KMS provider non-deployed (`memory/feedback_no_aws.md`). MockChainClient for tests. |
 | Testing | Vitest + Playwright + RLS helpers. |
 | Formal verification | TLA PreCheck. `machines/bitcoinAnchor.machine.ts`. |
 | Ingress | Cloudflare Tunnel, Zero Trust. No public ports. |
@@ -146,7 +153,7 @@ Anonymous: 100 req/min/IP. API key: 1,000 req/min. Batch: 10 req/min. `Retry-Aft
 
 ## 3. TASK EXECUTION GATES
 
-Every task — before declaring done — must pass all six gates:
+Every task — before declaring done — must pass all seven gates:
 
 1. **Tests** — Written first, seen failing, then made passing. `typecheck` + `lint` + `test` + `lint:copy` green. Coverage thresholds met.
 2. **Jira** — Ticket status transitioned, DoR + DoD checked, Confluence URL pasted in ticket, acceptance criteria ticked off.
@@ -154,8 +161,9 @@ Every task — before declaring done — must pass all six gates:
 4. **Bug log** — Any bugs found or fixed logged in the master tracker.
 5. **agents.md** — Updated in every modified folder.
 6. **HANDOFF.md + CLAUDE.md** — HANDOFF.md updated with the new state. CLAUDE.md only touched if a RULE changes — do not add rolling narrative here.
+7. **Workflow validators (R0-5 / SCRUM-1251)** — Atlassian Automation rules in `docs/jira-workflow/automation-rules.json` MUST approve the Done transition. Reporter ≠ resolver, PR merged > 30 min, Cloud Run SHA matches, all DoD `[ ]` ticked, no red required checks, Bug-issue rows linked. If a rule blocks, fix the underlying gap — do NOT seek a workaround.
 
-A task is NOT complete until all 6 gates pass. Announce gate status at the end of every task.
+A task is NOT complete until all 7 gates pass. Announce gate status at the end of every task.
 
 ---
 

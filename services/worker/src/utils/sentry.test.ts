@@ -5,8 +5,24 @@
  * Constitution 1.6: Documents never leave the user's device — no document data in Sentry.
  */
 
-import { describe, it, expect } from 'vitest';
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb } from './sentry.js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// vi.mock is hoisted above the import below so sentry.ts (which does
+// `import * as Sentry from '@sentry/node'`) sees the mocked addBreadcrumb.
+// vi.spyOn on the re-exported ESM namespace fails with "Cannot redefine
+// property: addBreadcrumb" because ESM exports are read-only — this is
+// the standard workaround. The other Sentry methods fall through to the
+// real module via importActual so the PII scrubber tests below behave
+// normally (they don't depend on addBreadcrumb at all).
+vi.mock('@sentry/node', async () => {
+  const actual = await vi.importActual<typeof import('@sentry/node')>('@sentry/node');
+  return {
+    ...actual,
+    addBreadcrumb: vi.fn(),
+  };
+});
+
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -233,5 +249,78 @@ describe('scrubPiiFromBreadcrumb', () => {
 
     const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
     expect(scrubbed?.message).toBe('Application started');
+  });
+});
+
+describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('emits a Sentry breadcrumb in the chain.rpc-fallback category with method + reason', () => {
+    const breadcrumbSpy = vi.mocked(Sentry.addBreadcrumb);
+    breadcrumbSpy.mockClear();
+    const logger = { warn: vi.fn() };
+
+    emitRpcFallback({
+      provider: 'getblock',
+      method: 'listunspent',
+      error: new Error('Method not allowed'),
+      fallbackTo: 'mempool.space',
+      logger,
+      origin: 'GetBlockHybridProvider.listUnspent',
+    });
+
+    expect(breadcrumbSpy).toHaveBeenCalledTimes(1);
+    expect(breadcrumbSpy).toHaveBeenCalledWith({
+      category: 'chain.rpc-fallback',
+      message: 'getblock.listunspent → mempool.space',
+      level: 'warning',
+      data: { method: 'listunspent', reason: 'Method not allowed' },
+    });
+  });
+
+  it('emits a structured warn log with the locked field shape', () => {
+    vi.mocked(Sentry.addBreadcrumb).mockClear();
+    const logger = { warn: vi.fn() };
+
+    emitRpcFallback({
+      provider: 'getblock',
+      method: 'getrawtransaction',
+      error: new Error('Connection refused'),
+      fallbackTo: 'mempool.space',
+      logger,
+      origin: 'GetBlockHybridProvider.getRawTransaction',
+    });
+
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      {
+        chain_rpc_fallback: true,
+        method: 'getrawtransaction',
+        provider: 'getblock',
+        reason: 'Connection refused',
+      },
+      'GetBlockHybridProvider.getRawTransaction: RPC fallback to mempool.space',
+    );
+  });
+
+  it('uses "unknown" reason when error is not an Error instance', () => {
+    vi.mocked(Sentry.addBreadcrumb).mockClear();
+    const logger = { warn: vi.fn() };
+
+    emitRpcFallback({
+      provider: 'getblock',
+      method: 'getblockheader',
+      error: 'just a string',
+      fallbackTo: 'mempool.space',
+      logger,
+      origin: 'X',
+    });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'unknown' }),
+      expect.any(String),
+    );
   });
 });

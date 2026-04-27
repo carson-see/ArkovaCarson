@@ -81,6 +81,7 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
+import { getBuildSha, isValidBuildSha } from '../utils/buildInfo.js';
 
 export const cronRouter = Router();
 
@@ -1195,6 +1196,35 @@ cronRouter.post('/report-metered-usage', async (_req, res) => {
   }
 });
 
+// ─── DB Health Monitor (SCRUM-1254 / R0-8) ───
+//
+// Cloud Scheduler hits this every 5 minutes. Emits Sentry events on
+// pg_cron failures, dead-tuple bloat, and smoke fail-streaks. See
+// services/worker/src/jobs/db-health-monitor.ts for the alert thresholds.
+//
+// Code-review issue #O (PR #563): wrapped in `withCronMonitoring` so
+// Sentry Crons receives in-progress / ok / error check-ins. Without this,
+// a stalled monitor would itself be undetected — the very class of
+// failure R0-8 was meant to surface.
+
+cronRouter.post('/db-health', async (_req, res) => {
+  const monitor = withCronMonitoring('db-health-monitor', '*/5 * * * *', async () => {
+    const { runDbHealthMonitor } = await import('../jobs/db-health-monitor.js');
+    return runDbHealthMonitor();
+  });
+  try {
+    const snapshot = await monitor();
+    res.json({
+      ok: snapshot.alerts.length === 0,
+      alertCount: snapshot.alerts.length,
+      snapshot,
+    });
+  } catch (error) {
+    logger.error({ error }, 'db-health-monitor failed');
+    res.status(500).json({ error: 'db-health-monitor failed' });
+  }
+});
+
 // ─── Production Smoke Test (P7-TS-06) ───
 
 cronRouter.post('/smoke-test', async (_req, res) => {
@@ -1202,6 +1232,10 @@ cronRouter.post('/smoke-test', async (_req, res) => {
     const results = await runSmokeTestSuite();
     const passed = results.filter((r) => r.status === 'pass').length;
     const failed = results.filter((r) => r.status === 'fail').length;
+    // SCRUM-1247 (R0-1): include the deployed git SHA so smoke output is
+    // self-attesting — operators can see in the same payload what code
+    // is being smoked.
+    const gitSha = getBuildSha();
 
     // Store results in audit_events for history
     try {
@@ -1213,6 +1247,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
           failed,
           total: results.length,
           results,
+          gitSha,
           timestamp: new Date().toISOString(),
         }),
       });
@@ -1226,6 +1261,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
       passed,
       failed,
       total: results.length,
+      gitSha,
       timestamp: new Date().toISOString(),
       results,
     });
@@ -1399,6 +1435,25 @@ async function runSmokeTestSuite(): Promise<SmokeCheckResult[]> {
   } catch (err) {
     results.push({ name: 'rls-active', status: 'fail', durationMs: Date.now() - rlsStart, error: String(err) });
   }
+
+  // Check 6: Build SHA present (SCRUM-1247 / R0-1).
+  //
+  // The deployed image MUST carry a BUILD_SHA env baked at Docker build
+  // (deploy-worker.yml passes --build-arg BUILD_SHA=$github.sha). If env
+  // is missing or "unknown" the image was built without the build-arg —
+  // either the deploy workflow drifted or someone built locally and
+  // pushed manually. Either way operators need to see it.
+  const shaStart = Date.now();
+  const buildSha = process.env.BUILD_SHA;
+  const shaOk = isValidBuildSha(buildSha);
+  results.push({
+    name: 'build-sha-present',
+    status: shaOk ? 'pass' : 'fail',
+    durationMs: Date.now() - shaStart,
+    detail: shaOk
+      ? `BUILD_SHA=${buildSha}`
+      : `BUILD_SHA=${buildSha ?? '(unset)'} — image was built without --build-arg BUILD_SHA`,
+  });
 
   return results;
 }
