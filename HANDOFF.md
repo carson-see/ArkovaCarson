@@ -157,6 +157,36 @@ Operator follow-ups (per CLAUDE.md §3 gate 7 + Sarah-handoff):
 
 ---
 
+### 2026-04-26 — Audit advisor batch + dashboard widget bug fix (Sarah session)
+
+Branch `claude/2026-04-26-audit-advisor-batch` (7 commits, ahead of `origin/main`). **Push blocked on Git Credential Manager** — same blocker as the KAU branch. Awaiting manual `git push` from Carson's terminal before the PR can open.
+
+**5 stories shipped on the branch:**
+
+| Jira | Title | Artifact |
+|---|---|---|
+| [SCRUM-1189](https://arkova.atlassian.net/browse/SCRUM-1189) | AUDIT-08 — search_path=public on 13 mutable functions | migration `0264_audit08_function_search_path_public.sql` + 13/13 static-analysis tests |
+| [SCRUM-1187](https://arkova.atlassian.net/browse/SCRUM-1187) | AUDIT-06 — payment_ledger view to SECURITY INVOKER | migration `0265_audit06_payment_ledger_security_invoker.sql` + regression test |
+| [SCRUM-1188](https://arkova.atlassian.net/browse/SCRUM-1188) | AUDIT-07 — explicit deny-all RLS for 7 tables | migration `0266_audit07_empty_policy_tables.sql` + 7/7 static-analysis tests |
+| [SCRUM-948](https://arkova.atlassian.net/browse/SCRUM-948) | UAT — Dashboard Compliance Score widget rewired to `compliance_audits` | new `useLatestComplianceAudit` hook + `ComplianceScoreCard` rewrite + 4/4 unit tests |
+| [SCRUM-1186](https://arkova.atlassian.net/browse/SCRUM-1186) | AUDIT-05 — verified resolved on `origin/main` (no code change) | Jira comment with verification notes |
+
+Plus 2 pre-existing test bug fixes (Windows path-separator regex in `service-role-audit.test.ts`, env-stub leak in `AssetDetailView.test.tsx` UAT3-04).
+
+**Verified deferred (no work needed):** SCRUM-1114 (CIBA-HARDEN-01) shipped via migrations 0233/0234 + commit `49ee873`. SCRUM-1115 (CIBA-HARDEN-02) deferred portion now in place: `claim_pending_rule_events` / `release_claimed_rule_events` / `complete_claimed_rule_events` exist in migration 0247, and `services/worker/src/jobs/rules-engine.ts` already calls release/complete on early-return paths.
+
+**Verified avoided** (Carson's active work): R0/R1 recovery wave SCRUM-1247..1262, GME2 fraud-seed SCRUM-792, KAU-06 SCRUM-754.
+
+**Tests:** 185/185 green on touched suites (compliance + anchor + security). Typecheck + lint:copy clean. Pre-existing eslint warnings (20 tenant-isolation warnings tracked in SCRUM-1208) untouched. 2 environmental test failures unfixed (postgres-version requires local Supabase running; check-coverage-monotonic fails because the local checkout path has spaces — neither is a real bug).
+
+**To open PR (Carson — credentialed shell):**
+```
+git push -u origin claude/2026-04-26-audit-advisor-batch
+gh pr create --title "fix(advisor): SCRUM-1187/1188/1189 + SCRUM-948 dashboard widget + 2 pre-existing test bugs" --base main
+```
+
+---
+
 ### 2026-04-25 EOD — GetBlock partial restoration + ultrareview/forensic launched
 
 **Bitcoin paths corrected (SCRUM-1245).** Cloud Run revision `arkova-worker-00398-p77` is live (env-var-only update via `gcloud run services update --update-env-vars`; image SHA `b8bf567f4...` unchanged from rev `00394`). What is actually true now:

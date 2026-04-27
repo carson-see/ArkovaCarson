@@ -127,12 +127,17 @@ describe('AssetDetailView', () => {
   });
 
   it('QR code URL uses production base URL not localhost (UAT3-04)', () => {
-    const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
-    const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
-
-    // The URL displayed below QR should use app.arkova.ai, not localhost
-    const urlText = getByText(/app\.arkova\.ai\/verify\/ARK-2024-00091/);
-    expect(urlText).toBeInTheDocument();
+    // Pin VITE_APP_URL so the test does not depend on the developer's local
+    // .env (which sets VITE_APP_URL=http://localhost:5173 for `npm run dev`).
+    vi.stubEnv('VITE_APP_URL', 'https://app.arkova.ai');
+    try {
+      const anchorWithPublicId = { ...mockAnchor, publicId: 'ARK-2024-00091' };
+      const { getByText } = render(<AssetDetailView anchor={anchorWithPublicId} />);
+      const urlText = getByText(/app\.arkova\.ai\/verify\/ARK-2024-00091/);
+      expect(urlText).toBeInTheDocument();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('should call onBack when back button clicked', () => {

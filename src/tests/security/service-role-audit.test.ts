@@ -37,7 +37,8 @@ function getSourceFiles(dir: string, exclude: RegExp[] = []): string[] {
 
 describe('SEC-003: Service Role Key Audit', () => {
   const srcDir = path.join(process.cwd(), 'src');
-  const clientFiles = getSourceFiles(srcDir, [/\/tests\//, /\.test\./,  /\.spec\./]);
+  // Match either path separator — paths use `\` on Windows, `/` elsewhere.
+  const clientFiles = getSourceFiles(srcDir, [/[\\/]tests[\\/]/, /\.test\./, /\.spec\./]);
 
   it('no hardcoded Supabase JWT tokens in client source files', () => {
     const jwtPattern = /eyJhbGciOi[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/;
