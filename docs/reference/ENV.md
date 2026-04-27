@@ -292,3 +292,116 @@ ENABLE_ALLOCATION_ROLLOVER=true
 # 3-day timer elapses). Keep true unless manually managing dunning.
 ENABLE_GRACE_EXPIRY_SWEEP=true
 ```
+
+## R1-4 absorption — previously-undocumented worker env vars (SCRUM-1258)
+
+Every variable consumed by `services/worker/src/**/*.ts` should appear in this
+file. R1-4 audit (2026-04-26) enumerated 147 unique `process.env.*` references
+in worker source vs ~121 documented above. The list below closes the gap so
+operators can audit Cloud Run env against documented intent. Full Zod
+ConfigSchema absorption + CI lint forbidding ad-hoc `process.env.X` reads is
+deferred to R1-4-followup sub-stories.
+
+### Cloud Run injected (read-only — set by the platform)
+```bash
+K_SERVICE=                          # Cloud Run service name; presence detects "running on Cloud Run"
+BUILD_SHA=                          # baked at Docker build via --build-arg (R0-1 SCRUM-1247); 40-char git sha
+PORT=                               # Cloud Run sets this; worker uses it OR WORKER_PORT, prefer PORT
+```
+
+### Vendor connector secrets (ATS / BGC / e-signature / GRC)
+Per `feedback_no_credit_limits_beta.md` and the Drive/DocuSign live-prod
+posture (HANDOFF.md), these are fail-closed when missing — the route returns
+503 + `vendor_gated`. Provision in Secret Manager during onboarding.
+
+```bash
+# SCRUM-1141..1153 — ATS / Adobe Sign / Veremark / Checkr connectors
+ADOBE_SIGN_CLIENT_SECRET=           # Adobe Sign OAuth secret; route 503s without it
+CHECKR_WEBHOOK_SECRET=              # Checkr Connect webhook HMAC; route 503s without it
+VEREMARK_WEBHOOK_SECRET=            # Veremark webhook HMAC; gated by ENABLE_VEREMARK_WEBHOOK
+ENABLE_VEREMARK_WEBHOOK=false       # default off; flip per-customer when wired
+
+# SCRUM-1099 / SCRUM-1100 — Drive / Workspace
+ENABLE_DRIVE_OAUTH=true             # Drive OAuth flow exposed on /api/v1/integrations/google_drive
+ENABLE_WORKSPACE_RENEWAL=true       # 6-hourly Drive watch-channel renewal cron
+
+# GRC connectors (Drata / Vanta / Anecdotes — SCRUM-1144..1148)
+DRATA_CLIENT_ID=                    # Drata OAuth client id
+DRATA_CLIENT_SECRET=                # Drata OAuth client secret (Secret Manager)
+VANTA_CLIENT_ID=                    # Vanta OAuth client id
+VANTA_CLIENT_SECRET=                # Vanta OAuth client secret (Secret Manager)
+ANECDOTES_CLIENT_ID=                # Anecdotes OAuth client id
+ANECDOTES_CLIENT_SECRET=            # Anecdotes OAuth client secret (Secret Manager)
+ENABLE_GRC_INTEGRATIONS=false       # umbrella flag for all 3 GRC connectors
+ENABLE_RULE_ACTION_DISPATCHER=true  # 2-min cron that fans rule executions out to actions
+```
+
+### eIDAS / qualified-signature stack
+```bash
+ENABLE_ADES_SIGNATURES=false        # ADES signing path (PAdES/CAdES/XAdES); off by default
+ADES_KMS_PROVIDER=                  # 'gcp' or 'aws' for ADES signing key (separate from BTC KMS)
+ADES_KMS_REGION=                    # KMS region for ADES key
+QTSP_PRIMARY_NAME=                  # primary qualified TSP name (e.g. "DigiCert TSA")
+QTSP_PRIMARY_URL=                   # primary qualified TSP RFC 3161 endpoint
+QTSP_PRIMARY_AUTH=                  # primary TSP auth header (basic/bearer)
+QTSP_SECONDARY_NAME=                # fallback TSP name
+QTSP_SECONDARY_URL=                 # fallback TSP RFC 3161 endpoint
+QTSP_SECONDARY_AUTH=                # fallback TSP auth header
+QTSP_TIMEOUT_MS=5000                # per-request timeout for TSP RFC 3161 calls
+EUTL_UPDATE_INTERVAL_HOURS=24       # EU Trust List refresh interval
+CRL_CACHE_TTL_SECONDS=3600          # cert revocation list cache TTL
+OCSP_CACHE_TTL_SECONDS=600          # OCSP responder cache TTL
+```
+
+### Proof packet signing (SCRUM-1057 P4.5)
+```bash
+PROOF_SIGNING_KEY_ID=               # KID surfaced in JWS header
+PROOF_SIGNING_KEY_PEM=              # PEM-encoded EC P-256 private key (Secret Manager)
+PROOF_PACKET_VERIFY_BASE_URL=       # base URL embedded in proof packets for re-verification
+METADATA_HASH_BYTES=                # bytes of metadata included in fingerprint hash; default 256
+```
+
+### Cloud logging sink (SCRUM-1093)
+```bash
+ENABLE_CLOUD_LOGGING_SINK=false     # GCP Cloud Logging sink for audit_events
+GCP_LOGGING_LOG_NAME=arkova-audit   # log name in Cloud Logging
+GCP_SA_KEY_JSON=                    # SA key JSON (Cloud Run uses metadata server; only set on local)
+```
+
+### AI / inference (extras beyond core GEMINI/NESSIE)
+```bash
+GEMINI_DISTILLATION_MODEL=          # NVI-07 distillation target model
+GEMINI_EMBEDDING_V2_MODEL=          # SCRUM-1040 GEMB2 — Gemini Embedding v2 model id
+GEMINI_LITE_MODEL=                  # GEM lite/cheaper model for low-latency calls
+GEMINI_VISION_MODEL=                # vision-capable Gemini model for image extraction
+ENABLE_MULTIMODAL_EMBEDDINGS=false  # multimodal (text+image) embedding gate
+ENABLE_NESSIE_RAG_RECOMMENDATIONS=false  # Nessie RAG recommendation experiment gate
+ENABLE_DEMO_INJECTOR=false          # synthetic demo data injector for sales/QA
+EVAL_VERBOSE=false                  # extra logging in eval scripts (test-only)
+CF_AI_BINDING=                      # Cloudflare AI binding name (peripheral, edge worker)
+```
+
+### Ops alerts
+```bash
+SLACK_OPS_WEBHOOK_URL=              # ops/alerts Slack webhook (separate from treasury alerts)
+INDEXNOW_KEY=                       # IndexNow protocol key for SEO indexing notifications
+```
+
+### Upstash Redis (alternate naming for raw vs REST clients)
+```bash
+UPSTASH_REDIS_URL=                  # raw Redis URL (for ioredis client)
+UPSTASH_REDIS_TOKEN=                # raw Redis token
+# UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN already documented above
+```
+
+### Legacy chain backwards-compat (kept for tests)
+These are tolerated but should not be set in production. The new
+`BITCOIN_*` vars are the authoritative ones. Kept for backwards compat
+with test fixtures that haven't been migrated yet.
+
+```bash
+CHAIN_API_URL=
+CHAIN_API_KEY=
+CHAIN_NETWORK=                      # "testnet" | "mainnet"
+```
+

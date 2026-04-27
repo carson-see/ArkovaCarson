@@ -24,6 +24,13 @@ COPY --from=builder /app/dist ./dist
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser
 
+# SCRUM-1247 (R0-1): bake the GitHub commit SHA into the image so /health
+# can report it. Surfaced via process.env.BUILD_SHA in routes/health.ts +
+# api/admin-health.ts. Defaults to "unknown" if the deploy workflow doesn't
+# pass --build-arg BUILD_SHA, which makes drift visible immediately.
+ARG BUILD_SHA=unknown
+ENV BUILD_SHA=${BUILD_SHA}
+
 ENV PORT=3001
 EXPOSE 3001
 # V8 tuning for Cloud Run (2GB container):

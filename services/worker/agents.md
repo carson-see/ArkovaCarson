@@ -1,9 +1,17 @@
 # agents.md — services/worker
-_Last updated: 2026-04-24_
+_Last updated: 2026-04-25 (R0 anti-false-done wave)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## R0 anti-false-done additions (2026-04-25, SCRUM-1246 wave)
+
+- **`Dockerfile`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `ARG BUILD_SHA=unknown` + `ENV BUILD_SHA` baked at Docker build via `--build-arg BUILD_SHA=$github.sha`. Surfaces in `/health.git_sha`, `/api/admin/system-health.git_sha`, smoke test response, and the new `build-sha-present` smoke check.
+- **`src/utils/buildInfo.ts`** ([SCRUM-1247](https://arkova.atlassian.net/browse/SCRUM-1247)): `getBuildSha()` + `isValidBuildSha(sha)` — single source of truth for the BUILD_SHA env read + 40-char hex validation. Used by `routes/health.ts`, `api/admin-health.ts`, `routes/cron.ts`.
+- **`src/jobs/db-health-monitor.ts`** ([SCRUM-1254](https://arkova.atlassian.net/browse/SCRUM-1254)): cron-driven monitor that emits Sentry events on pg_cron failures, dead-tuple bloat, smoke fail-streaks. Wired to `POST /cron/db-health` (Cloud Scheduler every 5 min, pending operator binding via SCRUM-1308). Depends on RPCs `get_recent_cron_failures` + `get_table_bloat_stats` (pending SCRUM-1307).
+- **`scripts/ci/check-confluence-dod.ts`** ([SCRUM-1251](https://arkova.atlassian.net/browse/SCRUM-1251)): helper for Atlassian Automation rule R4 — parses Confluence storage-format body and detects unticked `<ac:task>` markers in the "Definition of Done" section.
+- **`eslint.config.js`** ([SCRUM-1250](https://arkova.atlassian.net/browse/SCRUM-1250)): test-files override block extends the no-unused-vars/_/no-explicit-any/warn rules to `src/**/*.test.ts` + `src/**/*.spec.ts`. Without this 119 errors in test files blocked every deploy. Followup R4 ticket drives all warnings to zero so we can re-add `--max-warnings 0`.
 
 ## CIBA hardening closeout (2026-04-23, PRs #479 / #480)
 
@@ -64,6 +72,32 @@ Both `GET /api/treasury/status` AND `GET /api/treasury/health` are **platform-ad
 - **DON'T** import `generateFingerprint` here — it's client-side only (CLAUDE.md §1.6).
 - **DON'T** use `(db as any)` when the table is in `database.types.ts`; if you need the cast it means run `gen:types`.
 - **DON'T** touch Cloud Run deployment config — human-only per `feedback_worker_hands_off`.
+
+## Bitcoin paths — honest state (2026-04-25, SCRUM-1245)
+
+After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-only update), production is in a **hybrid** state. Read this before changing any chain code or claiming sovereignty in customer-facing materials.
+
+| Path | Provider | Sovereign? | Notes |
+|---|---|---|---|
+| Broadcast (`sendrawtransaction`) | GetBlock RPC | ✅ yes | Live as of `BITCOIN_UTXO_PROVIDER=getblock` flip 2026-04-25 |
+| UTXO listing (`listunspent`) | GetBlock RPC → fallback to `mempool.space` | ❌ no | GetBlock shared endpoint returns "Method not allowed" — `utxo-provider.ts:459-474` `try { rpc } catch { mempool }` enters the catch branch every call. **Observability:** R1-8 / SCRUM-1262 added Sentry breadcrumb (category `chain.rpc-fallback`) + structured warn log (`chain_rpc_fallback: true`) on every fallback. R0-8 dashboard surfaces fallback rate; alert fires when stays at 100% (RPC functionally unused). |
+| Fee estimation | `mempool.space` | ❌ no | `estimatesmartfee` IS supported by GetBlock (1013 sat/kvB confirmed), but worker has no `RpcFeeEstimator` and `BITCOIN_FEE_STRATEGY` only accepts `'static' \| 'mempool'` — needs code change + deploy |
+| `getrawtransaction` / `getblockheader` | GetBlock RPC (verification pending) | ⚠️ likely yes — needs operator curl matrix | Used by `check-confirmations.ts:144` + `chain-maintenance.ts:140` reorg detection. Untested against prod GetBlock token; standard tx-indexed methods on GetBlock shared endpoints generally work. R1-8 / SCRUM-1262 deferred the curl matrix to operator (requires prod token access — see runbook in story description). If either fails, file R3 follow-up for second-source verification. |
+| Frontend treasury balance polling | Browser → cached worker `treasury_cache` table → worker `/api/treasury/status` (8s timeout) → stale badge | ❌ no, but no longer leaks | R1-6 / SCRUM-1260: `useTreasuryBalance.ts` no longer falls through to direct mempool `address` polling on worker timeout — keeps last cached balance + flags stale instead. Mempool calls remain for receipts/price/fees enrichment (already-public address). |
+
+**Signing path (separate concern):**
+- `BITCOIN_TREASURY_WIF` in Secret Manager → decrypted into worker process memory at startup (current active signer)
+- GCP KMS code path (`gcp-kms-signing-provider.ts`) — only selected when `bitcoinTreasuryWif` is unset
+- `client.ts:279`: `// Signing: WIF takes precedence (current), KMS for future upgrade`
+- `feedback_no_aws.md` — AWS branch in code is dead, never customer-facing
+
+**Open follow-ups** (each will be a story under the recovery epic; do not roll into this story):
+1. `RpcFeeEstimator` class + `'rpc'` value in `BITCOIN_FEE_STRATEGY` enum (`config.ts:43`) so fees can route through GetBlock too
+2. ~~Frontend `useTreasuryBalance.ts` — kill direct browser hits to `mempool.space`~~ — partially done in R1-6 (balance no longer leaks); receipts/price/fees enrichment kept (R3 will move fully behind worker)
+3. Full sovereignty: stand up Bitcoin Core + Electrs/Esplora and flip `BITCOIN_UTXO_PROVIDER=rpc`
+4. WIF → KMS migration (or document a deliberate WIF retention decision in CLAUDE.md and stop claiming "GCP KMS (prod)")
+5. ~~Observability counter for `listUnspent` fallback~~ — done in R1-8 / SCRUM-1262
+6. **Operator action (R1-8):** run the curl matrix against prod GetBlock token for `getrawtransaction`, `getblockheader`, `getblockchaininfo`, `getblockcount`. Record results in [Forensic 1/8 Confluence page](https://arkova.atlassian.net/wiki/spaces/A/pages/27362208) and update the table above. If either reorg/confirmation method fails, file R3 follow-up for second-source verification.
 
 ## Recent Changes
 
