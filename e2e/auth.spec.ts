@@ -19,7 +19,7 @@ test.describe('Authentication', () => {
   });
 
   test('shows login form on auth page', async ({ page }) => {
-    await page.goto('/auth');
+    await page.goto('/login');
 
     await expect(page.getByLabel('Email address')).toBeVisible();
     await expect(page.getByLabel('Password')).toBeVisible();
@@ -27,13 +27,13 @@ test.describe('Authentication', () => {
   });
 
   test('shows Google OAuth button', async ({ page }) => {
-    await page.goto('/auth');
+    await page.goto('/login');
 
     await expect(page.getByRole('button', { name: /Continue with Google/i })).toBeVisible();
   });
 
   test('can navigate to signup form', async ({ page }) => {
-    await page.goto('/auth');
+    await page.goto('/login');
 
     await page.getByRole('button', { name: /Create an account/i }).click();
 
@@ -84,7 +84,7 @@ test.describe('Authentication', () => {
 
   test('sign out redirects to auth page', async ({ page }) => {
     // Log in with seed user via shared helper
-    await page.goto('/auth');
+    await page.goto('/login');
     await page.getByLabel('Email address').fill(SEED_USERS.individual.email);
     await page.getByLabel('Password').fill(SEED_USERS.individual.password);
     await page.getByRole('button', { name: 'Sign in' }).click();
