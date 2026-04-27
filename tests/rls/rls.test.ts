@@ -489,14 +489,14 @@ describe('Enum Validation', () => {
   });
 
   it('accepts valid anchor_status values', async () => {
-    // Timestamp + random suffix avoids re-run collisions on the partial unique
-    // index `(user_id, fingerprint) WHERE deleted_at IS NULL` if a prior run's
-    // cleanup was interrupted, and avoids same-millisecond collisions when
-    // parallel test workers seed simultaneously.
+    // Timestamp + crypto-random suffix avoids re-run collisions on the partial
+    // unique index `(user_id, fingerprint) WHERE deleted_at IS NULL` if a prior
+    // run's cleanup was interrupted, and avoids same-millisecond collisions when
+    // parallel test workers seed simultaneously. node:crypto avoids SonarCloud's
+    // weak-PRNG hotspot (S2245) firing on test code.
+    const { randomBytes } = await import('node:crypto');
     const ts = Date.now().toString(16).padStart(16, '0');
-    const rand = Math.floor(Math.random() * 0xffffffff)
-      .toString(16)
-      .padStart(8, '0');
+    const rand = randomBytes(4).toString('hex');
     const testFingerprint = `f${ts}${rand}`.padEnd(64, 'f').slice(0, 64);
     // PENDING is valid
     const { data, error } = await serviceClient.from('anchors').insert({
