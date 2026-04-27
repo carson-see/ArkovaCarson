@@ -1,17 +1,19 @@
 /**
  * Client-side audit event logging
  *
- * Provides a thin helper for inserting audit events from React components.
- * Fire-and-forget — failures are logged to console but never block the caller.
+ * SCRUM-1270 (R2-7): browser callers no longer insert into audit_events directly.
+ * Migration 0276 dropped the authenticated INSERT policy so that the audit log
+ * cannot be forged by the actor it records (Forensic 7 / SOC-2 CC7.2). All
+ * writes go through POST /api/audit/event, which inserts as service_role and
+ * pins actor_id to the JWT subject.
  *
  * Server-side RPC functions (revoke_anchor, bulk_create_anchors, complete_onboarding,
- * invite_member) handle their own audit logging internally.
- *
- * @see P1-TS-06
+ * invite_member) handle their own audit logging internally and are unaffected.
  */
 
-import { supabase } from '@/lib/supabase';
-import type { AuditEventCategory } from '@/lib/validators';
+import { WORKER_URL } from './workerClient';
+import { supabase } from './supabase';
+import type { AuditEventCategory } from './validators';
 
 interface AuditEventParams {
   eventType: string;
@@ -24,6 +26,7 @@ interface AuditEventParams {
 
 /**
  * Log an audit event. Fire-and-forget — never throws.
+ * Server-side service_role insert via POST /api/audit/event.
  */
 export async function logAuditEvent({
   eventType,
@@ -34,22 +37,26 @@ export async function logAuditEvent({
   details,
 }: AuditEventParams): Promise<void> {
   try {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
 
-    // GDPR Art. 5(1)(c): Never store actor_email in audit_events.
-    // actor_id UUID is sufficient; email can be looked up via JOIN when needed.
-    await supabase.from('audit_events').insert({
-      event_type: eventType,
-      event_category: eventCategory,
-      actor_id: user?.id ?? null,
-      target_type: targetType ?? null,
-      target_id: targetId ?? null,
-      org_id: orgId ?? null,
-      details: details ?? null,
+    await fetch(`${WORKER_URL}/api/audit/event`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        event_type: eventType,
+        event_category: eventCategory,
+        target_type: targetType ?? null,
+        target_id: targetId ?? null,
+        org_id: orgId ?? null,
+        details: details ?? null,
+      }),
+      keepalive: true,
     });
   } catch {
-    // Fire-and-forget — audit failures must never block the user flow
+    // Fire-and-forget — audit failures must never block the user flow.
   }
 }

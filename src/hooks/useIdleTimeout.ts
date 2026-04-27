@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { logAuditEvent } from '@/lib/auditLog';
 
 interface UseIdleTimeoutOptions {
   /** Timeout in minutes. 0 = disabled. */
@@ -87,9 +88,11 @@ export function useIdleTimeout({
 
     async function handleTimeout() {
       onTimeout?.();
-      await supabase.from('audit_events').insert({
-        event_type: 'SESSION_TIMEOUT',
-        event_category: 'SECURITY',
+      // SCRUM-1270: write through worker (service_role) — direct browser inserts
+      // into audit_events have been disabled in migration 0276.
+      await logAuditEvent({
+        eventType: 'SESSION_TIMEOUT',
+        eventCategory: 'AUTH',
         details: JSON.stringify({ timeout_minutes: timeoutMinutes }),
       });
       await supabase.auth.signOut();

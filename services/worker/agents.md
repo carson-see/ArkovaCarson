@@ -1,9 +1,15 @@
 # agents.md — services/worker
-_Last updated: 2026-04-26 (R2 batch 1 — SCRUM-1264/1265/1266/1267/1268)_
+_Last updated: 2026-04-27 (R2 batch 3 — SCRUM-1270 / 1272 vocab / 1271-A privacy fix)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## R2 batch 3 — audit immutability + scope vocabulary + agents privacy (2026-04-27, SCRUM-1246 wave)
+
+- **`api/audit-event.ts`** ([SCRUM-1270](https://arkova.atlassian.net/browse/SCRUM-1270)): new `POST /api/audit/event` endpoint. Browser callers used to insert into `audit_events` directly via the anon Supabase client (RLS allowed `actor_id = auth.uid()` writes — Forensic 7 forgery vector). Migration 0276 drops the authenticated INSERT policy; this route is the only browser-facing write path. JWT verified, `actor_id` pinned to the JWT subject, body Zod-validated with `.strict()` so spoofed `actor_id` keys 400.
+- **`api/apiScopes.ts`** ([SCRUM-1272](https://arkova.atlassian.net/browse/SCRUM-1272)): authoritative scope vocabulary extended with `COMPLIANCE_API_SCOPES` (`compliance:read|write`, `oracle:read|write`, `anchor:read|write`, `attestations:read|write`, `webhooks:manage`, `agents:manage`, `keys:read`). `scopeSatisfies()` treats legacy `verify` as a superset of `anchor:read` / `oracle:read` / `attestations:read` so existing keys keep working when handlers pivot to the new names. **JWT-claims path for FERPA / HIPAA / emergency-access scope guards still TBD** — those routes use `requireAuth` not `apiKeyAuth`, so a `requireScope()` mount falls through. Tracked under SCRUM-1271 sub-tickets.
+- **`api/v1/agents.ts`** ([SCRUM-1271](https://arkova.atlassian.net/browse/SCRUM-1271) sub-A): `toPublicAgent()` strips `org_id` and `registered_by` (a user UUID) from outbound responses. CLAUDE.md §6 privacy fix; the agent's own `id` stays for v1 back-compat per §1.8 — rename to `public_id` is staged in v2 under SCRUM-1444 / 1445.
 
 ## R2 batch 1 — P1 customer-facing recovery (2026-04-26, SCRUM-1246 wave)
 
