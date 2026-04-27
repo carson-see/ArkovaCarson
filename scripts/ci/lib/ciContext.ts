@@ -11,6 +11,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { Buffer } from 'node:buffer';
 
 export const REPO = resolve(import.meta.dirname, '..', '..', '..');
 
@@ -42,6 +43,7 @@ function resolveBaseRefOrFail(ref: string): string {
 const RAW_BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
 export const baseRef = resolveBaseRefOrFail(RAW_BASE_REF);
 export const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+export const prTitle = process.env.PR_TITLE ?? '';
 export const prBody = process.env.PR_BODY ?? '';
 export const prCommitsMsgs = process.env.PR_COMMITS_MSGS ?? '';
 export const headRef = process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME ?? '';
@@ -55,7 +57,17 @@ export const LABELS = {
   countExactAllowed: 'count-exact-allowed',
   coverageDropAllowed: 'coverage-drop-allowed',
   ciConfigChange: 'ci-config-change',
+  confluenceDriftSkip: 'confluence-drift-skip',
 } as const;
+
+/**
+ * Atlassian Basic-auth header builder. Reused by check-confluence-coverage
+ * (CI gate) and the healthcheck Atlassian probes — same env var contract
+ * on both sides.
+ */
+export function atlassianBasicAuthHeader(email: string, token: string): string {
+  return `Basic ${Buffer.from(`${email}:${token}`).toString('base64')}`;
+}
 
 export function hasLabel(label: string): boolean {
   return prLabels.includes(label);
