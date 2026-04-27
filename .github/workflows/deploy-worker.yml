@@ -30,9 +30,14 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: services/worker/package-lock.json
+          # Cache both root and worker lockfiles — root deps (tsx) are
+          # required for the `Copy lint` step, which runs the repo-root
+          # script `scripts/check-copy-terms.ts`.
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
-      - name: Install dependencies
+      - name: Install worker dependencies
         working-directory: services/worker
         run: npm ci
 
@@ -55,8 +60,17 @@ jobs:
         working-directory: services/worker
         run: npm test
 
+      - name: Install root dependencies (for lint:copy)
+        # `lint:copy` runs from the repo root and shells out to `tsx`,
+        # which lives in root devDependencies. Without this step the
+        # deploy gate fails with `sh: 1: tsx: not found` (exit 127).
+        # Mirrors ci.yml which installs root deps before invoking the
+        # same script. Drift between the two caused every push to main
+        # since 2026-04-26 11:45 UTC to fail the deploy gate.
+        run: npm ci --no-audit --no-fund
+
       - name: Copy lint
-        run: npm run lint:copy --if-present
+        run: npm run lint:copy
 
   deploy:
     name: Build & Deploy (canary → full)
