@@ -15,7 +15,7 @@
 
 import { db } from './db.js';
 import { logger } from './logger.js';
-import { callRpc } from './rpc.js';
+import { callRpc, type FastCountsRpc } from './rpc.js';
 
 export interface AnchorStats {
   total_secured: number;
@@ -23,15 +23,6 @@ export interface AnchorStats {
   last_secured_at: string | null;
   /** -1 sentinel = unavailable this round (24h count timed out). Caller renders "—". */
   last_24h_count: number;
-}
-
-interface FastCountsRpc {
-  PENDING: number;
-  SUBMITTED: number;
-  BROADCASTING: number;
-  SECURED: number;
-  REVOKED: number;
-  total: number;
 }
 
 /**

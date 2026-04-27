@@ -55,6 +55,21 @@ export interface AnonymizeUserDataArgs {
   p_user_id: string;
 }
 
+/**
+ * get_anchor_status_counts_fast() return type.
+ * pg_class.reltuples-based total + 1s per-status budget with -1 sentinels.
+ * Used for fast aggregate counts on the 1.4M+ row anchors table where
+ * count:'exact' would scan dead tuples and timeout under bloat.
+ */
+export interface FastCountsRpc {
+  PENDING: number;
+  SUBMITTED: number;
+  BROADCASTING: number;
+  SECURED: number;
+  REVOKED: number;
+  total: number;
+}
+
 // ---------------------------------------------------------------------------
 // Typed RPC call wrapper
 // ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@
 
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { callRpc, type FastCountsRpc } from '../utils/rpc.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
@@ -173,15 +174,23 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
   // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
   let oldestPendingAgeMs = 0;
   try {
-    const { data: stats } = await db
-      .from('anchors')
-      .select('created_at')
-      .eq('status', 'PENDING')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single();
+    // Both reads are independent and run on the 5-min cron — parallelize.
+    // Pending count via get_anchor_status_counts_fast (pg_class.reltuples +
+    // 1s per-status budget); avoids count:'exact' on the bloated anchors
+    // table that timed out the prior implementation.
+    const [oldestRes, countsRes] = await Promise.all([
+      db
+        .from('anchors')
+        .select('created_at')
+        .eq('status', 'PENDING')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .single(),
+      callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+    ]);
 
+    const stats = oldestRes.data;
     if (!stats) {
       logger.debug('No pending anchors — skipping batch');
       return EMPTY;
@@ -189,14 +198,12 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
 
     oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
 
-    // Count pending (cheap — uses index)
-    const { count } = await db
-      .from('anchors')
-      .select('id', { count: 'exact', head: true })
-      .eq('status', 'PENDING')
-      .is('deleted_at', null);
-
-    const pendingCount = count ?? 0;
+    if (countsRes.error) {
+      logger.warn({ error: countsRes.error }, 'get_anchor_status_counts_fast failed');
+    }
+    // On RPC failure we report 0; smart-skip then defers the batch — same
+    // conservative behavior as the prior count:'exact' nullable path.
+    const pendingCount = countsRes.data?.PENDING ?? 0;
 
     if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(

@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-04-27 — R1 cleanup batch: SCRUM-1259 final hot-site + SCRUM-1262 GetBlock observability test
+
+Branch `claude/focused-fermi-BCbPj`. PR pending. Engineering-only, no prod-state changes.
+
+**SCRUM-1259 (R1-5)** — five originally-enumerated `count:'exact'` callsites against `anchors` were already migrated in main (`utils/anchor-stats.ts`, `api/admin-pipeline-stats.ts`, `jobs/mainnet-migration.ts`, `jobs/pipeline-health.ts`, `index.ts:128`) — verified via `grep -rn "count: 'exact'" services/worker/src --include='*.ts'`. One additional anchors-table site found in `services/worker/src/jobs/batch-anchor.ts:193` (smart-skip pending count) — migrated to `callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast')` and the single-row + RPC reads parallelized via `Promise.all` (was serial round-trip on the 5-min cron). `FastCountsRpc` interface lifted from per-file inline declarations (3×) to `services/worker/src/utils/rpc.ts`.
+
+**SCRUM-1262 (R1-8)** — observability emit (`emitRpcFallback`) for `GetBlockHybridProvider.listUnspent` was already wired in main; this PR adds the missing integration tests covering both fallback (mocked RPC error → emit) and success (mocked RPC ok → no emit) paths in `utxo-provider.test.ts`. Operator portion (curl matrix against prod GetBlock token + R0-8 dashboard build) remains deferred.
+
+**Tests:** 132/132 across touched suites (`anchor-stats`, `mainnet-migration`, `batch-anchor`, `batch-anchor.audit`, `utxo-provider`); 9 new tests added (5 fetchAnchorStats + 4 getMigrationStatus). Worker `npx tsc --noEmit` clean. Worker lint: 0 errors / 382 pre-existing warnings (SCRUM-1208). `lint:copy` clean. `feedback_no_aws.md` CI lint clean.
+
+**/simplify pass applied (5 fixes):** Promise.all parallelization in batch-anchor smart-skip phase, trimmed 7-line narration comment to 4 lines, dropped SCRUM-task-tag prefixes from 4 jsdoc/test-header sites, dropped redundant `_processBatchAnchorsInner:` log prefix, kept the load-bearing R0-8 dashboard cross-reference.
+
+**/security-review pass:** zero findings ≥7 confidence — all queries parameterized, no PII in logs (RPC error shape only), service_role context appropriate (cron-only), no new auth surface, fake RPC URL in tests intercepted by mockFetch before any network call.
+
+**Stale Jira state surfaced:** SCRUM-1264 / 1265 / 1266 / 1267 / 1268 (R2-1..R2-5) shipped to main via PR [#567](https://github.com/carson-see/ArkovaCarson/pull/567) at `dda518f` but Jira tickets remain "In Progress" — closing-pass on those tickets included in this batch (per CLAUDE.md §3 gate 2).
+
 ### 2026-04-27 — Cloud Run worker deploy unblocked; PRs #555–581 + #584 + #585 live in prod
 
 **State:** worker rev `arkova-worker-00430-kal` (sha `b3593162`) serving live traffic, `/health` returns `status: healthy` with `git_sha: b359316206bd5d1a546fa277fa7791174a86383d` and all sub-checks (`database`, `anchoring`, `kms`) ok.
@@ -591,3 +607,7 @@ _Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-04-27 by claude — claims verified against gcloud/MCP/CI output (deploy unblock: deploy-worker run 24975511666 success at sha b3593162; gcloud `services describe arkova-worker` returns rev `arkova-worker-00430-kal`; `curl /health` returns `{"status":"healthy","git_sha":"b359316206bd5d1a546fa277fa7791174a86383d","network":"mainnet"}`; subsequent run 24975705021 on dda518fa failed Typecheck with 24 errors, log lines extracted into Known regression section; pino LogFn signature verified against `node_modules/pino/pino.d.ts` `interface LogFn`; `ci.yml typecheck-lint` confirmed to NOT typecheck services/worker — only repo-root + tsconfig.build.json)._
+
+---
+
+_Last refreshed: 2026-04-27 by claude — claims verified against vitest/CI output (SCRUM-1259/1262 batch: 132/132 tests green across `anchor-stats`/`mainnet-migration`/`batch-anchor`/`batch-anchor.audit`/`utxo-provider` suites; `npx tsc --noEmit` in services/worker exits 0; `npm run lint` returns 382 warnings 0 errors all pre-existing tenant-isolation per SCRUM-1208; `npm run lint:copy` returns "No forbidden terms found"; `SCAN_ALL=1 npx tsx scripts/ci/feedback-rules/no-aws.ts` returns "✅ feedback_no_aws: no AWS imports detected"; PR #567 dda518f present in `git log --grep` confirming R2-1..R2-5 in main awaiting Jira transition)._
