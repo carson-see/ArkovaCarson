@@ -1,3 +1,4 @@
+/// <reference types="@cloudflare/workers-types" />
 /**
  * Arkova Remote MCP Server (P8-S19)
  *
