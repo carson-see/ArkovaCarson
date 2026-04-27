@@ -1,5 +1,5 @@
 # agents.md — services/edge
-_Last updated: 2026-04-21_
+_Last updated: 2026-04-26_
 
 ## What This Folder Contains
 
@@ -28,12 +28,7 @@ PR #455 closed the critical findings:
 - `oracle_batch_verify` description no longer claims HMAC-signed results. Real signing tracked as MCP-SEC-02.
 
 Open (epic [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918)):
-- MCP-SEC-01 per-API-key rate limiting via CF KV
-- MCP-SEC-02 real HMAC signing on `oracle_batch_verify`
 - MCP-SEC-03 replace service-role with scoped role / JWT forwarding across ALL tools (not just `list_agents`)
-- MCP-SEC-04 idempotency keys on `anchor_document`
-- MCP-SEC-05 prompt-injection defensive framing in prompt templates
-- MCP-SEC-06 audit logging on every MCP tool invocation
 
 ### Landed 2026-04-21 (TRUST sprint)
 
@@ -51,6 +46,55 @@ Open (epic [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918)):
   failure burst, cross-tenant enumeration, oversized args, rate-limit
   storm. Dedupe + severity levels + Sentry envelope shipper.
 
+### Landed 2026-04-26 (edge bug-bounty review — SCRUM-1435..1438)
+
+Source-level review + live probes against `edge.arkova.ai`. PR [#582](https://github.com/carson-see/ArkovaCarson/pull/582). Deployed `arkova-edge@16257677-a610-49e2-9ef9-f6b3d5b69d24`.
+
+- **F-1 / MCP-SEC-01 + MCP-SEC-08 plumbing** (BUG-2026-04-26-009 / SCRUM-1435) —
+  `MCP_RATE_LIMIT_KV` namespace was never created; `MCP_ORIGIN_ALLOWLIST_KV`
+  namespace existed but was never bound. Both gate modules treat missing
+  KV as pass-through (dev/preview default), so production was silently
+  running with **no per-API-key rate limits and no origin pinning** since
+  first deploy. Fix: created the missing namespace, bound both in
+  `wrangler.toml`. Both now active in deployed bindings.
+- **F-2 / x402 facilitator hardening** (BUG-2026-04-26-010 / SCRUM-1436)
+  — `/x402/verify` was unauth + unrate-limited. Added
+  `ENABLE_X402_FACILITATOR` kill-switch (default `"false"` → 404),
+  strict `0x[0-9a-f]{64}` body regex, and a per-IP 30 req/min KV
+  token-bucket rate limit that runs **before** any Base RPC call (caps
+  denial-of-wallet on metered RPC quota). Flip the env var when
+  `x402PaymentGate` is wired through edge.
+- **F-3 / CORS drift** (BUG-2026-04-26-011 / SCRUM-1437) — production
+  `Access-Control-Allow-Origin` was reflecting the legacy
+  `arkova-carson.vercel.app`. Rotated `ALLOWED_ORIGINS` secret to
+  `https://arkova-26.vercel.app,https://app.arkova.ai`; redeployed
+  current source. Live ACAO now `arkova-26.vercel.app`. Open follow-up:
+  redirect/take down the legacy Vercel project.
+- **F-4 / MCP-SEC-02 real signing** (BUG-2026-04-26-012 / SCRUM-1438) —
+  `oracle_batch_verify` silently returned bare payload when
+  `MCP_SIGNING_KEY` was unset. Generated 48-byte random key + uploaded.
+  Code change: missing-key fallback now wraps as
+  `{payload, signature:null, alg:null, key_id:null, signed:false}` +
+  one-shot `console.warn` so callers fail closed on future rotation
+  gaps.
+
+**Operational invariants from this round:**
+
+- Production `wrangler.toml` MUST bind `MCP_RATE_LIMIT_KV` and
+  `MCP_ORIGIN_ALLOWLIST_KV`. Both gates fail-OPEN when the KV is
+  missing — this is a deliberate dev/preview default but a production
+  foot-gun.
+- `MCP_SIGNING_KEY` MUST be set as a secret. Verify with
+  `npx wrangler@4 versions view <active> --name arkova-edge` and
+  confirm the key appears under `Secrets:`.
+- `ENABLE_X402_FACILITATOR` stays `"false"` until `x402PaymentGate`
+  (in `services/worker/src/middleware/`) is repointed at
+  `https://edge.arkova.ai/x402/verify`. The paywall currently defaults
+  to `https://x402.org/facilitator`.
+- `ALLOWED_ORIGINS` MUST NOT include `arkova-carson.vercel.app`
+  (per `feedback_single_source_of_truth.md`). The first comma-separated
+  value is what unmatched-origin requests get reflected as the ACAO.
+
 ## Do / Don't Rules
 
 - **DO** gate AI fallback behind `ENABLE_AI_FALLBACK` switchboard flag
@@ -62,6 +106,9 @@ Open (epic [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918)):
 - **DON'T** bypass SSRF protections for internal/private IP ranges
 - **DON'T** move core anchor processing, Stripe webhooks, or cron jobs here
 - **DON'T** call `@cloudflare/ai` as primary provider — fallback only (Constitution 1.1)
+- **DON'T** ship a wrangler.toml without `[[kv_namespaces]]` for `MCP_RATE_LIMIT_KV` and `MCP_ORIGIN_ALLOWLIST_KV` — both gates silently pass-through when the binding is missing (F-1, 2026-04-26)
+- **DON'T** flip `ENABLE_X402_FACILITATOR` to `"true"` until the paywall is wired through edge **and** the per-IP rate limit + body regex have been smoke-tested in staging (F-2, 2026-04-26)
+- **DON'T** include `arkova-carson.vercel.app` in `ALLOWED_ORIGINS` — the canonical front-end is `arkova-26.vercel.app` only (F-3, 2026-04-26)
 
 ## Dependencies
 

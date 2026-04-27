@@ -34,10 +34,28 @@ zone_name = "arkova.ai"
 [ai]
 binding = "ARKOVA_AI"
 
+# ── KV Namespaces — MCP security gates (MCP-SEC-01 + MCP-SEC-08) ──────
+# Without these bindings, mcp-rate-limit.ts and mcp-origin-allowlist.ts
+# fail-OPEN (pass-through) by design for dev/preview. Production MUST
+# bind both, otherwise per-API-key rate limits and origin pinning are
+# silently disabled. Audit 2026-04-26 (edge bug-bounty review F-1).
+[[kv_namespaces]]
+binding = "MCP_RATE_LIMIT_KV"
+id = "a8a7843630e84c5aa22cf20ea8a8c5e8"
+
+[[kv_namespaces]]
+binding = "MCP_ORIGIN_ALLOWLIST_KV"
+id = "5ace0a24154a4731b263285890ae3a10"
+
 # ── Environment Variables ──────────────────────────────────────────────
 [vars]
 ENABLE_AI_FALLBACK = "false"
 CF_AI_MODEL = "@cf/nvidia/nemotron"
+# F-2 (edge bug-bounty 2026-04-26): /x402/verify ships behind a flag.
+# Flip to "true" only after rate-limit + body-shape hardening lands and
+# x402PaymentGate is pointed at edge.arkova.ai/x402/verify (currently
+# defaults to https://x402.org/facilitator).
+ENABLE_X402_FACILITATOR = "false"
 
 # ── Secrets (set via `wrangler secret put`) ────────────────────────────
 # SUPABASE_URL

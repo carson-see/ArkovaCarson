@@ -44,6 +44,26 @@
 3. Long-lead start: SCRUM-1072 SOC2-01 auditor selection — start now, blocks Q2 fieldwork.
 4. P3 NVI cluster (NVI/NTF/NDD/NSS/NCX/KAU = 6 epics + ~30 stories) stays Blocked until SCRUM-883 FCRA counsel closes. Do not unblock.
 
+---
+
+### 2026-04-26 — edge.arkova.ai bug-bounty review: 4 findings closed end-to-end
+
+`arkova-edge` Cloudflare Worker security review. 4 findings (F-1..F-4), all fixed and deployed. PR [#582](https://github.com/carson-see/ArkovaCarson/pull/582), Jira [SCRUM-1435..1438](https://arkova.atlassian.net/browse/SCRUM-1435), Confluence rows BUG-2026-04-26-009..012.
+
+**Active deployed version:** `arkova-edge@16257677-a610-49e2-9ef9-f6b3d5b69d24` (2026-04-27 00:55 UTC). First code deploy of the edge worker since 2026-03-21 — explained the stale CORS default (F-3). Verified via `wrangler versions view 16257677-...` showing both KV bindings + 4 secrets including the freshly-uploaded `MCP_SIGNING_KEY`.
+
+**F-1 (HIGH) — MCP rate-limit + origin-allowlist KVs were unbound.** `services/edge/wrangler.toml` had no `[[kv_namespaces]]` block; `mcp-rate-limit.ts:50` and `mcp-origin-allowlist.ts:127` treat missing KV as pass-through (dev/preview default), so production was running with **no per-API-key rate limits** and **no origin pinning** since first deploy. Created `MCP_RATE_LIMIT_KV` namespace (id `a8a78436...`); the `MCP_ORIGIN_ALLOWLIST_KV` namespace already existed (id `5ace0a24...`) but was never bound. Both now in toml + active in deployed bindings (verified via `wrangler versions view`). Closes MCP-SEC-01 + completes MCP-SEC-08 plumbing.
+
+**F-2 (MEDIUM, ship-blocker) — `/x402/verify` was unauth + unrate-limited.** Public endpoint that fans out to `BASE_RPC_URL` per request → denial-of-wallet on metered RPC quota. Was 404 in prod (route in source but task `PH1-PAY-02` was PARTIAL), so caught before live impact. Hardening: `ENABLE_X402_FACILITATOR` kill-switch (default `"false"` → 404), strict `0x[0-9a-f]{64}` body regex, per-IP 30 req/min KV token bucket — all run *before* any RPC call. Live curl confirms 404. Flip the env var when `x402PaymentGate` is wired through edge.
+
+**F-3 (LOW–MED) — production CORS was the legacy `arkova-carson.vercel.app`.** `Access-Control-Allow-Origin: https://arkova-carson.vercel.app` reflected from `/mcp` (per `feedback_single_source_of_truth.md` only `arkova-26` should appear). Two-part fix: rotated `ALLOWED_ORIGINS` secret to `https://arkova-26.vercel.app,https://app.arkova.ai`, and the redeploy picks up the source-default which already dropped `arkova-carson` per the 2026-04-20 audit. Live curl now shows `arkova-26.vercel.app`. Open follow-up: redirect or take down the legacy Vercel project to fully eliminate stale-origin risk.
+
+**F-4 (LOW) — `oracle_batch_verify` silently returned unsigned envelopes.** When `MCP_SIGNING_KEY` was unset, `mcp-server.ts:407` fell through to bare payload with no `signed:false` indicator. Generated 48-byte random key + uploaded via `wrangler secret put`. Code change: missing-key fallback now wraps payload as `{payload, signature:null, alg:null, key_id:null, signed:false}` + one-shot `console.warn` per isolate so callers fail closed on future rotation gaps. Closes MCP-SEC-02 (real signing now provisioned).
+
+**Cloudflare-side, not in git:** KV namespace creation, `MCP_SIGNING_KEY` upload, `ALLOWED_ORIGINS` rotation. PR #582 brings source-of-truth into alignment with what's already running.
+
+---
+
 ### 2026-04-26 — R1 wave in progress (SCRUM-1246 production recovery)
 
 Branch `claude/scrum-1246-r1-recovery` (off `origin/main` at `1c922fd9`). 4 of 9 R1 stories complete; PR #1 imminent.
@@ -413,4 +433,4 @@ Full history: `git log --oneline`.
 - `docs/archive/session-log.md` — older session notes.
 - `docs/BACKLOG.md` — banner only, points at Jira.
 
-_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f)._
+_Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R1-1 cron unschedule(3) returned `t`; cron.job query confirms only jobid 2 active; R1-2 applyMigration 0265 success:true + pgGetFunctiondef on pgProc catalog confirms deployed body; R1-3 SCAN-ALL=1 no-aws lint returned "✅"; R1-7 applyMigration 0266 success:true; listMigrations MCP shows 0265 + 0266 present in prod ledger; R0 wave still merged at adc654d2 + e918259f; **edge bug-bounty F-1..F-4** — `wrangler kv namespace create MCP_RATE_LIMIT_KV` returned id `a8a7843630e84c5aa22cf20ea8a8c5e8`, `wrangler deploy` returned "Current Version ID: 16257677-a610-49e2-9ef9-f6b3d5b69d24", `wrangler versions view 16257677-…` lists `env.MCP_RATE_LIMIT_KV` + `env.MCP_ORIGIN_ALLOWLIST_KV` + `env.ENABLE_X402_FACILITATOR ("false")` in active bindings + `MCP_SIGNING_KEY`/`ALLOWED_ORIGINS` in Secrets, `curl -i https://edge.arkova.ai/mcp` returns `access-control-allow-origin: https://arkova-26.vercel.app` (was `arkova-carson`), `curl -i https://edge.arkova.ai/x402/verify` returns 404 with `arkova-edge: no matching route` body proving kill-switch on)._

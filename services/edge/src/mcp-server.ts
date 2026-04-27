@@ -52,6 +52,18 @@ import { signEnvelope } from './mcp-hmac';
 // isolate. Request-scoped detectors could not observe cross-session
 // patterns like auth-failure burst or cross-tenant access.
 const anomalyDetector: AnomalyDetector = createAnomalyDetector();
+
+// F-4 (edge bug-bounty 2026-04-26): one-shot warning per isolate when
+// MCP_SIGNING_KEY is unset. Without the key, oracle_batch_verify cannot
+// produce tamper-evident envelopes — paired with the `signed:false`
+// marker emitted in the response body so downstream callers can fail
+// closed.
+let mcpSigningKeyWarned = false;
+function warnSigningKeyMissingOnce(): void {
+  if (mcpSigningKeyWarned) return;
+  mcpSigningKeyWarned = true;
+  console.warn('[mcp-server] MCP_SIGNING_KEY missing — oracle_batch_verify envelopes will be returned UNSIGNED with signed:false. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge`.');
+}
 import {
   MCP_TOOL_SCHEMAS,
   validateToolArgs,
@@ -405,9 +417,18 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           );
           const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
           const signingKey = telemetry.env.MCP_SIGNING_KEY;
+          // F-4 (edge bug-bounty 2026-04-26): if the signing key is
+          // missing in production, the response is shape-different (no
+          // signature/alg/key_id). Surface it on every call with an
+          // explicit `signed:false` marker so downstream callers fail
+          // closed instead of silently accepting unsigned envelopes.
+          // Prior behavior returned the raw payload with no indicator.
           const body = signingKey
             ? await signEnvelope(envelope, signingKey)
-            : envelope;
+            : { payload: envelope, signature: null, alg: null, key_id: null, signed: false };
+          if (!signingKey) {
+            warnSigningKeyMissingOnce();
+          }
           return { content: [{ type: 'text' as const, text: JSON.stringify(body, null, 2) }] };
         } catch (error) {
           return { content: [{ type: 'text' as const, text: safeErrorText(error, 'oracle_batch_verify') }], isError: true };
