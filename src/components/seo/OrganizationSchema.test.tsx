@@ -31,18 +31,29 @@ describe('buildOrganizationSchema', () => {
     expect(schema.description).toContain('Issuer of demo credentials');
   });
 
-  it('includes social profiles in sameAs', () => {
+  it('includes website + social profiles in sameAs (official site first for entity graph)', () => {
     const schema = buildOrganizationSchema(BASE_PROFILE, ORG_PAGE_URL);
-    expect(schema.sameAs).toContain('https://linkedin.com/company/demo');
-    expect(schema.sameAs).toContain('https://twitter.com/demo');
+    expect(schema.sameAs).toEqual([
+      'https://demo.example',
+      'https://linkedin.com/company/demo',
+      'https://twitter.com/demo',
+    ]);
   });
 
-  it('omits sameAs entirely when no socials provided', () => {
+  it('omits sameAs entirely when no website or socials provided', () => {
+    const schema = buildOrganizationSchema(
+      { ...BASE_PROFILE, website_url: null, linkedin_url: null, twitter_url: null },
+      ORG_PAGE_URL,
+    );
+    expect(schema).not.toHaveProperty('sameAs');
+  });
+
+  it('still emits sameAs when only website_url is set (single-element array)', () => {
     const schema = buildOrganizationSchema(
       { ...BASE_PROFILE, linkedin_url: null, twitter_url: null },
       ORG_PAGE_URL,
     );
-    expect(schema).not.toHaveProperty('sameAs');
+    expect(schema.sameAs).toEqual(['https://demo.example']);
   });
 
   it('falls back to org page URL when website_url missing (so url is always present)', () => {

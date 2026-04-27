@@ -41,7 +41,10 @@ export function buildOrganizationSchema(
   profile: OrgProfileForSchema,
   pageUrl: string,
 ): OrganizationJsonLd {
-  const sameAs = [profile.linkedin_url, profile.twitter_url].filter(
+  // sameAs covers any external authoritative reference for this entity.
+  // Order matters for Google's entity graph: official site first, then
+  // verified social profiles.
+  const sameAs = [profile.website_url, profile.linkedin_url, profile.twitter_url].filter(
     (s): s is string => typeof s === 'string' && s.length > 0,
   );
 

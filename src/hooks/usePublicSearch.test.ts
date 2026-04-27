@@ -1,10 +1,16 @@
 /**
  * usePublicSearch + useIssuerRegistry Hook Tests (UF-02 / AUDIT-12)
+ * + buildSubtreeIndex tests (SCRUM-1087)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { usePublicSearch, useIssuerRegistry } from './usePublicSearch';
+import {
+  usePublicSearch,
+  useIssuerRegistry,
+  buildSubtreeIndex,
+  type OrgSubtreeNode,
+} from './usePublicSearch';
 
 // Mock supabase with RPC
 const mockRpc = vi.fn();
@@ -132,5 +138,57 @@ describe('useIssuerRegistry', () => {
     });
 
     expect(result.current.error).toBe('Not found');
+  });
+});
+
+// ─── SCRUM-1087: buildSubtreeIndex helper ─────────────────────────────────────
+
+function subNode(over: Partial<OrgSubtreeNode>): OrgSubtreeNode {
+  return {
+    org_id: over.org_id ?? 'x',
+    public_id: null,
+    parent_org_id: null,
+    display_name: over.display_name ?? 'X',
+    domain: null,
+    description: null,
+    logo_url: null,
+    banner_url: null,
+    org_type: null,
+    website_url: null,
+    verification_status: null,
+    verified_badge_granted_at: null,
+    depth: over.depth ?? 1,
+    ...over,
+  };
+}
+
+describe('buildSubtreeIndex (SCRUM-1087)', () => {
+  it('keys roots under null and children under their parent_org_id', () => {
+    const idx = buildSubtreeIndex([
+      subNode({ org_id: 'root', depth: 1, parent_org_id: null }),
+      subNode({ org_id: 'child-a', depth: 2, parent_org_id: 'root' }),
+      subNode({ org_id: 'child-b', depth: 2, parent_org_id: 'root' }),
+      subNode({ org_id: 'grandchild', depth: 3, parent_org_id: 'child-a' }),
+    ]);
+    expect(idx.get(null)?.map((n) => n.org_id)).toEqual(['root']);
+    expect(idx.get('root')?.map((n) => n.org_id).sort()).toEqual(['child-a', 'child-b']);
+    expect(idx.get('child-a')?.map((n) => n.org_id)).toEqual(['grandchild']);
+    expect(idx.get('grandchild')).toBeUndefined();
+  });
+
+  it('preserves the depth-ordered server payload within each parent bucket', () => {
+    const idx = buildSubtreeIndex([
+      subNode({ org_id: 'r', depth: 1, parent_org_id: null }),
+      subNode({ org_id: 'c1', depth: 2, parent_org_id: 'r', display_name: 'Alpha' }),
+      subNode({ org_id: 'c2', depth: 2, parent_org_id: 'r', display_name: 'Beta' }),
+    ]);
+    expect(idx.get('r')?.[0].display_name).toBe('Alpha');
+    expect(idx.get('r')?.[1].display_name).toBe('Beta');
+  });
+
+  it('handles a flat list with no children (single root)', () => {
+    const idx = buildSubtreeIndex([subNode({ org_id: 'only', parent_org_id: null })]);
+    expect(idx.size).toBe(1);
+    expect(idx.get(null)?.[0].org_id).toBe('only');
   });
 });
