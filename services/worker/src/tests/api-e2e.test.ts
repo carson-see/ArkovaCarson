@@ -105,6 +105,7 @@ vi.mock('../middleware/aiFeatureGate.js', () => ({
   aiSemanticSearchGate: () => (_req: Request, _res: Response, next: NextFunction) => next(),
   aiFraudGate: () => (_req: Request, _res: Response, next: NextFunction) => next(),
   aiReportsGate: () => (_req: Request, _res: Response, next: NextFunction) => next(),
+  visualFraudDetectionGate: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
 // Mock webhook delivery
