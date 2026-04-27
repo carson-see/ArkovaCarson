@@ -141,24 +141,45 @@ jobs:
             --quiet
 
       - name: Smoke test canary revision
+        # Two bugs in the original implementation (introduced 2026-04-25 in
+        # adc654d2) caused this step to never actually exercise the canary:
+        #   1. `--format='value(status.traffic[tag=canary].url)'` returned empty
+        #      because gcloud's `value()` projection does not support
+        #      tag-filter subscripts on arrays. The script then fell back to
+        #      the main service URL — which routes to whatever has live
+        #      traffic, NOT the new no-traffic canary.
+        #   2. The assertion `.status == "ok"` never matched. /health returns
+        #      `{"status": "healthy" | "degraded"}` (services/worker/src/
+        #      routes/health.ts:212). It has never returned "ok".
+        # Together these caused the deploy of PR #584 (sha ebd42e00) to fail
+        # smoke test against live (healthy) prod, blocking the unblock that
+        # PR was meant to deliver.
+        # Fix: extract the canary tag URL via --format=json + jq, fail fast
+        # if absent (don't silently retest live), and assert the actual
+        # contract (`status: healthy`).
         run: |
           CANARY_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
             --region=${{ env.REGION }} \
             --project=${{ env.PROJECT_ID }} \
-            --format='value(status.traffic[tag=canary].url)' 2>/dev/null || echo "")
-          if [ -z "$CANARY_URL" ]; then
-            CANARY_URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --format=json \
+            | jq -r '.status.traffic[]? | select(.tag=="canary") | .url')
+          if [ -z "$CANARY_URL" ] || [ "$CANARY_URL" = "null" ]; then
+            echo "ERROR: canary tag URL not found on service. Refusing to fall back to live URL."
+            gcloud run services describe ${{ env.SERVICE_NAME }} \
               --region=${{ env.REGION }} \
               --project=${{ env.PROJECT_ID }} \
-              --format='value(status.url)')
+              --format=json | jq '.status.traffic' || true
+            exit 1
           fi
           echo "Canary URL: ${CANARY_URL}"
           for i in 1 2 3; do
-            if curl -sf --max-time 10 "${CANARY_URL}/health" | jq -e '.status == "ok"'; then
+            BODY=$(curl -sf --max-time 10 "${CANARY_URL}/health" || echo "")
+            if [ -n "$BODY" ] && echo "$BODY" | jq -e '.status == "healthy"' >/dev/null; then
               echo "Canary health check passed (attempt $i)"
+              echo "Response: $BODY"
               exit 0
             fi
-            echo "Canary health check attempt $i failed, retrying in 5s..."
+            echo "Canary health check attempt $i failed (body: ${BODY:-<empty>}), retrying in 5s..."
             sleep 5
           done
           echo "Canary health check failed after 3 attempts — aborting deploy"
