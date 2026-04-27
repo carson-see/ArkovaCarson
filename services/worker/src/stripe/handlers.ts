@@ -27,6 +27,48 @@ const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
 
 type StripeReference = string | { id?: string | null } | null | undefined;
 
+/**
+ * SCRUM-1266 (R2-3) + PR #567 review-fix: shared orphan-row guard for the
+ * Stripe handlers that perform `update().eq('stripe_subscription_id', x)`.
+ *
+ * Distinguishes "row missing" from "lookup failed":
+ *   - lookup error → throw (so Stripe retries; the billing_events claim is
+ *     already in place when this runs, so a silent ack would lose the event).
+ *   - row missing  → log + return null so the caller can early-return
+ *     without performing the no-op UPDATE.
+ *
+ * Each call site provides its own select column list (some need `user_id`,
+ * some only need `id` for existence) and an event name for log clarity.
+ */
+async function lookupSubscriptionOrThrow<T>(
+  stripeSubscriptionId: string,
+  selectCols: string,
+  context: Record<string, unknown>,
+  eventName: string,
+): Promise<T | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
+  const { data, error } = await (db
+    .from('subscriptions')
+    .select(selectCols)
+    .eq('stripe_subscription_id', stripeSubscriptionId)
+    .maybeSingle() as any);
+  if (error) {
+    logger.error(
+      { ...context, error },
+      `Subscription lookup failed on ${eventName} — throwing so Stripe retries the event`,
+    );
+    throw error;
+  }
+  if (!data) {
+    logger.warn(
+      context,
+      `No subscription row found for stripe_subscription_id on ${eventName} — refusing to update (SCRUM-1266)`,
+    );
+    return null;
+  }
+  return data as T;
+}
+
 interface PaymentGraceTarget {
   userId: string | null;
   orgId: string | null;
@@ -321,14 +363,25 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
  * @see MVP-11
  */
 export async function handleSubscriptionUpdated(event: StripeEvent): Promise<void> {
+  // SCRUM-1267 (R2-4): As of Stripe API version 2026-03-25.dahlia (which
+  // services/worker/src/stripe/client.ts pins), `current_period_start` /
+  // `_end` moved from the top-level Subscription onto each subscription item.
+  // The previous typing read from the top-level fields → undefined →
+  // `new Date(undefined * 1000).toISOString()` → RangeError on the FIRST
+  // real prod customer.subscription.updated event. We type both shapes to
+  // make the new field path explicit.
   const subscription = event.data.object as unknown as {
     id: string;
     customer: string;
     status: string;
-    current_period_start: number;
-    current_period_end: number;
     cancel_at_period_end: boolean;
-    items?: { data: Array<{ price: { id: string } }> };
+    items?: {
+      data: Array<{
+        price: { id: string };
+        current_period_start?: number;
+        current_period_end?: number;
+      }>;
+    };
     metadata?: { user_id?: string };
   };
 
@@ -388,13 +441,36 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     return;
   }
 
-  // Build update payload
+  // SCRUM-1267 (R2-4) + PR #567 Codex P2 fix: pull period fields from the
+  // first subscription item per the 2026-03-25.dahlia API. If they're absent
+  // (malformed/legacy payload), DO NOT throw — billing_events has already
+  // claimed this event via UNIQUE-key idempotency, so a Stripe retry would
+  // hit the constraint and the event would be permanently lost. Instead,
+  // log a warn and apply the status/cancel update WITHOUT touching the
+  // period fields — leaves pre-existing valid period values intact and
+  // the gap is observable in logs/Sentry for operator action.
+  const firstItem = subscription.items?.data?.[0];
+  const periodFieldsValid =
+    firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
+
+  // Build update payload — period fields only when valid
   const updatePayload: Record<string, unknown> = {
     status: mappedStatus,
-    current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
-    current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
+  if (periodFieldsValid) {
+    updatePayload.current_period_start = new Date(firstItem.current_period_start! * 1000).toISOString();
+    updatePayload.current_period_end = new Date(firstItem.current_period_end! * 1000).toISOString();
+  } else {
+    logger.warn(
+      {
+        subscriptionId: subscription.id,
+        hasItems: subscription.items != null,
+        itemsCount: subscription.items?.data?.length ?? 0,
+      },
+      'Stripe subscription missing items[0].current_period_start/_end — applying status/cancel update without period fields (SCRUM-1267, claim-first idempotency means we cannot throw-to-retry)',
+    );
+  }
 
   // Always update plan_id when we resolved a price (even if null — clears stale value)
   if (currentPriceId) {
@@ -455,12 +531,14 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
 
   logger.info({ subscriptionId: subscription.id }, 'Processing subscription deletion');
 
-  // Get the subscription to find user_id for audit log
-  const { data: existingSub } = await db
-    .from('subscriptions')
-    .select('user_id')
-    .eq('stripe_subscription_id', subscription.id)
-    .maybeSingle();
+  // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+  const existingSub = await lookupSubscriptionOrThrow<{ user_id: string | null }>(
+    subscription.id,
+    'user_id',
+    { subscriptionId: subscription.id },
+    'subscription_deleted',
+  );
+  if (!existingSub) return;
 
   const { error } = await db
     .from('subscriptions')
@@ -473,7 +551,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
   }
 
   // Log audit event if we found the user
-  if (existingSub?.user_id) {
+  if (existingSub.user_id) {
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_canceled',
       event_category: 'ADMIN',
@@ -501,6 +579,15 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
   logger.warn({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment failed');
 
   if (stripeSubscriptionId) {
+    // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+    const existingSub = await lookupSubscriptionOrThrow<{ id: string }>(
+      stripeSubscriptionId,
+      'id',
+      { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+      'payment_failed',
+    );
+    if (!existingSub) return;
+
     const { error } = await db
       .from('subscriptions')
       .update({ status: 'past_due' })
@@ -549,6 +636,15 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   logger.info({ invoiceId: invoice.id, subscription: stripeSubscriptionId }, 'Payment succeeded');
 
   if (!stripeSubscriptionId) return;
+
+  // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
+  const existingSub = await lookupSubscriptionOrThrow<{ id: string }>(
+    stripeSubscriptionId,
+    'id',
+    { invoiceId: invoice.id, subscriptionId: stripeSubscriptionId },
+    'payment_succeeded',
+  );
+  if (!existingSub) return;
 
   const { error } = await db
     .from('subscriptions')

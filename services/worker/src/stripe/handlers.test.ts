@@ -214,13 +214,15 @@ const CHECKOUT_EVENT = makeStripeEvent('checkout.session.completed', {
   metadata: { user_id: 'user-001' },
 });
 
+// SCRUM-1267 (R2-4): API version 2026-03-25.dahlia moves period fields onto
+// subscription.items.data[]. The handler now reads from items[0]; tests must
+// match the new shape or they'd silently exercise the pre-fix RangeError path.
 const SUBSCRIPTION_UPDATED_EVENT = makeStripeEvent('customer.subscription.updated', {
   id: 'sub_test_001',
   customer: 'cus_test_001',
   status: 'active',
-  current_period_start: 1710000000,
-  current_period_end: 1712678400,
   cancel_at_period_end: false,
+  items: makeSubItems('price_test'),
 });
 
 const SUBSCRIPTION_DELETED_EVENT = makeStripeEvent('customer.subscription.deleted', {
@@ -266,6 +268,48 @@ function setupDefaults() {
   // audit: succeeds
   auditInsert.mockResolvedValue({ error: null });
   mockCallRpc.mockResolvedValue({ data: { ok: true }, error: null });
+}
+
+// SCRUM-1266 (R2-3) + PR #567 review-fix: shared assertions for the orphan-row
+// guard pattern repeated across the 3 sibling Stripe handlers. Sonar flagged
+// 33% duplication on the test file because each handler had near-identical
+// missing-row + lookup-error pairs; centralised here.
+async function expectOrphanRowGuardSkipsUpdate(
+  handler: (e: StripeEvent) => Promise<void>,
+  event: StripeEvent,
+  context: Record<string, unknown>,
+) {
+  subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+  await handler(event);
+  expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  expect(auditInsert).not.toHaveBeenCalled();
+  expect(mockLogger.warn).toHaveBeenCalledWith(
+    expect.objectContaining(context),
+    expect.stringContaining('SCRUM-1266'),
+  );
+}
+
+async function expectLookupErrorThrows(
+  handler: (e: StripeEvent) => Promise<void>,
+  event: StripeEvent,
+  err: Record<string, string>,
+) {
+  subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null, error: err });
+  await expect(handler(event)).rejects.toEqual(err);
+  expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+}
+
+// SCRUM-1267 (R2-4): every customer.subscription.updated test fixture moved
+// period fields onto items.data[0]. Build the items shape once so each test
+// expresses only the per-test variance (price ID, period start/end).
+function makeSubItems(
+  priceId: string,
+  start = 1710000000,
+  end = 1712678400,
+): { data: Array<{ price: { id: string }; current_period_start: number; current_period_end: number }> } {
+  return {
+    data: [{ price: { id: priceId }, current_period_start: start, current_period_end: end }],
+  };
 }
 
 // ================================================================
@@ -686,9 +730,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_test_001',
       customer: 'cus_test_001',
       status: 'past_due',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -701,9 +744,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_002',
       customer: 'cus_002',
       status: 'unpaid',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -716,9 +758,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_003',
       customer: 'cus_003',
       status: 'incomplete_expired',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -731,9 +772,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_004',
       customer: 'cus_004',
       status: 'some_future_status',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
+      items: makeSubItems('price_test'),
     });
     await handleSubscriptionUpdated(event);
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
@@ -758,15 +798,13 @@ describe('handleSubscriptionUpdated', () => {
   // ---- Plan change detection (MVP-11) ----
 
   it('detects plan change and updates plan_id', async () => {
-    // Subscription event with price items
+    // Subscription event with price items (period fields under items.data[0] per R2-4)
     const event = makeStripeEvent('customer.subscription.updated', {
       id: 'sub_test_001',
       customer: 'cus_test_001',
       status: 'active',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
-      items: { data: [{ price: { id: 'price_pro' } }] },
+      items: makeSubItems('price_pro'),
     });
 
     // Plan lookup resolves new plan
@@ -798,10 +836,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_test_001',
       customer: 'cus_test_001',
       status: 'active',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
-      items: { data: [{ price: { id: 'price_ind' } }] },
+      items: makeSubItems('price_ind'),
     });
 
     // Same plan
@@ -823,9 +859,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_test_001',
       customer: 'cus_test_001',
       status: 'active',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: true,
+      items: makeSubItems('price_test'),
     });
 
     subscriptionsSelect.maybeSingle.mockResolvedValue({
@@ -851,15 +886,16 @@ describe('handleSubscriptionUpdated', () => {
     );
   });
 
-  it('handles missing price items gracefully (no plan change)', async () => {
-    // Event without items (original fixture)
+  // SCRUM-1267 (R2-4): items.data[0] is now mandatory (period fields live there).
+  // The pre-R2-4 "handles missing price items gracefully" test exercised a path
+  // that no longer exists — the handler throws if items.data[0] is missing.
+  // Coverage for the throw lives in the R2-4 describe block below.
+  it('emits plan_id in the update when items.data[0] has a resolvable price', async () => {
+    plansSelectMaybeSingle.mockResolvedValue({ data: { id: 'plan-test' } });
     await handleSubscriptionUpdated(SUBSCRIPTION_UPDATED_EVENT);
 
-    // Should still update subscription
-    expect(subscriptionsUpdate.update).toHaveBeenCalled();
-    // Should not include plan_id in update (no price to resolve)
     expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
-      expect.not.objectContaining({ plan_id: expect.anything() }),
+      expect.objectContaining({ plan_id: 'plan-test' }),
     );
   });
 
@@ -868,10 +904,8 @@ describe('handleSubscriptionUpdated', () => {
       id: 'sub_test_001',
       customer: 'cus_test_001',
       status: 'active',
-      current_period_start: 1710000000,
-      current_period_end: 1712678400,
       cancel_at_period_end: false,
-      items: { data: [{ price: { id: 'price_unknown' } }] },
+      items: makeSubItems('price_unknown'),
     });
 
     plansSelectMaybeSingle.mockResolvedValue({ data: null });
@@ -975,6 +1009,22 @@ describe('handleSubscriptionDeleted', () => {
       expect.stringContaining('cancel'),
     );
   });
+
+  // SCRUM-1266 (R2-3) + PR #567 review-fix: orphan-row guard + lookup-error throw
+  it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
+    await expectOrphanRowGuardSkipsUpdate(
+      handleSubscriptionDeleted,
+      SUBSCRIPTION_DELETED_EVENT,
+      { subscriptionId: 'sub_test_001' },
+    );
+  });
+
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    await expectLookupErrorThrows(handleSubscriptionDeleted, SUBSCRIPTION_DELETED_EVENT, {
+      message: 'connection lost',
+      code: '08001',
+    });
+  });
 });
 
 // ================================================================
@@ -1067,6 +1117,22 @@ describe('handlePaymentFailed', () => {
     mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc failed' } });
     await expect(handlePaymentFailed(PAYMENT_FAILED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
   });
+
+  // SCRUM-1266 (R2-3) + PR #567 review-fix
+  it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
+    await expectOrphanRowGuardSkipsUpdate(handlePaymentFailed, PAYMENT_FAILED_EVENT, {
+      subscriptionId: 'sub_test_001',
+      invoiceId: 'inv_test_001',
+    });
+    expect(mockCallRpc).not.toHaveBeenCalled();
+  });
+
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    await expectLookupErrorThrows(handlePaymentFailed, PAYMENT_FAILED_EVENT, {
+      message: 'rls denied',
+      code: 'PGRST301',
+    });
+  });
 });
 
 // ================================================================
@@ -1139,5 +1205,100 @@ describe('handlePaymentSucceeded', () => {
     });
     mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc failed' } });
     await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).rejects.toEqual({ message: 'rpc failed' });
+  });
+
+  // SCRUM-1266 (R2-3) + PR #567 review-fix
+  it('R2-3: refuses to UPDATE when subscription row is missing (orphan-row guard)', async () => {
+    await expectOrphanRowGuardSkipsUpdate(handlePaymentSucceeded, PAYMENT_SUCCEEDED_EVENT, {
+      subscriptionId: 'sub_test_001',
+      invoiceId: 'inv_test_002',
+    });
+    expect(mockCallRpc).not.toHaveBeenCalled();
+  });
+
+  it('PR #567 review-fix: throws when subscription lookup fails (DB error vs missing row)', async () => {
+    await expectLookupErrorThrows(handlePaymentSucceeded, PAYMENT_SUCCEEDED_EVENT, {
+      message: 'connection refused',
+      code: 'ECONNREFUSED',
+    });
+  });
+});
+
+// ================================================================
+// SCRUM-1267 (R2-4): items.data[0].current_period_* migration
+// ================================================================
+
+describe('handleSubscriptionUpdated — R2-4 items.data[0] period fields', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('reads period fields from subscription.items.data[0] (new API shape)', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_r2_4',
+      customer: 'cus_r2_4',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: makeSubItems('price_r2_4', 1735689600, 1738368000),
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        current_period_start: new Date(1735689600 * 1000).toISOString(),
+        current_period_end: new Date(1738368000 * 1000).toISOString(),
+      }),
+    );
+  });
+
+  // PR #567 Codex P2 fix: under claim-first idempotency, throwing would lose
+  // the event permanently. Instead we apply the status/cancel update without
+  // period fields and surface the gap in logs/Sentry for operator action.
+  it('PR #567 Codex P2 fix: applies status/cancel update without period fields when items[0] is missing', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_no_items',
+      customer: 'cus_no_items',
+      status: 'past_due',
+      cancel_at_period_end: true,
+      // no items field — pre-PR #567 we threw RangeError or an explicit Error,
+      // both of which were silently swallowed by the claim-first idempotency layer.
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'past_due', cancel_at_period_end: true }),
+    );
+    // Period fields must NOT be present — we don't overwrite valid existing values with bogus ones
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_no_items', itemsCount: 0 }),
+      expect.stringContaining('missing items[0].current_period_start/_end'),
+    );
+  });
+
+  it('PR #567 Codex P2 fix: applies partial update when items[0] has price but no period fields', async () => {
+    const event = makeStripeEvent('customer.subscription.updated', {
+      id: 'sub_partial',
+      customer: 'cus_partial',
+      status: 'active',
+      cancel_at_period_end: false,
+      items: { data: [{ price: { id: 'price_partial' } }] },
+    });
+
+    await handleSubscriptionUpdated(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock.calls[0][0] as Record<string, unknown>;
+    expect(updateArg.status).toBe('active');
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ subscriptionId: 'sub_partial' }),
+      expect.stringContaining('missing items[0].current_period_start/_end'),
+    );
   });
 });

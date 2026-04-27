@@ -497,13 +497,14 @@ describe('processAnchor', () => {
       await processAnchor(CLAIMED_ANCHOR);
 
       expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
+      // SCRUM-1268 (R2-5): event_id is public_id (CLAUDE.md §6 bans
+      // exposing anchors.id). Payload uses the strict AnchorSubmitted schema.
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         CLAIMED_ANCHOR.org_id,
         'anchor.submitted',
-        'anchor-001',
+        CLAIMED_ANCHOR.public_id,
         expect.objectContaining({
-          anchor_id: 'anchor-001',
-          fingerprint: CLAIMED_ANCHOR.fingerprint,
+          public_id: CLAIMED_ANCHOR.public_id,
           status: 'SUBMITTED',
           chain_tx_id: MOCK_RECEIPT.receiptId,
           submitted_at: MOCK_RECEIPT.blockTimestamp,
@@ -519,26 +520,22 @@ describe('processAnchor', () => {
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         CLAIMED_ANCHOR.org_id,
         'anchor.submitted',
-        'anchor-001',
+        'pub-abc-123',
         expect.objectContaining({
           public_id: 'pub-abc-123',
         }),
       );
     });
 
-    it('sends null public_id when anchor has no public_id', async () => {
+    it('skips webhook dispatch when anchor has no public_id', async () => {
+      // SCRUM-1268 (R2-5): dispatch is gated on (org_id && public_id) — a
+      // null public_id means there's nothing safe to expose, so the
+      // dispatch is skipped silently.
       const anchorNoPublicId: ClaimedAnchor = { ...CLAIMED_ANCHOR, public_id: null };
 
       await processAnchor(anchorNoPublicId);
 
-      expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-        CLAIMED_ANCHOR.org_id,
-        'anchor.submitted',
-        'anchor-001',
-        expect.objectContaining({
-          public_id: null,
-        }),
-      );
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
 
     it('still returns true when webhook dispatch fails (non-fatal)', async () => {

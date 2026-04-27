@@ -22,12 +22,141 @@ import { isSemanticSearchEnabled } from '../middleware/aiFeatureGate.js';
 import { generateAndStoreEmbedding } from '../ai/embeddings.js';
 import { createAIProvider } from '../ai/factory.js';
 import { sendEmail, buildAnchorSecuredEmail } from '../email/index.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
 
 /** Concurrency for parallel mempool.space API calls */
 const MEMPOOL_CONCURRENCY = 10;
+
+/**
+ * Concurrency cap for the SCRUM-1264 (R2-1) bulk-confirm webhook fan-out.
+ * Conservative default — a 10K-anchor merkle batch sends 10K dispatches but
+ * never more than this many in flight at once, so a customer with one slow
+ * endpoint can't be DDoS'd by our own fan-out. Override via env if needed.
+ */
+const BULK_WEBHOOK_FAN_OUT_CONCURRENCY = Math.max(
+  1,
+  Number.parseInt(process.env.BULK_WEBHOOK_FAN_OUT_CONCURRENCY ?? '20', 10) || 20,
+);
+
+/**
+ * Fan out per-anchor `anchor.secured` webhooks after the bulk SECURED update.
+ * SCRUM-1264 (R2-1) — restores the customer-facing webhook contract that
+ * commit a5da008d (2026-03-27) silently dropped. Per-org grouping keeps the
+ * fan-out symmetric to the single-anchor path: one event per anchor per
+ * subscribed endpoint, capped at BULK_WEBHOOK_FAN_OUT_CONCURRENCY in flight.
+ *
+ * Failures land in `webhook_dead_letter_queue` via the existing dispatch
+ * machinery — this function never throws. Errors are logged with txId
+ * + counts so operators can correlate against the merkle batch.
+ */
+export async function fanOutBulkSecuredWebhooks(
+  txId: string,
+  blockHeight: number,
+  blockTimestamp: string,
+): Promise<void> {
+  // SCRUM-1268 (R2-5): only public-allowed columns are pulled from the DB —
+  // anchor.id (UUID) and anchor.fingerprint stay server-side, never enter
+  // the webhook payload.
+  //
+  // PR #567 Codex P1 fix: a transient queryErr here would silently drop the
+  // entire merkle-batch's customer webhooks (anchors are already SECURED,
+  // future cron runs only scan SUBMITTED — no retry path). Inline retry
+  // with backoff (3 attempts) before giving up, then log loud + emit Sentry
+  // breadcrumb so operators can recover via a one-off script.
+  let securedAnchors: Array<{ id: string; public_id: string | null; org_id: string | null }> | null = null;
+  let queryErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const result = await db
+      .from('anchors')
+      .select('id, public_id, org_id')
+      .eq('chain_tx_id', txId)
+      .eq('status', 'SECURED');
+    if (!result.error) {
+      securedAnchors = result.data ?? [];
+      queryErr = null;
+      break;
+    }
+    queryErr = result.error;
+    if (attempt < 2) {
+      const backoffMs = 250 * Math.pow(2, attempt); // 250ms, 500ms
+      await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    }
+  }
+
+  if (queryErr) {
+    logger.error(
+      { txId, error: queryErr, anchorsConfirmed: 'unknown — query failed' },
+      'Bulk webhook fan-out: SECURED anchors query failed after 3 retries — customer webhooks for this tx will NOT be dispatched. Operators must replay via a one-off script. (PR #567 Codex P1)',
+    );
+    return;
+  }
+
+  if (!securedAnchors || securedAnchors.length === 0) {
+    return;
+  }
+
+  const eligible = securedAnchors.filter(
+    (a): a is { id: string; public_id: string; org_id: string } =>
+      typeof a.org_id === 'string' && typeof a.public_id === 'string' && a.public_id.length > 0,
+  );
+
+  if (eligible.length === 0) {
+    logger.debug(
+      { txId, anchorsTotal: securedAnchors.length },
+      'Bulk webhook fan-out: no anchors with both org_id + public_id; nothing to dispatch',
+    );
+    return;
+  }
+
+  const tasks = eligible.map((anchor) => async () => {
+    // PR #567 review-fix: pass `public_id` (NOT `anchor.id`) as the eventId
+    // arg so the outer envelope's `event_id` is the public slug rather than
+    // the internal UUID. CLAUDE.md §6 — `anchors.id` must never leak.
+    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
+      public_id: anchor.public_id,
+      status: 'SECURED',
+      chain_tx_id: txId,
+      chain_block_height: blockHeight,
+      chain_timestamp: blockTimestamp,
+      secured_at: blockTimestamp,
+    });
+  });
+
+  const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
+
+  if (result.rejected.length > 0) {
+    // PR #567 CodeRabbit nit fix: stringify non-Error rejections via JSON
+    // (with try/catch) so a future caller throwing a plain object doesn't
+    // log `firstError: '[object Object]'`.
+    const firstReason = result.rejected[0]?.reason;
+    const formatReason = (reason: unknown): string => {
+      if (reason instanceof Error) return reason.message;
+      if (reason === null || reason === undefined) return 'unknown';
+      try {
+        return JSON.stringify(reason);
+      } catch {
+        return String(reason);
+      }
+    };
+    logger.warn(
+      {
+        txId,
+        anchorsDispatched: result.fulfilled.length,
+        anchorsFailed: result.rejected.length,
+        firstError: formatReason(firstReason),
+      },
+      'Bulk webhook fan-out: some dispatches failed (DLQ holds the durable retries)',
+    );
+  } else {
+    logger.info(
+      { txId, anchorsDispatched: result.fulfilled.length },
+      'Bulk webhook fan-out: anchor.secured delivered for all anchors in tx',
+    );
+  }
+}
 
 /** In-process mutex — prevents concurrent confirmation check runs */
 let confirmationCheckRunning = false;
@@ -265,16 +394,19 @@ async function _checkAnchorConfirmation(anchor: {
     details: `Confirmed at block ${blockHeight} (tx: ${anchor.chain_tx_id})`,
   });
 
-  // Dispatch webhook — non-fatal
-  if (anchor.org_id) {
+  // Dispatch webhook — non-fatal.
+  // SCRUM-1268 (R2-5): payload contains only public-allowed fields.
+  // `anchor_id` (UUID) and raw `fingerprint` are banned by CLAUDE.md §6 + §1.6.
+  // PR #567 review-fix: eventId is `public_id` (not the internal UUID) so
+  // the outer envelope's `event_id` field is public-safe.
+  if (anchor.org_id && anchor.public_id) {
     try {
-      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.id, {
-        anchor_id: anchor.id,
+      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
         public_id: anchor.public_id,
-        fingerprint: anchor.fingerprint,
         status: 'SECURED',
         chain_tx_id: anchor.chain_tx_id,
         chain_block_height: blockHeight,
+        chain_timestamp: blockTimestamp,
         secured_at: blockTimestamp,
       });
     } catch (webhookError) {
@@ -454,6 +586,29 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
             { txId, confirmed: groupConfirmed, blockHeight, confirmations },
             'Bulk confirmed anchor group (shared tx)',
           );
+
+          // SCRUM-1264 (R2-1): Fan out per-anchor `anchor.secured` webhooks.
+          // The pre-2026-03-27 single-anchor path emitted one webhook per
+          // SECURED anchor (jobs/anchor.ts:283 still does this for SUBMITTED).
+          // Commit a5da008d "perf: bulk SECURED updates" replaced the per-anchor
+          // promote with a single bulk UPDATE and skipped the webhook fan-out
+          // entirely — silently breaking ~10K customer webhooks per merkle TX
+          // for 6 weeks. We restore the contract here, with a concurrency cap
+          // to avoid hammering customer endpoints.
+          //
+          // PR #567 CodeRabbit operational fix: fire-and-forget rather than
+          // awaiting inline. A 10K-anchor merkle batch at concurrency=20 with
+          // ~1s per dispatch can hold the per-tx Promise.allSettled past the
+          // 2-minute cron interval, blocking subsequent runs from clearing
+          // their `confirmationCheckRunning` mutex. The helper never throws
+          // (errors → DLQ via deliverToEndpoint), so a detached promise is
+          // safe; we attach a .catch to surface unexpected throws.
+          void fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp).catch((fanOutErr) => {
+            logger.error(
+              { txId, error: fanOutErr },
+              'Detached bulk webhook fan-out unexpectedly threw — should never happen (helper catches internally)',
+            );
+          });
         }
 
         return groupConfirmed;

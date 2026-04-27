@@ -256,14 +256,14 @@ describe('anchor lifecycle: PENDING → BROADCASTING → SUBMITTED → webhook',
 
     // 4. Webhook dispatched with correct payload
     expect(mockDispatchWebhookEvent).toHaveBeenCalledOnce();
+    // SCRUM-1268 (R2-5): event_id is public_id; payload obeys strict
+    // AnchorSubmitted schema (no anchor_id / fingerprint).
     expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
       'org-001',
       'anchor.submitted',
-      'anc-001',
+      'pub-anc-001',
       expect.objectContaining({
-        anchor_id: 'anc-001',
         public_id: 'pub-anc-001',
-        fingerprint: expect.stringMatching(/^[0-9a-f]{64}$/),
         status: 'SUBMITTED',
         chain_tx_id: RECEIPT.receiptId,
         submitted_at: RECEIPT.blockTimestamp,

@@ -155,9 +155,12 @@ const MOCK_ENDPOINT = {
 };
 
 const MOCK_PAYLOAD_DATA = {
-  anchor_id: 'anchor-001',
   public_id: 'pub-001',
-  status: 'SECURED',
+  status: 'SECURED' as const,
+  chain_tx_id: 'tx-001',
+  chain_block_height: 800000,
+  chain_timestamp: '2026-04-26T12:00:00.000Z',
+  secured_at: '2026-04-26T12:00:00.000Z',
 };
 
 // ---- Helper to set up DB from() routing ----
