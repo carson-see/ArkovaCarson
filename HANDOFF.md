@@ -14,6 +14,56 @@
 
 ## Now
 
+### 2026-04-27 — Cloud Run worker deploy unblocked; PRs #555–581 + #584 + #585 live in prod
+
+**State:** worker rev `arkova-worker-00430-kal` (sha `b3593162`) serving live traffic, `/health` returns `status: healthy` with `git_sha: b359316206bd5d1a546fa277fa7791174a86383d` and all sub-checks (`database`, `anchoring`, `kms`) ok.
+
+**What unblocked:** two latent bugs in `.github/workflows/deploy-worker.yml` — both introduced 2026-04-25 in adc654d2 alongside SCRUM-1247 BUILD_SHA work — were fixed and admin-merged tonight (per session-scoped user OK for these two PRs):
+
+- **#584** (sha ebd42e00): `Copy lint` step in pre-deploy gate failed `sh: 1: tsx: not found` because the workflow only ran `npm ci` inside `services/worker/`. Root devDeps (tsx) are required by `scripts/check-copy-terms.ts`. Fix: install root deps before that step, mirroring `ci.yml`.
+- **#585** (sha b3593162): smoke test fell back to live service URL (gcloud `value()` projection doesn't support `[tag=canary]` subscript) AND asserted `.status == "ok"` while `/health` returns `"healthy"`. Net effect: smoke test exercised OLD prod with a string that has never matched. Fix: `--format=json` + jq for canary URL, fail-fast if absent, assert `.status == "healthy"`.
+
+**Outage window:** every push to `main` from 2026-04-26 11:45 UTC to 2026-04-27 03:44 UTC failed the deploy gate — ~16h. Backlog of merged commits cleared this run: PRs #555–581 (SCRUM-1024 Sentry alerting, SCRUM-1207 Confluence-drift CI guard, SCRUM-1086/1090/1091/1094/1096 public-org + notification center, SCRUM-895/896 API-rich, SCRUM-1246 R1 wave, RLS suite restore, Sentry profiler lazy-load) plus the two CI fixes #584 and #585.
+
+**Verification artifacts:**
+- GH Actions run [24975511666](https://github.com/carson-see/ArkovaCarson/actions/runs/24975511666) — Pre-deploy + Build & Deploy both green; canary smoke passed against tagged canary URL with `.status == "healthy"`.
+- `gcloud run services describe arkova-worker --region=us-central1 --project=arkova1 --format='value(status.latestReadyRevisionName,status.url)'` → `arkova-worker-00430-kal	https://arkova-worker-kvojbeutfa-uc.a.run.app`.
+- `curl -s https://arkova-worker-270018525501.us-central1.run.app/health` → `{"status":"healthy","git_sha":"b359316206bd5d1a546fa277fa7791174a86383d","network":"mainnet","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`.
+
+**Operator unrelated note:** `gcloud auth login` reauth wall removed for carson@arkova.ai — `arkova-cli@arkova1.iam.gserviceaccount.com` impersonation set as default (`gcloud config set auth/impersonate_service_account ...`) with `roles/iam.serviceAccountTokenCreator` granted. SA token auto-refreshes from user creds; no more 16h interactive reauth for ops.
+
+**Known regression (NOT fixed this session — needs human call):** PR #567 (R2 batch 1 — 5 stories, sha dda518fa) merged after my deploy. Its deploy run [24975705021](https://github.com/carson-see/ArkovaCarson/actions/runs/24975705021) failed at `Pre-deploy Quality Gates → Typecheck` with **24 errors**, all the same shape:
+
+```
+src/api/v1/{auditBatchVerify,complianceTrends,key-inventory,keyInventory,
+provenance,signatureCompliance,signatures}.ts: error TS2345:
+Argument of type 'string' is not assignable to parameter of type 'object'.
+src/integrations/indexnow.ts: same (3 sites)
+src/jobs/check-confirmations-bulk-fanout.test.ts(38,5): TS2322 (Promise.then signature)
+src/jobs/db-health-rpcs.test.ts(52,33): TS2345 (tuple destructure)
+src/stripe/handlers.test.ts: TS2304 'StripeEvent' name not found (4 sites)
+```
+
+The 21 `string-vs-object` sites are pino call-order mistakes — they call `logger.error('msg', { ctx })` while pino's `LogFn` requires `logger.error({ ctx }, 'msg')` (object first). Verified against `node_modules/pino/pino.d.ts` `interface LogFn` — has been the documented contract for the entire pino v8 line.
+
+**Why this didn't get caught at PR time:** `ci.yml`'s `TypeCheck & Lint` job only runs `npm run typecheck` and `tsc -p tsconfig.build.json` from repo root — neither typechecks `services/worker/`. The worker's `npx tsc --noEmit` only runs in `deploy-worker.yml`'s pre-deploy gate. Same drift class as SCRUM-1250 (R0-4) lint parity. Followup needed: add `services/worker/` typecheck to ci.yml so this can never reach `main` again.
+
+**Why it surfaced now:** PR #567 regenerated `services/worker/package-lock.json` and pinned all deps (removed `^` ranges). Lockfile churn likely brought in stricter pino types, exposing 21+ pre-existing bad call sites. The errors did not exist at b3593162 in any way that `tsc` flagged — confirmed by deploy run 24975511666 passing typecheck on the same source files.
+
+**Net prod impact right now:**
+- ✅ Worker live on b3593162 with PRs #555–581 + #584 + #585.
+- ❌ PR #567 (R2 batch 1, 5 stories) NOT in prod.
+- ❌ PR #569 (R0 sub-stories + DEP-15) NOT in prod — its deploy run [24975597011](https://github.com/carson-see/ArkovaCarson/actions/runs/24975597011) was cancelled by #567's queued run, and #567's run failed before reaching it.
+
+I deliberately did NOT fix the call-site swap myself — the user's session-scoped permission was for the deploy gate (CI infra), not for editing feature code in 8 worker files. Two paths the user can pick in the morning:
+1. Revert PR #567 (rolls back the lockfile + pin), unblocking subsequent deploys until the call sites are addressed in a clean PR.
+2. Land a feature PR that swaps the call-site arg order (mechanical, ~24 sites, all pinpointed above) and adds worker typecheck to `ci.yml` so this can't recur.
+
+**Follow-ups (not done this session):**
+- Add `services/worker/` typecheck step to `ci.yml` (ROOT CAUSE of why this reached main).
+- Backfill smoke-test parity into a CI script `scripts/ci/check-deploy-smoke-parity.ts` (same pattern as SCRUM-1250 lint parity), so the `/health` contract and the gate's assertion are linked. The 16-hour blackout would have been minutes-of-detection if this script existed.
+- PR #582 (edge.arkova.ai bug-bounty fixes) — Cloudflare Worker, not Cloud Run worker; needs separate `wrangler deploy` if not already shipped (path filter excluded it from `deploy-worker.yml`).
+
 ### 2026-04-26 EOD — PO format + prioritization pass (alongside R1 in flight)
 
 **New artifacts (Confluence-canonical):**
@@ -537,3 +587,7 @@ _Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-04-26 by claude — claims verified against gcloud/MCP/CI output (R0 wave merged via PRs #562 + #563 at commits adc654d2 + e918259f; 9 follow-up sub-stories filed SCRUM-1301..1309; R2 batch 1 verifications: grep confirms orphan helper unused; period-field migration verified by grep on handlers.ts)._
+
+---
+
+_Last refreshed: 2026-04-27 by claude — claims verified against gcloud/MCP/CI output (deploy unblock: deploy-worker run 24975511666 success at sha b3593162; gcloud `services describe arkova-worker` returns rev `arkova-worker-00430-kal`; `curl /health` returns `{"status":"healthy","git_sha":"b359316206bd5d1a546fa277fa7791174a86383d","network":"mainnet"}`; subsequent run 24975705021 on dda518fa failed Typecheck with 24 errors, log lines extracted into Known regression section; pino LogFn signature verified against `node_modules/pino/pino.d.ts` `interface LogFn`; `ci.yml typecheck-lint` confirmed to NOT typecheck services/worker — only repo-root + tsconfig.build.json)._
