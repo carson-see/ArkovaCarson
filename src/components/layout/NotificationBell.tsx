@@ -28,7 +28,7 @@ const PANEL_LABELS = {
   MARK_ALL_READ: 'Mark all read',
 } as const;
 
-const KIND_TITLE: Record<string, string> = {
+const TYPE_TITLE: Record<string, string> = {
   queue_run_completed: 'Queue run finished',
   rule_fired: 'A rule fired',
   version_available_for_review: 'New version ready for review',
@@ -55,7 +55,8 @@ interface RowProps {
 
 function NotificationRow({ notification, onSelect }: Readonly<RowProps>) {
   const unread = notification.read_at === null;
-  const heading = notification.title || KIND_TITLE[notification.kind] || 'Notification';
+  const { title, body } = notification.payload ?? {};
+  const heading = title || TYPE_TITLE[notification.type] || 'Notification';
   return (
     <button
       type="button"
@@ -74,8 +75,8 @@ function NotificationRow({ notification, onSelect }: Readonly<RowProps>) {
         )}
         <div className="min-w-0 flex-1">
           <p className={`text-sm ${unread ? 'font-medium' : 'font-normal'}`}>{heading}</p>
-          {notification.body && (
-            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{notification.body}</p>
+          {body && (
+            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{body}</p>
           )}
           <p className="text-[11px] text-muted-foreground mt-1">{formatRelative(notification.created_at)}</p>
         </div>

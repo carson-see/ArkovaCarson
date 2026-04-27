@@ -73,6 +73,7 @@ const RuleBuilderPage = React.lazy(() => import('@/pages/RuleBuilderPage').then(
 const RulesPage = React.lazy(() => import('@/pages/RulesPage').then(m => ({ default: m.RulesPage })));
 const DevelopersPage = React.lazy(() => import('@/pages/DevelopersPage').then(m => ({ default: m.DevelopersPage })));
 const AttestationsPage = React.lazy(() => import('@/pages/AttestationsPage').then(m => ({ default: m.AttestationsPage })));
+const AdminOnboardingPage = React.lazy(() => import('@/pages/AdminOnboardingPage').then(m => ({ default: m.AdminOnboardingPage })));
 const AdminUsersPage = React.lazy(() => import('@/pages/AdminUsersPage').then(m => ({ default: m.AdminUsersPage })));
 const AdminRecordsPage = React.lazy(() => import('@/pages/AdminRecordsPage').then(m => ({ default: m.AdminRecordsPage })));
 const AdminSubscriptionsPage = React.lazy(() => import('@/pages/AdminSubscriptionsPage').then(m => ({ default: m.AdminSubscriptionsPage })));
@@ -248,6 +249,7 @@ export function App() {
           <Route path={ROUTES.RULES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Rules"><RulesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_ONBOARDING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* NCA-08 — Compliance Scorecard (post-audit landing) */}
           <Route path={ROUTES.COMPLIANCE_SCORECARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceScorecard"><ComplianceScorecardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

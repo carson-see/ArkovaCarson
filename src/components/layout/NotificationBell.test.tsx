@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent, waitFor } from '@testing-library/react';
+import type { Notification } from '@/hooks/useNotifications';
 
 const navigateMock = vi.fn();
 vi.mock('react-router-dom', () => ({
@@ -21,7 +22,7 @@ const markReadMock = vi.fn();
 const markAllReadMock = vi.fn();
 const refreshMock = vi.fn();
 
-let mockNotifications: unknown[] = [];
+let mockNotifications: Notification[] = [];
 let mockUnread = 0;
 let mockLoading = false;
 
@@ -55,12 +56,12 @@ beforeEach(() => {
   mockLoading = false;
 });
 
-const baseRow = {
+const baseRow: Notification = {
   id: 'n1',
   user_id: 'u1',
   organization_id: null,
-  body: null,
-  metadata: null,
+  type: 'rule_fired',
+  payload: {},
   read_at: null,
   created_at: new Date(Date.now() - 30_000).toISOString(),
 };
@@ -95,8 +96,8 @@ describe('<NotificationBell />', () => {
 
   it('opens the panel and lists rows for each notification', async () => {
     mockNotifications = [
-      { ...baseRow, id: 'n1', kind: 'anchor_revoked', title: 'Record revoked', target_id: 'a1' },
-      { ...baseRow, id: 'n2', kind: 'rule_fired', title: 'Rule X fired', target_id: 'r1' },
+      { ...baseRow, id: 'n1', type: 'anchor_revoked', payload: { title: 'Record revoked', target_id: 'a1' } },
+      { ...baseRow, id: 'n2', type: 'rule_fired', payload: { title: 'Rule X fired', target_id: 'r1' } },
     ];
     mockUnread = 2;
     const { getByRole, findByText } = render(<NotificationBell />);
@@ -107,7 +108,10 @@ describe('<NotificationBell />', () => {
 
   it('clicking an unread row marks it read AND navigates to its deep link', async () => {
     mockNotifications = [
-      { ...baseRow, id: 'n1', kind: 'anchor_revoked', title: 'Record revoked', target_id: 'anchor-42' },
+      { ...baseRow, id: 'n1', type: 'anchor_revoked', payload: { title: 'Record revoked', target_id: 'anchor-42' } },
+      { ...baseRow, id: 'n2', type: 'rule_fired', payload: { title: 'Rule fired' } },
+      { ...baseRow, id: 'n3', type: 'queue_run_completed', payload: { title: 'Queue run' } },
+      { ...baseRow, id: 'n4', type: 'treasury_alert', payload: { title: 'Treasury' } },
     ];
     mockUnread = 1;
     const { getByRole, findByLabelText } = render(<NotificationBell />);
@@ -130,7 +134,7 @@ describe('<NotificationBell />', () => {
   it('"Mark all read" renders when unread > 0 and calls markAllRead on click', () => {
     mockUnread = 4;
     mockNotifications = [
-      { ...baseRow, id: 'n1', kind: 'rule_fired', title: 'Rule X fired', target_id: 'r1' },
+      { ...baseRow, id: 'n1', type: 'rule_fired', payload: { title: 'Rule X fired', target_id: 'r1' } },
     ];
     const { getByRole } = render(<NotificationBell />);
     fireEvent.click(getByRole('button', { name: /4 unread/ }));
