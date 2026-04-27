@@ -8,3 +8,6 @@
 # the historical commit so the PR's first-parent scan passes.
 3cd98ca14331900348937a24e915ee589f1338e3:docs/runbooks/sec-harden/sec-harden-01-google-key-rotation.md:generic-api-key:59
 3cd98ca14331900348937a24e915ee589f1338e3:docs/runbooks/sec-harden/sec-harden-01-google-key-rotation.md:curl-auth-header:114
+# SCRUM-946: vendored Transformers.js runtime false positive (`this.vocab=new`),
+# not a credential. Keep scoped to the exact PR commit/path/rule fingerprint.
+66f4737e5549612d083ce0c1dc0fcccb7c78dd7a:public/vendor/transformers.web.min.js:generic-api-key:2

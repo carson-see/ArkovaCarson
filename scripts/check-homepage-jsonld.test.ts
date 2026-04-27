@@ -3,8 +3,24 @@ import { readFileSync } from 'node:fs';
 
 function homepageSchemas(): Array<Record<string, unknown>> {
   const html = readFileSync('index.html', 'utf8');
-  const scripts = [...html.matchAll(/<script type="application\/ld\+json">\s*([\s\S]*?)\s*<\/script>/g)];
-  return scripts.map((match) => JSON.parse(match[1]) as Record<string, unknown>);
+  const openTag = '<script type="application/ld+json">';
+  const closeTag = '</script>';
+  const scripts: string[] = [];
+  let searchFrom = 0;
+
+  while (searchFrom < html.length) {
+    const openAt = html.indexOf(openTag, searchFrom);
+    if (openAt === -1) break;
+
+    const contentStart = openAt + openTag.length;
+    const closeAt = html.indexOf(closeTag, contentStart);
+    if (closeAt === -1) break;
+
+    scripts.push(html.slice(contentStart, closeAt).trim());
+    searchFrom = closeAt + closeTag.length;
+  }
+
+  return scripts.map((script) => JSON.parse(script) as Record<string, unknown>);
 }
 
 describe('homepage JSON-LD', () => {

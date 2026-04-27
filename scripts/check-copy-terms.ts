@@ -165,7 +165,7 @@ function hasInlineJsxText(line: string): boolean {
     if (nextOpenTag === -1) return false;
 
     const text = line.slice(closeTagStart + 1, nextOpenTag).trimStart();
-    if (text.length > 0 && text[0] !== '{') {
+    if (text.length > 0 && !text.startsWith('{')) {
       return true;
     }
 

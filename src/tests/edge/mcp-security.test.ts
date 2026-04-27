@@ -30,6 +30,7 @@ declare global {
 }
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { Buffer } from 'node:buffer';
 import { webcrypto } from 'node:crypto';
 
 // Polyfill globalThis.crypto.subtle for Node test environment
@@ -52,9 +53,7 @@ import type { Env } from '../../../services/edge/src/env';
 
 function base64Url(value: string | Uint8Array): string {
   const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+  return Buffer.from(bytes).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
 
 async function signSupabaseTestJwt(

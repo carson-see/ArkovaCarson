@@ -19,7 +19,9 @@ function base64UrlToBytes(value: string): Uint8Array<ArrayBuffer> | null {
     const bytes = new Uint8Array(binary.length);
 
     for (let i = 0; i < binary.length; i += 1) {
-      bytes[i] = binary.charCodeAt(i);
+      const byte = binary.codePointAt(i);
+      if (byte === undefined || byte > 255) return null;
+      bytes[i] = byte;
     }
 
     return bytes;
@@ -44,8 +46,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === '/') {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 function expectedIssuer(env: Env): string {
-  return `${env.SUPABASE_URL.replace(/\/+$/, '')}/auth/v1`;
+  return `${trimTrailingSlashes(env.SUPABASE_URL)}/auth/v1`;
 }
 
 function hasExpectedAudience(aud: string | string[]): boolean {
