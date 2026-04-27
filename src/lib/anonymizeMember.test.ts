@@ -23,7 +23,7 @@ describe('anonymizeMemberDisplayName — mirror of SQL anonymize_member_display_
     ['   Casey   Privacy ', 'C. Privacy', 'extra whitespace tolerated'],
     ['Carson Seeger', 'C. Seeger', 'real prod row (public profile would never see this — sanity)'],
     ['Sarah Rushton', 'S. Rushton', 'real prod row anonymized form (private profile)'],
-  ])('anonymizeMemberDisplayName(%j) === %j (%s)', (input, expected) => {
+  ])('anonymizeMemberDisplayName(%j) === %j (%s)', (input, expected, _description) => {
     expect(anonymizeMemberDisplayName(input)).toBe(expected);
   });
 
