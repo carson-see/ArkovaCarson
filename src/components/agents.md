@@ -1,8 +1,10 @@
 # agents.md — components
-_Last updated: 2026-04-24_
+_Last updated: 2026-04-26_
 
 ## What This Folder Contains
 Domain-specific React components organized by feature area. Each subfolder has a barrel `index.ts` export. `ui/` contains shadcn/ui primitives (do not edit).
+
+`DataErrorBanner.tsx` (root-level) — shared amber "warn + retry" banner for admin-dashboard data-fetch failures. Centralised during the SCRUM-1260 R1-6 /simplify pass after the same shape appeared inline three times across `PipelineAdminPage` (stats + records) and `TreasuryAdminPage` (x402). Copy lives in `DATA_ERROR_LABELS` in `src/lib/copy.ts`.
 
 ## Subfolder Map
 

@@ -14,6 +14,7 @@
  */
 
 import { logger } from '../utils/logger.js';
+import { emitRpcFallback } from '../utils/sentry.js';
 
 // ─── HttpError ──────────────────────────────────────────────────────────
 
@@ -467,9 +468,26 @@ export class GetBlockHybridProvider implements UtxoProvider {
           rawTxHex: '',
         }));
       }
-    } catch {
-      // RPC node may not support listunspent (shared nodes) — fall back to mempool
-      logger.debug('GetBlockHybridProvider.listUnspent: RPC fallback to mempool.space');
+    } catch (err) {
+      // SCRUM-1262 (R1-8): per the GetBlock RPC matrix, the shared endpoint
+      // returns "Method not allowed" on listunspent (forensic 1/8). Falls
+      // back to public mempool.space — partial sovereignty leak. The
+      // counter below feeds the R0-8 / SCRUM-1254 db-health-monitor view
+      // so we can dashboard the fallback rate and alert if it stays at
+      // 100% (i.e. the RPC is functionally unused). Sentry breadcrumb +
+      // structured warn log (logger.warn is picked up by GCP Cloud Logging
+      // sink and the Arize tracing exporter when enabled).
+      // /simplify pass: pair extracted to emitRpcFallback() so future RPC
+      // fallback sites (getrawtransaction / getblockheader / fee estimation)
+      // emit the same locked shape.
+      emitRpcFallback({
+        provider: 'getblock',
+        method: 'listunspent',
+        error: err,
+        fallbackTo: 'mempool.space',
+        logger,
+        origin: 'GetBlockHybridProvider.listUnspent',
+      });
     }
     return this.mempool.listUnspent(address);
   }

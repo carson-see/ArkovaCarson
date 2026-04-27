@@ -239,7 +239,11 @@ describe('RLS: Anchors', () => {
   });
 
   it('users can insert anchors for themselves with PENDING status', async () => {
-    const testFingerprint = 'a'.repeat(64);
+    // Timestamp-based fingerprint avoids re-run collisions on the partial unique
+    // index `(user_id, fingerprint) WHERE deleted_at IS NULL` if a prior run's
+    // cleanup was interrupted.
+    const ts = Date.now().toString(16).padStart(16, '0');
+    const testFingerprint = `a${ts}`.padEnd(64, '0').slice(0, 64);
     const { data, error } = await userClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,
       fingerprint: testFingerprint,
@@ -480,10 +484,15 @@ describe('Enum Validation', () => {
   });
 
   it('accepts valid anchor_status values', async () => {
+    // Timestamp-based fingerprint avoids re-run collisions on the partial unique
+    // index `(user_id, fingerprint) WHERE deleted_at IS NULL` if a prior run's
+    // cleanup was interrupted.
+    const ts = Date.now().toString(16).padStart(16, '0');
+    const testFingerprint = `f${ts}`.padEnd(64, 'f').slice(0, 64);
     // PENDING is valid
     const { data, error } = await serviceClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,
-      fingerprint: 'f'.repeat(64),
+      fingerprint: testFingerprint,
       filename: 'enum_test.pdf',
       status: 'PENDING',
     }).select();
@@ -492,7 +501,7 @@ describe('Enum Validation', () => {
     expect(data![0].status).toBe('PENDING');
 
     // Cleanup
-    await serviceClient.from('anchors').delete().eq('fingerprint', 'f'.repeat(64));
+    await serviceClient.from('anchors').delete().eq('fingerprint', testFingerprint);
   });
 
   it('rejects invalid anchor_status values via constraint', async () => {

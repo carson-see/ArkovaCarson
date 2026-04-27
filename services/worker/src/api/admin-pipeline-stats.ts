@@ -99,33 +99,22 @@ export async function handlePipelineStats(
       logger.warn({ error: (pipelineResult as PromiseRejectedResult).reason }, 'get_pipeline_stats RPC failed');
     }
 
-    // Fallback: direct count queries (may be slow on large tables)
+    // SCRUM-1259 (R1-5): the previous fallback fanned out 8 exact-count
+    // queries against the bloated `anchors` + `public_records` tables when
+    // the RPC failed. Each query was a 60s PostgREST timeout candidate; the
+    // 8-of-them-in-parallel pattern was a known DOS-on-our-own-DB. When the
+    // RPC is unavailable now, return 503 with a clear error so the frontend
+    // shows an explicit "Pipeline stats temporarily unavailable" banner
+    // instead of silent zeros. R1-2's refresh_cache_pipeline_stats rewrite
+    // and the in-flight autovacuum should make RPC failure rare; if it
+    // becomes common we'll add a last-known-good cache read here.
     if (!usedPipelineRpc) {
-      const dbAny = db as any;
-      const countResults = await Promise.allSettled([
-        db.from('public_records').select('*', { count: 'exact', head: true }),
-        db.from('public_records').select('*', { count: 'exact', head: true }).not('anchor_id', 'is', null),
-        db.from('public_records').select('*', { count: 'exact', head: true }).is('anchor_id', null),
-        db.from('public_record_embeddings').select('*', { count: 'exact', head: true }),
-        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'PENDING').is('deleted_at', null),
-        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'BROADCASTING').is('deleted_at', null),
-        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'SUBMITTED').not('chain_tx_id', 'is', null).is('deleted_at', null),
-        dbAny.from('anchors').select('*', { count: 'exact', head: true }).not('metadata->>pipeline_source', 'is', null).eq('status', 'SECURED').not('chain_tx_id', 'is', null).is('deleted_at', null),
-      ]);
-      const cval = <T>(i: number): T | null => {
-        const r = countResults[i];
-        return r.status === 'fulfilled' ? (r.value as T) : null;
-      };
-      totalRecords = cval<{ count: number }>(0)?.count ?? 0;
-      anchorLinkedRecords = cval<{ count: number }>(1)?.count ?? 0;
-      pendingRecordLinks = cval<{ count: number }>(2)?.count ?? 0;
-      embeddedRecords = cval<{ count: number }>(3)?.count ?? 0;
-      pendingAnchorRecords = cval<{ count: number }>(4)?.count ?? 0;
-      broadcastingRecords = cval<{ count: number }>(5)?.count ?? 0;
-      submittedRecords = cval<{ count: number }>(6)?.count ?? 0;
-      securedRecords = cval<{ count: number }>(7)?.count ?? 0;
-      anchoredRecords = submittedRecords + securedRecords;
-      pendingRecords = pendingRecordLinks + pendingAnchorRecords + broadcastingRecords;
+      logger.warn('admin-pipeline-stats: get_pipeline_stats RPC unavailable; returning 503');
+      res.status(503).json({
+        error: 'Pipeline stats temporarily unavailable',
+        detail: 'Backing aggregation function failed; retry shortly.',
+      });
+      return;
     }
 
     // Extract source breakdown

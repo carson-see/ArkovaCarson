@@ -255,6 +255,14 @@ function setupDbMocks(overrides: {
       return {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
+            // SCRUM-1240 (R0 cleanup): handler now scopes attestations to
+            // org_id BEFORE running .or(...) — chain is now `.eq(org_id).or(...)`.
+            // Mock both legacy `.single()` and the new `.or()` form on the
+            // .eq return value.
+            or: vi.fn().mockResolvedValue({
+              data: attestationBatchData ?? [],
+              error: null,
+            }),
             single: vi.fn().mockResolvedValue({
               data: attestationData,
               error: attestationData ? null : { message: 'not found' },
@@ -330,6 +338,14 @@ function setupDbMocks(overrides: {
             }),
           }),
         }),
+      };
+    }
+
+    // SCRUM-1242 (R0 cleanup): replay-protection nonces table mock. Handler
+    // calls `.from('ats_webhook_nonces').insert(...)`. Default = success.
+    if (table === 'ats_webhook_nonces') {
+      return {
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
       };
     }
 

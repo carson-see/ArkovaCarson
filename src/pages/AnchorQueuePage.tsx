@@ -6,6 +6,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AppShell } from '@/components/layout';
+import { useVisibilityPolling } from '@/hooks/useVisibilityPolling';
 import { OrgRequiredGate } from '@/components/auth/OrgRequiredGate';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -150,39 +151,6 @@ function useQueueKeyboardShortcuts(args: {
   }, [groups, clampedFocus, dialogGroup, setFocusIdx, setShowHelp, openDialog]);
 }
 
-/**
- * Poll `cb` every `intervalMs`. Skips when the tab is hidden and catches up
- * when the tab becomes visible again. Extracted from QueueInner so Sonar's
- * cognitive-complexity check stays under 15 and the polling contract is
- * reusable.
- */
-function useVisibilityAwarePolling(cb: () => Promise<unknown>, intervalMs: number): void {
-  useEffect(() => {
-    const swallow = (p: Promise<unknown>) => {
-      // fetchPending handles its own errors + sets `error` state. Swallow
-      // here to satisfy TS/Sonar — `void p` triggers no-void rule.
-      p.catch(() => undefined);
-    };
-    swallow(cb());
-    const id = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      swallow(cb());
-    }, intervalMs);
-    function onVisibilityChange() {
-      if (!document.hidden) swallow(cb());
-    }
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', onVisibilityChange);
-    }
-    return () => {
-      clearInterval(id);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', onVisibilityChange);
-      }
-    };
-  }, [cb, intervalMs]);
-}
-
 function canRunAnchoringJob(profileRole?: string | null, isPlatformAdmin?: boolean, orgRole?: string | null): boolean {
   return (
     profileRole === 'ORG_ADMIN' ||
@@ -231,7 +199,7 @@ function QueueInner() {
     }
   }, []);
 
-  useVisibilityAwarePolling(fetchPending, POLL_INTERVAL_MS);
+  useVisibilityPolling(fetchPending, POLL_INTERVAL_MS);
 
   useEffect(() => {
     let cancelled = false;
