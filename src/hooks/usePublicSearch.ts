@@ -250,6 +250,87 @@ export function useOrgProfile(): UseOrgProfileReturn {
   return { profile, loading, error, fetchProfile };
 }
 
+// ── Org subtree (SCRUM-1087) ─────────────────────────────────────────────────
+
+export interface OrgSubtreeNode {
+  org_id: string;
+  public_id: string | null;
+  parent_org_id: string | null;
+  display_name: string;
+  domain: string | null;
+  description: string | null;
+  logo_url: string | null;
+  banner_url: string | null;
+  org_type: string | null;
+  website_url: string | null;
+  verification_status: string | null;
+  verified_badge_granted_at: string | null;
+  /** 1 = root org passed to the resolver, 2 = child, 3 = grandchild. */
+  depth: number;
+}
+
+export interface OrgSubtree {
+  root_id: string;
+  max_depth: number;
+  nodes: OrgSubtreeNode[];
+}
+
+interface UseOrgSubtreeReturn {
+  subtree: OrgSubtree | null;
+  loading: boolean;
+  error: string | null;
+  fetchSubtree: (rootOrgId: string, maxDepth?: number) => Promise<void>;
+}
+
+export function useOrgSubtree(): UseOrgSubtreeReturn {
+  const [subtree, setSubtree] = useState<OrgSubtree | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchSubtree = useCallback(async (rootOrgId: string, maxDepth = 3) => {
+    setLoading(true);
+    setError(null);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error: rpcError } = await (supabase as any).rpc('get_org_subtree', {
+        p_root_id: rootOrgId,
+        p_max_depth: maxDepth,
+      });
+      if (rpcError) {
+        setError(rpcError.message);
+        return;
+      }
+      const result = Array.isArray(data) ? data[0]?.get_org_subtree ?? data[0] : data;
+      if (result?.error) {
+        setError(result.error as string);
+        return;
+      }
+      setSubtree(result as OrgSubtree);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load org subtree');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return { subtree, loading, error, fetchSubtree };
+}
+
+/**
+ * Group a flat node list (server returns depth-ordered) by parent so the
+ * frontend can render a tree without doing the recursion in the request path.
+ */
+export function buildSubtreeIndex(nodes: OrgSubtreeNode[]): Map<string | null, OrgSubtreeNode[]> {
+  const index = new Map<string | null, OrgSubtreeNode[]>();
+  for (const n of nodes) {
+    const key = n.parent_org_id;
+    const arr = index.get(key) ?? [];
+    arr.push(n);
+    index.set(key, arr);
+  }
+  return index;
+}
+
 // ── Public Member Profile ────────────────────────────────────────────────────
 
 export interface PublicMemberOrganization {
