@@ -7,6 +7,7 @@ import {
   ALL_SUB_TYPES,
   isValidSubType,
 } from '../validators';
+import { formatCredentialSubType } from '../copy';
 
 describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
   it('every credential type has at least one sub-type', () => {
@@ -31,6 +32,16 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
         expect(subType, `${type}.${subType} should be snake_case`).toMatch(/^[a-z0-9_]+$/);
       }
     }
+  });
+
+  it('every sub-type has a readable public display label', () => {
+    for (const subType of ALL_SUB_TYPES) {
+      const label = formatCredentialSubType(subType);
+      expect(label, `${subType} should have a display label`).toBeTruthy();
+      expect(label).not.toContain('_');
+      expect(label).toMatch(/^[A-Z0-9]/);
+    }
+    expect(formatCredentialSubType('professional_certification')).toBe('Professional Certification');
   });
 
   it('ALL_SUB_TYPES contains all sub-types from all types', () => {

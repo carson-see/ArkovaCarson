@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_TERMS } from './check-copy-terms.js';
+import { FORBIDDEN_TERMS, findTermViolations } from './check-copy-terms.js';
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -48,5 +48,27 @@ describe('FORBIDDEN_TERMS — postgrest CamelCase', () => {
 
   it('does not match unrelated words sharing a prefix', () => {
     expect(matches(term, 'postgresql is the DB')).toBe(false);
+  });
+});
+
+describe('copy term scanner — JSX text with className', () => {
+  it('flags banned compound text even when the JSX line also has className', () => {
+    const violations = findTermViolations(
+      '<span className="text-[10px] text-muted-foreground">Block Height</span>',
+      1,
+      'src/pages/PipelineAdminPage.tsx',
+    );
+
+    expect(violations.some((v) => v.term.toLowerCase() === 'block height')).toBe(true);
+  });
+
+  it('does not treat Tailwind class names as user-facing copy', () => {
+    const violations = findTermViolations(
+      '<div className="block text-sm">Network Checkpoint</div>',
+      1,
+      'src/pages/PipelineAdminPage.tsx',
+    );
+
+    expect(violations).toHaveLength(0);
   });
 });

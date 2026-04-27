@@ -232,6 +232,9 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const isRevoked = data.status === 'REVOKED';
   const isExpired = data.status === 'EXPIRED';
   const isPending = data.status === 'PENDING';
+  const isSubmitted = data.status === 'SUBMITTED';
+  const isAwaitingConfirmation = isPending || isSubmitted;
+  const securedAt = data.secured_at ?? data.anchor_timestamp;
   const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
@@ -240,6 +243,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const pendingSince = isPending && data.created_at
     ? formatTimeSince(data.created_at)
     : null;
+  const heroTitle = getHeroTitle(data.status, securedAt, formatDate);
+  const heroSubtitle = getHeroSubtitle(data.status);
 
   return (
     <Card className="max-w-2xl mx-auto overflow-hidden">
@@ -247,7 +252,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           SECTION 1: Status Banner
           ============================================================ */}
       <div className={
-        isPending
+        isAwaitingConfirmation
           ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
           : isExpired
             ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
@@ -257,12 +262,12 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       }>
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
-            isPending ? 'bg-amber-500/10'
+            isAwaitingConfirmation ? 'bg-amber-500/10'
             : isExpired ? 'bg-amber-500/10'
             : isRevoked ? 'bg-gray-500/10'
             : 'bg-green-500/10'
           }`}>
-            {isPending ? (
+            {isAwaitingConfirmation ? (
               <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
             ) : isExpired ? (
               <Clock className="h-8 w-8 text-amber-500" />
@@ -273,31 +278,21 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             )}
           </div>
           <Badge
-            variant={isPending ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
+            variant={isAwaitingConfirmation ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
             className={`mb-2 text-sm px-4 py-1 ${
-              isPending ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
+              isAwaitingConfirmation ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
               : isExpired ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
               : isRevoked ? ''
               : 'bg-green-600 hover:bg-green-700'
             }`}
           >
-            {isPending ? ANCHORING_STATUS_LABELS.PENDING_BADGE : statusLabel}
+            {isSubmitted ? ANCHORING_STATUS_LABELS.SUBMITTED_BADGE : isPending ? ANCHORING_STATUS_LABELS.PENDING_BADGE : statusLabel}
           </Badge>
           <h2 className="text-xl font-semibold">
-            {isPending
-              ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE
-              : isRevoked ? PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED
-              : isExpired ? PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED
-              : PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED}
+            {heroTitle}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {isPending
-              ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE
-              : isRevoked
-                ? PUBLIC_VERIFICATION_LABELS.REVOKED_DESC
-                : isExpired
-                  ? PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC
-                  : PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC}
+            {heroSubtitle}
           </p>
           {pendingSince && (
             <p className="text-xs text-amber-600 mt-2">
@@ -386,7 +381,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2b: Evidence Layers (COMP-01)
             ============================================================ */}
-        {!isPending && (
+        {!isAwaitingConfirmation && (
           <>
             <Separator />
             <EvidenceLayersSection
@@ -402,7 +397,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 3: Cryptographic Proof (only for non-PENDING)
             ============================================================ */}
-        {!isPending && (
+        {!isAwaitingConfirmation && (
           <>
             <Separator />
             <div>
@@ -498,7 +493,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 5: Proof Download (UF-07)
             ============================================================ */}
-        {!isPending && (
+        {!isAwaitingConfirmation && (
           <>
             <Separator />
             <VerifierProofDownload
@@ -567,6 +562,7 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
     REVOKED: 'REVOKED',
     EXPIRED: 'EXPIRED',
     PENDING: 'PENDING',
+    SUBMITTED: 'SUBMITTED',
   };
   const status = validStatuses[data.status] ?? 'PENDING';
   return {
@@ -578,6 +574,29 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
     revocationReason: data.revocation_reason,
     expiresAt: data.expires_at ?? data.expiry_date,
   };
+}
+
+function getHeroTitle(
+  status: string,
+  securedAt: string | undefined,
+  formatDate: (dateStr: string) => string,
+): string {
+  if (status === 'SUBMITTED') return ANCHORING_STATUS_LABELS.SUBMITTED_PUBLIC_TITLE;
+  if (status === 'PENDING') return ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE;
+  if (status === 'REVOKED') return PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED;
+  if (status === 'EXPIRED') return PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED;
+  if (securedAt) {
+    return PUBLIC_VERIFICATION_LABELS.VERIFIED_ON.replace('{date}', formatDate(securedAt));
+  }
+  return PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED;
+}
+
+function getHeroSubtitle(status: string): string {
+  if (status === 'SUBMITTED') return ANCHORING_STATUS_LABELS.SUBMITTED_PUBLIC_SUBTITLE;
+  if (status === 'PENDING') return ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE;
+  if (status === 'REVOKED') return PUBLIC_VERIFICATION_LABELS.REVOKED_DESC;
+  if (status === 'EXPIRED') return PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC;
+  return PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC;
 }
 
 /** Format time since a given ISO timestamp (e.g., "3 minutes", "1 hour") */

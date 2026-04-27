@@ -74,6 +74,7 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
   const navigate = useNavigate();
   const [state, setState] = useState<AuditState>({ kind: 'idle' });
   const timers = useRef<number[]>([]);
+  const isRunning = state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
 
   useEffect(() => () => {
     for (const t of timers.current) window.clearTimeout(t);
@@ -88,6 +89,7 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
   }, [disablePhaseAnimation, phaseDurationMs]);
 
   const handleClick = useCallback(async () => {
+    if (state.kind !== 'idle') return;
     if (!fetchFn) {
       setState({ kind: 'error', message: AUDIT_MY_ORG_LABELS.ERROR_FETCH_UNAVAILABLE });
       return;
@@ -118,7 +120,7 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
       const message = (err as Error).message ?? AUDIT_MY_ORG_LABELS.ERROR_NETWORK;
       setState({ kind: 'error', message });
     }
-  }, [fetchFn, triggerUrl, onAuditStarted, onAuditCompleted, scheduleProgress]);
+  }, [fetchFn, triggerUrl, onAuditStarted, onAuditCompleted, scheduleProgress, state.kind]);
 
   const handleRetry = () => setState({ kind: 'idle' });
 
@@ -140,16 +142,19 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.DESCRIPTION}</p>
 
-        {state.kind === 'idle' && (
+        {(state.kind === 'idle' || isRunning) && (
           <Button
             type="button"
             size="lg"
             className="w-full sm:w-auto"
             onClick={handleClick}
+            disabled={isRunning}
+            aria-busy={isRunning}
             data-testid="audit-trigger"
             aria-label={AUDIT_MY_ORG_LABELS.TITLE}
           >
-            {AUDIT_MY_ORG_LABELS.CTA}
+            {isRunning && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" data-testid="audit-trigger-spinner" />}
+            {isRunning ? AUDIT_MY_ORG_LABELS.RUNNING : AUDIT_MY_ORG_LABELS.CTA}
           </Button>
         )}
 

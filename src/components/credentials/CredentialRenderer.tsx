@@ -32,6 +32,7 @@ import {
   CREDENTIAL_TYPE_LABELS,
   ANCHOR_STATUS_LABELS,
   CREDENTIAL_RENDERER_LABELS as LABELS,
+  formatCredentialSubType,
 } from '@/lib/copy';
 import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
 
@@ -167,6 +168,19 @@ const TYPE_CONFIG: Record<string, {
   },
 };
 
+function isSubTypeKey(key: string): boolean {
+  return ['subtype', 'sub_type', 'subType'].includes(key);
+}
+
+function extractSubTypeLabel(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata) return null;
+  for (const key of ['subType', 'subtype', 'sub_type']) {
+    const value = metadata[key];
+    if (typeof value === 'string') return formatCredentialSubType(value);
+  }
+  return null;
+}
+
 export interface CredentialRendererProps {
   credentialType?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -199,10 +213,11 @@ export function CredentialRenderer({
   const typeKey = credentialType ?? 'OTHER';
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
+  const subTypeLabel = extractSubTypeLabel(metadata);
 
-  const credentialLabel = credentialType
+  const credentialLabel = subTypeLabel ?? (credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
-    : null;
+    : null);
 
   const statusLabel = status
     ? (ANCHOR_STATUS_LABELS as Record<string, string>)[status] ?? status
@@ -243,6 +258,14 @@ export function CredentialRenderer({
     return String(value);
   };
 
+  const formatFieldLabel = (key: string): string => {
+    return isSubTypeKey(key)
+      ? 'Type'
+      : key
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
   // Determine rendering mode
   const hasTemplate = template && template.fields.length > 0;
   const hasMetadata = metadata && Object.keys(metadata).length > 0;
@@ -261,12 +284,11 @@ export function CredentialRenderer({
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
       if (key.startsWith('_') || ['recipient', 'jurisdiction', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source', 'abstract', 'description', 'summary'].includes(key)) continue;
-      const formatted = formatFieldValue(value);
+      const formatted = isSubTypeKey(key) && typeof value === 'string'
+        ? formatCredentialSubType(value)
+        : formatFieldValue(value);
       if (formatted) {
-        const label = key
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase());
-        displayFields.push({ label, value: formatted });
+        displayFields.push({ label: formatFieldLabel(key), value: formatted });
       }
     }
   }

@@ -477,9 +477,9 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
             )}
           </div>
 
-          {/* Block Height */}
+          {/* Network Checkpoint */}
           <div>
-            <p className="text-[10px] text-[#859398]">Block Height</p>
+            <p className="text-[10px] text-[#859398]">Network Checkpoint</p>
             <p className="text-xs font-semibold text-[#dce3ed] mt-0.5">
               {record.chainBlockHeight ? record.chainBlockHeight.toLocaleString() : '\u2014'}
             </p>

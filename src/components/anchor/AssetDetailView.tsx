@@ -447,9 +447,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
 
-              {/* Block Height */}
+              {/* Network Checkpoint */}
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Block Height</p>
+                <p className="text-xs text-muted-foreground">Network Checkpoint</p>
                 <p className="text-sm font-semibold">
                   {anchor.chainBlockHeight ? anchor.chainBlockHeight.toLocaleString() : '—'}
                 </p>

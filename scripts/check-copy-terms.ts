@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 export const FORBIDDEN_TERMS = [
   'wallet',
   'gas',
+  String.raw`(?<![-\w])block height(?![-\w])`,
+  String.raw`(?<![-\w])block hash(?![-\w])`,
   String.raw`(?<![-\w])hash(?![-\w])`,
   String.raw`(?<![-\w])block(?![-\w])`,
   'transaction',
@@ -133,10 +135,6 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
   if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
     return true;
   }
-  // Skip CSS class names (e.g. Tailwind "block" means display:block)
-  if (line.includes('className=')) {
-    return true;
-  }
   // Skip Web Crypto API usage and "cryptographic" adjective
   if (line.includes('crypto.subtle') || line.includes('crypto.getRandomValues') || line.includes('cryptographic')) {
     return true;
@@ -152,25 +150,30 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
   return false;
 }
 
+function stripIgnoredAttributeValues(line: string): string {
+  return line.replace(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
+}
+
 /**
  * Finds forbidden term violations in a single line.
  */
-function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
   const results: Violation[] = [];
+  const searchableLine = stripIgnoredAttributeValues(line);
   for (const term of FORBIDDEN_TERMS) {
     const regex = new RegExp(term, 'gi');
-    const match = line.match(regex);
+    const match = searchableLine.match(regex);
     if (!match) continue;
 
-    const hasString = line.includes('"') || line.includes("'") || line.includes('`');
-    const hasJsxText = line.includes('>') && line.includes('<');
+    const hasString = searchableLine.includes('"') || searchableLine.includes("'") || searchableLine.includes('`');
+    const hasJsxText = />\s*[^<{][^<]*</.test(searchableLine);
 
     if (hasString || hasJsxText) {
       results.push({
         file: filePath,
         line: lineNum,
         term: match[0],
-        context: line.trim().substring(0, 80),
+        context: searchableLine.trim().substring(0, 80),
       });
     }
   }

@@ -84,6 +84,17 @@ export function formatCredentialType(raw: string | null | undefined): string {
   return raw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** Map raw subtype values such as "professional_certification" to display copy. */
+export function formatCredentialSubType(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  return trimmed
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
 export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   DEGREE: 'Academic degree (e.g., Bachelor\'s, Master\'s, Doctorate)',
   LICENSE: 'Professional or occupational license',
@@ -623,9 +634,10 @@ export const PUBLIC_VERIFICATION_LABELS = {
   RECORD_REVOKED: 'Record Revoked',
   RECORD_EXPIRED: 'Record Expired',
   DOCUMENT_VERIFIED: 'Document Verified',
+  VERIFIED_ON: 'Verified on {date}',
   REVOKED_DESC: 'This record has been revoked by the issuing organization',
   EXPIRED_DESC: 'This record has passed its expiration date',
-  VERIFIED_DESC: 'This document has been permanently secured',
+  VERIFIED_DESC: 'This record is permanently anchored.',
   CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
   NETWORK_RECEIPT: 'Network Receipt',
@@ -646,9 +658,12 @@ export const PUBLIC_VERIFICATION_LABELS = {
 export const ANCHORING_STATUS_LABELS = {
   PENDING_TITLE: 'Anchoring In Progress',
   PENDING_SUBTITLE: 'Your document has been submitted for anchoring. This typically takes 5\u201315 minutes.',
-  PENDING_PUBLIC_TITLE: 'Record Found \u2014 Anchoring In Progress',
-  PENDING_PUBLIC_SUBTITLE: 'This record has been submitted and is being permanently secured. Anchoring is not yet complete.',
+  PENDING_PUBLIC_TITLE: 'Submitting to network...',
+  PENDING_PUBLIC_SUBTITLE: 'This record is being submitted. Check back shortly for confirmation.',
+  SUBMITTED_PUBLIC_TITLE: 'Record Submitted - Awaiting Network Confirmation',
+  SUBMITTED_PUBLIC_SUBTITLE: 'Finalization usually takes about 60 minutes.',
   PENDING_BADGE: 'Processing',
+  SUBMITTED_BADGE: 'Awaiting Confirmation',
   PENDING_SINCE: 'Submitted {time} ago',
   SHARE_LINK_NOTE: 'You can share this verification link now \u2014 verifiers will see the current anchoring status.',
   SUCCESS_TITLE: 'Document Submitted',
@@ -2267,6 +2282,7 @@ export const AUDIT_MY_ORG_LABELS = {
   DESCRIPTION:
     'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
   CTA: 'Start compliance audit',
+  RUNNING: 'Running compliance audit...',
   PROGRESS_ANALYZING: 'Analyzing credentials…',
   PROGRESS_CHECKING: 'Checking regulatory requirements…',
   PROGRESS_GENERATING: 'Generating compliance report…',
