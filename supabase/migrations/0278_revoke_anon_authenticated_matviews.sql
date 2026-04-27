@@ -27,10 +27,24 @@
 --   GRANT SELECT ON public.mv_anchor_status_counts TO anon, authenticated;
 --   GRANT SELECT ON public.mv_public_records_source_counts TO anon, authenticated;
 
+-- Guarded with to_regclass() because the matviews are created by timestamp-
+-- prefixed migrations (20260425134510_actually_fast_anchor_status_counts,
+-- and the public-records source-counts matview), which are present in prod
+-- but not all replayed in local Supabase seed runs. Without this guard the
+-- local CI test job dies at "Start Supabase" with `relation does not exist`.
+-- Prod already has both matviews; the REVOKE applied there 2026-04-27.
+
 BEGIN;
 
-REVOKE ALL ON public.mv_anchor_status_counts FROM anon, authenticated;
-REVOKE ALL ON public.mv_public_records_source_counts FROM anon, authenticated;
+DO $$
+BEGIN
+  IF to_regclass('public.mv_anchor_status_counts') IS NOT NULL THEN
+    REVOKE ALL ON public.mv_anchor_status_counts FROM anon, authenticated;
+  END IF;
+  IF to_regclass('public.mv_public_records_source_counts') IS NOT NULL THEN
+    REVOKE ALL ON public.mv_public_records_source_counts FROM anon, authenticated;
+  END IF;
+END $$;
 
 NOTIFY pgrst, 'reload schema';
 
