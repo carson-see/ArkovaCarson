@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..', '..');
+const GIT_BIN = '/usr/bin/git';
 
 export interface RetryAfterViolation {
   file: string;
@@ -34,7 +35,7 @@ function isScannedSource(file: string): boolean {
 }
 
 function trackedSourceFiles(): string[] {
-  const output = execFileSync('git', ['ls-files', 'services/worker/src/**/*.ts'], {
+  const output = execFileSync(GIT_BIN, ['ls-files', 'services/worker/src/**/*.ts'], {
     cwd: REPO,
     encoding: 'utf8',
   });
