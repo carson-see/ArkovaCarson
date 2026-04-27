@@ -96,6 +96,7 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     const { data: authUser, error: authErr } = await (serviceClient as any).auth.admin.createUser({
       email: opts.testEmail,
       email_confirm: true,
+      user_metadata: { full_name: opts.fullName },
     });
     if (authErr) throw new Error(`auth.admin.createUser failed: ${authErr.message}`);
     const testUserId = authUser.user.id;
@@ -105,14 +106,16 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
       legal_name: opts.sandboxOrgName,
       display_name: opts.sandboxOrgName,
     });
+    // The handle_new_user trigger creates a stub profile row from auth.users
+    // metadata. Force-update the columns the test asserts on (no upsert race).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('profiles').upsert({
-      id: testUserId,
+    const { error: profErr } = await (serviceClient as any).from('profiles').update({
       public_id: opts.publicId,
       full_name: opts.fullName,
       avatar_url: opts.avatarUrl ?? null,
       is_public_profile: opts.isPublicProfile,
-    });
+    }).eq('id', testUserId);
+    if (profErr) throw new Error(`profiles update failed: ${profErr.message}`);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('org_members').upsert({
       org_id: opts.sandboxOrgId,
