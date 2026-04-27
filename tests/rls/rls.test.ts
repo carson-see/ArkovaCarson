@@ -489,11 +489,15 @@ describe('Enum Validation', () => {
   });
 
   it('accepts valid anchor_status values', async () => {
-    // Timestamp-based fingerprint avoids re-run collisions on the partial unique
+    // Timestamp + random suffix avoids re-run collisions on the partial unique
     // index `(user_id, fingerprint) WHERE deleted_at IS NULL` if a prior run's
-    // cleanup was interrupted.
+    // cleanup was interrupted, and avoids same-millisecond collisions when
+    // parallel test workers seed simultaneously.
     const ts = Date.now().toString(16).padStart(16, '0');
-    const testFingerprint = `f${ts}`.padEnd(64, 'f').slice(0, 64);
+    const rand = Math.floor(Math.random() * 0xffffffff)
+      .toString(16)
+      .padStart(8, '0');
+    const testFingerprint = `f${ts}${rand}`.padEnd(64, 'f').slice(0, 64);
     // PENDING is valid
     const { data, error } = await serviceClient.from('anchors').insert({
       user_id: DEMO_CREDENTIALS.userId,
