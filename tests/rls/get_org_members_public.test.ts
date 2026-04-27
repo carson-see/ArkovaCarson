@@ -77,27 +77,76 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     expect(data.error).toBe('Organization not found');
   });
 
-  it('private-profile members are anonymized: display_name "X. Surname", avatar+id null', async () => {
-    // Seed a private-profile member into the Arkova org as part of the test, then
-    // assert the anonymization on read. (Service client bypasses RLS.)
-    const testUserId = '99999999-1086-0000-0000-000000000001';
+  // profiles.id and org_members.user_id both FK to auth.users(id) ON DELETE
+  // CASCADE — upserting with a fake UUID silently fails the FK check, leaving
+  // the member rows un-inserted and `find()` returning undefined. Each test
+  // creates a real auth.users row via the service-role admin API and threads
+  // the returned id through profile + org_members upserts. Sandbox-org keeps
+  // the seeded member findable regardless of Arkova-seed size.
+  async function seedTestUser(opts: {
+    sandboxOrgId: string;
+    sandboxOrgName: string;
+    testEmail: string;
+    publicId: string;
+    fullName: string;
+    avatarUrl?: string;
+    isPublicProfile: boolean;
+  }): Promise<string> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('profiles').upsert({
-      id: testUserId,
-      public_id: '99999999-1086-pid',
-      full_name: 'Casey Privacy-Tester',
-      is_public_profile: false,
+    const { data: authUser, error: authErr } = await (serviceClient as any).auth.admin.createUser({
+      email: opts.testEmail,
+      email_confirm: true,
+      user_metadata: { full_name: opts.fullName },
     });
+    if (authErr) throw new Error(`auth.admin.createUser failed: ${authErr.message}`);
+    const testUserId = authUser.user.id;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').upsert({
+      id: opts.sandboxOrgId,
+      legal_name: opts.sandboxOrgName,
+      display_name: opts.sandboxOrgName,
+    });
+    // The handle_new_user trigger creates a stub profile row from auth.users
+    // metadata. Force-update the columns the test asserts on (no upsert race).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: profErr } = await (serviceClient as any).from('profiles').update({
+      public_id: opts.publicId,
+      full_name: opts.fullName,
+      avatar_url: opts.avatarUrl ?? null,
+      is_public_profile: opts.isPublicProfile,
+    }).eq('id', testUserId);
+    if (profErr) throw new Error(`profiles update failed: ${profErr.message}`);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('org_members').upsert({
-      org_id: ORG_IDS.arkova,
+      org_id: opts.sandboxOrgId,
       user_id: testUserId,
       role: 'member',
+    });
+    return testUserId;
+  }
+
+  async function cleanupTestUser(testUserId: string, sandboxOrgId: string): Promise<void> {
+    // ON DELETE CASCADE from auth.users handles profiles + org_members.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).auth.admin.deleteUser(testUserId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').delete().eq('id', sandboxOrgId);
+  }
+
+  it('private-profile members are anonymized: display_name "X. Surname", avatar+id null', async () => {
+    const sandboxOrgId = '99999999-1086-1000-0000-000000000001';
+    const testUserId = await seedTestUser({
+      sandboxOrgId,
+      sandboxOrgName: 'RLS 1086 Private Sandbox',
+      testEmail: `rls-1086-private-${Date.now()}@arkova-test.com`,
+      publicId: `99999999-1086-pid-${Date.now()}`,
+      fullName: 'Casey Privacy-Tester',
+      isPublicProfile: false,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (anonClient.rpc as any)('get_org_members_public', {
-      p_org_id: ORG_IDS.arkova,
+      p_org_id: sandboxOrgId,
       p_limit: 200,
       p_offset: 0,
     });
@@ -105,52 +154,40 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
       (m) => m.is_public_profile === false && m.role === 'member',
     );
     expect(seeded).toBeTruthy();
-    // Anonymized form: initial + last token. Never the raw full name.
     expect(seeded!.display_name).toMatch(/^[A-Z]\. [A-Za-z-]+$/);
     expect(seeded!.display_name).not.toContain('Casey');
     expect(seeded!.avatar_url).toBeNull();
     expect(seeded!.profile_public_id).toBeNull();
 
-    // Cleanup so retest runs idempotent.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('org_members').delete().eq('user_id', testUserId);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('profiles').delete().eq('id', testUserId);
+    await cleanupTestUser(testUserId, sandboxOrgId);
   });
 
   it('public-profile members get full payload + their own profile_public_id', async () => {
-    const testUserId = '99999999-1086-0000-0000-000000000002';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('profiles').upsert({
-      id: testUserId,
-      public_id: '99999999-1086-pub',
-      full_name: 'Publicly Visible',
-      avatar_url: 'https://cdn.example/avatar.png',
-      is_public_profile: true,
-    });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('org_members').upsert({
-      org_id: ORG_IDS.arkova,
-      user_id: testUserId,
-      role: 'member',
+    const sandboxOrgId = '99999999-1086-1000-0000-000000000002';
+    const publicId = `99999999-1086-pub-${Date.now()}`;
+    const testUserId = await seedTestUser({
+      sandboxOrgId,
+      sandboxOrgName: 'RLS 1086 Public Sandbox',
+      testEmail: `rls-1086-public-${Date.now()}@arkova-test.com`,
+      publicId,
+      fullName: 'Publicly Visible',
+      avatarUrl: 'https://cdn.example/avatar.png',
+      isPublicProfile: true,
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (anonClient.rpc as any)('get_org_members_public', {
-      p_org_id: ORG_IDS.arkova,
+      p_org_id: sandboxOrgId,
       p_limit: 200,
       p_offset: 0,
     });
     const seeded = (data.members as Array<Record<string, unknown>>).find(
-      (m) => m.is_public_profile === true && m.profile_public_id === '99999999-1086-pub',
+      (m) => m.is_public_profile === true && m.profile_public_id === publicId,
     );
     expect(seeded).toBeTruthy();
     expect(seeded!.display_name).toBe('Publicly Visible');
     expect(seeded!.avatar_url).toBe('https://cdn.example/avatar.png');
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('org_members').delete().eq('user_id', testUserId);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (serviceClient as any).from('profiles').delete().eq('id', testUserId);
+    await cleanupTestUser(testUserId, sandboxOrgId);
   });
 });
