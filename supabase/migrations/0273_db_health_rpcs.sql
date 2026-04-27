@@ -34,13 +34,15 @@ STABLE
 SECURITY DEFINER
 SET search_path = public
 AS $$
+  -- cron.job_run_details has only jobid; jobname lives on cron.job.
   SELECT
     jrd.jobid::int,
-    jrd.jobname::text,
+    j.jobname::text,
     jrd.return_message::text,
     jrd.start_time,
     jrd.end_time
   FROM cron.job_run_details jrd
+  LEFT JOIN cron.job j ON j.jobid = jrd.jobid
   WHERE jrd.status = 'failed'
     AND jrd.start_time >= now() - (since_minutes * interval '1 minute')
   ORDER BY jrd.start_time DESC;
