@@ -176,8 +176,8 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
   try {
     // Both reads are independent and run on the 5-min cron — parallelize.
     // Pending count via get_anchor_status_counts_fast (pg_class.reltuples +
-    // 1s per-status budget); avoids count:'exact' on the bloated anchors
-    // table that timed out the prior implementation.
+    // 1s per-status budget); avoids the exact-count scan on the bloated
+    // anchors table that timed out the prior implementation.
     const [oldestRes, countsRes] = await Promise.all([
       db
         .from('anchors')
@@ -202,7 +202,7 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
       logger.warn({ error: countsRes.error }, 'get_anchor_status_counts_fast failed');
     }
     // On RPC failure we report 0; smart-skip then defers the batch — same
-    // conservative behavior as the prior count:'exact' nullable path.
+    // conservative behavior as the prior nullable-count path.
     const pendingCount = countsRes.data?.PENDING ?? 0;
 
     if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
