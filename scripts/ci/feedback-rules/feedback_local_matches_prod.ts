@@ -25,9 +25,6 @@ const MIGRATIONS_DIR = resolve(REPO, 'supabase/migrations');
 const SNAPSHOT_FILE =
   process.env.PROD_TABLES_FILE ?? resolve(REPO, 'scripts/ci/snapshots/prod-tables.json');
 
-const CREATE_TABLE_RE = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi;
-const DROP_TABLE_RE = /drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi;
-
 function localTableSet(): Set<string> {
   const tables = new Set<string>();
   if (!existsSync(MIGRATIONS_DIR)) return tables;

@@ -44,6 +44,7 @@ import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
+import { handleAuditEvent } from './api/audit-event.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
 import { globalErrorHandler } from './routes/errorHandler.js';
 import { buildHealthResponse, type HealthCheckDeps } from './routes/health.js';
@@ -283,7 +284,6 @@ app.use('/jobs', cronRouter);      // /jobs/* (Cloud Scheduler + dev manual trig
 
 // SCRUM-1270 (R2-7) — audit_events worker-only write path. Migration 0276
 // REVOKEd browser INSERT; this is the replacement endpoint.
-import { handleAuditEvent } from './api/audit-event.js';
 app.post(
   '/api/audit/event',
   requireAuthMw,

@@ -11,6 +11,10 @@
 
 import { z } from 'zod';
 
+// Treat env vars as booleans without z.coerce.boolean's "false" → true bug.
+const boolFromEnv = (defaultValue = false) =>
+  z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(defaultValue);
+
 const ConfigSchema = z.object({
   // Server
   port: z.coerce.number().default(3001),
@@ -193,19 +197,19 @@ const ConfigSchema = z.object({
   // identified by the CI/deps/docs ultrareview agent. Full 145-var sweep +
   // ad-hoc-read CI lint deferred to R1-4-followup sub-stories.
   /** DocuSign demo flag — when true, DocuSign points at demo.docusign.net. */
-  docusignDemo: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  docusignDemo: boolFromEnv(),
   /** DocuSign OAuth flow kill-switch. Routes 503 when false. */
-  enableDocusignOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDocusignOauth: boolFromEnv(),
   /** Verification API kill-switch — gates ALL /api/v1/* (CLAUDE.md §1.9). */
-  enableVerificationApi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableVerificationApi: boolFromEnv(),
   /** AI fallback to Cloudflare provider when Gemini errors. Default false (CLAUDE.md §1.1). */
-  enableAiFallback: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableAiFallback: boolFromEnv(),
   /** Vertex AI access — gates Vertex client initialization. */
-  enableVertexAi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableVertexAi: boolFromEnv(),
   /** Compliance rules engine kill-switch. Routes 503 when false. */
-  enableRulesEngine: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableRulesEngine: boolFromEnv(),
   /** Treasury low-balance alert cron kill-switch. */
-  enableTreasuryAlerts: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableTreasuryAlerts: boolFromEnv(),
   /** Slack channel for treasury alerts (separate from ops). */
   slackTreasuryWebhookUrl: z.string().url().optional(),
   /** Email recipient for treasury alerts (Resend). */
