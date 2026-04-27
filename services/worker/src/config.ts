@@ -187,6 +187,35 @@ const ConfigSchema = z.object({
   middeskSandbox: z.preprocess((v) => v !== 'false', z.boolean()).default(true),
   /** Slack ops webhook (separate channel from treasury alerts). */
   slackOpsWebhookUrl: z.string().url().optional(),
+
+  // SCRUM-1258 (R1-4) batch 2 — additional absorption pass. Closes the next
+  // tier of "documented in code reads, undocumented in ConfigSchema" gap
+  // identified by the CI/deps/docs ultrareview agent. Full 145-var sweep +
+  // ad-hoc-read CI lint deferred to R1-4-followup sub-stories.
+  /** DocuSign demo flag — when true, DocuSign points at demo.docusign.net. */
+  docusignDemo: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** DocuSign OAuth flow kill-switch. Routes 503 when false. */
+  enableDocusignOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Verification API kill-switch — gates ALL /api/v1/* (CLAUDE.md §1.9). */
+  enableVerificationApi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** AI fallback to Cloudflare provider when Gemini errors. Default false (CLAUDE.md §1.1). */
+  enableAiFallback: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Vertex AI access — gates Vertex client initialization. */
+  enableVertexAi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Compliance rules engine kill-switch. Routes 503 when false. */
+  enableRulesEngine: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Treasury low-balance alert cron kill-switch. */
+  enableTreasuryAlerts: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Slack channel for treasury alerts (separate from ops). */
+  slackTreasuryWebhookUrl: z.string().url().optional(),
+  /** Email recipient for treasury alerts (Resend). */
+  treasuryAlertEmail: z.string().email().optional(),
+  /** Treasury low-balance threshold in USD — alert when balance falls below. */
+  treasuryLowBalanceUsd: z.coerce.number().positive().optional(),
+  /** Base RPC URL — x402 facilitator forwards to here for on-chain reads. */
+  baseRpcUrl: z.string().url().optional(),
+  /** SAM.gov API key — required for SAM.gov fetcher (NPH-16-OPS / SCRUM-880/892). */
+  samGovApiKey: z.string().optional(),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -397,6 +426,19 @@ function loadConfig(): Config {
     middeskWebhookSecret: process.env.MIDDESK_WEBHOOK_SECRET,
     middeskSandbox: process.env.MIDDESK_SANDBOX,
     slackOpsWebhookUrl: process.env.SLACK_OPS_WEBHOOK_URL,
+    // SCRUM-1258 (R1-4) batch 2 — additional absorption pass
+    docusignDemo: process.env.DOCUSIGN_DEMO,
+    enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
+    enableVerificationApi: process.env.ENABLE_VERIFICATION_API,
+    enableAiFallback: process.env.ENABLE_AI_FALLBACK,
+    enableVertexAi: process.env.ENABLE_VERTEX_AI,
+    enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
+    enableTreasuryAlerts: process.env.ENABLE_TREASURY_ALERTS,
+    slackTreasuryWebhookUrl: process.env.SLACK_TREASURY_WEBHOOK_URL,
+    treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
+    treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
+    baseRpcUrl: process.env.BASE_RPC_URL,
+    samGovApiKey: process.env.SAM_GOV_API_KEY,
   });
 
   if (!result.success) {

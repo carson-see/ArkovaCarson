@@ -1,16 +1,23 @@
 /**
  * Client-side audit event logging
  *
- * Provides a thin helper for inserting audit events from React components.
- * Fire-and-forget — failures are logged to console but never block the caller.
+ * Posts to the worker /api/audit/event endpoint. The worker validates,
+ * forces actor_id from the JWT, and inserts as service_role — keeping the
+ * audit trail unforgeable by the actor it records (CLAUDE.md §1.4).
  *
- * Server-side RPC functions (revoke_anchor, bulk_create_anchors, complete_onboarding,
- * invite_member) handle their own audit logging internally.
+ * Migration 0276 (SCRUM-1270) REVOKEd INSERT on audit_events from
+ * authenticated/anon, so direct supabase.from('audit_events').insert() is
+ * no longer allowed.
  *
- * @see P1-TS-06
+ * Server-side RPC functions (revoke_anchor, bulk_create_anchors,
+ * complete_onboarding, invite_member) handle their own audit logging
+ * internally via service_role.
+ *
+ * Fire-and-forget — failures must not block the user flow.
  */
 
 import { supabase } from '@/lib/supabase';
+import { WORKER_URL } from '@/lib/workerClient';
 import type { AuditEventCategory } from '@/lib/validators';
 
 interface AuditEventParams {
@@ -22,9 +29,6 @@ interface AuditEventParams {
   details?: string;
 }
 
-/**
- * Log an audit event. Fire-and-forget — never throws.
- */
 export async function logAuditEvent({
   eventType,
   eventCategory,
@@ -35,19 +39,24 @@ export async function logAuditEvent({
 }: AuditEventParams): Promise<void> {
   try {
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) return;
 
-    // GDPR Art. 5(1)(c): Never store actor_email in audit_events.
-    // actor_id UUID is sufficient; email can be looked up via JOIN when needed.
-    await supabase.from('audit_events').insert({
-      event_type: eventType,
-      event_category: eventCategory,
-      actor_id: user?.id ?? null,
-      target_type: targetType ?? null,
-      target_id: targetId ?? null,
-      org_id: orgId ?? null,
-      details: details ?? null,
+    await fetch(`${WORKER_URL}/api/audit/event`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        event_type: eventType,
+        event_category: eventCategory,
+        target_type: targetType ?? null,
+        target_id: targetId ?? null,
+        org_id: orgId ?? null,
+        details: details ?? null,
+      }),
     });
   } catch {
     // Fire-and-forget — audit failures must never block the user flow

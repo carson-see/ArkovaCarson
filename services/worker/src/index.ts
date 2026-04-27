@@ -281,6 +281,18 @@ app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*
 app.use('/jobs', cronRouter);      // /jobs/* (Cloud Scheduler + dev manual trigger)
 
+// SCRUM-1270 (R2-7) — audit_events worker-only write path. Migration 0276
+// REVOKEd browser INSERT; this is the replacement endpoint.
+import { handleAuditEvent } from './api/audit-event.js';
+app.post(
+  '/api/audit/event',
+  requireAuthMw,
+  async (req: Request, res: Response) => {
+    const userId = (req as Request & { userId?: string }).userId!;
+    await handleAuditEvent(userId, { db, logger }, req, res);
+  },
+);
+
 // API docs — no auth, no feature flag (P4.5-TS-04)
 app.use('/api/docs', docsRouter);
 app.get('/.well-known/openapi.json', (_req, res) => {

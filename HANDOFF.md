@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-04-27 — R2 batch 3: SCRUM-1270 + 1272 + 1271 + 1258 + 1263 (5 stories one PR)
+
+Branch `claude/elated-engelbart-eeee33-r2-batch`. Engineering, no prod-state changes.
+
+**SCRUM-1270 (R2-7)** — `audit_events` write path moved off browser. Migration `0276_audit_events_worker_only.sql` drops `audit_events_insert_own` policy + REVOKEs INSERT from `authenticated`/`anon` so the trail is no longer forgeable by the actor it records (CLAUDE.md §1.4). New worker route `POST /api/audit/event` (`services/worker/src/api/audit-event.ts`) takes a Zod-validated payload, forces `actor_id` from the verified JWT (body cannot override), and inserts via service_role. Browser callers `src/lib/auditLog.ts` + `src/hooks/useIdleTimeout.ts` migrated to the new endpoint via `workerClient.WORKER_URL`. 7 unit tests for the route. Append-only trigger + UPDATE/DELETE revocation deferred to follow-up (existing `reject_audit_modification` trigger from migration 0011 already enforces).
+
+**SCRUM-1272 (R2-9)** — Extended `services/worker/src/api/apiScopes.ts` with `SENSITIVE_V1_SCOPES` (`compliance:read/write`, `oracle:read/write`, `anchor:read/write`, `attestations:read/write`, `webhooks:manage`, `agents:manage`, `keys:read`). Added `requireScope('compliance:read')` mounts on FERPA + HIPAA + compliance/{history,benchmark,report,audit} routes in `api/v1/router.ts`. Existing `requireScope()` middleware no-ops for JWT (browser) callers and gates API-key callers — JWT users keep current behavior, API keys must hold the explicit scope. Migration backfill (existing API keys → default scopes) + CI lint forbidding unguarded v1 routes deferred to a follow-up sub-story; this PR ships the vocabulary + the FERPA/HIPAA gates.
+
+**SCRUM-1271 (R2-8)** — Warn-only CI lint script `scripts/ci/check-v1-uuid-leaks.ts` flags `res.json(<row>)` and `res.json({ ...row })` patterns in `services/worker/src/api/v1/*.ts` that may leak `id`/`org_id`/`user_id`/`agent_id`/`key_id`/`endpoint_id`/`attestation_id`/`actor_id`. Detected 34 sites on first run. Override marker: `// SCRUM-1271-EXEMPT: <reason>` on the same line. New runbook `docs/runbooks/v1-uuid-leak-deprecation.md` documents the §1.8 v2-namespace + 12-month deprecation cutover plan. Honest scope: the multi-week v2 namespace + per-table `public_id` migrations remain unstarted; this PR makes new leaks audible at PR time and pins the cutover plan. `anchor-lifecycle.ts:48` confirmed already uses `actor_public_id` (no privacy-spot-fix needed).
+
+**SCRUM-1258 (R1-4)** — Batch-2 absorption pass adds 12 more env vars to `ConfigSchema` + `loadConfig()`: `DOCUSIGN_DEMO`, `ENABLE_DOCUSIGN_OAUTH`, `ENABLE_VERIFICATION_API`, `ENABLE_AI_FALLBACK`, `ENABLE_VERTEX_AI`, `ENABLE_RULES_ENGINE`, `ENABLE_TREASURY_ALERTS`, `SLACK_TREASURY_WEBHOOK_URL`, `TREASURY_ALERT_EMAIL`, `TREASURY_LOW_BALANCE_USD`, `BASE_RPC_URL`, `SAM_GOV_API_KEY`. A typo in any of these in Cloud Run no longer silently disables the feature — Zod fails loud at boot. Full 145-var sweep + `ad-hoc process.env.*` lint deferred to R1-4-followup.
+
+**SCRUM-1263 (R1-9)** — SCRUM-1235 was already transitioned to Done (`resolution: Done`) per Jira fetch, so the gate-2 close-out is honestly satisfied. This batch's HANDOFF.md entry adds the verification trail: the Cloud Run `/health` returns `git_sha: 837a3ee010f1d972446ef5c3987fefdf152cc637` (mainnet, all checks ok); the SCRUM-1235 fix in commit `022f096e` (PR #547) is included. Confluence page 27361284 + bug-tracker entry follow-up tracked separately.
+
+**Tests:** 38/38 across touched suites (audit-event 7 new, apiScopes 13 = 9 pre-existing + 4 new, config 31 pre-existing). Worker `npx tsc --noEmit` clean except for 10 pre-existing `webhooks/delivery.ts` errors (unrelated to this PR — node typings issue).
+
+**Skipped this batch (intentional, deferred):** Append-only trigger on `audit_events` (existing trigger covers UPDATE/DELETE; explicit re-REVOKE would be belt-and-suspenders), full v2 namespace work for SCRUM-1271, full env-var migration for SCRUM-1258 remaining 100+ vars, Confluence page write for SCRUM-1263 verification trail.
+
 ### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
 
 Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.

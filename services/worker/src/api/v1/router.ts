@@ -409,20 +409,23 @@ router.use('/compliance/gap-analysis', requireAuth, aiRateLimiter, complianceGap
 // Cross-reference — JWT auth required (NCE-15)
 router.use('/compliance/cross-reference', requireAuth, aiRateLimiter, complianceCrossRefRouter);
 // Score history — JWT auth required (NCE-16)
-router.use('/compliance/history', requireAuth, aiRateLimiter, complianceHistoryRouter);
+router.use('/compliance/history', requireAuth, requireScope('compliance:read'), aiRateLimiter, complianceHistoryRouter);
 // Industry benchmarking — JWT auth required (NCE-17)
-router.use('/compliance/benchmark', requireAuth, aiRateLimiter, complianceBenchmarkRouter);
+router.use('/compliance/benchmark', requireAuth, requireScope('compliance:read'), aiRateLimiter, complianceBenchmarkRouter);
 // Audit-ready report — JWT auth required (NCE-18)
-router.use('/compliance/report', requireAuth, batchRateLimiter, complianceReportRouter);
+router.use('/compliance/report', requireAuth, requireScope('compliance:read'), batchRateLimiter, complianceReportRouter);
 // "Audit My Organization" — org-level compliance audit (NCA-03)
-router.use('/compliance/audit', requireAuth, batchRateLimiter, complianceAuditRouter);
+router.use('/compliance/audit', requireAuth, requireScope('compliance:read'), batchRateLimiter, complianceAuditRouter);
 
 // ─── FERPA Compliance (REG-01, REG-02) — rate limited per Constitution 1.10 ───
-router.use('/ferpa', requireAuth, aiRateLimiter, ferpaDisclosuresRouter);
-router.use('/directory-opt-out', requireAuth, batchRateLimiter, directoryOptOutRouter);
+// SCRUM-1272: requireScope('compliance:read') gates API-key callers; JWT
+// callers fall through (requireScope no-ops without req.apiKey).
+router.use('/ferpa', requireAuth, requireScope('compliance:read'), aiRateLimiter, ferpaDisclosuresRouter);
+router.use('/directory-opt-out', requireAuth, requireScope('compliance:read'), batchRateLimiter, directoryOptOutRouter);
 
 // ─── HIPAA Compliance (REG-07, REG-10) — rate limited per Constitution 1.10 ───
-router.use('/hipaa/audit', requireAuth, aiRateLimiter, hipaaAuditRouter);
-router.use('/emergency-access', requireAuth, batchRateLimiter, emergencyAccessRouter);
+// SCRUM-1272: see FERPA note above.
+router.use('/hipaa/audit', requireAuth, requireScope('compliance:read'), aiRateLimiter, hipaaAuditRouter);
+router.use('/emergency-access', requireAuth, requireScope('compliance:read'), batchRateLimiter, emergencyAccessRouter);
 
 export { router as apiV1Router };

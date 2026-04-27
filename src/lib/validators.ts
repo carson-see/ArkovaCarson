@@ -299,6 +299,16 @@ export const AUDIT_EVENT_CATEGORIES = [
   'ORG',
   'ADMIN',
   'SYSTEM',
+  // SCRUM-1270: actual values in use across worker + browser code paths.
+  // Browser-side `useIdleTimeout` records SESSION_TIMEOUT under SECURITY;
+  // worker-side compliance/AI/notification/webhook handlers use the rest.
+  'SECURITY',
+  'AI',
+  'COMPLIANCE',
+  'NOTIFICATION',
+  'PLATFORM',
+  'USER',
+  'WEBHOOK',
 ] as const;
 
 export type AuditEventCategory = (typeof AUDIT_EVENT_CATEGORIES)[number];
