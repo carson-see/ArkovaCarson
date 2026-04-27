@@ -33,6 +33,44 @@ Real-browser UAT against `arkova-26.vercel.app` (carson@arkova.ai logged in, eve
 
 **Queue triage (11 open PRs):** 5 PRs (#596, #598, #599, #601, #602) ship the IDENTICAL `0276_audit_events_append_only.sql` + `0277_revoke_anon_authenticated_matviews.sql` — they're stacked auto-generated PRs that need migration renumbering after #604's `0276_switchboard_flags_*` landed. #599/#601/#602 will be closed-and-recut (titles don't match shipped scope). #596 + #598 will renumber and merge in order. #600 has its own conflicting `0276_audit_events_worker_only.sql` and overlaps with #596 conceptually — needs review for dedup. #594 is `DIRTY` (already in conflict). #603 has 9 stories under one PR — review separately.
 
+### 2026-04-27 — Jira board cleanup: 21 → 10 In Progress; vacuum cron command repaired
+
+**Code:** PR [#593](https://github.com/carson-see/ArkovaCarson/pull/593) on `fix/scrum-1301-rls-test-realign` — three of the five RLS test assertion drift failures from CI run [24976512048](https://github.com/carson-see/ArkovaCarson/actions/runs/24976512048) (`tests/rls/p7.test.ts:209, :630, :680`) realigned with the 0270 + 0272 schema-restore migrations. The two `get_org_members_public` failures (`:107, :147`) need investigation against a live Supabase tenant — flagged in [SCRUM-1301](https://arkova.atlassian.net/browse/SCRUM-1301).
+
+**Production fix this session:** `cron.alter_job(2, command => 'SET statement_timeout = 0; SET maintenance_work_mem = ''1GB''; VACUUM (ANALYZE) public.anchors;')`. Background: `cron.job 2 vacuum-anchors` (hourly) had been running bare `VACUUM anchors` against the default 2-min `statement_timeout`, failing every run at block ~900k–980k of the 1.05M-block heap. After R1-1's `cron.unschedule(3)` released the snapshot-holder, this cron's failure loop accumulated 4M dead tuples back onto `anchors` (11.7M dead vs 2.94M live = 400% bloat). Autovacuum (started 2026-04-27 12:05 UTC) is actively reclaiming as of this writing — wall-clock 2-4h expected. Verified via `pg_stat_activity` `pid 3374685 autovacuum: VACUUM ANALYZE public.anchors` `xmin_age 14688`.
+
+**Jira maintenance:** 21 In Progress → 10 In Progress this session. 13 stories transitioned to Done via MCP and were auto-routed to **Needs Human** by Atlassian Automation rule `019dca84-9ae3-7efc-a994-90ce64580fff` (Reporter ≠ Resolver — carson reported, carson can't be the resolver). 13 awaiting human Done-confirmation:
+
+| SCRUM | Story | Verification |
+|---|---|---|
+| 1257 | R1-3 config.ts kmsProvider default `aws→gcp` + fail-loud | shipped PR #565, `/health` `kms: ok` |
+| 1259 | R1-5 final `count:'exact'` migration | shipped PR #590 |
+| 1261 | R1-7 restore beta no-quota | migration 0266 applied to prod |
+| 1262 | R1-8 GetBlock RPC observability tests | shipped PR #590 |
+| 1264 | R2-1 dispatchWebhookEvent in bulk-confirm | shipped PR #567 |
+| 1265 | R2-2 Stripe credit-pack `mode` parameter | shipped PR #567 |
+| 1266 | R2-3 orphan-row guard 3 sibling Stripe handlers | shipped PR #567 |
+| 1267 | R2-4 Stripe `current_period_*` from items.data[0] | shipped PR #567 |
+| 1268 | R2-5 webhook payload privacy fix | shipped PR #567 |
+| 1005 | DEP-15 dependency pinning | shipped PR #569 |
+| 1304 | R0-3-FU1 SonarQube quality gate | repo config done; org-side gate is admin step |
+| 1306 | R0-7-FU1 6 feedback rules | 7 detector scripts wired in `scripts/ci/feedback-rules/` |
+| 1307 | R0-8-FU1 db-health-monitor RPCs | migration 0273 applied to prod |
+
+**Remaining 10 In Progress with honest scope:**
+- **SCRUM-1255 / 1256 (R1-1, R1-2)** — operational, autovacuum in flight, will close once `n_dead_tup / n_live_tup < 0.05` and cron `jobid 3` re-enabled.
+- **SCRUM-1258 (R1-4)** — env-var inventory (~145 vars, ~25 worker files); needs dedicated 4–8h session.
+- **SCRUM-1260 (R1-6)** — multi-component frontend error-state pass; depends on R1-1 vacuum closure (DoR satisfied except for that).
+- **SCRUM-1301 (R0-2-FU1)** — 3/5 test failures fixed in PR #593; remaining 2 (`get_org_members_public.test.ts:107, :147`) need live-tenant investigation.
+- **SCRUM-1302 (R0-2-FU2)** — Playwright auth-setup timeout; needs `PWDEBUG=1` reproduction.
+- **SCRUM-1303 (R0-2-FU3)** — Lighthouse current failure is environmental (`CHROME_INTERSTITIAL_ERROR` from a Vercel preview-auth screen, NOT a baseline drift); needs ops fix on Vercel access + the rolling-baseline script.
+- **SCRUM-792 / 772 (GME2-01, GME2 epic)** — separate ML training arc; not deliverable in a code-only session.
+- **SCRUM-1246 (RECOVERY epic)** — stays In Progress until all R1+R2+R3+R4 children close.
+
+**Open PRs from this session:** [#593](https://github.com/carson-see/ArkovaCarson/pull/593) (RLS test realign).
+**Open PRs from concurrent author work:** [#591](https://github.com/carson-see/ArkovaCarson/pull/591) (rescue fraud-training-seed test, DRAFT), [#594](https://github.com/carson-see/ArkovaCarson/pull/594) (R1/R2 5-story bundle).
+**Just-merged worker deploys:** [#592](https://github.com/carson-see/ArkovaCarson/pull/592) (api-e2e mock for visualFraudDetectionGate, sha 837a3ee0, rev `arkova-worker-00436-vey`).
+
 ### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
 
 Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.
