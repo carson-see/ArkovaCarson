@@ -46,6 +46,8 @@ export class MockStripeClient {
     success_url: string;
     cancel_url: string;
     metadata?: Record<string, string>;
+    /** SCRUM-1265: 'payment' for one-time credit packs, 'subscription' for recurring. */
+    mode?: 'payment' | 'subscription';
   }): Promise<{ id: string; url: string }> {
     const sessionId = `cs_mock_${Date.now()}`;
     const customerId = params.customer ?? `cus_mock_${Date.now()}`;

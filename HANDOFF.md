@@ -14,6 +14,33 @@
 
 ## Now
 
+### 2026-04-27 — R1/R2 backlog iteration: 5 stories code-side, branch open as PR
+
+Branch `claude/2026-04-27-backlog-iteration` (off fresh clone of `origin/main` at `b72dc6af`). 5 of 10 PO-roadmap top stories landed in code with new tests + agents.md updates. PR opening immediately after this commit.
+
+**Stories landed (code + tests, no regressions):**
+
+| Jira | Title | What landed | Tests |
+| --- | --- | --- | --- |
+| [SCRUM-1259](https://arkova.atlassian.net/browse/SCRUM-1259) (R1-5) | `count: 'exact'` migration on bloated anchors | Verified all 5 hot sites already migrated to `get_anchor_status_counts_fast` in prior sessions; closed honest gap by adding missing test file `services/worker/src/utils/anchor-stats.test.ts` | +3 tests |
+| [SCRUM-1267](https://arkova.atlassian.net/browse/SCRUM-1267) (R2-4) | Stripe `current_period_start/_end` on `items.data[0]` (API 2026-03-25.dahlia) | `handleSubscriptionUpdated` reads from items.data[0]; throws clear SCRUM-1267 error if missing rather than `new Date(undefined * 1000) → RangeError` | +3 tests |
+| [SCRUM-1265](https://arkova.atlassian.net/browse/SCRUM-1265) (R2-2) | Stripe credit-pack `mode` pipe-through | `createCheckoutSession` honors `params.mode`; omits `subscription_data` on `mode === 'payment'`; mock client accepts new field | +2 tests |
+| [SCRUM-1266](https://arkova.atlassian.net/browse/SCRUM-1266) (R2-3) | Orphan-row guards in 3 sibling Stripe handlers | `handleSubscriptionDeleted` + `handlePaymentFailed` + `handlePaymentSucceeded` mirror SCRUM-1239 pattern (select.maybeSingle + warn + early return) | +3 tests |
+| [SCRUM-1262](https://arkova.atlassian.net/browse/SCRUM-1262) (R1-8) | GetBlock RPC fallback observability | Integration test added to `utxo-provider.test.ts` proving listunspent fallback emits `emitRpcFallback()` with locked field shape; counter was already in code | +1 test |
+
+**Verification artifacts:**
+- `npx vitest run src/utils/anchor-stats.test.ts src/stripe/handlers.test.ts src/stripe/client.test.ts src/chain/utxo-provider.test.ts` → 173/173 pass (all 4 modified test files green) at 2026-04-27 ~14:06 UTC
+- `npm run typecheck` on the diff: 0 errors in changed files (68 pre-existing errors remain in `signatures/`, `integrations/`, `api/v1/` — unrelated, out of scope; flagged in PR for separate sweep)
+- Full suite: 4495/4503 pass; 5 pre-existing failures are Windows-env artifacts (`zip` CLI, `URL.pathname` path-mangling) unaffected by this branch
+
+**Stories deliberately not attempted** in this session (need DB migration to prod / large surface / browser-preview UAT / op-only steps): SCRUM-1256 (R1-2 idx + cache rewrite — needs autovacuum complete + cron re-enable on prod), SCRUM-1258 (R1-4 absorb 24+ env vars — large surface), SCRUM-1260 (R1-6 frontend error states — needs preview UAT 1280px+375px), SCRUM-1264 (R2-1 dispatchWebhookEvent fan-out — needs design choice + load test + e2e), SCRUM-1263 (R1-9 SCRUM-1235 honest close — operational, needs deploy + smoke run-now click).
+
+**Carryover follow-ups:**
+- 68 pre-existing typecheck errors in `signatures/` + `integrations/` + `api/v1/` likely from Sentry SDK type-shape change (`Argument of type 'string' is not assignable to parameter of type 'object'`). New ticket recommended.
+- The orphan-row guard pattern (select.maybeSingle + warn + early return) is now duplicated in 4 Stripe handlers. Helper extraction would dedupe ~15 lines but mirroring is the security-audit value — defer until 5th instance appears.
+
+---
+
 ### 2026-04-26 EOD — PO format + prioritization pass (alongside R1 in flight)
 
 **New artifacts (Confluence-canonical):**

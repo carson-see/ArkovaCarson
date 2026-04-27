@@ -78,26 +78,34 @@ export async function createCheckoutSession(params: {
     ...params.metadata,
   };
 
+  // SCRUM-1265 (R2-2): pipe `params.mode` through. The pre-fix code
+  // hardcoded `mode: 'subscription'`, so credit-pack purchases (which call
+  // this with `mode: 'payment'` for one-time prices) either errored at
+  // Stripe ("subscription mode + one-time price") or silently subscribed
+  // the customer to a recurring charge. Three weeks of customer harm.
+  const mode: 'payment' | 'subscription' = params.mode ?? 'subscription';
+
   if (config.useMocks) {
     const result = await mockStripeClient.createCheckoutSession({
       line_items: [{ price: params.priceId, quantity: 1 }],
       success_url: params.successUrl ?? '',
       cancel_url: params.cancelUrl ?? '',
       metadata,
+      mode,
     });
     return { sessionId: result.id, url: result.url ?? '' };
   }
 
   const session = await stripe.checkout.sessions.create({
-    mode: 'subscription',
+    mode,
     line_items: [{ price: params.priceId, quantity: 1 }],
     success_url: params.successUrl,
     cancel_url: params.cancelUrl,
     customer_email: params.customerEmail,
     metadata,
-    subscription_data: {
-      metadata,
-    },
+    // subscription_data is only valid when mode === 'subscription'.
+    // Including it on a payment-mode session is a Stripe API error.
+    ...(mode === 'subscription' ? { subscription_data: { metadata } } : {}),
   });
 
   if (!session.url) {

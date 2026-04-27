@@ -1,9 +1,21 @@
 # agents.md — services/worker
-_Last updated: 2026-04-25 (R0 anti-false-done wave)_
+_Last updated: 2026-04-27 (R1/R2 backlog iteration session)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## R1/R2 backlog iteration (2026-04-27, branch `claude/2026-04-27-backlog-iteration`)
+
+5 stories landed code-side from the PO Roadmap top-of-stack. All landed with new tests and no regressions in the existing suite.
+
+- **[SCRUM-1259](https://arkova.atlassian.net/browse/SCRUM-1259) (R1-5)** — `count: 'exact'` migration on the bloated `anchors` table. Confirmed all 5 hot sites (anchor-stats, admin-pipeline-stats, mainnet-migration, pipeline-health, /health detailed) were already migrated to `get_anchor_status_counts_fast` in prior sessions. Added missing test file `src/utils/anchor-stats.test.ts` covering fast-path + RPC-error sentinel-path + unexpected-throw recovery (3 tests). R0-8 baseline lint at `scripts/ci/check-count-exact-baseline.ts` already enforces no-regression.
+- **[SCRUM-1267](https://arkova.atlassian.net/browse/SCRUM-1267) (R2-4)** — `src/stripe/handlers.ts` `handleSubscriptionUpdated` now reads `current_period_start/_end` from `subscription.items.data[0]` (Stripe API 2026-03-25.dahlia moved them off the top-level Subscription). Throws a clear `SCRUM-1267` error if `items[0]` or the period fields are missing rather than silently `new Date(undefined * 1000) → RangeError`. 3 new tests cover happy path + 2 throw-paths.
+- **[SCRUM-1265](https://arkova.atlassian.net/browse/SCRUM-1265) (R2-2)** — `src/stripe/client.ts` `createCheckoutSession` now pipes `params.mode` through (was hardcoded `'subscription'`). `subscription_data` block omitted on `mode === 'payment'` (Stripe rejects it otherwise). 3 weeks of broken credit-pack purchases unblocked. `src/stripe/mock.ts` accepts the new field. 2 new tests + 1 fixture update.
+- **[SCRUM-1266](https://arkova.atlassian.net/browse/SCRUM-1266) (R2-3)** — `handleSubscriptionDeleted`, `handlePaymentFailed`, `handlePaymentSucceeded` now mirror the SCRUM-1239 orphan-row guard: `select.maybeSingle().eq(stripe_subscription_id)` + structured warn + early return on missing row. Closes the silent-no-op vector that previously 200-ACKed Stripe with no DB trace. 3 new tests, one per handler.
+- **[SCRUM-1262](https://arkova.atlassian.net/browse/SCRUM-1262) (R1-8)** — added integration test in `src/chain/utxo-provider.test.ts` proving `GetBlockHybridProvider.listUnspent` falls back to `mempool.space` AND emits `emitRpcFallback()` with the locked `chain_rpc_fallback: true` field shape on RPC error. Counter was already in code; this is the integration-level coverage.
+
+Test totals across these files: 79 + 21 + 67+3 + 3 + 1 = ~174 tests, all green. Pre-existing 68 typecheck errors (signatures/, integrations/) are unrelated and out of scope. Pre-existing 5 test failures (`usptoFetcher.test.ts`, `cron.test.ts:1011`, `memory-leaks.test.ts`, `nessie-dpo-generate.test.ts`) are Windows-environment artifacts (missing `zip` CLI, `URL.pathname` path-mangling) — unaffected by this session.
 
 ## R0 anti-false-done additions (2026-04-25, SCRUM-1246 wave)
 

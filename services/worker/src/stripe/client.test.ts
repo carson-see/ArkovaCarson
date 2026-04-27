@@ -251,7 +251,18 @@ describe('createCheckoutSession', () => {
         success_url: CHECKOUT_PARAMS.successUrl,
         cancel_url: CHECKOUT_PARAMS.cancelUrl,
         metadata: { user_id: 'user-uuid-001', price_id: 'price_test_123' },
+        mode: 'subscription',
       });
+    });
+
+    it('SCRUM-1265: pipes mode=payment through to mock client (credit-pack purchase)', async () => {
+      mockMockCreateCheckoutSession.mockResolvedValue({ id: 'cs_1', url: 'https://x' });
+
+      await createCheckoutSession({ ...CHECKOUT_PARAMS, mode: 'payment' });
+
+      expect(mockMockCreateCheckoutSession).toHaveBeenCalledWith(
+        expect.objectContaining({ mode: 'payment' }),
+      );
     });
   });
 
@@ -306,6 +317,37 @@ describe('createCheckoutSession', () => {
       mockStripeCheckoutCreate.mockRejectedValue(new Error('Stripe API error'));
 
       await expect(createCheckoutSession(CHECKOUT_PARAMS)).rejects.toThrow('Stripe API error');
+    });
+
+    // ---- SCRUM-1265 (R2-2) — mode pipe-through ----
+
+    it('SCRUM-1265: passes mode=payment to Stripe SDK and omits subscription_data', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_pmt', url: 'https://x' });
+
+      await createCheckoutSession({ ...CHECKOUT_PARAMS, mode: 'payment' });
+
+      const call = mockStripeCheckoutCreate.mock.calls[0]?.[0] as {
+        mode: string;
+        subscription_data?: unknown;
+      };
+      expect(call.mode).toBe('payment');
+      // subscription_data on payment-mode sessions is a Stripe API error.
+      expect(call.subscription_data).toBeUndefined();
+    });
+
+    it('SCRUM-1265: defaults to mode=subscription when mode is not provided', async () => {
+      mockStripeCheckoutCreate.mockResolvedValue({ id: 'cs_sub', url: 'https://x' });
+
+      await createCheckoutSession(CHECKOUT_PARAMS);
+
+      const call = mockStripeCheckoutCreate.mock.calls[0]?.[0] as {
+        mode: string;
+        subscription_data?: { metadata?: Record<string, string> };
+      };
+      expect(call.mode).toBe('subscription');
+      expect(call.subscription_data?.metadata).toEqual(
+        expect.objectContaining({ user_id: 'user-uuid-001' }),
+      );
     });
   });
 });

@@ -25,6 +25,8 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 
 ## Recent Changes
 
+- **2026-04-27 SCRUM-1262 R1-8 honest test coverage:** added `GetBlockHybridProvider — listUnspent RPC fallback (SCRUM-1262)` describe block to `utxo-provider.test.ts`. Asserts that an RPC error response (e.g. GetBlock's "Method not allowed" on listunspent) triggers `emitRpcFallback()` with the locked field shape `{chain_rpc_fallback: true, method: 'listunspent', provider: 'getblock'}` AND that the mempool fallback result is returned to the caller. Previously the fallback path was untested at the integration level even though `emitRpcFallback()` itself had unit tests in `utils/sentry.test.ts`.
+
 - **2026-04-26 SCRUM-1262 R1-8 /simplify carry-over:** `GetBlockHybridProvider.listUnspent()` RPC-fallback Sentry breadcrumb + structured warn log pair extracted to `emitRpcFallback()` in `services/worker/src/utils/sentry.ts`. Future RPC-fallback sites (`getrawtransaction` / `getblockheader` / fee estimation) can now reuse the same locked field shape (`chain_rpc_fallback`, `method`, `provider`, `reason`) so Cloud Logging + Arize + db-health dashboards see one canonical event signature.
 
 - **Session 38 (2026-04-09):** Added `estimateCurrentFee()` to `ChainClient` interface (`types.ts`) and `BitcoinChainClient` (`signet.ts`). Exposes fee estimator for pre-claim fee checks in batch anchor scaling (SCALE-4).

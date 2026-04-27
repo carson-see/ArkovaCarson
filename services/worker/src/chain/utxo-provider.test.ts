@@ -8,7 +8,7 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
 import {
-  RpcUtxoProvider, MempoolUtxoProvider, createUtxoProvider,
+  RpcUtxoProvider, MempoolUtxoProvider, GetBlockHybridProvider, createUtxoProvider,
   HttpError, retryWithBackoff, isRetryableError, isDuplicateTxError,
 } from './utxo-provider.js';
 import { logger } from '../utils/logger.js';
@@ -207,6 +207,51 @@ describe('MempoolUtxoProvider', () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
     await sp.listUnspent('tb1q');
     expect(mockFetch).toHaveBeenCalledWith('https://mempool.space/signet/api/address/tb1q/utxo', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+});
+
+// SCRUM-1262 (R1-8) — GetBlockHybridProvider falls back to mempool.space when
+// the RPC method is unsupported (e.g. shared GetBlock endpoint returns
+// "Method not allowed" on listunspent). The fallback must emit a structured
+// warn log with `chain_rpc_fallback: true` so the R0-8 dashboard can compute
+// the daily fallback rate and alert if it pegs at 100%.
+describe('GetBlockHybridProvider — listUnspent RPC fallback (SCRUM-1262)', () => {
+  beforeEach(() => {
+    mockFetch.mockReset();
+    vi.mocked(logger.warn).mockClear();
+  });
+
+  it('emits chain_rpc_fallback log when RPC errors and uses mempool result', async () => {
+    const provider = new GetBlockHybridProvider({
+      rpcUrl: 'https://go.getblock.io/test-token',
+      mempoolBaseUrl: 'https://mempool.space/api',
+    });
+
+    // 1st call: RPC listunspent → error response (GetBlock returns "Method not allowed").
+    mockFetch.mockResolvedValueOnce(rpcErr('Method not allowed'));
+    // 2nd call: mempool.space fallback returns one UTXO.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve([
+        { txid: 'fallback_aaa', vout: 0, value: 75000, status: { confirmed: true, block_height: 100 } },
+      ]),
+    });
+
+    const utxos = await provider.listUnspent('bc1qtest');
+
+    expect(utxos).toHaveLength(1);
+    expect(utxos[0]).toEqual({ txid: 'fallback_aaa', vout: 0, valueSats: 75000, rawTxHex: '' });
+
+    // Locked field shape from emitRpcFallback() — auditors and dashboards
+    // depend on this exact key set.
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chain_rpc_fallback: true,
+        method: 'listunspent',
+        provider: 'getblock',
+      }),
+      expect.stringContaining('GetBlockHybridProvider.listUnspent'),
+    );
   });
 });
 
