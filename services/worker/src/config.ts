@@ -88,6 +88,15 @@ const ConfigSchema = z.object({
   useMocks: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /**
+   * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
+   * Default false: existing per-user credit path runs unchanged. Flip to true
+   * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
+   * in `org_credits` (migration 0278). When unset OR false, anchor submit
+   * skips the deduct call. When true, anchor submit calls `deduct_org_credit`
+   * RPC and returns a structured `insufficient_credits` 402 on shortfall.
+   */
+  enableOrgCreditEnforcement: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
@@ -359,6 +368,7 @@ function loadConfig(): Config {
     sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
+    enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,

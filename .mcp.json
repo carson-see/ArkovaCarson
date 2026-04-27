@@ -32,6 +32,14 @@
       "headers": {
         "X-Goog-Api-Key": "${GOOGLE_DEVELOPER_KNOWLEDGE_API_KEY}"
       }
+    },
+    "sonarqube": {
+      "type": "http",
+      "url": "https://api.sonarcloud.io/mcp",
+      "headers": {
+        "Authorization": "Bearer ${SONARCLOUD_TOKEN}",
+        "SONARQUBE_ORG": "carson-see"
+      }
     }
   }
 }

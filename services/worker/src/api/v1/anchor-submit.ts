@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { deductOrgCredit } from '../../utils/orgCredits.js';
 
 const router = Router();
 
@@ -100,6 +101,36 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Get org_id from API key
     const orgId = req.apiKey.orgId ?? null;
+
+    // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
+    // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
+    // existing API-key paths without per-org credit setup are unaffected.
+    if (orgId) {
+      const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
+      if (!deduction.allowed && deduction.error === 'insufficient_credits') {
+        res.status(402).json({
+          error: 'insufficient_credits',
+          message: 'Organization has insufficient anchor credits for this cycle.',
+          balance: deduction.balance,
+          required: deduction.required,
+        });
+        return;
+      }
+      if (!deduction.allowed && deduction.error === 'rpc_failure') {
+        logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
+        // Fail closed only when enforcement is on. The helper's feature_disabled
+        // short-circuit returns allowed=true so this branch is unreachable in the
+        // off state.
+        res.status(503).json({ error: 'credit_check_unavailable' });
+        return;
+      }
+      // org_not_initialized in enforcement mode = let the anchor through with a
+      // warn log — operator must seed the row before flipping the flag, but we
+      // don't want a misconfiguration to silently reject legitimate calls.
+      if (!deduction.allowed && deduction.error === 'org_not_initialized') {
+        logger.warn({ orgId }, 'org_credit_deduct_skipped_uninitialized');
+      }
+    }
 
     // credential_type already validated by Zod enum; defaults to 'OTHER'.
     const credentialType = body.credential_type ?? 'OTHER';
