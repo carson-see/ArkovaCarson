@@ -14,6 +14,33 @@
 
 ## Now
 
+### 2026-04-27 — PO Roadmap close-out sweep (~40 Jira transitions, 4 epic closures)
+
+PR [#600](https://github.com/carson-see/ArkovaCarson/pull/600) shipped 3 commits across batches A/B/C (15 stories of engineering). On top, a Jira-only sweep closed out the long-stale "shipped-but-In-Progress" tail and 4 PO Roadmap epics.
+
+**Epics closed this session:**
+- [SCRUM-1040](https://arkova.atlassian.net/browse/SCRUM-1040) GEMB2 (Gemini Embedding 2 adoption — P1, "BLOCKS further AI training") — 4/4 children Done. **AI training cycle now unblocked at the embedder layer.**
+- [SCRUM-1044](https://arkova.atlassian.net/browse/SCRUM-1044) MCP-EXPAND (Arize / Sonatype / Chrome DevTools / Sequential Thinking / Google Dev Knowledge) — 5/5 Done.
+- [SCRUM-1048](https://arkova.atlassian.net/browse/SCRUM-1048) CONNECTORS-V2 (Drive + DocuSign + Adobe Sign + Checkr + Veremark + Middesk) — 6/6 Done.
+- [SCRUM-1049](https://arkova.atlassian.net/browse/SCRUM-1049) API-V2 (verification API v2 with unified search + scoped keys) — 8/8 Done.
+
+**RECOVERY (SCRUM-1246) status snapshot — R1+R2 essentially clear:**
+- R0 ✅ all Done
+- R1 — 7 of 9 Done (1255/1257/1259/1260/1261/1262/1263); 1256+1258 In Progress (operator-gated and umbrella)
+- R2 — 10 of 10 Done (1264-1273)
+- R3 (12 stories) + R4 (15 stories) — all To Do, normal-cadence cleanup
+- R5 / SCRUM-1208 — 1 child remaining (SCRUM-1284, PR #598 open with failing checks)
+
+**HAKI-REQ (SCRUM-1010):** 22 of 25 Done. Remaining: SCRUM-1170 (parent/sub-org credit), SCRUM-1171 (bulk + retroactive anchoring), SCRUM-1174 (legal doc presets).
+
+**SEC-HARDEN (SCRUM-1041):** 1 child remaining (SCRUM-1060 MFA enforcement audit — procurement work across 12 SaaS vendors).
+
+**SOC2-01 (SCRUM-1072):** Confluence vendor comparison spike scaffolded (page [29556737](https://arkova.atlassian.net/wiki/spaces/A/pages/29556737)) with Drata recommendation and tripwire to Vanta. Procurement (vendor demos + ref calls + signed contract) remains.
+
+**Stories transitioned (37 total this session):** SCRUM-1255, 1257, 1259, 1260, 1261, 1262, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1270, 1271, 1272, 1273, 1306, 1307, 1172, 1173, 1040 epic, 1044 epic, 1048 epic, 1049 epic plus 12 status comments on epics + open child stories.
+
+**Net-net for "back to Nessie":** Recovery hump is essentially clear. GEMB2 epic closed unblocks Nessie training. R3+R4 are normal-cadence cleanup — no longer crisis work blocking AI cycles.
+
 ### 2026-04-27 — Batch C: SCRUM-1307 + 1306 + closing comments (5 stories)
 
 Branch `claude/elated-engelbart-eeee33-r2-batch` (continuation, atop PR #600).
