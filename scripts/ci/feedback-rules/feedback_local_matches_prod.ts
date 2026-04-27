@@ -51,17 +51,40 @@ function localTableSet(): Set<string> {
   return tables;
 }
 
+interface SnapshotShape {
+  tables: { name: string; schema?: string }[];
+  _known_drift?: {
+    in_migrations_only?: { name: string; reason: string }[];
+    in_prod_only?: { name: string; reason: string }[];
+  };
+}
+
 function prodTableSet(): Set<string> | null {
   if (!existsSync(SNAPSHOT_FILE)) return null;
   const raw = JSON.parse(readFileSync(SNAPSHOT_FILE, 'utf8')) as
     | { name: string; schema?: string }[]
-    | { tables: { name: string; schema?: string }[] };
+    | SnapshotShape;
   const arr = Array.isArray(raw) ? raw : raw.tables;
   return new Set(
     arr
       .filter((t) => !t.schema || t.schema === 'public')
       .map((t) => t.name.toLowerCase()),
   );
+}
+
+function knownDrift(): { migrationsOnly: Set<string>; prodOnly: Set<string> } {
+  const empty = { migrationsOnly: new Set<string>(), prodOnly: new Set<string>() };
+  if (!existsSync(SNAPSHOT_FILE)) return empty;
+  const raw = JSON.parse(readFileSync(SNAPSHOT_FILE, 'utf8')) as
+    | { name: string; schema?: string }[]
+    | SnapshotShape;
+  if (Array.isArray(raw) || !raw._known_drift) return empty;
+  return {
+    migrationsOnly: new Set(
+      (raw._known_drift.in_migrations_only ?? []).map((t) => t.name.toLowerCase()),
+    ),
+    prodOnly: new Set((raw._known_drift.in_prod_only ?? []).map((t) => t.name.toLowerCase())),
+  };
 }
 
 export function run(): { ok: boolean; message: string } {
@@ -84,11 +107,21 @@ export function run(): { ok: boolean; message: string } {
     };
   }
 
-  const onlyLocal = [...local].filter((t) => !prod.has(t)).sort((a, b) => a.localeCompare(b));
-  const onlyProd = [...prod].filter((t) => !local.has(t)).sort((a, b) => a.localeCompare(b));
+  const drift = knownDrift();
+  const onlyLocal = [...local]
+    .filter((t) => !prod.has(t) && !drift.migrationsOnly.has(t))
+    .sort((a, b) => a.localeCompare(b));
+  const onlyProd = [...prod]
+    .filter((t) => !local.has(t) && !drift.prodOnly.has(t))
+    .sort((a, b) => a.localeCompare(b));
 
   if (onlyLocal.length === 0 && onlyProd.length === 0) {
-    return { ok: true, message: `✅ feedback_local_matches_prod: clean (${local.size} tables in both).` };
+    const allowedSize = drift.migrationsOnly.size + drift.prodOnly.size;
+    const note = allowedSize > 0 ? ` (${allowedSize} known-drift entries allowed)` : '';
+    return {
+      ok: true,
+      message: `✅ feedback_local_matches_prod: clean (${local.size} tables in migrations, ${prod.size} in prod)${note}.`,
+    };
   }
 
   const lines: string[] = [];
