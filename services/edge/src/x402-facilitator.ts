@@ -145,6 +145,46 @@ async function verifyPayment(
 }
 
 /**
+ * F-2 hardening (edge bug-bounty 2026-04-26):
+ *   1. Feature flag — route is 404 unless ENABLE_X402_FACILITATOR=true.
+ *   2. Strict txHash format check — rejects garbage before any RPC call.
+ *   3. Per-IP token bucket on MCP_RATE_LIMIT_KV — caps RPC fan-out at
+ *      30 req/min/IP so a public unauthenticated endpoint can't burn the
+ *      Base RPC quota (denial-of-wallet).
+ */
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const X402_RATE_PER_IP_PER_MIN = 30;
+
+async function ipRateLimit(
+  env: Env,
+  clientIp: string | null,
+): Promise<{ ok: true } | { ok: false; retryAfter: number }> {
+  const kv = env.MCP_RATE_LIMIT_KV;
+  // No KV → no limit (matches mcp-rate-limit.ts pass-through semantics).
+  // Production binds the KV (wrangler.toml), so this only fails open in
+  // dev / preview.
+  if (!kv || !clientIp) return { ok: true };
+  const windowStart = Math.floor(Date.now() / 60_000) * 60_000;
+  const key = `x402-ip:${clientIp}:${windowStart}`;
+  let count = 0;
+  try {
+    const raw = await kv.get(key);
+    count = raw ? Number(raw) : 0;
+  } catch {
+    return { ok: true }; // KV read failure → fail-open (consistent with mcp-rate-limit.ts)
+  }
+  if (count >= X402_RATE_PER_IP_PER_MIN) {
+    return { ok: false, retryAfter: Math.max(1, Math.ceil((windowStart + 60_000 - Date.now()) / 1000)) };
+  }
+  try {
+    await kv.put(key, String(count + 1), { expirationTtl: 120 });
+  } catch {
+    // Write failure is non-fatal — let the request through, log will surface it.
+  }
+  return { ok: true };
+}
+
+/**
  * Handle x402 facilitator requests.
  * POST /x402/verify — Verify a payment proof on-chain.
  */
@@ -152,6 +192,12 @@ export async function handleX402Facilitator(
   request: Request,
   env: Env,
 ): Promise<Response> {
+  // F-2 (1): feature flag. Default off — flip ENABLE_X402_FACILITATOR
+  // to "true" only when the paywall is wired through edge.arkova.ai.
+  if (env.ENABLE_X402_FACILITATOR !== 'true') {
+    return new Response('arkova-edge: no matching route', { status: 404 });
+  }
+
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -159,11 +205,32 @@ export async function handleX402Facilitator(
     });
   }
 
+  // F-2 (3): per-IP rate limit — caps RPC fan-out before we touch RPC.
+  const clientIp =
+    request.headers.get('CF-Connecting-IP') ??
+    request.headers.get('X-Forwarded-For')?.split(',')[0]?.trim() ??
+    null;
+  const rl = await ipRateLimit(env, clientIp);
+  if (!rl.ok) {
+    return new Response(
+      JSON.stringify({ error: 'rate_limit_exceeded', retry_after_seconds: rl.retryAfter }),
+      {
+        status: 429,
+        headers: {
+          'Content-Type': 'application/json',
+          'Retry-After': String(rl.retryAfter),
+        },
+      },
+    );
+  }
+
   try {
     const body = await request.json() as PaymentVerification;
 
-    if (!body.txHash) {
-      return new Response(JSON.stringify({ error: 'txHash required' }), {
+    // F-2 (2): strict shape check — reject before RPC. Most attacker
+    // garbage gets caught here for free, no upstream RPC call billed.
+    if (!body.txHash || typeof body.txHash !== 'string' || !TX_HASH_RE.test(body.txHash)) {
+      return new Response(JSON.stringify({ error: 'txHash must be a 0x-prefixed 32-byte hex string' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
       });

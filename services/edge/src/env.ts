@@ -53,6 +53,10 @@ export interface Env {
   USDC_CONTRACT_ADDRESS?: string;
   ARKOVA_USDC_ADDRESS?: string;
   X402_NETWORK?: string;
+  // F-2 (edge bug-bounty 2026-04-26): kill-switch for /x402/verify so
+  // the unauthenticated RPC-fanout endpoint stays disabled until the
+  // paywall is actually pointed at it.
+  ENABLE_X402_FACILITATOR?: string;
 }
 
 export interface BatchQueueMessage {
