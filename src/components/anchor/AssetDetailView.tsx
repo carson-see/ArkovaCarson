@@ -6,7 +6,8 @@
 
 import { useState, useCallback } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
-import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil } from 'lucide-react';
+import { FileText, CheckCircle, XCircle, AlertTriangle, Clock, Copy, Check, RefreshCw, Download, ArrowLeft, Hash, Share2, ExternalLink, GitBranch, Pencil, Ban } from 'lucide-react';
+import { RevokeAnchorModal } from './RevokeAnchorModal';
 import { QRCodeSVG } from 'qrcode.react';
 import { ComplianceBadge } from './ComplianceBadge';
 import { Button } from '@/components/ui/button';
@@ -91,6 +92,14 @@ interface AssetDetailViewProps {
   onDownloadProof?: () => void;
   onDownloadProofJson?: () => void;
   onRenameFile?: (newName: string) => Promise<void>;
+  /**
+   * SCRUM-1096 — when true, render the "Mark as Revoked" admin action.
+   * The parent decides admin eligibility (e.g. profile.role === 'ORG_ADMIN').
+   * Server-side `revoke_anchor` RPC is the authoritative permission check.
+   */
+  canRevoke?: boolean;
+  /** Called after a successful revoke so the parent can refresh the anchor. */
+  onRevoked?: () => void;
 }
 
 type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
@@ -134,7 +143,7 @@ const statusConfig = {
   },
 };
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile }: Readonly<AssetDetailViewProps>) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
@@ -142,6 +151,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const [editingFilename, setEditingFilename] = useState(false);
   const [filenameInput, setFilenameInput] = useState(anchor.filename);
   const [renameSaving, setRenameSaving] = useState(false);
+  const [revokeOpen, setRevokeOpen] = useState(false);
 
   // Fetch template for credential rendering (UF-01)
   const { template } = useCredentialTemplate(anchor.credentialType, anchor.orgId);
@@ -219,9 +229,30 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               publicId={anchor.publicId}
               status={anchor.status}
             />
+            {canRevoke && anchor.status !== 'REVOKED' && (
+              <Button
+                variant="outline"
+                onClick={() => setRevokeOpen(true)}
+                className="text-destructive hover:text-destructive"
+                aria-label="Mark as Revoked"
+              >
+                <Ban className="mr-2 h-4 w-4" />
+                Mark as Revoked
+              </Button>
+            )}
           </div>
         )}
       </div>
+
+      {canRevoke && (
+        <RevokeAnchorModal
+          open={revokeOpen}
+          onClose={() => setRevokeOpen(false)}
+          anchorId={anchor.id}
+          filename={anchor.filename}
+          onRevoked={onRevoked}
+        />
+      )}
 
       {/* Certificate Card */}
       <Card className="overflow-hidden">

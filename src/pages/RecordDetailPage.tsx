@@ -27,7 +27,7 @@ export function RecordDetailPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { anchor, loading: anchorLoading, error } = useAnchor(id);
+  const { anchor, loading: anchorLoading, error, refreshAnchor } = useAnchor(id);
 
   // Fetch version lineage when anchor has parent or version > 1
   const [lineage, setLineage] = useState<{ id: string; versionNumber: number; status: string; createdAt: string; filename: string }[]>([]);
@@ -165,6 +165,8 @@ export function RecordDetailPage() {
       onSignOut={handleSignOut}
     >
       <AssetDetailView
+        canRevoke={profile?.role === 'ORG_ADMIN' && anchor.org_id === profile?.org_id}
+        onRevoked={() => { void refreshAnchor(); }}
         anchor={{
           id: anchor.id,
           publicId: anchor.public_id ?? undefined,
