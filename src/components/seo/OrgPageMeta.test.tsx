@@ -21,15 +21,23 @@ function getNamedMeta(name: string): string | null {
   return document.head.querySelector(`meta[name="${name}"]`)?.getAttribute('content') ?? null;
 }
 
+function getCanonical(): string | null {
+  return document.head.querySelector('link[rel="canonical"]')?.getAttribute('href') ?? null;
+}
+
 describe('<OrgPageMeta />', () => {
   beforeEach(() => {
-    document.head.querySelectorAll('meta[property^="og:"], meta[name^="twitter:"]').forEach((m) => m.remove());
+    document.head
+      .querySelectorAll('meta[property^="og:"], meta[name^="twitter:"], link[rel="canonical"]')
+      .forEach((m) => m.remove());
     document.title = '';
   });
 
   afterEach(() => {
     cleanup();
-    document.head.querySelectorAll('meta[property^="og:"], meta[name^="twitter:"]').forEach((m) => m.remove());
+    document.head
+      .querySelectorAll('meta[property^="og:"], meta[name^="twitter:"], link[rel="canonical"]')
+      .forEach((m) => m.remove());
   });
 
   it('sets document.title', () => {
@@ -74,7 +82,24 @@ describe('<OrgPageMeta />', () => {
   it("cleans up its tags on unmount so a navigation away doesn't leak meta", () => {
     const { unmount } = render(<OrgPageMeta profile={PROFILE} pageUrl={PAGE_URL} />);
     expect(getMeta('og:title')).not.toBeNull();
+    expect(getCanonical()).not.toBeNull();
     unmount();
     expect(getMeta('og:title')).toBeNull();
+    expect(getCanonical()).toBeNull();
+  });
+
+  it('emits og:site_name "Arkova" so unfurl previews credit the platform', () => {
+    render(<OrgPageMeta profile={PROFILE} pageUrl={PAGE_URL} />);
+    expect(getMeta('og:site_name')).toBe('Arkova');
+  });
+
+  it('emits canonical link pointing at the canonical org page URL', () => {
+    render(<OrgPageMeta profile={PROFILE} pageUrl={PAGE_URL} />);
+    expect(getCanonical()).toBe(PAGE_URL);
+  });
+
+  it('emits og:image:alt when a logo is set (a11y + AI-search context)', () => {
+    render(<OrgPageMeta profile={PROFILE} pageUrl={PAGE_URL} />);
+    expect(getMeta('og:image:alt')).toBe('Demo Issuer Co. logo');
   });
 });

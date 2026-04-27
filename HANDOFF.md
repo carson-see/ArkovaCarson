@@ -14,6 +14,36 @@
 
 ## Now
 
+### 2026-04-26 EOD — PO format + prioritization pass (alongside R1 in flight)
+
+**New artifacts (Confluence-canonical):**
+- [PRODUCT OWNER ROADMAP](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) — releases → epics → stories priority order. Read this before picking up new work. Beats any Jira label drift.
+- [BUG TRACKER — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270) — replaces the Google Sheet (which becomes a historical archive). New bugs land in Confluence. CLAUDE.md §0 rule 5 updated to match.
+
+**Audit findings (this session):**
+- 341 open Jira tickets across 4 statuses, 4 issue types, 4 priority buckets.
+- 42 malformed (description not in `## User Story` / `## Epic Goal` form) — 2 epics (SCRUM-1208, SCRUM-1246), 4 bugs, 4 stories, 32 tasks.
+- 274 open tickets without a Confluence page (CLAUDE.md §0 rule 4 violation, tracked under SCRUM-1199 backfill).
+- Discovered MCP `editJiraIssue` payload cap (~200 chars) — pivoted convention: Jira description = short pointer; Confluence holds full structured spec.
+
+**Format-pass results:**
+- ✅ SCRUM-1208 + SCRUM-1246 epics reformatted (Confluence pages 27361609 + 27558990 hold the spec; Jira descriptions are short pointers).
+- ✅ All 40 remaining malformed tickets reformatted (Agent A): each got a Confluence page (created or stub-replaced with full structured spec), Jira description trimmed to ≤200 chars with link, "Confluence:" comment added. Tickets: SCRUM-1130-1133, 1136-1139, 1183-1207, 1229-1234, 1244.
+- ✅ 7 duplicate epics SCRUM-1033..1039 closed Done with Duplicate links to canonical SCRUM-1041..1047 (Agent B).
+- ✅ 111 subtasks created across 36 top-priority Stories (Agent C; SCRUM-1324..1434). Subtask issuetype is **id 10002** (named `Subtask`) — corrected in CLAUDE.md §5.1. Two harmless duplicate `[DoD]` subtasks on SCRUM-775 (SCRUM-1348) and SCRUM-780 (SCRUM-1349) from a Confluence-sync 400-retry race; not blocking, left in place.
+
+**Carryover follow-ups (separate sessions):**
+- Backfill Confluence pages for the remaining ~234 open tickets without a page (CLAUDE.md §0 rule 4). Tracked under SCRUM-1199.
+- Add subtasks to the remaining ~115 open Stories not in the top-36 batch.
+- Clean up older Confluence stub duplicates for SCRUM-1231 / 1233 / 1234 (canonical pages now live; older stubs left stale).
+- Update `docs/jira-workflow/automation-rules.json` rule R6 body to point at Confluence Bug Tracker (28115270) instead of the Google Sheet — until then both URLs are accepted.
+
+**PO call-outs surfaced:**
+1. Top-of-stack right now: finish R1 (5 stories), ship R2 (10 stories — revenue-bleeding Stripe + webhook bugs), close SCRUM-1208 by landing SCRUM-1226 + SCRUM-1284.
+2. ✅ Duplicate epic series SCRUM-1033..1039 closed (was: duplicate SCRUM-1040..1049). Done in this session.
+3. Long-lead start: SCRUM-1072 SOC2-01 auditor selection — start now, blocks Q2 fieldwork.
+4. P3 NVI cluster (NVI/NTF/NDD/NSS/NCX/KAU = 6 epics + ~30 stories) stays Blocked until SCRUM-883 FCRA counsel closes. Do not unblock.
+
 ### 2026-04-26 — R1 wave in progress (SCRUM-1246 production recovery)
 
 Branch `claude/scrum-1246-r1-recovery` (off `origin/main` at `1c922fd9`). 4 of 9 R1 stories complete; PR #1 imminent.
@@ -42,6 +72,26 @@ Branch `claude/scrum-1246-r1-recovery` (off `origin/main` at `1c922fd9`). 4 of 9
 - `memory/feedback_no_credit_limits_beta.md` updated with full migration trail (0049 → 0084 → 0093 → 0266) + R0-7 CI lint reference.
 
 Remaining R1: R1-4 (env-var inventory), R1-5 (`count: 'exact'` migration), R1-6 (frontend error states), R1-8 (GetBlock RPC verify), R1-9 (SCRUM-1235 honest close, post-deploy).
+
+---
+
+### 2026-04-26 — Confluence-drift CI guard (Sarah session 3)
+
+PR [#571](https://github.com/carson-see/ArkovaCarson/pull/571) on branch `claude/2026-04-26-confluence-drift-guard`. Pushed + open + linked to Jira. Awaiting review.
+
+**1 story shipped:**
+
+| Jira | Title | Posture |
+|---|---|---|
+| [SCRUM-1207](https://arkova.atlassian.net/browse/SCRUM-1207) | AUDIT-26 — automated Confluence-drift CI guard | warn-only; flip `FAIL_ON_MISSING_CONFLUENCE=true` after SCRUM-1199 long-tail backfill |
+
+`confluence-coverage` job in `.github/workflows/ci.yml` parses PR title/body/commits for SCRUM-NNNN refs (handles slash-chain `SCRUM-1187/1188/1189` form) and queries Confluence space A via CQL. Per-ref missing-page warnings let auditors catch the "every story has a doc" mandate at PR time instead of post-hoc audit. Override label: `confluence-drift-skip` for chore/deps PRs.
+
+**Reuse pulled out:** `atlassianBasicAuthHeader(email, token)` lifted into `lib/ciContext.ts` (collapses one duplicate in `healthcheck/checks.ts`). `prTitle` env-var helper added there too.
+
+**Tests:** 12/12 vitest green (pure parser + missing-page detector). Typecheck clean. /simplify pass applied 5 fixes (Promise.all parallelization, 4xx vs 5xx distinction, pathToFileURL for cross-platform isMain, label promoted to LABELS const, basic-auth helper extracted). /security-review pass: zero findings ≥7 confidence.
+
+**Stories deliberately not attempted** in this session (need browser/preview verification, schema-heavy, or external blockers): SCRUM-1097/1094/1096 (ADMIN-VIEW frontends), SCRUM-1170 (parent/sub-org credit allocation, large schema work), SCRUM-1199 (557-page Confluence backfill — tedious volume), SCRUM-880 (SAM.gov, blocked on SCRUM-892 operator-only Cloud Run env step).
 
 ---
 
