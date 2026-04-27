@@ -46,6 +46,7 @@ import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-pr
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
+import { getCorsOrigin } from '../../../services/edge/src/mcp-server';
 import type { Env } from '../../../services/edge/src/env';
 
 describe('mcp-prompt-safety — fenceUserInput (SCRUM-923)', () => {
@@ -301,5 +302,59 @@ describe('mcp-hmac — signEnvelope / verifyEnvelope (SCRUM-920)', () => {
     const s1 = await signEnvelope(payload, TEST_KEY);
     const s2 = await signEnvelope(payload, TEST_KEY);
     expect(s1.signature).toBe(s2.signature);
+  });
+});
+
+// 2026-04-26 — bug-bounty F1 regression. Stale `arkova-carson.vercel.app`
+// in the production CORS allowlist meant the worker echoed it as ACAO for
+// every unrecognised origin; combined with that Vercel project being
+// unclaimed (DEPLOYMENT_NOT_FOUND), an attacker who claimed the project
+// would have gotten credentialed cross-origin reads from any victim's
+// browser. These tests guard the two invariants:
+//   1. allowlisted origin -> echoed back unchanged
+//   2. anything else -> literal `'null'` (browsers reject for cross-origin reads)
+// The default env value is also asserted so it can't quietly drift back.
+describe('mcp-server — getCorsOrigin (bug-bounty F1, 2026-04-26)', () => {
+  const env = {
+    ALLOWED_ORIGINS: 'https://app.arkova.ai,https://arkova-26.vercel.app,https://search.arkova.ai',
+  } as unknown as Env;
+
+  function reqWithOrigin(origin: string | null): Request {
+    return new Request('https://edge.arkova.ai/mcp', {
+      headers: origin === null ? {} : { Origin: origin },
+    });
+  }
+
+  it('echoes an allowlisted origin back as the ACAO value', () => {
+    expect(getCorsOrigin(reqWithOrigin('https://app.arkova.ai'), env)).toBe('https://app.arkova.ai');
+    expect(getCorsOrigin(reqWithOrigin('https://arkova-26.vercel.app'), env)).toBe('https://arkova-26.vercel.app');
+    expect(getCorsOrigin(reqWithOrigin('https://search.arkova.ai'), env)).toBe('https://search.arkova.ai');
+  });
+
+  it('returns the literal "null" for an unknown origin (no allowlist leak)', () => {
+    expect(getCorsOrigin(reqWithOrigin('https://evil.com'), env)).toBe('null');
+    expect(getCorsOrigin(reqWithOrigin('https://arkova-carson.vercel.app'), env)).toBe('null');
+    expect(getCorsOrigin(reqWithOrigin('null'), env)).toBe('null');
+  });
+
+  it('returns "null" when the request has no Origin header', () => {
+    expect(getCorsOrigin(reqWithOrigin(null), env)).toBe('null');
+  });
+
+  it('does not partial-match (suffix / subdomain confusion)', () => {
+    expect(getCorsOrigin(reqWithOrigin('https://evil.app.arkova.ai'), env)).toBe('null');
+    expect(getCorsOrigin(reqWithOrigin('https://app.arkova.ai.evil.com'), env)).toBe('null');
+    expect(getCorsOrigin(reqWithOrigin('http://app.arkova.ai'), env)).toBe('null'); // scheme matters
+  });
+
+  it('default ALLOWED_ORIGINS does NOT contain the stale arkova-carson host', () => {
+    // Drift guard: the 2026-04-26 audit found a stale `arkova-carson.vercel.app`
+    // in the live env var. The source default must never re-introduce it.
+    const sourceDefault = (undefined as unknown as Env);
+    const out = getCorsOrigin(reqWithOrigin('https://app.arkova.ai'), sourceDefault ?? ({} as Env));
+    // app.arkova.ai is the canonical front-end and MUST be in the default
+    expect(out).toBe('https://app.arkova.ai');
+    // arkova-carson must NEVER be allowlisted by default
+    expect(getCorsOrigin(reqWithOrigin('https://arkova-carson.vercel.app'), {} as Env)).toBe('null');
   });
 });

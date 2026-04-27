@@ -180,10 +180,15 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
 }
 
 // ─── Batch rate limiter (Constitution 1.10: 10 req/min) ───
+// `scope: 'batch'` keeps this bucket separate from anonRateLimiter and
+// keyedRateLimiter so a hot batch caller doesn't eat into their general
+// 1000/min budget (and vice versa). Without `scope`, all three would
+// share the same per-IP bucket after the F5 fix below.
 const batchRateLimiter = rateLimit({
   windowMs: 60_000,
   maxRequests: 10,
-  keyGenerator: (req) => `batch:${req.apiKey?.keyId ?? req.ip ?? 'unknown'}`,
+  scope: 'batch',
+  keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
 });
 
 // ─── Mount routes ───

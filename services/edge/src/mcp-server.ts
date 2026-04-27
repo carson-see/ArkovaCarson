@@ -1,3 +1,17 @@
+// PR #583 follow-up: Define ExecutionContext locally instead of pulling
+// @cloudflare/workers-types via /// <reference />. The directive leaks
+// workers-types into the root TS project — src/tests/edge/
+// mcp-security.test.ts imports from this file, so the directive
+// transitively redefines Response / Request globally and breaks 50+
+// src/components/* call-sites with TS18046 ('body' / 'data' / 'result'
+// is of type 'unknown'). services/edge has its own tsconfig that lists
+// @cloudflare/workers-types in compilerOptions.types, so the worker
+// build still compiles with the full ExecutionContext shape.
+interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}
+
 /**
  * Arkova Remote MCP Server (P8-S19)
  *
@@ -750,19 +764,22 @@ function handleProtectedResourceMetadata(baseUrl: string): Response {
 
 // ── Request handler ─────────────────────────────────────────────────────
 
-function getCorsOrigin(request: Request, env: Env): string {
+// 2026-04-26 MCP security audit (post-bug-bounty F1): unknown origins now
+// return the literal string `'null'` instead of echoing back the first
+// allowlisted origin. The previous fallback turned every allowlisted origin
+// into a wildcard exfil destination — if any of them was ever
+// takeover-able (e.g. an unclaimed Vercel preview URL), an attacker who
+// claimed it could read MCP responses from any victim's browser. `'null'`
+// is the standard CORS sentinel for "no matching origin" and browsers will
+// reject cross-origin reads against it (sandboxed-iframe edge case aside,
+// which doesn't apply here since MCP requires Authorization).
+export function getCorsOrigin(request: Request, env: Env): string {
   const requestOrigin = request.headers.get('Origin') ?? '';
-  // 2026-04-20 MCP security audit: previous default listed the stale
-  // `arkova-carson.vercel.app` host. Current prod front-end is
-  // `arkova-26.vercel.app`; canonical is `app.arkova.ai`. Env var override
-  // (`ALLOWED_ORIGINS`) still wins.
-  const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://arkova-26.vercel.app,https://app.arkova.ai')
+  const allowedOrigins = (env.ALLOWED_ORIGINS ?? 'https://app.arkova.ai,https://arkova-26.vercel.app,https://arkova.ai,https://search.arkova.ai')
     .split(',')
     .map((o) => o.trim())
     .filter((o) => o.length > 0);
-  return allowedOrigins.includes(requestOrigin)
-    ? requestOrigin
-    : (allowedOrigins[0] ?? 'https://app.arkova.ai');
+  return allowedOrigins.includes(requestOrigin) ? requestOrigin : 'null';
 }
 
 /**
@@ -793,6 +810,7 @@ export async function handleMcpRequest(
         'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, Mcp-Session-Id, MCP-Protocol-Version',
         'Access-Control-Max-Age': '86400',
+        Vary: 'Origin',
       },
     });
   }
@@ -844,6 +862,7 @@ export async function handleMcpRequest(
           'Content-Type': 'application/json',
           'WWW-Authenticate': `Bearer realm="arkova-mcp", resource_metadata="${url.protocol}//${url.host}/mcp/.well-known/oauth-protected-resource"`,
           'Access-Control-Allow-Origin': corsOrigin,
+          Vary: 'Origin',
         },
       },
     );
@@ -901,6 +920,7 @@ export async function handleMcpRequest(
 
     const headers = new Headers(response.headers);
     headers.set('Access-Control-Allow-Origin', corsOrigin);
+    headers.set('Vary', 'Origin');
 
     return new Response(response.body, {
       status: response.status,
@@ -914,6 +934,7 @@ export async function handleMcpRequest(
       { status: 500, headers: {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': corsOrigin,
+        Vary: 'Origin',
       } },
     );
   }

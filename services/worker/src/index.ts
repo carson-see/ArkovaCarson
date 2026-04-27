@@ -287,6 +287,16 @@ app.get('/.well-known/openapi.json', (_req, res) => {
   res.redirect(301, '/api/docs/spec.json');
 });
 
+// 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
+// `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401
+// from the v1 auth middleware. The 401 implied restricted-disclosure where
+// none existed; expose the same spec at the conventional path. MUST be
+// registered before `app.use('/api/v1', apiV1Router)` so it bypasses v1
+// auth middleware. Accepts no query params and no auth.
+app.get('/api/v1/openapi.json', (_req, res) => {
+  res.redirect(301, '/api/docs/spec.json');
+});
+
 // Agent-ready v2 OpenAPI 3.1 spec — public for tool importers.
 import { apiV2OpenApiHandler } from './api/v2/openapi.js';
 app.get('/v2/openapi.json', apiV2OpenApiHandler);

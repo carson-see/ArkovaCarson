@@ -109,6 +109,7 @@ export function mcpDisabledResponse(corsOrigin: string): Response {
         'Content-Type': 'application/json',
         'Retry-After': String(RETRY_AFTER_SECONDS),
         'Access-Control-Allow-Origin': corsOrigin,
+        Vary: 'Origin',
       },
     },
   );
