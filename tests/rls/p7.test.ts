@@ -204,9 +204,12 @@ describe('P7-S6: Anchor Status Protection', () => {
       .update({ status: 'SECURED' })
       .eq('id', testAnchorId);
 
-    // Trigger should block this (0180 unified error message)
+    // Migration 0270 raises "Cannot set status to SECURED directly" specifically
+    // for the OLD!=SECURED → NEW=SECURED transition (the worker is the only
+    // legitimate caller). 0179's generic "Only the system can change anchor
+    // status" still fires for OTHER illegal status transitions.
     expect(error).not.toBeNull();
-    expect(error!.message).toContain('Only the system can change anchor status');
+    expect(error!.message).toContain('Cannot set status to SECURED directly');
   });
 
   it('user cannot modify chain data', async () => {
@@ -626,8 +629,9 @@ describe('P7-S7: Public Verification', () => {
     expect(result.verified).toBe(true);
     expect(result.public_id).toBe(testPublicId);
     expect(result.filename).toBe('public_test.pdf');
-    // Migration 0174 returns raw status (SECURED → ACTIVE mapping removed)
-    expect(result.status).toBe('SECURED');
+    // Migration 0272 restored the 0121 status mapping: raw 'SECURED' renders as
+    // public 'ACTIVE'. (0174 had stripped the mapping; 0272 reversed that.)
+    expect(result.status).toBe('ACTIVE');
 
     // Phase 1.5 frozen schema fields
     expect(result.issuer_name).toBeDefined();
@@ -653,9 +657,13 @@ describe('P7-S7: Public Verification', () => {
     expect(result.verified).toBeUndefined();
   });
 
-  it('get_public_anchor does not expose PENDING anchors', async () => {
-    // Create a PENDING anchor (public_id is generated on INSERT since migration 0037)
-    const fingerprint = 'f3e4d5c6'.repeat(8); // valid 64-char hex
+  it('get_public_anchor exposes PENDING anchors with verified=false envelope', async () => {
+    // Migration 0272 restored 0121's behavior: PENDING anchors return the full
+    // Phase 1.5 envelope with verified=false (and chain fields null'd via the
+    // `WHEN status NOT IN ('PENDING')` guards) instead of a hard error. 0174
+    // had stripped this back to "hidden until SECURED"; 0272 reversed that
+    // because the public verify page needs the in-progress signal.
+    const fingerprint = 'f3e4d5c6'.repeat(8);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: pending } = await (serviceClient as any)
       .from('anchors')
@@ -668,18 +676,21 @@ describe('P7-S7: Public Verification', () => {
       .select('id, public_id')
       .single();
 
-    // PENDING anchors now get a public_id on INSERT, but the RPC should NOT expose them
     expect(pending!.public_id).not.toBeNull();
 
-    // Migration 0174 restricts get_public_anchor to SECURED/REVOKED only
     const anonClient = createAnonClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: result } = await (anonClient.rpc as any)('get_public_anchor', {
       p_public_id: pending!.public_id,
     });
-    expect(result.error).toBe('Anchor not found or not verified');
+    expect(result.error).toBeUndefined();
+    expect(result.verified).toBe(false);
+    expect(result.status).toBe('PENDING');
+    // Chain-confirmed fields are gated on status NOT IN ('PENDING') in 0272
+    expect(result.anchor_timestamp).toBeNull();
+    expect(result.bitcoin_block).toBeNull();
+    expect(result.network_receipt_id).toBeNull();
 
-    // Cleanup
     await serviceClient.from('anchors').delete().eq('id', pending!.id);
   });
 });

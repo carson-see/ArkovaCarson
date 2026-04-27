@@ -236,7 +236,7 @@ export default function SignatureCompliancePage() {
           </div>
           <div className="flex items-start gap-3">
             <Badge variant="outline" className="text-cyan-400 border-cyan-400/30 shrink-0 mt-0.5">Encryption</Badge>
-            <p>All signing keys are stored in HSM (AWS KMS / GCP Cloud HSM). Private key material never enters application memory.</p>
+            <p>All signing keys are stored in GCP Cloud KMS (HSM-backed). Private key material never enters application memory.</p>
           </div>
           <div className="flex items-start gap-3">
             <Badge variant="outline" className="text-purple-400 border-purple-400/30 shrink-0 mt-0.5">Retention</Badge>
