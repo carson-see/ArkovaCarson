@@ -37,12 +37,26 @@ CREATE POLICY anchor_chain_index_no_user_access
   USING (false)
   WITH CHECK (false);
 
-CREATE POLICY anchoring_jobs_no_user_access
-  ON public.anchoring_jobs
-  FOR ALL
-  TO authenticated, anon
-  USING (false)
-  WITH CHECK (false);
+-- anchoring_jobs was dropped in migration 0236 (PR #525, dead-queue
+-- cleanup). Guard the policy creation so this advisor migration is
+-- idempotent against environments where the table is already gone.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'anchoring_jobs'
+  ) THEN
+    EXECUTE $POL$
+      CREATE POLICY anchoring_jobs_no_user_access
+        ON public.anchoring_jobs
+        FOR ALL
+        TO authenticated, anon
+        USING (false)
+        WITH CHECK (false)
+    $POL$;
+  END IF;
+END $$;
 
 CREATE POLICY audit_events_archive_no_user_access
   ON public.audit_events_archive
