@@ -29,7 +29,7 @@ async function loginAndSave(
   password: string,
   storagePath: string,
 ) {
-  await page.goto('/auth');
+  await page.goto('/login');
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
