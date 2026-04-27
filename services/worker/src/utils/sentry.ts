@@ -246,4 +246,62 @@ export function withCronMonitoring<T>(
   };
 }
 
+// ---------------------------------------------------------------------------
+// RPC fallback observability (SCRUM-1262 R1-8 + /simplify carry-over)
+// ---------------------------------------------------------------------------
+//
+// Pairs a Sentry breadcrumb + structured warn log for RPC-fallback events
+// (e.g. GetBlock listunspent → mempool.space). Centralised here so that
+// future fallback sites (`getrawtransaction`, `getblockheader`, fee
+// estimation) all emit the same shape and Cloud Logging / Arize / db-health
+// dashboards can rely on a fixed field set.
+//
+// Field shape locked:
+//   - `chain_rpc_fallback: true`     — boolean filter for log views
+//   - `method: string`               — RPC method name that fell back
+//   - `provider: string`             — original provider (e.g. 'getblock')
+//   - `reason: string`               — short error message from the RPC call
+//
+// Caller MUST pass a logger.warn-compatible logger so this util stays
+// dependency-free (avoids circular imports from `utils/logger.ts` consumers
+// that also import sentry — e.g. the AUDIT-22 bootstrap path).
+
+export interface RpcFallbackLogger {
+  warn: (obj: Record<string, unknown>, msg: string) => void;
+}
+
+export interface EmitRpcFallbackArgs {
+  /** Provider that fell back, e.g. `'getblock'`. Used as the breadcrumb tag. */
+  provider: string;
+  /** RPC method that fell back, e.g. `'listunspent'`, `'getrawtransaction'`. */
+  method: string;
+  /** Error from the failing RPC call. Surfaced as `reason` in both events. */
+  error: unknown;
+  /** Where the call falls back to, e.g. `'mempool.space'`. */
+  fallbackTo: string;
+  /** logger.warn-compatible target — pass `logger` from `utils/logger.js`. */
+  logger: RpcFallbackLogger;
+  /** Origin file/method, e.g. `'GetBlockHybridProvider.listUnspent'`. */
+  origin: string;
+}
+
+export function emitRpcFallback(args: EmitRpcFallbackArgs): void {
+  const reason = args.error instanceof Error ? args.error.message : 'unknown';
+  Sentry.addBreadcrumb({
+    category: 'chain.rpc-fallback',
+    message: `${args.provider}.${args.method} → ${args.fallbackTo}`,
+    level: 'warning',
+    data: { method: args.method, reason },
+  });
+  args.logger.warn(
+    {
+      chain_rpc_fallback: true,
+      method: args.method,
+      provider: args.provider,
+      reason,
+    },
+    `${args.origin}: RPC fallback to ${args.fallbackTo}`,
+  );
+}
+
 export { Sentry };

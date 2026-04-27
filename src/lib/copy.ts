@@ -1040,6 +1040,23 @@ export const TREASURY_LABELS = {
 } as const;
 
 // =============================================================================
+// DATA ERROR BANNER (SCRUM-1260 R1-6 /simplify carry-over)
+// =============================================================================
+//
+// Centralised error-banner copy for admin dashboards. The previous inline
+// hardcoded strings on PipelineAdminPage + TreasuryAdminPage drifted into
+// three subtly different phrasings ("Pipeline stats temporarily unavailable",
+// "Records fetch failed", "x402 stats unavailable"). Consolidating per
+// CLAUDE.md §1.3 (UI copy lives in src/lib/copy.ts).
+export const DATA_ERROR_LABELS = {
+  STATS_UNAVAILABLE_TITLE: 'Pipeline stats temporarily unavailable',
+  STATS_UNAVAILABLE_TRAILER: ' — showing last successful values.',
+  RECORDS_FETCH_FAILED_TITLE: 'Records fetch failed',
+  X402_UNAVAILABLE_TITLE: 'x402 stats unavailable',
+  RETRY: 'Retry',
+} as const;
+
+// =============================================================================
 // INTEGRITY SCORES (P8-S8)
 // =============================================================================
 
