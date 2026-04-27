@@ -78,9 +78,19 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
   });
 
   it('private-profile members are anonymized: display_name "X. Surname", avatar+id null', async () => {
-    // Seed a private-profile member into the Arkova org as part of the test, then
-    // assert the anonymization on read. (Service client bypasses RLS.)
+    // Seed a private-profile member into a sandbox org so the assertion
+    // doesn't depend on the order/size of the Arkova seed (the seeded
+    // user's public_id sorts to the end and falls outside LIMIT 200 once
+    // the seed grows past 200 members).
     const testUserId = '99999999-1086-0000-0000-000000000001';
+    const sandboxOrgId = '99999999-1086-1000-0000-000000000001';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').upsert({
+      id: sandboxOrgId,
+      slug: 'rls-1086-private-test',
+      display_name: 'RLS 1086 Private Sandbox',
+      is_public: true,
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').upsert({
       id: testUserId,
@@ -90,14 +100,14 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('org_members').upsert({
-      org_id: ORG_IDS.arkova,
+      org_id: sandboxOrgId,
       user_id: testUserId,
       role: 'member',
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (anonClient.rpc as any)('get_org_members_public', {
-      p_org_id: ORG_IDS.arkova,
+      p_org_id: sandboxOrgId,
       p_limit: 200,
       p_offset: 0,
     });
@@ -105,21 +115,29 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
       (m) => m.is_public_profile === false && m.role === 'member',
     );
     expect(seeded).toBeTruthy();
-    // Anonymized form: initial + last token. Never the raw full name.
     expect(seeded!.display_name).toMatch(/^[A-Z]\. [A-Za-z-]+$/);
     expect(seeded!.display_name).not.toContain('Casey');
     expect(seeded!.avatar_url).toBeNull();
     expect(seeded!.profile_public_id).toBeNull();
 
-    // Cleanup so retest runs idempotent.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('org_members').delete().eq('user_id', testUserId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').delete().eq('id', testUserId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').delete().eq('id', sandboxOrgId);
   });
 
   it('public-profile members get full payload + their own profile_public_id', async () => {
     const testUserId = '99999999-1086-0000-0000-000000000002';
+    const sandboxOrgId = '99999999-1086-1000-0000-000000000002';
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').upsert({
+      id: sandboxOrgId,
+      slug: 'rls-1086-public-test',
+      display_name: 'RLS 1086 Public Sandbox',
+      is_public: true,
+    });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').upsert({
       id: testUserId,
@@ -130,14 +148,14 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('org_members').upsert({
-      org_id: ORG_IDS.arkova,
+      org_id: sandboxOrgId,
       user_id: testUserId,
       role: 'member',
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (anonClient.rpc as any)('get_org_members_public', {
-      p_org_id: ORG_IDS.arkova,
+      p_org_id: sandboxOrgId,
       p_limit: 200,
       p_offset: 0,
     });
@@ -152,5 +170,7 @@ dscribe('SCRUM-1086 — get_org_members_public', () => {
     await (serviceClient as any).from('org_members').delete().eq('user_id', testUserId);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any).from('profiles').delete().eq('id', testUserId);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (serviceClient as any).from('organizations').delete().eq('id', sandboxOrgId);
   });
 });

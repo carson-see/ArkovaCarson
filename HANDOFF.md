@@ -14,6 +14,25 @@
 
 ## Now
 
+### 2026-04-27 — Pre-existing CI failures + UAT fixes (PR #604 merged + follow-up)
+
+Real-browser UAT against `arkova-26.vercel.app` (carson@arkova.ai logged in, every authenticated route walked via Chrome DevTools MCP) surfaced 6 prod-blocking bugs. PR [#604](https://github.com/carson-see/ArkovaCarson/pull/604) shipped (admin-merged 15:29 UTC, sha [3838662a](https://github.com/carson-see/ArkovaCarson/commit/3838662ad0f88976434993e0716af75f2ae53900) — explicit user permission per `feedback_never_merge_without_ok.md`):
+
+- Worker CORS now allows PATCH (was rejecting `/api/rules/:id` Enable/Disable preflight).
+- `useNotifications.ts` schema realigned to migration 0240's `type` + `payload jsonb` (was 400'ing on every authed page with `column user_notifications.kind does not exist`).
+- Migration `0276_switchboard_flags_select_platform_admin.sql` adds the missing SELECT policy so `/admin/controls` renders 20 flags for platform admins.
+- `useAnchorStats.ts` no longer falls back to count:'exact' on `get_anchor_tx_stats` 42501 (that path timed out at 30s; HANDOFF acknowledges 0269 is canonical).
+- `ROUTES.ADMIN_ONBOARDING` mounted in `App.tsx`.
+- `SignatureCompliancePage` no longer claims AWS KMS (per `feedback_no_aws.md`).
+- /simplify pass applied: dropped `[key:string]:unknown` index-signature leak on `NotificationPayload`, used `recordDetailPath()` from routes.ts, added 30s-poll reference-equality guard, wrapped `auth.uid()` as `(SELECT auth.uid())` per migration 0190's RLS-cache idiom.
+- /code-review surfaced one latent bug: `notificationDeepLink` returned 404 paths (`/admin/rules/:id`, `/admin/queues`); fixed in [9a2cb83f](https://github.com/carson-see/ArkovaCarson/commit/9a2cb83f) to use `ROUTES.RULES` / `ROUTES.ANCHOR_QUEUE` / `ROUTES.ADMIN_TREASURY`.
+
+**Out-of-scope from #604 (still broken in prod):** anchoring death-spiral (357k pending, 0 broadcasting per `/admin/pipeline`); operator must restart Cloud Scheduler. Other admin pages still degraded: `/admin/overview` (zeros despite 2.95M records), `/billing` (`/api/billing/status` 404), `/organization/queue` (`/api/queue/pending` 500), `/organization/compliance` (500/401), `/admin/subscriptions` (Stripe sync stale).
+
+**Follow-up PR (this branch):** fixing the 5 pre-existing RLS test failures + Lighthouse interstitial that have been red on `main` since well before #604. The test expectations were stale relative to migrations 0270 (anchor field protections — split error messages) and 0272 (restored 0121's `get_public_anchor` body — SECURED→ACTIVE mapping + PENDING in WHERE). `get_org_members_public` tests now use a sandbox-org-per-test pattern (adapted from PR #602) so the seeded user can't get pushed past LIMIT 200. Lighthouse CI was running against `localhost:5173/login` with no server started; switched to `staticDistDir: ./dist` + `isSinglePageApplication: true`.
+
+**Queue triage (11 open PRs):** 5 PRs (#596, #598, #599, #601, #602) ship the IDENTICAL `0276_audit_events_append_only.sql` + `0277_revoke_anon_authenticated_matviews.sql` — they're stacked auto-generated PRs that need migration renumbering after #604's `0276_switchboard_flags_*` landed. #599/#601/#602 will be closed-and-recut (titles don't match shipped scope). #596 + #598 will renumber and merge in order. #600 has its own conflicting `0276_audit_events_worker_only.sql` and overlaps with #596 conceptually — needs review for dedup. #594 is `DIRTY` (already in conflict). #603 has 9 stories under one PR — review separately.
+
 ### 2026-04-27 — R2 customer-recovery batch 2: SCRUM-1273 (R2-10) + SCRUM-1269 (R2-6)
 
 Same branch `claude/focused-fermi-BCbPj`. Stacked atop the R1 cleanup commit. Engineering-only, no prod-state changes.

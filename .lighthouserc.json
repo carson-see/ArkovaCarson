@@ -1,7 +1,9 @@
 {
   "ci": {
     "collect": {
-      "url": ["http://localhost:5173/login", "http://localhost:5173/verify", "http://localhost:5173/search"],
+      "staticDistDir": "./dist",
+      "isSinglePageApplication": true,
+      "url": ["/login", "/verify", "/search"],
       "numberOfRuns": 3,
       "settings": {
         "preset": "desktop"
