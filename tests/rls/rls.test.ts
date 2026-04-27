@@ -354,16 +354,21 @@ describe('RLS: Audit Events', () => {
     expect(data!.every((e) => e.actor_id === DEMO_CREDENTIALS.userId)).toBe(true);
   });
 
-  it('users can insert audit events for themselves', async () => {
-    const { data, error } = await userClient.from('audit_events').insert({
+  it('authenticated users CANNOT insert audit events directly (SCRUM-1270 / Forensic 7)', async () => {
+    // Migration 0277 dropped the authenticated INSERT policy on audit_events
+    // so the audit log cannot be forged by the actor it records. Browser
+    // callers must go through POST /api/audit/event (worker-only,
+    // service_role insert with actor_id pinned to the JWT subject).
+    const { error } = await userClient.from('audit_events').insert({
       actor_id: DEMO_CREDENTIALS.userId,
       event_type: 'test.event',
       event_category: 'SYSTEM',
       details: 'Test audit event from RLS test',
-    }).select();
+    });
 
-    expect(error).toBeNull();
-    expect(data).toHaveLength(1);
+    expect(error).not.toBeNull();
+    // 42501 = insufficient_privilege (RLS-denied direct INSERT)
+    expect(error!.code).toBe('42501');
   });
 
   it('audit events cannot be updated (immutable)', async () => {
