@@ -85,7 +85,19 @@ export function useNotifications(): UseNotificationsReturn {
     let timer: ReturnType<typeof setInterval> | undefined;
 
     async function init() {
-      const { data } = await supabase.auth.getUser();
+      // Defensive guard: in tests with partial supabase mocks, auth or
+      // auth.getUser may be missing. Without this guard a sync TypeError
+      // bubbles up as an unhandled rejection from this fire-and-forget
+      // useEffect, failing the whole vitest run.
+      const auth = supabase?.auth;
+      if (!auth || typeof auth.getUser !== 'function') {
+        if (!cancelled) {
+          setLoading(false);
+          setNotifications([]);
+        }
+        return;
+      }
+      const { data } = await auth.getUser();
       if (!data.user) {
         if (!cancelled) {
           setLoading(false);
