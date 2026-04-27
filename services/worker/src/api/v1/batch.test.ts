@@ -45,6 +45,9 @@ function createAnchor(publicId: string, status = 'SECURED'): AnchorByPublicId {
     revocation_block_height: null,
     file_mime: null,
     file_size: null,
+    // API-RICH-02 (SCRUM-895)
+    confidence_scores: null,
+    sub_type: null,
   };
 }
 

@@ -117,6 +117,7 @@ type AIExtractResponse = Record<string, unknown> & {
   subType?: unknown;
   fraudSignals?: unknown;
   confidenceScores?: unknown;
+  description?: unknown;
   fields?: Record<string, unknown>;
   degraded?: boolean;
   creditsRemaining?: unknown;
@@ -223,6 +224,69 @@ describe('AI Extraction Endpoint', () => {
     expect(responseJson.confidenceScores).toEqual({ overall: 0.92 });
     expect(responseJson.subType).toBe('BACHELOR');
     expect(responseJson.fraudSignals).toEqual([{ signal: 'font_mismatch', severity: 'low' }]);
+  });
+
+  // API-RICH-02 (SCRUM-895): description completes the trio (confidenceScores +
+  // subType + description) the public AC promises.
+  it('surfaces description top-level when extracted (SCRUM-895)', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    mockExtractionDatabase();
+
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+      monthlyAllocation: 500,
+      usedThisMonth: 10,
+      remaining: 490,
+      hasCredits: true,
+    });
+
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+      extractMetadata: vi.fn().mockResolvedValue({
+        fields: {
+          credentialType: 'DEGREE',
+          description: 'Bachelor of Science in Computer Engineering',
+        },
+        confidence: 0.9,
+        provider: 'gemini',
+        tokensUsed: 120,
+      }),
+    });
+
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    await handler!(req, res);
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson.description).toBe('Bachelor of Science in Computer Engineering');
+  });
+
+  it('returns null description when not extracted (SCRUM-895)', async () => {
+    const handler = getPostHandler();
+    const { req, res } = createMockReqRes(validBody, 'user-123');
+
+    mockExtractionDatabase();
+
+    (checkAICredits as ReturnType<typeof vi.fn>).mockResolvedValue({
+      monthlyAllocation: 500,
+      usedThisMonth: 10,
+      remaining: 490,
+      hasCredits: true,
+    });
+
+    (createExtractionProvider as ReturnType<typeof vi.fn>).mockReturnValue({
+      extractMetadata: vi.fn().mockResolvedValue({
+        fields: { credentialType: 'CERTIFICATE' },
+        confidence: 0.8,
+        provider: 'gemini',
+        tokensUsed: 100,
+      }),
+    });
+
+    (deductAICredits as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+
+    await handler!(req, res);
+    const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(responseJson.description).toBeNull();
   });
 
   it('returns null for subType and fraudSignals when not present in extraction (API-RICH-02)', async () => {

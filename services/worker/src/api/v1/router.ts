@@ -309,7 +309,15 @@ router.use('/agents', requireAuth, agentsRouter);
 router.use('/oracle', requireScope('verify'), oracleRouter);
 
 // ─── Anchor lifecycle + extraction manifest — API-RICH-03/05 ───
-router.use('/anchor', requireScope('verify'), anchorLifecycleRouter);
+// Lifecycle is public per SCRUM-896 (anonymous gets a public-safe projection;
+// API key with org scope adds actor_public_id). Same anon-allow shape as /verify.
+router.use('/anchor', (req: Request, res: Response, next: NextFunction) => {
+  if (!req.apiKey && req.method === 'GET') {
+    next();
+    return;
+  }
+  requireScope('verify')(req, res, next);
+}, anchorLifecycleRouter);
 router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───

@@ -10,7 +10,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { buildVerificationResult, type PublicIdLookup, type AnchorByPublicId } from './verify.js';
+import { buildVerificationResult, EMPTY_API_RICH_FIELDS, type PublicIdLookup, type AnchorByPublicId } from './verify.js';
 import { incrementUsage } from '../../middleware/usageTracking.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 import type { VerificationResult } from './verify.js';
@@ -87,6 +87,9 @@ const defaultLookup: PublicIdLookup = {
       merkle_root: null,
       description: data.description ?? null,
       directory_info_opt_out: data.directory_info_opt_out ?? false,
+      // Batch endpoint stays terse by design (matches oracle.ts) — rich
+      // fields stay null. Clients needing richness call GET /verify/{publicId}.
+      ...EMPTY_API_RICH_FIELDS,
     } as AnchorByPublicId;
   },
 };
