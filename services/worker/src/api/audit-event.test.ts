@@ -11,14 +11,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
 
-const { mockInsert, mockLogger } = vi.hoisted(() => ({
+const { mockFrom, mockInsert, mockMaybeSingle, mockLogger } = vi.hoisted(() => ({
+  mockFrom: vi.fn(),
   mockInsert: vi.fn(),
+  mockMaybeSingle: vi.fn(),
   mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../utils/db.js', () => ({
-  db: { from: vi.fn(() => ({ insert: mockInsert })) },
+  db: { from: mockFrom },
 }));
 
 import { auditEventRouter, auditEventBodySchema } from './audit-event.js';
@@ -71,7 +73,20 @@ async function invoke(body: unknown, userId: string | null = SUBJECT_USER_ID) {
 
 describe('POST /api/audit/event', () => {
   beforeEach(() => {
+    mockFrom.mockReset().mockImplementation((table: string) => {
+      if (table === 'org_members') {
+        const chain = {
+          select: vi.fn(() => chain),
+          eq: vi.fn(() => chain),
+          maybeSingle: mockMaybeSingle,
+        };
+        return chain;
+      }
+      return { insert: mockInsert };
+    });
     mockInsert.mockReset().mockResolvedValue({ error: null });
+    mockMaybeSingle.mockReset().mockResolvedValue({ data: { org_id: '33333333-3333-3333-3333-333333333333' }, error: null });
+    mockLogger.warn.mockReset();
     mockLogger.error.mockReset();
   });
 
@@ -105,6 +120,32 @@ describe('POST /api/audit/event', () => {
 
     expect(res.statusCode).toBe(400);
     expect((res.body as { error: string }).error).toBe('invalid_request');
+    expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts org_id only when the JWT subject is an org member', async () => {
+    const orgId = '33333333-3333-3333-3333-333333333333';
+    const res = await invoke({
+      event_type: 'ORG_UPDATED',
+      event_category: 'ORG',
+      org_id: orgId,
+    });
+
+    expect(res.statusCode).toBe(202);
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+    expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({ org_id: orgId }));
+  });
+
+  it('rejects org_id when the JWT subject is not a member (SCRUM-1270)', async () => {
+    mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    const res = await invoke({
+      event_type: 'ORG_UPDATED',
+      event_category: 'ORG',
+      org_id: '44444444-4444-4444-4444-444444444444',
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden_org' });
     expect(mockInsert).not.toHaveBeenCalled();
   });
 
