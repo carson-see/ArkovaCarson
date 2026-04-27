@@ -64,6 +64,13 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
   }
   const body = (await res.json()) as { qualityGate: { id: string; name: string } };
 
+  // Validate the gate id shape (alphanumeric/underscore/hyphen only, length-bounded)
+  // before splicing it into a URL. Defends against any upstream API regression
+  // returning unexpected characters; satisfies SonarCloud taint-flow check.
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(body.qualityGate.id)) {
+    throw new Error(`SonarCloud returned a gate id outside the expected charset: ${body.qualityGate.id.length} chars`);
+  }
+
   const showRes = await fetch(
     `${SONAR_BASE}/api/qualitygates/show?id=${encodeURIComponent(body.qualityGate.id)}`,
     { headers: { Authorization: auth } },
@@ -134,17 +141,22 @@ async function main(): Promise<void> {
   try {
     gate = await fetchProjectGate(token);
   } catch (err) {
-    console.error(`SCRUM-1304: failed to fetch SonarCloud gate — ${(err as Error).message}`);
+    // err.message is a synthetic string from our own throw sites; safe to log.
+    const msg = String((err as Error).message).replace(/[\r\n]+/g, ' ');
+    console.error(`SCRUM-1304: failed to fetch SonarCloud gate — ${msg}`);
     process.exit(2);
   }
 
   const result = verifyGate(gate);
+  // Strip newlines from gate name before logging (defense-in-depth — SonarCloud's
+  // own API is trusted but log injection rules treat any external string as suspect).
+  const safeGateName = result.gateName.replace(/[\r\n]+/g, ' ');
   if (result.ok) {
-    console.log(`SCRUM-1304 ✅ SonarCloud gate "${result.gateName}" satisfies all 5 required conditions.`);
+    console.log(`SCRUM-1304 ✅ SonarCloud gate "${safeGateName}" satisfies all 5 required conditions.`);
     return;
   }
 
-  console.error(`SCRUM-1304 ❌ SonarCloud gate "${result.gateName}" does NOT satisfy the contract documented in sonar-project.properties:`);
+  console.error(`SCRUM-1304 ❌ SonarCloud gate "${safeGateName}" does NOT satisfy the contract documented in sonar-project.properties:`);
   for (const m of result.missing) console.error(`  missing condition: ${m}`);
   for (const w of result.weak) console.error(`  too weak:          ${w}`);
   console.error('');
