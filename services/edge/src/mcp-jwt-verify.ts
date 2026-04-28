@@ -81,7 +81,10 @@ async function hmacSignatureMatches(
 ): Promise<boolean> {
   const key = await getHmacKey(secret);
   const sig = base64UrlDecode(signatureSegment);
-  return crypto.subtle.verify('HMAC', key, sig, ENCODER.encode(signingInput));
+  // Web Crypto verify wants BufferSource (ArrayBuffer-backed). The
+  // Uint8Array we return from base64UrlDecode types as ArrayBufferLike
+  // under stricter TS, so cast through BufferSource explicitly.
+  return crypto.subtle.verify('HMAC', key, sig as BufferSource, ENCODER.encode(signingInput) as BufferSource);
 }
 
 function audMatches(claim: string | string[] | undefined, expected: string): boolean {
