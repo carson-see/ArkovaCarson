@@ -83,6 +83,12 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npm run ci:dep-pinning
 
+      - name: Block new ad-hoc process.env reads in worker (SCRUM-1258)
+        env:
+          # PR labels feed the worker-env-adhoc-baseline-update override
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-worker-env-adhoc.ts
+
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
