@@ -8,7 +8,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import express from 'express';
 import request from 'supertest';
 
 vi.mock('../../utils/db.js', () => ({
@@ -21,46 +20,20 @@ vi.mock('../../utils/logger.js', () => ({
 
 import { orgSubOrgsRouter } from './orgSubOrgs.js';
 import { db } from '../../utils/db.js';
+import { buildApp as buildAppFromRouter, makeBuilder } from './__testHelpers.js';
 
+/**
+ * orgSubOrgs.ts reads `req.userId` (untyped cast at line 27), not the typed
+ * `req.authUserId` convention used by most v1 routers. Inject the cast field
+ * here rather than widening the global Request type for one router.
+ */
 function buildApp(userId?: string) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    if (userId) (req as unknown as { userId: string }).userId = userId;
-    next();
+  return buildAppFromRouter(orgSubOrgsRouter, '/api/v1/org/sub-orgs', {
+    userId,
+    injectUserId: (req, uid) => {
+      (req as unknown as { userId: string }).userId = uid;
+    },
   });
-  app.use('/api/v1/org/sub-orgs', orgSubOrgsRouter);
-  return app;
-}
-
-interface Builder {
-  select: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  order: ReturnType<typeof vi.fn>;
-  limit: ReturnType<typeof vi.fn>;
-  single: ReturnType<typeof vi.fn>;
-  maybeSingle: ReturnType<typeof vi.fn>;
-  insert: ReturnType<typeof vi.fn>;
-  update: ReturnType<typeof vi.fn>;
-}
-
-function makeBuilder(state: {
-  data?: unknown;
-  error?: unknown;
-  singleData?: unknown;
-  maybeSingleData?: unknown;
-} = {}): Builder {
-  const builder = {} as Builder;
-  const chain = () => builder;
-  builder.select = vi.fn(chain);
-  builder.eq = vi.fn(chain);
-  builder.order = vi.fn(() => Promise.resolve({ data: state.data ?? [], error: state.error ?? null }));
-  builder.limit = vi.fn(chain);
-  builder.single = vi.fn(() => Promise.resolve({ data: state.singleData ?? null, error: null }));
-  builder.maybeSingle = vi.fn(() => Promise.resolve({ data: state.maybeSingleData ?? null, error: null }));
-  builder.insert = vi.fn(chain);
-  builder.update = vi.fn(chain);
-  return builder;
 }
 
 describe('GET /api/v1/org/sub-orgs (HAKI-REQ-01)', () => {

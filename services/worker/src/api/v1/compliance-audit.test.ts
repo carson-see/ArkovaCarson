@@ -6,7 +6,6 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import express from 'express';
 import request from 'supertest';
 
 vi.mock('../../utils/db.js', () => ({
@@ -24,67 +23,10 @@ vi.mock('../../compliance/auth-helpers.js', () => ({
 import { complianceAuditRouter } from './compliance-audit.js';
 import { db } from '../../utils/db.js';
 import { getCallerOrgId } from '../../compliance/auth-helpers.js';
+import { buildApp as buildAppFromRouter, makeBuilder } from './__testHelpers.js';
 
 function buildApp(userId?: string) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, _res, next) => {
-    if (userId) req.authUserId = userId;
-    next();
-  });
-  app.use('/api/v1/compliance/audit', complianceAuditRouter);
-  return app;
-}
-
-interface QueryBuilder {
-  select: ReturnType<typeof vi.fn>;
-  insert: ReturnType<typeof vi.fn>;
-  eq: ReturnType<typeof vi.fn>;
-  in: ReturnType<typeof vi.fn>;
-  gte: ReturnType<typeof vi.fn>;
-  order: ReturnType<typeof vi.fn>;
-  limit: ReturnType<typeof vi.fn>;
-  single: ReturnType<typeof vi.fn>;
-  maybeSingle: ReturnType<typeof vi.fn>;
-}
-
-/**
- * Fluent mock that satisfies every chain the audit route uses.
- * `state` drives the terminal method return values.
- */
-function makeBuilder(state: {
-  selectData?: unknown;
-  selectError?: unknown;
-  insertData?: unknown;
-  insertError?: unknown;
-  singleData?: unknown;
-  singleError?: unknown;
-  maybeSingleData?: unknown;
-} = {}): QueryBuilder {
-  const builder = {} as QueryBuilder;
-  const chain = () => builder;
-  builder.select = vi.fn(chain);
-  builder.insert = vi.fn(() => builder);
-  builder.eq = vi.fn(chain);
-  builder.in = vi.fn(chain);
-  builder.gte = vi.fn(chain);
-  builder.order = vi.fn(chain);
-  builder.limit = vi.fn(() => {
-    // Default terminal for GET list endpoint
-    return Object.assign(Promise.resolve({
-      data: (state.selectData ?? []) as unknown,
-      error: state.selectError ?? null,
-    }), builder);
-  });
-  builder.single = vi.fn(() => Promise.resolve({
-    data: state.singleData ?? null,
-    error: state.singleError ?? null,
-  }));
-  builder.maybeSingle = vi.fn(() => Promise.resolve({
-    data: state.maybeSingleData ?? null,
-    error: null,
-  }));
-  return builder;
+  return buildAppFromRouter(complianceAuditRouter, '/api/v1/compliance/audit', { userId });
 }
 
 describe('POST /api/v1/compliance/audit', () => {
