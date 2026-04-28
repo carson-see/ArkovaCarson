@@ -84,17 +84,6 @@ export function formatCredentialType(raw: string | null | undefined): string {
   return raw.replaceAll('_', ' ').replaceAll(/\b\w/g, c => c.toUpperCase());
 }
 
-/** Map raw subtype values such as "professional_certification" to display copy. */
-export function formatCredentialSubType(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return trimmed
-    .replaceAll(/[-_]+/g, ' ')
-    .replaceAll(/\s+/g, ' ')
-    .replaceAll(/\b\w/g, c => c.toUpperCase());
-}
-
 // Hoisted to module scope so it isn't rebuilt on every render call (this
 // helper is invoked from the credential renderer on every list row).
 const SUBTYPE_ACRONYMS: Readonly<Record<string, string>> = Object.freeze({
@@ -698,11 +687,6 @@ export const ANCHORING_STATUS_LABELS = {
   PENDING_SUBTITLE: 'Your document has been submitted for anchoring. This typically takes 5\u201315 minutes.',
   PENDING_PUBLIC_TITLE: 'Submitting to network...',
   PENDING_PUBLIC_SUBTITLE: 'This record is being submitted. Check back shortly for confirmation.',
-  SUBMITTED_PUBLIC_TITLE: 'Record Submitted - Awaiting Network Confirmation',
-  SUBMITTED_PUBLIC_SUBTITLE: 'Finalization usually takes about 60 minutes.',
-  PENDING_BADGE: 'Processing',
-  SUBMITTED_BADGE: 'Awaiting Confirmation',
-  PENDING_SINCE: 'Submitted {time} ago',
   // SCRUM-952 \u2014 SUBMITTED is distinct from PENDING. SUBMITTED means the
   // anchor has been broadcast to the network and is awaiting on-network
   // confirmation; the hero must NOT show a green "Verified" affordance
@@ -711,6 +695,9 @@ export const ANCHORING_STATUS_LABELS = {
   // it here.
   SUBMITTED_PUBLIC_TITLE: 'Record Submitted \u00b7 Awaiting Network Confirmation',
   SUBMITTED_PUBLIC_SUBTITLE: 'Finalization usually takes \u224860 minutes once the network observes the next checkpoint.',
+  PENDING_BADGE: 'Processing',
+  SUBMITTED_BADGE: 'Awaiting Confirmation',
+  PENDING_SINCE: 'Submitted {time} ago',
   SHARE_LINK_NOTE: 'You can share this verification link now \u2014 verifiers will see the current anchoring status.',
   SUCCESS_TITLE: 'Document Submitted',
   SUCCESS_SUBTITLE: 'Your document has been submitted for anchoring.',

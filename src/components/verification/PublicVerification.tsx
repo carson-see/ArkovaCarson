@@ -239,8 +239,11 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
 
-  // Calculate time since creation for not-yet-secured anchors
-  const pendingSince = isPreSecured && data.created_at
+  // Calculate time since creation for not-yet-secured anchors. PENDING +
+  // SUBMITTED both render the "awaiting confirmation" hero so reuse that
+  // boolean here (SCRUM-952 split SUBMITTED into a distinct UI state but
+  // the time-since copy is the same for both).
+  const pendingSince = isAwaitingConfirmation && data.created_at
     ? formatTimeSince(data.created_at)
     : null;
   const heroTitle = getHeroTitle(data.status, securedAt, formatDate);
