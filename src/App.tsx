@@ -249,7 +249,12 @@ export function App() {
           <Route path={ROUTES.RULES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Rules"><RulesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
-          <Route path={ROUTES.ADMIN_ONBOARDING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* SCRUM-1097 — AC names /admin/queue specifically. Alias to the existing AnchorQueuePage so both URLs work. */}
+          <Route path="/admin/queue" element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.ADMIN_ONBOARDING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>}
+          />
+          {/* SCRUM-1098 — alias /admin/onboarding to the existing wizard so the AC's first-login URL works. */}
+          <Route path="/admin/onboarding" element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.COMPLIANCE_TRENDS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceTrends"><ComplianceTrendPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* NCA-08 — Compliance Scorecard (post-audit landing) */}
           <Route path={ROUTES.COMPLIANCE_SCORECARD} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ComplianceScorecard"><ComplianceScorecardPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
