@@ -121,43 +121,34 @@ describe('formatCredentialSubType (SCRUM-952)', () => {
     expect(formatCredentialSubType('')).toBe('—');
   });
 
-  it('returns "Unclassified" for the explicit unclassified sentinel', () => {
-    expect(formatCredentialSubType('unclassified')).toBe('Unclassified');
-  });
-
-  it('title-cases simple snake_case subtypes', () => {
-    expect(formatCredentialSubType('professional_certification')).toBe('Professional Certification');
-    expect(formatCredentialSubType('completion_certificate')).toBe('Completion Certificate');
-    expect(formatCredentialSubType('bachelor')).toBe('Bachelor');
-    expect(formatCredentialSubType('doctorate')).toBe('Doctorate');
-  });
-
-  it('preserves canonical acronym capitalization', () => {
-    expect(formatCredentialSubType('nursing_rn')).toBe('Nursing RN');
-    expect(formatCredentialSubType('medical_md')).toBe('Medical MD');
-    expect(formatCredentialSubType('engineering_pe')).toBe('Engineering PE');
-    expect(formatCredentialSubType('professional_jd')).toBe('Professional JD');
-    expect(formatCredentialSubType('cpa')).toBe('CPA');
-    expect(formatCredentialSubType('cdl')).toBe('CDL');
-  });
-
-  it('handles SEC-filing short codes', () => {
-    expect(formatCredentialSubType('10k')).toBe('10-K');
-    expect(formatCredentialSubType('10q')).toBe('10-Q');
-    expect(formatCredentialSubType('8k')).toBe('8-K');
-    expect(formatCredentialSubType('def14a')).toBe('DEF 14A');
-    expect(formatCredentialSubType('s1')).toBe('S-1');
-  });
-
-  it('handles VA / FINRA / NPI / DEA acronyms', () => {
-    expect(formatCredentialSubType('va_disability')).toBe('VA Disability');
-    expect(formatCredentialSubType('finra_broker')).toBe('FINRA Broker');
-    expect(formatCredentialSubType('npi_registration')).toBe('NPI Registration');
-    expect(formatCredentialSubType('dea_registration')).toBe('DEA Registration');
-  });
-
-  it('falls back to title case for unrecognized but well-formed subtypes', () => {
-    expect(formatCredentialSubType('weird_made_up_subtype')).toBe('Weird Made Up Subtype');
+  // Table-driven assertions — collapses what was 6 it() blocks of repeated
+  // `expect(formatCredentialSubType(X)).toBe(Y)` calls into a single it.each
+  // so SonarCloud CPD doesn't flag the structurally-identical lines as
+  // duplicated code.
+  it.each<[string, string, string]>([
+    ['returns "Unclassified" for unclassified sentinel', 'unclassified', 'Unclassified'],
+    ['title-cases professional_certification',           'professional_certification', 'Professional Certification'],
+    ['title-cases completion_certificate',               'completion_certificate', 'Completion Certificate'],
+    ['title-cases bachelor',                             'bachelor', 'Bachelor'],
+    ['title-cases doctorate',                            'doctorate', 'Doctorate'],
+    ['preserves nursing_rn → Nursing RN',                'nursing_rn', 'Nursing RN'],
+    ['preserves medical_md → Medical MD',                'medical_md', 'Medical MD'],
+    ['preserves engineering_pe → Engineering PE',        'engineering_pe', 'Engineering PE'],
+    ['preserves professional_jd → Professional JD',      'professional_jd', 'Professional JD'],
+    ['preserves cpa → CPA',                              'cpa', 'CPA'],
+    ['preserves cdl → CDL',                              'cdl', 'CDL'],
+    ['SEC filing 10k → 10-K',                            '10k', '10-K'],
+    ['SEC filing 10q → 10-Q',                            '10q', '10-Q'],
+    ['SEC filing 8k → 8-K',                              '8k', '8-K'],
+    ['SEC filing def14a → DEF 14A',                      'def14a', 'DEF 14A'],
+    ['SEC filing s1 → S-1',                              's1', 'S-1'],
+    ['acronym va_disability → VA Disability',            'va_disability', 'VA Disability'],
+    ['acronym finra_broker → FINRA Broker',              'finra_broker', 'FINRA Broker'],
+    ['acronym npi_registration → NPI Registration',      'npi_registration', 'NPI Registration'],
+    ['acronym dea_registration → DEA Registration',      'dea_registration', 'DEA Registration'],
+    ['fallback weird_made_up_subtype',                   'weird_made_up_subtype', 'Weird Made Up Subtype'],
+  ])('%s', (_label, input, expected) => {
+    expect(formatCredentialSubType(input)).toBe(expected);
   });
 
   it('every subtype in CREDENTIAL_SUB_TYPES produces a non-empty, non-"Other" label', () => {
