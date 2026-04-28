@@ -83,20 +83,32 @@ export function triggerA_shouldFireOnSize(claimedCount: number): boolean {
 }
 
 /**
- * Trigger B — Age-based: fire when the oldest pending anchor has been
- * waiting ≥ MAX_ANCHOR_AGE_MS (3 hours). Independent of queue size — even
- * 4,500 pending fires once any anchor crosses 3 hours. Guarantees no
- * anchor sits PENDING longer than MAX_ANCHOR_AGE_MS (modulo cron cadence).
+ * Trigger B — Age-based: fire only when BOTH
+ *   (a) pendingCount ≥ MIN_BATCH_THRESHOLD (3,000) — the 3-hour clock
+ *       only starts running once the queue has crossed the operator-
+ *       defined threshold; and
+ *   (b) the oldest pending anchor has been waiting ≥ MAX_ANCHOR_AGE_MS
+ *       (3 hours).
  *
- * Size by itself is NOT a fire condition; size only fires via Trigger A
- * (≥ BATCH_SIZE). Fixing 2026-04-28: the 3,000 threshold is for cron
- * cadence + ops watch, not for forced TX.
+ * Examples (operator rule, 2026-04-28):
+ *   • 1 anchor sitting 6h with no queue growth → does NOT fire (sub-3k).
+ *     The daily 3am EST scheduled flush handles long-tail micro-queues.
+ *   • 4,500 anchors at 3h → fires (count ≥ 3k AND age ≥ 3h).
+ *   • 10,000 anchors at any age → fires via Trigger A, regardless of B.
+ *
+ * Size alone never fires (that's Trigger A's job). Hitting 3k only means
+ * "watch the clock" — the cron just polls every 30 min so the moment age
+ * also crosses 3h, the next tick flushes whatever's queued (≥ 3k).
+ *
+ * Codex review on PR #627 caught the prior version that fired on age
+ * alone — a 1-anchor backlog at 3h would have triggered a TX with a
+ * single leaf, burning a UTXO for nothing.
  */
 export function triggerB_shouldFireOnAge(input: {
   pendingCount: number;
   oldestPendingAgeMs: number;
 }): boolean {
-  if (input.pendingCount === 0) return false;
+  if (input.pendingCount < MIN_BATCH_THRESHOLD) return false;
   return input.oldestPendingAgeMs >= MAX_ANCHOR_AGE_MS;
 }
 
