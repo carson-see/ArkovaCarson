@@ -14,6 +14,10 @@
 
 ## Now
 
+### 2026-04-27 — SCRUM-1284 R3-11: REVOKE matview anon/authenticated access (this branch / PR #598)
+
+Migration `0278_revoke_anon_authenticated_matviews.sql` REVOKEs SELECT on `mv_anchor_status_counts` and `mv_public_records_source_counts` from `anon` and `authenticated`. Both matviews were exposed via PostgREST's auto-generated REST API; the SCRUM-1208 redo probe ran as `service_role` (bypasses RLS), so the leak shipped silently. Tests pin the deny path with `error.code === '42501'` (not `data.length === 0`) per the codex-review fix — empty matviews would have masked a regression. Renumbered from 0277 to 0278 after #596 landed `0277_audit_events_append_only.sql` on main.
+
 ### 2026-04-27 — Pre-existing CI failures + UAT fixes (PR #604 merged + follow-up)
 
 Real-browser UAT against `arkova-26.vercel.app` (carson@arkova.ai logged in, every authenticated route walked via Chrome DevTools MCP) surfaced 6 prod-blocking bugs. PR [#604](https://github.com/carson-see/ArkovaCarson/pull/604) shipped (admin-merged 15:29 UTC, sha [3838662a](https://github.com/carson-see/ArkovaCarson/commit/3838662ad0f88976434993e0716af75f2ae53900) — explicit user permission per `feedback_never_merge_without_ok.md`):
