@@ -919,7 +919,12 @@ describe('handleSubscriptionUpdated', () => {
     // The update fires (status/cancel still flow through) but plan_id
     // must be omitted from the payload — not written as null.
     expect(subscriptionsUpdate.update).toHaveBeenCalled();
-    const updatePayload = subscriptionsUpdate.update.mock.calls[0]?.[0] as Record<string, unknown>;
+    // Vitest's `.mock.calls` types as `[]` until inferred; widen via `unknown`
+    // so we can assert the absence/presence of properties on the actual
+    // payload that was passed to .update().
+    const calls = subscriptionsUpdate.update.mock.calls as unknown as unknown[][];
+    const updatePayload = calls[0]?.[0] as Record<string, unknown> | undefined;
+    expect(updatePayload).toBeDefined();
     expect(updatePayload).not.toHaveProperty('plan_id');
     // Status/cancel still applied so the rest of the handler still works.
     expect(updatePayload).toMatchObject({ status: 'active', cancel_at_period_end: false });
