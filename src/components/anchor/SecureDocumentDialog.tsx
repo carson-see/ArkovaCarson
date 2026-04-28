@@ -863,6 +863,8 @@ export function SecureDocumentDialog({
               <Button
                 onClick={handleUploadContinue}
                 disabled={!fileData}
+                aria-disabled={!fileData}
+                data-testid="secure-document-continue"
               >
                 {aiEnabled && fileData?.file.type === 'application/pdf' && (
                   <Sparkles className="mr-2 h-4 w-4" />

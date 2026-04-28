@@ -1,0 +1,6 @@
+{
+  "registry_version": "1.0.0",
+  "updated_at": "2026-04-27T00:00:00Z",
+  "_comment": "SCRUM-900 PROOF-SIG-01 — public proof-bundle signing keys. Retired keys stay listed so historical bundles remain verifiable. Rotate by editing this file + redeploying the worker; the /.well-known/arkova-keys.json endpoint serves it. Active key PEMs MUST come from `gcloud kms keys versions get-public-key` after the underlying KMS key is provisioned in arkova1 — do NOT commit prod-active keys until that step is done.",
+  "keys": []
+}
