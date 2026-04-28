@@ -1,0 +1,439 @@
+[
+  {
+    "id": "FH-001",
+    "description": "Headway University degree (Pakistan-origin diploma mill)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Headway University",
+      "issuedDate": "2021-03-12",
+      "fieldOfStudy": "Information Technology",
+      "degreeLevel": "Master",
+      "jurisdiction": "Online (no state)"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "KNOWN_DIPLOMA_MILL",
+        "UNVERIFIABLE_ISSUER"
+      ],
+      "confidence": 0.92,
+      "reasoning": "Headway University is a documented unaccredited online operation in the Belford / Rochville mill family. Degrees granted with no academic work; not recognized by any USDOE-recognized accreditor or any country's Ministry of Education registry."
+    },
+    "category": "diploma_mill",
+    "source": "Oregon ODA unaccredited list; FTC consumer alert"
+  },
+  {
+    "id": "FH-002",
+    "description": "Hill University degree (Wyoming mill closed by AG)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Hill University",
+      "issuedDate": "2009-08-25",
+      "fieldOfStudy": "Education",
+      "degreeLevel": "PhD",
+      "jurisdiction": "Wyoming, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "KNOWN_DIPLOMA_MILL",
+        "EXPIRED_ISSUER",
+        "ENFORCEMENT_ACTION"
+      ],
+      "confidence": 0.93,
+      "reasoning": "Hill University was an unaccredited Wyoming operator shut down after Wyoming raised licensure standards in 2009. Same legislative cleanup that ended Kennedy-Western. Pre-2010 PhDs from Wyoming-domiciled \"universities\" without USDOE accreditation are mill artifacts."
+    },
+    "category": "diploma_mill",
+    "source": "Wyoming AG; GAO-04-1024T context"
+  },
+  {
+    "id": "FH-003",
+    "description": "University of Northern Virginia degree (closed for I-20 fraud)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "University of Northern Virginia",
+      "issuedDate": "2010-04-30",
+      "fieldOfStudy": "Computer Science",
+      "degreeLevel": "Master",
+      "jurisdiction": "Virginia, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "KNOWN_DIPLOMA_MILL",
+        "EXPIRED_ISSUER",
+        "ENFORCEMENT_ACTION"
+      ],
+      "confidence": 0.94,
+      "reasoning": "University of Northern Virginia (UNVA) lost SCHEV authorization and ICE SEVP certification in 2011 after a federal raid for visa fraud. Pre-closure degrees existed but the institution was operating as a visa mill rather than a credentialing institution. Post-2011 UNVA credentials are facially fraudulent."
+    },
+    "category": "diploma_mill",
+    "source": "ICE HSI raid 2011; Virginia SCHEV"
+  },
+  {
+    "id": "FH-004",
+    "description": "Hartland University degree (life-experience model)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Hartland University",
+      "issuedDate": "2020-07-10",
+      "fieldOfStudy": "Public Administration",
+      "degreeLevel": "PhD",
+      "jurisdiction": "Online (no state)",
+      "programNotes": "PhD awarded based on resume + work experience; no dissertation defense"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "KNOWN_DIPLOMA_MILL",
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.94,
+      "reasoning": "A PhD awarded without dissertation defense or supervised research is structurally impossible at any USDOE-recognized institution. Hartland's self-described \"no dissertation\" model is the textbook diploma-mill life-experience scheme."
+    },
+    "category": "diploma_mill",
+    "source": "FTC educational fraud guidance; Oregon ODA"
+  },
+  {
+    "id": "FH-101",
+    "description": "NPI with 11 digits (one too many)",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "CMS NPPES",
+      "fieldOfStudy": "Family Medicine",
+      "recipientIdentifier": "NPI 12345678901",
+      "jurisdiction": "Ohio, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INVALID_FORMAT"
+      ],
+      "confidence": 0.95,
+      "reasoning": "NPI is exactly 10 digits per CMS specification (45 CFR 162.406). An 11-digit value cannot be a valid NPI; this is structurally impossible and indicates fabrication or transcription error severe enough to require source verification."
+    },
+    "category": "license_forgery",
+    "source": "CMS NPI specification 45 CFR 162.406"
+  },
+  {
+    "id": "FH-102",
+    "description": "Massachusetts medical license with non-standard format",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "Massachusetts Board of Registration in Medicine",
+      "fieldOfStudy": "Medicine",
+      "licenseNumber": "BRM-99",
+      "jurisdiction": "Massachusetts, USA",
+      "issuedDate": "2023-04-18"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INVALID_FORMAT"
+      ],
+      "confidence": 0.86,
+      "reasoning": "MA Board of Registration in Medicine issues physician licenses as 6-digit numbers (e.g., 123456). \"BRM-99\" mimics agency initialism rather than the issued license format and would not match the BoRiM verification portal."
+    },
+    "category": "license_forgery",
+    "source": "MA BoRiM license verification"
+  },
+  {
+    "id": "FH-103",
+    "description": "DEA registration with invalid first letter (J prefix)",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "US Drug Enforcement Administration",
+      "fieldOfStudy": "Controlled Substance Prescribing",
+      "licenseNumber": "JS1234563",
+      "jurisdiction": "Federal, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INVALID_FORMAT"
+      ],
+      "confidence": 0.93,
+      "reasoning": "DEA registration number first letter encodes registrant type (A/B/F/M/P/R for practitioners/distributors/MLPs/etc.). \"J\" is not a valid registrant-type prefix per the DEA specification, so the registration is structurally invalid before checksum."
+    },
+    "category": "license_forgery",
+    "source": "DEA Office of Diversion Control format spec"
+  },
+  {
+    "id": "FH-104",
+    "description": "CPA license issued by a non-existent state body",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "New York State CPA Authority",
+      "fieldOfStudy": "Public Accounting",
+      "licenseNumber": "109876",
+      "jurisdiction": "New York, USA",
+      "issuedDate": "2022-06-08"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INCONSISTENT_ISSUER"
+      ],
+      "confidence": 0.7,
+      "reasoning": "NY CPA licenses are issued by the New York State Education Department - Office of the Professions, not by a \"New York State CPA Authority\" (no such agency). Either a fabricated issuer name or a transcription error against the actual NYSED Office of the Professions registry."
+    },
+    "category": "license_forgery",
+    "source": "NYSED Office of the Professions"
+  },
+  {
+    "id": "FH-201",
+    "description": "Conferral date in February (off-cycle for the issuer)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Princeton University",
+      "issuedDate": "2022-02-14",
+      "fieldOfStudy": "History",
+      "degreeLevel": "Bachelor",
+      "jurisdiction": "New Jersey, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "SUSPICIOUS_DATES"
+      ],
+      "confidence": 0.65,
+      "reasoning": "Princeton University awards undergraduate degrees only at the late-May/June commencement (with rare off-cycle conferrals for specific cases). A February conferral date is anomalous and warrants registrar verification — could indicate template tampering where the issue date was edited."
+    },
+    "category": "document_tampering",
+    "source": "Princeton University academic calendar"
+  },
+  {
+    "id": "FH-202",
+    "description": "Transcript with negative credit hour entry",
+    "extractedFields": {
+      "credentialType": "TRANSCRIPT",
+      "issuerName": "Indiana University",
+      "issuedDate": "2021-12-15",
+      "fieldOfStudy": "Biology",
+      "degreeLevel": "Bachelor",
+      "perCourseCreditSum": 124,
+      "lineItemAnomaly": "BIOL-301 listed with -3 credit hours",
+      "jurisdiction": "Indiana, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "MATERIAL_MISSTATEMENT",
+        "INVALID_FORMAT"
+      ],
+      "confidence": 0.95,
+      "reasoning": "Negative credit hours are mathematically impossible on a US transcript. A single -3 line entry indicates spreadsheet manipulation where a course was retroactively erased by subtracting credits from the total. Indiana University would never produce this output."
+    },
+    "category": "document_tampering",
+    "source": "pattern: credit-arithmetic invariant"
+  },
+  {
+    "id": "FH-203",
+    "description": "Department name with a single-letter typo (gives away template)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "University of Texas at Austin",
+      "issuedDate": "2020-05-22",
+      "fieldOfStudy": "Mechanical Engineering",
+      "degreeLevel": "Bachelor",
+      "department": "Cockrelll School of Engineering",
+      "jurisdiction": "Texas, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.85,
+      "reasoning": "UT Austin's engineering school is \"Cockrell School of Engineering\" (one l). The triple-l \"Cockrelll\" is the kind of typo that survives Photoshop-level template tampering when the forger doesn't notice the OCR-fed extra glyph. Real UT Austin diplomas never spell it that way."
+    },
+    "category": "document_tampering",
+    "source": "UT Austin department directory"
+  },
+  {
+    "id": "FH-301",
+    "description": "NPI returns provider in unrelated state",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "Texas Medical Board",
+      "fieldOfStudy": "Internal Medicine",
+      "licenseNumber": "K1234567",
+      "recipientIdentifier": "NPI 1659389765",
+      "jurisdiction": "Texas, USA",
+      "crossRefNote": "NPPES returns this NPI registered to a provider with primary practice address in Vermont"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INCONSISTENT_ISSUER",
+        "DUPLICATE_REGISTRATION"
+      ],
+      "confidence": 0.7,
+      "reasoning": "NPI cross-reference returns a Vermont primary practice address while the credential claims Texas licensure. Could indicate (a) a real provider with a stolen TX license number, (b) a real TX provider whose NPI was misappropriated, or (c) a synthetic credential. All three need investigation; in none does the credential pass identity verification."
+    },
+    "category": "identity_mismatch",
+    "source": "CMS NPPES address registry"
+  },
+  {
+    "id": "FH-302",
+    "description": "Bar registration registered to a different person (last-name mismatch)",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "New York State Bar",
+      "fieldOfStudy": "Law",
+      "licenseNumber": "4123456",
+      "claimedHolderName": "Anika R. Brennan",
+      "ocaRegisteredName": "Anika R. Patel",
+      "jurisdiction": "New York, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "INCONSISTENT_ISSUER",
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.78,
+      "reasoning": "NY OCA attorney directory verification returns a different family name for the same registration number. First name + middle initial match is suggestive of a same-person name change, but absent a recorded name-change order with OCA, the credential cannot be presented as currently valid under \"Brennan.\""
+    },
+    "category": "identity_mismatch",
+    "source": "NY OCA attorney directory"
+  },
+  {
+    "id": "FH-303",
+    "description": "Credential claims active status but issuer revocation list shows surrender",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "California Medical Board",
+      "fieldOfStudy": "Medicine",
+      "licenseNumber": "A765432",
+      "jurisdiction": "California, USA",
+      "issuedDate": "2014-09-08",
+      "statusClaim": "Active",
+      "priorActions": [
+        "Voluntary Surrender 2022-04-30 in lieu of further discipline"
+      ]
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "REVOKED_STATUS",
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.96,
+      "reasoning": "A voluntary-surrender-in-lieu action is a discipline equivalent — the licensee gave up the license to avoid further proceedings. Presenting the license as \"Active\" after a 2022 surrender is materially false. MBC verification would return surrendered/inactive."
+    },
+    "category": "identity_mismatch",
+    "source": "CA Medical Board discipline registry"
+  },
+  {
+    "id": "FH-401",
+    "description": "Real Cornell PhD in a department that exists, but field misrepresented as a sister-program",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Cornell University",
+      "issuedDate": "2019-08-25",
+      "fieldOfStudy": "Operations Research and Information Engineering",
+      "degreeLevel": "PhD",
+      "claimedAtAnotherDeptOnCV": "Computer Science",
+      "jurisdiction": "New York, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.7,
+      "reasoning": "Cornell's ORIE department is real and the credential itself is genuine. The misrepresentation occurs when the holder later claims the PhD as \"Computer Science\" — a different Cornell department with different admissions and qualifying-exam standards. Real institution + real degree + tampered field-of-study representation is a sophisticated-fraud signature for hiring fraud."
+    },
+    "category": "sophisticated",
+    "source": "Cornell Graduate School department registry"
+  },
+  {
+    "id": "FH-402",
+    "description": "CFA charter date claimed before charter awarded",
+    "extractedFields": {
+      "credentialType": "CERTIFICATE",
+      "issuerName": "CFA Institute",
+      "certificationName": "Chartered Financial Analyst",
+      "issuedDate": "2019-08-15",
+      "level3PassDate": "2020-08-12",
+      "jurisdiction": "Federal, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "SUSPICIOUS_TIMELINE",
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.92,
+      "reasoning": "CFA charter is awarded only after Level III passage and the four-year work-experience requirement. Charter date 2019-08-15 with Level III pass 2020-08-12 is impossible — you cannot be granted the charter before passing the qualifying exam. Either the charter date or the Level III date was tampered."
+    },
+    "category": "sophisticated",
+    "source": "CFA Institute charter requirements"
+  },
+  {
+    "id": "FH-403",
+    "description": "Real ACGME-accredited program but holder's residency dates fall outside program approval window",
+    "extractedFields": {
+      "credentialType": "CERTIFICATE",
+      "issuerName": "Stanford Hospital - Internal Medicine Residency",
+      "certificationName": "Residency Completion",
+      "issuedDate": "2014-06-30",
+      "claimedResidencyStart": "2011-07-01",
+      "acgmeProgramApprovalStart": "2013-01-01",
+      "jurisdiction": "California, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [
+        "SUSPICIOUS_TIMELINE",
+        "MATERIAL_MISSTATEMENT"
+      ],
+      "confidence": 0.85,
+      "reasoning": "Stanford Internal Medicine Residency is a real ACGME-accredited program. However, claiming residency dates of 2011-07-01 → 2014-06-30 against a program that didn't receive ACGME approval until 2013-01-01 means the first 18 months would not count toward board eligibility. Either the program-approval window is wrong (verifiable) or the residency dates were inflated to claim seniority."
+    },
+    "category": "sophisticated",
+    "source": "ACGME program registry"
+  },
+  {
+    "id": "FH-901",
+    "description": "Genuine Stanford CS Master degree (no fraud)",
+    "extractedFields": {
+      "credentialType": "DEGREE",
+      "issuerName": "Stanford University",
+      "issuedDate": "2024-06-16",
+      "fieldOfStudy": "Computer Science",
+      "degreeLevel": "Master",
+      "jurisdiction": "California, USA"
+    },
+    "expectedOutput": {
+      "fraudSignals": [],
+      "confidence": 0.95,
+      "reasoning": "Stanford University is a regionally accredited research institution (founded 1885, current). Computer Science is an established Stanford program in the School of Engineering. June 2024 conferral aligns with the standard Stanford academic calendar. No fraud indicators."
+    },
+    "category": "clean",
+    "source": "clean baseline"
+  },
+  {
+    "id": "FH-902",
+    "description": "Genuine Florida medical license with correct ME prefix (no fraud)",
+    "extractedFields": {
+      "credentialType": "LICENSE",
+      "issuerName": "Florida Department of Health",
+      "fieldOfStudy": "Medicine",
+      "licenseNumber": "ME134567",
+      "jurisdiction": "Florida, USA",
+      "issuedDate": "2020-01-10",
+      "statusClaim": "Active"
+    },
+    "expectedOutput": {
+      "fraudSignals": [],
+      "confidence": 0.92,
+      "reasoning": "Florida DOH issues physician licenses with prefix \"ME\" + 6 digits. License \"ME134567\" matches that pattern. Issuance year 2020 falls in active issuance period. Status active. No format violations."
+    },
+    "category": "clean",
+    "source": "clean baseline"
+  },
+  {
+    "id": "FH-903",
+    "description": "Genuine BLS provider card (no fraud)",
+    "extractedFields": {
+      "credentialType": "CERTIFICATE",
+      "issuerName": "American Heart Association",
+      "issuedDate": "2025-03-04",
+      "expiryDate": "2027-03-04",
+      "fieldOfStudy": "Basic Life Support",
+      "certificationName": "BLS Provider"
+    },
+    "expectedOutput": {
+      "fraudSignals": [],
+      "confidence": 0.92,
+      "reasoning": "AHA-issued BLS Provider cards are valid for 2 years from issuance. The expiry exactly 2 years out matches AHA policy. No format issues."
+    },
+    "category": "clean",
+    "source": "clean baseline"
+  }
+]
