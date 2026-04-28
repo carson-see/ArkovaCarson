@@ -124,11 +124,19 @@ router.post('/', async (req: Request, res: Response) => {
         res.status(503).json({ error: 'credit_check_unavailable' });
         return;
       }
-      // org_not_initialized in enforcement mode = let the anchor through with a
-      // warn log — operator must seed the row before flipping the flag, but we
-      // don't want a misconfiguration to silently reject legitimate calls.
+      // org_not_initialized in enforcement mode = fail closed. If enforcement
+      // is ON and the org has no credit row, that's a pre-flight error, not a
+      // bypass. Letting it through silently would leak free anchors when an
+      // operator forgets to seed before flipping the flag (codex review).
       if (!deduction.allowed && deduction.error === 'org_not_initialized') {
-        logger.warn({ orgId }, 'org_credit_deduct_skipped_uninitialized');
+        logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
+        res.status(402).json({
+          error: 'org_credits_not_initialized',
+          message:
+            'This organization is not provisioned for credit-based billing. ' +
+            'An operator must seed org_credits before this API key can submit.',
+        });
+        return;
       }
     }
 
