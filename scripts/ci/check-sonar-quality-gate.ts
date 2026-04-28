@@ -55,11 +55,18 @@ function readToken(): string | null {
   return process.env.SONARCLOUD_TOKEN ?? process.env.SONAR_TOKEN ?? null;
 }
 
+// Allow-list of acceptable SonarCloud gate names. The repo's gate is
+// "Sonar way" (project-default); a fork could be named "Sonar way (Built-in)".
+// We never let an arbitrary string from the API reach a fetch URL — the API
+// response is matched against this fixed set, and the FIXED literal is the
+// value that flows into the URL. SonarCloud taint analysis (S8476)
+// recognizes string literals as untainted.
+const ALLOWED_GATE_NAMES: readonly string[] = [
+  'Sonar way',
+  'Sonar way (Built-in)',
+] as const;
+
 async function fetchProjectGate(token: string): Promise<QualityGate> {
-  // Single-call refactor (SCRUM-1304): fetch the gate name from the project,
-  // then ask /show?name=... — keeps everything keyed by the static PROJECT_KEY
-  // constant, so no API-derived id is ever spliced into a URL. This pattern
-  // sidesteps the SonarCloud taint analyzer (S8476) entirely.
   const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
   const projectRes = await fetch(
     `${SONAR_BASE}/api/qualitygates/get_by_project?project=${encodeURIComponent(PROJECT_KEY)}`,
@@ -72,20 +79,20 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
     qualityGate: { name: string };
   };
 
-  // Validate the name has only printable ASCII before logging it.
-  // (We do NOT use this value to build URLs — show takes id OR name and
-  // we go through name where the SonarCloud builder URL-encodes for us.)
-  const nameOk = /^[\x20-\x7E]{1,64}$/.test(qualityGate.name);
-  if (!nameOk) {
+  // Lookup the API-returned name in our fixed allow-list and use the
+  // matching literal — never the API value itself. If the gate is renamed
+  // to something we don't recognize, fail loud so an operator updates this
+  // list rather than silently letting a tainted string flow into the URL.
+  const allowedName = ALLOWED_GATE_NAMES.find((candidate) => candidate === qualityGate.name);
+  if (!allowedName) {
     throw new Error(
-      `SonarCloud returned a gate name outside the expected charset: ${qualityGate.name.length} chars`,
+      `SonarCloud quality gate "${qualityGate.name.length}-char value" is not in the allow-list. ` +
+        `Update ALLOWED_GATE_NAMES in scripts/ci/check-sonar-quality-gate.ts.`,
     );
   }
 
-  // Use the static "Sonar way" / project-default gate name, sanitized above.
-  // encodeURIComponent + the allow-list above means the URL is safe.
   const showRes = await fetch(
-    `${SONAR_BASE}/api/qualitygates/show?name=${encodeURIComponent(qualityGate.name)}`,
+    `${SONAR_BASE}/api/qualitygates/show?name=${encodeURIComponent(allowedName)}`,
     { headers: { Authorization: auth } },
   );
   if (!showRes.ok) {
