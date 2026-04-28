@@ -75,6 +75,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Enforce pinned package versions
+        run: npm run ci:dep-pinning
+
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9
@@ -399,6 +402,9 @@ jobs:
         # `npx eslint src/ --max-warnings 0` (or any other drift). The
         # 2026-04-25 outage was caused by exactly this drift.
         run: npx tsx scripts/ci/check-deploy-lint-parity.ts
+
+      - name: Verify 429 responses include Retry-After
+        run: npm run ci:retry-after-429
 
       - name: TypeScript check (edge workers)
         env:

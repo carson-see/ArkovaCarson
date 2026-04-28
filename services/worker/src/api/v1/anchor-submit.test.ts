@@ -52,8 +52,9 @@ vi.mock('../../lib/urls.js', () => ({
 }));
 
 import { anchorSubmitRouter } from './anchor-submit.js';
+import { requireScope } from '../../middleware/apiKeyAuth.js';
 
-function makeApp() {
+function makeApp(scopes = ['anchor:write']) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -61,13 +62,13 @@ function makeApp() {
       keyId: 'key-1',
       userId: 'user-1',
       orgId: 'org-1',
-      scopes: ['anchor:write'],
+      scopes,
       rateLimitTier: 'paid',
       keyPrefix: 'arkv_test_',
     };
     next();
   });
-  app.use('/v1/anchor', anchorSubmitRouter);
+  app.use('/v1/anchor', requireScope('anchor:write'), anchorSubmitRouter);
   return app;
 }
 
@@ -147,8 +148,18 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   it('returns 401 when API key missing', async () => {
     const app = express();
     app.use(express.json());
-    app.use('/v1/anchor', anchorSubmitRouter);
+    app.use('/v1/anchor', requireScope('anchor:write'), anchorSubmitRouter);
     const res = await request(app).post('/v1/anchor').send({ fingerprint: VALID_FINGERPRINT });
     expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when API key lacks anchor:write scope (SCRUM-1273)', async () => {
+    const res = await request(makeApp(['anchor:read'])).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('insufficient_scope');
+    expect(res.body.required).toBe('anchor:write');
   });
 });

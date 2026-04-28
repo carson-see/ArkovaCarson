@@ -17,9 +17,10 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO, prLabels } from './lib/ciContext.js';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
+const REPO = resolve(import.meta.dirname, '..', '..');
+const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 interface Violation {
   file: string;

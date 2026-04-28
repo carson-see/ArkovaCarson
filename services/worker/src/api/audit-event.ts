@@ -58,6 +58,24 @@ auditEventRouter.post('/event', async (req: Request, res: Response) => {
   }
   const body = parsed.data;
 
+  if (body.org_id) {
+    const { data: membership, error: membershipError } = await db
+      .from('org_members')
+      .select('org_id')
+      .eq('org_id', body.org_id)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (membershipError || !membership) {
+      logger.warn(
+        { userId, orgId: body.org_id, error: membershipError?.message },
+        'audit_event_org_membership_check_failed',
+      );
+      res.status(403).json({ error: 'forbidden_org' });
+      return;
+    }
+  }
+
   const { error } = await db.from('audit_events').insert({
     event_type: body.event_type,
     event_category: body.event_category,
