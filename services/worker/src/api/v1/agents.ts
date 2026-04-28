@@ -192,11 +192,14 @@ router.get('/:agentId', async (req: Request<{ agentId: string }>, res: Response)
     const agent = await verifyAgentOwnership(agentId, orgId, res);
     if (!agent) return;
 
-    // Also fetch API keys associated with this agent
+    // Also fetch API keys associated with this agent. Same defense-in-depth
+    // org_id filter as the revoke path: prevents a hypothetical agent_id
+    // collision from returning another tenant's keys via service_role.
     const { data: keys } = await dbAny
       .from('api_keys')
       .select('id, name, key_prefix, scopes, is_active, last_used_at, created_at, expires_at')
       .eq('agent_id', agentId)
+      .eq('org_id', orgId)
       .eq('is_active', true);
 
     res.json({ ...toPublicAgent(agent), api_keys: keys ?? [] });
@@ -289,8 +292,15 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
       return;
     }
 
-    // Also revoke all associated API keys
-    await dbAny.from('api_keys').update({ is_active: false, revoked_at: new Date().toISOString() }).eq('agent_id', agentId);
+    // Also revoke all associated API keys. Scope by org_id even though
+    // agent_id is a UUID — defense-in-depth against a hypothetical agent_id
+    // collision (race or test-seed leak) silently revoking another tenant's
+    // keys. Required by services/worker/agents.md service-role rule.
+    await dbAny
+      .from('api_keys')
+      .update({ is_active: false, revoked_at: new Date().toISOString() })
+      .eq('agent_id', agentId)
+      .eq('org_id', orgId);
 
     void db.from('audit_events').insert({
       actor_id: userId,
