@@ -9,11 +9,13 @@
  * + stderr.
  */
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+
+import { resolveRepoRoot } from './check-dep-pinning.js';
 
 const SCRIPT = resolve(import.meta.dirname, 'check-dep-pinning.ts');
 
@@ -120,5 +122,89 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     rmSync(join(tmp, 'services', 'edge', 'package.json'), { force: true });
     const r = runScript(tmp);
     expect(r.status).toBe(0);
+  });
+});
+
+/**
+ * SonarCloud security hotspot regression — DEP_PINNING_REPO_ROOT must not
+ * let a malicious caller read /etc/, ~/.ssh/, etc.
+ *
+ * The script-spawn tests above prove the happy path (a valid /tmp fixture).
+ * These unit tests prove the validator rejects everything else.
+ */
+describe('resolveRepoRoot security validation', () => {
+  let validTmp: string;
+  const originalEnv = process.env.DEP_PINNING_REPO_ROOT;
+
+  beforeAll(() => {
+    validTmp = mkdtempSync(join(tmpdir(), 'dep-pinning-validate-'));
+    writeFileSync(
+      join(validTmp, 'package.json'),
+      JSON.stringify({ name: 'fixture' }),
+    );
+  });
+
+  afterAll(() => {
+    rmSync(validTmp, { recursive: true, force: true });
+    if (originalEnv === undefined) {
+      delete process.env.DEP_PINNING_REPO_ROOT;
+    } else {
+      process.env.DEP_PINNING_REPO_ROOT = originalEnv;
+    }
+  });
+
+  beforeEach(() => {
+    delete process.env.DEP_PINNING_REPO_ROOT;
+  });
+
+  afterEach(() => {
+    delete process.env.DEP_PINNING_REPO_ROOT;
+  });
+
+  it('returns the fallback (script repo root) when the env var is unset', () => {
+    const r = resolveRepoRoot();
+    // The fallback resolves to a real directory containing this script.
+    expect(r).toMatch(/[\\/]/);
+    expect(r.length).toBeGreaterThan(0);
+  });
+
+  it('accepts a valid /tmp path that contains a package.json', () => {
+    process.env.DEP_PINNING_REPO_ROOT = validTmp;
+    const r = resolveRepoRoot();
+    // The validator may resolve symlinks (/tmp -> /private/tmp on macOS),
+    // so just compare basenames.
+    expect(r.endsWith(validTmp.split('/').pop() ?? '')).toBe(true);
+  });
+
+  it('rejects a path outside repo root and /tmp (e.g. user home)', () => {
+    // homedir() is neither inside the repo nor inside /tmp.
+    process.env.DEP_PINNING_REPO_ROOT = homedir();
+    expect(() => resolveRepoRoot()).toThrow(/outside.*repo root.*temp dir|refusing for safety/i);
+  });
+
+  it('rejects /etc — a classic path-traversal target', () => {
+    process.env.DEP_PINNING_REPO_ROOT = '/etc';
+    expect(() => resolveRepoRoot()).toThrow(/outside.*repo root.*temp dir|refusing for safety/i);
+  });
+
+  it('rejects a /tmp path with no package.json', () => {
+    const noPkg = mkdtempSync(join(tmpdir(), 'dep-pinning-no-pkg-'));
+    try {
+      process.env.DEP_PINNING_REPO_ROOT = noPkg;
+      expect(() => resolveRepoRoot()).toThrow(/no package\.json/);
+    } finally {
+      rmSync(noPkg, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a non-existent /tmp path', () => {
+    process.env.DEP_PINNING_REPO_ROOT = join(tmpdir(), 'does-not-exist-' + Date.now());
+    expect(() => resolveRepoRoot()).toThrow();
+  });
+
+  it('rejects a path that traverses out of /tmp via .. segments', () => {
+    // path.resolve will normalize this away and land in /etc, which is outside the allowlist.
+    process.env.DEP_PINNING_REPO_ROOT = join(tmpdir(), '..', '..', 'etc');
+    expect(() => resolveRepoRoot()).toThrow(/outside.*repo root.*temp dir|refusing for safety/i);
   });
 });
