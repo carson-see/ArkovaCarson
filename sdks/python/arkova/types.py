@@ -48,6 +48,27 @@ class VerificationResult:
     error: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class BatchVerificationResult(VerificationResult):
+    """A VerificationResult that includes the public_id it was looked up by."""
+
+    public_id: str = ""
+
+
+@dataclass(frozen=True)
+class BatchJob:
+    """Async batch verification job (server-side, polled via get_batch_job)."""
+
+    job_id: str
+    status: str  # submitted | processing | complete | failed
+    total: int
+    created_at: str
+    expires_at: str
+    completed_at: Optional[str] = None
+    results: Optional[List[BatchVerificationResult]] = None
+    error_message: Optional[str] = None
+
+
 # ── Webhooks ──────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
