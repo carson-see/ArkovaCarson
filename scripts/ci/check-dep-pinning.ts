@@ -19,7 +19,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
-const REPO = resolve(import.meta.dirname, '..', '..');
+// SCRUM-1005: tests inject DEP_PINNING_REPO_ROOT to point at a fixture.
+const REPO = process.env.DEP_PINNING_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 interface Violation {
