@@ -1,72 +1,167 @@
 /**
- * SCRUM-792 (GME2-01) — fraud training seed dataset structural tests.
+ * Fraud Training Seed Tests (SCRUM-792 / GME2-01)
  *
- * Pins:
- *   - Dataset is monotonically growing toward the 100+ DoD threshold.
- *     CI fails if the count drops below the highwater shipped 2026-04-27.
- *   - All entries have unique IDs.
- *   - All entries pass shape validation (required fields populated).
- *   - Categorical coverage is non-empty across all 5 fraud categories so
- *     a Gemini fine-tune doesn't accidentally train on one class.
+ * Locks the per-category counts and structural integrity required by the
+ * GME2-01 acceptance criteria: 100+ distinct fraud patterns spanning
+ * 5 categories, with description / extractedFields / expectedOutput /
+ * source on every entry, calibrated confidence, and signal codes drawn
+ * from the FRAUD_SYSTEM_PROMPT vocabulary.
  */
 
 import { describe, it, expect } from 'vitest';
-import { FRAUD_TRAINING_SEED, FRAUD_TRAINING_TARGET_COUNT } from './fraud-training-seed.js';
+import {
+  FRAUD_TRAINING_SEED,
+  FRAUD_SYSTEM_PROMPT,
+  FRAUD_SIGNALS,
+  FRAUD_CATEGORIES,
+} from './fraud-training-seed.js';
 
-const HIGHWATER_AT_2026_04_27 = 34;
+const VALID_SIGNALS: ReadonlySet<string> = new Set(FRAUD_SIGNALS);
+const VALID_CATEGORIES: ReadonlySet<string> = new Set(FRAUD_CATEGORIES);
+
+const MIN_TOTAL = 100;
+const MIN_FRAUD = 80;
+const MIN_CLEAN = 10;
+const PER_CATEGORY_MIN: ReadonlyArray<readonly [(typeof FRAUD_CATEGORIES)[number], number]> = [
+  ['diploma_mill', 20],
+  ['license_forgery', 20],
+  ['document_tampering', 15],
+  ['identity_mismatch', 15],
+  ['sophisticated', 10],
+  ['clean', 10],
+];
+
+function countByCategory(category: string): number {
+  return FRAUD_TRAINING_SEED.filter(e => e.category === category).length;
+}
 
 describe('fraud-training-seed (SCRUM-792)', () => {
-  it('does not regress below the 2026-04-27 highwater of 34 entries', () => {
-    expect(FRAUD_TRAINING_SEED.length).toBeGreaterThanOrEqual(HIGHWATER_AT_2026_04_27);
+  it(`has ${MIN_TOTAL}+ total entries`, () => {
+    expect(FRAUD_TRAINING_SEED.length).toBeGreaterThanOrEqual(MIN_TOTAL);
   });
 
-  it('exposes the 100+ DoD target as a constant', () => {
-    expect(FRAUD_TRAINING_TARGET_COUNT).toBeGreaterThanOrEqual(100);
+  it(`has ${MIN_FRAUD}+ fraud-signal entries (clean controls excluded)`, () => {
+    const fraud = FRAUD_TRAINING_SEED.filter(e => e.expectedOutput.fraudSignals.length > 0);
+    expect(fraud.length).toBeGreaterThanOrEqual(MIN_FRAUD);
   });
 
-  it('flags incomplete progress against the DoD target', () => {
-    if (FRAUD_TRAINING_SEED.length < FRAUD_TRAINING_TARGET_COUNT) {
-      const remaining = FRAUD_TRAINING_TARGET_COUNT - FRAUD_TRAINING_SEED.length;
-      // Pin remaining work for SCRUM-792. Test still passes — the seed is partial
-      // by design until the curation backlog catches up.
-      expect(remaining).toBeGreaterThan(0);
-    }
+  it(`has ${MIN_CLEAN}+ clean control entries (anchors false-positive rate)`, () => {
+    const clean = FRAUD_TRAINING_SEED.filter(e => e.expectedOutput.fraudSignals.length === 0);
+    expect(clean.length).toBeGreaterThanOrEqual(MIN_CLEAN);
   });
 
-  it('has unique IDs across the dataset', () => {
-    const ids = FRAUD_TRAINING_SEED.map((e) => e.id);
-    expect(new Set(ids).size).toBe(ids.length);
+  describe('per-category counts (GME2-01 scope)', () => {
+    it.each(PER_CATEGORY_MIN)('%s: at least %d', (category, min) => {
+      expect(countByCategory(category)).toBeGreaterThanOrEqual(min);
+    });
   });
 
-  it('every entry has the required fields populated', () => {
-    for (const entry of FRAUD_TRAINING_SEED) {
-      expect(entry.id).toMatch(/^FT-\d{3}$/);
-      expect(entry.description.length).toBeGreaterThan(10);
-      expect(Object.keys(entry.extractedFields).length).toBeGreaterThan(0);
-      expect(entry.expectedOutput.reasoning.length).toBeGreaterThan(20);
-      expect(entry.expectedOutput.confidence).toBeGreaterThanOrEqual(0);
-      expect(entry.expectedOutput.confidence).toBeLessThanOrEqual(1);
-      expect(entry.source.length).toBeGreaterThan(2);
-      expect(Array.isArray(entry.expectedOutput.fraudSignals)).toBe(true);
-    }
+  describe('per-entry integrity', () => {
+    it('all IDs are unique', () => {
+      const ids = FRAUD_TRAINING_SEED.map(e => e.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    });
+
+    it('all IDs follow FT-NNN pattern', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.id).toMatch(/^FT-\d{3}$/);
+      }
+    });
+
+    it('all entries have a meaningful description', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.description.length).toBeGreaterThanOrEqual(15);
+      }
+    });
+
+    it('all entries have a credentialType in extractedFields', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.extractedFields.credentialType).toBeTruthy();
+      }
+    });
+
+    it('all entries have a category in the allowed set', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(VALID_CATEGORIES.has(entry.category)).toBe(true);
+      }
+    });
+
+    it('all entries have a non-empty source', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.source.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('all entries have reasoning >= 40 chars (forces real explanation)', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.expectedOutput.reasoning.length).toBeGreaterThanOrEqual(40);
+      }
+    });
+
+    it('all confidences are in [0, 1]', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        expect(entry.expectedOutput.confidence).toBeGreaterThanOrEqual(0);
+        expect(entry.expectedOutput.confidence).toBeLessThanOrEqual(1);
+      }
+    });
+
+    it('all fraudSignals are in the FRAUD_SYSTEM_PROMPT vocabulary', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        for (const signal of entry.expectedOutput.fraudSignals) {
+          expect(VALID_SIGNALS.has(signal)).toBe(true);
+        }
+      }
+    });
+
+    it('FRAUD_SYSTEM_PROMPT lists every signal used in the dataset', () => {
+      for (const entry of FRAUD_TRAINING_SEED) {
+        for (const signal of entry.expectedOutput.fraudSignals) {
+          expect(FRAUD_SYSTEM_PROMPT).toContain(signal);
+        }
+      }
+    });
   });
 
-  it('covers all 5 fraud categories — no class collapse', () => {
-    const categories = new Set(FRAUD_TRAINING_SEED.map((e) => e.category));
-    expect(categories.has('diploma_mill')).toBe(true);
-    expect(categories.has('license_forgery')).toBe(true);
-    expect(categories.has('document_tampering')).toBe(true);
-    expect(categories.has('identity_mismatch')).toBe(true);
-    expect(categories.has('sophisticated')).toBe(true);
+  describe('confidence calibration shape', () => {
+    it('clean entries (no signals) sit in the high-confidence band (>= 0.85)', () => {
+      const clean = FRAUD_TRAINING_SEED.filter(e => e.expectedOutput.fraudSignals.length === 0);
+      for (const entry of clean) {
+        expect(entry.expectedOutput.confidence).toBeGreaterThanOrEqual(0.85);
+      }
+    });
+
+    it('has at least 10 entries flagged with confidence >= 0.9 (unambiguous fraud)', () => {
+      const highConfFraud = FRAUD_TRAINING_SEED.filter(
+        e => e.expectedOutput.fraudSignals.length > 0 && e.expectedOutput.confidence >= 0.9,
+      );
+      expect(highConfFraud.length).toBeGreaterThanOrEqual(10);
+    });
+
+    it('has at least 10 entries in the verification-needed band (0.5–0.75)', () => {
+      const verifyBand = FRAUD_TRAINING_SEED.filter(
+        e =>
+          e.expectedOutput.fraudSignals.length > 0 &&
+          e.expectedOutput.confidence >= 0.5 &&
+          e.expectedOutput.confidence < 0.75,
+      );
+      expect(verifyBand.length).toBeGreaterThanOrEqual(10);
+    });
   });
 
-  it('non-fraud baseline entries have empty fraudSignals', () => {
-    const cleanEntries = FRAUD_TRAINING_SEED.filter(
-      (e) => e.source.toLowerCase().includes('clean') || e.expectedOutput.fraudSignals.length === 0,
-    );
-    for (const entry of cleanEntries) {
-      expect(entry.expectedOutput.fraudSignals).toEqual([]);
-      expect(entry.expectedOutput.confidence).toBeGreaterThanOrEqual(0.85);
-    }
+  describe('source attribution (FTC / GAO / state AG anchors)', () => {
+    it('at least 5 entries cite an FTC enforcement source', () => {
+      const ftc = FRAUD_TRAINING_SEED.filter(e => /ftc/i.test(e.source));
+      expect(ftc.length).toBeGreaterThanOrEqual(5);
+    });
+
+    it('at least 2 entries cite a GAO source', () => {
+      const gao = FRAUD_TRAINING_SEED.filter(e => /gao/i.test(e.source));
+      expect(gao.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('at least 5 entries cite a state AG / state-board source', () => {
+      const state = FRAUD_TRAINING_SEED.filter(e => /\b(AG|attorney general|state bar|medical board|board of|state of|department)\b/i.test(e.source));
+      expect(state.length).toBeGreaterThanOrEqual(5);
+    });
   });
 });
