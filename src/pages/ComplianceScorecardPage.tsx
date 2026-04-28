@@ -174,7 +174,7 @@ export function ComplianceScorecardPage(props: ComplianceScorecardPageProps = {}
     };
   }, [fetchFn, isIndividual]);
 
-  const latest = history && history.length > 0 ? history[0] : null;
+  const latest = history && history.length > 0 ? normalizeAuditRow(history[0]) : null;
   const recommendations = latest?.metadata?.recommendations ?? null;
 
   const handleExport = async () => {
@@ -325,6 +325,14 @@ function PerJurisdictionBars({ data }: { readonly data: PerJurisdiction[] }) {
       ))}
     </ul>
   );
+}
+
+function normalizeAuditRow(row: AuditRow): AuditRow {
+  if (row.per_jurisdiction.length > 0) return row;
+  const metadataJurisdictions = row.metadata?.per_jurisdiction;
+  return Array.isArray(metadataJurisdictions)
+    ? { ...row, per_jurisdiction: metadataJurisdictions as PerJurisdiction[] }
+    : row;
 }
 
 function barColor(score: number): string {

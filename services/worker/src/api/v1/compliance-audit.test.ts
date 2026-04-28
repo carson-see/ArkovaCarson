@@ -252,6 +252,7 @@ describe('POST /api/v1/compliance/audit', () => {
     // metadata.recommendations is populated by NCA-05.
     expect(insertCalls.length).toBe(1);
     const metadata = insertCalls[0].metadata as Record<string, unknown>;
+    expect(Array.isArray(metadata.per_jurisdiction)).toBe(true);
     expect(metadata.recommendations).toBeDefined();
     const recs = metadata.recommendations as { recommendations: unknown[]; overflow_count: number };
     expect(Array.isArray(recs.recommendations)).toBe(true);
@@ -511,5 +512,45 @@ describe('GET /api/v1/compliance/audit (list)', () => {
       .expect(200);
     expect(res.body.audits.length).toBe(2);
     expect(res.body.count).toBe(2);
+  });
+
+  it('hydrates per_jurisdiction from metadata for legacy rows with an empty top-level array', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+    vi.mocked(db.from).mockImplementation((): never =>
+      makeBuilder({
+        selectData: [
+          {
+            id: 'legacy',
+            org_id: 'org-1',
+            overall_score: 100,
+            overall_grade: 'A',
+            per_jurisdiction: [],
+            gaps: [],
+            quarantines: [],
+            status: 'COMPLETED',
+            started_at: '',
+            completed_at: '',
+            duration_ms: 1,
+            jurisdiction_filter: null,
+            error_code: null,
+            error_message: null,
+            metadata: {
+              per_jurisdiction: [
+                { jurisdiction_code: 'US', industry_code: 'default', score: 100, grade: 'A', total_required: 1, total_present: 1, rule_count: 1 },
+              ],
+            },
+            created_at: '',
+          },
+        ],
+      }) as unknown as never,
+    );
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .get('/api/v1/compliance/audit?limit=5')
+      .expect(200);
+
+    expect(res.body.audits[0].per_jurisdiction).toHaveLength(1);
+    expect(res.body.audits[0].per_jurisdiction[0].jurisdiction_code).toBe('US');
   });
 });

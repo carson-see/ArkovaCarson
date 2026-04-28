@@ -74,6 +74,7 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
   const navigate = useNavigate();
   const [state, setState] = useState<AuditState>({ kind: 'idle' });
   const timers = useRef<number[]>([]);
+  const isRunning = state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
 
   useEffect(() => () => {
     for (const t of timers.current) window.clearTimeout(t);
@@ -88,6 +89,7 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
   }, [disablePhaseAnimation, phaseDurationMs]);
 
   const handleClick = useCallback(async () => {
+    if (state.kind !== 'idle') return;
     if (!fetchFn) {
       setState({ kind: 'error', message: AUDIT_MY_ORG_LABELS.ERROR_FETCH_UNAVAILABLE });
       return;
@@ -118,16 +120,13 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
       const message = (err as Error).message ?? AUDIT_MY_ORG_LABELS.ERROR_NETWORK;
       setState({ kind: 'error', message });
     }
-  }, [fetchFn, triggerUrl, onAuditStarted, onAuditCompleted, scheduleProgress]);
+  }, [fetchFn, triggerUrl, onAuditStarted, onAuditCompleted, scheduleProgress, state.kind]);
 
   const handleRetry = () => setState({ kind: 'idle' });
 
   const handleViewResults = () => {
     navigate(ROUTES.COMPLIANCE_SCORECARD);
   };
-
-  const isRunning =
-    state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
 
   return (
     <Card

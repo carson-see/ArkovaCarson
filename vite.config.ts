@@ -29,14 +29,9 @@ export default defineConfig({
           ) {
             return 'vendor-ui';
           }
-          if (
-            id.includes('/react/') ||
-            id.includes('/react-dom/') ||
-            id.includes('react-router-dom') ||
-            id.includes('/react-router/')
-          ) {
-            return 'vendor-react';
-          }
+          if (id.includes('/react-dom/')) return 'vendor-react-dom';
+          if (id.includes('react-router-dom') || id.includes('/react-router/')) return 'vendor-router';
+          if (id.includes('/react/')) return 'vendor-react';
           return undefined;
         },
       },

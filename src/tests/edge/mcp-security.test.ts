@@ -30,6 +30,7 @@ declare global {
 }
 
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { Buffer } from 'node:buffer';
 import { webcrypto } from 'node:crypto';
 
 // Polyfill globalThis.crypto.subtle for Node test environment
@@ -46,8 +47,40 @@ import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-pr
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
-import { getCorsOrigin } from '../../../services/edge/src/mcp-server';
+import { getCorsOrigin, validateBearer } from '../../../services/edge/src/mcp-server';
+import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
+
+function base64Url(value: string | Uint8Array): string {
+  const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
+  return Buffer.from(bytes).toString('base64').replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+}
+
+async function signSupabaseTestJwt(
+  env: Env,
+  payloadOverrides: Record<string, unknown> = {},
+  secret = env.SUPABASE_JWT_SECRET!,
+): Promise<string> {
+  const header = base64Url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const payload = base64Url(JSON.stringify({
+    sub: 'user-123',
+    aud: 'authenticated',
+    iss: `${env.SUPABASE_URL}/auth/v1`,
+    exp: 4_102_444_800,
+    iat: 1_767_804_000,
+    ...payloadOverrides,
+  }));
+  const signingInput = `${header}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signingInput)));
+  return `${signingInput}.${base64Url(signature)}`;
+}
 
 describe('mcp-prompt-safety — fenceUserInput (SCRUM-923)', () => {
   it('wraps plain input in a <user_input> fence', () => {
@@ -356,5 +389,58 @@ describe('mcp-server — getCorsOrigin (bug-bounty F1, 2026-04-26)', () => {
     expect(out).toBe('https://app.arkova.ai');
     // arkova-carson must NEVER be allowlisted by default
     expect(getCorsOrigin(reqWithOrigin('https://arkova-carson.vercel.app'), {} as Env)).toBe('null');
+  });
+});
+
+describe('mcp-server — Supabase JWT local validation (SCRUM-926)', () => {
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role',
+    SUPABASE_JWT_SECRET: 'local-test-secret',
+  } as Env;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('accepts a locally valid Supabase user token', async () => {
+    const token = await signSupabaseTestJwt(env);
+
+    await expect(verifySupabaseJwt(token, env)).resolves.toMatchObject({
+      sub: 'user-123',
+      aud: 'authenticated',
+      iss: 'https://example.supabase.co/auth/v1',
+    });
+  });
+
+  it('rejects expired, wrong-audience, wrong-issuer, and bad-signature tokens', async () => {
+    const expired = await signSupabaseTestJwt(env, { exp: 1 });
+    const wrongAudience = await signSupabaseTestJwt(env, { aud: 'anon' });
+    const wrongIssuer = await signSupabaseTestJwt(env, { iss: 'https://evil.example/auth/v1' });
+    const badSignature = await signSupabaseTestJwt(env, {}, 'different-secret');
+
+    await expect(verifySupabaseJwt(expired, env)).resolves.toBeNull();
+    await expect(verifySupabaseJwt(wrongAudience, env)).resolves.toBeNull();
+    await expect(verifySupabaseJwt(wrongIssuer, env)).resolves.toBeNull();
+    await expect(verifySupabaseJwt(badSignature, env)).resolves.toBeNull();
+  });
+
+  it('short-circuits forged JWTs before the Supabase auth round-trip', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const forged = await signSupabaseTestJwt(env, {}, 'different-secret');
+
+    await expect(validateBearer(forged, env)).resolves.toBeNull();
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps Supabase as a secondary check and requires the returned user to match the JWT subject', async () => {
+    const token = await signSupabaseTestJwt(env);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(
+      JSON.stringify({ id: 'different-user' }),
+      { status: 200 },
+    ));
+
+    await expect(validateBearer(token, env)).resolves.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 });
