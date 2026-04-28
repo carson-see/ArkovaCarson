@@ -23,6 +23,12 @@ jobs:
   sonatype-oss-index:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Skip on dependabot PRs — GitHub does NOT pass repo secrets to workflows
+    # triggered from forks/dependabot, so the GCP Workload Identity step fails
+    # with "the GitHub Action workflow must specify exactly one of
+    # workload_identity_provider or credentials_json". The scheduled cron run
+    # (Mondays 12:00 UTC) and human-author PRs still cover license/CVE checks.
+    if: github.actor != 'dependabot[bot]' && github.event.pull_request.user.login != 'dependabot[bot]'
     strategy:
       fail-fast: false
       matrix:

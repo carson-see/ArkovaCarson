@@ -74,7 +74,7 @@ test.describe('Route Guards', () => {
 
       // If ended up on email confirmation page, log in manually
       if (page.url().includes('/auth') || await page.getByText(/Check your email/i).isVisible().catch(() => false)) {
-        await page.goto('/auth');
+        await page.goto('/login');
         await page.getByLabel('Email address').fill(email);
         await page.getByLabel('Password').fill(password);
         await page.getByRole('button', { name: 'Sign in' }).click();
