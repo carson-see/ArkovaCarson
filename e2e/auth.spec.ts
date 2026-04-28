@@ -103,7 +103,8 @@ test.describe('Authentication', () => {
       .or(page.getByRole('button', { name: 'Sign out' }))
       .click();
 
-    await expect(page).toHaveURL(/\/auth/, { timeout: 10000 });
+    // signOut hard-redirects to /login (src/hooks/useAuth.ts), not /auth.
+    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
     await expect(page.getByLabel('Email address')).toBeVisible();
   });
 });
