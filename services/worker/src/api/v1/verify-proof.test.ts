@@ -6,7 +6,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import express, { type Request } from 'express';
 import request from 'supertest';
 import { generateKeyPairSync } from 'node:crypto';
-import { verifyProofRouter, type ProofLookup, type ProofAnchorData } from './verify-proof.js';
+import { verifyProofRouter, type ProofLookup, type ProofAnchorData, __resetSignerCacheForTests } from './verify-proof.js';
 import { verifySignedBundle } from '../../proof/signed-bundle.js';
 
 function buildApp(lookup: ProofLookup) {
@@ -39,16 +39,23 @@ describe('SCRUM-900 signed proof bundle route', () => {
   let publicPem: string;
 
   beforeEach(() => {
+    // Defensive: ensure no KMS path bleed-in from environment.
+    delete process.env.PROOF_SIGNING_KMS_KEY;
     const kp = generateKeyPairSync('ed25519');
     privatePem = kp.privateKey.export({ format: 'pem', type: 'pkcs8' }).toString();
     publicPem = kp.publicKey.export({ format: 'pem', type: 'spki' }).toString();
     process.env.PROOF_SIGNING_KEY_PEM = privatePem;
     process.env.PROOF_SIGNING_KEY_ID = 'arkova-proof-test';
+    // resolveSigner() memoizes the resolved signer at module scope; per-
+    // test env-var swaps require explicit cache reset.
+    __resetSignerCacheForTests();
   });
 
   afterEach(() => {
     delete process.env.PROOF_SIGNING_KEY_PEM;
     delete process.env.PROOF_SIGNING_KEY_ID;
+    delete process.env.PROOF_SIGNING_KMS_KEY;
+    __resetSignerCacheForTests();
   });
 
   it('returns legacy unsigned JSON when ?format is omitted (backwards compat)', async () => {
@@ -79,6 +86,8 @@ describe('SCRUM-900 signed proof bundle route', () => {
 
   it('returns 503 when the signer env vars are not configured', async () => {
     delete process.env.PROOF_SIGNING_KEY_PEM;
+    delete process.env.PROOF_SIGNING_KEY_ID;
+    __resetSignerCacheForTests();
     const app = buildApp({ lookupByPublicId: async () => ANCHOR });
     const res = await request(app).get('/api/v1/verify/abc123/proof?format=signed');
     expect(res.status).toBe(503);
