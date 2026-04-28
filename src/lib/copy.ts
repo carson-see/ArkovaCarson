@@ -84,15 +84,39 @@ export function formatCredentialType(raw: string | null | undefined): string {
   return raw.replaceAll('_', ' ').replaceAll(/\b\w/g, c => c.toUpperCase());
 }
 
-/** Map raw subtype values such as "professional_certification" to display copy. */
-export function formatCredentialSubType(raw: string | null | undefined): string | null {
-  if (!raw) return null;
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  return trimmed
-    .replaceAll(/[-_]+/g, ' ')
-    .replaceAll(/\s+/g, ' ')
-    .replaceAll(/\b\w/g, c => c.toUpperCase());
+// Hoisted to module scope so it isn't rebuilt on every render call (this
+// helper is invoked from the credential renderer on every list row).
+const SUBTYPE_ACRONYMS: Readonly<Record<string, string>> = Object.freeze({
+  rn: 'RN', lpn: 'LPN', np: 'NP', md: 'MD', do: 'DO', cpa: 'CPA',
+  pe: 'PE', fe: 'FE', jd: 'JD', mba: 'MBA', cv: 'CV', cle: 'CLE',
+  aws: 'AWS', cisco: 'Cisco', comptia: 'CompTIA', cfa: 'CFA',
+  pmi: 'PMI', pmp: 'PMP', capm: 'CAPM', shrm: 'SHRM',
+  isc2: 'ISC2', cissp: 'CISSP', sec: 'SEC', cdl: 'CDL',
+  finra: 'FINRA', npi: 'NPI', dea: 'DEA', wes: 'WES', ece: 'ECE',
+  cfr: 'CFR', dd214: 'DD214', va: 'VA', id: 'ID',
+  ria: 'RIA', iapd: 'IAPD', '501c3': '501(c)(3)',
+  pct: 'PCT', '10k': '10-K', '10q': '10-Q', '8k': '8-K',
+  def14a: 'DEF 14A', s1: 'S-1',
+});
+
+/**
+ * Map a snake_case credential SUB-TYPE (`professional_certification`,
+ * `nursing_rn`, `bachelor`, `10k`, etc.) to a human-readable label.
+ * SCRUM-952 fix: callers were rendering the parent `credential_type`
+ * fallback ("Other") when the more specific subtype was already known.
+ *
+ * Strategy: title-case each underscore-separated segment, with
+ * targeted overrides for tokens that have a canonical capitalization
+ * (`md`, `pe`, `cle`, `cpa`, `cv`, `aws`, etc.) or are well-known acronyms.
+ * Returns `'—'` for nullish inputs and `'Unclassified'` for `unclassified`.
+ */
+export function formatCredentialSubType(raw: string | null | undefined): string {
+  if (!raw) return '—';
+  if (raw === 'unclassified') return 'Unclassified';
+  return raw
+    .split('_')
+    .map(seg => SUBTYPE_ACRONYMS[seg] ?? (seg.charAt(0).toUpperCase() + seg.slice(1)))
+    .join(' ');
 }
 
 export const CREDENTIAL_TYPE_DESCRIPTIONS = {
@@ -663,8 +687,14 @@ export const ANCHORING_STATUS_LABELS = {
   PENDING_SUBTITLE: 'Your document has been submitted for anchoring. This typically takes 5\u201315 minutes.',
   PENDING_PUBLIC_TITLE: 'Submitting to network...',
   PENDING_PUBLIC_SUBTITLE: 'This record is being submitted. Check back shortly for confirmation.',
-  SUBMITTED_PUBLIC_TITLE: 'Record Submitted - Awaiting Network Confirmation',
-  SUBMITTED_PUBLIC_SUBTITLE: 'Finalization usually takes about 60 minutes.',
+  // SCRUM-952 \u2014 SUBMITTED is distinct from PENDING. SUBMITTED means the
+  // anchor has been broadcast to the network and is awaiting on-network
+  // confirmation; the hero must NOT show a green "Verified" affordance
+  // because the record is not yet immutable. The badge string itself
+  // already lives at ANCHOR_STATUS_LABELS.SUBMITTED \u2014 we don't redeclare
+  // it here.
+  SUBMITTED_PUBLIC_TITLE: 'Record Submitted \u00b7 Awaiting Network Confirmation',
+  SUBMITTED_PUBLIC_SUBTITLE: 'Finalization usually takes \u224860 minutes once the network observes the next checkpoint.',
   PENDING_BADGE: 'Processing',
   SUBMITTED_BADGE: 'Awaiting Confirmation',
   PENDING_SINCE: 'Submitted {time} ago',

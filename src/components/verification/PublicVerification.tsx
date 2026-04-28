@@ -3,14 +3,14 @@
  *
  * Full verification display for public anchor lookups with:
  * - CredentialRenderer for template-based display (UF-01)
- * - PENDING status support with "Anchoring In Progress" banner (UF-04)
- * - Status banner (SECURED / PENDING / REVOKED / EXPIRED)
- * - Cryptographic proof (fingerprint, network receipt, block height)
+ * - PENDING / SUBMITTED pre-secured banners with amber clock + status-specific copy (UF-04, SCRUM-952)
+ * - Status banner (PENDING / SUBMITTED / SECURED / REVOKED / EXPIRED) — SUBMITTED ≠ SECURED
+ * - Cryptographic proof (fingerprint, network receipt, block height) — SECURED only
  * - Lifecycle timeline
  *
  * Shows redacted information - no sensitive data exposed.
  *
- * @see P6-TS-01, P6-TS-04, UF-01, UF-04
+ * @see P6-TS-01, P6-TS-04, UF-01, UF-04, SCRUM-952
  */
 
 import { useState, useEffect } from 'react';
@@ -239,8 +239,11 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
 
-  // Calculate time since creation for PENDING anchors
-  const pendingSince = isPending && data.created_at
+  // Calculate time since creation for not-yet-secured anchors. PENDING +
+  // SUBMITTED both render the "awaiting confirmation" hero so reuse that
+  // boolean here (SCRUM-952 split SUBMITTED into a distinct UI state but
+  // the time-since copy is the same for both).
+  const pendingSince = isAwaitingConfirmation && data.created_at
     ? formatTimeSince(data.created_at)
     : null;
   const heroTitle = getHeroTitle(data.status, securedAt, formatDate);
@@ -286,6 +289,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           }`}>
             {isAwaitingConfirmation ? (
               <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
+            ) : isSubmitted ? (
+              <Clock className="h-8 w-8 text-amber-500" />
             ) : isExpired ? (
               <Clock className="h-8 w-8 text-amber-500" />
             ) : isRevoked ? (

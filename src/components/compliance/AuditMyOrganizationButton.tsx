@@ -153,7 +153,13 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
             data-testid="audit-trigger"
             aria-label={AUDIT_MY_ORG_LABELS.TITLE}
           >
-            {isRunning && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+            {isRunning && (
+              <Loader2
+                className="mr-2 h-4 w-4 animate-spin"
+                aria-hidden="true"
+                data-testid="audit-trigger-spinner"
+              />
+            )}
             {isRunning ? AUDIT_MY_ORG_LABELS.RUNNING : AUDIT_MY_ORG_LABELS.CTA}
           </Button>
         )}

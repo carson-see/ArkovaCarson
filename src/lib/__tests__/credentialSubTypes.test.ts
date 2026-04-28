@@ -113,3 +113,51 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
     }
   });
 });
+
+describe('formatCredentialSubType (SCRUM-952)', () => {
+  it('returns "—" for nullish input', () => {
+    expect(formatCredentialSubType(null)).toBe('—');
+    expect(formatCredentialSubType(undefined)).toBe('—');
+    expect(formatCredentialSubType('')).toBe('—');
+  });
+
+  // Table-driven assertions — collapses what was 6 it() blocks of repeated
+  // `expect(formatCredentialSubType(X)).toBe(Y)` calls into a single it.each
+  // so SonarCloud CPD doesn't flag the structurally-identical lines as
+  // duplicated code.
+  it.each<[string, string, string]>([
+    ['returns "Unclassified" for unclassified sentinel', 'unclassified', 'Unclassified'],
+    ['title-cases professional_certification',           'professional_certification', 'Professional Certification'],
+    ['title-cases completion_certificate',               'completion_certificate', 'Completion Certificate'],
+    ['title-cases bachelor',                             'bachelor', 'Bachelor'],
+    ['title-cases doctorate',                            'doctorate', 'Doctorate'],
+    ['preserves nursing_rn → Nursing RN',                'nursing_rn', 'Nursing RN'],
+    ['preserves medical_md → Medical MD',                'medical_md', 'Medical MD'],
+    ['preserves engineering_pe → Engineering PE',        'engineering_pe', 'Engineering PE'],
+    ['preserves professional_jd → Professional JD',      'professional_jd', 'Professional JD'],
+    ['preserves cpa → CPA',                              'cpa', 'CPA'],
+    ['preserves cdl → CDL',                              'cdl', 'CDL'],
+    ['SEC filing 10k → 10-K',                            '10k', '10-K'],
+    ['SEC filing 10q → 10-Q',                            '10q', '10-Q'],
+    ['SEC filing 8k → 8-K',                              '8k', '8-K'],
+    ['SEC filing def14a → DEF 14A',                      'def14a', 'DEF 14A'],
+    ['SEC filing s1 → S-1',                              's1', 'S-1'],
+    ['acronym va_disability → VA Disability',            'va_disability', 'VA Disability'],
+    ['acronym finra_broker → FINRA Broker',              'finra_broker', 'FINRA Broker'],
+    ['acronym npi_registration → NPI Registration',      'npi_registration', 'NPI Registration'],
+    ['acronym dea_registration → DEA Registration',      'dea_registration', 'DEA Registration'],
+    ['fallback weird_made_up_subtype',                   'weird_made_up_subtype', 'Weird Made Up Subtype'],
+  ])('%s', (_label, input, expected) => {
+    expect(formatCredentialSubType(input)).toBe(expected);
+  });
+
+  it('every subtype in CREDENTIAL_SUB_TYPES produces a non-empty, non-"Other" label', () => {
+    for (const subTypes of Object.values(CREDENTIAL_SUB_TYPES)) {
+      for (const sub of subTypes) {
+        const label = formatCredentialSubType(sub);
+        expect(label, `subtype ${sub}`).not.toBe('');
+        expect(label, `subtype ${sub}`).not.toBe('Other');
+      }
+    }
+  });
+});

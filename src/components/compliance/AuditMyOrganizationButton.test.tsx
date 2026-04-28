@@ -69,7 +69,7 @@ describe('NCA-07 AuditMyOrganizationButton', () => {
     expect(trigger).toBeDisabled();
     expect(trigger).toHaveAttribute('aria-busy', 'true');
     expect(screen.getByTestId('audit-trigger-spinner')).toBeInTheDocument();
-    expect(trigger.textContent).toContain('Running compliance audit...');
+    expect(trigger.textContent).toContain('Running compliance audit…');
 
     resolveFetch({
       ok: true,

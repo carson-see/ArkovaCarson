@@ -16,7 +16,18 @@ function matches(term: string, haystack: string): boolean {
 }
 
 function findTerm(substring: string): string {
-  const term = FORBIDDEN_TERMS.find((t) => t.includes(substring));
+  // Multiple FORBIDDEN_TERMS entries can share a substring (e.g. both
+  // `(?<![-\w])hash(?![-\w])` and `(?<![-\w])block hash(?![-\w])` contain
+  // "hash"). Prefer the entry whose stripped-inner-token equals the
+  // substring exactly so callers asking for "hash" don't get the more
+  // specific "block hash" pattern.
+  const stripBoundaries = (t: string): string =>
+    t
+      .replace(/\(\?<!\[[^\]]+\]\)/g, '')
+      .replace(/\(\?!\[[^\]]+\]\)/g, '')
+      .trim();
+  const exactToken = FORBIDDEN_TERMS.find((t) => stripBoundaries(t) === substring);
+  const term = exactToken ?? FORBIDDEN_TERMS.find((t) => t.includes(substring));
   if (!term) throw new Error(`No FORBIDDEN_TERMS entry contains "${substring}"`);
   return term;
 }
