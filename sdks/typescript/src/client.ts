@@ -17,17 +17,36 @@
  * ```
  */
 
-import type { AnchorReceipt, VerificationResult, ArkovaConfig } from './types.js';
+import type {
+  AnchorReceipt,
+  ArkovaConfig,
+  BatchJob,
+  BatchVerificationResult,
+  VerificationResult,
+  WaitForBatchJobOptions,
+} from './types.js';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
 
+/**
+ * Max public IDs per synchronous batch verify request.
+ * The server returns sync results (200) at this size or below; above this
+ * and up to VERIFY_BATCH_MAX_SIZE the server returns 202 with a job_id.
+ */
+export const VERIFY_BATCH_SYNC_LIMIT = 20;
+
+/** Max public IDs the server accepts in a single batch (sync or async). */
+export const VERIFY_BATCH_MAX_SIZE = 100;
+
 export class ArkovaError extends Error {
   statusCode?: number;
+  code?: string;
 
-  constructor(message: string, statusCode?: number) {
+  constructor(message: string, statusCode?: number, code?: string) {
     super(message);
     this.name = 'ArkovaError';
     this.statusCode = statusCode;
+    this.code = code;
   }
 }
 
@@ -136,6 +155,142 @@ export class ArkovaClient {
     }
 
     return (await response.json()) as VerificationResult;
+  }
+
+  /**
+   * Verify multiple credentials synchronously. Accepts up to 20 public IDs.
+   * For 21–100 IDs, use {@link verifyBatchAsync} which submits a job.
+   */
+  async verifyBatch(publicIds: string[]): Promise<BatchVerificationResult[]> {
+    if (publicIds.length === 0) return [];
+
+    if (publicIds.length > VERIFY_BATCH_SYNC_LIMIT) {
+      throw new ArkovaError(
+        `verifyBatch accepts at most ${VERIFY_BATCH_SYNC_LIMIT} public IDs ` +
+          `per synchronous request. Got ${publicIds.length}. ` +
+          `Use verifyBatchAsync for larger batches.`,
+        400,
+        'batch_too_large',
+      );
+    }
+
+    const response = await this.fetch('/api/v1/verify/batch', {
+      method: 'POST',
+      body: JSON.stringify({ public_ids: publicIds }),
+    });
+
+    if (!response.ok) {
+      const error = await this.parseError(response);
+      throw new ArkovaError(error, response.status);
+    }
+
+    const data = (await response.json()) as { results?: BatchVerificationResult[] };
+    return data.results ?? [];
+  }
+
+  /**
+   * Submit an async batch verification job for 21–100 public IDs.
+   *
+   * The server returns 202 with a job_id; poll with {@link getBatchJob}
+   * or block on {@link waitForBatchJob}. For ≤20 IDs use {@link verifyBatch}
+   * — the server returns sync results at that size and will not create a job.
+   */
+  async verifyBatchAsync(publicIds: string[]): Promise<BatchJob> {
+    if (publicIds.length <= VERIFY_BATCH_SYNC_LIMIT) {
+      throw new ArkovaError(
+        `verifyBatchAsync requires more than ${VERIFY_BATCH_SYNC_LIMIT} ` +
+          `public IDs (the server returns sync results at or below that size). ` +
+          `Use verifyBatch for ≤${VERIFY_BATCH_SYNC_LIMIT} IDs.`,
+        400,
+        'batch_too_small',
+      );
+    }
+    if (publicIds.length > VERIFY_BATCH_MAX_SIZE) {
+      throw new ArkovaError(
+        `verifyBatchAsync accepts at most ${VERIFY_BATCH_MAX_SIZE} public IDs ` +
+          `per request. Got ${publicIds.length}.`,
+        400,
+        'batch_too_large',
+      );
+    }
+
+    const response = await this.fetch('/api/v1/verify/batch', {
+      method: 'POST',
+      body: JSON.stringify({ public_ids: publicIds }),
+    });
+
+    if (!response.ok) {
+      const error = await this.parseError(response);
+      throw new ArkovaError(error, response.status);
+    }
+
+    const data = (await response.json()) as {
+      job_id?: string;
+      total?: number;
+      expires_at?: string;
+    };
+
+    if (!data.job_id) {
+      throw new ArkovaError(
+        'Server did not return a job_id for async batch submission',
+        500,
+        'unexpected_response',
+      );
+    }
+
+    return {
+      job_id: data.job_id,
+      status: 'submitted',
+      total: data.total ?? publicIds.length,
+      created_at: '',
+      expires_at: data.expires_at ?? '',
+    };
+  }
+
+  /**
+   * Fetch the current status (and results, if complete) of a batch job.
+   */
+  async getBatchJob(jobId: string): Promise<BatchJob> {
+    const response = await this.fetch(`/api/v1/jobs/${encodeURIComponent(jobId)}`);
+
+    if (!response.ok) {
+      const error = await this.parseError(response);
+      throw new ArkovaError(error, response.status);
+    }
+
+    return (await response.json()) as BatchJob;
+  }
+
+  /**
+   * Block until a batch job reaches a terminal state (complete or failed).
+   *
+   * Throws ArkovaError with code 'batch_job_timeout' if the timeout is
+   * reached before the job finishes.
+   */
+  async waitForBatchJob(
+    jobId: string,
+    options?: WaitForBatchJobOptions,
+  ): Promise<BatchJob> {
+    const timeoutMs = options?.timeoutMs ?? 300_000;
+    const pollIntervalMs = options?.pollIntervalMs ?? 2_000;
+    const deadline = Date.now() + timeoutMs;
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const job = await this.getBatchJob(jobId);
+      if (job.status === 'complete' || job.status === 'failed') {
+        return job;
+      }
+      if (Date.now() >= deadline) {
+        throw new ArkovaError(
+          `Batch job ${jobId} did not finish within ${timeoutMs}ms ` +
+            `(last status: ${job.status})`,
+          408,
+          'batch_job_timeout',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
   }
 
   private async fetch(path: string, init?: RequestInit): Promise<Response> {

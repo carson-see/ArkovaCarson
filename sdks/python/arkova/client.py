@@ -32,6 +32,7 @@ Usage:
 """
 
 import hashlib
+import time
 from typing import Dict, List, Optional, Union
 from urllib.parse import quote
 
@@ -40,6 +41,8 @@ import httpx
 from arkova.types import (
     AnchorProof,
     AnchorReceipt,
+    BatchJob,
+    BatchVerificationResult,
     NessieCitation,
     NessieContextResult,
     NessieQueryResult,
@@ -54,7 +57,14 @@ from arkova.types import (
 DEFAULT_BASE_URL = "https://arkova-worker-270018525501.us-central1.run.app"
 
 VERIFY_BATCH_SYNC_LIMIT = 20
-"""Max public IDs per synchronous batch verify request."""
+"""Max public IDs per synchronous batch verify request.
+
+Server returns sync results (200 OK) at this size or below; above this and up
+to VERIFY_BATCH_MAX_SIZE the server returns 202 with a job_id for polling.
+"""
+
+VERIFY_BATCH_MAX_SIZE = 100
+"""Max public IDs the server accepts in a single batch (sync or async)."""
 
 
 class ArkovaError(Exception):
@@ -366,6 +376,107 @@ class ArkovaClient:
 
         return [_map_verification_result(r) for r in data.get("results", [])]
 
+    def verify_batch_async(self, public_ids: List[str]) -> BatchJob:
+        """Submit an async batch verification job for 21–100 public IDs.
+
+        The server returns 202 with a job_id; poll with ``get_batch_job()``
+        or block on ``wait_for_batch_job()``. For ≤20 IDs use ``verify_batch()``
+        — the server returns sync results at that size and will not create a job.
+
+        Args:
+            public_ids: 21 to 100 ARK-XXXX public identifiers.
+
+        Returns:
+            BatchJob with status='submitted' (no results yet).
+
+        Raises:
+            ArkovaError: If count is outside (VERIFY_BATCH_SYNC_LIMIT, VERIFY_BATCH_MAX_SIZE].
+        """
+        if len(public_ids) <= VERIFY_BATCH_SYNC_LIMIT:
+            raise ArkovaError(
+                f"verify_batch_async requires more than {VERIFY_BATCH_SYNC_LIMIT} "
+                f"public IDs (the server returns sync results at or below that size). "
+                f"Use verify_batch() for ≤{VERIFY_BATCH_SYNC_LIMIT} IDs.",
+                status_code=400,
+                code="batch_too_small",
+            )
+        if len(public_ids) > VERIFY_BATCH_MAX_SIZE:
+            raise ArkovaError(
+                f"verify_batch_async accepts at most {VERIFY_BATCH_MAX_SIZE} "
+                f"public IDs per request. Got {len(public_ids)}.",
+                status_code=400,
+                code="batch_too_large",
+            )
+
+        data = self._request(
+            "POST",
+            "/api/v1/verify/batch",
+            json={"public_ids": public_ids},
+        )
+
+        if "job_id" not in data:
+            raise ArkovaError(
+                "Server did not return a job_id for async batch submission",
+                status_code=500,
+                code="unexpected_response",
+            )
+
+        return BatchJob(
+            job_id=data["job_id"],
+            status="submitted",
+            total=data.get("total", len(public_ids)),
+            created_at="",
+            expires_at=data.get("expires_at", ""),
+        )
+
+    def get_batch_job(self, job_id: str) -> BatchJob:
+        """Fetch the current status (and results, if complete) of a batch job.
+
+        Args:
+            job_id: ID returned by ``verify_batch_async()``.
+
+        Returns:
+            BatchJob with current status. ``results`` is populated when
+            ``status == 'complete'``; ``error_message`` when ``'failed'``.
+        """
+        data = self._request(
+            "GET", f"/api/v1/jobs/{quote(job_id, safe='')}"
+        )
+        return _map_batch_job(data)
+
+    def wait_for_batch_job(
+        self,
+        job_id: str,
+        timeout: float = 300.0,
+        poll_interval: float = 2.0,
+    ) -> BatchJob:
+        """Block until a batch job reaches a terminal state (complete or failed).
+
+        Args:
+            job_id: ID returned by ``verify_batch_async()``.
+            timeout: Max seconds to wait. Defaults to 300 (5 min).
+            poll_interval: Seconds between polls. Defaults to 2.0.
+
+        Returns:
+            BatchJob in 'complete' or 'failed' status.
+
+        Raises:
+            ArkovaError: If the timeout is reached before the job finishes.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            job = self.get_batch_job(job_id)
+            if job.status in ("complete", "failed"):
+                return job
+            if time.monotonic() >= deadline:
+                raise ArkovaError(
+                    f"Batch job {job_id} did not finish within {timeout}s "
+                    f"(last status: {job.status})",
+                    status_code=408,
+                    code="batch_job_timeout",
+                )
+            time.sleep(poll_interval)
+
     # ── Nessie Intelligence ───────────────────────────────────────────
 
     def query(self, q: str, limit: Optional[int] = None) -> NessieQueryResult:
@@ -466,6 +577,43 @@ def _map_verification_result(data: Dict) -> VerificationResult:
         issued_date=data.get("issued_date"),
         expiry_date=data.get("expiry_date"),
         error=data.get("error"),
+    )
+
+
+def _map_batch_verification_result(data: Dict) -> BatchVerificationResult:
+    return BatchVerificationResult(
+        verified=data.get("verified", False),
+        status=data.get("status"),
+        issuer_name=data.get("issuer_name"),
+        credential_type=data.get("credential_type"),
+        anchor_timestamp=data.get("anchor_timestamp"),
+        bitcoin_block=data.get("bitcoin_block"),
+        network_receipt_id=data.get("network_receipt_id"),
+        record_uri=data.get("record_uri"),
+        explorer_url=data.get("explorer_url"),
+        description=data.get("description"),
+        issued_date=data.get("issued_date"),
+        expiry_date=data.get("expiry_date"),
+        error=data.get("error"),
+        public_id=data.get("public_id", ""),
+    )
+
+
+def _map_batch_job(data: Dict) -> BatchJob:
+    raw_results = data.get("results")
+    results: Optional[List[BatchVerificationResult]] = None
+    if isinstance(raw_results, list):
+        results = [_map_batch_verification_result(r) for r in raw_results]
+
+    return BatchJob(
+        job_id=data.get("job_id", data.get("id", "")),
+        status=data.get("status", ""),
+        total=data.get("total", 0),
+        created_at=data.get("created_at", ""),
+        expires_at=data.get("expires_at", ""),
+        completed_at=data.get("completed_at"),
+        results=results,
+        error_message=data.get("error_message"),
     )
 
 
