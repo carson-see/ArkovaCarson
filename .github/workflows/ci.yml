@@ -89,6 +89,12 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-worker-env-adhoc.ts
 
+      - name: Block tracked filenames with spaces (SCRUM-1294)
+        run: npx tsx scripts/ci/check-filename-spaces.ts
+
+      - name: Block migration prefix collisions (SCRUM-1287)
+        run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
+
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9

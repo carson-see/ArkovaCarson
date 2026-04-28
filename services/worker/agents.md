@@ -144,9 +144,21 @@ After GetBlock partial restoration (revision `arkova-worker-00398-p77`, env-var-
 | 2026-04-12 | NMT-09–16 | **Nessie continuation stories.** Eval regression pipeline (baseline-metrics.ts, 18 tests). Golden dataset phase 14 (120 entries, 14 tests). Domain router expanded with professional + identity groups (11 tests). Scripts: runpod-deploy-v5.ts, nessie-intelligence-distill-v2.ts, nessie-v7-export.ts. npm script: eval:regression. |
 | 2026-03-12 | INFRA-01 | **Zero Trust Docker transformation.** Dockerfile converted to multi-process (Express + cloudflared sidecar). `entrypoint.sh` process manager created. `tunnel-config.yml` reference spec. `config.ts` extended with `cloudflareTunnelToken` + `sentryDsn`. `scripts/deploy-tunnel.sh` deployment script. NO ports exposed — all ingress via Cloudflare Tunnel. ADR-002: `docs/confluence/15_zero_trust_edge_architecture.md`. |
 
-## Test Coverage Status (Final — HARDENING-5)
+## Test Coverage Status
 
-**1,043 worker tests across 67 test files. All pass 80%+ per-file thresholds.**
+**4,682 worker tests across 363 test files (refreshed 2026-04-28).** Per-file
+80%+ thresholds enforced via `services/worker/vitest.config.ts`; coverage
+monotonic enforcement via `scripts/ci/check-coverage-monotonic.ts` blocks any
+PR that lowers a per-file threshold without the `coverage-drop-allowed`
+label + a linked `coverage-restoration` Jira ticket.
+
+The HARDENING-5 snapshot below (1,043 tests / 67 files) is the historical
+baseline from 2026-03-10; left in place as a sprint artifact, not as
+current state.
+
+### HARDENING-5 historical snapshot (2026-03-10)
+
+**1,043 worker tests across 67 test files (HARDENING-5 close-out, since superseded by ongoing test growth).**
 
 | File | Test File | Tests | Coverage | Sprint |
 |------|-----------|-------|----------|--------|
