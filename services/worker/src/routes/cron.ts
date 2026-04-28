@@ -1143,15 +1143,58 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
   }
 });
 
-// ─── Materialized View Refresh ───
+// ─── Pipeline dashboard cache refresh ───
+//
+// 2026-04-28 hotfix: this endpoint previously called only
+// `refresh_stats_materialized_views`, which refreshed two materialized
+// views nothing reads (`mv_anchor_status_counts`,
+// `mv_public_records_source_counts`). The actual dashboard reads from
+// the `pipeline_dashboard_cache` table populated by
+// `refresh_pipeline_dashboard_cache()` — which NOTHING was calling.
+// Result: every cache row in the dashboard had an `updated_at` of
+// 2026-04-26 (last manual run) and `pipeline_stats.embedded_records`
+// stayed at the -1 sentinel from a stale 1s-budget timeout.
+//
+// Now we drive the dashboard cache (the user-visible one) AND keep
+// the legacy materialized views fresh so anything still pointing at
+// them keeps working. Each call is wrapped so a failure in one
+// pathway doesn't kill the other.
 cronRouter.post('/refresh-stats', async (_req, res) => {
+  const errors: Array<{ source: string; message: string }> = [];
+
+  try {
+    await callRpc(db, 'refresh_pipeline_dashboard_cache');
+  } catch (error) {
+    logger.error({ error }, 'refresh_pipeline_dashboard_cache failed');
+    errors.push({
+      source: 'pipeline_dashboard_cache',
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   try {
     await callRpc(db, 'refresh_stats_materialized_views');
-    res.json({ status: 'refreshed' });
   } catch (error) {
-    logger.error({ error }, 'Stats materialized view refresh failed');
-    res.status(500).json({ error: 'Processing failed' });
+    logger.warn({ error }, 'refresh_stats_materialized_views failed (non-fatal)');
+    errors.push({
+      source: 'stats_materialized_views',
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
+
+  if (errors.length === 2) {
+    // Both failed — surface 500 so Cloud Scheduler retries.
+    res.status(500).json({ error: 'All refresh paths failed', errors });
+    return;
+  }
+
+  res.json({
+    status: 'refreshed',
+    refreshed: ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
+      (s) => !errors.some((e) => e.source === s),
+    ),
+    errors,
+  });
 });
 
 // ─── Calibration Refit (GME7.3 — SCRUM-856) ───

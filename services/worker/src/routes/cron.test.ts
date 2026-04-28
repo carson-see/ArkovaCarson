@@ -1236,19 +1236,41 @@ describe('cron routes', () => {
   // ═══════════════════════════════════════
 
   describe('POST /refresh-stats', () => {
-    it('returns refreshed status', async () => {
-      (callRpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: null });
+    it('refreshes BOTH pipeline_dashboard_cache AND legacy mat views', async () => {
+      // Hotfix 2026-04-28: handler used to call only
+      // refresh_stats_materialized_views, leaving pipeline_dashboard_cache
+      // stale (the actual table the dashboard reads). Now drives both.
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock.mockResolvedValue({ data: null, error: null });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({ status: 'refreshed' });
+      expect(res.body.status).toBe('refreshed');
+      expect(res.body.errors).toEqual([]);
+      // First call must be the dashboard cache (the user-visible one).
+      expect(callRpcMock.mock.calls[0]?.[1]).toBe('refresh_pipeline_dashboard_cache');
+      expect(callRpcMock.mock.calls[1]?.[1]).toBe('refresh_stats_materialized_views');
     });
 
-    it('returns 500 on RPC failure', async () => {
-      (callRpc as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('fail'));
+    it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockRejectedValueOnce(new Error('mat-view fail'));
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(200);
+      expect(res.body.errors).toHaveLength(1);
+      expect(res.body.errors[0].source).toBe('stats_materialized_views');
+    });
+
+    it('returns 500 only when BOTH refresh paths fail', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock.mockRejectedValue(new Error('fail'));
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(500);
+      expect(res.body.errors).toHaveLength(2);
     });
   });
 
