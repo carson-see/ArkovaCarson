@@ -27,28 +27,30 @@ test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
       });
     });
 
-    await orgAdminPage.goto('/pipeline');
+    await orgAdminPage.goto('/admin/pipeline');
 
     // Page must NOT silently render a "0 records / 0 anchored / 0 embedded"
-    // tile grid. It must surface the failure in a banner.
+    // tile grid. It must surface the failure in a banner — match a banner-
+    // style assertion (role=alert) so we don't false-positive on stray copy.
     await expect(
-      orgAdminPage.getByText(/Pipeline stats fetch failed/i)
-        .or(orgAdminPage.getByText(/unable to load/i))
-        .or(orgAdminPage.getByText(/error/i))
-        .or(orgAdminPage.getByText(/failed/i)),
+      orgAdminPage.getByRole('alert')
+        .filter({ hasText: /pipeline stats|unable to load/i }),
     ).toBeVisible({ timeout: 15_000 });
   });
 });
 
 test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
   test('treasury hook surfaces error within ~8s, not 60s', async ({ orgAdminPage }) => {
-    // Hang the treasury balance endpoint indefinitely so the hook hits its
-    // SCRUM-1260 8s timeout. Without the timeout the previous behaviour was
-    // to spin a skeleton until the worker's 60s wall-clock cap.
-    await orgAdminPage.route(WORKER_TREASURY_PATTERN, async () => {
-      // Never resolve — the hook's AbortController fires at 8s.
-      await new Promise<void>(() => {
-        // intentionally hung
+    // Mock the hook's 8s timeout deterministically: respond with 504 after
+    // 8.2s so the AbortController/error path runs without hanging the route
+    // handler indefinitely (the previous `new Promise(() => {})` leaked the
+    // request and produced "Target page closed" on teardown).
+    await orgAdminPage.route(WORKER_TREASURY_PATTERN, async (route) => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 8_200));
+      await route.fulfill({
+        status: 504,
+        contentType: 'application/json',
+        body: '{"error":"timeout"}',
       });
     });
 
@@ -56,10 +58,8 @@ test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
     await orgAdminPage.goto('/admin/treasury');
 
     await expect(
-      orgAdminPage.getByText(/treasury (?:balance )?(?:un)?available/i)
-        .or(orgAdminPage.getByText(/stale/i))
-        .or(orgAdminPage.getByText(/error/i))
-        .or(orgAdminPage.getByText(/unable to/i)),
+      orgAdminPage.getByRole('alert')
+        .filter({ hasText: /treasury|stale|unavailable|unable to/i }),
     ).toBeVisible({ timeout: 12_000 });
 
     // Soft assertion: the error/stale state should appear well under the
@@ -85,8 +85,14 @@ test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
 
     await orgAdminPage.goto('/admin/treasury');
 
-    // Give the page time to render + (NOT) make fallback calls.
-    await orgAdminPage.waitForTimeout(3_000);
+    // Wait deterministically for the page's failure state to render — at
+    // that point all the synchronous data fetches in PipelineAdminPage /
+    // TreasuryBalance hooks have run, so any mempool.space fallback would
+    // already have been issued. Replaces an arbitrary 3s sleep
+    // (Playwright's documented anti-pattern).
+    await expect(
+      orgAdminPage.getByRole('alert'),
+    ).toBeVisible({ timeout: 12_000 });
 
     expect(mempoolHits).toBe(0);
   });
