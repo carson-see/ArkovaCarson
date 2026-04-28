@@ -45,12 +45,12 @@ describe('ARK-102 constants — do not change without design review', () => {
     expect(MIN_BATCH_SIZE).toBe(1);
   });
 
-  it('MIN_BATCH_THRESHOLD is pinned to 5', () => {
-    expect(MIN_BATCH_THRESHOLD).toBe(5);
+  it('MIN_BATCH_THRESHOLD is pinned to 3,000 (size floor for economic UTXO + fee)', () => {
+    expect(MIN_BATCH_THRESHOLD).toBe(3_000);
   });
 
-  it('MAX_ANCHOR_AGE_MS is pinned to 10 minutes', () => {
-    expect(MAX_ANCHOR_AGE_MS).toBe(10 * 60 * 1000);
+  it('MAX_ANCHOR_AGE_MS is pinned to 3 hours (age ceiling on PENDING)', () => {
+    expect(MAX_ANCHOR_AGE_MS).toBe(3 * 60 * 60 * 1000);
   });
 
   it('ABSOLUTE_FEE_CAP_SAT_PER_VB is pinned to 200', () => {
@@ -83,9 +83,18 @@ describe('Trigger B — age-based fire', () => {
     ).toBe(false);
   });
 
-  it('fires once pending reaches MIN_BATCH_THRESHOLD regardless of age', () => {
+  it('does NOT fire just because pendingCount reaches MIN_BATCH_THRESHOLD — age must also be ≥ MAX_ANCHOR_AGE_MS', () => {
+    // Operator rule: 3,000 pending starts a 3-hour clock; only the clock
+    // (or the BATCH_SIZE cap via Trigger A) fires the TX. Size alone is not
+    // a fire condition.
     expect(
       triggerB_shouldFireOnAge({ pendingCount: MIN_BATCH_THRESHOLD, oldestPendingAgeMs: 0 }),
+    ).toBe(false);
+    expect(
+      triggerB_shouldFireOnAge({
+        pendingCount: MIN_BATCH_THRESHOLD,
+        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS,
+      }),
     ).toBe(true);
   });
 
@@ -172,14 +181,14 @@ describe('Cross-trigger invariants', () => {
     expect(MIN_BATCH_THRESHOLD).toBeLessThanOrEqual(BATCH_SIZE);
   });
 
-  it('at fresh age + threshold met, Trigger B fires and Trigger A may not', () => {
-    // This is the steady-state "normal throughput" path — Trigger A waits
-    // until we have 10K; Trigger B will ship earlier if we accumulate ≥5
-    // with a fresh backlog.
+  it('at fresh age + threshold met, NEITHER Trigger A nor Trigger B fires (size alone is not a fire condition)', () => {
+    // Operator rule: hitting MIN_BATCH_THRESHOLD starts the 3-hour clock
+    // but does NOT fire a TX. Trigger A waits for BATCH_SIZE; Trigger B
+    // waits for MAX_ANCHOR_AGE_MS. Either condition independently fires.
     expect(triggerA_shouldFireOnSize(MIN_BATCH_THRESHOLD)).toBe(false);
     expect(
       triggerB_shouldFireOnAge({ pendingCount: MIN_BATCH_THRESHOLD, oldestPendingAgeMs: 0 }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('fee ceiling is never negative', () => {

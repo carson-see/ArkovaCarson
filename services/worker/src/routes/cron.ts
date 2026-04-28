@@ -225,9 +225,11 @@ cronRouter.post('/process-anchors', async (_req, res) => {
   }
 });
 
-cronRouter.post('/batch-anchors', async (_req, res) => {
+cronRouter.post('/batch-anchors', async (req, res) => {
   try {
-    const result = await processBatchAnchors();
+    // ?force=true bypasses the size/age trigger (daily 3am EST sweep).
+    const force = req.query.force === 'true' || req.query.force === '1';
+    const result = await processBatchAnchors({ force });
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Batch anchor processing failed');
