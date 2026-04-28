@@ -899,7 +899,11 @@ describe('handleSubscriptionUpdated', () => {
     );
   });
 
-  it('handles unresolvable price (sets plan_id to null)', async () => {
+  it('handles unresolvable price (skips plan_id write to preserve NOT NULL invariant)', async () => {
+    // subscriptions.plan_id is NON-NULL in schema. When the Stripe price
+    // is unrecognised (newPlanId === null), we must NOT write the column
+    // — leave the existing plan_id intact rather than triggering a
+    // not-null violation at UPDATE time. Coderabbit P0 finding on PR #623.
     const event = makeStripeEvent('customer.subscription.updated', {
       id: 'sub_test_001',
       customer: 'cus_test_001',
@@ -912,10 +916,13 @@ describe('handleSubscriptionUpdated', () => {
 
     await handleSubscriptionUpdated(event);
 
-    // Should update with plan_id explicitly set to null
-    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
-      expect.objectContaining({ plan_id: null }),
-    );
+    // The update fires (status/cancel still flow through) but plan_id
+    // must be omitted from the payload — not written as null.
+    expect(subscriptionsUpdate.update).toHaveBeenCalled();
+    const updatePayload = subscriptionsUpdate.update.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(updatePayload).not.toHaveProperty('plan_id');
+    // Status/cancel still applied so the rest of the handler still works.
+    expect(updatePayload).toMatchObject({ status: 'active', cancel_at_period_end: false });
   });
 
   // SCRUM-1239 (AUDIT-0424-14): the handler must refuse to UPDATE when no

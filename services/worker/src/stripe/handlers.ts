@@ -473,11 +473,14 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     );
   }
 
-  // Always update plan_id when we resolved a price (even if null — clears stale value).
-  // The DB column is nullable; supabase TablesUpdate types `plan_id?: string | undefined`,
-  // so coerce null → undefined will skip the column. Use a typed `as` to keep the null write.
-  if (currentPriceId) {
-    (updatePayload as { plan_id?: string | null }).plan_id = newPlanId;
+  // subscriptions.plan_id is NON-NULL in the schema (TablesUpdate types
+  // `plan_id?: string`). Only write the column when we resolved a real
+  // priceId AND mapped it to a known plan. If the price is unrecognised
+  // (newPlanId === null), leave the existing plan_id intact rather than
+  // forcing a NOT NULL violation at UPDATE time. Operator-visible via the
+  // "Unrecognized Stripe priceId" warn already emitted upstream.
+  if (currentPriceId && newPlanId) {
+    updatePayload.plan_id = newPlanId;
   }
 
   const { error } = await db
