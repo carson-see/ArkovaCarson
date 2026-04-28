@@ -24,7 +24,7 @@
  * docs/runbooks/v1-uuid-leak-deprecation.md.
  */
 
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 const ROOT = new URL('../../', import.meta.url).pathname;
@@ -41,6 +41,17 @@ const BANNED_KEYS = [
   'actor_id',
 ];
 
+// Sanitized response builders that are known-safe to pass directly to
+// res.json(). Promote to a constant so the list can grow as v2 work lands
+// without buried inline literal surprises.
+const SANITIZED_RESPONSE_IDENTS = new Set([
+  'response',
+  'payload',
+  'sanitized',
+  'publicView',
+  'errorResponse',
+]);
+
 interface Finding {
   file: string;
   line: number;
@@ -49,6 +60,7 @@ interface Finding {
 }
 
 function walkTs(dir: string): string[] {
+  if (!existsSync(dir)) return []; // fail soft if v1 dir was renamed/moved
   const out: string[] = [];
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -72,16 +84,28 @@ function scanFile(file: string): Finding[] {
     const line = lines[i];
     if (line.includes('SCRUM-1271-EXEMPT')) continue;
 
-    // res.json({ ...row, ... }) where row is a DB row with banned keys
-    const spreadMatch = /res\.(json|status\(\d+\)\.json)\(\s*\{\s*\.\.\.(\w+)/.exec(line);
+    // res.json({ ...row, ... }) where the spread is followed by an explicit
+    // banned key. Without checking the surrounding object literal we'd flag
+    // every res.json({...x}) regardless of whether x even reaches a banned
+    // shape, which is what made the v1 lint noisy in the first place.
+    const spreadMatch = /res\.(?:json|status\(\d+\)\.json)\(\s*\{([^}]*)\}/.exec(line);
     if (spreadMatch) {
-      findings.push({
-        file: relative(ROOT, file),
-        line: i + 1,
-        match: line.trim(),
-        reason: `spreads "${spreadMatch[2]}" into v1 response — likely leaks DB UUIDs (id/org_id/...)`,
-      });
-      continue;
+      const objectInterior = spreadMatch[1];
+      const spread = /\.\.\.(\w+)/.exec(objectInterior);
+      const mentionsBannedKey = BANNED_KEYS.some((k) =>
+        new RegExp(`\\b${k}\\b`).test(objectInterior),
+      );
+      if (spread && mentionsBannedKey) {
+        findings.push({
+          file: relative(ROOT, file),
+          line: i + 1,
+          match: line.trim(),
+          reason: `spreads "${spread[1]}" alongside ${BANNED_KEYS.find((k) =>
+            new RegExp(`\\b${k}\\b`).test(objectInterior),
+          )} — likely leaks DB UUID`,
+        });
+        continue;
+      }
     }
 
     // res.json(row) or res.status(N).json(row) where row is a single identifier
@@ -89,9 +113,7 @@ function scanFile(file: string): Finding[] {
     if (rowMatch) {
       const ident = rowMatch[1];
       // false-positive filter: well-known sanitized response builders
-      if (['response', 'payload', 'sanitized', 'publicView', 'errorResponse'].includes(ident)) {
-        continue;
-      }
+      if (SANITIZED_RESPONSE_IDENTS.has(ident)) continue;
       findings.push({
         file: relative(ROOT, file),
         line: i + 1,

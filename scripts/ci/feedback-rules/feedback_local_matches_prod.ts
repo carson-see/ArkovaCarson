@@ -44,9 +44,18 @@ function localTableSet(): Set<string> {
       .filter((line) => !/^\s*--/.test(line))
       .join('\n')
       .replace(/\/\*[\s\S]*?\*\//g, '');
-    const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?([a-z_][a-z0-9_]*)"?/gi;
+    // Captures schema (group 1) + table (group 2). When schema is anything
+    // other than `public` (or absent), skip — this rule scans the public.* set.
+    // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
+    // match `auth` as the table name and false-flag a non-existent drift.
+    const createRe =
+      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-z_][a-z0-9_]*)\.)?"?([a-z_][a-z0-9_]*)"?/gi;
     let m: RegExpExecArray | null;
-    while ((m = createRe.exec(sql)) !== null) tables.add(m[1].toLowerCase());
+    while ((m = createRe.exec(sql)) !== null) {
+      const schema = (m[1] ?? 'public').toLowerCase();
+      if (schema !== 'public') continue;
+      tables.add(m[2].toLowerCase());
+    }
   }
   return tables;
 }
@@ -59,31 +68,34 @@ interface SnapshotShape {
   };
 }
 
-function prodTableSet(): Set<string> | null {
+interface ParsedSnapshot {
+  prod: Set<string>;
+  drift: { migrationsOnly: Set<string>; prodOnly: Set<string> };
+}
+
+// Read + parse the snapshot file once and return both the prod-table set
+// and the known-drift allow-lists. Returns null if the file is missing
+// (bootstrapping case).
+function loadSnapshot(): ParsedSnapshot | null {
   if (!existsSync(SNAPSHOT_FILE)) return null;
   const raw = JSON.parse(readFileSync(SNAPSHOT_FILE, 'utf8')) as
     | { name: string; schema?: string }[]
     | SnapshotShape;
   const arr = Array.isArray(raw) ? raw : raw.tables;
-  return new Set(
+  const prod = new Set(
     arr
       .filter((t) => !t.schema || t.schema === 'public')
       .map((t) => t.name.toLowerCase()),
   );
-}
-
-function knownDrift(): { migrationsOnly: Set<string>; prodOnly: Set<string> } {
-  const empty = { migrationsOnly: new Set<string>(), prodOnly: new Set<string>() };
-  if (!existsSync(SNAPSHOT_FILE)) return empty;
-  const raw = JSON.parse(readFileSync(SNAPSHOT_FILE, 'utf8')) as
-    | { name: string; schema?: string }[]
-    | SnapshotShape;
-  if (Array.isArray(raw) || !raw._known_drift) return empty;
+  const driftSpec = Array.isArray(raw) ? undefined : raw._known_drift;
   return {
-    migrationsOnly: new Set(
-      (raw._known_drift.in_migrations_only ?? []).map((t) => t.name.toLowerCase()),
-    ),
-    prodOnly: new Set((raw._known_drift.in_prod_only ?? []).map((t) => t.name.toLowerCase())),
+    prod,
+    drift: {
+      migrationsOnly: new Set(
+        (driftSpec?.in_migrations_only ?? []).map((t) => t.name.toLowerCase()),
+      ),
+      prodOnly: new Set((driftSpec?.in_prod_only ?? []).map((t) => t.name.toLowerCase())),
+    },
   };
 }
 
@@ -96,9 +108,9 @@ export function run(): { ok: boolean; message: string } {
   }
 
   const local = localTableSet();
-  const prod = prodTableSet();
+  const snapshot = loadSnapshot();
 
-  if (!prod) {
+  if (!snapshot) {
     return {
       ok: true,
       message:
@@ -107,7 +119,7 @@ export function run(): { ok: boolean; message: string } {
     };
   }
 
-  const drift = knownDrift();
+  const { prod, drift } = snapshot;
   const onlyLocal = [...local]
     .filter((t) => !prod.has(t) && !drift.migrationsOnly.has(t))
     .sort((a, b) => a.localeCompare(b));
