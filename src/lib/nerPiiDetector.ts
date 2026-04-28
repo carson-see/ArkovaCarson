@@ -61,6 +61,21 @@ export interface NERProgress {
 const NER_MODEL_ID = 'Xenova/bert-base-NER';
 const NER_CONFIDENCE_THRESHOLD = 0.7;
 const MAX_TEXT_LENGTH = 15_000; // Limit input to avoid OOM
+const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.web.min.js';
+
+interface TransformersJsModule {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: (...args: any[]) => Promise<unknown>;
+  env: {
+    backends?: {
+      onnx?: {
+        wasm?: {
+          numThreads?: number;
+        };
+      };
+    };
+  };
+}
 
 // Singleton pipeline — loaded once, reused across calls
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -103,7 +118,9 @@ async function getNERPipeline(
   onProgress?.({ stage: 'loading', progress: 0, message: 'Loading NER model...' });
 
   _pipelinePromise = (async () => {
-    const { pipeline, env } = await import('@huggingface/transformers');
+    // Keep the large, on-demand NER runtime out of the homepage bundle.
+    // Vite serves `public/` files at the site root in both dev and prod.
+    const { pipeline, env } = await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE) as TransformersJsModule;
 
     // Configure backend
     if (backend === 'webgpu' && env.backends?.onnx?.wasm) {

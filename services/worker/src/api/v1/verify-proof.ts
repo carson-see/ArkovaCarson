@@ -15,19 +15,72 @@
 
 import { Router, Request, Response } from 'express';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
+import {
+  gcpKmsEd25519Signer,
+  createRealGcpKmsEd25519Client,
+  type KmsEd25519ClientLike,
+} from '../../proof/kms-signer.js';
 
 const router = Router();
 
-// Resolve the signer once per request. Returns null when neither env var is
-// set so `?format=signed` can respond 503 (caller degrades to the legacy
-// unsigned shape) instead of silently shipping an unsigned bundle.
-// Production will swap `staticEd25519Signer` for a GCP KMS adapter; the
-// `SignerFn` contract doesn't change.
-function resolveSigner(): { sign: SignerFn; keyId: string } | null {
-  const pem = process.env.PROOF_SIGNING_KEY_PEM;
+/**
+ * Resolve the signer once per process. Returns null when no production
+ * or dev signing material is configured, so `?format=signed` can respond
+ * 503 (caller degrades to the legacy unsigned shape) instead of silently
+ * shipping an unsigned bundle.
+ *
+ * Resolution order:
+ *   1. PROOF_SIGNING_KMS_KEY + PROOF_SIGNING_KEY_ID → GCP KMS Ed25519
+ *      signer (production: private key never leaves KMS, per
+ *      `feedback_no_aws.md` and SCRUM-900 AC)
+ *   2. PROOF_SIGNING_KEY_PEM + PROOF_SIGNING_KEY_ID → static-PEM signer
+ *      (dev / preview / unit fixtures only — never set in prod)
+ *   3. None of the above → null → 503
+ *
+ * Memoized: env vars are immutable post-boot in Cloud Run, so the
+ * resolved signer (and the KMS client it lazy-initialises on first call)
+ * lives for the lifetime of the worker process. Without this memo,
+ * every signed-proof request would build a fresh signer and re-import
+ * the GCP KMS SDK client.
+ *
+ * `__resetSignerCacheForTests()` clears both the signer and the KMS
+ * client memos so per-test env-var swaps take effect.
+ */
+let cachedSigner: { sign: SignerFn; keyId: string } | null | undefined;
+let cachedKmsClient: Promise<KmsEd25519ClientLike> | null = null;
+
+export function resolveSigner(): { sign: SignerFn; keyId: string } | null {
+  if (cachedSigner !== undefined) return cachedSigner;
   const keyId = process.env.PROOF_SIGNING_KEY_ID;
-  if (!pem || !keyId) return null;
-  return { sign: staticEd25519Signer(pem, keyId), keyId };
+  if (!keyId) {
+    cachedSigner = null;
+    return null;
+  }
+  const kmsKeyName = process.env.PROOF_SIGNING_KMS_KEY;
+  if (kmsKeyName) {
+    // Lazy-init the SDK client on first invocation, then memoize the
+    // Promise so concurrent first-callers don't double-instantiate.
+    const sign: SignerFn = async (canonical) => {
+      if (!cachedKmsClient) cachedKmsClient = createRealGcpKmsEd25519Client();
+      const client = await cachedKmsClient;
+      return gcpKmsEd25519Signer({ keyResourceName: kmsKeyName, shortKeyId: keyId }, client)(canonical);
+    };
+    cachedSigner = { sign, keyId };
+    return cachedSigner;
+  }
+  const pem = process.env.PROOF_SIGNING_KEY_PEM;
+  if (pem) {
+    cachedSigner = { sign: staticEd25519Signer(pem, keyId), keyId };
+    return cachedSigner;
+  }
+  cachedSigner = null;
+  return null;
+}
+
+/** Test-only: reset both signer + KMS-client memos. */
+export function __resetSignerCacheForTests(): void {
+  cachedSigner = undefined;
+  cachedKmsClient = null;
 }
 
 /** Merkle proof entry matching the stored format */

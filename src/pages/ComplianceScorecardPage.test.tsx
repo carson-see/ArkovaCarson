@@ -103,6 +103,40 @@ describe('NCA-08 ComplianceScorecardPage', () => {
     expect(text).toContain('Upload LICENSE for US-NY');
   });
 
+  it('falls back to metadata.per_jurisdiction when the top-level array is empty', async () => {
+    const fetchFn = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        audits: [
+          makeAudit({
+            per_jurisdiction: [],
+            metadata: {
+              per_jurisdiction: [
+                { jurisdiction_code: 'US', industry_code: 'default', score: 100, grade: 'A', total_required: 1, total_present: 1, rule_count: 1 },
+                { jurisdiction_code: 'EU', industry_code: 'default', score: 92, grade: 'A', total_required: 1, total_present: 1, rule_count: 1 },
+              ],
+              recommendations: {
+                recommendations: [],
+                overflow_count: 0,
+                grouped: { critical: [], quick_wins: [], upcoming: [], standard: [] },
+              },
+            },
+          }),
+        ],
+        count: 1,
+      }),
+    } as unknown as Response));
+
+    renderWithRouter(<ComplianceScorecardPage fetchFn={fetchFn} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('US')).toBeInTheDocument();
+      expect(screen.getByText('EU')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('No jurisdiction data.')).not.toBeInTheDocument();
+  });
+
   it('renders timeline when history has >= 2 audits', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

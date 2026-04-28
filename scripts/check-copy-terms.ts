@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 export const FORBIDDEN_TERMS = [
   'wallet',
   'gas',
+  String.raw`(?<![-\w])block height(?![-\w])`,
+  String.raw`(?<![-\w])block hash(?![-\w])`,
   String.raw`(?<![-\w])hash(?![-\w])`,
   String.raw`(?<![-\w])block(?![-\w])`,
   'transaction',
@@ -154,6 +156,31 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
   return false;
 }
 
+function stripIgnoredAttributeValues(line: string): string {
+  return line.replaceAll(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
+}
+
+function hasInlineJsxText(line: string): boolean {
+  let searchFrom = 0;
+
+  while (searchFrom < line.length) {
+    const closeTagStart = line.indexOf('>', searchFrom);
+    if (closeTagStart === -1) return false;
+
+    const nextOpenTag = line.indexOf('<', closeTagStart + 1);
+    if (nextOpenTag === -1) return false;
+
+    const text = line.slice(closeTagStart + 1, nextOpenTag).trimStart();
+    if (text.length > 0 && !text.startsWith('{')) {
+      return true;
+    }
+
+    searchFrom = nextOpenTag + 1;
+  }
+
+  return false;
+}
+
 /**
  * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
  * Strips className/class attribute values (Tailwind utilities like
@@ -233,7 +260,7 @@ function findTermViolations(line: string, lineNum: number, filePath: string): Vi
         file: filePath,
         line: lineNum,
         term: match[0],
-        context: line.trim().substring(0, 80),
+        context: cleaned.trim().substring(0, 80),
       });
     }
   }

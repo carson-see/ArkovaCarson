@@ -149,13 +149,14 @@ router.post('/', async (req: Request, res: Response) => {
         completed_at: completedAt.toISOString(),
         duration_ms: durationMs,
         jurisdiction_filter: jurisdictionFilter ?? null,
-        metadata: {
-          anchor_count: anchors.length,
-          rule_count: rules.length,
-          jurisdiction_pair_count: jurisdictionPairs.length,
-          // NCA-05: recommendations live in metadata per migration 0217 comment.
-          recommendations: result.recommendations,
-        },
+	        metadata: {
+	          anchor_count: anchors.length,
+	          rule_count: rules.length,
+	          jurisdiction_pair_count: jurisdictionPairs.length,
+	          per_jurisdiction: result.per_jurisdiction,
+	          // NCA-05: recommendations live in metadata per migration 0217 comment.
+	          recommendations: result.recommendations,
+	        },
       })
       .select('*')
       .single();
@@ -367,12 +368,13 @@ async function loadOrgAnchors(orgId: string): Promise<OrgAnchor[]> {
 }
 
 function shapeAuditRow(row: Record<string, unknown>) {
+  const metadata = isRecord(row.metadata) ? row.metadata : {};
   return {
     id: row.id,
     org_id: row.org_id,
     overall_score: row.overall_score,
     overall_grade: row.overall_grade,
-    per_jurisdiction: row.per_jurisdiction,
+    per_jurisdiction: nonEmptyArray(row.per_jurisdiction) ?? nonEmptyArray(metadata.per_jurisdiction) ?? [],
     gaps: row.gaps,
     quarantines: row.quarantines,
     status: row.status,
@@ -382,9 +384,17 @@ function shapeAuditRow(row: Record<string, unknown>) {
     jurisdiction_filter: row.jurisdiction_filter,
     error_code: row.error_code,
     error_message: row.error_message,
-    metadata: row.metadata,
+    metadata,
     created_at: row.created_at,
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function nonEmptyArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) && value.length > 0 ? value : null;
 }
 
 function arraysEqual(a: string[], b: string[]): boolean {

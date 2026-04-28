@@ -731,7 +731,7 @@ function warnSupabaseJwtSecretMissingOnce(): void {
   console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
 }
 
-async function validateBearer(
+export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {

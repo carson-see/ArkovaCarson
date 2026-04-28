@@ -34,6 +34,16 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
     }
   });
 
+  it('every sub-type has a readable public display label', () => {
+    for (const subType of ALL_SUB_TYPES) {
+      const label = formatCredentialSubType(subType);
+      expect(label, `${subType} should have a display label`).toBeTruthy();
+      expect(label).not.toContain('_');
+      expect(label).toMatch(/^[A-Z0-9]/);
+    }
+    expect(formatCredentialSubType('professional_certification')).toBe('Professional Certification');
+  });
+
   it('ALL_SUB_TYPES contains all sub-types from all types', () => {
     const expectedTotal = Object.values(CREDENTIAL_SUB_TYPES)
       .reduce((sum, arr) => sum + arr.length, 0);

@@ -347,8 +347,8 @@ router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
 router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
-// API key required, standard rate limit
-router.use('/anchor', anchorSubmitRouter);
+// SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.
+router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
 
 // ─── Attestations — Phase II ───
 // Batch attestation create — auth required, batch rate limit (10 req/min)

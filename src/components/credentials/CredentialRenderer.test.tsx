@@ -183,6 +183,21 @@ describe('CredentialRenderer', () => {
       // long-form rendering used by the existing formatDate helper.
       expect(screen.getByText('April 1, 2026')).toBeInTheDocument();
     });
+
+    it('renders subtype values as human Type labels instead of raw enum copy', () => {
+      render(
+        <CredentialRenderer
+          credentialType="OTHER"
+          metadata={{ subType: 'professional_certification' }}
+          status="SUBMITTED"
+        />
+      );
+
+      expect(screen.getAllByText('Professional Certification').length).toBeGreaterThanOrEqual(1);
+      expect(screen.getByText('Type')).toBeInTheDocument();
+      expect(screen.queryByText('professional_certification')).not.toBeInTheDocument();
+      expect(screen.queryByText('Other')).not.toBeInTheDocument();
+    });
   });
 
   describe('Mode 3: No Metadata', () => {

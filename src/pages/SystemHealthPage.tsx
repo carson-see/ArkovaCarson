@@ -247,7 +247,10 @@ export function SystemHealthPage() {
                   </Badge>
                 )}
                 <p className="text-sm text-muted-foreground">
-                  Network: <Badge variant="secondary" className="font-mono text-xs ml-1">{getNetworkDisplayName(health.checks.bitcoin.network)}</Badge>
+                  Network:{' '}
+                  <Badge variant="secondary" className="font-mono text-xs ml-1">
+                    {getNetworkDisplayName(health.checks.bitcoin.network)}
+                  </Badge>
                 </p>
               </div>
             ) : (

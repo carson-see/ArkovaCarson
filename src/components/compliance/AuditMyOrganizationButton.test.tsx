@@ -56,6 +56,32 @@ describe('NCA-07 AuditMyOrganizationButton', () => {
     );
   });
 
+  it('keeps a disabled busy trigger visible while the audit request is in flight', async () => {
+    let resolveFetch!: (value: Response) => void;
+    const fetchFn = vi.fn(() => new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    }));
+
+    renderWithRouter(<AuditMyOrganizationButton fetchFn={fetchFn} disablePhaseAnimation />);
+    fireEvent.click(screen.getByTestId('audit-trigger'));
+
+    const trigger = screen.getByTestId('audit-trigger');
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByTestId('audit-trigger-spinner')).toBeInTheDocument();
+    expect(trigger.textContent).toContain('Running compliance audit...');
+
+    resolveFetch({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 'audit-123', status: 'COMPLETED' }),
+    } as unknown as Response);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('audit-view-results')).toBeDefined();
+    });
+  });
+
   it('shows an error with retry when the API returns a non-OK response', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: false,

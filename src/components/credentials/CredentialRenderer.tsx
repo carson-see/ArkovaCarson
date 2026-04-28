@@ -168,6 +168,19 @@ const TYPE_CONFIG: Record<string, {
   },
 };
 
+function isSubTypeKey(key: string): boolean {
+  return ['subtype', 'sub_type', 'subType'].includes(key);
+}
+
+function extractSubTypeLabel(metadata: Record<string, unknown> | null | undefined): string | null {
+  if (!metadata) return null;
+  for (const key of ['subType', 'subtype', 'sub_type']) {
+    const value = metadata[key];
+    if (typeof value === 'string') return formatCredentialSubType(value);
+  }
+  return null;
+}
+
 export interface CredentialRendererProps {
   credentialType?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -200,34 +213,11 @@ export function CredentialRenderer({
   const typeKey = credentialType ?? 'OTHER';
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
+  const subTypeLabel = extractSubTypeLabel(metadata);
 
-  // SCRUM-952 — when credential_type is OTHER (or unknown) but metadata
-  // carries a recognized subtype (e.g. `professional_certification`),
-  // surface the subtype as the user-visible Type label so we don't mark
-  // a known credential as the generic "Other" fallback. The parent type
-  // is preserved in CREDENTIAL_TYPE_LABELS for rendering when present
-  // and unambiguous.
-  //
-  // Key precedence: `sub_type` is the canonical anchor column (per
-  // migration 0213 / GRE-01). `subtype` (no underscore) is the legacy
-  // Gemini extraction-payload key that some callers still emit. Prefer
-  // the canonical column so a stale extraction-payload subtype can't
-  // shadow the schema-blessed value.
-  const subtypeRaw =
-    metadata && typeof metadata.sub_type === 'string'
-      ? metadata.sub_type
-      : metadata && typeof metadata.subtype === 'string'
-        ? metadata.subtype
-        : null;
-  const typeLabel = credentialType
+  const credentialLabel = subTypeLabel ?? (credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
-    : null;
-  const credentialLabel =
-    typeLabel && typeLabel !== CREDENTIAL_TYPE_LABELS.OTHER
-      ? typeLabel
-      : subtypeRaw
-        ? formatCredentialSubType(subtypeRaw)
-        : typeLabel;
+    : null);
 
   const statusLabel = status
     ? (ANCHOR_STATUS_LABELS as Record<string, string>)[status] ?? status
@@ -268,6 +258,14 @@ export function CredentialRenderer({
     return String(value);
   };
 
+  const formatFieldLabel = (key: string): string => {
+    return isSubTypeKey(key)
+      ? 'Type'
+      : key
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (c) => c.toUpperCase());
+  };
+
   // Determine rendering mode
   const hasTemplate = template && template.fields.length > 0;
   const hasMetadata = metadata && Object.keys(metadata).length > 0;
@@ -286,12 +284,11 @@ export function CredentialRenderer({
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
       if (key.startsWith('_') || ['recipient', 'jurisdiction', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source', 'abstract', 'description', 'summary'].includes(key)) continue;
-      const formatted = formatFieldValue(value);
+      const formatted = isSubTypeKey(key) && typeof value === 'string'
+        ? formatCredentialSubType(value)
+        : formatFieldValue(value);
       if (formatted) {
-        const label = key
-          .replace(/_/g, ' ')
-          .replace(/\b\w/g, (c) => c.toUpperCase());
-        displayFields.push({ label, value: formatted });
+        displayFields.push({ label: formatFieldLabel(key), value: formatted });
       }
     }
   }
