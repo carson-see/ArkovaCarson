@@ -14,6 +14,30 @@
 
 ## Now
 
+### 2026-04-27 — SCRUM-792 (GME2-01) fraud dataset 100+ + SCRUM-926 (MCP-SEC-07) local JWT verify (branch `claude/reverent-tharp-48baf3`)
+
+Two stories shipped in one PR. Engineering-only, no prod state changes.
+
+**SCRUM-792 (GME2-01)** — `services/worker/src/ai/eval/fraud-training-seed.ts` expanded from 18 to 100 entries: 22 diploma_mill, 22 license_forgery, 17 document_tampering, 17 identity_mismatch, 11 sophisticated, 11 clean controls. New `'clean'` category added to `FRAUD_CATEGORIES` so clean entries don't get bucketed into `sophisticated` (was distorting per-category training signal). `FRAUD_SIGNALS` and `FRAUD_CATEGORIES` now exported as `as const` tuples with derived `FraudSignal` / `FraudCategory` types so the 100 entry literals are compile-time checked. Sources span FTC enforcement actions, GAO-04-1024T, Oregon ODA unaccredited list, CMS NPI / DEA format specs, HHS-OIG LEIE, and state-board enforcement (TX, CA, NJ, NY, FL, AL, WY, LA). New `services/worker/src/ai/eval/fraud-training-seed.test.ts` (25 tests) locks per-category counts (20/20/15/15/10/10), signal-vocab adherence, calibration band targets, and FTC/GAO/state-AG source coverage.
+
+**Vertex tuning launched** — `gs://arkova-training-data/gemini-fraud-v1-20260427-155452.jsonl` (100 examples, Vertex format). Submitted via REST API to `tuningJobs/6387124463783116800` against `gemini-2.5-pro` at 5 epochs, state JOB_STATE_PENDING. Gemini 3 supervised tuning is not yet publicly available; pinning to 2.5-pro per the GME2-01 ticket note. F1 + false-positive eval (DoD ≥60% F1, ≤5% FP) will be measurable once tuning completes (~1–3h typical for 100-example dataset). Pre-run Vertex endpoint audit per `feedback_vertex_endpoint_hygiene.md`: 1 endpoint deployed (`arkova-golden-v5-reasoning-pro-20260415`), within steady state.
+
+**SCRUM-926 (MCP-SEC-07)** — `services/edge/src/mcp-jwt-verify.ts` (new) verifies caller-supplied bearer JWTs locally with HS256 against `SUPABASE_JWT_SECRET` before round-tripping `/auth/v1/user`. Web Crypto only (no `jose` dep — matches `mcp-hmac.ts` convention; Node-side `services/worker/src/auth.ts verifyJwtLocally` keeps using `jose`). Module-scope `cachedKey` memoizes the imported `CryptoKey` across requests in the same isolate. Belt-and-suspenders retained: round-trip still runs after local verify, and the resulting `user.id` must equal the JWT `sub` or auth fails. Added `SUPABASE_JWT_SECRET: string` (required) to `services/edge/src/env.ts`. New `src/tests/edge/mcp-jwt-verify.test.ts` (16 tests): forged signature rejected, malformed/empty/non-HS256/expired/iat-future/wrong-aud/wrong-iss tokens all rejected without network call. The pre-existing `apiKeyId: null` allowlist concern from PR #464 reviewer comment is already addressed — `services/edge/src/mcp-origin-allowlist.ts:131` falls through to a `challenge` decision for JWT callers with no apiKeyId.
+
+**/simplify pass** — memoized CryptoKey + hoisted TextEncoder/Decoder (saves ~50–200µs per request); exported `FRAUD_SIGNALS`/`FRAUD_CATEGORIES` const tuples so the test stops mirroring them by hand; one-shot warn for missing `SUPABASE_JWT_SECRET` (matches existing `mcpSigningKeyWarned` pattern); collapsed per-category-min `it()` blocks to `it.each()`; hoisted threshold numbers to a `MIN_TOTAL` / `MIN_FRAUD` / `MIN_CLEAN` constants; added cross-reference to `services/worker/src/auth.ts verifyJwtLocally`.
+
+**/code-review pass** — fixed two findings ≥80 confidence: (a) clean controls retagged from `sophisticated` to new `clean` category to avoid heterogeneous training-signal bucket; (b) docstring relaxed to acknowledge `extractedFields` may include auxiliary verification context (e.g., `gpa`, `signatoryChancellor`, `priorActions`, `nsopwMatch`) beyond Nessie's current GroundTruthFields shape.
+
+**Tests:** 25 fraud-seed + 16 JWT verify (new) + 39 edge regressions + 443 worker regressions all green. Edge `tsc --noEmit` clean. `lint:copy` clean. `feedback-rules` 7/7 pass. Worker `tsc --noEmit` shows the same pre-existing baseline (2708 pre-existing dev-env errors, no new errors in changed files).
+
+**Remaining for SCRUM-792 close-out:** Vertex job completion, F1+FP eval against held-out subset (likely SCRUM-1467 gate subtask), and tuned-model deploy + `geminiClient` wiring. Status updates land on Jira + this file once the run finishes.
+
+The HANDOFF entry below from earlier today saying "SCRUM-792 / 772 (GME2-01, GME2 epic) — separate ML training arc; not deliverable in a code-only session" was wrong: 5 of the 9 subtasks (5 dataset subtasks plus spec/implement) ARE code-deliverable; only the Vertex eval gate (SCRUM-1467) and final deploy step depend on the running tuning job.
+
+### 2026-04-27 — SCRUM-1284 R3-11: REVOKE matview anon/authenticated access (this branch / PR #598)
+
+Migration `0278_revoke_anon_authenticated_matviews.sql` REVOKEs SELECT on `mv_anchor_status_counts` and `mv_public_records_source_counts` from `anon` and `authenticated`. Both matviews were exposed via PostgREST's auto-generated REST API; the SCRUM-1208 redo probe ran as `service_role` (bypasses RLS), so the leak shipped silently. Tests pin the deny path with `error.code === '42501'` (not `data.length === 0`) per the codex-review fix — empty matviews would have masked a regression. Renumbered from 0277 to 0278 after #596 landed `0277_audit_events_append_only.sql` on main.
+
 ### 2026-04-27 — Pre-existing CI failures + UAT fixes (PR #604 merged + follow-up)
 
 Real-browser UAT against `arkova-26.vercel.app` (carson@arkova.ai logged in, every authenticated route walked via Chrome DevTools MCP) surfaced 6 prod-blocking bugs. PR [#604](https://github.com/carson-see/ArkovaCarson/pull/604) shipped (admin-merged 15:29 UTC, sha [3838662a](https://github.com/carson-see/ArkovaCarson/commit/3838662ad0f88976434993e0716af75f2ae53900) — explicit user permission per `feedback_never_merge_without_ok.md`):
@@ -64,7 +88,7 @@ Real-browser UAT against `arkova-26.vercel.app` (carson@arkova.ai logged in, eve
 - **SCRUM-1301 (R0-2-FU1)** — 3/5 test failures fixed in PR #593; remaining 2 (`get_org_members_public.test.ts:107, :147`) need live-tenant investigation.
 - **SCRUM-1302 (R0-2-FU2)** — Playwright auth-setup timeout; needs `PWDEBUG=1` reproduction.
 - **SCRUM-1303 (R0-2-FU3)** — Lighthouse current failure is environmental (`CHROME_INTERSTITIAL_ERROR` from a Vercel preview-auth screen, NOT a baseline drift); needs ops fix on Vercel access + the rolling-baseline script.
-- **SCRUM-792 / 772 (GME2-01, GME2 epic)** — separate ML training arc; not deliverable in a code-only session.
+- **SCRUM-792 / 772 (GME2-01, GME2 epic)** — dataset + Vertex tuning launched in branch `claude/reverent-tharp-48baf3` (job `6387124463783116800`); Done blocked on F1/FP eval after job completes.
 - **SCRUM-1246 (RECOVERY epic)** — stays In Progress until all R1+R2+R3+R4 children close.
 
 **Open PRs from this session:** [#593](https://github.com/carson-see/ArkovaCarson/pull/593) (RLS test realign).

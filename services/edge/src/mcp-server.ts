@@ -61,6 +61,7 @@ import {
 import { isMcpEnabled, mcpDisabledResponse } from './mcp-kill-switch';
 import { fenceUserInput, SAFETY_PREFIX } from './mcp-prompt-safety';
 import { signEnvelope } from './mcp-hmac';
+import { verifySupabaseJwt } from './mcp-jwt-verify';
 
 // Module-scope detector so heuristics span requests inside one CF
 // isolate. Request-scoped detectors could not observe cross-session
@@ -720,10 +721,39 @@ async function validateApiKey(
   return null;
 }
 
+// One-shot warning per isolate when SUPABASE_JWT_SECRET is unset
+// (SCRUM-926 / MCP-SEC-07). Mirrors `mcpSigningKeyWarned` above so a
+// misconfigured deploy logs once instead of spamming on every request.
+let supabaseJwtSecretWarned = false;
+function warnSupabaseJwtSecretMissingOnce(): void {
+  if (supabaseJwtSecretWarned) return;
+  supabaseJwtSecretWarned = true;
+  console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
+}
+
 async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
+  // SCRUM-926 / MCP-SEC-07 — verify HS256 signature + exp/iat/aud/iss
+  // locally first. Fail-closed if SUPABASE_JWT_SECRET is unset; that
+  // forces operators to provision the secret rather than silently
+  // falling back to the round-trip-only model the ticket flagged.
+  if (!env.SUPABASE_JWT_SECRET) {
+    warnSupabaseJwtSecretMissingOnce();
+    return null;
+  }
+  const local = await verifySupabaseJwt(token, {
+    secret: env.SUPABASE_JWT_SECRET,
+    supabaseUrl: env.SUPABASE_URL,
+  });
+  if (!local.ok) return null;
+
+  // Belt-and-suspenders: round-trip to confirm the user still exists and
+  // hasn't been deleted/banned since the JWT was issued. Local sig+exp
+  // alone is sufficient to reject forged tokens; the round-trip catches
+  // server-side revocations (deleted user, role demotion, etc.) that the
+  // self-signed JWT can't reflect on its own.
   try {
     const response = await authFetch(`${env.SUPABASE_URL}/auth/v1/user`, {
       headers: {
@@ -733,7 +763,10 @@ async function validateBearer(
     });
     if (response.ok) {
       const user = await response.json() as { id: string };
-      return { userId: user.id, tier: 'authenticated', apiKeyId: null };
+      // Defence-in-depth: refuse if Supabase returns a different sub than
+      // the JWT carried. Either side disagreeing is a hard fail.
+      if (user.id !== local.userId) return null;
+      return { userId: user.id, tier: local.tier, apiKeyId: null };
     }
   } catch {
     // Fall through

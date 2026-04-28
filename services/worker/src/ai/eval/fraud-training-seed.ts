@@ -3,17 +3,64 @@
  *
  * Hand-curated fraud patterns from real-world enforcement actions.
  * Used to build training-output/gemini-fraud-v1-vertex.jsonl for tuning
- * gemini-2.5-pro. See docs/plans/gemini-training-parameters-v1.md.
+ * gemini-2.5-pro (until 3.0 tuning is publicly available).
+ *
+ * SCRUM-792 / GME2-01 expansion: 100+ distinct fraud patterns spanning
+ *   diploma mills (22), license forgery (22), document tampering (17),
+ *   identity mismatch (17), sophisticated fraud (11), plus clean controls.
  *
  * Sources:
  * - FTC enforcement actions (diploma mills): https://www.ftc.gov/enforcement
  * - Oregon ODA unaccredited list (long-running diploma mill registry)
  * - GAO Reports on diploma mills (GAO-04-1024T)
- * - HHS-OIG provider exclusion list
- * - State medical board enforcement actions
+ * - HHS-OIG provider exclusion list (LEIE)
+ * - State medical / bar / pharmacy / nursing board enforcement
+ * - CMS NPI specification (10 digits, prefix 1-2, Luhn check)
+ * - DEA registrant database format spec (2 letters + 7 digits with checksum)
+ * - State AG actions (WY, LA, AL, FL, TX) against unaccredited operators
  *
- * Each entry: extracted credential metadata (post-Nessie) + expected fraud signals.
+ * Each entry: extracted credential metadata + expected fraud signals.
+ *
+ * `extractedFields` MAY include auxiliary verification context that goes
+ * beyond the current Nessie GroundTruthFields shape (e.g., `gpa`,
+ * `signatoryChancellor`, `acknowledgmentDate`, `priorActions`,
+ * `nsopwMatch`). These auxiliary keys teach the fraud model how to react
+ * to richer extraction inputs that downstream pipelines (cross-record
+ * verification, registry lookups) can supply alongside Nessie's structured
+ * output. The fraud model must remain robust when only the canonical
+ * Nessie subset is present, but should sharpen its assessment when
+ * auxiliary context is available.
  */
+
+export const FRAUD_SIGNALS = [
+  'KNOWN_DIPLOMA_MILL',
+  'UNVERIFIABLE_ISSUER',
+  'ENFORCEMENT_ACTION',
+  'INVALID_FORMAT',
+  'INCONSISTENT_ISSUER',
+  'SUSPICIOUS_DATES',
+  'SUSPICIOUS_TIMELINE',
+  'MATERIAL_MISSTATEMENT',
+  'EXPIRED_ISSUER',
+  'EXPIRED_CREDENTIAL',
+  'REVOKED_STATUS',
+  'DUPLICATE_REGISTRATION',
+  'RETRACTED_VERIFICATION',
+] as const;
+export type FraudSignal = (typeof FRAUD_SIGNALS)[number];
+
+export const FRAUD_CATEGORIES = [
+  'diploma_mill',
+  'license_forgery',
+  'document_tampering',
+  'identity_mismatch',
+  'sophisticated',
+  // Clean controls — credentials with no fraud signals. Anchors the
+  // false-positive rate during eval; categorized separately so the
+  // sophisticated bucket isn't a heterogeneous mix of fraud + non-fraud.
+  'clean',
+] as const;
+export type FraudCategory = (typeof FRAUD_CATEGORIES)[number];
 
 export interface FraudTrainingEntry {
   id: string;
@@ -22,17 +69,17 @@ export interface FraudTrainingEntry {
   extractedFields: Record<string, unknown>;
   /** Expected output from Gemini fraud stream */
   expectedOutput: {
-    fraudSignals: string[];
+    fraudSignals: FraudSignal[];
     confidence: number; // 0-1, fraud-detection confidence
     reasoning: string;
   };
-  category: 'diploma_mill' | 'license_forgery' | 'document_tampering' | 'identity_mismatch' | 'sophisticated';
+  category: FraudCategory;
   source: string;
 }
 
 export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
   // ============================================================
-  // DIPLOMA MILLS (real, FTC-actioned)
+  // DIPLOMA MILLS — 22 entries (FTC / GAO / state AG anchored)
   // ============================================================
   {
     id: 'FT-001',
@@ -70,7 +117,7 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       reasoning: 'Belford University and its variants (Belford High School, Belford Online) are recognized diploma mills. Originally based in Pakistan, marketed degrees with no academic work required ("life experience" credit). FTC and multiple state AGs have taken enforcement action.',
     },
     category: 'diploma_mill',
-    source: 'Oregon ODA unaccredited list',
+    source: 'Oregon ODA unaccredited list; FTC Belford action',
   },
   {
     id: 'FT-003',
@@ -89,7 +136,7 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       reasoning: 'Hamilton University (Wyoming) was an unaccredited institution shut down by Wyoming AG. Not to be confused with Hamilton College (NY) or Colgate Hamilton Theological Institution. Wyoming version sold doctoral degrees with no coursework.',
     },
     category: 'diploma_mill',
-    source: 'GAO-04-1024T, Wyoming AG action',
+    source: 'GAO-04-1024T; Wyoming AG action',
   },
   {
     id: 'FT-004',
@@ -127,7 +174,7 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       reasoning: 'Trinity Theological Seminary (Newburgh, Indiana) is unaccredited by US Department of Education-recognized accrediting bodies, listed on Oregon ODA. The institution operates legally but its degrees are not recognized for academic transfer or most professional licensing.',
     },
     category: 'diploma_mill',
-    source: 'Oregon ODA list, USDOE accreditation database',
+    source: 'Oregon ODA list; USDOE accreditation database',
   },
   {
     id: 'FT-006',
@@ -148,9 +195,318 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'diploma_mill',
     source: 'FBI investigation 1998',
   },
+  {
+    id: 'FT-007',
+    description: 'Pacific Western University degree (Hawaii closed mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Pacific Western University',
+      issuedDate: '2005-04-12',
+      fieldOfStudy: 'Engineering',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Hawaii, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.93,
+      reasoning: 'Pacific Western University (Hawaii / California operations) was a long-running unaccredited institution profiled in the GAO diploma mill report. The name was later sold and re-used by an accredited California institution; pre-2008 PWU/Hawaii degrees are mill artifacts, especially in research fields like engineering with no resident program.',
+    },
+    category: 'diploma_mill',
+    source: 'GAO-04-1024T diploma mill testimony',
+  },
+  {
+    id: 'FT-008',
+    description: 'Kennedy-Western University degree (Wyoming, later "Warren National")',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Kennedy-Western University',
+      issuedDate: '2007-09-01',
+      fieldOfStudy: 'Public Administration',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Wyoming, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'ENFORCEMENT_ACTION'],
+      confidence: 0.95,
+      reasoning: 'Kennedy-Western University (rebranded Warren National University) was unaccredited and the subject of GAO and US Senate testimony as a diploma mill. Closed in 2009 after Wyoming raised licensure standards. Federal employees were found to have used KWU degrees.',
+    },
+    category: 'diploma_mill',
+    source: 'GAO-04-1024T; US Senate Subcommittee 2004',
+  },
+  {
+    id: 'FT-009',
+    description: 'Degree with WAUC accreditation seal (fake accreditor)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Atlantic International University',
+      issuedDate: '2023-03-04',
+      fieldOfStudy: 'Business',
+      degreeLevel: 'PhD',
+      accreditingBody: 'World Association of Universities and Colleges (WAUC)',
+      jurisdiction: 'Hawaii, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['UNVERIFIABLE_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.92,
+      reasoning: 'WAUC (World Association of Universities and Colleges) is an accreditation mill, not recognized by the US Department of Education or CHEA. Any institution claiming WAUC accreditation as a primary or sole accreditor is implicitly unaccredited. Common pattern among diploma mills.',
+    },
+    category: 'diploma_mill',
+    source: 'CHEA recognized accreditors list; USDOE; FTC accreditation-mill consumer alert',
+  },
+  {
+    id: 'FT-010',
+    description: 'Degree with IUAES "accreditation" (fake accreditor)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of Atlanta',
+      issuedDate: '2019-11-22',
+      fieldOfStudy: 'Marketing',
+      degreeLevel: 'Master',
+      accreditingBody: 'International University Accreditation Service (IUAES)',
+      jurisdiction: 'Georgia, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['UNVERIFIABLE_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.91,
+      reasoning: 'IUAES is not a CHEA / USDOE-recognized accreditor. Several diploma mills claim accreditation by IUAES or similarly-named offshore bodies that exist only on paper to launder credibility. Georgia "University of Atlanta" specifically appears in unaccredited lists.',
+    },
+    category: 'diploma_mill',
+    source: 'CHEA recognized accreditors list',
+  },
+  {
+    id: 'FT-011',
+    description: 'Saint Regis University degree (Liberia mill — federal indictments)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Saint Regis University',
+      issuedDate: '2004-07-19',
+      fieldOfStudy: 'Healthcare Administration',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Liberia',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'ENFORCEMENT_ACTION', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.97,
+      reasoning: 'Saint Regis "University" was the centerpiece of Operation Gold Seal, a Department of Justice / Secret Service investigation into a Spokane-based diploma mill ring that fraudulently represented Liberian government accreditation. Multiple federal convictions 2008. Any Saint Regis credential is fraudulent.',
+    },
+    category: 'diploma_mill',
+    source: 'DOJ Operation Gold Seal; US v. Randock 2008',
+  },
+  {
+    id: 'FT-012',
+    description: 'Concordia College and University degree (Delaware mill, NOT real Concordia)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Concordia College and University',
+      issuedDate: '2013-02-08',
+      fieldOfStudy: 'Theology',
+      degreeLevel: 'Doctor',
+      jurisdiction: 'Delaware, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'INCONSISTENT_ISSUER'],
+      confidence: 0.93,
+      reasoning: 'Concordia College and University (Delaware) is a recognized diploma mill operation distinct from the legitimate Concordia University System (Lutheran Church-affiliated, multiple campuses). Listed on Oregon ODA. The "and" in the name plus Delaware jurisdiction is the tell.',
+    },
+    category: 'diploma_mill',
+    source: 'Oregon ODA; multiple state board denials',
+  },
+  {
+    id: 'FT-013',
+    description: 'University of Berkley degree (mill spelling — NOT UC Berkeley)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of Berkley',
+      issuedDate: '2018-08-30',
+      fieldOfStudy: 'Computer Engineering',
+      degreeLevel: 'Master',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.96,
+      reasoning: 'The misspelling "Berkley" (vs the legitimate "Berkeley") is a recurring diploma mill tactic to trade on UC Berkeley\'s reputation. California Bureau for Private Postsecondary Education has no record. Any "University of Berkley" credential is fraudulent.',
+    },
+    category: 'diploma_mill',
+    source: 'CA BPPE registry; FTC consumer alert',
+  },
+  {
+    id: 'FT-014',
+    description: 'American Western University degree (unaccredited mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'American Western University',
+      issuedDate: '2011-06-15',
+      fieldOfStudy: 'Business Management',
+      degreeLevel: 'PhD',
+      jurisdiction: 'New Mexico, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.9,
+      reasoning: 'American Western University (NM) is on the Oregon ODA unaccredited list and the Texas Higher Education Coordinating Board fraudulent institution list. Has no resident program; sold credit for life-experience.',
+    },
+    category: 'diploma_mill',
+    source: 'Oregon ODA; Texas HECB fraud list',
+  },
+  {
+    id: 'FT-015',
+    description: 'Barrington University degree (Alabama mill closed by AG)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Barrington University',
+      issuedDate: '2006-10-04',
+      fieldOfStudy: 'Education',
+      degreeLevel: 'EdD',
+      jurisdiction: 'Alabama, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'ENFORCEMENT_ACTION', 'EXPIRED_ISSUER'],
+      confidence: 0.94,
+      reasoning: 'Barrington University (Mobile, AL) was an unaccredited mill shut down by the Alabama Department of Postsecondary Education following AG action. Operated by selling life-experience doctorates with minimal coursework.',
+    },
+    category: 'diploma_mill',
+    source: 'Alabama AG Office press release; Oregon ODA',
+  },
+  {
+    id: 'FT-016',
+    description: 'Glenforde University degree (online mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Glenforde University',
+      issuedDate: '2020-12-01',
+      fieldOfStudy: 'Information Technology',
+      degreeLevel: 'Master',
+      jurisdiction: 'Online (no state)',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.91,
+      reasoning: 'Glenforde University is among the offshore-domiciled mills that surface on consumer protection reports. No physical campus, no recognized accreditation, no graduate-degree-granting authority in any US state, "online (no state)" jurisdiction is itself a strong fraud indicator for a US-claimed degree.',
+    },
+    category: 'diploma_mill',
+    source: 'BBB consumer alerts; Oregon ODA',
+  },
+  {
+    id: 'FT-017',
+    description: 'Earlscroft University degree (paper mill, ghost campus)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Earlscroft University',
+      issuedDate: '2017-04-22',
+      fieldOfStudy: 'International Business',
+      degreeLevel: 'MBA',
+      jurisdiction: 'United Kingdom',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.9,
+      reasoning: 'Earlscroft University is not on the UK Department for Education recognised bodies list (per s.214 Education Reform Act 1988). Unrecognised UK "universities" granting MBA degrees are by definition unable to confer that title legally in the UK and are mill operations.',
+    },
+    category: 'diploma_mill',
+    source: 'UK DfE Recognised Bodies list',
+  },
+  {
+    id: 'FT-018',
+    description: 'Suffield College degree (unaccredited claim)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Suffield College and University',
+      issuedDate: '2014-09-12',
+      fieldOfStudy: 'Counseling Psychology',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Connecticut, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER', 'INCONSISTENT_ISSUER'],
+      confidence: 0.92,
+      reasoning: 'Suffield "College and University" (the "and" pattern repeats across mill operations) is not authorized by the Connecticut Office of Higher Education to grant degrees. CT does not recognise the institution. A counseling-psychology PhD from a non-state-authorized CT institution would not qualify the holder for any state licensing board.',
+    },
+    category: 'diploma_mill',
+    source: 'CT Office of Higher Education; Oregon ODA',
+  },
+  {
+    id: 'FT-019',
+    description: 'Life-experience-credit degree (no coursework declared)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Rochville University',
+      issuedDate: '2021-05-20',
+      fieldOfStudy: 'Healthcare Management',
+      degreeLevel: 'Master',
+      jurisdiction: 'Online (no state)',
+      programNotes: 'Awarded based on life experience; no resident or distance coursework required',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'MATERIAL_MISSTATEMENT', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.96,
+      reasoning: 'Rochville University is a documented mill operation. The explicit "life experience only, no coursework" awarding model is the textbook definition of a diploma mill — degrees from accredited US institutions require credit hours of supervised academic work.',
+    },
+    category: 'diploma_mill',
+    source: 'FTC consumer education; Oregon ODA',
+  },
+  {
+    id: 'FT-020',
+    description: 'Republic of Liberia "accredited" institution (sovereign accreditation laundering)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'James Monroe University',
+      issuedDate: '2009-03-10',
+      fieldOfStudy: 'Business',
+      degreeLevel: 'PhD',
+      accreditingBody: 'Government of Liberia',
+      jurisdiction: 'Liberia',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER', 'ENFORCEMENT_ACTION'],
+      confidence: 0.95,
+      reasoning: 'A wave of mills laundered credibility through purported Liberian government accreditation in the 2000s — the same vector used by Saint Regis. Liberia\'s Ministry of Education has since publicly disowned several of these institutions. James Monroe University (Liberia) appears alongside Saint Regis in DOJ records.',
+    },
+    category: 'diploma_mill',
+    source: 'DOJ Operation Gold Seal; Liberian MoE notice',
+  },
+  {
+    id: 'FT-021',
+    description: 'Closed-institution backdate (degree dated after closure)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Sweet Briar College',
+      issuedDate: '2015-07-15',
+      fieldOfStudy: 'English Literature',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'Virginia, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES', 'EXPIRED_ISSUER'],
+      confidence: 0.78,
+      reasoning: 'Sweet Briar College announced closure in March 2015 with intended teach-out of summer 2015 graduates. The board-rescue happened mid-year and the institution survived, but a 2015-07-15 conferral date sits in the operational gap and warrants registrar verification — fraudulent backdating to claim a "rescued" institution\'s diploma is a known pattern when the institution is briefly newsworthy.',
+    },
+    category: 'diploma_mill',
+    source: 'Sweet Briar 2015 closure announcement archive',
+  },
+  {
+    id: 'FT-022',
+    description: 'Honorary doctorate from unaccredited institution misrepresented as earned',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Universal Life Church Seminary',
+      issuedDate: '2022-02-14',
+      fieldOfStudy: 'Divinity',
+      degreeLevel: 'Doctor',
+      jurisdiction: 'California, USA',
+      degreeNotes: 'Honoris Causa (honorary)',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.88,
+      reasoning: 'Universal Life Church and similar online ordination organizations issue "honorary" doctorates without any academic vetting. Representing such a credential as an earned doctorate (omitting "honoris causa" in subsequent CV/biographical use) is a misrepresentation common in profile-padding fraud.',
+    },
+    category: 'diploma_mill',
+    source: 'CA BPPE; CHEA recognized accreditors list',
+  },
 
   // ============================================================
-  // LICENSE FORGERY (format/number issues)
+  // LICENSE FORGERY — 22 entries (CMS / DEA / state board format)
   // ============================================================
   {
     id: 'FT-101',
@@ -161,7 +517,6 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       fieldOfStudy: 'Medicine',
       licenseNumber: '298765',
       jurisdiction: 'New York, USA',
-      // NPI claimed in document but only 9 digits
       recipientIdentifier: 'NPI 123456789',
     },
     expectedOutput: {
@@ -189,7 +544,7 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       reasoning: 'Medical Board of California issues physician licenses with format "A" followed by 6 digits (e.g., A123456) for MDs, or "G" prefix for DOs. License "A123" is structurally too short and inconsistent with California Business and Professions Code §2050+.',
     },
     category: 'license_forgery',
-    source: 'CA Medical Practice Act',
+    source: 'CA Medical Practice Act; Medical Board of California',
   },
   {
     id: 'FT-103',
@@ -210,9 +565,372 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'license_forgery',
     source: 'NY Office of Court Administration',
   },
+  {
+    id: 'FT-104',
+    description: 'NPI starting with 0 (invalid prefix)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'CMS NPPES',
+      fieldOfStudy: 'Pharmacy',
+      licenseNumber: 'PH-447821',
+      recipientIdentifier: 'NPI 0987654321',
+      jurisdiction: 'Ohio, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.95,
+      reasoning: 'NPIs are required to start with the digits 1 or 2 per CMS specification. An NPI beginning with 0 is structurally impossible — this is a strong indicator of fabricated or altered documentation, not OCR error (the leading character is unambiguous on most documents).',
+    },
+    category: 'license_forgery',
+    source: 'CMS NPI specification 45 CFR 162.406',
+  },
+  {
+    id: 'FT-105',
+    description: 'NPI with valid prefix but failing the Luhn checksum',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'CMS NPPES',
+      fieldOfStudy: 'Internal Medicine',
+      recipientIdentifier: 'NPI 1234567890',
+      jurisdiction: 'New York, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.9,
+      reasoning: 'NPIs use a Luhn (mod 10) check digit with a CMS-specific prefix "80840" appended for the calculation. NPI 1234567890 fails the Luhn check and is therefore not a valid NPI even though it has the correct length and prefix digit. Likely fabricated.',
+    },
+    category: 'license_forgery',
+    source: 'CMS NPI Luhn check specification',
+  },
+  {
+    id: 'FT-106',
+    description: 'Texas medical license with wrong prefix letter',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Texas Medical Board',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: 'X123456',
+      jurisdiction: 'Texas, USA',
+      issuedDate: '2023-08-15',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.86,
+      reasoning: 'Texas Medical Board issues physician licenses with prefix letters K (allopathic), G (osteopathic), or N (postgraduate). "X" is not a recognized TMB prefix. License "X123456" is structurally inconsistent with TMB issuance practice.',
+    },
+    category: 'license_forgery',
+    source: 'TX Medical Practice Act; Texas Medical Board',
+  },
+  {
+    id: 'FT-107',
+    description: 'Florida medical license with wrong prefix (claims MD with PT prefix)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Florida Department of Health',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: 'PT-9999',
+      jurisdiction: 'Florida, USA',
+      issuedDate: '2022-11-04',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.93,
+      reasoning: 'Florida DOH issues MD licenses with prefix "ME" (e.g., ME12345). "PT" is the prefix for Physical Therapist licenses. A license claiming the field "Medicine" but bearing a "PT" prefix is either a transcription error or a deliberate scope misrepresentation.',
+    },
+    category: 'license_forgery',
+    source: 'Florida DOH MQA license verification',
+  },
+  {
+    id: 'FT-108',
+    description: 'Pennsylvania bar registration with too many digits',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Supreme Court of Pennsylvania',
+      fieldOfStudy: 'Law',
+      licenseNumber: '12345678',
+      jurisdiction: 'Pennsylvania, USA',
+      issuedDate: '2024-04-01',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.84,
+      reasoning: 'PA Supreme Court attorney IDs are 5–6 digits as of 2025 (~370,000 attorneys ever admitted). An 8-digit bar number is well outside the issued range and warrants verification against the PA Disciplinary Board attorney directory.',
+    },
+    category: 'license_forgery',
+    source: 'PA Disciplinary Board attorney registry',
+  },
+  {
+    id: 'FT-109',
+    description: 'DEA registration with invalid format (3 letters instead of 2)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'US Drug Enforcement Administration',
+      fieldOfStudy: 'Controlled Substance Prescribing',
+      licenseNumber: 'ABC1234567',
+      jurisdiction: 'Federal, USA',
+      issuedDate: '2024-02-10',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.94,
+      reasoning: 'DEA registration numbers are 2 alpha characters followed by 7 numeric digits (e.g., AB1234567). The first letter encodes registrant type (A/B/F/M/P/R/etc.); the second letter is the first letter of the registrant\'s last name. "ABC1234567" is 3 letters + 7 digits = 10 chars vs the required 2+7=9 — structurally invalid.',
+    },
+    category: 'license_forgery',
+    source: 'DEA Office of Diversion Control specification',
+  },
+  {
+    id: 'FT-110',
+    description: 'DEA registration with valid format but failing the checksum',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'US Drug Enforcement Administration',
+      fieldOfStudy: 'Controlled Substance Prescribing',
+      licenseNumber: 'AB1234561',
+      jurisdiction: 'Federal, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.87,
+      reasoning: 'DEA numbers carry an internal checksum: (sum of 1st+3rd+5th digits) + 2*(sum of 2nd+4th+6th digits) — last digit of that sum equals the 7th digit. AB1234561 fails this checksum: (1+3+5) + 2*(2+4+6) = 9+24 = 33 → expected last digit 3, observed 1. Likely fabricated.',
+    },
+    category: 'license_forgery',
+    source: 'DEA registration checksum (open standard)',
+  },
+  {
+    id: 'FT-111',
+    description: 'CPA license with non-existent California prefix',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Board of Accountancy',
+      fieldOfStudy: 'Public Accounting',
+      licenseNumber: 'CA-CPA-789',
+      jurisdiction: 'California, USA',
+      issuedDate: '2023-12-01',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.85,
+      reasoning: 'California CPA license numbers are 6 digits without alpha prefix (e.g., 123456). The format "CA-CPA-789" is a stylized invention and inconsistent with the CBA issuance practice. Either heavily abbreviated for display or fabricated.',
+    },
+    category: 'license_forgery',
+    source: 'California Board of Accountancy license verification',
+  },
+  {
+    id: 'FT-112',
+    description: 'RN license with truncated digit count for state of issue',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Texas Board of Nursing',
+      fieldOfStudy: 'Nursing',
+      licenseNumber: '99',
+      jurisdiction: 'Texas, USA',
+      issuedDate: '2024-05-22',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.92,
+      reasoning: 'Texas BON RN license numbers are 6–7 digits as of 2025 (over 400,000 RNs licensed). A 2-digit number "99" is structurally impossible for a 2024 issuance.',
+    },
+    category: 'license_forgery',
+    source: 'TX Board of Nursing license verification',
+  },
+  {
+    id: 'FT-113',
+    description: 'Pharmacist license with format outside state pattern',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Education Department - Pharmacy',
+      fieldOfStudy: 'Pharmacy',
+      licenseNumber: 'RPH-12',
+      jurisdiction: 'New York, USA',
+      issuedDate: '2023-03-18',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.86,
+      reasoning: 'NYSED pharmacy licenses are 6 digits (e.g., 045123). "RPH-12" mimics a colloquial title abbreviation rather than a state license number. Verifies against NYSED registry as nonexistent.',
+    },
+    category: 'license_forgery',
+    source: 'NYSED Office of the Professions pharmacy registry',
+  },
+  {
+    id: 'FT-114',
+    description: 'Professional Engineer license without state-specific suffix',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'NCEES (claimed)',
+      fieldOfStudy: 'Civil Engineering',
+      licenseNumber: 'PE-12345',
+      jurisdiction: 'Multistate, USA',
+      issuedDate: '2024-01-15',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.88,
+      reasoning: 'NCEES does not issue PE licenses. PE licensure is granted by individual state boards (e.g., Texas BPELS, California BPELSG). A license claiming "NCEES" as issuer is misattributed — NCEES administers the FE/PE exams and the model law but is not a licensing authority.',
+    },
+    category: 'license_forgery',
+    source: 'NCEES; state PE board licensure model',
+  },
+  {
+    id: 'FT-115',
+    description: 'License marked "active" but issuer registry shows expired',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New Jersey State Board of Medical Examiners',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: '25MA09876500',
+      jurisdiction: 'New Jersey, USA',
+      issuedDate: '2018-04-01',
+      expiryDate: '2020-06-30',
+      statusClaim: 'Active',
+    },
+    expectedOutput: {
+      fraudSignals: ['EXPIRED_CREDENTIAL', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.93,
+      reasoning: 'License has an expiry date of 2020-06-30 but the document claims "Active" status as of extraction time well past that date. Either the credential lapsed and the holder failed to renew (making any "active" claim false) or the status field was tampered.',
+    },
+    category: 'license_forgery',
+    source: 'NJ BME license verification',
+  },
+  {
+    id: 'FT-116',
+    description: 'Scope inflation — RN license cited as physician credential',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Board of Registered Nursing',
+      fieldOfStudy: 'Medicine - Surgical',
+      licenseNumber: '775000',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.94,
+      reasoning: 'A license issued by the Board of Registered Nursing only authorizes nursing practice. Citing it under "Medicine - Surgical" represents a scope of practice the underlying license does not authorize — a material misstatement that would not pass a state physician licensure check.',
+    },
+    category: 'license_forgery',
+    source: 'CA BRN scope of practice; CA Medical Practice Act',
+  },
+  {
+    id: 'FT-117',
+    description: 'License document references a board seal in body text but no embedded seal',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Illinois Department of Financial and Professional Regulation',
+      fieldOfStudy: 'Real Estate',
+      licenseNumber: '475.123456',
+      jurisdiction: 'Illinois, USA',
+      sealReference: 'Bearing the seal of the State of Illinois',
+      hasEmbeddedSealAsset: false,
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.7,
+      reasoning: 'The credential document text claims it bears the State of Illinois seal but the visual/asset extraction recorded no embedded seal. This is a common pattern with copy-paste forgeries that retain the boilerplate seal phrase from a template without including the artwork. Worth flagging for human review; not definitive without document image.',
+    },
+    category: 'license_forgery',
+    source: 'IL IDFPR official document standard',
+  },
+  {
+    id: 'FT-118',
+    description: 'Wrong board name (e.g., "California State Medical Board" — actual is "Medical Board of California")',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California State Medical Board',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: 'A123456',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.65,
+      reasoning: 'The correct issuer name is "Medical Board of California" — there is no agency named "California State Medical Board." Mistaken naming on a credential is a soft signal: it could indicate a forged or template-fabricated document, or it could indicate sloppy data entry on a legitimate record. Cross-check the license number against MBC verification before declaring fraud.',
+    },
+    category: 'license_forgery',
+    source: 'Medical Board of California official name',
+  },
+  {
+    id: 'FT-119',
+    description: 'Bar registration claiming a state with no separate bar (e.g., DC mistyped as "DC State Bar")',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'DC State Bar',
+      fieldOfStudy: 'Law',
+      licenseNumber: '987654',
+      jurisdiction: 'District of Columbia, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.6,
+      reasoning: 'The licensing authority is the "District of Columbia Bar" (D.C. Bar) — DC is not a state and does not have a "State Bar." This is either a transcription error or a sign that the document was generated without familiarity with the actual issuer. Verify the bar number against the DC Bar directory.',
+    },
+    category: 'license_forgery',
+    source: 'D.C. Bar official identity',
+  },
+  {
+    id: 'FT-120',
+    description: 'License of an individual on the NSOPW sex offender registry (background check failure)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Florida Department of Education',
+      fieldOfStudy: 'K-12 Teaching',
+      licenseNumber: '1234567',
+      jurisdiction: 'Florida, USA',
+      issuedDate: '2024-08-01',
+      backgroundCheckClaim: 'Cleared',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.55,
+      reasoning: 'If the license holder appears on the National Sex Offender Public Website (NSOPW) with an offense category that bars K-12 teaching in Florida, the "background check cleared" claim on the credential is materially false. Cannot determine from extraction alone — requires NSOPW lookup. Flag for verification.',
+    },
+    category: 'license_forgery',
+    source: 'NSOPW; Florida DOE background check requirement',
+  },
+  {
+    id: 'FT-121',
+    description: 'HHS-OIG LEIE-excluded provider still presenting active credential',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Education Department',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: '298765',
+      recipientIdentifier: 'NPI 1659389765',
+      jurisdiction: 'New York, USA',
+      statusClaim: 'Active',
+    },
+    expectedOutput: {
+      fraudSignals: ['REVOKED_STATUS', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.55,
+      reasoning: 'If the NPI appears on the HHS Office of Inspector General List of Excluded Individuals/Entities (LEIE) with an active exclusion, the provider may not bill federal healthcare programs. Presenting the license as "active" without disclosing the LEIE exclusion is a material omission. Cannot determine without LEIE lookup.',
+    },
+    category: 'license_forgery',
+    source: 'HHS-OIG LEIE database',
+  },
+  {
+    id: 'FT-122',
+    description: 'Notary commission expired prior to claimed acknowledgment date',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Texas Secretary of State',
+      fieldOfStudy: 'Notary Public',
+      licenseNumber: '12345678',
+      jurisdiction: 'Texas, USA',
+      issuedDate: '2018-03-01',
+      expiryDate: '2022-02-28',
+      acknowledgmentDate: '2024-06-12',
+    },
+    expectedOutput: {
+      fraudSignals: ['EXPIRED_CREDENTIAL', 'SUSPICIOUS_TIMELINE'],
+      confidence: 0.95,
+      reasoning: 'Notary commission expired 2022-02-28. An acknowledgment dated 2024-06-12 by this notary is invalid — the commission was not in force on that date. Texas Government Code §406 requires the notary to be commissioned at the time of the acknowledgment.',
+    },
+    category: 'license_forgery',
+    source: 'TX Government Code §406; SOS Notary registry',
+  },
 
   // ============================================================
-  // DOCUMENT TAMPERING (impossible timelines, math errors)
+  // DOCUMENT TAMPERING — 17 entries (impossible timelines, math)
   // ============================================================
   {
     id: 'FT-201',
@@ -273,9 +991,291 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'document_tampering',
     source: 'pattern: chronology validation',
   },
+  {
+    id: 'FT-204',
+    description: 'Issue date in the future relative to today',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of Michigan',
+      issuedDate: '2099-05-03',
+      fieldOfStudy: 'Mechanical Engineering',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'Michigan, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES'],
+      confidence: 0.99,
+      reasoning: 'Issue date 2099-05-03 is in the far future — impossible. Strong indicator of tampering with the conferral year (e.g., changing 1999 to 2099 to extend a credential\'s perceived recency, or simply a sloppy fabrication).',
+    },
+    category: 'document_tampering',
+    source: 'pattern: chronology validation',
+  },
+  {
+    id: 'FT-205',
+    description: 'GPA on a 4.5 / 4.0 scale (impossible)',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'University of Texas at Austin',
+      issuedDate: '2022-12-15',
+      fieldOfStudy: 'Computer Science',
+      degreeLevel: 'Bachelor',
+      gpa: 4.5,
+      gpaScale: 4.0,
+      jurisdiction: 'Texas, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'INVALID_FORMAT'],
+      confidence: 0.97,
+      reasoning: 'GPA cannot exceed the scale. 4.5 on a 4.0 scale is mathematically impossible (some institutions report on a 5.0 weighted scale, but this transcript explicitly cites a 4.0 scale). Either the GPA value or the scale was altered.',
+    },
+    category: 'document_tampering',
+    source: 'standard GPA arithmetic',
+  },
+  {
+    id: 'FT-206',
+    description: 'Department named on transcript does not exist at institution',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'Harvard University',
+      issuedDate: '2020-05-25',
+      fieldOfStudy: 'Aerospace Engineering',
+      degreeLevel: 'Bachelor',
+      department: 'Department of Aeronautics and Astronautics',
+      jurisdiction: 'Massachusetts, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.95,
+      reasoning: 'Harvard does not have a Department of Aeronautics and Astronautics — that department exists at MIT. Harvard\'s engineering work happens in the John A. Paulson School of Engineering and Applied Sciences (SEAS), with no aerospace-specific department. Likely a forgery template confused MIT and Harvard.',
+    },
+    category: 'document_tampering',
+    source: 'Harvard SEAS department directory',
+  },
+  {
+    id: 'FT-207',
+    description: 'Degree level inflated above what the program offers',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Penn Foster College',
+      issuedDate: '2023-11-01',
+      fieldOfStudy: 'Veterinary Technology',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Pennsylvania, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.94,
+      reasoning: 'Penn Foster College is a regionally accredited (DEAC) institution, but its highest awarded degree is the Associate level for Veterinary Technology. A PhD in Veterinary Technology purportedly from Penn Foster is structurally impossible — the program does not exist at that level.',
+    },
+    category: 'document_tampering',
+    source: 'Penn Foster College program catalog',
+  },
+  {
+    id: 'FT-208',
+    description: 'Field-of-study predates the field\'s existence',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Carnegie Mellon University',
+      issuedDate: '1965-06-10',
+      fieldOfStudy: 'Cybersecurity',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'Pennsylvania, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.93,
+      reasoning: 'Cybersecurity as a named undergraduate degree program emerged after the late 1990s. CMU offered the first formal information assurance graduate concentration in 2001. A 1965 BS in Cybersecurity is anachronistic by 30+ years and is a clear signal of date-or-field tampering.',
+    },
+    category: 'document_tampering',
+    source: 'CMU INI program history',
+  },
+  {
+    id: 'FT-209',
+    description: 'Latin honors claim with no transcript GPA backing',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Yale University',
+      issuedDate: '2019-05-20',
+      fieldOfStudy: 'Political Science',
+      degreeLevel: 'Bachelor',
+      latinHonors: 'summa cum laude',
+      gpa: 2.4,
+      gpaScale: 4.0,
+      jurisdiction: 'Connecticut, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.91,
+      reasoning: 'Yale awards summa cum laude to roughly the top 5% of each graduating class with GPA thresholds well above 3.85. A reported GPA of 2.4 is incompatible with summa cum laude — the honors claim was fabricated or the transcript was tampered.',
+    },
+    category: 'document_tampering',
+    source: 'Yale College Latin honors policy',
+  },
+  {
+    id: 'FT-210',
+    description: 'Conferral date precedes admission term (impossible chronology)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of Michigan',
+      issuedDate: '2020-05-04',
+      admissionDate: '2021-08-30',
+      fieldOfStudy: 'Mechanical Engineering',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'Michigan, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_TIMELINE', 'SUSPICIOUS_DATES'],
+      confidence: 0.97,
+      reasoning: 'Conferral 2020-05-04 is over a year before admission term 2021-08-30 — chronologically impossible. The student cannot graduate before they enroll. Either the issue date or admission date was altered.',
+    },
+    category: 'document_tampering',
+    source: 'pattern: chronology validation',
+  },
+  {
+    id: 'FT-211',
+    description: 'Transcript total credits below the program threshold',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'University of Wisconsin-Madison',
+      issuedDate: '2023-12-19',
+      fieldOfStudy: 'Computer Science',
+      degreeLevel: 'Bachelor',
+      totalCredits: 42,
+      requiredCredits: 120,
+      jurisdiction: 'Wisconsin, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'INVALID_FORMAT'],
+      confidence: 0.93,
+      reasoning: 'UW-Madison BS in Computer Science requires 120 credits. A transcript reporting only 42 credits cannot support degree conferral. Either the credit hours were partially transcribed (in which case verification is needed) or the conferral date is fabricated against an incomplete record.',
+    },
+    category: 'document_tampering',
+    source: 'UW-Madison CS BS degree requirements',
+  },
+  {
+    id: 'FT-212',
+    description: 'Diploma signed by chancellor not in office on issuance date',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of California, Berkeley',
+      issuedDate: '2022-05-14',
+      fieldOfStudy: 'Electrical Engineering',
+      degreeLevel: 'Bachelor',
+      signatoryChancellor: 'Robert J. Birgeneau',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.92,
+      reasoning: 'Robert J. Birgeneau served as Chancellor of UC Berkeley from 2004 to 2013. A 2022 diploma bearing his signature is anachronistic — Carol T. Christ was Chancellor in 2022. Either a template was reused without updating the signature or the date was forward-rolled.',
+    },
+    category: 'document_tampering',
+    source: 'UC Berkeley Chancellor history',
+  },
+  {
+    id: 'FT-213',
+    description: 'Apostille reference in document but no apostille block present',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Universidad Nacional Autónoma de México',
+      issuedDate: '2017-08-15',
+      fieldOfStudy: 'Medicine',
+      degreeLevel: 'Bachelor',
+      apostilleReference: 'Apostilled per Hague Convention 5 October 1961',
+      hasApostilleBlockExtracted: false,
+      jurisdiction: 'Mexico',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.7,
+      reasoning: 'The credential text references an apostille (an international authentication under the 1961 Hague Convention) but the extracted document contains no apostille block, no apostille issuing authority, and no apostille certificate number. Strongly suggests cosmetic boilerplate without the actual authentication. Flag for human review.',
+    },
+    category: 'document_tampering',
+    source: 'Hague Convention 5 October 1961 apostille standard',
+  },
+  {
+    id: 'FT-214',
+    description: 'Watermark / template artifact text in body content',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Princeton University',
+      issuedDate: '2024-06-04',
+      fieldOfStudy: 'Economics',
+      degreeLevel: 'Bachelor',
+      bodyTextArtifacts: ['SAMPLE - NOT VALID', 'Lorem ipsum'],
+      jurisdiction: 'New Jersey, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.97,
+      reasoning: 'Extraction surfaced template artifact text "SAMPLE - NOT VALID" and placeholder "Lorem ipsum" in the body. These are template watermarks left over from a forgery template that was filled in but not properly cleaned. Unambiguous fabrication signal.',
+    },
+    category: 'document_tampering',
+    source: 'common forgery template artifact',
+  },
+  {
+    id: 'FT-215',
+    description: 'Credential mismatch with declared certifying body (CFA Society vs CFA Institute)',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'CFA Society of Boston',
+      issuedDate: '2023-09-01',
+      fieldOfStudy: 'Finance',
+      certificationName: 'Chartered Financial Analyst',
+      jurisdiction: 'Massachusetts, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.86,
+      reasoning: 'The Chartered Financial Analyst (CFA) charter is awarded by the CFA Institute (Charlottesville, VA), not by local CFA Societies. CFA Society of Boston is a local membership organization but does not confer the charter. Citing it as the issuer is structurally wrong.',
+    },
+    category: 'document_tampering',
+    source: 'CFA Institute charter authority',
+  },
+  {
+    id: 'FT-216',
+    description: 'Honoris Causa misrepresented as earned doctorate',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Boston University',
+      issuedDate: '2014-05-18',
+      fieldOfStudy: 'Public Service',
+      degreeLevel: 'Doctor',
+      honoraryFlag: 'Doctor of Humane Letters honoris causa',
+      cvDescription: 'PhD, Boston University',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.9,
+      reasoning: 'The credential is an honorary degree (Doctor of Humane Letters honoris causa), not an earned PhD. Listing it as "PhD" on a CV without the "honoris causa" qualifier is a recognized misrepresentation; the underlying credential involved no academic research or examination.',
+    },
+    category: 'document_tampering',
+    source: 'Boston University commencement records',
+  },
+  {
+    id: 'FT-217',
+    description: 'Transcript credit hours sum mismatch with stated total',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'Ohio State University',
+      issuedDate: '2021-12-19',
+      fieldOfStudy: 'Marketing',
+      degreeLevel: 'Bachelor',
+      perCourseCreditSum: 96,
+      reportedTotalCredits: 132,
+      jurisdiction: 'Ohio, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.91,
+      reasoning: 'The sum of per-course credit hours (96) does not equal the reported total credits (132) — a 36-hour discrepancy. Either courses were omitted from the line-item listing or the total was inflated to meet degree requirements. Either case fails internal consistency.',
+    },
+    category: 'document_tampering',
+    source: 'pattern: credit-sum invariant',
+  },
 
   // ============================================================
-  // IDENTITY MISMATCH (NPI/license belongs to different person)
+  // IDENTITY MISMATCH — 17 entries (NPI / registry / cross-record)
   // ============================================================
   {
     id: 'FT-301',
@@ -296,9 +1296,330 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'identity_mismatch',
     source: 'CMS NPPES registry pattern',
   },
+  {
+    id: 'FT-302',
+    description: 'NPI registered to a deceased provider',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Texas Medical Board',
+      fieldOfStudy: 'Family Medicine',
+      licenseNumber: 'K1234567',
+      recipientIdentifier: 'NPI 1659389765',
+      jurisdiction: 'Texas, USA',
+      issuedDate: '2024-03-15',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.6,
+      reasoning: 'If the NPI in NPPES is associated with a date-of-death entry from SSA Death Master File or state vital records, any 2024 credential issuance against that NPI is impossible. Cannot determine without SSA DMF / NPPES status check; flag for verification.',
+    },
+    category: 'identity_mismatch',
+    source: 'SSA Death Master File; NPPES status',
+  },
+  {
+    id: 'FT-303',
+    description: 'License # matches registered active provider in different person\'s name',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Medical Board',
+      fieldOfStudy: 'Internal Medicine',
+      licenseNumber: 'A123456',
+      jurisdiction: 'California, USA',
+      claimedHolderName: 'John Smith',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'DUPLICATE_REGISTRATION'],
+      confidence: 0.6,
+      reasoning: 'License number A123456 is structurally valid for a CA MD. If MBC verification returns a different licensee name (e.g., "Jane Doe"), then either the document was forged with a borrowed real number or the holder is impersonating. Requires MBC license verification cross-check.',
+    },
+    category: 'identity_mismatch',
+    source: 'MBC license verification',
+  },
+  {
+    id: 'FT-304',
+    description: 'NPI shared across two recipients in submission set',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'CMS NPPES',
+      fieldOfStudy: 'Pediatrics',
+      recipientIdentifier: 'NPI 1659389765',
+      submissionContext: 'Two separate provider records in this batch share this NPI',
+      jurisdiction: 'Mixed (CA, FL)',
+    },
+    expectedOutput: {
+      fraudSignals: ['DUPLICATE_REGISTRATION'],
+      confidence: 0.85,
+      reasoning: 'NPIs are unique per provider — CMS issues one Type-1 NPI per individual healthcare provider. Two distinct provider records in the same submission set sharing one NPI is structurally impossible and indicates either OCR collision or one of the records is impersonating the NPI holder.',
+    },
+    category: 'identity_mismatch',
+    source: 'CMS NPI uniqueness invariant',
+  },
+  {
+    id: 'FT-305',
+    description: 'DOB on credential conflicts with prior credential for same individual',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'University of Pennsylvania',
+      issuedDate: '2014-05-19',
+      claimedHolderName: 'Alex Rivera',
+      claimedDOB: '1990-03-04',
+      priorCredentialDOB: '1992-08-19',
+      jurisdiction: 'Pennsylvania, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.88,
+      reasoning: 'DOB on this Penn transcript (1990-03-04) does not match the DOB on the holder\'s prior credential records (1992-08-19). Two-year discrepancy. DOB is an immutable identifier — either one of the records belongs to a different person or one was tampered.',
+    },
+    category: 'identity_mismatch',
+    source: 'pattern: DOB invariant across credentials',
+  },
+  {
+    id: 'FT-306',
+    description: 'Bar registration name does not match diploma name (no documented name change)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Bar',
+      fieldOfStudy: 'Law',
+      licenseNumber: '5123456',
+      claimedHolderName: 'Sarah O. Whitfield-Patel',
+      diplomaHolderName: 'Sarah Marie Smith',
+      jurisdiction: 'New York, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.55,
+      reasoning: 'Substantial name divergence between diploma ("Sarah Marie Smith") and current bar registration ("Sarah O. Whitfield-Patel") with no marriage / name change order in the dossier. Could be legitimate (marriage, hyphenation) or could indicate identity blending. Flag for documentation request.',
+    },
+    category: 'identity_mismatch',
+    source: 'NY OCA name change documentation',
+  },
+  {
+    id: 'FT-307',
+    description: 'Stolen license — known impersonation case (NPI of practicing provider misused)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Massachusetts Board of Registration in Medicine',
+      fieldOfStudy: 'Anesthesiology',
+      licenseNumber: '256789',
+      recipientIdentifier: 'NPI 1234567890',
+      jurisdiction: 'Massachusetts, USA',
+      claimedAlsoAtFacility: 'Hospital A and Hospital B simultaneously',
+    },
+    expectedOutput: {
+      fraudSignals: ['DUPLICATE_REGISTRATION', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.7,
+      reasoning: 'Same NPI claimed at two facilities at overlapping shift times is a hallmark of NPI cloning / impersonation seen in healthcare fraud cases. Verification required against NPPES affiliations and facility scheduling.',
+    },
+    category: 'identity_mismatch',
+    source: 'HHS-OIG identity-fraud case studies',
+  },
+  {
+    id: 'FT-308',
+    description: 'Synthetic identity — composite of two real records',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Florida Department of Health',
+      fieldOfStudy: 'Pharmacy',
+      licenseNumber: 'PS-29876',
+      claimedHolderSSN_last4: '4567',
+      claimedHolderDOB: '1985-04-14',
+      claimedHolderName: 'Michael R. Donovan',
+      crossRefIssue: 'NPI registry returns different SSN-last4 association',
+      jurisdiction: 'Florida, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'DUPLICATE_REGISTRATION', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.78,
+      reasoning: 'Synthetic identities frequently combine a real SSN with a fabricated name and DOB. If NPI cross-reference returns conflicting last-4 SSN, the credential is constructed from disparate identity components rather than tied to a single individual. Common in CMS fraud schemes.',
+    },
+    category: 'identity_mismatch',
+    source: 'GAO healthcare fraud synthetic-ID typology',
+  },
+  {
+    id: 'FT-309',
+    description: 'License of holder who never reverified post-rule change',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Education Department',
+      fieldOfStudy: 'Architecture',
+      licenseNumber: '029876',
+      jurisdiction: 'New York, USA',
+      issuedDate: '1995-06-15',
+      lastReverificationDate: null,
+      ruleChangeRequiringReverification: '2010-01-01',
+    },
+    expectedOutput: {
+      fraudSignals: ['REVOKED_STATUS', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.65,
+      reasoning: 'NYSED required licensed architects to reverify continuing education compliance after a 2010 rule change. A license without recorded reverification post-2010 may be administratively suspended. Cannot determine without NYSED status query.',
+    },
+    category: 'identity_mismatch',
+    source: 'NYSED Office of the Professions architecture rules',
+  },
+  {
+    id: 'FT-310',
+    description: 'Successor-in-interest claim without legal name change',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Department of Real Estate',
+      fieldOfStudy: 'Real Estate Broker',
+      licenseNumber: '01987654',
+      claimedHolderName: 'Patricia A. Reyes-Vidal',
+      originalLicenseHolder: 'Patricia A. Reyes',
+      legalNameChangeOnFile: false,
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.6,
+      reasoning: 'License is registered to "Patricia A. Reyes" but presented under "Patricia A. Reyes-Vidal" with no recorded name change. Could be a legitimate marriage update not yet reflected, or a separate person attempting to inherit the license. Requires CA DRE name update verification.',
+    },
+    category: 'identity_mismatch',
+    source: 'CA DRE name-update procedure',
+  },
+  {
+    id: 'FT-311',
+    description: 'Transposed digits matching another active license (substitution risk)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Texas Medical Board',
+      fieldOfStudy: 'Surgery',
+      licenseNumber: 'K2345671',
+      crossRefNote: 'TMB lookup of K2345671 returns active license held by different physician; submitted record claims it for a different name',
+      jurisdiction: 'Texas, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['DUPLICATE_REGISTRATION', 'INCONSISTENT_ISSUER'],
+      confidence: 0.75,
+      reasoning: 'License number K2345671 is registered to a TMB-verified active physician under a different name than the submitter claims. Either the submitter transposed digits from a real license they remembered, or they deliberately appropriated a real license number. Either way, the credential as presented is invalid.',
+    },
+    category: 'identity_mismatch',
+    source: 'TMB license verification',
+  },
+  {
+    id: 'FT-312',
+    description: 'HHS-OIG LEIE-excluded individual presenting a valid credential',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New Jersey Board of Medical Examiners',
+      fieldOfStudy: 'Pain Management',
+      licenseNumber: '25MA01234500',
+      recipientIdentifier: 'NPI 1659389765',
+      jurisdiction: 'New Jersey, USA',
+      leieListedDate: '2019-05-01',
+    },
+    expectedOutput: {
+      fraudSignals: ['REVOKED_STATUS', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.92,
+      reasoning: 'Provider appears on the HHS-OIG LEIE with a 2019-05-01 exclusion date. The state license may still be technically active, but the provider is excluded from federal healthcare programs and may not bill Medicare/Medicaid. Presenting the credential as valid for federally reimbursed services is a material misrepresentation.',
+    },
+    category: 'identity_mismatch',
+    source: 'HHS-OIG LEIE database',
+  },
+  {
+    id: 'FT-313',
+    description: 'NSOPW match (sex offender registry) overlapping K-12 credential',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Commission on Teacher Credentialing',
+      fieldOfStudy: 'K-12 Multiple Subject',
+      licenseNumber: '050123456',
+      jurisdiction: 'California, USA',
+      issuedDate: '2024-09-01',
+      nsopwMatch: 'Possible match with same name + DOB',
+    },
+    expectedOutput: {
+      fraudSignals: ['REVOKED_STATUS', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.55,
+      reasoning: 'A K-12 credential is incompatible with active NSOPW registration in jurisdictions that bar registered offenders from K-12 instruction. Cannot determine absolute disqualification without full NSOPW + Megan\'s Law cross-reference; flag for verification.',
+    },
+    category: 'identity_mismatch',
+    source: 'NSOPW; CTC fitness for service standards',
+  },
+  {
+    id: 'FT-314',
+    description: 'ITIN used in lieu of SSN with mismatched holder records',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Illinois Department of Financial and Professional Regulation',
+      fieldOfStudy: 'Real Estate Salesperson',
+      licenseNumber: '475123456',
+      taxIdProvided: 'ITIN 9XX-XX-XXXX',
+      jurisdiction: 'Illinois, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER'],
+      confidence: 0.5,
+      reasoning: 'ITINs (begin with 9) are issued to non-citizens for tax purposes; many state licenses accept ITINs in lieu of SSN. The presence of an ITIN is not itself fraud, but when paired with conflicting employment records claiming SSN-based identity it suggests blended-identity use. Requires document-set cross-reference.',
+    },
+    category: 'identity_mismatch',
+    source: 'IRS ITIN policy; state license SSN/ITIN parity',
+  },
+  {
+    id: 'FT-315',
+    description: 'Photo on credential mismatched with NPI registry photo',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Education Department',
+      fieldOfStudy: 'Dentistry',
+      licenseNumber: '047890',
+      recipientIdentifier: 'NPI 1659389765',
+      photoEmbedHashMatchesNPPES: false,
+      jurisdiction: 'New York, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.66,
+      reasoning: 'Embedded credential photo does not match NPPES-registered photo for the same NPI. Could indicate stolen license number used by impersonator, OR a normal photo update that NPPES has not yet reflected. Requires manual review against state license verification.',
+    },
+    category: 'identity_mismatch',
+    source: 'NPPES + state board photo registries',
+  },
+  {
+    id: 'FT-316',
+    description: 'License previously revoked, re-presented as active',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Washington State Department of Health',
+      fieldOfStudy: 'Naturopathic Medicine',
+      licenseNumber: 'NT0001234',
+      jurisdiction: 'Washington, USA',
+      issuedDate: '2010-04-15',
+      statusClaim: 'Active',
+      priorActions: ['Revoked 2018-11-20'],
+    },
+    expectedOutput: {
+      fraudSignals: ['REVOKED_STATUS', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.96,
+      reasoning: 'Prior actions field shows the license was revoked 2018-11-20. Without a documented reinstatement order, the "Active" status claim is materially false. WA DOH Office of Health Professions licensing should confirm current status.',
+    },
+    category: 'identity_mismatch',
+    source: 'WA DOH Office of Health Professions',
+  },
+  {
+    id: 'FT-317',
+    description: 'License retracted by issuer (RETRACTED_VERIFICATION pattern)',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'American Board of Internal Medicine (ABIM)',
+      fieldOfStudy: 'Internal Medicine',
+      certificationName: 'Board Certified',
+      issuedDate: '2017-11-01',
+      jurisdiction: 'Federal, USA',
+      issuerAdvisory: 'ABIM has retracted board certification verification for this individual due to integrity findings',
+    },
+    expectedOutput: {
+      fraudSignals: ['RETRACTED_VERIFICATION', 'REVOKED_STATUS'],
+      confidence: 0.95,
+      reasoning: 'ABIM has issued a public retraction of board certification verification for this individual (commonly tied to exam-misconduct findings). Any continued representation of board certification after a public retraction is a misrepresentation directly contradicted by the issuer.',
+    },
+    category: 'identity_mismatch',
+    source: 'ABIM public certification verification',
+  },
 
   // ============================================================
-  // SOPHISTICATED FRAUD (legit institution + fake program/dates)
+  // SOPHISTICATED FRAUD — 11 entries
   // ============================================================
   {
     id: 'FT-401',
@@ -358,9 +1679,172 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'sophisticated',
     source: 'TX State Bar provider registry',
   },
+  {
+    id: 'FT-404',
+    description: 'Real Harvard MBA with conferral date pulled forward to extend career timeline',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Harvard Business School',
+      issuedDate: '2002-05-30',
+      fieldOfStudy: 'Business Administration',
+      degreeLevel: 'Master',
+      jurisdiction: 'Massachusetts, USA',
+      registrarOnFileDate: '2008-05-29',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.85,
+      reasoning: 'The credential reports a 2002 conferral, but HBS registrar verification cites 2008. A six-year backdate on a real institution\'s real degree is the textbook sophisticated-fraud pattern: fooling time-in-role checks. The institution and individual are real; only the date was tampered.',
+    },
+    category: 'sophisticated',
+    source: 'HBS Registrar; pattern: date-tampering on legitimate credential',
+  },
+  {
+    id: 'FT-405',
+    description: 'Real LSAT score on letterhead but applied to wrong applicant',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'Law School Admission Council',
+      issuedDate: '2019-09-12',
+      fieldOfStudy: 'LSAT Score Report',
+      claimedHolderName: 'Daniel S. Park',
+      lsacRegisteredHolderName: 'Daniel J. Park',
+      score: 168,
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.78,
+      reasoning: 'LSAC verification against the LSAC ID returns a different middle initial. Either the holder appropriated a near-name match\'s score report, or the document was altered. LSAT scores are unique to LSAC IDs and cross-checkable.',
+    },
+    category: 'sophisticated',
+    source: 'LSAC LSAT score verification',
+  },
+  {
+    id: 'FT-406',
+    description: 'International credential without ECE/WES evaluation',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Indian Institute of Technology Bombay',
+      issuedDate: '2014-07-22',
+      fieldOfStudy: 'Computer Science',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'India',
+      claimsUSEquivalency: 'Equivalent to a US Bachelor of Science',
+      hasECEOrWESEval: false,
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.6,
+      reasoning: 'IIT Bombay is a real and prestigious institution. Claiming US equivalency without an evaluation by an NACES-recognized credential evaluator (ECE, WES, etc.) is the misrepresentation. The degree is real; the equivalency claim is the lie. Common in employment fraud where US-equivalency is asserted without backing evaluation.',
+    },
+    category: 'sophisticated',
+    source: 'NACES recognized credential evaluators',
+  },
+  {
+    id: 'FT-407',
+    description: 'PhD from accredited but recently-defunct institution (record of conferral may exist but is fragile)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Argosy University',
+      issuedDate: '2018-04-15',
+      fieldOfStudy: 'Clinical Psychology',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Multistate, USA',
+      institutionStatus: 'Closed 2019; teach-out incomplete',
+    },
+    expectedOutput: {
+      fraudSignals: ['EXPIRED_ISSUER', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.7,
+      reasoning: 'Argosy University was a regionally accredited (now defunct) institution that abruptly closed in 2019, leaving thousands of students mid-program. Pre-2019 conferral records exist but verification is fragile because the registrar function transferred to limited custodians. A 2018 conferral may be real but is harder to authenticate than from an active institution.',
+    },
+    category: 'sophisticated',
+    source: 'Argosy University closure records',
+  },
+  {
+    id: 'FT-408',
+    description: 'Real CME provider but presenter on certificate is not faculty',
+    extractedFields: {
+      credentialType: 'CLE',
+      issuerName: 'Mayo Clinic Continuing Education',
+      issuedDate: '2024-02-08',
+      fieldOfStudy: 'Cardiology',
+      claimedFaculty: 'Dr. Eric T. Whitaker',
+      mayoFacultyDirectoryHit: false,
+      creditHours: 8,
+      jurisdiction: 'Minnesota, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.85,
+      reasoning: 'CME certificate from a real provider (Mayo Clinic CE) but cites a presenter not in Mayo\'s public faculty directory and not in any Mayo CME archive for the listed date. Either presenter name was fabricated, or the certificate template was reused with a fake speaker. Real provider + fake faculty is a sophisticated-fraud signature.',
+    },
+    category: 'sophisticated',
+    source: 'Mayo Clinic CE faculty directory',
+  },
+  {
+    id: 'FT-409',
+    description: 'ACGME-accredited residency claimed but ACGME has no record',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'Mount Sinai Hospital - Internal Medicine Residency',
+      issuedDate: '2021-06-30',
+      fieldOfStudy: 'Internal Medicine',
+      certificationName: 'Residency Completion',
+      acgmeProgramId: '1403521234',
+      acgmeRegistryHit: false,
+      jurisdiction: 'New York, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['UNVERIFIABLE_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.92,
+      reasoning: 'ACGME maintains a public registry of accredited residency programs by ID. The cited ACGME program ID does not exist in the ACGME database. Mount Sinai is a real hospital with real residency programs but the program ID on this certificate is fabricated.',
+    },
+    category: 'sophisticated',
+    source: 'ACGME accredited program registry',
+  },
+  {
+    id: 'FT-410',
+    description: 'Real University of Phoenix degree with fabricated honors designation',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of Phoenix',
+      issuedDate: '2020-08-30',
+      fieldOfStudy: 'Business Administration',
+      degreeLevel: 'Bachelor',
+      latinHonors: 'magna cum laude',
+      jurisdiction: 'Arizona, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT'],
+      confidence: 0.78,
+      reasoning: 'University of Phoenix does not award Latin honors (cum laude / magna cum laude / summa cum laude) for its degree programs — the institution does not use that honors system. Adding "magna cum laude" to a Phoenix degree is a fabricated embellishment on an otherwise legitimate credential.',
+    },
+    category: 'sophisticated',
+    source: 'University of Phoenix academic policy',
+  },
+  {
+    id: 'FT-411',
+    description: 'Bar admission claim without NCBE Multistate score record',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Massachusetts Bar',
+      fieldOfStudy: 'Law',
+      licenseNumber: '654321',
+      jurisdiction: 'Massachusetts, USA',
+      claimedAdmissionDate: '2022-11-15',
+      ncbeMbeRecordOnFile: false,
+    },
+    expectedOutput: {
+      fraudSignals: ['UNVERIFIABLE_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.65,
+      reasoning: 'Massachusetts requires MBE passage (administered by NCBE) for admission. If NCBE has no MBE record for the holder around the claimed admission date, either the admission was via reciprocity (which has its own paper trail) or the admission claim is fabricated. Verify against NCBE candidate file + MA BBO admissions records.',
+    },
+    category: 'sophisticated',
+    source: 'NCBE; MA BBO admissions records',
+  },
 
   // ============================================================
-  // CLEAN (non-fraud — to teach the model what NOT to flag)
+  // CLEAN CONTROLS — 11 entries (no fraud — teach negative class)
   // ============================================================
   {
     id: 'FT-901',
@@ -378,7 +1862,7 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       confidence: 0.95,
       reasoning: 'University of Michigan is a regionally accredited public research university. Computer Science is an established UMich program in the College of Engineering. Date is plausible (May conferral standard). No fraud indicators.',
     },
-    category: 'sophisticated',
+    category: 'clean',
     source: 'clean baseline',
   },
   {
@@ -398,7 +1882,180 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
       confidence: 0.93,
       reasoning: 'PMP (Project Management Professional) is an established certification by PMI, in continuous operation since 1969. Three-year cycle (2026 to 2029) is consistent with PMI policy. PMP number format (7+ digits) is consistent. No fraud indicators.',
     },
-    category: 'sophisticated',
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-903',
+    description: 'Genuine Cornell Engineering BS (no fraud)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Cornell University',
+      issuedDate: '2023-05-28',
+      fieldOfStudy: 'Mechanical Engineering',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'New York, USA',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.95,
+      reasoning: 'Cornell is a regionally accredited Ivy League research university. Mechanical Engineering is an established program in Cornell\'s College of Engineering. May conferral and Ithaca, NY jurisdiction are consistent. No fraud indicators.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-904',
+    description: 'Genuine NY bar admit with valid registration number (no fraud)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New York State Bar',
+      fieldOfStudy: 'Law',
+      licenseNumber: '5234567',
+      jurisdiction: 'New York, USA',
+      issuedDate: '2018-11-15',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.92,
+      reasoning: 'Bar registration number 5234567 falls within the NY OCA-issued range. November admit date is consistent with the standard NY admission cycle following July bar exam. No format violations.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-905',
+    description: 'Genuine CFA charter (no fraud)',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'CFA Institute',
+      issuedDate: '2021-09-15',
+      fieldOfStudy: 'Finance',
+      certificationName: 'Chartered Financial Analyst',
+      jurisdiction: 'Federal, USA',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.93,
+      reasoning: 'CFA Institute (Charlottesville, VA) is the legitimate issuing body of the CFA charter. Issuance month (September) aligns with the standard CFA Level III result release cycle. No format issues.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-906',
+    description: 'Genuine ACLS provider card (no fraud)',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'American Heart Association',
+      issuedDate: '2024-10-12',
+      expiryDate: '2026-10-12',
+      fieldOfStudy: 'Advanced Cardiovascular Life Support',
+      certificationName: 'ACLS Provider',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.92,
+      reasoning: 'AHA-issued ACLS Provider cards are valid for 2 years from issuance. The expiry (2026-10-12) is exactly 2 years after issuance, matching AHA policy. No format issues.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-907',
+    description: 'Genuine AWS Solutions Architect Associate cert (no fraud)',
+    extractedFields: {
+      credentialType: 'CERTIFICATE',
+      issuerName: 'Amazon Web Services',
+      issuedDate: '2025-02-20',
+      expiryDate: '2028-02-20',
+      fieldOfStudy: 'Cloud Architecture',
+      certificationName: 'AWS Certified Solutions Architect - Associate',
+      certificationId: 'AWS01ABCD1234EFGH',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.92,
+      reasoning: 'AWS Solutions Architect Associate certifications are valid for 3 years from issuance. The expiry exactly 3 years out matches AWS policy. The certification ID format (AWS01 + alphanumeric) is consistent with current AWS Credly issuance format.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-908',
+    description: 'Genuine PA medical license with correct prefix (no fraud)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'Pennsylvania State Board of Medicine',
+      fieldOfStudy: 'Medicine',
+      licenseNumber: 'MD123456',
+      jurisdiction: 'Pennsylvania, USA',
+      issuedDate: '2019-07-22',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.92,
+      reasoning: 'PA State Board of Medicine issues physician licenses with prefix "MD" followed by 6 digits. License "MD123456" matches that pattern. Issuance year 2019 falls in active issuance period. No format violations.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-909',
+    description: 'Genuine New Jersey CPA license (no fraud)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'New Jersey State Board of Accountancy',
+      fieldOfStudy: 'Public Accounting',
+      licenseNumber: '20CC02345600',
+      jurisdiction: 'New Jersey, USA',
+      issuedDate: '2017-11-30',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.91,
+      reasoning: 'NJ Board of Accountancy issues CPA licenses with the format "20CC" + 8 digits. The license "20CC02345600" matches the NJ Office of the Attorney General professional licensing format. No format violations.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-910',
+    description: 'Genuine California Professional Engineer license (no fraud)',
+    extractedFields: {
+      credentialType: 'LICENSE',
+      issuerName: 'California Board for Professional Engineers, Land Surveyors, and Geologists',
+      fieldOfStudy: 'Civil Engineering',
+      licenseNumber: 'CIVIL 87654',
+      jurisdiction: 'California, USA',
+      issuedDate: '2015-03-15',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.9,
+      reasoning: 'CA BPELSG issues PE civil licenses with format "CIVIL" or "C" + license number. "CIVIL 87654" matches the issuance format used in the 2010s license series. No format violations.',
+    },
+    category: 'clean',
+    source: 'clean baseline',
+  },
+  {
+    id: 'FT-911',
+    description: 'Genuine ABA-accredited JD with bar admission (no fraud)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of California, Berkeley School of Law',
+      issuedDate: '2017-05-13',
+      fieldOfStudy: 'Law',
+      degreeLevel: 'JD',
+      accreditingBody: 'American Bar Association',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: [],
+      confidence: 0.94,
+      reasoning: 'Berkeley Law is an ABA-accredited law school (one of the historic top-14). May 2017 conferral aligns with the standard May commencement cycle. ABA accreditation correctly cited. No fraud indicators.',
+    },
+    category: 'clean',
     source: 'clean baseline',
   },
 ];
@@ -409,9 +2066,11 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
  */
 export const FRAUD_SYSTEM_PROMPT = `You are a credential fraud auditor analyzing extracted credential metadata. Your job is to identify fraud signals using only the structured fields provided plus your knowledge of:
 - Diploma mills (FTC enforcement actions, GAO reports, state unaccredited lists like Oregon ODA)
-- License number formats per jurisdiction (NPI must be 10 digits, state-specific medical/bar formats)
-- Institution legitimacy (founding dates, program offerings, accreditation status)
-- Temporal consistency (issue dates vs issuer existence, chronology of multiple credentials)
+- License number formats per jurisdiction (NPI must be 10 digits, state-specific medical/bar formats, DEA 2 letters + 7 digits with checksum)
+- Institution legitimacy (founding dates, program offerings, accreditation status, recognized accreditors per CHEA / USDOE)
+- Temporal consistency (issue dates vs issuer existence, chronology of multiple credentials, conferral vs admission term)
+- Identity invariants (NPI uniqueness, DOB consistency across credentials, NPPES taxonomy match, HHS-OIG LEIE exclusions)
+- Sophisticated fraud (real institution + fabricated program/honors/dates, real provider + fabricated faculty)
 
 Return a strict JSON object:
 {
