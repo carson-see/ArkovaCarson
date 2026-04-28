@@ -15,6 +15,7 @@
  */
 
 import { db, withDbTimeout } from '../utils/db.js';
+import type { TablesUpdate } from '../types/database.types.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 import { getChainClientAsync } from '../chain/client.js';
@@ -189,7 +190,7 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
 
     // RACE-1 fix: Update BROADCASTING → SUBMITTED with chain data.
     // This is safe: only one worker holds this anchor in BROADCASTING.
-    const updatePayload: Record<string, unknown> = {
+    const updatePayload: TablesUpdate<'anchors'> = {
       status: 'SUBMITTED',
       chain_tx_id: receipt.receiptId,
       chain_block_height: receipt.blockHeight,
@@ -239,16 +240,14 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
     // Clean up claim metadata
     delete chainMetadata._claimed_by;
     delete chainMetadata._claimed_at;
-    updatePayload.metadata = chainMetadata;
+    updatePayload.metadata = chainMetadata as TablesUpdate<'anchors'>['metadata'];
 
     // CML-02: Auto-populate compliance controls based on credential type
     updatePayload.compliance_controls = getComplianceControlIds(anchor.credential_type);
 
     const { error: updateError, count } = await db
       .from('anchors')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- supabase-js
-      // RejectExcessProperties is too strict for the dynamic update payload built above.
-      .update(updatePayload as any)
+      .update(updatePayload)
       .eq('id', anchorId)
       .eq('status', 'BROADCASTING');
 

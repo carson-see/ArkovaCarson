@@ -24,6 +24,7 @@
 import { Router, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { db } from '../../utils/db.js';
+import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
 import { isPrivateUrlResolved, replayDelivery, signPayload } from '../../webhooks/delivery.js';
 import {
@@ -601,14 +602,7 @@ router.patch('/:id', async (req, res) => {
     return;
   }
 
-  // supabase-js v2.x update() rejects Record<string, unknown> via
-  // RejectExcessProperties; declare the partial-update shape explicitly.
-  const updateData: {
-    url?: string;
-    events?: string[];
-    description?: string | null;
-    is_active?: boolean;
-  } = {};
+  const updateData: TablesUpdate<'webhook_endpoints'> = {};
   if (parsed.data.url !== undefined) updateData.url = parsed.data.url;
   if (parsed.data.events !== undefined) updateData.events = parsed.data.events;
   if (parsed.data.description !== undefined) updateData.description = parsed.data.description;

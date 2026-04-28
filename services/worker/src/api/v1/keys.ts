@@ -14,6 +14,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
+import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
@@ -266,10 +267,7 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
-    // supabase-js v2.x's update() generic now uses RejectExcessProperties,
-    // which refuses Record<string, unknown>. Type the partial-update shape
-    // explicitly so only the keys we set are inferred.
-    const updateData: { name?: string; is_active?: boolean } = {};
+    const updateData: TablesUpdate<'api_keys'> = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
     if (parsed.data.is_active !== undefined) updateData.is_active = parsed.data.is_active;
 
