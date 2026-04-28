@@ -18,30 +18,14 @@
  * on the PR. Override is enforced at the workflow level, not here.
  */
 
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { loadBaseline, loadMigrations } from './lib/migration-lint';
 
 const REPO = process.env.RLS_POLICY_COVERAGE_REPO_ROOT
   ?? resolve(import.meta.dirname, '..', '..');
 const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'rls-policy-coverage-baseline.json');
-
-interface Baseline {
-  /** Table names exempt from the policy-coverage requirement. */
-  grandfathered: string[];
-}
-
-function loadBaseline(): Set<string> {
-  if (!existsSync(BASELINE_PATH)) return new Set();
-  const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Baseline;
-  return new Set(raw.grandfathered);
-}
-
-function stripDollarQuoted(sql: string): string {
-  return sql.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)?\$[\s\S]*?\$\1\$/g, (m) => {
-    return m.replace(/[^\n]/g, ' ');
-  });
-}
 
 function unquoteIdent(s: string): string {
   return s.replace(/^"|"$/g, '');
@@ -53,41 +37,7 @@ function bareName(qualified: string): string {
   return unquoteIdent(noSchema);
 }
 
-interface MigrationView {
-  file: string;
-  sql: string;
-  /**
-   * `sql` with dollar-quoted blocks blanked. Used only for FORCE RLS
-   * detection — ALTER TABLE … FORCE inside a DO/EXECUTE block is
-   * vanishingly rare and the strip helps avoid quoted ALTERs in
-   * comment headers from being matched. CREATE POLICY detection runs
-   * against the ORIGINAL `sql` because policies inside DO/EXECUTE
-   * blocks (e.g. 0275's anchoring_jobs IF EXISTS guard) are real
-   * runtime CREATE POLICY statements that must count.
-   */
-  stripped: string;
-}
-
-function loadMigrations(): MigrationView[] {
-  if (!existsSync(MIGRATIONS_DIR)) return [];
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql') && !f.startsWith('_'))
-    .sort()
-    .map((file) => {
-      const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-      return { file, sql, stripped: stripDollarQuoted(sql) };
-    });
-}
-
-function tableHasForceRls(stripped: string, table: string): boolean {
-  const re = new RegExp(
-    `ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:public\\.)?\"?${table}\"?\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY`,
-    'i',
-  );
-  return re.test(stripped);
-}
-
-function tableHasPolicy(stripped: string, table: string): boolean {
+function tableHasPolicy(sql: string, table: string): boolean {
   // Policy name can be a bare identifier (\w+) or a quoted identifier
   // ("Org members can read..."). The ON clause can be schema-qualified
   // and the table name itself may be quoted.
@@ -95,24 +45,25 @@ function tableHasPolicy(stripped: string, table: string): boolean {
     `CREATE\\s+POLICY\\s+(?:\\w+|"[^"]+")\\s+ON\\s+(?:public\\.)?\"?${table}\"?\\b`,
     'i',
   );
-  return re.test(stripped);
+  return re.test(sql);
 }
 
-function tableHasDenyAllComment(stripped: string, table: string): boolean {
+function tableHasDenyAllComment(sql: string, table: string): boolean {
   const re = new RegExp(
     `COMMENT\\s+ON\\s+TABLE\\s+(?:public\\.)?\"?${table}\"?\\s+IS\\s+'[^']*Deny-all by design[^']*'`,
     'i',
   );
-  return re.test(stripped);
+  return re.test(sql);
 }
 
 function main(): void {
-  const grandfathered = loadBaseline();
-  const migrations = loadMigrations();
-  if (migrations.length === 0) {
-    console.log(`No migrations directory; skipping.`);
+  if (!existsSync(MIGRATIONS_DIR)) {
+    console.log(`No migrations directory at ${MIGRATIONS_DIR}; skipping.`);
     return;
   }
+
+  const grandfathered = loadBaseline(BASELINE_PATH);
+  const migrations = loadMigrations(MIGRATIONS_DIR);
 
   // Pass 1: collect every table that ever sets FORCE ROW LEVEL SECURITY.
   // Track the first migration where it happens so error output is helpful.

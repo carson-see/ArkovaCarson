@@ -3,33 +3,23 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import {
+  runLintScript,
+  makeTempMigrationsRepo,
+} from './lib/migration-lint-test-helpers';
 
 const SCRIPT = join(process.cwd(), 'scripts/ci/check-rls-policy-coverage.ts');
+const ENV_VAR = 'RLS_POLICY_COVERAGE_REPO_ROOT';
 
-function runIn(repoRoot: string): { code: number; stdout: string; stderr: string } {
-  const res = spawnSync('npx', ['tsx', SCRIPT], {
-    cwd: process.cwd(),
-    env: { ...process.env, RLS_POLICY_COVERAGE_REPO_ROOT: repoRoot },
-    encoding: 'utf8',
-  });
-  return { code: res.status ?? 0, stdout: res.stdout, stderr: res.stderr };
-}
-
-function makeRepo(): string {
-  const root = mkdtempSync(join(tmpdir(), 'arkova-rls-coverage-'));
-  mkdirSync(join(root, 'supabase', 'migrations'), { recursive: true });
-  return root;
-}
+const run = (repoRoot: string) => runLintScript(SCRIPT, ENV_VAR, repoRoot);
 
 describe('check-rls-policy-coverage', () => {
   let repoRoot: string;
 
   beforeEach(() => {
-    repoRoot = makeRepo();
+    repoRoot = makeTempMigrationsRepo('arkova-rls-coverage-');
   });
 
   afterEach(() => {
@@ -41,7 +31,7 @@ describe('check-rls-policy-coverage', () => {
       join(repoRoot, 'supabase/migrations/0001_init.sql'),
       'CREATE TABLE foo (id int);',
     );
-    const { code, stdout } = runIn(repoRoot);
+    const { code, stdout } = run(repoRoot);
     expect(code).toBe(0);
     expect(stdout).toContain('No tables with bare ENABLE+FORCE');
   });
@@ -54,8 +44,7 @@ ALTER TABLE foo ENABLE ROW LEVEL SECURITY;
 ALTER TABLE foo FORCE ROW LEVEL SECURITY;
 CREATE POLICY foo_service ON foo FOR ALL TO service_role USING (true) WITH CHECK (true);`,
     );
-    const { code } = runIn(repoRoot);
-    expect(code).toBe(0);
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('passes when policy is in a later migration', () => {
@@ -69,8 +58,7 @@ ALTER TABLE foo FORCE ROW LEVEL SECURITY;`,
       join(repoRoot, 'supabase/migrations/0002_policy.sql'),
       `CREATE POLICY foo_service ON foo FOR ALL TO service_role USING (true);`,
     );
-    const { code } = runIn(repoRoot);
-    expect(code).toBe(0);
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('passes when DELIBERATE deny-all comment is present', () => {
@@ -81,8 +69,7 @@ ALTER TABLE legacy_quarantine ENABLE ROW LEVEL SECURITY;
 ALTER TABLE legacy_quarantine FORCE ROW LEVEL SECURITY;
 COMMENT ON TABLE legacy_quarantine IS 'Deny-all by design (R3-2). See SCRUM-XXXX.';`,
     );
-    const { code } = runIn(repoRoot);
-    expect(code).toBe(0);
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('fails when ENABLE+FORCE is set with no policy and no deny-all comment', () => {
@@ -92,7 +79,7 @@ COMMENT ON TABLE legacy_quarantine IS 'Deny-all by design (R3-2). See SCRUM-XXXX
 ALTER TABLE silent ENABLE ROW LEVEL SECURITY;
 ALTER TABLE silent FORCE ROW LEVEL SECURITY;`,
     );
-    const { code, stderr } = runIn(repoRoot);
+    const { code, stderr } = run(repoRoot);
     expect(code).toBe(1);
     expect(stderr).toContain('SCRUM-1275');
     expect(stderr).toContain('silent');
@@ -110,8 +97,7 @@ ALTER TABLE legacy FORCE ROW LEVEL SECURITY;`,
       join(repoRoot, 'scripts/ci/snapshots/rls-policy-coverage-baseline.json'),
       JSON.stringify({ grandfathered: ['legacy'] }),
     );
-    const { code } = runIn(repoRoot);
-    expect(code).toBe(0);
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('treats only ENABLE without FORCE as a non-issue (force is what blocks service_role)', () => {
@@ -120,8 +106,7 @@ ALTER TABLE legacy FORCE ROW LEVEL SECURITY;`,
       `CREATE TABLE foo (id int);
 ALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,
     );
-    const { code } = runIn(repoRoot);
-    expect(code).toBe(0);
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('handles schema-qualified table names', () => {
@@ -130,7 +115,7 @@ ALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,
       `ALTER TABLE public.qualified ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.qualified FORCE ROW LEVEL SECURITY;`,
     );
-    const { code, stderr } = runIn(repoRoot);
+    const { code, stderr } = run(repoRoot);
     expect(code).toBe(1);
     expect(stderr).toContain('qualified');
   });

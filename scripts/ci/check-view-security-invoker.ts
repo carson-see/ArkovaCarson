@@ -7,6 +7,7 @@
  * superuser or migration runner) — bypassing RLS for the view's caller.
  *
  * Allowed forms:
+ *
  *   1. `CREATE [OR REPLACE] VIEW ... WITH (security_invoker = true) AS ...`
  *   2. `CREATE [OR REPLACE] VIEW ... AS ...` immediately followed within
  *      the same file by `ALTER VIEW ... SET (security_invoker = true)`.
@@ -20,18 +21,14 @@
  * on the PR. Override is enforced at the workflow level, not here.
  */
 
-import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { loadBaseline, loadMigrations } from './lib/migration-lint';
 
 const REPO = process.env.VIEW_SECURITY_INVOKER_REPO_ROOT
   ?? resolve(import.meta.dirname, '..', '..');
 const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'view-security-invoker-baseline.json');
-
-interface Baseline {
-  /** Migration filenames that pre-date the lint and are exempt. */
-  grandfathered: string[];
-}
 
 interface Violation {
   file: string;
@@ -39,28 +36,8 @@ interface Violation {
   lineHint: number;
 }
 
-/**
- * Strip dollar-quoted blocks (`$$ ... $$` and `$tag$ ... $tag$`) so the
- * scanner doesn't treat CREATE VIEW templates inside DO blocks as
- * top-level statements.
- */
-function stripDollarQuoted(sql: string): string {
-  // Match $tag$...$tag$ where tag is empty or [a-zA-Z_][a-zA-Z0-9_]*.
-  // Replace with newline-preserving blank so subsequent line-counting stays correct.
-  return sql.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)?\$[\s\S]*?\$\1\$/g, (m) => {
-    return m.replace(/[^\n]/g, ' ');
-  });
-}
-
-function loadBaseline(): Set<string> {
-  if (!existsSync(BASELINE_PATH)) return new Set();
-  const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Baseline;
-  return new Set(raw.grandfathered);
-}
-
-function findViolations(file: string, sql: string): Violation[] {
+function findViolations(file: string, stripped: string): Violation[] {
   const out: Violation[] = [];
-  const stripped = stripDollarQuoted(sql);
   const lines = stripped.split('\n');
 
   // Find every CREATE [OR REPLACE] VIEW. Capture the view name (next non-AS token).
@@ -72,14 +49,13 @@ function findViolations(file: string, sql: string): Violation[] {
     const offset = m.index;
     const lineHint = stripped.slice(0, offset).split('\n').length;
 
-    // Read up to ~400 chars after match to check for WITH (security_invoker = true)
-    // OR an AS clause that didn't close before the next statement.
+    // Read up to ~800 chars after match to check for WITH (security_invoker = true)
     const window = stripped.slice(offset, offset + 800);
     const hasInvokerInline = /WITH\s*\(\s*security_invoker\s*=\s*true\s*\)/i.test(window);
     if (hasInvokerInline) continue;
 
     // Look for a sibling ALTER VIEW <same name> SET (security_invoker = true) anywhere
-    // in the rest of the file. Allow schema-qualified or bare names.
+    // in the rest of the file.
     const bareName = viewIdent.replace(/^public\./i, '').replace(/^"|"$/g, '');
     const alterPattern = new RegExp(
       `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?(?:public\\.)?\"?${bareName}\"?\\s+SET\\s*\\(\\s*security_invoker\\s*=\\s*true\\s*\\)`,
@@ -104,16 +80,13 @@ function main(): void {
     return;
   }
 
-  const grandfathered = loadBaseline();
+  const grandfathered = loadBaseline(BASELINE_PATH);
+  const migrations = loadMigrations(MIGRATIONS_DIR);
   const violations: Violation[] = [];
 
-  for (const file of readdirSync(MIGRATIONS_DIR).sort()) {
-    if (!file.endsWith('.sql')) continue;
-    if (file.startsWith('_')) continue;
-    if (grandfathered.has(file)) continue;
-    const full = join(MIGRATIONS_DIR, file);
-    const sql = readFileSync(full, 'utf8');
-    violations.push(...findViolations(file, sql));
+  for (const mig of migrations) {
+    if (grandfathered.has(mig.file)) continue;
+    violations.push(...findViolations(mig.file, mig.stripped));
   }
 
   if (violations.length === 0) {
