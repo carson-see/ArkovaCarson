@@ -59,11 +59,19 @@ if [[ "${SKIP_TDD_CHECK:-}" == "1" ]]; then
   exit 0
 fi
 
-# Check commit message for [skip-tdd] (only in staged mode)
+# Check commit message(s) for [skip-tdd]. In staged mode we look at the
+# pending commit; in --diff (CI) mode we scan every commit between BASE
+# and HEAD so a [skip-tdd] marker on any commit in the PR opts the whole
+# PR out (matching how operators document the skip in git log).
 if [[ "$MODE" == "staged" ]]; then
   COMMIT_MSG_FILE="${GIT_COMMIT_MSG_FILE:-.git/COMMIT_EDITMSG}"
   if [[ -f "$COMMIT_MSG_FILE" ]] && grep -qi '\[skip-tdd\]' "$COMMIT_MSG_FILE"; then
     echo "TDD check skipped ([skip-tdd] in commit message)"
+    exit 0
+  fi
+elif [[ "$MODE" == "diff" ]]; then
+  if git log --format=%B "$BASE_SHA..HEAD" 2>/dev/null | grep -qi '\[skip-tdd\]'; then
+    echo "TDD check skipped ([skip-tdd] found in PR commit messages)"
     exit 0
   fi
 fi

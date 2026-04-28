@@ -10,6 +10,7 @@
 
 import type Stripe from 'stripe';
 import { db } from '../utils/db.js';
+import type { TablesUpdate } from '../types/database.types.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 
@@ -453,8 +454,8 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   const periodFieldsValid =
     firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
 
-  // Build update payload — period fields only when valid
-  const updatePayload: Record<string, unknown> = {
+  // Build update payload — period fields only when valid.
+  const updatePayload: TablesUpdate<'subscriptions'> = {
     status: mappedStatus,
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
@@ -472,8 +473,13 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     );
   }
 
-  // Always update plan_id when we resolved a price (even if null — clears stale value)
-  if (currentPriceId) {
+  // subscriptions.plan_id is NON-NULL in the schema (TablesUpdate types
+  // `plan_id?: string`). Only write the column when we resolved a real
+  // priceId AND mapped it to a known plan. If the price is unrecognised
+  // (newPlanId === null), leave the existing plan_id intact rather than
+  // forcing a NOT NULL violation at UPDATE time. Operator-visible via the
+  // "Unrecognized Stripe priceId" warn already emitted upstream.
+  if (currentPriceId && newPlanId) {
     updatePayload.plan_id = newPlanId;
   }
 

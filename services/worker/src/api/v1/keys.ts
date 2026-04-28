@@ -14,6 +14,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
+import type { TablesUpdate } from '../../types/database.types.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
 import { API_KEY_SCOPES, DEFAULT_API_KEY_SCOPES } from '../apiScopes.js';
@@ -266,7 +267,7 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
-    const updateData: Record<string, unknown> = {};
+    const updateData: TablesUpdate<'api_keys'> = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
     if (parsed.data.is_active !== undefined) updateData.is_active = parsed.data.is_active;
 

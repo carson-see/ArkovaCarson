@@ -235,7 +235,15 @@ async function createRealKmsClient(region?: string): Promise<KmsClientLike> {
     '@aws-sdk/client-kms'
   );
 
-  const client = new KMSClient({ region: region ?? 'us-east-1' });
+  // @aws-sdk/client-kms 3.x removed `client.send` from public types
+  // (runtime method still exists). This path is non-deployed per
+  // memory/feedback_no_aws.md — prod signs via WIF in Secret Manager
+  // (chain/client.ts:279). Cast to a named structural type instead of
+  // `any` so the contract is documented at the type-system boundary.
+  interface SendOnlyKmsClient {
+    send(cmd: unknown): Promise<{ PublicKey?: Uint8Array; Signature?: Uint8Array }>;
+  }
+  const client = new KMSClient({ region: region ?? 'us-east-1' }) as unknown as SendOnlyKmsClient;
 
   return {
     async getPublicKey(keyId: string): Promise<Uint8Array> {
