@@ -260,7 +260,7 @@ function findTermViolations(line: string, lineNum: number, filePath: string): Vi
         file: filePath,
         line: lineNum,
         term: match[0],
-        context: searchableLine.trim().substring(0, 80),
+        context: cleaned.trim().substring(0, 80),
       });
     }
   }

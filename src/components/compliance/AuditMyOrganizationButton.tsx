@@ -128,9 +128,6 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
     navigate(ROUTES.COMPLIANCE_SCORECARD);
   };
 
-  const isRunning =
-    state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
-
   return (
     <Card
       className="border-primary/40 bg-gradient-to-br from-primary/5 to-transparent"

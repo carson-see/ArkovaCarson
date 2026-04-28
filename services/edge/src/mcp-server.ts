@@ -731,7 +731,7 @@ function warnSupabaseJwtSecretMissingOnce(): void {
   console.error('[mcp-server] SUPABASE_JWT_SECRET unset — bearer auth disabled (MCP-SEC-07). Provision via `wrangler secret put SUPABASE_JWT_SECRET --name arkova-edge`.');
 }
 
-async function validateBearer(
+export async function validateBearer(
   token: string,
   env: Env,
 ): Promise<AuthResult | null> {
@@ -755,9 +755,6 @@ async function validateBearer(
   // server-side revocations (deleted user, role demotion, etc.) that the
   // self-signed JWT can't reflect on its own.
   try {
-    const claims = await verifySupabaseJwt(token, env);
-    if (!claims) return null;
-
     const response = await authFetch(`${env.SUPABASE_URL}/auth/v1/user`, {
       headers: {
         apikey: env.SUPABASE_SERVICE_ROLE_KEY,
