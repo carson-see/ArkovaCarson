@@ -1,9 +1,19 @@
 # agents.md — services/worker
-_Last updated: 2026-04-27 (R2 batch 3 — SCRUM-1270 / 1272 vocab / 1271-A privacy fix)_
+_Last updated: 2026-04-27 (SCRUM-792 fraud-seed 100+ + R2 batch 3 SCRUM-1270 / 1272 / 1271-A)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## SCRUM-792 — Gemini fraud detection seed dataset 100+ (2026-04-27, GME2-01)
+
+`src/ai/eval/fraud-training-seed.ts` expanded from 18 to 100 entries: 22 diploma_mill, 22 license_forgery, 17 document_tampering, 17 identity_mismatch, 11 sophisticated, 11 clean controls. Sources span FTC enforcement actions (Almeda, Belford, WAUC accreditation alert, Rochville, FBI Columbia State 1998), GAO-04-1024T, Oregon ODA unaccredited registry, CMS NPI spec (10-digit + Luhn + prefix), DEA registrant format spec (2 letters + 7 digits + checksum), HHS-OIG LEIE provider exclusion, and state-board enforcement (TX Medical Board, Medical Board of California, NY OCA, NJ BME, NSOPW match, ABIM retraction).
+
+Exported `as const` tuples — `FRAUD_SIGNALS` (13 codes) and `FRAUD_CATEGORIES` (6 categories incl. new `'clean'`) — with derived `FraudSignal` / `FraudCategory` types so the 100 entry literals are compile-time checked. The new `'clean'` category isolates false-positive controls; previously they were lumped into `'sophisticated'` which heterogenized that bucket.
+
+Tests at `src/ai/eval/fraud-training-seed.test.ts` (25 tests) lock per-category counts (20/20/15/15/10/10), signal-vocab membership, calibration band targets (≥10 conf ≥0.9 unambiguous, ≥10 in 0.5–0.75 verification band), and source attribution (≥5 FTC, ≥2 GAO, ≥5 state-board references).
+
+Vertex tuning launched: `tuningJobs/6387124463783116800` against `gemini-2.5-pro`, 5 epochs, dataset `gs://arkova-training-data/gemini-fraud-v1-20260427-155452.jsonl`. F1 ≥ 60% + FP ≤ 5% DoD gated on job completion.
 
 ## R2 batch 3 — audit immutability + scope vocabulary + agents privacy (2026-04-27, SCRUM-1246 wave)
 
