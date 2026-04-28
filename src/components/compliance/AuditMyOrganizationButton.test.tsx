@@ -7,6 +7,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AuditMyOrganizationButton } from './AuditMyOrganizationButton';
 import { ROUTES } from '@/lib/routes';
+import { AUDIT_MY_ORG_LABELS } from '@/lib/copy';
 
 function renderWithRouter(ui: React.ReactElement) {
   return render(
@@ -136,5 +137,41 @@ describe('NCA-07 AuditMyOrganizationButton', () => {
     expect(trigger.getAttribute('aria-label')).toContain('Audit My Organization');
     trigger.focus();
     expect(document.activeElement).toBe(trigger);
+  });
+
+  it('SCRUM-950 — trigger stays mounted in aria-busy + disabled + "Running compliance audit…" state during audit', async () => {
+    let resolveFetch!: (r: Response) => void;
+    const fetchFn = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+    );
+
+    renderWithRouter(<AuditMyOrganizationButton fetchFn={fetchFn} disablePhaseAnimation />);
+
+    const trigger = screen.getByTestId('audit-trigger');
+    expect(trigger.getAttribute('aria-busy')).not.toBe('true');
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      const live = screen.getByTestId('audit-trigger');
+      expect(live.getAttribute('aria-busy')).toBe('true');
+      expect(live).toBeDisabled();
+      // Source from the copy constant so a label edit does not silently
+      // unpin the assertion.
+      expect(live.textContent).toContain(AUDIT_MY_ORG_LABELS.RUNNING.replace('…', ''));
+    });
+
+    const progress = screen.getByTestId('audit-progress');
+    expect(progress.getAttribute('role')).toBe('status');
+    expect(progress.getAttribute('aria-live')).toBe('polite');
+
+    resolveFetch({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 'a1', status: 'COMPLETED' }),
+    } as unknown as Response);
+    await waitFor(() => expect(screen.getByTestId('audit-view-results')).toBeDefined());
   });
 });

@@ -37,7 +37,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { ROUTES } from '@/lib/routes';
-import { PIPELINE_LABELS, DATA_ERROR_LABELS, formatCredentialType } from '@/lib/copy';
+import { PIPELINE_LABELS, DATA_ERROR_LABELS, RECORDS_LIST_LABELS, formatCredentialType } from '@/lib/copy';
 import { supabase } from '@/lib/supabase';
 import { DataErrorBanner } from '@/components/DataErrorBanner';
 
@@ -1201,7 +1201,7 @@ export function PipelineAdminPage() {
 
                             {anchorDetails.chain_block_height && (
                               <div>
-                                <span className="text-[10px] text-muted-foreground">Network Checkpoint</span>
+                                <span className="text-[10px] text-muted-foreground">{RECORDS_LIST_LABELS.NETWORK_CHECKPOINT}</span>
                                 <p className="text-xs font-mono mt-0.5">{anchorDetails.chain_block_height.toLocaleString()}</p>
                               </div>
                             )}

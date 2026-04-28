@@ -128,6 +128,9 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
     navigate(ROUTES.COMPLIANCE_SCORECARD);
   };
 
+  const isRunning =
+    state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
+
   return (
     <Card
       className="border-primary/40 bg-gradient-to-br from-primary/5 to-transparent"
@@ -153,21 +156,20 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
             data-testid="audit-trigger"
             aria-label={AUDIT_MY_ORG_LABELS.TITLE}
           >
-            {isRunning && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" data-testid="audit-trigger-spinner" />}
+            {isRunning && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
             {isRunning ? AUDIT_MY_ORG_LABELS.RUNNING : AUDIT_MY_ORG_LABELS.CTA}
           </Button>
         )}
 
-        {(state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating') && (
+        {isRunning && (
           <div
             role="status"
             aria-live="polite"
             className="flex items-center gap-3 rounded-md border border-border/60 bg-background/60 p-3 text-sm"
             data-testid="audit-progress"
           >
-            <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden="true" />
             <div className="flex-1">
-              <p className="font-medium">{progressLabel(state.kind)}</p>
+              <p className="font-medium">{progressLabel(state.kind as RunningKind)}</p>
               <p className="text-xs text-muted-foreground">{AUDIT_MY_ORG_LABELS.PROGRESS_ESTIMATE}</p>
             </div>
           </div>
@@ -206,7 +208,9 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
   );
 }
 
-function progressLabel(kind: 'analyzing' | 'checking' | 'generating'): string {
+type RunningKind = 'analyzing' | 'checking' | 'generating';
+
+function progressLabel(kind: RunningKind): string {
   switch (kind) {
     case 'analyzing':
       return AUDIT_MY_ORG_LABELS.PROGRESS_ANALYZING;

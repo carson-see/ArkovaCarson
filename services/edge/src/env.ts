@@ -39,6 +39,11 @@ export interface Env {
   // locally before the MCP server trusts `/auth/v1/user`.
   SUPABASE_JWT_SECRET?: string;
 
+  // SCRUM-926 / MCP-SEC-07: HS256 secret used to verify caller-supplied
+  // bearer JWTs locally before round-tripping to /auth/v1/user. Required —
+  // edge worker must reject all bearer auth if unset (fail-closed).
+  SUPABASE_JWT_SECRET: string;
+
   // Authentication (AUDIT-03)
   CRON_SECRET: string;
   ALLOWED_ORIGINS: string; // comma-separated list of allowed CORS origins

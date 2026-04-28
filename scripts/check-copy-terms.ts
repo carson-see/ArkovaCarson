@@ -127,8 +127,14 @@ function shouldCheck(filePath: string): boolean {
   return false;
 }
 
+// Pre-compile once. Building a new RegExp per line × 13 terms × 224 files was
+// the bulk of `lint:copy` runtime.
+const FORBIDDEN_REGEXES = FORBIDDEN_TERMS.map((t) => new RegExp(t, 'gi'));
+
 /**
- * Returns true if the line should be skipped (comments, imports, CSS classes, crypto API).
+ * Returns true if the line should be skipped (comments, imports, crypto API).
+ * className attribute values are stripped separately by
+ * {@link stripClassNameAttributes} so JSX text on the same line still gets scanned.
  */
 function shouldSkipLine(line: string, trimmed: string): boolean {
   // Skip comments and imports
@@ -176,20 +182,80 @@ function hasInlineJsxText(line: string): boolean {
 }
 
 /**
- * Finds forbidden term violations in a single line.
+ * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
+ * Strips className/class attribute values (Tailwind utilities like
+ * "inline-block" are noise) and JSX comments `{/* … *​/}` (so engineering
+ * notes can mention banned terms without tripping the lint).
+ *
+ * Exported for unit tests.
  */
-export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+export function stripClassNameAttributes(line: string): string {
+  let out = line.replaceAll(/className\s*=\s*"[^"]*"/g, 'className=""');
+  out = out.replaceAll(/className\s*=\s*'[^']*'/g, "className=''");
+  // Brace-walk so `className={\`text-${x} block\`}` and
+  // `className={cn('a', isOpen && 'b')}` strip cleanly — a naive `.*?` would
+  // stop at the first `}` inside a `${…}` or nested call.
+  out = stripBraceExpressions(out);
+  out = out.replaceAll(/\bclass\s*=\s*"[^"]*"/g, 'class=""');
+  out = out.replaceAll(/\{\/\*[\s\S]*?\*\/\}/g, '');
+  return out;
+}
+
+function stripBraceExpressions(line: string): string {
+  const prefix = /className\s*=\s*\{/g;
+  let result = line;
+  let match: RegExpExecArray | null;
+  while ((match = prefix.exec(result)) !== null) {
+    const startIdx = match.index + match[0].length;
+    let depth = 1;
+    let i = startIdx;
+    while (i < result.length && depth > 0) {
+      const ch = result[i];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      i++;
+    }
+    if (depth !== 0) break; // unbalanced — leave the rest of the line alone
+    result = result.slice(0, match.index) + 'className={}' + result.slice(i);
+    prefix.lastIndex = match.index + 'className={}'.length;
+  }
+  return result;
+}
+
+/**
+ * Returns true when the matched term is a JSX component name (`<Hash …>`,
+ * `</Hash>`) or an object property access (`health.checks.bitcoin.network`)
+ * rather than user-visible copy. `/hash-help` in JSX text MUST NOT match —
+ * a bare `/` is therefore not a sufficient prefix; only `</` (the JSX
+ * closing-tag form) is.
+ */
+function isCodeIdentifier(line: string, matchIndex: number): boolean {
+  if (matchIndex === 0) return false;
+  const prev = line[matchIndex - 1];
+  if (prev === '<') return true;
+  // `</Hash>` — closing tag.
+  if (prev === '/' && matchIndex >= 2 && line[matchIndex - 2] === '<') return true;
+  // `obj.bitcoin` — property access. Require an identifier char before the
+  // dot so a sentence-ending `.` followed by a banned word in the next
+  // sentence ("…secure. Bitcoin is…") doesn't get masked.
+  if (prev === '.' && matchIndex >= 2 && /[A-Za-z0-9_]/.test(line[matchIndex - 2])) return true;
+  return false;
+}
+
+function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
   const results: Violation[] = [];
-  const searchableLine = stripIgnoredAttributeValues(line);
-  for (const term of FORBIDDEN_TERMS) {
-    const regex = new RegExp(term, 'i');
-    const match = regex.exec(searchableLine);
-    if (!match) continue;
+  const cleaned = stripClassNameAttributes(line);
+  // Quote/JSX context is a per-line property; computing it once per term
+  // saves 6×n includes() calls when the line has many term matches.
+  const hasString = cleaned.includes('"') || cleaned.includes("'") || cleaned.includes('`');
+  const hasJsxText = cleaned.includes('>') && cleaned.includes('<');
+  if (!hasString && !hasJsxText) return results;
 
-    const hasString = searchableLine.includes('"') || searchableLine.includes("'") || searchableLine.includes('`');
-    const hasJsxText = hasInlineJsxText(searchableLine);
-
-    if (hasString || hasJsxText) {
+  for (const regex of FORBIDDEN_REGEXES) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(cleaned)) !== null) {
+      if (isCodeIdentifier(cleaned, match.index)) continue;
       results.push({
         file: filePath,
         line: lineNum,

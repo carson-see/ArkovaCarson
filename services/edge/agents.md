@@ -1,5 +1,13 @@
 # agents.md — services/edge
-_Last updated: 2026-04-26_
+_Last updated: 2026-04-27_
+
+## SCRUM-926 — Local JWT verification on `validateBearer` (2026-04-27)
+
+`services/edge/src/mcp-jwt-verify.ts` (new) verifies caller-supplied bearer JWTs locally with HS256 against `SUPABASE_JWT_SECRET` BEFORE the round-trip to `/auth/v1/user`. Defense-in-depth against compromise of the Supabase auth path forging a session for arbitrary user IDs. WebCrypto only — no `jose` dep on the edge bundle (matches `mcp-hmac.ts` convention). Module-scope `cachedKey` memoizes the imported `CryptoKey` so we don't re-derive HMAC bytes per request.
+
+`validateBearer` flow now: (1) fail-closed if `SUPABASE_JWT_SECRET` is unset (one-shot warn); (2) `verifySupabaseJwt` checks `alg`, `exp`, `iat`, `aud`, `iss`, signature, `sub`; (3) belt-and-suspenders round-trip to `/auth/v1/user` (catches server-side revocations the JWT can't reflect); (4) `user.id` cross-check against JWT `sub` — symmetric distrust of both sides. Tests: `src/tests/edge/mcp-jwt-verify.test.ts` covers forged-signature, malformed, expired, iat-future, wrong-aud, wrong-iss, missing-sub all rejected without network call.
+
+Note: the `[MCP-SEC-07]` Jira label is reused by SCRUM-926 (this ticket) — SCRUM-984 below also carries the MCP-SEC-07 tag from the earlier TRUST sprint. Two separate concerns under one tag; both shipped.
 
 ## What This Folder Contains
 

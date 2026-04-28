@@ -7,7 +7,7 @@
 import { useState, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { CheckCircle, Clock, MoreHorizontal, Eye, Download, XCircle, AlertTriangle, Loader2, RefreshCw, Mail, Copy, Check, ExternalLink } from 'lucide-react';
-import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, REVOKED_EXPIRED_ACTIONS, RECORDS_LIST_LABELS } from '@/lib/copy';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -477,9 +477,8 @@ function RecordRow({ record, onView, onDownload, onRevoke }: Readonly<RecordRowP
             )}
           </div>
 
-          {/* Network Checkpoint */}
           <div>
-            <p className="text-[10px] text-[#859398]">Network Checkpoint</p>
+            <p className="text-[10px] text-[#859398]">{RECORDS_LIST_LABELS.NETWORK_CHECKPOINT}</p>
             <p className="text-xs font-semibold text-[#dce3ed] mt-0.5">
               {record.chainBlockHeight ? record.chainBlockHeight.toLocaleString() : '\u2014'}
             </p>

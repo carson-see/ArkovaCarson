@@ -24,7 +24,7 @@ import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import {
   Tooltip,
   TooltipContent,
@@ -447,9 +447,8 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
 
-              {/* Network Checkpoint */}
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">Network Checkpoint</p>
+                <p className="text-xs text-muted-foreground">{RECORDS_LIST_LABELS.NETWORK_CHECKPOINT}</p>
                 <p className="text-sm font-semibold">
                   {anchor.chainBlockHeight ? anchor.chainBlockHeight.toLocaleString() : '—'}
                 </p>
