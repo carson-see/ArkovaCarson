@@ -51,6 +51,7 @@ import { nessieQueryRouter } from './nessie-query.js';
 import { regulatoryAlertsRouter } from './regulatory-alerts.js';
 import { aiTemplateRouter } from './ai-template.js';
 import { anchorSubmitRouter } from './anchor-submit.js';
+import { anchorBulkRouter } from './anchor-bulk.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
 import { anchorEvidenceRouter } from './anchor-evidence.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
@@ -349,6 +350,8 @@ router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.
 router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
+// SCRUM-1171 (HAKI-REQ-02): bulk + retroactive anchoring with original-document metadata
+router.use('/anchor/bulk', requireScope('anchor:write'), anchorBulkRouter);
 
 // ─── Attestations — Phase II ───
 // Batch attestation create — auth required, batch rate limit (10 req/min)
