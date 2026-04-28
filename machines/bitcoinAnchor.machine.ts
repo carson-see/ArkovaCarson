@@ -25,23 +25,32 @@ const chainTxId = variable("chainTxId");
 const fingerprintLocked = variable("fingerprintLocked");
 const metadataLocked = variable("metadataLocked");
 const legalHold = variable("legalHold");
-const credentialTypeLocked = variable("credentialTypeLocked");
 const actor = variable("actor");
+const softDeleted = variable("softDeleted");
 
+// SCRUM-1274 (R3-1) — Confluence audit page covers the rationale for
+// version 3 changes: SUPERSEDED + reorgDetected + softDeleted axis added,
+// INV-7 (credentialTypeImmutableAfterPending) dropped because migration
+// 0172_fix_credential_type_trigger_service_role.sql made service_role
+// exempt deliberately for backfill / repair flows. Spec now matches code.
 export const bitcoinAnchorMachine = defineMachine({
   version: 2,
   moduleName: "BitcoinAnchor",
 
   variables: {
     // Core anchor lifecycle status
-    // PENDING = just created, awaiting chain submission
-    // BROADCASTING = worker has claimed anchor, broadcast in progress (transient)
-    // SUBMITTED = worker has broadcast to mempool (tx unconfirmed)
-    // SECURED = chain_tx_id confirmed on-chain (check-confirmations cron)
-    // REVOKED = org admin revoked (terminal)
+    // PENDING       = just created, awaiting chain submission
+    // BROADCASTING  = worker has claimed anchor, broadcast in progress (transient)
+    // SUBMITTED     = worker has broadcast to mempool (tx unconfirmed)
+    // SECURED       = chain_tx_id confirmed on-chain (check-confirmations cron)
+    // REVOKED       = org admin revoked (terminal)
+    // SUPERSEDED    = newer anchor in lineage replaces this one (terminal).
+    //                 Maps to: anchor_status enum value added in
+    //                 0225_ark104_superseded_enum.sql + supersede_anchor()
+    //                 RPC in 0226_ark104_lineage_rpcs.sql.
     status: mapVar(
       "Anchors",
-      enumType("PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED"),
+      enumType("PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "SUPERSEDED"),
       lit("PENDING")
     ),
 
@@ -59,10 +68,7 @@ export const bitcoinAnchorMachine = defineMachine({
     // Once SECURED, metadata becomes immutable
     metadataLocked: mapVar("Anchors", boolType(), lit(false)),
 
-    // TLA-01: credential_type is immutable once anchor leaves PENDING
-    credentialTypeLocked: mapVar("Anchors", boolType(), lit(false)),
-
-    // Legal hold flag — blocks revocation
+    // Legal hold flag — blocks revocation and supersede
     legalHold: mapVar("Anchors", boolType(), lit(false)),
 
     // Who is performing the action: "client" or "worker"
@@ -71,21 +77,25 @@ export const bitcoinAnchorMachine = defineMachine({
       "Anchors",
       enumType("client", "worker"),
       lit("client")
-    )
+    ),
+
+    // Soft-delete axis (deleted_at IS NOT NULL). Orthogonal to lifecycle.
+    // Maps to: anchor.ts:483 + check-confirmations.ts:340 deleted_at handling.
+    // Soft-deleted rows are preserved for audit but excluded from active queries.
+    softDeleted: mapVar("Anchors", boolType(), lit(false))
   },
 
   actions: {
     // Worker claims a PENDING anchor before broadcasting.
     // Maps to: claim_pending_anchors() RPC (atomic FOR UPDATE SKIP LOCKED)
-    // Result: PENDING → BROADCASTING, fingerprint locked, credential_type locked
+    // Result: PENDING → BROADCASTING, fingerprint locked
     workerClaim: {
       params: { a: "Anchors" },
       guard: eq(index(status, param("a")), lit("PENDING")),
       updates: [
         setMap("status", param("a"), lit("BROADCASTING")),
         setMap("actor", param("a"), lit("worker")),
-        setMap("fingerprintLocked", param("a"), lit(true)),
-        setMap("credentialTypeLocked", param("a"), lit(true))
+        setMap("fingerprintLocked", param("a"), lit(true))
       ]
     },
 
@@ -131,13 +141,12 @@ export const bitcoinAnchorMachine = defineMachine({
       updates: [
         setMap("status", param("a"), lit("PENDING")),
         setMap("actor", param("a"), lit("client")),
-        setMap("fingerprintLocked", param("a"), lit(false)),
-        setMap("credentialTypeLocked", param("a"), lit(false))
+        setMap("fingerprintLocked", param("a"), lit(false))
       ]
     },
 
     // Chain submission fails after broadcast — tx dropped from mempool.
-    // Maps to: recover_stuck_broadcasts() RPC or chain-maintenance reorg detection
+    // Maps to: recover_stuck_broadcasts() RPC (operator-initiated reset)
     chainSubmitFail: {
       params: { a: "Anchors" },
       guard: and(
@@ -148,8 +157,31 @@ export const bitcoinAnchorMachine = defineMachine({
         setMap("status", param("a"), lit("PENDING")),
         setMap("chainTxId", param("a"), lit(null)),
         setMap("actor", param("a"), lit("client")),
-        setMap("fingerprintLocked", param("a"), lit(false)),
-        setMap("credentialTypeLocked", param("a"), lit(false))
+        setMap("fingerprintLocked", param("a"), lit(false))
+      ]
+    },
+
+    // SCRUM-1274: chain reorg flips a SECURED anchor back to SUBMITTED.
+    // Triggered when both UTXO providers (mempool.space + blockstream)
+    // confirm the tx is no longer in the canonical chain.
+    // Maps to: chain-maintenance.ts:152 reorg detection path.
+    // Result: SECURED → SUBMITTED, chain_tx_id retained (tx still references
+    // a real broadcast; chainConfirm can re-validate after re-org settles).
+    // metadataLocked is NOT cleared — the org committed to those values
+    // before reorg; subsequent chainConfirm re-secures the same metadata.
+    // Legal hold blocks reorg processing — worker must skip held rows so
+    // INV-6 (legalHold ⟹ status ≠ PENDING) is preserved through the
+    // reorg → chainSubmitFail → PENDING fallback path.
+    reorgDetected: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SECURED")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED"))
       ]
     },
 
@@ -165,11 +197,43 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Admin places legal hold (on SECURED or REVOKED anchors)
+    // SCRUM-1274: lineage supersede — newer anchor replaces this one.
+    // Maps to: supersede_anchor() RPC in 0226_ark104_lineage_rpcs.sql,
+    // which writes status='SUPERSEDED' from any non-terminal lifecycle state.
+    // Cannot fire on REVOKED or SUPERSEDED (terminal — guard excludes them).
+    // Legal hold blocks supersede the same way it blocks revoke.
+    // SUPERSEDED is terminal, so fingerprint is locked here even if supersede
+    // fires from PENDING (idempotent for BROADCASTING/SUBMITTED/SECURED).
+    supersede: {
+      params: { a: "Anchors" },
+      guard: and(
+        isin(index(status, param("a")), setOf(
+          lit("PENDING"),
+          lit("BROADCASTING"),
+          lit("SUBMITTED"),
+          lit("SECURED")
+        )),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUPERSEDED")),
+        setMap("fingerprintLocked", param("a"), lit(true))
+      ]
+    },
+
+    // Admin places legal hold (on SECURED, REVOKED, or SUPERSEDED anchors).
+    // SUPERSEDED is included for SCRUM-1274: superseded rows still need
+    // litigation hold for e-discovery. Pre-confirmation states (PENDING,
+    // BROADCASTING, SUBMITTED) cannot carry legal hold — anchor isn't yet
+    // an evidentiary record.
     placeLegalHold: {
       params: { a: "Anchors" },
       guard: and(
-        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"))),
+        isin(index(status, param("a")), setOf(
+          lit("SECURED"),
+          lit("REVOKED"),
+          lit("SUPERSEDED")
+        )),
         not(index(legalHold, param("a")))
       ),
       updates: [
@@ -177,15 +241,31 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Admin removes legal hold (on SECURED or REVOKED anchors)
+    // Admin removes legal hold (on SECURED, REVOKED, or SUPERSEDED anchors)
     removeLegalHold: {
       params: { a: "Anchors" },
       guard: and(
-        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"))),
+        isin(index(status, param("a")), setOf(
+          lit("SECURED"),
+          lit("REVOKED"),
+          lit("SUPERSEDED")
+        )),
         index(legalHold, param("a"))
       ),
       updates: [
         setMap("legalHold", param("a"), lit(false))
+      ]
+    },
+
+    // SCRUM-1274: soft-delete sets deleted_at IS NOT NULL.
+    // Orthogonal to lifecycle status — soft-deleted rows are preserved
+    // but excluded from active queries (anchor.ts:483 query-builder).
+    // One-way in this model; un-delete is operator-only via direct SQL.
+    softDelete: {
+      params: { a: "Anchors" },
+      guard: not(index(softDeleted, param("a"))),
+      updates: [
+        setMap("softDeleted", param("a"), lit(true))
       ]
     }
   },
@@ -235,9 +315,13 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-3: REVOKED is terminal — no transitions out
-    revokedIsTerminal: {
-      description: "REVOKED is a terminal state with no outbound transitions",
+    // INV-3 (SCRUM-1274): REVOKED + SUPERSEDED are terminal lifecycle states.
+    // No outbound transitions exist — verified structurally by every action's
+    // guard (none accepts REVOKED or SUPERSEDED as a source status). This
+    // invariant additionally pins the chain_tx_id retention property: REVOKED
+    // is only reachable from SECURED, so chain_tx_id must be set.
+    revokedHasChainTx: {
+      description: "REVOKED is terminal and retains chain_tx_id (only reachable from SECURED)",
       formula: forall("Anchors", "a",
         or(
           not(eq(index(status, param("a")), lit("REVOKED"))),
@@ -246,7 +330,12 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-4: Metadata is locked once SECURED
+    // INV-4: Metadata is locked once SECURED or REVOKED.
+    // SUPERSEDED is intentionally excluded — supersede can fire from PENDING
+    // (before metadata is committed to chain), so metadataLocked is not
+    // guaranteed to be true post-supersede. SUPERSEDED-from-SECURED preserves
+    // the metadataLocked=true setting through the supersede transition; that's
+    // a property of the action, not a state predicate.
     metadataImmutableAfterSecured: {
       description: "Metadata is immutable once anchor is SECURED or REVOKED",
       formula: forall("Anchors", "a",
@@ -268,20 +357,12 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-7: credential_type is locked once anchor leaves PENDING (TLA-01)
-    credentialTypeImmutableAfterPending: {
-      description: "credential_type is immutable once status leaves initial PENDING",
-      formula: forall("Anchors", "a",
-        or(
-          eq(index(status, param("a")), lit("PENDING")),
-          index(credentialTypeLocked, param("a"))
-        )
-      )
-    },
-
-    // INV-6: Legal hold blocks revocation transition
+    // INV-6: Legal hold blocks revocation transition.
+    // Original framing: legalHold ⟹ status ≠ PENDING (placeLegalHold guard
+    // limits to SECURED/REVOKED). The same guarantee covers supersede now,
+    // since the supersede action also blocks under legalHold.
     legalHoldPreventsSecuredToRevoked: {
-      description: "SECURED anchors under legal hold remain SECURED (guard blocks revoke)",
+      description: "Legal hold can only be placed on SECURED or REVOKED anchors",
       formula: forall("Anchors", "a",
         or(
           not(index(legalHold, param("a"))),
@@ -289,6 +370,12 @@ export const bitcoinAnchorMachine = defineMachine({
         )
       )
     }
+
+    // INV-7 (credentialTypeImmutableAfterPending) intentionally REMOVED —
+    // see SCRUM-1274. Migration 0172_fix_credential_type_trigger_service_role.sql
+    // makes service_role exempt for backfill/repair flows. CLAUDE.md §1.4
+    // documents that credential_type is monotonic for `authenticated` only;
+    // service_role can mutate post-PENDING with audit_events row required.
   },
 
   proof: {
@@ -298,11 +385,12 @@ export const bitcoinAnchorMachine = defineMachine({
         domains: {
           Anchors: ids({ prefix: "a", size: 2 })
         },
-        // State count for size=2 is 320^2 = 102,400 (5 statuses × 2^5 bools ×
-        // 2 actors)^2, which marginally exceeds the tla-precheck 100k
-        // graph-equivalence cap introduced after this machine was authored.
-        // Disabling graphEquivalence keeps the invariant checks running and
-        // lets us set a budget slightly above the 100k equivalence cap.
+        // State count for size=2: 6 statuses × 2 (chainTxId) × 2
+        // (fingerprintLocked) × 2 (metadataLocked) × 2 (legalHold) × 2
+        // (actor) × 2 (softDeleted) = 384 per anchor; 384^2 = 147,456
+        // for the cross-product. Marginally above the tla-precheck 100k
+        // graph-equivalence cap, so disable graphEquivalence and bump
+        // the budget to 200k to leave headroom for future axes.
         graphEquivalence: false,
         budgets: {
           maxEstimatedStates: 200_000,
@@ -315,8 +403,8 @@ export const bitcoinAnchorMachine = defineMachine({
         },
         graphEquivalence: false,
         budgets: {
-          // size=3 → 320^3 = 32,768,000 states; bump to 50M for nightly.
-          maxEstimatedStates: 50_000_000,
+          // size=3 → 384^3 = 56,623,104 states; bump to 75M for headroom.
+          maxEstimatedStates: 75_000_000,
           maxEstimatedBranching: 1_000_000
         }
       }
@@ -326,13 +414,13 @@ export const bitcoinAnchorMachine = defineMachine({
   metadata: {
     // Documentation only — this TLA+ machine models anchor lifecycle state
     // but is not code-generated into a runtime DB adapter. Several machine
-    // variables (fingerprintLocked, metadataLocked, credentialTypeLocked,
-    // actor) are derived/conceptual state with no 1:1 DB column, so the
-    // tla-precheck runtimeAdapter (which requires same-named variable↔column
-    // mapping) is intentionally omitted.
+    // variables (fingerprintLocked, metadataLocked, actor, softDeleted) are
+    // derived/conceptual state with no 1:1 DB column, so the tla-precheck
+    // runtimeAdapter (which requires same-named variable↔column mapping)
+    // is intentionally omitted.
     ownedTables: ["anchors"],
     ownedColumns: {
-      anchors: ["status", "chain_tx_id", "legal_hold", "credential_type"]
+      anchors: ["status", "chain_tx_id", "legal_hold", "deleted_at"]
     }
   }
 });
