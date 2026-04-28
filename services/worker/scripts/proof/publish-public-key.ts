@@ -58,9 +58,14 @@ async function main() {
   const pem = await fetchKmsPublicKeyPem(kmsKeyName);
   const nowIso = new Date().toISOString();
 
+  // Normalize line endings + surrounding whitespace before comparing —
+  // KMS may return CRLF while the JSON-stored PEM was saved with LF only,
+  // and a stray trailing newline shouldn't trigger a false "different
+  // key" rejection.
+  const normalizePem = (s: string): string => s.replace(/\r\n/g, '\n').trim();
   const existing = registry.keys.find(k => k.signing_key_id === signingKeyId);
   if (existing) {
-    if (existing.publicKeyPem === pem) {
+    if (normalizePem(existing.publicKeyPem) === normalizePem(pem)) {
       console.log(`Key '${signingKeyId}' already current — no change.`);
       return;
     }

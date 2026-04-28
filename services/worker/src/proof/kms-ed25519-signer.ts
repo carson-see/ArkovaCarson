@@ -45,13 +45,20 @@ export function kmsEd25519Signer(opts: KmsSignerOptions): SignerFn {
   if (!kmsKeyName) throw new Error('kmsEd25519Signer: kmsKeyName is required');
   if (!signingKeyId) throw new Error('kmsEd25519Signer: signingKeyId is required');
 
-  let resolvedClient: KmsClientLike | null = opts.client ?? null;
+  // Memoize the lazy-init Promise so concurrent first-callers don't each
+  // build their own KMS SDK client (silent waste of an auth round-trip
+  // and gRPC handshake). All callers await the same Promise; subsequent
+  // calls hit the resolved value with no overhead.
+  let clientPromise: Promise<KmsClientLike> | null = opts.client
+    ? Promise.resolve(opts.client)
+    : null;
   let logged = false;
 
   return async (canonical: string) => {
-    if (!resolvedClient) {
-      resolvedClient = await createRealKmsClient();
+    if (!clientPromise) {
+      clientPromise = createRealKmsClient();
     }
+    const client = await clientPromise;
     if (!logged) {
       // One-shot info log per signer instance — KMS key NAME is fine to
       // log (per §1.4 only key MATERIAL is forbidden). Using console
@@ -62,7 +69,7 @@ export function kmsEd25519Signer(opts: KmsSignerOptions): SignerFn {
       );
       logged = true;
     }
-    const signatureBytes = await resolvedClient.asymmetricSign(
+    const signatureBytes = await client.asymmetricSign(
       kmsKeyName,
       Buffer.from(canonical, 'utf8'),
     );

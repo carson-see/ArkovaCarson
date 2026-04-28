@@ -1,5 +1,19 @@
 # agents.md — services/worker
-_Last updated: 2026-04-27 (SCRUM-792 fraud-seed 100+ + R2 batch 3 SCRUM-1270 / 1272 / 1271-A)_
+_Last updated: 2026-04-28 (SCRUM-900 PROOF-SIG-01 GCP KMS proof-bundle signer)_
+
+## SCRUM-900 — Cryptographically signed proof bundle (2026-04-28, PROOF-SIG-01)
+
+`/api/v1/verify/:publicId/proof?format=signed` now returns an Ed25519-signed envelope. Resolution order in `src/api/v1/verify-proof.ts resolveSigner()`:
+
+1. `PROOF_SIGNING_KMS_KEY` + `PROOF_SIGNING_KEY_ID` → GCP KMS Ed25519 signer (production — private key never leaves KMS, per `feedback_no_aws.md`)
+2. `PROOF_SIGNING_KEY_PEM` + `PROOF_SIGNING_KEY_ID` → static-PEM signer (dev / preview / unit fixtures only)
+3. None of the above → `null` → 503 from the route, caller degrades to legacy unsigned shape
+
+`resolveSigner()` is module-scope memoized (`cachedSigner`) — Cloud Run env vars are immutable post-boot, so we resolve once per process. Tests use `__resetSignerCacheForTests()` to swap env between cases. Without this memo, every signed-proof request built a fresh `kmsEd25519Signer` closure, which silently defeated the per-instance KMS-client lazy-init memo.
+
+`src/proof/kms-ed25519-signer.ts` is the SignerFn adapter. Lazy-init via a Promise memo (`clientPromise`) so concurrent first-callers don't double-instantiate the GCP KMS SDK client. Mirrors the existing `chain/gcp-kms-signing-provider.ts` pattern; intentionally separate because Bitcoin-signing uses secp256k1 + DER + pre-hashed digest, while proof-bundle signing uses Ed25519 + raw bytes. Operator publishes the public key via `scripts/proof/publish-public-key.ts` to `docs/public-keys.json` — retired keys remain so historical bundles stay verifiable.
+
+Env vars documented in `.env.example` "Proof Bundle Signing" block. Confluence "On-Chain Policy / Proof Packages" page should be updated with bundle format + verification procedure.
 
 ## What This Folder Contains
 

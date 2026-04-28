@@ -73,6 +73,15 @@ export const COMPOUND_BANNED_PHRASES = [
   'transaction id',
 ];
 
+// Pre-compiled regexes — building these per-line per-file inside the
+// scanner adds measurable cost on a 200+ file lint run. Hoist to module
+// scope so each pattern compiles exactly once.
+const FORBIDDEN_REGEXES: ReadonlyArray<RegExp> = FORBIDDEN_TERMS.map(t => new RegExp(t, 'gi'));
+const COMPOUND_REGEXES: ReadonlyArray<{ phrase: string; re: RegExp }> = COMPOUND_BANNED_PHRASES.map(p => ({
+  phrase: p,
+  re: new RegExp(`(?<![-\\w])${p.replace(/ /g, '\\s+')}(?![-\\w])`, 'gi'),
+}));
+
 // File patterns to check (UI-facing files)
 // These patterns define which files are scanned for UI copy
 const _INCLUDE_PATTERNS = [
@@ -186,9 +195,10 @@ function shouldSkipLine(line: string, trimmed: string): boolean {
  */
 function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
   const results: Violation[] = [];
-  for (const term of FORBIDDEN_TERMS) {
-    const regex = new RegExp(term, 'gi');
-    const match = line.match(regex);
+  // String.prototype.match with a /g regex creates a fresh internal
+  // matcher each call — no need to reset `lastIndex`.
+  for (const re of FORBIDDEN_REGEXES) {
+    const match = line.match(re);
     if (!match) continue;
 
     const hasString = line.includes('"') || line.includes("'") || line.includes('`');
@@ -221,9 +231,8 @@ function findCompoundPhraseViolations(line: string, lineNum: number, filePath: s
     return [];
   }
   const results: Violation[] = [];
-  for (const phrase of COMPOUND_BANNED_PHRASES) {
-    const regex = new RegExp(`(?<![-\\w])${phrase.replace(/ /g, '\\s+')}(?![-\\w])`, 'gi');
-    const match = line.match(regex);
+  for (const { re } of COMPOUND_REGEXES) {
+    const match = line.match(re);
     if (!match) continue;
     results.push({
       file: filePath,

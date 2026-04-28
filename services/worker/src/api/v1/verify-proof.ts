@@ -19,7 +19,7 @@ import { kmsEd25519Signer } from '../../proof/kms-ed25519-signer.js';
 
 const router = Router();
 
-// Resolve the signer once per request. Returns null when no production
+// Resolve the signer once per process. Returns null when no production
 // or dev signing material is configured, so `?format=signed` can respond
 // 503 (caller degrades to the legacy unsigned shape) instead of silently
 // shipping an unsigned bundle.
@@ -31,16 +31,39 @@ const router = Router();
 //   2. PROOF_SIGNING_KEY_PEM + PROOF_SIGNING_KEY_ID → static-PEM signer
 //      (dev / preview / unit fixtures only — never set in prod)
 //   3. None of the above → null → 503
-function resolveSigner(): { sign: SignerFn; keyId: string } | null {
+//
+// Memoized: env vars are immutable post-boot in Cloud Run, so the
+// resolved signer (and the KMS client it lazy-initialises on first
+// `sign(...)`) lives for the lifetime of the worker process. Without
+// this memo, every `?format=signed` request built a fresh
+// `kmsEd25519Signer` closure, which in turn re-imported and
+// re-instantiated the GCP KMS SDK client per call — defeating the
+// per-instance `cachedKey` memo inside the signer.
+let cachedSigner: { sign: SignerFn; keyId: string } | null | undefined;
+export function resolveSigner(): { sign: SignerFn; keyId: string } | null {
+  if (cachedSigner !== undefined) return cachedSigner;
   const keyId = process.env.PROOF_SIGNING_KEY_ID;
-  if (!keyId) return null;
+  if (!keyId) {
+    cachedSigner = null;
+    return null;
+  }
   const kmsKeyName = process.env.PROOF_SIGNING_KMS_KEY;
   if (kmsKeyName) {
-    return { sign: kmsEd25519Signer({ kmsKeyName, signingKeyId: keyId }), keyId };
+    cachedSigner = { sign: kmsEd25519Signer({ kmsKeyName, signingKeyId: keyId }), keyId };
+    return cachedSigner;
   }
   const pem = process.env.PROOF_SIGNING_KEY_PEM;
-  if (pem) return { sign: staticEd25519Signer(pem, keyId), keyId };
+  if (pem) {
+    cachedSigner = { sign: staticEd25519Signer(pem, keyId), keyId };
+    return cachedSigner;
+  }
+  cachedSigner = null;
   return null;
+}
+
+/** Test-only: reset the resolved-signer memo so per-test env-var swaps take effect. */
+export function __resetSignerCacheForTests(): void {
+  cachedSigner = undefined;
 }
 
 /** Merkle proof entry matching the stored format */

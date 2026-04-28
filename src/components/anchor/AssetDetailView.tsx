@@ -447,7 +447,6 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 )}
               </div>
 
-              {/* SCRUM-951: renamed from "Block Height" — banned UI term per CLAUDE.md §1.3 */}
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground">Network Checkpoint</p>
                 <p className="text-sm font-semibold">

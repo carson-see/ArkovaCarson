@@ -215,30 +215,47 @@ async function main() {
 
   const dodF1 = f1 >= 0.6;
   const dodFp = fpRate <= 0.05;
-  const verdict = dodF1 && dodFp ? 'PASS' : 'FAIL';
+  // DoD gate is a generalization claim — only meaningful when eval data
+  // is disjoint from training. `train` mode reports the same numbers but
+  // labels them "memorization floor" so a passing F1 there is never
+  // confused for a passing DoD gate.
+  const isHoldout = mode === 'holdout';
+  const verdict = !isHoldout
+    ? 'MEMORIZATION_FLOOR'
+    : dodF1 && dodFp
+      ? 'PASS'
+      : 'FAIL';
 
   console.log('=== Metrics ===');
   console.log(`  Accuracy:        ${(accuracy * 100).toFixed(1)}%`);
   console.log(`  Precision:       ${(precision * 100).toFixed(1)}%`);
   console.log(`  Recall:          ${(recall * 100).toFixed(1)}%`);
-  console.log(`  F1:              ${(f1 * 100).toFixed(1)}%   (DoD ≥60% ${dodF1 ? 'PASS' : 'FAIL'})`);
-  console.log(`  FP rate (of clean): ${(fpRate * 100).toFixed(1)}%   (DoD ≤5% ${dodFp ? 'PASS' : 'FAIL'})`);
+  if (isHoldout) {
+    console.log(`  F1:              ${(f1 * 100).toFixed(1)}%   (DoD ≥60% ${dodF1 ? 'PASS' : 'FAIL'})`);
+    console.log(`  FP rate (of clean): ${(fpRate * 100).toFixed(1)}%   (DoD ≤5% ${dodFp ? 'PASS' : 'FAIL'})`);
+  } else {
+    console.log(`  F1:              ${(f1 * 100).toFixed(1)}%   (memorization floor — not a DoD gate)`);
+    console.log(`  FP rate (of clean): ${(fpRate * 100).toFixed(1)}%   (memorization floor — not a DoD gate)`);
+  }
   console.log(`  TP=${truePositives}  FP=${falsePositives}  FN=${falseNegatives}  TN=${trueNegatives}  errors=${errors}`);
   console.log(`  VERDICT: ${verdict}`);
 
   const outputDir = resolve(__dirname, '..', '..', '..', 'docs', 'eval');
   mkdirSync(outputDir, { recursive: true });
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
-  const outPath = resolve(outputDir, `eval-fraud-vertex-${timestamp}.json`);
+  // Mode in filename: holdout vs train runs are repeated and need to be
+  // distinguishable on disk for trend-tracking.
+  const outPath = resolve(outputDir, `eval-fraud-vertex-${mode}-${timestamp}.json`);
   writeFileSync(
     outPath,
     JSON.stringify(
       {
         endpoint: `projects/${PROJECT_ID}/locations/${REGION}/endpoints/${ENDPOINT_ID}`,
+        mode,
         timestamp: new Date().toISOString(),
         metrics: { accuracy, precision, recall, f1, fpRate, truePositives, falsePositives, falseNegatives, trueNegatives, errors },
         verdict,
-        dod: { f1Min: 0.6, fpMax: 0.05, f1Pass: dodF1, fpPass: dodFp },
+        dod: isHoldout ? { f1Min: 0.6, fpMax: 0.05, f1Pass: dodF1, fpPass: dodFp } : { note: 'memorization-floor run; DoD gate not applicable' },
         results,
       },
       null,
@@ -247,6 +264,8 @@ async function main() {
   );
   console.log(`\nResults: ${outPath}`);
 
+  // Only fail the process exit code on holdout-mode FAIL — train-mode
+  // never produces a CI-failable verdict.
   if (verdict === 'FAIL') process.exitCode = 1;
 }
 

@@ -126,6 +126,13 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
     navigate(ROUTES.COMPLIANCE_SCORECARD);
   };
 
+  // SCRUM-950: button stays rendered through the audit run with aria-busy
+  // + disabled + spinner so the user has unambiguous confirmation their
+  // click registered (was a "dead-click" surface previously).
+  const isBusy =
+    state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating';
+  const showTriggerButton = state.kind === 'idle' || isBusy;
+
   return (
     <Card
       className="border-primary/40 bg-gradient-to-br from-primary/5 to-transparent"
@@ -140,36 +147,23 @@ export function AuditMyOrganizationButton(props: AuditMyOrganizationButtonProps 
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">{AUDIT_MY_ORG_LABELS.DESCRIPTION}</p>
 
-        {(state.kind === 'idle' ||
-          state.kind === 'analyzing' ||
-          state.kind === 'checking' ||
-          state.kind === 'generating') && (() => {
-            // SCRUM-950: button stays rendered through the audit run with
-            // aria-busy + disabled + spinner so the user has unambiguous
-            // confirmation their click registered (was a "dead-click"
-            // surface — silent state swap previously).
-            const isBusy =
-              state.kind === 'analyzing' ||
-              state.kind === 'checking' ||
-              state.kind === 'generating';
-            return (
-              <Button
-                type="button"
-                size="lg"
-                className="w-full sm:w-auto"
-                onClick={handleClick}
-                data-testid="audit-trigger"
-                aria-label={AUDIT_MY_ORG_LABELS.TITLE}
-                aria-busy={isBusy}
-                disabled={isBusy}
-              >
-                {isBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
-                {isBusy ? AUDIT_MY_ORG_LABELS.RUNNING : AUDIT_MY_ORG_LABELS.CTA}
-              </Button>
-            );
-          })()}
+        {showTriggerButton && (
+          <Button
+            type="button"
+            size="lg"
+            className="w-full sm:w-auto"
+            onClick={handleClick}
+            data-testid="audit-trigger"
+            aria-label={AUDIT_MY_ORG_LABELS.TITLE}
+            aria-busy={isBusy}
+            disabled={isBusy}
+          >
+            {isBusy && <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />}
+            {isBusy ? AUDIT_MY_ORG_LABELS.RUNNING : AUDIT_MY_ORG_LABELS.CTA}
+          </Button>
+        )}
 
-        {(state.kind === 'analyzing' || state.kind === 'checking' || state.kind === 'generating') && (
+        {isBusy && (
           <div
             role="status"
             aria-live="polite"

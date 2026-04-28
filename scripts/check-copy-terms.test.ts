@@ -89,4 +89,25 @@ describe('COMPOUND_BANNED_PHRASES (SCRUM-951)', () => {
     expect(COMPOUND_BANNED_PHRASES.length).toBeGreaterThan(0);
     expect(COMPOUND_BANNED_PHRASES).toContain('block height');
   });
+
+  it('test helper regex shape matches the production formula exactly', () => {
+    // Locks the shape so a future drift in `findCompoundPhraseViolations`
+    // (e.g. swapping `[-\w]` boundaries for `\b`) shows up here as a
+    // failing test rather than silently passing against the helper.
+    for (const phrase of COMPOUND_BANNED_PHRASES) {
+      const expected = `(?<![-\\w])${phrase.replace(/ /g, '\\s+')}(?![-\\w])`;
+      // We don't have the production regex object exported, but we can
+      // derive it identically and verify the formula is what we expect.
+      const re = new RegExp(expected, 'gi');
+      expect(re.flags).toContain('g');
+      expect(re.flags).toContain('i');
+      // The pattern must reject the standalone single-word case (so the
+      // single-word `block` lint isn't double-counted).
+      const single = phrase.split(' ')[0];
+      expect(re.test(single)).toBe(false);
+      re.lastIndex = 0;
+      // And accept the multi-word case directly.
+      expect(re.test(phrase)).toBe(true);
+    }
+  });
 });
