@@ -45,12 +45,12 @@ describe('ARK-102 constants — do not change without design review', () => {
     expect(MIN_BATCH_SIZE).toBe(1);
   });
 
-  it('MIN_BATCH_THRESHOLD is pinned to 5', () => {
-    expect(MIN_BATCH_THRESHOLD).toBe(5);
+  it('MIN_BATCH_THRESHOLD is pinned to 3,000 (size floor for economic UTXO + fee)', () => {
+    expect(MIN_BATCH_THRESHOLD).toBe(3_000);
   });
 
-  it('MAX_ANCHOR_AGE_MS is pinned to 10 minutes', () => {
-    expect(MAX_ANCHOR_AGE_MS).toBe(10 * 60 * 1000);
+  it('MAX_ANCHOR_AGE_MS is pinned to 3 hours (age ceiling on PENDING)', () => {
+    expect(MAX_ANCHOR_AGE_MS).toBe(3 * 60 * 60 * 1000);
   });
 
   it('ABSOLUTE_FEE_CAP_SAT_PER_VB is pinned to 200', () => {
@@ -76,35 +76,70 @@ describe('Trigger A — size-based fire', () => {
   });
 });
 
-describe('Trigger B — age-based fire', () => {
+describe('Trigger B — age-based fire (gated by MIN_BATCH_THRESHOLD)', () => {
   it('never fires with pending count of 0', () => {
     expect(
       triggerB_shouldFireOnAge({ pendingCount: 0, oldestPendingAgeMs: Number.MAX_SAFE_INTEGER }),
     ).toBe(false);
   });
 
-  it('fires once pending reaches MIN_BATCH_THRESHOLD regardless of age', () => {
+  it('does NOT fire below MIN_BATCH_THRESHOLD even at 3-hour age (Codex finding on PR #627)', () => {
+    // The 3-hour clock only runs ONCE the queue has crossed 3,000.
+    // A 1-anchor or 100-anchor stale backlog must NOT fire — the daily
+    // 3am EST `force` sweep handles long-tail micro-queues. Otherwise
+    // we'd burn a UTXO on a single-leaf Merkle tree.
     expect(
-      triggerB_shouldFireOnAge({ pendingCount: MIN_BATCH_THRESHOLD, oldestPendingAgeMs: 0 }),
-    ).toBe(true);
-  });
-
-  it('does NOT fire below threshold when oldest is fresh', () => {
+      triggerB_shouldFireOnAge({ pendingCount: 1, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS }),
+    ).toBe(false);
+    expect(
+      triggerB_shouldFireOnAge({ pendingCount: 1, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS * 10 }),
+    ).toBe(false);
     expect(
       triggerB_shouldFireOnAge({
         pendingCount: MIN_BATCH_THRESHOLD - 1,
-        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS - 1,
+        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS,
       }),
     ).toBe(false);
   });
 
-  it('forces fire at or past MAX_ANCHOR_AGE_MS even with 1 pending', () => {
+  it('does NOT fire at MIN_BATCH_THRESHOLD when age is fresh — clock just started', () => {
+    // Operator rule: hitting 3,000 starts the clock; doesn't fire the TX.
     expect(
-      triggerB_shouldFireOnAge({ pendingCount: 1, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS }),
+      triggerB_shouldFireOnAge({ pendingCount: MIN_BATCH_THRESHOLD, oldestPendingAgeMs: 0 }),
+    ).toBe(false);
+  });
+
+  it('FIRES at MIN_BATCH_THRESHOLD once age ≥ MAX_ANCHOR_AGE_MS', () => {
+    // 3,000 pending + 3 hours = fire. Even if queue hasn't grown to 10k,
+    // the age guarantee means the oldest leaf has been PENDING long
+    // enough that we ship whatever's claimed.
+    expect(
+      triggerB_shouldFireOnAge({
+        pendingCount: MIN_BATCH_THRESHOLD,
+        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS,
+      }),
+    ).toBe(true);
+  });
+
+  it("FIRES at the operator's canonical example: 4,500 pending at 3 hours", () => {
+    // From the rule the user stated: "if after 3 hours theres only 4500
+    // anchors ready, event is still triggered."
+    expect(
+      triggerB_shouldFireOnAge({ pendingCount: 4_500, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS }),
     ).toBe(true);
     expect(
-      triggerB_shouldFireOnAge({ pendingCount: 1, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS + 1 }),
+      triggerB_shouldFireOnAge({ pendingCount: 4_500, oldestPendingAgeMs: MAX_ANCHOR_AGE_MS + 1 }),
     ).toBe(true);
+  });
+
+  it('does NOT fire at-or-above threshold when age < MAX_ANCHOR_AGE_MS', () => {
+    // 8,000 pending at 2 hours: keeps waiting (Trigger A handles 10k cap).
+    expect(
+      triggerB_shouldFireOnAge({
+        pendingCount: 8_000,
+        oldestPendingAgeMs: MAX_ANCHOR_AGE_MS - 1,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -172,14 +207,26 @@ describe('Cross-trigger invariants', () => {
     expect(MIN_BATCH_THRESHOLD).toBeLessThanOrEqual(BATCH_SIZE);
   });
 
-  it('at fresh age + threshold met, Trigger B fires and Trigger A may not', () => {
-    // This is the steady-state "normal throughput" path — Trigger A waits
-    // until we have 10K; Trigger B will ship earlier if we accumulate ≥5
-    // with a fresh backlog.
+  it('at fresh age + threshold met, NEITHER Trigger A nor Trigger B fires (size alone is not a fire condition)', () => {
+    // Operator rule: hitting MIN_BATCH_THRESHOLD starts the 3-hour clock
+    // but does NOT fire a TX. Trigger A waits for BATCH_SIZE; Trigger B
+    // waits for MAX_ANCHOR_AGE_MS. Either condition independently fires.
     expect(triggerA_shouldFireOnSize(MIN_BATCH_THRESHOLD)).toBe(false);
     expect(
       triggerB_shouldFireOnAge({ pendingCount: MIN_BATCH_THRESHOLD, oldestPendingAgeMs: 0 }),
-    ).toBe(true);
+    ).toBe(false);
+  });
+
+  it('sub-threshold stale backlog stays parked — daily force flush is the only out', () => {
+    // 100 anchors sitting for 12 hours: neither A nor B fires. The
+    // `daily-anchor-flush` cron at 3am EST passes opts.force=true to
+    // bypass triggers and drain whatever's queued. Pinned so future
+    // refactors can't reintroduce "fire on age alone" without breaking
+    // this test.
+    expect(triggerA_shouldFireOnSize(100)).toBe(false);
+    expect(
+      triggerB_shouldFireOnAge({ pendingCount: 100, oldestPendingAgeMs: 12 * 60 * 60 * 1000 }),
+    ).toBe(false);
   });
 
   it('fee ceiling is never negative', () => {

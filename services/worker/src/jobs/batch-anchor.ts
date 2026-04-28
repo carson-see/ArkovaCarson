@@ -40,12 +40,22 @@ export const BATCH_SIZE = Math.min(
 export const MIN_BATCH_SIZE = 1;
 
 /**
- * SCALE-1: Smart batch skipping — don't burn a UTXO + fee for tiny batches.
- * Skip if fewer than this many anchors pending AND oldest is under MAX_ANCHOR_AGE_MS.
- * Guarantees no anchor waits more than MAX_ANCHOR_AGE_MS regardless.
+ * Pipeline rule (operator-defined):
+ *   • Below MIN_BATCH_THRESHOLD pending: cron is mostly a no-op, no TX fires.
+ *   • At/above MIN_BATCH_THRESHOLD: cron polls more frequently (every 30min)
+ *     to evaluate the age clock; size threshold by itself does NOT fire a TX.
+ *   • Hit BATCH_SIZE → fire immediately (Trigger A).
+ *   • Oldest pending age ≥ MAX_ANCHOR_AGE_MS → fire whatever is queued
+ *     (Trigger B). Even 4,500 anchors at the 3-hour mark broadcasts.
+ *   • Daily 3am EST scheduled flush → fire whatever is queued
+ *     (Trigger D, see processBatchAnchors call site).
+ *
+ * MIN_BATCH_THRESHOLD is intentionally NOT a fire trigger — it is the
+ * "start watching closely" threshold. The 5-anchors-fires-in-10-min
+ * pre-2026-04-28 behavior burned UTXOs on micro-batches.
  */
-export const MIN_BATCH_THRESHOLD = 5;
-export const MAX_ANCHOR_AGE_MS = 10 * 60 * 1000; // 10 minutes
+export const MIN_BATCH_THRESHOLD = 3_000;
+export const MAX_ANCHOR_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
 
 /**
  * SCALE-2: Absolute hard cap for dynamic fee ceiling (sat/vB).
@@ -73,17 +83,32 @@ export function triggerA_shouldFireOnSize(claimedCount: number): boolean {
 }
 
 /**
- * Trigger B — Age-based: even if pending count is below MIN_BATCH_THRESHOLD,
- * force a batch when the oldest pending anchor has been waiting longer than
- * MAX_ANCHOR_AGE_MS. Guarantees no anchor sits PENDING for more than that
- * window (modulo cron cadence).
+ * Trigger B — Age-based: fire only when BOTH
+ *   (a) pendingCount ≥ MIN_BATCH_THRESHOLD (3,000) — the 3-hour clock
+ *       only starts running once the queue has crossed the operator-
+ *       defined threshold; and
+ *   (b) the oldest pending anchor has been waiting ≥ MAX_ANCHOR_AGE_MS
+ *       (3 hours).
+ *
+ * Examples (operator rule, 2026-04-28):
+ *   • 1 anchor sitting 6h with no queue growth → does NOT fire (sub-3k).
+ *     The daily 3am EST scheduled flush handles long-tail micro-queues.
+ *   • 4,500 anchors at 3h → fires (count ≥ 3k AND age ≥ 3h).
+ *   • 10,000 anchors at any age → fires via Trigger A, regardless of B.
+ *
+ * Size alone never fires (that's Trigger A's job). Hitting 3k only means
+ * "watch the clock" — the cron just polls every 30 min so the moment age
+ * also crosses 3h, the next tick flushes whatever's queued (≥ 3k).
+ *
+ * Codex review on PR #627 caught the prior version that fired on age
+ * alone — a 1-anchor backlog at 3h would have triggered a TX with a
+ * single leaf, burning a UTXO for nothing.
  */
 export function triggerB_shouldFireOnAge(input: {
   pendingCount: number;
   oldestPendingAgeMs: number;
 }): boolean {
-  if (input.pendingCount === 0) return false;
-  if (input.pendingCount >= MIN_BATCH_THRESHOLD) return true;
+  if (input.pendingCount < MIN_BATCH_THRESHOLD) return false;
   return input.oldestPendingAgeMs >= MAX_ANCHOR_AGE_MS;
 }
 
@@ -138,7 +163,7 @@ let batchProcessingRunning = false;
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
  * SCALE-3: In-process mutex prevents overlapping runs
  */
-export async function processBatchAnchors(): Promise<BatchAnchorResult> {
+export async function processBatchAnchors(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // SCALE-3: Mutex — skip if already running
@@ -148,13 +173,13 @@ export async function processBatchAnchors(): Promise<BatchAnchorResult> {
   }
   batchProcessingRunning = true;
   try {
-    return await _processBatchAnchorsInner();
+    return await _processBatchAnchorsInner(opts);
   } finally {
     batchProcessingRunning = false;
   }
 }
 
-async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
+async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
@@ -210,7 +235,15 @@ async function _processBatchAnchorsInner(): Promise<BatchAnchorResult> {
     // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
     const pendingCount = countsRes.data?.PENDING ?? 1;
 
-    if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
+    // Trigger D: forced flush (daily 3am EST sweep) bypasses the age check
+    // and broadcasts whatever is queued, even below MIN_BATCH_THRESHOLD.
+    // Used by the daily-anchor-flush Cloud Scheduler job.
+    if (opts.force) {
+      logger.info(
+        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
+        'Forced batch flush (daily 3am EST sweep)',
+      );
+    } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
         { pendingCount, oldestAgeMs: oldestPendingAgeMs },
         'Below batch threshold and oldest anchor is fresh — deferring',
