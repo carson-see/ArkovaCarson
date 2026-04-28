@@ -246,7 +246,9 @@ export async function processAnchor(anchor: ClaimedAnchor): Promise<boolean> {
 
     const { error: updateError, count } = await db
       .from('anchors')
-      .update(updatePayload)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- supabase-js
+      // RejectExcessProperties is too strict for the dynamic update payload built above.
+      .update(updatePayload as any)
       .eq('id', anchorId)
       .eq('status', 'BROADCASTING');
 

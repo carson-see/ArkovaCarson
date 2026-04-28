@@ -124,13 +124,15 @@ router.get('/', async (req: Request, res: Response) => {
       });
     }
 
-    // Log audit event
+    // Log audit event. event_category is forced to 'ADMIN' (the closest
+    // enum value — 'COMPLIANCE' is not in the AUDIT_EVENT_CATEGORIES enum
+    // per migration 0006). target_type replaces the legacy resource_type.
     await db.from('audit_events').insert({
       event_type: 'KEY_INVENTORY_ACCESSED',
-      event_category: 'COMPLIANCE',
+      event_category: 'ADMIN',
       org_id: membership.org_id,
       actor_id: userId,
-      resource_type: 'compliance',
+      target_type: 'compliance',
       details: JSON.stringify({ key_count: inventory.length }),
     });
 

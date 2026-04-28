@@ -266,7 +266,10 @@ router.patch('/:keyId', async (req, res) => {
       return;
     }
 
-    const updateData: Record<string, unknown> = {};
+    // supabase-js v2.x's update() generic now uses RejectExcessProperties,
+    // which refuses Record<string, unknown>. Type the partial-update shape
+    // explicitly so only the keys we set are inferred.
+    const updateData: { name?: string; is_active?: boolean } = {};
     if (parsed.data.name !== undefined) updateData.name = parsed.data.name;
     if (parsed.data.is_active !== undefined) updateData.is_active = parsed.data.is_active;
 

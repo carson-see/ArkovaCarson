@@ -453,10 +453,12 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   const periodFieldsValid =
     firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
 
-  // Build update payload — period fields only when valid
+  // Build update payload — period fields only when valid. supabase-js v2.x
+  // rejects Record<string, unknown> via RejectExcessProperties; we cast to
+  // the Database row's Update type at the call site below.
   const updatePayload: Record<string, unknown> = {
     status: mappedStatus,
-    cancel_at_period_end: subscription.cancel_at_period_end,
+    cancel_at_period_end: subscription.cancel_at_period_end ?? undefined,
   };
   if (periodFieldsValid) {
     updatePayload.current_period_start = new Date(firstItem.current_period_start! * 1000).toISOString();
@@ -479,7 +481,9 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
 
   const { error } = await db
     .from('subscriptions')
-    .update(updatePayload)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- supabase-js
+    // RejectExcessProperties is too strict for our dynamic update payload here.
+    .update(updatePayload as any)
     .eq('stripe_subscription_id', subscription.id);
 
   if (error) {

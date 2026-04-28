@@ -601,7 +601,14 @@ router.patch('/:id', async (req, res) => {
     return;
   }
 
-  const updateData: Record<string, unknown> = {};
+  // supabase-js v2.x update() rejects Record<string, unknown> via
+  // RejectExcessProperties; declare the partial-update shape explicitly.
+  const updateData: {
+    url?: string;
+    events?: string[];
+    description?: string | null;
+    is_active?: boolean;
+  } = {};
   if (parsed.data.url !== undefined) updateData.url = parsed.data.url;
   if (parsed.data.events !== undefined) updateData.events = parsed.data.events;
   if (parsed.data.description !== undefined) updateData.description = parsed.data.description;

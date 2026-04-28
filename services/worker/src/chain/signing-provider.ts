@@ -235,7 +235,13 @@ async function createRealKmsClient(region?: string): Promise<KmsClientLike> {
     '@aws-sdk/client-kms'
   );
 
-  const client = new KMSClient({ region: region ?? 'us-east-1' });
+  // @aws-sdk/client-kms 3.x removed the v2-style `client.send` from the
+  // public type surface (the runtime method still exists). Cast to a
+  // structural send-only type so this AWS-only code path keeps compiling.
+  // Note: this path is non-deployed per memory/feedback_no_aws.md — prod
+  // signs via WIF in Secret Manager (chain/client.ts:279).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client = new KMSClient({ region: region ?? 'us-east-1' }) as any;
 
   return {
     async getPublicKey(keyId: string): Promise<Uint8Array> {
