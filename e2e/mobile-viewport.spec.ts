@@ -21,7 +21,7 @@ test.describe('Mobile Viewport (375px)', () => {
     test.use({ storageState: { cookies: [], origins: [] } });
 
     test('login form is fully visible and usable at 375px', async ({ page }) => {
-      await page.goto('/auth');
+      await page.goto('/login');
 
       // Form fields should be visible and not clipped
       const emailInput = page.getByLabel('Email address');
