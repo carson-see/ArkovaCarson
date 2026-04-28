@@ -88,6 +88,15 @@ const ConfigSchema = z.object({
   useMocks: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
   enableProdNetworkAnchoring: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /**
+   * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
+   * Default false: existing per-user credit path runs unchanged. Flip to true
+   * per-tenant via Confluence carve-out (e.g. HakiChain) once an org is seeded
+   * in `org_credits` (migration 0278). When unset OR false, anchor submit
+   * skips the deduct call. When true, anchor submit calls `deduct_org_credit`
+   * RPC and returns a structured `insufficient_credits` 402 on shortfall.
+   */
+  enableOrgCreditEnforcement: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
@@ -187,6 +196,71 @@ const ConfigSchema = z.object({
   middeskSandbox: z.preprocess((v) => v !== 'false', z.boolean()).default(true),
   /** Slack ops webhook (separate channel from treasury alerts). */
   slackOpsWebhookUrl: z.string().url().optional(),
+
+  // ──────────────────────────────────────────────────────────────────────
+  // SCRUM-1258 (R1-4) batch 2 — feature flags, observability, treasury,
+  // GRC + AI provider creds. Silent-fail risk class: a typo in any of these
+  // disables the corresponding feature with no boot-time signal.
+  // ──────────────────────────────────────────────────────────────────────
+
+  /** ENABLE_AI_FALLBACK — toggles Cloudflare AI fallback when Gemini fails. CLAUDE.md §1.1. Default false. */
+  enableAiFallback: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_VERIFICATION_API — gates /api/v1/* surface. CLAUDE.md §1.9. Default true so customer keys work. */
+  enableVerificationApi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_VERTEX_AI — Gemini calls go through Vertex AI when true; Google AI Studio when false. */
+  enableVertexAi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_RULES_ENGINE — claim + run pending rule events. Default true. */
+  enableRulesEngine: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_QUEUE_REMINDERS — 15-min cron on org rule queues. Default true. */
+  enableQueueReminders: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_TREASURY_ALERTS — fan-out treasury low-balance to Slack/email. Default true. */
+  enableTreasuryAlerts: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_WEBHOOK_HMAC — verify HMAC on inbound vendor webhooks. CLAUDE.md SEC-01. Default true. */
+  enableWebhookHmac: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_RULE_ACTION_DISPATCHER — claim-loop driver for rule actions. Default true. */
+  enableRuleActionDispatcher: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  /** ENABLE_ALLOCATION_ROLLOVER — monthly credit rollover cron. Default false (PAY work). */
+  enableAllocationRollover: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_VISUAL_FRAUD_DETECTION — gates /ai/fraud/visual (off-device image bytes per §1.6 carve-out). SCRUM-1269 default false. */
+  enableVisualFraudDetection: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_GRC_INTEGRATIONS — Vanta/Drata/Anecdotes oauth + push. Default false. */
+  enableGrcIntegrations: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_ADES_SIGNATURES — Phase III electronic signature (eIDAS). Default false. */
+  enableAdesSignatures: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_DEMO_INJECTOR — synthetic event injector for demos. NEVER true in prod. */
+  enableDemoInjector: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_SYNTHETIC_DATA — gate for synthetic/seeded fixtures. NEVER true in prod. */
+  enableSyntheticData: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_NESSIE_RAG_RECOMMENDATIONS — Nessie post-extraction recommendation surfaces. */
+  enableNessieRagRecommendations: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_MULTIMODAL_EMBEDDINGS — opt-in path for image-aware embeddings. Default false. */
+  enableMultimodalEmbeddings: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_CLOUD_LOGGING_SINK — mirror logs into Cloud Logging. Default false outside prod. */
+  enableCloudLoggingSink: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ENABLE_WORKSPACE_RENEWAL — Drive watch channel renewal cron. Default true when Drive is on. */
+  enableWorkspaceRenewal: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+
+  // Arize observability (SCRUM-1067)
+  /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
+  arizeTracingEnabled: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ARIZE_TRACING_CONSOLE — debug console exporter. Never in prod. */
+  arizeTracingConsole: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** ARIZE_API_KEY — required when arizeTracingEnabled. */
+  arizeApiKey: z.string().optional(),
+  /** ARIZE_SPACE_ID — required when arizeTracingEnabled. */
+  arizeSpaceId: z.string().optional(),
+  /** ARIZE_OTLP_ENDPOINT — defaults to https://otlp.arize.com/v1. */
+  arizeOtlpEndpoint: z.string().url().optional(),
+  /** ARIZE_PROJECT_NAME — Arize project. Default arkova-ai-providers. */
+  arizeProjectName: z.string().optional(),
+
+  // Treasury alerts (ARK-103)
+  /** SLACK_TREASURY_WEBHOOK_URL — incoming webhook for treasury low-balance alerts. */
+  slackTreasuryWebhookUrl: z.string().url().optional(),
+  /** TREASURY_ALERT_EMAIL — email recipient when balance below threshold. */
+  treasuryAlertEmail: z.string().email().optional(),
+  /** TREASURY_LOW_BALANCE_USD — threshold in USD; defaults to 50. */
+  treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -321,6 +395,52 @@ const ConfigSchema = z.object({
       path: ['veremarkWebhookSecret'],
     });
   }
+
+  // SCRUM-1258 (R1-4) batch 2 cross-field rules.
+
+  // Arize tracing requires creds when enabled.
+  if (cfg.arizeTracingEnabled && (!cfg.arizeApiKey || !cfg.arizeSpaceId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ARIZE_TRACING_ENABLED=true requires ARIZE_API_KEY and ARIZE_SPACE_ID. '
+        + 'Without them the OTLP exporter falls back to console only.',
+      path: ['arizeApiKey'],
+    });
+  }
+
+  // Treasury alerts: when EXPLICITLY enabled via env in production with prod
+  // network anchoring on, require at least one delivery channel. This mirrors
+  // the conservative KMS-required pattern (SCRUM-1257). Implicit-default true
+  // does not trigger the requirement so the broad existing test surface and
+  // dev environments aren't broken; the rule fires only when an operator has
+  // taken affirmative steps to wire treasury into prod.
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.enableProdNetworkAnchoring
+    && process.env.ENABLE_TREASURY_ALERTS === 'true'
+    && !cfg.slackTreasuryWebhookUrl
+    && !cfg.treasuryAlertEmail
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_TREASURY_ALERTS=true with production prod-network anchoring requires '
+        + 'SLACK_TREASURY_WEBHOOK_URL or TREASURY_ALERT_EMAIL. Otherwise alerts compute and drop.',
+      path: ['slackTreasuryWebhookUrl'],
+    });
+  }
+
+  // Demo / synthetic-data flags must be off in production.
+  if (cfg.nodeEnv === 'production' && (cfg.enableDemoInjector || cfg.enableSyntheticData)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DEMO_INJECTOR and ENABLE_SYNTHETIC_DATA must be false in production. '
+        + 'These flags inject fixture rows that contaminate prod analytics + audit data.',
+      path: ['enableDemoInjector'],
+    });
+  }
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -359,6 +479,7 @@ function loadConfig(): Config {
     sentryDsn: process.env.SENTRY_DSN,
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
+    enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,
@@ -397,6 +518,35 @@ function loadConfig(): Config {
     middeskWebhookSecret: process.env.MIDDESK_WEBHOOK_SECRET,
     middeskSandbox: process.env.MIDDESK_SANDBOX,
     slackOpsWebhookUrl: process.env.SLACK_OPS_WEBHOOK_URL,
+
+    // SCRUM-1258 batch 2 — feature flags + observability + treasury
+    enableAiFallback: process.env.ENABLE_AI_FALLBACK,
+    enableVerificationApi: process.env.ENABLE_VERIFICATION_API,
+    enableVertexAi: process.env.ENABLE_VERTEX_AI,
+    enableRulesEngine: process.env.ENABLE_RULES_ENGINE,
+    enableQueueReminders: process.env.ENABLE_QUEUE_REMINDERS,
+    enableTreasuryAlerts: process.env.ENABLE_TREASURY_ALERTS,
+    enableWebhookHmac: process.env.ENABLE_WEBHOOK_HMAC,
+    enableRuleActionDispatcher: process.env.ENABLE_RULE_ACTION_DISPATCHER,
+    enableAllocationRollover: process.env.ENABLE_ALLOCATION_ROLLOVER,
+    enableVisualFraudDetection: process.env.ENABLE_VISUAL_FRAUD_DETECTION,
+    enableGrcIntegrations: process.env.ENABLE_GRC_INTEGRATIONS,
+    enableAdesSignatures: process.env.ENABLE_ADES_SIGNATURES,
+    enableDemoInjector: process.env.ENABLE_DEMO_INJECTOR,
+    enableSyntheticData: process.env.ENABLE_SYNTHETIC_DATA,
+    enableNessieRagRecommendations: process.env.ENABLE_NESSIE_RAG_RECOMMENDATIONS,
+    enableMultimodalEmbeddings: process.env.ENABLE_MULTIMODAL_EMBEDDINGS,
+    enableCloudLoggingSink: process.env.ENABLE_CLOUD_LOGGING_SINK,
+    enableWorkspaceRenewal: process.env.ENABLE_WORKSPACE_RENEWAL,
+    arizeTracingEnabled: process.env.ARIZE_TRACING_ENABLED,
+    arizeTracingConsole: process.env.ARIZE_TRACING_CONSOLE,
+    arizeApiKey: process.env.ARIZE_API_KEY,
+    arizeSpaceId: process.env.ARIZE_SPACE_ID,
+    arizeOtlpEndpoint: process.env.ARIZE_OTLP_ENDPOINT,
+    arizeProjectName: process.env.ARIZE_PROJECT_NAME,
+    slackTreasuryWebhookUrl: process.env.SLACK_TREASURY_WEBHOOK_URL,
+    treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
+    treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
   });
 
   if (!result.success) {

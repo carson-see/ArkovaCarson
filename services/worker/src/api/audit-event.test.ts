@@ -183,13 +183,22 @@ describe('POST /api/audit/event', () => {
 });
 
 describe('auditEventBodySchema', () => {
-  it('caps details at 4000 chars to bound payload size', () => {
+  it('caps details at 10000 chars to match audit_events CHECK constraint', () => {
     const result = auditEventBodySchema.safeParse({
       event_type: 'X',
       event_category: 'AUTH',
-      details: 'a'.repeat(4001),
+      details: 'a'.repeat(10_001),
     });
     expect(result.success).toBe(false);
+  });
+
+  it('accepts details up to 10000 chars (the DB CHECK ceiling)', () => {
+    const result = auditEventBodySchema.safeParse({
+      event_type: 'X',
+      event_category: 'AUTH',
+      details: 'a'.repeat(10_000),
+    });
+    expect(result.success).toBe(true);
   });
 
   it('accepts a clean minimal payload', () => {

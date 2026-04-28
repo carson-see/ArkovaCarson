@@ -415,6 +415,9 @@ export const RECORDS_LIST_LABELS = {
   NO_RESULTS: 'No records match your search',
   NO_RESULTS_DESC: 'Try adjusting your search or filter criteria.',
   PAGE_SIZE_LABEL: 'per page',
+  // Replaces "Block Height" — the banned-term version sat next to
+  // NETWORK_RECEIPT / "Network Observed Time"; this keeps the trio coherent.
+  NETWORK_CHECKPOINT: 'Network Checkpoint',
 } as const;
 
 // =============================================================================
@@ -2267,6 +2270,7 @@ export const AUDIT_MY_ORG_LABELS = {
   DESCRIPTION:
     'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
   CTA: 'Start compliance audit',
+  RUNNING: 'Running compliance audit…',
   PROGRESS_ANALYZING: 'Analyzing credentials…',
   PROGRESS_CHECKING: 'Checking regulatory requirements…',
   PROGRESS_GENERATING: 'Generating compliance report…',

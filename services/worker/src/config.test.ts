@@ -441,3 +441,115 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 });
+
+// SCRUM-1258 (R1-4) batch 2 — feature flags, ARIZE, treasury alerts.
+describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () => {
+  it('absorbs every ENABLE_* feature flag with sane defaults', async () => {
+    await withConfig({}, (mod) => {
+      const c = mod.config as Record<string, unknown>;
+      expect(c.enableAiFallback).toBe(false);
+      expect(c.enableVerificationApi).toBe(true);
+      expect(c.enableVertexAi).toBe(false);
+      expect(c.enableRulesEngine).toBe(true);
+      expect(c.enableQueueReminders).toBe(true);
+      expect(c.enableTreasuryAlerts).toBe(true);
+      expect(c.enableWebhookHmac).toBe(true);
+      expect(c.enableRuleActionDispatcher).toBe(true);
+      expect(c.enableAllocationRollover).toBe(false);
+      expect(c.enableVisualFraudDetection).toBe(false);
+      expect(c.enableGrcIntegrations).toBe(false);
+      expect(c.enableAdesSignatures).toBe(false);
+      expect(c.enableDemoInjector).toBe(false);
+      expect(c.enableSyntheticData).toBe(false);
+      expect(c.enableNessieRagRecommendations).toBe(false);
+      expect(c.enableMultimodalEmbeddings).toBe(false);
+      expect(c.enableCloudLoggingSink).toBe(false);
+      expect(c.enableWorkspaceRenewal).toBe(false);
+    });
+  });
+
+  it('coerces ENABLE_* env strings to booleans', async () => {
+    await withConfig(
+      {
+        ENABLE_VISUAL_FRAUD_DETECTION: 'true',
+        ENABLE_DEMO_INJECTOR: 'false',
+        ENABLE_GRC_INTEGRATIONS: 'true',
+      },
+      (mod) => {
+        const c = mod.config as Record<string, unknown>;
+        expect(c.enableVisualFraudDetection).toBe(true);
+        expect(c.enableDemoInjector).toBe(false);
+        expect(c.enableGrcIntegrations).toBe(true);
+      },
+    );
+  });
+
+  it('absorbs ARIZE_* observability vars', async () => {
+    await withConfig(
+      {
+        ARIZE_TRACING_ENABLED: 'true',
+        ARIZE_API_KEY: 'arize-key',
+        ARIZE_SPACE_ID: 'space-id',
+        ARIZE_OTLP_ENDPOINT: 'https://otlp.arize.com/v1',
+        ARIZE_PROJECT_NAME: 'arkova-ai-providers',
+      },
+      (mod) => {
+        const c = mod.config as Record<string, unknown>;
+        expect(c.arizeTracingEnabled).toBe(true);
+        expect(c.arizeApiKey).toBe('arize-key');
+        expect(c.arizeSpaceId).toBe('space-id');
+        expect(c.arizeOtlpEndpoint).toBe('https://otlp.arize.com/v1');
+        expect(c.arizeProjectName).toBe('arkova-ai-providers');
+      },
+    );
+  });
+
+  it('rejects ARIZE_TRACING_ENABLED=true without ARIZE_API_KEY + ARIZE_SPACE_ID', async () => {
+    await expectConfigToReject({
+      ARIZE_TRACING_ENABLED: 'true',
+      ARIZE_API_KEY: undefined,
+      ARIZE_SPACE_ID: undefined,
+    });
+  });
+
+  it('absorbs TREASURY_LOW_BALANCE_USD with default 50', async () => {
+    await withConfig({}, (mod) => {
+      const c = mod.config as Record<string, unknown>;
+      expect(c.treasuryLowBalanceUsd).toBe(50);
+    });
+    await withConfig({ TREASURY_LOW_BALANCE_USD: '125.5' }, (mod) => {
+      const c = mod.config as Record<string, unknown>;
+      expect(c.treasuryLowBalanceUsd).toBe(125.5);
+    });
+  });
+
+  it('rejects production prod-network anchoring with treasury alerts on but no channel', async () => {
+    await expectConfigToReject({
+      ...PROD_BASE_ENV,
+      NODE_ENV: 'production',
+      BITCOIN_NETWORK: 'mainnet',
+      ENABLE_PROD_NETWORK_ANCHORING: 'true',
+      KMS_PROVIDER: 'gcp',
+      BITCOIN_TREASURY_WIF: 'L1aW4aubDFB7yfras2S1mN3bqg9nwySY8nkoLmJebSLD5BWv3ENZ',
+      ENABLE_TREASURY_ALERTS: 'true',
+      SLACK_TREASURY_WEBHOOK_URL: undefined,
+      TREASURY_ALERT_EMAIL: undefined,
+    });
+  });
+
+  it('rejects production with ENABLE_DEMO_INJECTOR=true (audit-data contamination guard)', async () => {
+    await expectConfigToReject({
+      ...PROD_BASE_ENV,
+      NODE_ENV: 'production',
+      ENABLE_DEMO_INJECTOR: 'true',
+    });
+  });
+
+  it('rejects production with ENABLE_SYNTHETIC_DATA=true', async () => {
+    await expectConfigToReject({
+      ...PROD_BASE_ENV,
+      NODE_ENV: 'production',
+      ENABLE_SYNTHETIC_DATA: 'true',
+    });
+  });
+});

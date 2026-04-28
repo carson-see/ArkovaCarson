@@ -10,12 +10,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockLogger } = vi.hoisted(() => {
+const { mockSelectChain, mockInsertChain, mockLogger, mockConfig } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
   const mockInsertChain = { single: vi.fn() };
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  return { mockSelectChain, mockInsertChain, mockLogger };
+  // Mock the worker config so transitive import (anchor-submit → orgCredits →
+  // config.js) doesn't try to load required env vars in the test env and
+  // throw "Invalid worker configuration" before any test runs.
+  const mockConfig = { enableOrgCreditEnforcement: false };
+  return { mockSelectChain, mockInsertChain, mockLogger, mockConfig };
 });
+
+vi.mock('../../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 

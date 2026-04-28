@@ -22,6 +22,24 @@ const router = Router();
 
 import { FERPA_EXCEPTION_CATEGORIES, INSTITUTION_TYPES } from '../../constants/ferpa.js';
 
+/**
+ * SCRUM-1271-D — strip the internal `id` UUID from outbound key responses.
+ *
+ * Customers should reference keys by `key_prefix` (already human-readable +
+ * unique) rather than the api_keys.id UUID per CLAUDE.md §6. The PATCH
+ * endpoint URL still takes `:keyId` (= the internal UUID) as the path param
+ * because v1 routes are frozen — that surface migrates to v2 in the
+ * follow-on. Today's fix is purely additive-removal in the response body.
+ */
+function toPublicKey<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
+  if (!row) return {};
+  const sanitized = { ...row };
+  delete (sanitized as Record<string, unknown>).id;
+  delete (sanitized as Record<string, unknown>).org_id;
+  delete (sanitized as Record<string, unknown>).key_hash;
+  return sanitized;
+}
+
 /** Zod schema for key creation */
 const ApiKeyScopeSchema = z.enum(API_KEY_SCOPES);
 
@@ -139,9 +157,9 @@ router.post('/', async (req, res) => {
     // Log audit event
     logAuditEvent(userId, 'api_key.created', 'api_key', inserted.id, JSON.stringify({ key_prefix: prefix, name, scopes }));
 
-    // Return raw key ONCE — Constitution 1.4
+    // Return raw key ONCE — Constitution 1.4. SCRUM-1271-D: omit internal id.
     res.status(201).json({
-      ...inserted,
+      ...toPublicKey(inserted),
       key: raw,
       warning: 'Save this key now. It cannot be retrieved again.',
     });
@@ -191,7 +209,7 @@ router.get('/', async (req, res) => {
       return;
     }
 
-    res.json({ keys: keys ?? [] });
+    res.json({ keys: (keys ?? []).map(toPublicKey) });
   } catch (err) {
     logger.error({ error: err }, 'API key listing failed');
     res.status(500).json({ error: 'Internal server error' });
@@ -268,7 +286,7 @@ router.patch('/:keyId', async (req, res) => {
       logAuditEvent(userId, 'api_key.revoked', 'api_key', keyId, JSON.stringify({ key_prefix: updated.key_prefix }));
     }
 
-    res.json(updated);
+    res.json(toPublicKey(updated));
   } catch (err) {
     logger.error({ error: err }, 'API key update failed');
     res.status(500).json({ error: 'Internal server error' });

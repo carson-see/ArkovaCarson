@@ -388,7 +388,7 @@ export function ApiSandbox() {
         ) : (
           <div className="bg-[#080f16] border border-[#3c494e]/30 rounded-lg p-4 text-sm text-[#bbc9cf] space-y-2">
             <p className="text-[#a8e8ff] font-semibold">x402 Payment Protocol</p>
-            <p>No API key needed. Make a request without auth and receive a <code className="text-[#00d4ff]">402 Payment Required</code> response with pricing details. Complete the USDC payment on Base L2, then retry with the <code className="text-[#00d4ff]">X-Payment</code> header containing your transaction proof.</p>
+            <p>No API key needed. Make a request without auth and receive a <code className="text-[#00d4ff]">402 Payment Required</code> response with pricing details. Complete the USDC payment on Base L2, then retry with the <code className="text-[#00d4ff]">X-Payment</code> header containing your payment proof.</p>
           </div>
         )}
       </div>
