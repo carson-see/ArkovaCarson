@@ -291,6 +291,25 @@ async function loadOrgJurisdictions(
     }
   }
 
+  // SCRUM-954 / BUG-2026-04-21-007: "Arkova default scope" — derive pairs
+  // from jurisdiction_rules for the org's industry so the scorecard isn't
+  // stuck on "No jurisdiction data" after a clean audit. Empty result here
+  // is legitimate (no rules for this industry).
+  if (pairs.length === 0) {
+    const { data: ruleScopes } = await dbAny
+      .from('jurisdiction_rules')
+      .select('jurisdiction_code')
+      .eq('industry_code', industry)
+      .limit(2000);
+    const seen = new Set<string>();
+    for (const r of ruleScopes ?? []) {
+      const code = r.jurisdiction_code as string;
+      if (seen.has(code)) continue;
+      seen.add(code);
+      pairs.push({ jurisdiction_code: code, industry_code: industry });
+    }
+  }
+
   if (filter?.length) {
     const allowed = new Set(filter);
     pairs = pairs.filter((p) => allowed.has(p.jurisdiction_code));
